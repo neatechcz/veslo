@@ -204,6 +204,8 @@ export default function SessionView(props: SessionViewProps) {
   };
   const [workspaceMenuId, setWorkspaceMenuId] = createSignal<string | null>(null);
   let workspaceMenuRef: HTMLDivElement | undefined;
+  const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
+  let addWorkspaceMenuRef: HTMLDivElement | undefined;
 
   createEffect(() => {
     if (!workspaceMenuId()) return;
@@ -225,6 +227,28 @@ export default function SessionView(props: SessionViewProps) {
       return "Add a server token to attach files.";
     }
     return "Connect to OpenWork server to attach files.";
+  });
+
+  createEffect(() => {
+    if (!addWorkspaceMenuOpen()) return;
+    const closeMenu = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (addWorkspaceMenuRef && target && addWorkspaceMenuRef.contains(target)) return;
+      setAddWorkspaceMenuOpen(false);
+    };
+    window.addEventListener("click", closeMenu);
+    onCleanup(() => window.removeEventListener("click", closeMenu));
+  });
+
+  createEffect(() => {
+    if (!addWorkspaceMenuOpen()) return;
+    const closeMenu = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (addWorkspaceMenuRef && target && addWorkspaceMenuRef.contains(target)) return;
+      setAddWorkspaceMenuOpen(false);
+    };
+    window.addEventListener("click", closeMenu);
+    onCleanup(() => window.removeEventListener("click", closeMenu));
   });
 
   const isNearBottom = (el: HTMLElement, threshold = 80) => {
@@ -1004,14 +1028,54 @@ export default function SessionView(props: SessionViewProps) {
             </For>
           </div>
 
-          <button
-            type="button"
-            onClick={props.openCreateWorkspace}
-            class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
-          >
-            <Plus size={14} />
-            Add a workspace
-          </button>
+          <div class="relative" ref={(el) => (addWorkspaceMenuRef = el)}>
+            <button
+              type="button"
+              class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+              onClick={() => setAddWorkspaceMenuOpen((prev) => !prev)}
+            >
+              <Plus size={14} />
+              Add a workspace
+            </button>
+            <Show when={addWorkspaceMenuOpen()}>
+              <div class="absolute left-0 right-0 top-full mt-2 rounded-lg border border-dls-border bg-dls-surface shadow-xl overflow-hidden z-20">
+                <button
+                  type="button"
+                  class="w-full flex items-center gap-2 px-3 py-2 text-xs text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors"
+                  onClick={() => {
+                    props.openCreateWorkspace();
+                    setAddWorkspaceMenuOpen(false);
+                  }}
+                >
+                  <Plus size={12} />
+                  New workspace
+                </button>
+                <button
+                  type="button"
+                  class="w-full flex items-center gap-2 px-3 py-2 text-xs text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors"
+                  onClick={() => {
+                    props.openCreateRemoteWorkspace();
+                    setAddWorkspaceMenuOpen(false);
+                  }}
+                >
+                  <Plus size={12} />
+                  Connect remote
+                </button>
+                <button
+                  type="button"
+                  class="w-full flex items-center gap-2 px-3 py-2 text-xs text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  disabled={props.importingWorkspaceConfig}
+                  onClick={() => {
+                    props.importWorkspaceConfig();
+                    setAddWorkspaceMenuOpen(false);
+                  }}
+                >
+                  <Plus size={12} />
+                  Import config
+                </button>
+              </div>
+            </Show>
+          </div>
         </div>
 
         <div class="pt-4 border-t border-dls-border">
