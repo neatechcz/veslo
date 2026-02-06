@@ -1,155 +1,14 @@
-import Link from "next/link";
-
-type ReleaseAsset = {
-  name?: string;
-  browser_download_url?: string;
-};
-
-type Release = {
-  draft?: boolean;
-  html_url?: string;
-  assets?: ReleaseAsset[];
-};
-
-type Repo = {
-  stargazers_count?: number;
-};
-
-const FALLBACK_RELEASE = "https://github.com/different-ai/openwork/releases";
-
-const formatCompact = (value: number) => {
-  try {
-    return new Intl.NumberFormat("en", {
-      notation: "compact",
-      maximumFractionDigits: 1
-    }).format(value);
-  } catch {
-    return String(value);
-  }
-};
-
-const selectAsset = (
-  assets: ReleaseAsset[],
-  extensions: string[],
-  keywords: string[] = []
-) => {
-  const matches = assets.filter((asset) => {
-    if (!asset?.name || !asset?.browser_download_url) return false;
-    const name = asset.name.toLowerCase();
-    const extensionMatch = extensions.some((ext) => name.endsWith(ext));
-    const keywordMatch =
-      keywords.length === 0 || keywords.some((key) => name.includes(key));
-    return extensionMatch && keywordMatch;
-  });
-
-  if (matches.length === 0) return null;
-
-  return (
-    matches.find((asset) => asset.name?.toLowerCase().includes("adhoc")) ||
-    matches.find((asset) => asset.name?.toLowerCase().includes("universal")) ||
-    matches.find((asset) => asset.name?.toLowerCase().includes("aarch64")) ||
-    matches[0]
-  );
-};
-
-const fetchJson = async <T,>(url: string): Promise<T | null> => {
-  try {
-    const response = await fetch(url, {
-      headers: {
-        Accept: "application/vnd.github+json"
-      },
-      next: { revalidate: 60 * 60 }
-    });
-
-    if (!response.ok) return null;
-    return (await response.json()) as T;
-  } catch {
-    return null;
-  }
-};
-
-const getGithubData = async () => {
-  const [repo, releases] = await Promise.all([
-    fetchJson<Repo>("https://api.github.com/repos/different-ai/openwork"),
-    fetchJson<Release[]>(
-      "https://api.github.com/repos/different-ai/openwork/releases?per_page=10"
-    )
-  ]);
-
-  const stars =
-    typeof repo?.stargazers_count === "number"
-      ? formatCompact(repo.stargazers_count)
-      : "—";
-
-  const releaseList = Array.isArray(releases) ? releases : [];
-  const pick = releaseList.find((release) => {
-    if (!release || release.draft) return false;
-    const assets = Array.isArray(release.assets) ? release.assets : [];
-    return assets.some((asset) => asset?.browser_download_url);
-  });
-
-  const assets = Array.isArray(pick?.assets) ? pick.assets : [];
-  const dmg = selectAsset(assets, [".dmg"]);
-  const exe = selectAsset(assets, [".exe", ".msi"], ["win", "windows"]);
-  const appImage = selectAsset(assets, [".appimage"], ["linux"]);
-
-  return {
-    stars,
-    releaseUrl: pick?.html_url || FALLBACK_RELEASE,
-    downloads: {
-      macos: dmg?.browser_download_url || FALLBACK_RELEASE,
-      windows: exe?.browser_download_url || FALLBACK_RELEASE,
-      linux: appImage?.browser_download_url || FALLBACK_RELEASE
-    }
-  };
-};
+import { SiteFooter } from "../components/site-footer";
+import { SiteNav } from "../components/site-nav";
+import { OpenCodeLogo } from "../components/opencode-logo";
+import { getGithubData } from "../lib/github";
 
 export default async function Home() {
   const github = await getGithubData();
+  const cal = process.env.NEXT_PUBLIC_CAL_URL ?? "";
   return (
     <div className="min-h-screen">
-      <nav className="sticky top-0 z-50 border-b border-gray-100 bg-white/90 py-4 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-6">
-          <div className="flex items-center gap-6">
-            <Link href="#" className="text-lg font-bold tracking-tight">
-              OpenWork
-            </Link>
-            <div className="hidden items-center gap-6 text-[14px] text-gray-500 md:flex">
-              <Link href="#install" className="transition hover:text-black">
-                Getting started
-              </Link>
-              <Link href="#capabilities" className="transition hover:text-black">
-                Features
-              </Link>
-              <Link href="#faq" className="transition hover:text-black">
-                FAQ
-              </Link>
-              <Link href="#" className="transition hover:text-black">
-                Blog
-              </Link>
-            </div>
-          </div>
-          <div className="flex items-center gap-4 text-[14px]">
-            <a
-              href="https://github.com/different-ai/openwork"
-              className="flex items-center gap-1 text-gray-500 transition hover:text-black"
-              rel="noreferrer"
-              target="_blank"
-              aria-label="OpenWork GitHub stars"
-            >
-              <svg
-                className="h-4 w-4"
-                fill="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.041-1.416-4.041-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
-              </svg>
-              {github.stars}
-            </a>
-          </div>
-        </div>
-      </nav>
+      <SiteNav stars={github.stars} callUrl={cal} />
 
       <main className="pb-24 pt-20">
         <div className="content-max-width px-6">
@@ -177,8 +36,8 @@ export default async function Home() {
               browser.
             </p>
             <p>
-              Start for free with local models, connect your ChatGPT account, or
-              use any of the 50 other{" "}
+              Get started with free models, connect your ChatGPT account, or use
+              any of the 50 other{" "}
               <a
                 href="https://opencode.ai/docs/providers/"
                 target="_blank"
@@ -257,37 +116,7 @@ export default async function Home() {
               className="inline-flex items-center"
               aria-label="opencode.ai"
             >
-              <svg
-                viewBox="0 0 234 42"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-                aria-hidden="true"
-                className="h-3 w-auto"
-              >
-                <g clipPath="url(#clip0_1311_95049)">
-                  <path d="M18 30H6V18H18V30Z" fill="#CFCECD" />
-                  <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z" fill="#656363" />
-                  <path d="M48 30H36V18H48V30Z" fill="#CFCECD" />
-                  <path d="M36 30H48V12H36V30ZM54 36H36V42H30V6H54V36Z" fill="#656363" />
-                  <path d="M84 24V30H66V24H84Z" fill="#CFCECD" />
-                  <path d="M84 24H66V30H84V36H60V6H84V24ZM66 18H78V12H66V18Z" fill="#656363" />
-                  <path d="M108 36H96V18H108V36Z" fill="#CFCECD" />
-                  <path d="M108 12H96V36H90V6H108V12ZM114 36H108V12H114V36Z" fill="#656363" />
-                  <path d="M144 30H126V18H144V30Z" fill="#CFCECD" />
-                  <path d="M144 12H126V30H144V36H120V6H144V12Z" fill="#211E1E" />
-                  <path d="M168 30H156V18H168V30Z" fill="#CFCECD" />
-                  <path d="M168 12H156V30H168V12ZM174 36H150V6H174V36Z" fill="#211E1E" />
-                  <path d="M198 30H186V18H198V30Z" fill="#CFCECD" />
-                  <path d="M198 12H186V30H198V12ZM204 36H180V6H198V0H204V36Z" fill="#211E1E" />
-                  <path d="M234 24V30H216V24H234Z" fill="#CFCECD" />
-                  <path d="M216 12V18H228V12H216ZM234 24H216V30H234V36H210V6H234V24Z" fill="#211E1E" />
-                </g>
-                <defs>
-                  <clipPath id="clip0_1311_95049">
-                    <rect width="234" height="42" fill="white" />
-                  </clipPath>
-                </defs>
-              </svg>
+              <OpenCodeLogo className="h-3 w-auto" />
             </a>
             <span>Everything from opencode just works.</span>
           </div>
@@ -492,8 +321,8 @@ export default async function Home() {
                 <h4 className="mb-2 text-[15px] font-bold">Is it free?</h4>
                 <p className="text-[14px] leading-relaxed text-gray-600">
                   Yes. OpenWork is open source. You can download and use it for
-                  free with local models. You only pay for API usage if you
-                  choose to connect paid cloud models.
+                  free using free models on your machine. You only pay for API
+                  usage if you choose to connect paid cloud models.
                 </p>
               </div>
               <div>
@@ -527,20 +356,7 @@ export default async function Home() {
             </div>
           </section>
 
-          <footer className="mt-12 flex flex-col items-center justify-between gap-6 border-t border-gray-100 pb-12 pt-24 text-[13px] text-gray-400 md:flex-row">
-            <div className="flex gap-6">
-              <Link href="#" className="transition hover:text-black">
-                Safety guide
-              </Link>
-              <Link href="#" className="transition hover:text-black">
-                Terms
-              </Link>
-              <Link href="#" className="transition hover:text-black">
-                Privacy
-              </Link>
-            </div>
-            <span>© 2026 OpenWork Project.</span>
-          </footer>
+          <SiteFooter />
         </div>
       </main>
     </div>
