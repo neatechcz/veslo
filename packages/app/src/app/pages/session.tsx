@@ -186,7 +186,6 @@ export default function SessionView(props: SessionViewProps) {
   const [agentOptions, setAgentOptions] = createSignal<Agent[]>([]);
   const [autoScrollEnabled, setAutoScrollEnabled] = createSignal(false);
   const [scrollOnNextUpdate, setScrollOnNextUpdate] = createSignal(false);
-  const [unreadCount, setUnreadCount] = createSignal(0);
 
   const agentLabel = createMemo(() => props.selectedSessionAgent ?? "Default agent");
   const workspaceLabel = (workspace: WorkspaceInfo) =>
@@ -605,27 +604,6 @@ export default function SessionView(props: SessionViewProps) {
     ),
   );
 
-  createEffect(
-    on(
-      () => props.messages.length,
-      (current, previous) => {
-        if (previous == null) return;
-        if (current < previous) {
-          setUnreadCount(0);
-          return;
-        }
-        if (current > previous && !autoScrollEnabled()) {
-          setUnreadCount((count) => count + (current - previous));
-        }
-      },
-    ),
-  );
-
-  createEffect(() => {
-    if (autoScrollEnabled()) {
-      setUnreadCount(0);
-    }
-  });
 
   const triggerFlyout = (
     sourceEl: Element | null,
@@ -995,12 +973,6 @@ export default function SessionView(props: SessionViewProps) {
       const message = error instanceof Error ? error.message : "Connect failed";
       setToastMessage(message);
     });
-  };
-
-  const jumpToLatest = () => {
-    setScrollOnNextUpdate(true);
-    scrollToLatest("smooth");
-    setUnreadCount(0);
   };
 
   return (
@@ -1562,23 +1534,6 @@ export default function SessionView(props: SessionViewProps) {
         attachmentsEnabled={attachmentsEnabled()}
         attachmentsDisabledReason={attachmentsDisabledReason()}
       />
-
-      <Show when={unreadCount() > 0}>
-        <div class="fixed bottom-24 right-6 z-40">
-          <button
-            type="button"
-            onClick={jumpToLatest}
-            class="flex items-center gap-2 rounded-full border border-gray-6 bg-gray-2/90 px-3 py-2 text-xs text-gray-11 shadow-lg shadow-gray-12/10 transition-all hover:text-gray-12 hover:border-gray-7"
-            aria-label="Jump to latest message"
-          >
-            <span>New messages</span>
-            <span class="rounded-full bg-gray-12/10 px-2 py-0.5 text-[10px] font-semibold text-gray-12">
-              {unreadCount()}
-            </span>
-            <ChevronDown size={12} class="text-gray-9" />
-          </button>
-        </div>
-      </Show>
 
       </main>
 
