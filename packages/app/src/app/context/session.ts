@@ -409,7 +409,25 @@ export function createSessionStore(options: {
   async function loadSessions(scopeRoot?: string) {
     const c = options.client();
     if (!c) return;
-    const list = unwrap(await c.session.list());
+
+    // IMPORTANT: OpenCode's session.list() supports server-side filtering by directory.
+    // Use it to avoid fetching every session across every workspace root.
+    //
+    // Note: We intentionally normalize slashes + trailing separators but do NOT
+    // lowercase on Windows for the query value because the server does strict
+    // string equality against the stored session.directory.
+    const queryDirectory = (() => {
+      const trimmed = (scopeRoot ?? "").trim();
+      if (!trimmed) return undefined;
+      const unified = trimmed.replace(/\\/g, "/");
+      const withoutTrailing = unified.replace(/\/+$/, "");
+      return withoutTrailing || "/";
+    })();
+
+    const list = unwrap(await c.session.list({ directory: queryDirectory, roots: true }));
+
+    // Defensive client-side filter in case the server returns sessions spanning
+    // multiple roots (e.g. older servers or proxies).
     const root = normalizeDirectoryPath(scopeRoot);
     const filtered = root
       ? list.filter((session) => normalizeDirectoryPath(session.directory) === root)

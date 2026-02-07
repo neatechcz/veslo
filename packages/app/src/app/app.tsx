@@ -1551,17 +1551,22 @@ export default function App() {
         }
       }
 
-      const list = unwrap(await c.session.list());
+      const queryDirectory = (() => {
+        const trimmed = (directory ?? "").trim();
+        if (!trimmed) return undefined;
+        const unified = trimmed.replace(/\\/g, "/");
+        const withoutTrailing = unified.replace(/\/+$/, "");
+        return withoutTrailing || "/";
+      })();
+
+      // Fetch sessions scoped to the workspace directory to avoid loading the
+      // full global session list for every workspace.
+      const list = unwrap(await c.session.list({ directory: queryDirectory, roots: true }));
       if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
 
-      // `session.list()` can return sessions across multiple workspace roots.
-      // The dashboard sidebar shows sessions grouped by workspace, so we must
-      // filter by the workspace root to avoid every local workspace rendering the
-      // same global list.
+      // Defensive client-side filter in case upstream ignores the directory query.
       const root = normalizeDirectoryPath(directory);
-      const filtered = root
-        ? list.filter((session) => normalizeDirectoryPath(session.directory) === root)
-        : list;
+      const filtered = root ? list.filter((session) => normalizeDirectoryPath(session.directory) === root) : list;
 
       const sorted = sortSessionsByActivity(filtered);
       const items: SidebarSessionItem[] = sorted.map((session) => ({
