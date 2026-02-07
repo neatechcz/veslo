@@ -1653,6 +1653,9 @@ export default function App() {
   });
 
   createEffect(() => {
+    // Only auto-select a session when the user is on the session route.
+    // Switching workspaces while on the dashboard should not force navigation.
+    if (currentView() !== "session") return;
     if (!client()) return;
     if (!sessionsLoaded()) return;
     if (creatingSession()) return;
@@ -4005,13 +4008,28 @@ export default function App() {
     return activeWorkspaceDisplay();
   });
 
+  // Avoid flashing the full-screen switch overlay for fast workspace switches.
+  // Only show it if a switch is still in progress after a short delay.
+  const [workspaceSwitchDelayElapsed, setWorkspaceSwitchDelayElapsed] = createSignal(false);
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    const switchingId = workspaceStore.connectingWorkspaceId();
+    if (!switchingId) {
+      setWorkspaceSwitchDelayElapsed(false);
+      return;
+    }
+
+    setWorkspaceSwitchDelayElapsed(false);
+    const timer = window.setTimeout(() => setWorkspaceSwitchDelayElapsed(true), 250);
+    onCleanup(() => window.clearTimeout(timer));
+  });
+
   const workspaceSwitchOpen = createMemo(() => {
     if (booting()) return true;
-    if (workspaceStore.connectingWorkspaceId()) return true;
+    if (workspaceStore.connectingWorkspaceId()) return workspaceSwitchDelayElapsed();
     if (!busy() || !busyLabel()) return false;
     const label = busyLabel();
     return (
-      label === "status.connecting" ||
       label === "status.starting_engine" ||
       label === "status.restarting_engine"
     );

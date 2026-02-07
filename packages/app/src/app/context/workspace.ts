@@ -473,7 +473,7 @@ export function createWorkspaceStore(options: {
             info.projectDir ?? undefined,
             { reason: "engine-refresh" },
             auth ?? undefined,
-            { quiet: true },
+            { quiet: true, navigate: false },
           )
             .catch(() => undefined)
             .finally(() => {
@@ -592,6 +592,7 @@ export function createWorkspaceStore(options: {
               reason: "workspace-switch-openwork",
             },
             resolvedAuth,
+            { navigate: false },
           );
 
           if (!ok) {
@@ -648,12 +649,18 @@ export function createWorkspaceStore(options: {
           return false;
         }
 
-        const ok = await connectToServer(baseUrl, next.directory?.trim() || undefined, {
-          workspaceId: next.id,
-          workspaceType: next.workspaceType,
-          targetRoot: next.directory?.trim() ?? "",
-          reason: "workspace-switch-direct",
-        });
+        const ok = await connectToServer(
+          baseUrl,
+          next.directory?.trim() || undefined,
+          {
+            workspaceId: next.id,
+            workspaceType: next.workspaceType,
+            targetRoot: next.directory?.trim() ?? "",
+            reason: "workspace-switch-direct",
+          },
+          undefined,
+          { navigate: false },
+        );
 
         if (!ok) {
           updateWorkspaceConnectionState(id, {
@@ -742,13 +749,54 @@ export function createWorkspaceStore(options: {
       options.setPendingPermissions([]);
       options.setSessionStatusById({});
 
-      const ok = await startHost({ workspacePath: next.path });
-      if (!ok) {
-        updateWorkspaceConnectionState(id, {
-          status: "error",
-          message: "Failed to start local engine.",
-        });
-        return false;
+      // If a local host engine is already running (common when bouncing between remote/local),
+      // reuse it instead of restarting to keep switching snappy.
+      let connectedToLocalHost = false;
+      const existingEngine = engine();
+      const runtime = existingEngine?.runtime ?? resolveEngineRuntime();
+      const canReuseHost =
+        isTauriRuntime() &&
+        Boolean(existingEngine?.running && existingEngine.baseUrl);
+
+      if (canReuseHost && runtime === "openwrk") {
+        try {
+          await openwrkWorkspaceActivate({
+            workspacePath: next.path,
+            name: next.displayName?.trim() || next.name?.trim() || null,
+          });
+          await activateOpenworkHostWorkspace(next.path);
+
+          const nextInfo = await engineInfo();
+          setEngine(nextInfo);
+
+          const username = nextInfo.opencodeUsername?.trim() ?? "";
+          const password = nextInfo.opencodePassword?.trim() ?? "";
+          const auth = username && password ? { username, password } : undefined;
+          setEngineAuth(auth ?? null);
+
+          if (nextInfo.baseUrl) {
+            connectedToLocalHost = await connectToServer(
+              nextInfo.baseUrl,
+              nextInfo.projectDir ?? undefined,
+              { reason: "workspace-attach-local" },
+              auth,
+              { navigate: false },
+            );
+          }
+        } catch {
+          connectedToLocalHost = false;
+        }
+      }
+
+      if (!connectedToLocalHost) {
+        const ok = await startHost({ workspacePath: next.path, navigate: false });
+        if (!ok) {
+          updateWorkspaceConnectionState(id, {
+            status: "error",
+            message: "Failed to start local engine.",
+          });
+          return false;
+        }
       }
     }
 
@@ -776,17 +824,18 @@ export function createWorkspaceStore(options: {
           const auth = username && password ? { username, password } : undefined;
           setEngineAuth(auth ?? null);
 
-          if (newInfo.baseUrl) {
-            const ok = await connectToServer(
-              newInfo.baseUrl,
-              newInfo.projectDir ?? undefined,
-              { reason: "workspace-openwrk-switch" },
-              auth,
-            );
-            if (!ok) {
-              options.setError("Failed to reconnect after workspace switch");
+            if (newInfo.baseUrl) {
+              const ok = await connectToServer(
+                newInfo.baseUrl,
+                newInfo.projectDir ?? undefined,
+                { reason: "workspace-openwrk-switch" },
+                auth,
+                { navigate: false },
+              );
+              if (!ok) {
+                options.setError("Failed to reconnect after workspace switch");
+              }
             }
-          }
         } else {
           // Stop the current engine
           const info = await engineStop();
@@ -806,17 +855,18 @@ export function createWorkspaceStore(options: {
           setEngineAuth(auth ?? null);
 
           // Reconnect to server
-          if (newInfo.baseUrl) {
-            const ok = await connectToServer(
-              newInfo.baseUrl,
-              newInfo.projectDir ?? undefined,
-              { reason: "workspace-restart" },
-              auth,
-            );
-            if (!ok) {
-              options.setError("Failed to reconnect after workspace switch");
+            if (newInfo.baseUrl) {
+              const ok = await connectToServer(
+                newInfo.baseUrl,
+                newInfo.projectDir ?? undefined,
+                { reason: "workspace-restart" },
+                auth,
+                { navigate: false },
+              );
+              if (!ok) {
+                options.setError("Failed to reconnect after workspace switch");
+              }
             }
-          }
         }
       } catch (e) {
         const message = e instanceof Error ? e.message : safeStringify(e);
@@ -847,7 +897,7 @@ export function createWorkspaceStore(options: {
       reason?: string;
     },
     auth?: OpencodeAuth,
-    connectOptions?: { quiet?: boolean },
+    connectOptions?: { quiet?: boolean; navigate?: boolean },
   ) {
     console.log("[workspace] connect", {
       baseUrl: nextBaseUrl,
@@ -855,6 +905,7 @@ export function createWorkspaceStore(options: {
       workspaceType: context?.workspaceType ?? null,
     });
     const quiet = connectOptions?.quiet ?? false;
+    const navigate = connectOptions?.navigate ?? true;
     options.setError(null);
     if (!quiet) {
       options.setBusy(true);
@@ -936,7 +987,7 @@ export function createWorkspaceStore(options: {
 
       options.refreshSkills({ force: true }).catch(() => undefined);
       options.refreshPlugins().catch(() => undefined);
-      if (!options.selectedSessionId()) {
+      if (navigate && !options.selectedSessionId()) {
         options.setTab("scheduled");
         options.setView("session");
       }
@@ -1484,7 +1535,7 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function startHost(optionsOverride?: { workspacePath?: string }) {
+  async function startHost(optionsOverride?: { workspacePath?: string; navigate?: boolean }) {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
       return false;
@@ -1552,15 +1603,16 @@ export function createWorkspaceStore(options: {
       const auth = username && password ? { username, password } : undefined;
       setEngineAuth(auth ?? null);
 
-      if (info.baseUrl) {
-        const ok = await connectToServer(
-          info.baseUrl,
-          info.projectDir ?? undefined,
-          { reason: "host-start" },
-          auth,
-        );
-        if (!ok) return false;
-      }
+       if (info.baseUrl) {
+         const ok = await connectToServer(
+           info.baseUrl,
+           info.projectDir ?? undefined,
+           { reason: "host-start" },
+           auth,
+           { navigate: optionsOverride?.navigate ?? true },
+         );
+         if (!ok) return false;
+       }
 
       markOnboardingComplete();
       return true;
