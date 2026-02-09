@@ -4580,7 +4580,6 @@ export default function App() {
     "plugins",
     "mcp",
     "identities",
-    "deploy",
     "config",
     "settings",
   ]);

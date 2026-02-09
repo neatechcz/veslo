@@ -82,11 +82,6 @@ const skillRecommended = [
     description: "Manage tabs in ChatGPT Atlas and access your...",
   },
   {
-    icon: Cloud,
-    title: "Cloudflare Deploy",
-    description: "Deploy Workers, Pages, and platform services",
-  },
-  {
     icon: Gamepad2,
     title: "Develop Web Game",
     description: "Web game dev + Playwright test loop",

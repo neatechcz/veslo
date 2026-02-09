@@ -131,7 +131,6 @@ export type DashboardTab =
   | "plugins"
   | "mcp"
   | "identities"
-  | "deploy"
   | "config"
   | "settings";
 

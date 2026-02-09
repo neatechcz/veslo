@@ -32,7 +32,6 @@ import {
   History,
   ListTodo,
   Loader2,
-  Package,
   MessageCircle,
   Maximize2,
   Minimize2,
@@ -1822,21 +1821,6 @@ export default function SessionView(props: SessionViewProps) {
           >
             <MessageCircle size={18} />
             Identities
-          </button>
-          <button
-            type="button"
-            class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
-              showRightSidebarSelection() && props.tab === "deploy"
-                ? "bg-dls-active text-dls-text"
-                : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
-            }`}
-            onClick={() => {
-              props.setTab("deploy");
-              props.setView("dashboard");
-            }}
-          >
-            <Package size={18} />
-            Deploy
           </button>
           <button
             type="button"
