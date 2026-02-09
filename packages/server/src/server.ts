@@ -2023,8 +2023,8 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
   });
 
   addRoute(routes, "GET", "/workspace/:id/scheduler/jobs", "client", async (ctx) => {
-    await resolveWorkspace(config, ctx.params.id);
-    const items = await listScheduledJobs();
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const items = await listScheduledJobs(workspace.path);
     return jsonResponse({ items });
   });
 
@@ -2033,14 +2033,14 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const name = ctx.params.name ?? "";
-    const { job, jobFile, systemPaths } = await resolveScheduledJob(name);
+    const { job, jobFile, systemPaths } = await resolveScheduledJob(name, workspace.path);
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "scheduler.delete",
       summary: `Delete scheduled job ${job.name}`,
       paths: [jobFile, ...systemPaths],
     });
-    await deleteScheduledJob(job);
+    await deleteScheduledJob(job, jobFile);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,

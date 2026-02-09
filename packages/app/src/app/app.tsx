@@ -2690,7 +2690,8 @@ export default function App() {
     setScheduledJobsStatus(null);
 
     try {
-      const jobs = await schedulerListJobs();
+      const root = workspaceStore.activeWorkspaceRoot().trim();
+      const jobs = await schedulerListJobs(root || undefined);
       setScheduledJobs(jobs);
       setScheduledJobsUpdatedAt(Date.now());
     } catch (error) {
@@ -2719,7 +2720,8 @@ export default function App() {
     if (isWindowsPlatform()) {
       throw new Error("Scheduler is not supported on Windows yet.");
     }
-    const job = await schedulerDeleteJob(name);
+    const root = workspaceStore.activeWorkspaceRoot().trim();
+    const job = await schedulerDeleteJob(name, root || undefined);
     setScheduledJobs((current) => current.filter((entry) => entry.slug !== job.slug));
     return;
   };

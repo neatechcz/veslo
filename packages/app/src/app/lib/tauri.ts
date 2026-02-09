@@ -459,6 +459,9 @@ export type ScheduledJobRun = {
 };
 
 export type ScheduledJob = {
+  scopeId?: string;
+  timeoutSeconds?: number;
+  invocation?: { command: string; args: string[] };
   slug: string;
   name: string;
   schedule: string;
@@ -584,12 +587,12 @@ export async function resetOpencodeCache(): Promise<CacheResetResult> {
   return invoke<CacheResetResult>("reset_opencode_cache");
 }
 
-export async function schedulerListJobs(): Promise<ScheduledJob[]> {
-  return invoke<ScheduledJob[]>("scheduler_list_jobs");
+export async function schedulerListJobs(scopeRoot?: string): Promise<ScheduledJob[]> {
+  return invoke<ScheduledJob[]>("scheduler_list_jobs", { scopeRoot });
 }
 
-export async function schedulerDeleteJob(name: string): Promise<ScheduledJob> {
-  return invoke<ScheduledJob>("scheduler_delete_job", { name });
+export async function schedulerDeleteJob(name: string, scopeRoot?: string): Promise<ScheduledJob> {
+  return invoke<ScheduledJob>("scheduler_delete_job", { name, scopeRoot });
 }
 
 // Owpenbot types

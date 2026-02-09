@@ -259,6 +259,8 @@ pub struct ScheduledJobRun {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ScheduledJob {
+    pub scope_id: Option<String>,
+    pub timeout_seconds: Option<i32>,
     pub slug: String,
     pub name: String,
     pub schedule: String,
