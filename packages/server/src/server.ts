@@ -1176,7 +1176,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const opencode = await readOpencodeConfig(workspace.path);
     const openwork = await readOpenworkConfig(workspace.path);
-    const lastAudit = await readLastAudit(workspace.path);
+    const lastAudit = await readLastAudit(workspace.path, workspace.id);
     return jsonResponse({ opencode, openwork, updatedAt: lastAudit?.timestamp ?? null });
   });
 
@@ -1185,7 +1185,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const limitParam = ctx.url.searchParams.get("limit");
     const parsed = limitParam ? Number(limitParam) : NaN;
     const limit = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 200) : 50;
-    const items = await readAuditEntries(workspace.path, limit);
+    const items = await readAuditEntries(workspace.path, workspace.id, limit);
     return jsonResponse({ items });
   });
 
