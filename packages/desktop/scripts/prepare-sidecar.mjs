@@ -27,6 +27,9 @@ const readArg = (name) => {
   if (index >= 0 && raw[index + 1]) return raw[index + 1];
   return null;
 };
+
+const hasFlag = (name) => process.argv.slice(2).includes(name);
+const forceBuild = hasFlag("--force") || process.env.OPENWORK_SIDECAR_FORCE_BUILD === "1";
 const sidecarOverride = process.env.OPENWORK_SIDECAR_DIR?.trim() || readArg("--outdir");
 const sidecarDir = sidecarOverride ? resolve(sidecarOverride) : join(__dirname, "..", "src-tauri", "sidecars");
 const packageJsonPath = resolve(__dirname, "..", "package.json");
@@ -278,8 +281,9 @@ const parseChecksum = (content, assetName) => {
   return null;
 };
 
+let didBuildOpenworkServer = false;
 const shouldBuildOpenworkServer =
-  !existsSync(openworkServerBuildPath) || isStubBinary(openworkServerBuildPath);
+  forceBuild || !existsSync(openworkServerBuildPath) || isStubBinary(openworkServerBuildPath);
 
 if (shouldBuildOpenworkServer) {
   mkdirSync(sidecarDir, { recursive: true });
@@ -307,10 +311,12 @@ if (shouldBuildOpenworkServer) {
   if (buildResult.status !== 0) {
     process.exit(buildResult.status ?? 1);
   }
+
+  didBuildOpenworkServer = true;
 }
 
 if (existsSync(openworkServerBuildPath)) {
-  const shouldCopyCanonical = !existsSync(openworkServerPath) || isStubBinary(openworkServerPath);
+  const shouldCopyCanonical = didBuildOpenworkServer || !existsSync(openworkServerPath) || isStubBinary(openworkServerPath);
   if (shouldCopyCanonical && openworkServerBuildPath !== openworkServerPath) {
     try {
       if (existsSync(openworkServerPath)) {
@@ -323,7 +329,8 @@ if (existsSync(openworkServerBuildPath)) {
   }
 
   if (openworkServerTargetPath) {
-    const shouldCopyTarget = !existsSync(openworkServerTargetPath) || isStubBinary(openworkServerTargetPath);
+    const shouldCopyTarget =
+      didBuildOpenworkServer || !existsSync(openworkServerTargetPath) || isStubBinary(openworkServerTargetPath);
     if (shouldCopyTarget && openworkServerBuildPath !== openworkServerTargetPath) {
       try {
         if (existsSync(openworkServerTargetPath)) {
@@ -491,7 +498,8 @@ if (normalizedOwpenbotVersion && owpenbotPkgVersion && normalizedOwpenbotVersion
   process.exit(1);
 }
 
-const shouldBuildOwpenbot = !existsSync(owpenbotBuildPath) || isStubBinary(owpenbotBuildPath);
+let didBuildOwpenbot = false;
+const shouldBuildOwpenbot = forceBuild || !existsSync(owpenbotBuildPath) || isStubBinary(owpenbotBuildPath);
 if (shouldBuildOwpenbot) {
   mkdirSync(sidecarDir, { recursive: true });
   if (existsSync(owpenbotBuildPath)) {
@@ -514,10 +522,12 @@ if (shouldBuildOwpenbot) {
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
+
+  didBuildOwpenbot = true;
 }
 
 if (existsSync(owpenbotBuildPath)) {
-  const shouldCopyCanonical = !existsSync(owpenbotPath) || isStubBinary(owpenbotPath);
+  const shouldCopyCanonical = didBuildOwpenbot || !existsSync(owpenbotPath) || isStubBinary(owpenbotPath);
   if (shouldCopyCanonical && owpenbotBuildPath !== owpenbotPath) {
     try {
       if (existsSync(owpenbotPath)) unlinkSync(owpenbotPath);
@@ -528,7 +538,7 @@ if (existsSync(owpenbotBuildPath)) {
   }
 
   if (owpenbotTargetPath) {
-    const shouldCopyTarget = !existsSync(owpenbotTargetPath) || isStubBinary(owpenbotTargetPath);
+    const shouldCopyTarget = didBuildOwpenbot || !existsSync(owpenbotTargetPath) || isStubBinary(owpenbotTargetPath);
     if (shouldCopyTarget && owpenbotBuildPath !== owpenbotTargetPath) {
       try {
         if (existsSync(owpenbotTargetPath)) unlinkSync(owpenbotTargetPath);
@@ -541,7 +551,8 @@ if (existsSync(owpenbotBuildPath)) {
 }
 
 // Build openwrk sidecar
-const shouldBuildOpenwrk = !existsSync(openwrkBuildPath) || isStubBinary(openwrkBuildPath);
+let didBuildOpenwrk = false;
+const shouldBuildOpenwrk = forceBuild || !existsSync(openwrkBuildPath) || isStubBinary(openwrkBuildPath);
 if (shouldBuildOpenwrk) {
   mkdirSync(sidecarDir, { recursive: true });
   if (existsSync(openwrkBuildPath)) {
@@ -573,10 +584,12 @@ if (shouldBuildOpenwrk) {
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
+
+  didBuildOpenwrk = true;
 }
 
 if (existsSync(openwrkBuildPath)) {
-  const shouldCopyCanonical = !existsSync(openwrkPath) || isStubBinary(openwrkPath);
+  const shouldCopyCanonical = didBuildOpenwrk || !existsSync(openwrkPath) || isStubBinary(openwrkPath);
   if (shouldCopyCanonical && openwrkBuildPath !== openwrkPath) {
     try {
       if (existsSync(openwrkPath)) unlinkSync(openwrkPath);
@@ -587,7 +600,7 @@ if (existsSync(openwrkBuildPath)) {
   }
 
   if (openwrkTargetPath) {
-    const shouldCopyTarget = !existsSync(openwrkTargetPath) || isStubBinary(openwrkTargetPath);
+    const shouldCopyTarget = didBuildOpenwrk || !existsSync(openwrkTargetPath) || isStubBinary(openwrkTargetPath);
     if (shouldCopyTarget && openwrkBuildPath !== openwrkTargetPath) {
       try {
         if (existsSync(openwrkTargetPath)) unlinkSync(openwrkTargetPath);

@@ -4,7 +4,7 @@
   "version": "0.11.36",
   "identifier": "com.differentai.openwork",
   "build": {
-    "beforeDevCommand": "pnpm -C ../.. --filter @different-ai/openwork run prepare:sidecar && pnpm -w dev:ui",
+    "beforeDevCommand": "node ../scripts/tauri-before-dev.mjs",
     "beforeBuildCommand": "pnpm -C ../.. --filter @different-ai/openwork run prepare:sidecar && pnpm -w build:ui",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../../app/dist"
