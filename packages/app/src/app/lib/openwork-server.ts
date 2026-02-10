@@ -8,6 +8,7 @@ export type OpenworkServerCapabilities = {
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
   config: { read: boolean; write: boolean };
+  sandbox?: { enabled: boolean; backend: "none" | "docker" | "container" };
 };
 
 export type OpenworkServerStatus = "connected" | "disconnected" | "limited";

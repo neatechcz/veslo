@@ -1383,7 +1383,16 @@ export default function SettingsView(props: SettingsViewProps) {
                           <div>Skills: {formatCapability(caps().skills)}</div>
                           <div>Plugins: {formatCapability(caps().plugins)}</div>
                           <div>MCP: {formatCapability(caps().mcp)}</div>
+                          <div>Commands: {formatCapability(caps().commands)}</div>
                           <div>Config: {formatCapability(caps().config)}</div>
+                          <div>
+                            Sandbox: {(() => {
+                              const sandbox = caps().sandbox;
+                              return sandbox
+                                ? `${sandbox.backend} (${sandbox.enabled ? "on" : "off"})`
+                                : "Unavailable";
+                            })()}
+                          </div>
                         </div>
                       )}
                     </Show>
