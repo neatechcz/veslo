@@ -46,6 +46,8 @@ type ComposerProps = {
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
   isRemoteWorkspace: boolean;
+  isSandboxWorkspace: boolean;
+  onUploadInboxFiles?: (files: File[]) => void | Promise<void>;
   attachmentsEnabled: boolean;
   attachmentsDisabledReason: string | null;
   listCommands: () => Promise<SlashCommandOption[]>;
@@ -367,6 +369,7 @@ const buildRangeFromOffsets = (root: HTMLElement, start: number, end: number) =>
 export default function Composer(props: ComposerProps) {
   let editorRef: HTMLDivElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
+  let inboxFileInputRef: HTMLInputElement | undefined;
   let variantPickerRef: HTMLDivElement | undefined;
   let mentionSearchRun = 0;
   let suppressPromptSync = false;
@@ -387,6 +390,7 @@ export default function Composer(props: ComposerProps) {
   const [historyIndex, setHistoryIndex] = createSignal({ prompt: -1, shell: -1 });
   const [history, setHistory] = createSignal({ prompt: [] as ComposerDraft[], shell: [] as ComposerDraft[] });
   const [variantMenuOpen, setVariantMenuOpen] = createSignal(false);
+  const [showInboxUploadAction, setShowInboxUploadAction] = createSignal(false);
   const activeVariant = createMemo(() => props.modelVariant ?? "none");
   const attachmentsDisabled = createMemo(() => !props.attachmentsEnabled);
 
@@ -466,7 +470,7 @@ export default function Composer(props: ComposerProps) {
       }));
     const all = [...agents, ...recentFiles, ...searchFiles];
     const list = query
-      ? fuzzysort.go(query, all, { keys: ["display"] }).map((entry) => entry.obj)
+      ? fuzzysort.go(query, all, { keys: ["display"] }).map((entry: any) => entry.obj)
       : all;
     const groups: MentionGroup[] = [];
     const bucket = new Map<MentionGroup["category"], MentionOption[]>();
@@ -619,7 +623,7 @@ export default function Composer(props: ComposerProps) {
     if (!query) return commands.slice(0, 15);
     return fuzzysort
       .go(query, commands, { keys: ["name", "description"] })
-      .map((entry) => entry.obj)
+      .map((entry: any) => entry.obj)
       .slice(0, 15);
   });
 
@@ -929,7 +933,6 @@ export default function Composer(props: ComposerProps) {
       .map((item) => item.getAsFile())
       .filter((file): file is File => !!file);
     const allFiles = files.length ? files : itemFiles;
-
     if (allFiles.length) {
       event.preventDefault();
       const hasSupported = allFiles.some((file) => ACCEPTED_FILE_TYPES.includes(file.type));
@@ -939,6 +942,20 @@ export default function Composer(props: ComposerProps) {
       }
       void addAttachments(allFiles);
       return;
+    }
+
+    const plainForCheck = clipboard.getData("text/plain") ?? "";
+    const trimmedForCheck = plainForCheck.trim();
+    if (trimmedForCheck && props.isSandboxWorkspace) {
+      const hasFileUrl = /file:\/\//i.test(trimmedForCheck);
+      const hasAbsolutePosix = /(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(trimmedForCheck);
+      const hasAbsoluteWindows = /(^|\s)[a-zA-Z]:\\/.test(trimmedForCheck);
+      if (hasFileUrl || hasAbsolutePosix || hasAbsoluteWindows) {
+        props.onToast(
+          "Sandboxes can't access local file paths. Upload the file to the workspace inbox instead."
+        );
+        setShowInboxUploadAction(Boolean(props.onUploadInboxFiles));
+      }
     }
 
     const plain = clipboard.getData("text/plain") || clipboard.getData("text") || "";
@@ -959,6 +976,12 @@ export default function Composer(props: ComposerProps) {
     updateSlashQuery();
     emitDraftChange();
   };
+
+  createEffect(() => {
+    if (!props.toast) {
+      setShowInboxUploadAction(false);
+    }
+  });
 
   const handleDrop = (event: DragEvent) => {
     if (!event.dataTransfer) return;
@@ -1395,7 +1418,18 @@ export default function Composer(props: ComposerProps) {
                    <div class="relative min-h-[120px]">
               <Show when={props.toast}>
                 <div class="absolute bottom-full right-0 mb-2 z-30 rounded-xl border border-dls-border bg-dls-surface px-3 py-2 text-xs text-dls-secondary shadow-lg backdrop-blur-md">
-                  {props.toast}
+                  <div class="flex items-center gap-3">
+                    <span>{props.toast}</span>
+                    <Show when={showInboxUploadAction() && props.onUploadInboxFiles}>
+                      <button
+                        type="button"
+                        class="shrink-0 rounded-md border border-dls-border bg-dls-hover px-2 py-1 text-[10px] text-dls-text hover:bg-dls-active"
+                        onClick={() => inboxFileInputRef?.click()}
+                      >
+                        Upload to inbox
+                      </button>
+                    </Show>
+                  </div>
                 </div>
               </Show>
 
@@ -1429,6 +1463,20 @@ export default function Composer(props: ComposerProps) {
 
                     <div class="mt-3 flex items-center justify-between px-2 pb-2">
                       <div class="flex items-center gap-2">
+                        <input
+                          ref={inboxFileInputRef}
+                          type="file"
+                          multiple
+                          class="hidden"
+                          onChange={(event: Event) => {
+                            const target = event.currentTarget as HTMLInputElement;
+                            const files = Array.from(target.files ?? []);
+                            if (files.length && props.onUploadInboxFiles) {
+                              void Promise.resolve(props.onUploadInboxFiles(files));
+                            }
+                            target.value = "";
+                          }}
+                        />
                         <input
                           ref={fileInputRef}
                           type="file"

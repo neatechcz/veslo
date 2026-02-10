@@ -36,6 +36,8 @@ import {
   engineInstall,
   engineStart,
   engineStop,
+  sandboxDoctor,
+  sandboxStop,
   openwrkInstanceDispose,
   openwrkStartDetached,
   openwrkWorkspaceActivate,
@@ -55,6 +57,7 @@ import {
   workspaceUpdateRemote,
   type EngineDoctorResult,
   type EngineInfo,
+  type SandboxDoctorResult,
   type WorkspaceInfo,
 } from "../lib/tauri";
 import { waitForHealthy, createClient, type OpencodeAuth } from "../lib/opencode";
@@ -133,6 +136,9 @@ export function createWorkspaceStore(options: {
   const [engineDoctorResult, setEngineDoctorResult] = createSignal<EngineDoctorResult | null>(null);
   const [engineDoctorCheckedAt, setEngineDoctorCheckedAt] = createSignal<number | null>(null);
   const [engineInstallLogs, setEngineInstallLogs] = createSignal<string | null>(null);
+  const [sandboxDoctorResult, setSandboxDoctorResult] = createSignal<SandboxDoctorResult | null>(null);
+  const [sandboxDoctorCheckedAt, setSandboxDoctorCheckedAt] = createSignal<number | null>(null);
+  const [sandboxDoctorBusy, setSandboxDoctorBusy] = createSignal(false);
   let lastEngineReconnectAt = 0;
   let reconnectingEngine = false;
 
@@ -516,6 +522,41 @@ export function createWorkspaceStore(options: {
       setEngineInstallLogs(e instanceof Error ? e.message : safeStringify(e));
     }
   }
+
+  async function refreshSandboxDoctor() {
+    if (!isTauriRuntime()) {
+      setSandboxDoctorResult(null);
+      setSandboxDoctorCheckedAt(Date.now());
+      return null;
+    }
+    if (sandboxDoctorBusy()) return sandboxDoctorResult();
+    setSandboxDoctorBusy(true);
+    try {
+      const result = await sandboxDoctor();
+      setSandboxDoctorResult(result);
+      return result;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      const fallback: SandboxDoctorResult = {
+        installed: false,
+        daemonRunning: false,
+        permissionOk: false,
+        ready: false,
+        error: message,
+      };
+      setSandboxDoctorResult(fallback);
+      return fallback;
+    } finally {
+      setSandboxDoctorCheckedAt(Date.now());
+      setSandboxDoctorBusy(false);
+    }
+  }
+
+  createEffect(() => {
+    if (!createWorkspaceOpen()) return;
+    if (!isTauriRuntime()) return;
+    void refreshSandboxDoctor();
+  });
 
   async function activateWorkspace(workspaceId: string) {
     const id = workspaceId.trim();
@@ -1154,7 +1195,7 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function createWorkerFlow(preset: WorkspacePreset, folder: string | null) {
+  async function createSandboxFlow(preset: WorkspacePreset, folder: string | null) {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
       return;
@@ -1162,6 +1203,13 @@ export function createWorkspaceStore(options: {
 
     if (!folder) {
       options.setError(t("app.error.choose_folder", currentLocale()));
+      return;
+    }
+
+    const doctor = await refreshSandboxDoctor();
+    if (!doctor?.ready) {
+      const detail = doctor?.error?.trim() || "Docker is required for sandboxes. Install Docker Desktop, start it, then retry.";
+      options.setError(detail);
       return;
     }
 
@@ -1177,7 +1225,7 @@ export function createWorkspaceStore(options: {
         return;
       }
 
-      const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Worker";
+      const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Workspace";
 
       // Ensure the workspace folder has baseline OpenWork/OpenCode files.
       const created = await workspaceCreate({ folderPath: resolvedFolder, name, preset });
@@ -1192,8 +1240,8 @@ export function createWorkspaceStore(options: {
         syncActiveWorkspaceId(forgotten.activeId);
       }
 
-      options.setBusyLabel("Starting host...");
-      const host = await openwrkStartDetached({ workspacePath: resolvedFolder });
+      options.setBusyLabel("Starting sandbox...");
+      const host = await openwrkStartDetached({ workspacePath: resolvedFolder, sandboxBackend: "docker" });
 
       setCreateWorkspaceOpen(false);
       options.setTab("scheduled");
@@ -1205,6 +1253,9 @@ export function createWorkspaceStore(options: {
         openworkToken: host.token,
         directory: resolvedFolder,
         displayName: name,
+        sandboxBackend: host.sandboxBackend ?? "docker",
+        sandboxRunId: host.sandboxRunId ?? null,
+        sandboxContainerName: host.sandboxContainerName ?? null,
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
@@ -1221,6 +1272,11 @@ export function createWorkspaceStore(options: {
     openworkToken?: string | null;
     directory?: string | null;
     displayName?: string | null;
+
+    // Sandbox lifecycle metadata (desktop-managed)
+    sandboxBackend?: "docker" | null;
+    sandboxRunId?: string | null;
+    sandboxContainerName?: string | null;
   }) {
     const hostUrl = normalizeOpenworkServerUrl(input.openworkHostUrl ?? "") ?? "";
     const token = input.openworkToken?.trim() ?? "";
@@ -1312,6 +1368,9 @@ export function createWorkspaceStore(options: {
           openworkToken: remoteType === "openwork" ? (token || null) : null,
           openworkWorkspaceId: remoteType === "openwork" ? openworkWorkspace?.id ?? null : null,
           openworkWorkspaceName: remoteType === "openwork" ? openworkWorkspace?.name ?? null : null,
+          sandboxBackend: input.sandboxBackend ?? null,
+          sandboxRunId: input.sandboxRunId ?? null,
+          sandboxContainerName: input.sandboxContainerName ?? null,
         });
         setWorkspaces(ws.workspaces);
         syncActiveWorkspaceId(ws.activeId);
@@ -1331,6 +1390,9 @@ export function createWorkspaceStore(options: {
           openworkToken: remoteType === "openwork" ? (token || null) : null,
           openworkWorkspaceId: remoteType === "openwork" ? openworkWorkspace?.id ?? null : null,
           openworkWorkspaceName: remoteType === "openwork" ? openworkWorkspace?.name ?? null : null,
+          sandboxBackend: input.sandboxBackend ?? null,
+          sandboxRunId: input.sandboxRunId ?? null,
+          sandboxContainerName: input.sandboxContainerName ?? null,
         };
 
         setWorkspaces((prev) => {
@@ -1544,6 +1606,55 @@ export function createWorkspaceStore(options: {
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       options.setError(addOpencodeCacheHint(message));
+    }
+  }
+
+  async function stopSandbox(workspaceId: string) {
+    if (!isTauriRuntime()) {
+      options.setError(t("app.error.tauri_required", currentLocale()));
+      return;
+    }
+
+    const id = workspaceId.trim();
+    if (!id) return;
+
+    const workspace = workspaces().find((entry) => entry.id === id) ?? null;
+    const containerName = workspace?.sandboxContainerName?.trim() ?? "";
+    if (!containerName) {
+      options.setError("Sandbox container name missing.");
+      return;
+    }
+
+    options.setBusy(true);
+    options.setBusyLabel("Stopping sandbox...");
+    options.setBusyStartedAt(Date.now());
+    options.setError(null);
+
+    try {
+      const result = await sandboxStop(containerName);
+      if (!result.ok) {
+        const details = [result.stderr?.trim(), result.stdout?.trim()]
+          .filter(Boolean)
+          .join("\n")
+          .trim();
+        throw new Error(details || `Failed to stop sandbox (status ${result.status})`);
+      }
+
+      // If the user stopped the active workspace, proactively disconnect the client.
+      if (activeWorkspaceId() === id) {
+        options.setClient(null);
+        options.setConnectedVersion(null);
+        options.setSseConnected(false);
+      }
+
+      updateWorkspaceConnectionState(id, { status: "error", message: "Sandbox stopped." });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
+    } finally {
+      options.setBusy(false);
+      options.setBusyLabel(null);
+      options.setBusyStartedAt(null);
     }
   }
 
@@ -2302,6 +2413,9 @@ export function createWorkspaceStore(options: {
     engineDoctorResult,
     engineDoctorCheckedAt,
     engineInstallLogs,
+    sandboxDoctorResult,
+    sandboxDoctorCheckedAt,
+    sandboxDoctorBusy,
     projectDir,
     workspaces,
     activeWorkspaceId,
@@ -2333,11 +2447,12 @@ export function createWorkspaceStore(options: {
     testWorkspaceConnection,
     connectToServer,
     createWorkspaceFlow,
-    createWorkerFlow,
+    createSandboxFlow,
     createRemoteWorkspaceFlow,
     updateRemoteWorkspaceFlow,
     updateWorkspaceDisplayName,
     forgetWorkspace,
+    stopSandbox,
     pickWorkspaceFolder,
     exportWorkspaceConfig,
     importWorkspaceConfig,
@@ -2358,5 +2473,6 @@ export function createWorkspaceStore(options: {
     removeAuthorizedDirAtIndex,
     persistReloadSettings,
     setEngineInstallLogs,
+    refreshSandboxDoctor,
   };
 }

@@ -23,6 +23,7 @@ use commands::engine::{engine_doctor, engine_info, engine_install, engine_start,
 use commands::misc::{app_build_info, opencode_mcp_auth, reset_opencode_cache, reset_openwork_state};
 use commands::openwrk::{
     openwrk_instance_dispose, openwrk_start_detached, openwrk_status, openwrk_workspace_activate,
+    sandbox_doctor, sandbox_stop,
 };
 use commands::openwork_server::openwork_server_info;
 use commands::scheduler::{scheduler_delete_job, scheduler_list_jobs};
@@ -75,6 +76,8 @@ pub fn run() {
             openwrk_workspace_activate,
             openwrk_instance_dispose,
             openwrk_start_detached,
+            sandbox_doctor,
+            sandbox_stop,
             openwork_server_info,
             owpenbot_info,
             owpenbot_start,

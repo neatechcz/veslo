@@ -118,6 +118,11 @@ export type WorkspaceInfo = {
   openworkToken?: string | null;
   openworkWorkspaceId?: string | null;
   openworkWorkspaceName?: string | null;
+
+  // Sandbox lifecycle metadata (desktop-managed)
+  sandboxBackend?: "docker" | null;
+  sandboxRunId?: string | null;
+  sandboxContainerName?: string | null;
 };
 
 export type WorkspaceList = {
@@ -172,6 +177,11 @@ export async function workspaceCreateRemote(input: {
   openworkToken?: string | null;
   openworkWorkspaceId?: string | null;
   openworkWorkspaceName?: string | null;
+
+  // Sandbox lifecycle metadata (desktop-managed)
+  sandboxBackend?: "docker" | null;
+  sandboxRunId?: string | null;
+  sandboxContainerName?: string | null;
 }): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_create_remote", {
     baseUrl: input.baseUrl,
@@ -182,6 +192,9 @@ export async function workspaceCreateRemote(input: {
     openworkToken: input.openworkToken ?? null,
     openworkWorkspaceId: input.openworkWorkspaceId ?? null,
     openworkWorkspaceName: input.openworkWorkspaceName ?? null,
+    sandboxBackend: input.sandboxBackend ?? null,
+    sandboxRunId: input.sandboxRunId ?? null,
+    sandboxContainerName: input.sandboxContainerName ?? null,
   });
 }
 
@@ -195,6 +208,11 @@ export async function workspaceUpdateRemote(input: {
   openworkToken?: string | null;
   openworkWorkspaceId?: string | null;
   openworkWorkspaceName?: string | null;
+
+  // Sandbox lifecycle metadata (desktop-managed)
+  sandboxBackend?: "docker" | null;
+  sandboxRunId?: string | null;
+  sandboxContainerName?: string | null;
 }): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_update_remote", {
     workspaceId: input.workspaceId,
@@ -206,6 +224,9 @@ export async function workspaceUpdateRemote(input: {
     openworkToken: input.openworkToken ?? null,
     openworkWorkspaceId: input.openworkWorkspaceId ?? null,
     openworkWorkspaceName: input.openworkWorkspaceName ?? null,
+    sandboxBackend: input.sandboxBackend ?? null,
+    sandboxRunId: input.sandboxRunId ?? null,
+    sandboxContainerName: input.sandboxContainerName ?? null,
   });
 }
 
@@ -367,12 +388,39 @@ export type OpenwrkDetachedHost = {
   token: string;
   hostToken: string;
   port: number;
+  sandboxBackend?: "docker" | null;
+  sandboxRunId?: string | null;
+  sandboxContainerName?: string | null;
 };
 
-export async function openwrkStartDetached(input: { workspacePath: string }): Promise<OpenwrkDetachedHost> {
+export async function openwrkStartDetached(input: {
+  workspacePath: string;
+  sandboxBackend?: "none" | "docker" | null;
+  runId?: string | null;
+}): Promise<OpenwrkDetachedHost> {
   return invoke<OpenwrkDetachedHost>("openwrk_start_detached", {
     workspacePath: input.workspacePath,
+    sandboxBackend: input.sandboxBackend ?? null,
+    runId: input.runId ?? null,
   });
+}
+
+export type SandboxDoctorResult = {
+  installed: boolean;
+  daemonRunning: boolean;
+  permissionOk: boolean;
+  ready: boolean;
+  clientVersion?: string | null;
+  serverVersion?: string | null;
+  error?: string | null;
+};
+
+export async function sandboxDoctor(): Promise<SandboxDoctorResult> {
+  return invoke<SandboxDoctorResult>("sandbox_doctor");
+}
+
+export async function sandboxStop(containerName: string): Promise<ExecResult> {
+  return invoke<ExecResult>("sandbox_stop", { containerName });
 }
 
 export async function openworkServerInfo(): Promise<OpenworkServerInfo> {

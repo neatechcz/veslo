@@ -120,6 +120,7 @@ export type DashboardViewProps = {
   openRenameWorkspace: (workspaceId: string) => void;
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
+  stopSandbox: (workspaceId: string) => void;
   scheduledJobs: ScheduledJob[];
   scheduledJobsSource: "local" | "remote";
   scheduledJobsSourceReady: boolean;
@@ -272,7 +273,11 @@ export default function DashboardView(props: DashboardViewProps) {
     workspace.path?.trim() ||
     "Workspace";
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
-    workspace.workspaceType === "remote" ? "Remote" : "Local";
+    workspace.workspaceType === "remote"
+      ? workspace.sandboxContainerName?.trim()
+        ? "Sandbox"
+        : "Remote"
+      : "Local";
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
     // For same-workspace clicks, just select the session without workspace activation
@@ -859,6 +864,18 @@ export default function DashboardView(props: DashboardViewProps) {
                               }}
                             >
                               Edit connection
+                            </button>
+                          </Show>
+                          <Show when={workspace().sandboxContainerName?.trim()}>
+                            <button
+                              type="button"
+                              class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-dls-hover"
+                              onClick={() => {
+                                props.stopSandbox(workspace().id);
+                                setWorkspaceMenuId(null);
+                              }}
+                            >
+                              Stop sandbox
                             </button>
                           </Show>
                           <button

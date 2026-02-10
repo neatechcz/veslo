@@ -258,6 +258,20 @@ export type OpenworkWorkspaceExport = {
   commands?: Array<{ name: string; description?: string; template?: string }>;
 };
 
+export type OpenworkArtifactItem = {
+  id: string;
+  name?: string;
+  path?: string;
+  size?: number;
+  createdAt?: number;
+  updatedAt?: number;
+  mime?: string;
+};
+
+export type OpenworkArtifactList = {
+  items: OpenworkArtifactItem[];
+};
+
 type RawJsonResponse<T> = {
   ok: boolean;
   status: number;
@@ -498,6 +512,20 @@ function buildHeaders(
   return headers;
 }
 
+function buildAuthHeaders(token?: string, hostToken?: string, extra?: Record<string, string>) {
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  if (hostToken) {
+    headers["X-OpenWork-Host-Token"] = hostToken;
+  }
+  if (extra) {
+    Object.assign(headers, extra);
+  }
+  return headers;
+}
+
 // Use Tauri's fetch when running in the desktop app to avoid CORS issues
 const resolveFetch = () => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
 
@@ -548,6 +576,56 @@ async function requestJsonRaw<T>(
   }
 
   return { ok: response.ok, status: response.status, json };
+}
+
+async function requestMultipartRaw(
+  baseUrl: string,
+  path: string,
+  options: { method?: string; token?: string; hostToken?: string; body?: FormData } = {},
+): Promise<{ ok: boolean; status: number; text: string }>{
+  const url = `${baseUrl}${path}`;
+  const fetchImpl = resolveFetch();
+  const response = await fetchImpl(url, {
+    method: options.method ?? "POST",
+    headers: buildAuthHeaders(options.token, options.hostToken),
+    body: options.body,
+  });
+  const text = await response.text();
+  return { ok: response.ok, status: response.status, text };
+}
+
+async function requestBinary(
+  baseUrl: string,
+  path: string,
+  options: { method?: string; token?: string; hostToken?: string } = {},
+): Promise<{ data: ArrayBuffer; contentType: string | null; filename: string | null }>{
+  const url = `${baseUrl}${path}`;
+  const fetchImpl = resolveFetch();
+  const response = await fetchImpl(url, {
+    method: options.method ?? "GET",
+    headers: buildAuthHeaders(options.token, options.hostToken),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    let json: any = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      json = null;
+    }
+    const code = typeof json?.code === "string" ? json.code : "request_failed";
+    const message = typeof json?.message === "string" ? json.message : response.statusText;
+    throw new OpenworkServerError(response.status, code, message, json?.details);
+  }
+
+  const contentType = response.headers.get("content-type");
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const filenameMatch = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+  const filenameRaw = filenameMatch?.[1] ?? filenameMatch?.[2] ?? null;
+  const filename = filenameRaw ? decodeURIComponent(filenameRaw) : null;
+  const data = await response.arrayBuffer();
+  return { data, contentType, filename };
 }
 
 export function createOpenworkServerClient(options: { baseUrl: string; token?: string; hostToken?: string }) {
@@ -878,6 +956,52 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           hostToken,
           method: "DELETE",
         },
+      ),
+
+    uploadInbox: async (workspaceId: string, file: File, options?: { path?: string }) => {
+      const id = workspaceId.trim();
+      if (!id) throw new Error("workspaceId is required");
+      if (!file) throw new Error("file is required");
+      const form = new FormData();
+      form.append("file", file);
+      if (options?.path?.trim()) {
+        form.append("path", options.path.trim());
+      }
+
+      const result = await requestMultipartRaw(baseUrl, `/workspace/${encodeURIComponent(id)}/inbox`, {
+        token,
+        hostToken,
+        method: "POST",
+        body: form,
+      });
+
+      if (!result.ok) {
+        let message = result.text.trim();
+        try {
+          const json = message ? JSON.parse(message) : null;
+          if (json && typeof json.message === "string") {
+            message = json.message;
+          }
+        } catch {
+          // ignore
+        }
+        throw new OpenworkServerError(result.status, "request_failed", message || "Inbox upload failed");
+      }
+
+      return result.text;
+    },
+
+    listArtifacts: (workspaceId: string) =>
+      requestJson<OpenworkArtifactList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/artifacts`, {
+        token,
+        hostToken,
+      }),
+
+    downloadArtifact: (workspaceId: string, artifactId: string) =>
+      requestBinary(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}`,
+        { token, hostToken },
       ),
   };
 }

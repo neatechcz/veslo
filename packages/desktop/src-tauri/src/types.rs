@@ -326,6 +326,14 @@ pub struct WorkspaceInfo {
     pub openwork_workspace_id: Option<String>,
     #[serde(default)]
     pub openwork_workspace_name: Option<String>,
+
+    // Sandbox lifecycle metadata (desktop-managed)
+    #[serde(default)]
+    pub sandbox_backend: Option<String>,
+    #[serde(default)]
+    pub sandbox_run_id: Option<String>,
+    #[serde(default)]
+    pub sandbox_container_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -373,4 +381,4 @@ impl Default for WorkspaceState {
     }
 }
 
-pub const WORKSPACE_STATE_VERSION: u8 = 3;
+pub const WORKSPACE_STATE_VERSION: u8 = 4;

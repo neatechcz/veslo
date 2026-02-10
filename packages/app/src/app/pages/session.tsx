@@ -49,7 +49,7 @@ import ProviderAuthModal from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import StatusBar from "../components/status-bar";
 import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../lib/openwork-server";
-import type { OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
+import type { OpenworkServerClient, OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
 import { join } from "@tauri-apps/api/path";
 import { formatRelativeTime, isTauriRuntime, normalizeDirectoryPath } from "../utils";
 
@@ -83,8 +83,10 @@ export type SessionViewProps = {
   exportWorkspaceBusy: boolean;
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
+  openworkServerClient: OpenworkServerClient | null;
   openworkServerSettings: OpenworkServerSettings;
   openworkServerHostInfo: OpenworkServerInfo | null;
+  openworkServerWorkspaceId: string | null;
   engineInfo: EngineInfo | null;
   stopHost: () => void;
   headerStatus: string;
@@ -991,6 +993,32 @@ export default function SessionView(props: SessionViewProps) {
     props.sendPromptAsync(draft).catch(() => undefined);
   };
 
+  const isSandboxWorkspace = createMemo(() => Boolean((props.activeWorkspaceDisplay as any)?.sandboxContainerName?.trim()));
+
+  const uploadInboxFiles = async (files: File[]) => {
+    const client = props.openworkServerClient;
+    const workspaceId = props.openworkServerWorkspaceId?.trim() ?? "";
+    if (!client || !workspaceId) {
+      setToastMessage("Connect to the OpenWork server to upload inbox files.");
+      return;
+    }
+    if (!files.length) return;
+
+    const label = files.length === 1 ? files[0]?.name ?? "file" : `${files.length} files`;
+    setToastMessage(`Uploading ${label} to inbox...`);
+
+    try {
+      for (const file of files) {
+        await client.uploadInbox(workspaceId, file);
+      }
+      const summary = files.map((file) => file.name).filter(Boolean).join(", ");
+      setToastMessage(summary ? `Uploaded to inbox: ${summary}` : "Uploaded to inbox.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Inbox upload failed";
+      setToastMessage(message);
+    }
+  };
+
   const handleDraftChange = (draft: ComposerDraft) => {
     props.setPrompt(draft.text);
   };
@@ -1739,6 +1767,8 @@ export default function SessionView(props: SessionViewProps) {
         searchFiles={props.searchFiles}
         listCommands={props.listCommands}
         isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
+        isSandboxWorkspace={isSandboxWorkspace()}
+        onUploadInboxFiles={isSandboxWorkspace() ? uploadInboxFiles : undefined}
         attachmentsEnabled={attachmentsEnabled()}
         attachmentsDisabledReason={attachmentsDisabledReason()}
       />

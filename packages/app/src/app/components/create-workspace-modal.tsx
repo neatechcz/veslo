@@ -18,6 +18,13 @@ export default function CreateWorkspaceModal(props: {
   subtitle?: string;
   confirmLabel?: string;
   workerLabel?: string;
+  workerDisabled?: boolean;
+  workerDisabledReason?: string | null;
+  workerCtaLabel?: string;
+  workerCtaDescription?: string;
+  onWorkerCta?: () => void;
+  workerRetryLabel?: string;
+  onWorkerRetry?: () => void;
 }) {
   let pickFolderRef: HTMLButtonElement | undefined;
   const translate = (key: string) => t(key, currentLocale());
@@ -76,9 +83,13 @@ export default function CreateWorkspaceModal(props: {
   const title = () => props.title ?? translate("dashboard.create_workspace_title");
   const subtitle = () => props.subtitle ?? translate("dashboard.create_workspace_subtitle");
   const confirmLabel = () => props.confirmLabel ?? translate("dashboard.create_workspace_confirm");
-  const workerLabel = () => props.workerLabel ?? "Create worker";
+  const workerLabel = () => props.workerLabel ?? translate("dashboard.create_sandbox_confirm");
   const isInline = () => props.inline ?? false;
   const submitting = () => props.submitting ?? false;
+
+  const workerDisabled = () => Boolean(props.workerDisabled);
+  const workerDisabledReason = () => (props.workerDisabledReason ?? "").trim();
+  const showWorkerCallout = () => Boolean(props.onConfirmWorker && workerDisabled() && workerDisabledReason());
 
   const content = (
     <div class="bg-gray-2 border border-gray-6 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -180,37 +191,63 @@ export default function CreateWorkspaceModal(props: {
             </div>
           </div>
 
-      <div class="p-6 border-t border-gray-6 bg-gray-1 flex justify-end gap-3">
-        <Show when={showClose()}>
-          <Button variant="ghost" onClick={props.onClose} disabled={submitting()}>
-              {translate("common.cancel")}
-          </Button>
+      <div class="p-6 border-t border-gray-6 bg-gray-1 flex flex-col gap-3">
+        <Show when={showWorkerCallout()}>
+          <div class="rounded-xl border border-amber-7/30 bg-amber-2/40 px-4 py-3 text-xs text-amber-11">
+            <div class="font-semibold text-amber-12">{translate("dashboard.sandbox_get_ready_title")}</div>
+            <Show when={props.workerCtaDescription?.trim() || workerDisabledReason()}>
+              <div class="mt-1 text-amber-11 leading-relaxed">
+                {props.workerCtaDescription?.trim() || workerDisabledReason()}
+              </div>
+            </Show>
+            <div class="mt-3 flex flex-wrap items-center gap-2">
+              <Show when={props.onWorkerCta && props.workerCtaLabel?.trim()}>
+                <Button variant="outline" onClick={props.onWorkerCta} disabled={submitting()}>
+                  {props.workerCtaLabel}
+                </Button>
+              </Show>
+              <Show when={props.onWorkerRetry && props.workerRetryLabel?.trim()}>
+                <Button variant="ghost" onClick={props.onWorkerRetry} disabled={submitting()}>
+                  {props.workerRetryLabel}
+                </Button>
+              </Show>
+            </div>
+          </div>
         </Show>
-        <Show when={props.onConfirmWorker}>
+
+        <div class="flex justify-end gap-3">
+          <Show when={showClose()}>
+            <Button variant="ghost" onClick={props.onClose} disabled={submitting()}>
+              {translate("common.cancel")}
+            </Button>
+          </Show>
+          <Show when={props.onConfirmWorker}>
+            <Button
+              variant="outline"
+              onClick={() => props.onConfirmWorker?.(preset(), selectedFolder())}
+              disabled={!selectedFolder() || submitting() || workerDisabled()}
+              title={(() => {
+                if (!selectedFolder()) return translate("dashboard.choose_folder_continue");
+                if (workerDisabled() && workerDisabledReason()) return workerDisabledReason();
+                return undefined;
+              })()}
+            >
+              {workerLabel()}
+            </Button>
+          </Show>
           <Button
-            variant="outline"
-            onClick={() => props.onConfirmWorker?.(preset(), selectedFolder())}
+            onClick={() => props.onConfirm(preset(), selectedFolder())}
             disabled={!selectedFolder() || submitting()}
             title={!selectedFolder() ? translate("dashboard.choose_folder_continue") : undefined}
           >
-            {workerLabel()}
+            <Show when={submitting()} fallback={confirmLabel()}>
+              <span class="inline-flex items-center gap-2">
+                <Loader2 size={16} class="animate-spin" />
+                Creating...
+              </span>
+            </Show>
           </Button>
-        </Show>
-        <Button
-          onClick={() => props.onConfirm(preset(), selectedFolder())}
-          disabled={!selectedFolder() || submitting()}
-          title={!selectedFolder() ? translate("dashboard.choose_folder_continue") : undefined}
-        >
-          <Show
-            when={submitting()}
-            fallback={confirmLabel()}
-          >
-            <span class="inline-flex items-center gap-2">
-              <Loader2 size={16} class="animate-spin" />
-              Creating...
-            </span>
-          </Show>
-        </Button>
+        </div>
       </div>
     </div>
   );

@@ -4328,6 +4328,7 @@ export default function App() {
       openRenameWorkspace,
       editWorkspaceConnection: openWorkspaceConnectionSettings,
       forgetWorkspace: workspaceStore.forgetWorkspace,
+      stopSandbox: workspaceStore.stopSandbox,
       scheduledJobs: scheduledJobs(),
       scheduledJobsSource: scheduledJobsSource(),
       scheduledJobsSourceReady: scheduledJobsSourceReady(),
@@ -4488,8 +4489,10 @@ export default function App() {
     exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
     clientConnected: Boolean(client()),
     openworkServerStatus: openworkServerStatus(),
+    openworkServerClient: openworkServerClient(),
     openworkServerSettings: openworkServerSettings(),
     openworkServerHostInfo: openworkServerHostInfo(),
+    openworkServerWorkspaceId: openworkServerWorkspaceId(),
     engineInfo: workspaceStore.engine(),
     stopHost,
     headerStatus: headerStatus(),
@@ -4775,10 +4778,41 @@ export default function App() {
         onConfirm={(preset, folder) =>
           workspaceStore.createWorkspaceFlow(preset, folder)
         }
-        onConfirmWorker={(preset, folder) =>
-          workspaceStore.createWorkerFlow(preset, folder)
+        onConfirmWorker={
+          isTauriRuntime()
+            ? (preset, folder) => workspaceStore.createSandboxFlow(preset, folder)
+            : undefined
         }
-        workerLabel="Create worker"
+        workerDisabled={(() => {
+          if (!isTauriRuntime()) return true;
+          const doctor = workspaceStore.sandboxDoctorResult?.();
+          return !doctor?.ready;
+        })()}
+        workerDisabledReason={(() => {
+          if (!isTauriRuntime()) return t("app.error.tauri_required", currentLocale());
+          const doctor = workspaceStore.sandboxDoctorResult?.();
+          if (doctor?.ready) return null;
+          if (workspaceStore.sandboxDoctorBusy?.()) {
+            return t("dashboard.sandbox_checking_docker", currentLocale());
+          }
+          const message = doctor?.error?.trim();
+          return message || t("dashboard.sandbox_get_ready_desc", currentLocale());
+        })()}
+        workerCtaLabel={t("dashboard.sandbox_get_ready_action", currentLocale())}
+        workerCtaDescription={t("dashboard.sandbox_get_ready_desc", currentLocale())}
+        onWorkerCta={async () => {
+          const url = "https://www.docker.com/products/docker-desktop/";
+          if (isTauriRuntime()) {
+            const { openUrl } = await import("@tauri-apps/plugin-opener");
+            await openUrl(url);
+          } else {
+            window.open(url, "_blank", "noopener,noreferrer");
+          }
+        }}
+        workerRetryLabel={t("common.retry", currentLocale())}
+        onWorkerRetry={() => {
+          void workspaceStore.refreshSandboxDoctor?.();
+        }}
         submitting={busy() && busyLabel() === "status.creating_workspace"}
       />
 
