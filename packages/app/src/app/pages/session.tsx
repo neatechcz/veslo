@@ -1347,7 +1347,7 @@ export default function SessionView(props: SessionViewProps) {
       return props.anyActiveRuns ? "Update ready" : "Restart";
     }
     if (state === "downloading") return "Downloading";
-    return "Update";
+    return "Update available";
   });
 
   const updatePillTitle = createMemo(() => {

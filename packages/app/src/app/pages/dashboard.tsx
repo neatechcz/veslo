@@ -686,7 +686,7 @@ export default function DashboardView(props: DashboardViewProps) {
       return props.anyActiveRuns ? "Update ready" : "Restart";
     }
     if (state === "downloading") return "Downloading";
-    return "Update";
+    return "Update available";
   });
 
   const updatePillTitle = createMemo(() => {

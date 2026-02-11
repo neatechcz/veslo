@@ -2242,6 +2242,21 @@ export default function App() {
     anyActiveRuns,
   } = systemState;
 
+  const UPDATE_AUTO_CHECK_EVERY_MS = 12 * 60 * 60_000;
+  const UPDATE_AUTO_CHECK_POLL_MS = 60_000;
+
+  const getUpdateLastCheckedAt = (state: ReturnType<typeof updateStatus>) => {
+    if (state.state === "checking") return null;
+    return state.lastCheckedAt ?? null;
+  };
+
+  const shouldAutoCheckForUpdates = () => {
+    const state = updateStatus();
+    const lastCheckedAt = getUpdateLastCheckedAt(state);
+    if (!lastCheckedAt) return true;
+    return Date.now() - lastCheckedAt >= UPDATE_AUTO_CHECK_EVERY_MS;
+  };
+
   const [pendingReloadReasons, setPendingReloadReasons] = createSignal<ReloadReason[]>([]);
   const [pendingReloadTrigger, setPendingReloadTrigger] = createSignal<ReloadTrigger | null>(null);
   const [pendingReloadResume, setPendingReloadResume] = createSignal<
@@ -3880,15 +3895,6 @@ export default function App() {
       } catch {
         // ignore
       }
-
-      if (updateAutoCheck()) {
-        const state = updateStatus();
-        const lastCheckedAt =
-          state.state === "idle" ? state.lastCheckedAt : null;
-        if (!lastCheckedAt || Date.now() - lastCheckedAt > 24 * 60 * 60_000) {
-          checkForUpdates({ quiet: true }).catch(() => undefined);
-        }
-      }
     }
 
     void workspaceStore.bootstrapOnboarding().finally(() => setBooting(false));
@@ -4219,6 +4225,26 @@ export default function App() {
         // ignore
       }
     }
+  });
+
+  createEffect(() => {
+    if (booting()) return;
+    if (typeof window === "undefined") return;
+    if (!isTauriRuntime()) return;
+    if (!updateAutoCheck()) return;
+
+    const maybeRunAutoUpdateCheck = () => {
+      if (!updateAutoCheck()) return;
+      const state = updateStatus();
+      if (state.state === "checking" || state.state === "downloading") return;
+      if (!shouldAutoCheckForUpdates()) return;
+      checkForUpdates({ quiet: true }).catch(() => undefined);
+    };
+
+    maybeRunAutoUpdateCheck();
+
+    const interval = window.setInterval(maybeRunAutoUpdateCheck, UPDATE_AUTO_CHECK_POLL_MS);
+    onCleanup(() => window.clearInterval(interval));
   });
 
   createEffect(() => {
