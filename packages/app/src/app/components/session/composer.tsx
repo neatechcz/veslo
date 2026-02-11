@@ -1048,7 +1048,7 @@ export default function Composer(props: ComposerProps) {
       const hasAbsoluteWindows = /(^|\s)[a-zA-Z]:\\/.test(trimmedForCheck);
       if (hasFileUrl || hasAbsolutePosix || hasAbsoluteWindows) {
         props.onToast(
-          "Sandboxes can't access local file paths. Upload the file to the workspace inbox instead."
+          "Sandboxes can't access local file paths. Upload the file to the worker inbox instead."
         );
         setShowInboxUploadAction(Boolean(props.onUploadInboxFiles));
       }

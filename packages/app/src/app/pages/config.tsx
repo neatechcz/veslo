@@ -86,9 +86,9 @@ export default function ConfigView(props: ConfigViewProps) {
   });
 
   const reloadAvailabilityReason = createMemo(() => {
-    if (!props.clientConnected) return "Connect to this workspace to reload.";
+    if (!props.clientConnected) return "Connect to this worker to reload.";
     if (!props.canReloadWorkspace) {
-      return "Reloading is only available for local workspaces or connected OpenWork servers.";
+      return "Reloading is only available for local workers or connected OpenWork servers.";
     }
     return null;
   });
@@ -468,8 +468,8 @@ export default function ConfigView(props: ConfigViewProps) {
         </div>
 
         <div class="space-y-1">
-          <div class="text-[11px] text-gray-7 font-mono truncate">Resolved workspace URL: {resolvedWorkspaceUrl() || "Not set"}</div>
-          <div class="text-[11px] text-gray-8 font-mono truncate">Workspace ID: {resolvedWorkspaceId() || "Unavailable"}</div>
+          <div class="text-[11px] text-gray-7 font-mono truncate">Resolved worker URL: {resolvedWorkspaceUrl() || "Not set"}</div>
+          <div class="text-[11px] text-gray-8 font-mono truncate">Worker ID: {resolvedWorkspaceId() || "Unavailable"}</div>
         </div>
 
         <div class="flex flex-wrap gap-2">

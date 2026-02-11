@@ -199,8 +199,8 @@ const automationTemplates = [
   },
   {
     icon: Brain,
-    description: "Suggest the next skills to install for this workspace.",
-    prompt: "Schedule a weekly job on Wednesdays at 2pm to suggest the next skills to install for this workspace.",
+    description: "Suggest the next skills to install for this worker.",
+    prompt: "Schedule a weekly job on Wednesdays at 2pm to suggest the next skills to install for this worker.",
     tone: "text-pink-9",
   },
 ];

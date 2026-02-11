@@ -16,12 +16,12 @@ export default function OnboardingWorkspaceSelector(props: {
   const options = () => [
     {
       id: "starter" as const,
-      name: "Starter workspace",
+      name: "Starter worker",
       desc: "Preconfigured to show you how to use plugins, commands, and skills.",
     },
     {
       id: "minimal" as const,
-      name: "Empty workspace",
+      name: "Empty worker",
       desc: "Start with a blank folder and add what you need.",
     },
   ];

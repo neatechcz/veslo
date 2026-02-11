@@ -26,7 +26,7 @@ export default function ShareWorkspaceModal(props: {
 }) {
   let firstCopyRef: HTMLButtonElement | undefined;
 
-  const title = createMemo(() => props.title ?? "Share workspace");
+  const title = createMemo(() => props.title ?? "Share worker");
   const detail = createMemo(() => props.workspaceDetail?.trim() ?? "");
   const note = createMemo(() => props.note?.trim() ?? "");
 
@@ -156,7 +156,7 @@ export default function ShareWorkspaceModal(props: {
               </div>
               <div class="flex items-center justify-between gap-3">
                 <div class="text-xs text-gray-9">
-                  {props.exportDisabledReason?.trim() || "Export is available for local workspaces in the desktop app."}
+                  {props.exportDisabledReason?.trim() || "Export is available for local workers in the desktop app."}
                 </div>
                 <Button
                   variant="outline"

@@ -284,7 +284,7 @@ export default function DashboardView(props: DashboardViewProps) {
     workspace.openworkWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
-    "Workspace";
+    "Worker";
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
     workspace.workspaceType === "remote"
       ? workspace.sandboxContainerName?.trim()
@@ -602,13 +602,13 @@ export default function DashboardView(props: DashboardViewProps) {
       const token = props.openworkServerHostInfo?.clientToken?.trim() || "";
       return [
         {
-          label: "OpenWork workspace URL",
+          label: "OpenWork worker URL",
           value: url,
           placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
           hint: mountedUrl
-            ? "Use on phones or laptops connecting to this workspace."
+            ? "Use on phones or laptops connecting to this worker."
             : hostUrl
-              ? "Workspace URL is resolving; host URL shown as fallback."
+              ? "Worker URL is resolving; host URL shown as fallback."
               : undefined,
         },
         {
@@ -617,7 +617,7 @@ export default function DashboardView(props: DashboardViewProps) {
           secret: true,
           placeholder: isTauriRuntime() ? "-" : "Desktop app required",
           hint: mountedUrl
-            ? "Use on phones or laptops connecting to this workspace."
+            ? "Use on phones or laptops connecting to this worker."
             : "Use on phones or laptops connecting to this host.",
         },
       ];
@@ -632,7 +632,7 @@ export default function DashboardView(props: DashboardViewProps) {
         "";
       return [
         {
-          label: "OpenWork workspace URL",
+          label: "OpenWork worker URL",
           value: url,
         },
         {
@@ -640,7 +640,7 @@ export default function DashboardView(props: DashboardViewProps) {
           value: token,
           secret: true,
           placeholder: token ? undefined : "Set token in Config",
-          hint: "This token grants access to the workspace on that host.",
+          hint: "This token grants access to the worker on that host.",
         },
       ];
     }
@@ -664,15 +664,15 @@ export default function DashboardView(props: DashboardViewProps) {
     const ws = shareWorkspace();
     if (!ws) return null;
     if (ws.workspaceType === "local" && props.engineInfo?.runtime === "direct") {
-      return "Engine runtime is set to Direct. Switching local workspaces can restart the host and disconnect clients. The token may change after a restart.";
+      return "Engine runtime is set to Direct. Switching local workers can restart the host and disconnect clients. The token may change after a restart.";
     }
     return null;
   });
 
   const exportDisabledReason = createMemo(() => {
     const ws = shareWorkspace();
-    if (!ws) return "Export is available for local workspaces in the desktop app.";
-    if (ws.workspaceType === "remote") return "Export is only supported for local workspaces.";
+    if (!ws) return "Export is available for local workers in the desktop app.";
+    if (ws.workspaceType === "remote") return "Export is only supported for local workers.";
     if (!isTauriRuntime()) return "Export is available in the desktop app.";
     if (props.exportWorkspaceBusy) return "Export is already running.";
     return null;
@@ -836,7 +836,7 @@ export default function DashboardView(props: DashboardViewProps) {
                               current === workspace().id ? null : workspace().id
                             );
                           }}
-                          aria-label="Workspace options"
+                          aria-label="Worker options"
                         >
                           <MoreHorizontal size={14} />
                         </button>
@@ -911,7 +911,7 @@ export default function DashboardView(props: DashboardViewProps) {
                               setWorkspaceMenuId(null);
                             }}
                           >
-                            Remove workspace
+                            Remove worker
                           </button>
                         </div>
                       </Show>
@@ -1045,7 +1045,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onClick={() => setAddWorkspaceMenuOpen((prev) => !prev)}
             >
               <Plus size={14} />
-              Add a workspace
+              Add a worker
             </button>
             <Show when={addWorkspaceMenuOpen()}>
               <div class="absolute left-0 right-0 top-full mt-2 rounded-lg border border-dls-border bg-dls-surface shadow-xl overflow-hidden z-20">
@@ -1058,7 +1058,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   }}
                 >
                   <Plus size={12} />
-                  New workspace
+                  New worker
                 </button>
                 <button
                   type="button"
@@ -1157,6 +1157,7 @@ export default function DashboardView(props: DashboardViewProps) {
             </Match>
             <Match when={props.tab === "skills"}>
               <SkillsView
+                workspaceName={props.activeWorkspaceDisplay.name}
                 busy={props.busy}
                 canInstallSkillCreator={props.canInstallSkillCreator}
                 canUseDesktopTools={props.canUseDesktopTools}

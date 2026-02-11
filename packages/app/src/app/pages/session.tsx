@@ -240,7 +240,7 @@ export default function SessionView(props: SessionViewProps) {
     workspace.openworkWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
-    "Workspace";
+    "Worker";
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
     workspace.workspaceType === "remote" ? "Remote" : "Local";
   const todoList = createMemo(() => props.todos.filter((todo) => todo.content.trim()));
@@ -316,7 +316,7 @@ export default function SessionView(props: SessionViewProps) {
   const openMarkdownEditor = (file: string) => {
     const relative = toWorkspaceRelativeForApi(file);
     if (!relative) {
-      setToastMessage("Only workspace-relative files can be opened here.");
+      setToastMessage("Only worker-relative files can be opened here.");
       return;
     }
     if (!/\.(md|mdx|markdown)$/i.test(relative)) {
@@ -466,7 +466,7 @@ export default function SessionView(props: SessionViewProps) {
     if (!trimmed) return;
 
     if (props.activeWorkspaceDisplay.workspaceType === "remote") {
-      setToastMessage("File open is unavailable for remote workspaces.");
+      setToastMessage("File open is unavailable for remote workers.");
       return;
     }
 
@@ -479,7 +479,7 @@ export default function SessionView(props: SessionViewProps) {
       const { openPath } = await import("@tauri-apps/plugin-opener");
       const root = props.activeWorkspaceRoot.trim();
       if (!isAbsolutePath(trimmed) && !root) {
-        setToastMessage("Pick a workspace to open files.");
+        setToastMessage("Pick a worker to open files.");
         return;
       }
       const target = !isAbsolutePath(trimmed) && root ? await join(root, trimmed) : trimmed;
@@ -1162,13 +1162,13 @@ export default function SessionView(props: SessionViewProps) {
       const token = props.openworkServerHostInfo?.clientToken?.trim() || "";
       return [
         {
-          label: "OpenWork workspace URL",
+          label: "OpenWork worker URL",
           value: url,
           placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
           hint: mountedUrl
-            ? "Use on phones or laptops connecting to this workspace."
+            ? "Use on phones or laptops connecting to this worker."
             : hostUrl
-              ? "Workspace URL is resolving; host URL shown as fallback."
+              ? "Worker URL is resolving; host URL shown as fallback."
               : undefined,
         },
         {
@@ -1177,7 +1177,7 @@ export default function SessionView(props: SessionViewProps) {
           secret: true,
           placeholder: isTauriRuntime() ? "-" : "Desktop app required",
           hint: mountedUrl
-            ? "Use on phones or laptops connecting to this workspace."
+            ? "Use on phones or laptops connecting to this worker."
             : "Use on phones or laptops connecting to this host.",
         },
       ];
@@ -1192,7 +1192,7 @@ export default function SessionView(props: SessionViewProps) {
         "";
       return [
         {
-          label: "OpenWork workspace URL",
+          label: "OpenWork worker URL",
           value: url,
         },
         {
@@ -1200,7 +1200,7 @@ export default function SessionView(props: SessionViewProps) {
           value: token,
           secret: true,
           placeholder: token ? undefined : "Set token in Config",
-          hint: "This token grants access to the workspace on that host.",
+          hint: "This token grants access to the worker on that host.",
         },
       ];
     }
@@ -1224,15 +1224,15 @@ export default function SessionView(props: SessionViewProps) {
     const ws = shareWorkspace();
     if (!ws) return null;
     if (ws.workspaceType === "local" && props.engineInfo?.runtime === "direct") {
-      return "Engine runtime is set to Direct. Switching local workspaces can restart the host and disconnect clients. The token may change after a restart.";
+      return "Engine runtime is set to Direct. Switching local workers can restart the host and disconnect clients. The token may change after a restart.";
     }
     return null;
   });
 
   const exportDisabledReason = createMemo(() => {
     const ws = shareWorkspace();
-    if (!ws) return "Export is available for local workspaces in the desktop app.";
-    if (ws.workspaceType === "remote") return "Export is only supported for local workspaces.";
+    if (!ws) return "Export is available for local workers in the desktop app.";
+    if (ws.workspaceType === "remote") return "Export is only supported for local workers.";
     if (!isTauriRuntime()) return "Export is available in the desktop app.";
     if (props.exportWorkspaceBusy) return "Export is already running.";
     return null;
@@ -1545,7 +1545,7 @@ export default function SessionView(props: SessionViewProps) {
                               current === workspace().id ? null : workspace().id
                             );
                           }}
-                          aria-label="Workspace options"
+                          aria-label="Worker options"
                         >
                           <MoreHorizontal size={14} />
                         </button>

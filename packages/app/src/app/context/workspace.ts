@@ -255,7 +255,7 @@ export function createWorkspaceStore(options: {
     if (!ws) {
       return {
         id: "",
-        name: "Workspace",
+        name: "Worker",
         path: "",
         preset: "starter",
         workspaceType: "local",
@@ -275,7 +275,7 @@ export function createWorkspaceStore(options: {
       ws.openworkHostUrl ||
       ws.baseUrl ||
       ws.path ||
-      "Workspace";
+      "Worker";
     return { ...ws, name: displayName };
   });
   const normalizeRemoteType = (value?: WorkspaceInfo["remoteType"] | null) =>
@@ -406,7 +406,7 @@ export function createWorkspaceStore(options: {
       ? (items.find((item) => item?.id && selectById(item as any)) as OpenworkWorkspaceInfo | undefined)
       : undefined;
     if (requestedWorkspaceId && !workspaceById) {
-      throw new Error("OpenWork workspace not found on that host.");
+      throw new Error("OpenWork worker not found on that host.");
     }
 
     const workspaceByHint = hint
@@ -415,7 +415,7 @@ export function createWorkspaceStore(options: {
 
     const workspace = (workspaceById ?? workspaceByHint ?? items[0]) as OpenworkWorkspaceInfo | undefined;
     if (!workspace?.id) {
-      throw new Error("OpenWork server did not return a workspace.");
+      throw new Error("OpenWork server did not return a worker.");
     }
     const opencodeUpstreamBaseUrl = workspace.opencode?.baseUrl?.trim() ?? workspace.baseUrl?.trim() ?? "";
     if (!opencodeUpstreamBaseUrl) {
@@ -756,7 +756,7 @@ export function createWorkspaceStore(options: {
           if (!ok) {
             updateWorkspaceConnectionState(id, {
               status: "error",
-              message: "Failed to connect to workspace.",
+              message: "Failed to connect to worker.",
             });
             return false;
           }
@@ -823,7 +823,7 @@ export function createWorkspaceStore(options: {
         if (!ok) {
           updateWorkspaceConnectionState(id, {
             status: "error",
-            message: "Failed to connect to workspace.",
+            message: "Failed to connect to worker.",
           });
           return false;
         }
@@ -1022,7 +1022,7 @@ export function createWorkspaceStore(options: {
                 { navigate: false },
               );
               if (!ok) {
-                options.setError("Failed to reconnect after workspace switch");
+                options.setError("Failed to reconnect after worker switch");
               }
             }
         } else {
@@ -1053,7 +1053,7 @@ export function createWorkspaceStore(options: {
                 { navigate: false },
               );
               if (!ok) {
-                options.setError("Failed to reconnect after workspace switch");
+                options.setError("Failed to reconnect after worker switch");
               }
             }
         }
@@ -1294,7 +1294,7 @@ export function createWorkspaceStore(options: {
         return;
       }
 
-      const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Workspace";
+      const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Worker";
       const ws = await workspaceCreate({ folderPath: resolvedFolder, name, preset });
       setWorkspaces(ws.workspaces);
       syncActiveWorkspaceId(ws.activeId);
@@ -1343,7 +1343,7 @@ export function createWorkspaceStore(options: {
       logs: [],
       steps: [
         { key: "docker", label: "Docker ready", status: "active", detail: null },
-        { key: "workspace", label: "Prepare workspace", status: "pending", detail: null },
+        { key: "workspace", label: "Prepare worker", status: "pending", detail: null },
         { key: "sandbox", label: "Start sandbox services", status: "pending", detail: null },
         { key: "health", label: "Wait for OpenWork", status: "pending", detail: null },
         { key: "connect", label: "Connect in OpenWork", status: "pending", detail: null },
@@ -1362,7 +1362,7 @@ export function createWorkspaceStore(options: {
       return;
     }
     setSandboxStep("docker", { status: "done", detail: doctor.serverVersion ?? null });
-    setSandboxStage("Preparing workspace...");
+    setSandboxStage("Preparing worker...");
 
     options.setBusy(true);
     options.setBusyLabel("status.creating_workspace");
@@ -1378,10 +1378,10 @@ export function createWorkspaceStore(options: {
         return;
       }
 
-      const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Workspace";
+      const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Worker";
 
       setSandboxStep("workspace", { status: "active", detail: name });
-      pushSandboxCreateLog(`Workspace: ${resolvedFolder}`);
+      pushSandboxCreateLog(`Worker: ${resolvedFolder}`);
 
       // Ensure the workspace folder has baseline OpenWork/OpenCode files.
       const created = await workspaceCreate({ folderPath: resolvedFolder, name, preset });
@@ -1392,7 +1392,7 @@ export function createWorkspaceStore(options: {
       // Remove the local workspace entry to avoid duplicate Local+Remote rows.
       const localId = created.activeId;
       if (localId) {
-        pushSandboxCreateLog("Removing local workspace row (will re-add as remote sandbox)...");
+        pushSandboxCreateLog("Removing local worker row (will re-add as remote sandbox)...");
         const forgotten = await workspaceForget(localId);
         setWorkspaces(forgotten.workspaces);
         syncActiveWorkspaceId(forgotten.activeId);
@@ -1665,7 +1665,7 @@ export function createWorkspaceStore(options: {
 
     const remoteType = normalizeRemoteType(workspace.remoteType);
     if (remoteType !== "openwork") {
-      options.setError("Only OpenWork remote workspaces can be edited.");
+      options.setError("Only OpenWork remote workers can be edited.");
       return false;
     }
 
@@ -1747,7 +1747,7 @@ export function createWorkspaceStore(options: {
       if (!ok) {
         updateWorkspaceConnectionState(id, {
           status: "error",
-          message: "Failed to connect to workspace.",
+          message: "Failed to connect to worker.",
         });
         return false;
       }
@@ -1911,16 +1911,16 @@ export function createWorkspaceStore(options: {
 
     const targetId = workspaceId?.trim() || activeWorkspaceInfo()?.id || "";
     if (!targetId) {
-      options.setError("Select a workspace to export");
+      options.setError("Select a worker to export");
       return;
     }
     const target = workspaces().find((ws) => ws.id === targetId) ?? null;
     if (!target) {
-      options.setError("Unknown workspace");
+      options.setError("Unknown worker");
       return;
     }
     if (target.workspaceType === "remote") {
-      options.setError("Export is only supported for local workspaces");
+      options.setError("Export is only supported for local workers");
       return;
     }
 
@@ -1928,20 +1928,20 @@ export function createWorkspaceStore(options: {
     options.setError(null);
 
     try {
-      const nameBase = (target.displayName || target.name || "workspace")
+      const nameBase = (target.displayName || target.name || "worker")
         .toLowerCase()
         .replace(/[^a-z0-9-_]+/g, "-")
         .replace(/^-+|-+$/g, "")
         .slice(0, 60);
       const dateStamp = new Date().toISOString().slice(0, 10);
-      const fileName = `openwork-${nameBase || "workspace"}-${dateStamp}.openwork-workspace`;
+      const fileName = `openwork-${nameBase || "worker"}-${dateStamp}.openwork-workspace`;
       const downloads = await downloadDir().catch(() => null);
       const defaultPath = downloads ? `${downloads}/${fileName}` : fileName;
 
       const outputPath = await saveFile({
-        title: "Export workspace config",
+        title: "Export worker config",
         defaultPath,
-        filters: [{ name: "OpenWork Workspace", extensions: ["openwork-workspace", "zip"] }],
+        filters: [{ name: "OpenWork Worker", extensions: ["openwork-workspace", "zip"] }],
       });
 
       if (!outputPath) {
@@ -1972,15 +1972,15 @@ export function createWorkspaceStore(options: {
 
     try {
       const selection = await pickFile({
-        title: "Import workspace config",
-        filters: [{ name: "OpenWork Workspace", extensions: ["openwork-workspace", "zip"] }],
+        title: "Import worker config",
+        filters: [{ name: "OpenWork Worker", extensions: ["openwork-workspace", "zip"] }],
       });
       const filePath =
         typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
       if (!filePath) return;
 
       const target = await pickDirectory({
-        title: "Choose a workspace folder",
+        title: "Choose a worker folder",
       });
       const folder =
         typeof target === "string" ? target : Array.isArray(target) ? target[0] : null;
@@ -2190,13 +2190,13 @@ export function createWorkspaceStore(options: {
     }
 
     if (activeWorkspaceDisplay().workspaceType !== "local") {
-      options.setError("Reload is only available for local workspaces.");
+      options.setError("Reload is only available for local workers.");
       return false;
     }
 
     const root = activeWorkspacePath().trim();
     if (!root) {
-      options.setError("Pick a workspace folder first.");
+      options.setError("Pick a worker folder first.");
       return false;
     }
 

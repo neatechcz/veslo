@@ -245,7 +245,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     const id = workspaceId();
     if (!id) {
       resetAgentState();
-      setAgentError("Workspace scope unavailable.");
+      setAgentError("Worker scope unavailable.");
       return;
     }
     const client = openworkServerClient();
@@ -380,9 +380,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         setHealth(null);
         setTelegramIdentities([]);
         setSlackIdentities([]);
-        setHealthError("Workspace scope unavailable. Reconnect using a workspace URL or switch to a known workspace.");
-        setTelegramIdentitiesError("Workspace scope unavailable.");
-        setSlackIdentitiesError("Workspace scope unavailable.");
+        setHealthError("Worker scope unavailable. Reconnect using a worker URL or switch to a known worker.");
+        setTelegramIdentitiesError("Worker scope unavailable.");
+        setSlackIdentitiesError("Worker scope unavailable.");
         resetAgentState();
         setSendStatus(null);
         setSendError(null);

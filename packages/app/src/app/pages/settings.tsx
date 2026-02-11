@@ -394,7 +394,7 @@ export default function SettingsView(props: SettingsViewProps) {
     const opencodeUsername = props.engineInfo?.opencodeUsername?.trim() || undefined;
     const opencodePassword = props.engineInfo?.opencodePassword?.trim() || undefined;
     if (!workspacePath) {
-      setOwpenbotRestartError("No workspace path available");
+      setOwpenbotRestartError("No worker path available");
       return;
     }
     setOwpenbotRestarting(true);
@@ -1328,7 +1328,7 @@ export default function SettingsView(props: SettingsViewProps) {
                           {props.owpenbotInfo?.opencodeUrl?.trim() || "OpenCode URL unavailable"}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {props.owpenbotInfo?.workspacePath?.trim() || "No workspace directory"}
+                          {props.owpenbotInfo?.workspacePath?.trim() || "No worker directory"}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">PID: {props.owpenbotInfo?.pid ?? "—"}</div>
                       </div>
@@ -1407,7 +1407,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div class="flex items-center justify-between gap-3">
                       <div class="text-sm font-medium text-gray-12">OpenWork server capabilities</div>
                       <div class="text-[11px] text-gray-8 font-mono truncate">
-                        {props.openworkServerWorkspaceId ? `Workspace ${props.openworkServerWorkspaceId}` : "Workspace unresolved"}
+                        {props.openworkServerWorkspaceId ? `Worker ${props.openworkServerWorkspaceId}` : "Worker unresolved"}
                       </div>
                     </div>
                     <Show

@@ -53,7 +53,7 @@ const automationTemplates = [
   { icon: MessageSquare, description: "Summarize yesterday's git activity by repo.", color: "text-purple-9" },
   { icon: TrendingUp, description: "Watch CI failures and surface recurring flakes.", color: "text-indigo-9" },
   { icon: Trophy, description: "Build a tiny classic game for a team demo.", color: "text-amber-9" },
-  { icon: Brain, description: "Suggest the next skills to install for this workspace.", color: "text-pink-9" },
+  { icon: Brain, description: "Suggest the next skills to install for this worker.", color: "text-pink-9" },
 ];
 
 const skillInstalled = [
@@ -414,7 +414,7 @@ export default function ProtoV1UxView() {
               </div>
               <button
                 type="button"
-                aria-label="Workspace settings"
+                aria-label="Worker settings"
                 class="rounded-lg p-2 text-gray-8 transition-colors hover:bg-gray-2 hover:text-gray-12"
               >
                 <Settings size={16} />

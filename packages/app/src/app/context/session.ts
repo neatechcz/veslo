@@ -335,7 +335,7 @@ export function createSessionStore(options: {
     if (lower.includes("browser") || lower.includes("chrome") || lower.includes("devtools")) {
       return "OpenWork browser automation isn't set up yet. Go to Plugins and ensure the browser plugin/extension is installed and connected, then retry.";
     }
-    return "Try again, or switch to an agent/prompt that only uses available tools in this workspace.";
+    return "Try again, or switch to an agent/prompt that only uses available tools in this worker.";
   };
 
   const maybeHandleInvalidToolError = (part: Part) => {

@@ -204,7 +204,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
               </div>
 
               <OnboardingWorkspaceSelector
-                defaultPath="~/OpenWork/Workspace"
+                defaultPath="~/OpenWork/Worker"
                 onConfirm={props.onCreateWorkspace}
                 onPickFolder={props.onPickWorkspaceFolder}
               />

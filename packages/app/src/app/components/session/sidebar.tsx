@@ -89,7 +89,7 @@ export default function SessionSidebar(props: SidebarProps) {
     workspace.openworkWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
-    "Workspace";
+    "Worker";
 
   const workspacePathLabel = (workspace: WorkspaceInfo) => {
     if (workspace.workspaceType === "remote") {

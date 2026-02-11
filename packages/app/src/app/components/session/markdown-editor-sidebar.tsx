@@ -132,7 +132,7 @@ export default function MarkdownEditorSidebar(props: MarkdownEditorSidebarProps)
   const canSave = createMemo(() => dirty() && !saving() && canWrite());
   const writeDisabledReason = createMemo(() => {
     if (canWrite()) return null;
-    return "Connect to an OpenWork server workspace to edit files.";
+    return "Connect to an OpenWork server worker to edit files.";
   });
 
   const previewSource = useThrottledValue(() => (props.open ? draft() : ""), 120);

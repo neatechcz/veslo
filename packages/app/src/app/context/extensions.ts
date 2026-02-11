@@ -418,9 +418,9 @@ export function createExtensionsStore(options: {
     const targetDir = options.projectDir().trim();
 
     if (scope !== "project" && !isLocalWorkspace) {
-      setPluginStatus("Global plugins are only available for local workspaces.");
+      setPluginStatus("Global plugins are only available for local workers.");
       setPluginList([]);
-      setSidebarPluginStatus("Global plugins require a local workspace.");
+      setSidebarPluginStatus("Global plugins require a local worker.");
       setSidebarPluginList([]);
       refreshPluginsInFlight = false;
       return;
@@ -554,7 +554,7 @@ export function createExtensionsStore(options: {
     }
 
     if (pluginScope() !== "project" && !isLocalWorkspace) {
-      setPluginStatus("Global plugins are only available for local workspaces.");
+      setPluginStatus("Global plugins are only available for local workers.");
       return;
     }
 
@@ -643,7 +643,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isLocalWorkspace) {
-      options.setError("Local workspaces are required to import skills.");
+      options.setError("Local workers are required to import skills.");
       return;
     }
 
@@ -741,7 +741,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isLocalWorkspace) {
-      const message = "Local workspaces are required to install skills.";
+      const message = "Local workers are required to install skills.";
       options.setError(message);
       setSkillsStatus(message);
       return { ok: false, message };
@@ -836,7 +836,7 @@ export function createExtensionsStore(options: {
     }
 
     if (options.workspaceType() !== "local") {
-      options.setError("Local workspaces are required to uninstall skills.");
+      options.setError("Local workers are required to uninstall skills.");
       return;
     }
 
@@ -925,7 +925,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isLocalWorkspace) {
-      setSkillsStatus("Local workspaces are required to view skills.");
+      setSkillsStatus("Local workers are required to view skills.");
       return null;
     }
 
@@ -993,7 +993,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!isLocalWorkspace) {
-      setSkillsStatus("Local workspaces are required to edit skills.");
+      setSkillsStatus("Local workers are required to edit skills.");
       return;
     }
 

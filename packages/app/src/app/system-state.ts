@@ -249,7 +249,7 @@ export function createSystemState(options: {
 
     const override = options.canReloadWorkspaceEngine?.();
     if (override === false) {
-      setReloadError("Reload is unavailable for this workspace.");
+      setReloadError("Reload is unavailable for this worker.");
       return;
     }
 
@@ -306,13 +306,13 @@ export function createSystemState(options: {
         if (nextStatus === "connecting") {
           nextStatus = "connected";
           options.notion.setStatus(nextStatus);
-          options.notion.setStatusDetail("Workspace connected");
+          options.notion.setStatusDetail("Worker connected");
         }
 
         if (nextStatus === "connected") {
           const detail = options.notion.statusDetail();
           if (!detail || detail.toLowerCase().includes("reload")) {
-            options.notion.setStatusDetail("Workspace connected");
+            options.notion.setStatusDetail("Worker connected");
           }
         }
 
