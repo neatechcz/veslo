@@ -1421,11 +1421,6 @@ export default function SessionView(props: SessionViewProps) {
                               Error
                             </span>
                           </Show>
-                          <Show when={group.status === "ready" && group.sessions.length > 0}>
-                            <span class="text-[10px] px-2 py-0.5 rounded-full border border-dls-border text-dls-secondary bg-dls-hover">
-                              {group.sessions.length}
-                            </span>
-                          </Show>
                           <Show when={isConnecting()}>
                             <Loader2 size={14} class="animate-spin text-dls-secondary" />
                           </Show>
