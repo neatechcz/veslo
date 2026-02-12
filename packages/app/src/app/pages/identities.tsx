@@ -1340,13 +1340,24 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           </Show>
           <Show when={sendResult()}>
             {(value) => (
-              <div class="rounded-lg border border-gray-4 bg-gray-2/40 px-3 py-2 text-[11px] text-gray-10 font-mono">
-                sent={value().sent} attempted={value().attempted}
+              <div class="rounded-lg border border-gray-4 bg-gray-2/40 px-3 py-2 text-[11px] text-gray-10 font-mono space-y-1">
+                <div>
+                  sent={value().sent} attempted={value().attempted}
+                  <Show when={value().failures?.length}>
+                    {(failures) => ` failures=${failures()}`}
+                  </Show>
+                  <Show when={value().reason?.trim()}>
+                    {(reason) => ` reason=${reason()}`}
+                  </Show>
+                </div>
                 <Show when={value().failures?.length}>
-                  {(failures) => ` failures=${failures()}`}
-                </Show>
-                <Show when={value().reason?.trim()}>
-                  {(reason) => ` reason=${reason()}`}
+                  <For each={value().failures ?? []}>
+                    {(failure) => (
+                      <div class="text-red-11">
+                        {failure.identityId}/{failure.peerId}: {failure.error}
+                      </div>
+                    )}
+                  </For>
                 </Show>
               </div>
             )}

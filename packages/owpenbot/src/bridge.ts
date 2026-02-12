@@ -288,6 +288,13 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     return typeof (app as any)?.directory === "string" ? String((app as any).directory).trim() : "";
   };
 
+  const listIdentityConfigs = (channel: ChannelName): Array<{ id: string; directory: string }> => {
+    if (channel === "telegram") {
+      return config.telegramBots.map((bot) => ({ id: bot.id, directory: (bot.directory ?? "").trim() }));
+    }
+    return config.slackApps.map((app) => ({ id: app.id, directory: (app.directory ?? "").trim() }));
+  };
+
   const getClient = (directory?: string | null) => {
     const resolved = (directory ?? "").trim() || defaultDirectory;
     if (deps.client && resolved === defaultDirectory) {
@@ -994,6 +1001,14 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
 
           const resolveSendIdentityId = () => {
             if (identityId) return identityId;
+            if (normalizedDir) {
+              const configured = listIdentityConfigs(channel).find((entry) => {
+                if (!entry.directory) return false;
+                if (!adapters.has(adapterKey(channel, entry.id))) return false;
+                return normalizeDirectory(entry.directory) === normalizedDir;
+              });
+              if (configured?.id) return configured.id;
+            }
             const active = Array.from(adapters.values()).find((adapter) => adapter.name === channel);
             return active?.identityId;
           };

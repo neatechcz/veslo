@@ -2096,7 +2096,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       "/send",
       {
         channel,
-        identityId,
+        ...(identityId ? { identityId } : {}),
         ...(directory.trim() ? { directory } : {}),
         ...(peerId ? { peerId } : {}),
         ...(autoBind ? { autoBind: true } : {}),
@@ -2119,7 +2119,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       actor: ctx.actor ?? { type: "remote" },
       action: "owpenbot.send",
       target: `owpenbot.${channel}`,
-      summary: `Sent outbound ${channel} message for ${identityId}${peerId ? ` to ${peerId}` : ""}`,
+      summary: `Sent outbound ${channel} message${identityId ? ` for ${identityId}` : ""}${peerId ? ` to ${peerId}` : ""}`,
       timestamp: Date.now(),
     });
 
