@@ -92,6 +92,8 @@ export type SandboxCreateProgressState = {
   error: string | null;
 };
 
+export type SandboxCreatePhase = "idle" | "preflight" | "provisioning" | "finalizing";
+
 export function createWorkspaceStore(options: {
   startupPreference: () => StartupPreference | null;
   setStartupPreference: (value: StartupPreference | null) => void;
@@ -182,6 +184,7 @@ export function createWorkspaceStore(options: {
   const [sandboxDoctorCheckedAt, setSandboxDoctorCheckedAt] = createSignal<number | null>(null);
   const [sandboxDoctorBusy, setSandboxDoctorBusy] = createSignal(false);
   const [sandboxPreflightBusy, setSandboxPreflightBusy] = createSignal(false);
+  const [sandboxCreatePhase, setSandboxCreatePhase] = createSignal<SandboxCreatePhase>("idle");
 
   const [sandboxCreateProgress, setSandboxCreateProgress] = createSignal<SandboxCreateProgressState | null>(null);
   const clearSandboxCreateProgress = () => setSandboxCreateProgress(null);
@@ -1349,12 +1352,14 @@ export function createWorkspaceStore(options: {
 
     const runId = makeRunId();
     const startedAt = Date.now();
+    setSandboxCreatePhase("preflight");
     setSandboxPreflightBusy(true);
     options.setError(null);
     clearSandboxCreateProgress();
 
     const doctor = await refreshSandboxDoctor();
     setSandboxPreflightBusy(false);
+    setSandboxCreatePhase("provisioning");
     options.setBusy(true);
     options.setBusyLabel("status.creating_workspace");
     options.setBusyStartedAt(startedAt);
@@ -1404,6 +1409,7 @@ export function createWorkspaceStore(options: {
       options.setBusy(false);
       options.setBusyLabel(null);
       options.setBusyStartedAt(null);
+      setSandboxCreatePhase("idle");
       return false;
     }
     setSandboxStep("docker", { status: "done", detail: doctor.serverVersion ?? null });
@@ -1529,6 +1535,7 @@ export function createWorkspaceStore(options: {
           sandboxRunId: host.sandboxRunId ?? runId,
           sandboxContainerName: host.sandboxContainerName ?? null,
           manageBusy: false,
+          closeModal: false,
         });
         if (!ok) {
           const fallback = "Failed to connect to sandbox";
@@ -1539,6 +1546,7 @@ export function createWorkspaceStore(options: {
         }
 
         if (input?.onReady) {
+          setSandboxCreatePhase("finalizing");
           setSandboxStage("Opening session...");
           setSandboxStep("connect", { status: "active", detail: "Opening session" });
           pushSandboxCreateLog("Opening session in new worker...");
@@ -1561,6 +1569,7 @@ export function createWorkspaceStore(options: {
       return false;
     } finally {
       setSandboxPreflightBusy(false);
+      setSandboxCreatePhase("idle");
       options.setBusy(false);
       options.setBusyLabel(null);
       options.setBusyStartedAt(null);
@@ -1573,6 +1582,7 @@ export function createWorkspaceStore(options: {
     directory?: string | null;
     displayName?: string | null;
     manageBusy?: boolean;
+    closeModal?: boolean;
 
     // Sandbox lifecycle metadata (desktop-managed)
     sandboxBackend?: "docker" | null;
@@ -1738,8 +1748,11 @@ export function createWorkspaceStore(options: {
       setWorkspaceConfigLoaded(true);
       setAuthorizedDirs([]);
 
-      setCreateWorkspaceOpen(false);
-      setCreateRemoteWorkspaceOpen(false);
+      const closeModal = input.closeModal ?? true;
+      if (closeModal) {
+        setCreateWorkspaceOpen(false);
+        setCreateRemoteWorkspaceOpen(false);
+      }
       const activeId = activeWorkspaceId();
       if (activeId) {
         updateWorkspaceConnectionState(activeId, { status: "connected", message: null });
@@ -2760,6 +2773,7 @@ export function createWorkspaceStore(options: {
     sandboxDoctorCheckedAt,
     sandboxDoctorBusy,
     sandboxPreflightBusy,
+    sandboxCreatePhase,
     projectDir,
     workspaces,
     activeWorkspaceId,

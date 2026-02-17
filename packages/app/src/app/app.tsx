@@ -4904,11 +4904,11 @@ export default function App() {
           void workspaceStore.refreshSandboxDoctor?.();
         }}
         workerSubmitting={workspaceStore.sandboxPreflightBusy?.() ?? false}
-        submitting={
-          busy() &&
-          busyLabel() === "status.creating_workspace" &&
-          Boolean(workspaceStore.sandboxCreateProgress?.())
-        }
+        submitting={(() => {
+          const phase = workspaceStore.sandboxCreatePhase?.() ?? "idle";
+          if (phase === "provisioning" || phase === "finalizing") return true;
+          return busy() && busyLabel() === "status.creating_workspace";
+        })()}
         submittingProgress={workspaceStore.sandboxCreateProgress?.() ?? null}
       />
 
