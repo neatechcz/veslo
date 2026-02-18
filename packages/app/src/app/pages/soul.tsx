@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { Activity, HeartPulse, RefreshCw, Sparkles } from "lucide-solid";
 
 import type { OpenworkSoulHeartbeatEntry, OpenworkSoulStatus } from "../lib/openwork-server";
@@ -34,6 +34,12 @@ export default function SoulView(props: SoulViewProps) {
   const [focusInput, setFocusInput] = createSignal("");
   const [boundariesInput, setBoundariesInput] = createSignal("");
   const [cadence, setCadence] = createSignal(cadenceOptions[1]?.cron ?? "0 */12 * * *");
+  const [heartbeatRunState, setHeartbeatRunState] = createSignal<"idle" | "running" | "success" | "warning">("idle");
+  const [heartbeatRunMessage, setHeartbeatRunMessage] = createSignal<string | null>(null);
+  const [heartbeatBaselineTs, setHeartbeatBaselineTs] = createSignal<string | null>(null);
+  const [heartbeatRunStartedAt, setHeartbeatRunStartedAt] = createSignal<number | null>(null);
+  let heartbeatPollTimer: ReturnType<typeof setInterval> | null = null;
+  let heartbeatTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
 
   const statusMeta = createMemo(() => {
     const state = props.status?.state ?? "off";
@@ -69,6 +75,79 @@ export default function SoulView(props: SoulViewProps) {
     if (props.newTaskDisabled) return;
     props.runSoulPrompt(prompt);
   };
+
+  const clearHeartbeatTimers = () => {
+    if (heartbeatPollTimer) {
+      clearInterval(heartbeatPollTimer);
+      heartbeatPollTimer = null;
+    }
+    if (heartbeatTimeoutTimer) {
+      clearTimeout(heartbeatTimeoutTimer);
+      heartbeatTimeoutTimer = null;
+    }
+  };
+
+  const runHeartbeatNow = () => {
+    if (props.newTaskDisabled || heartbeatRunState() === "running") return;
+    const baselineTs = props.heartbeats[0]?.ts ?? props.status?.lastHeartbeatAt ?? null;
+    setHeartbeatBaselineTs(baselineTs);
+    setHeartbeatRunStartedAt(Date.now());
+    setHeartbeatRunState("running");
+    setHeartbeatRunMessage("Heartbeat task started. Waiting for a fresh check-in entry...");
+    clearHeartbeatTimers();
+
+    runPrompt(
+      "Run scheduler tool run_job for the job named soul-heartbeat in this workspace. If the job is missing, run /soul-heartbeat once instead. Then summarize the latest heartbeat status with loose ends and one concrete next action.",
+    );
+
+    void props.refresh({ force: true });
+
+    heartbeatPollTimer = setInterval(() => {
+      void props.refresh({ force: true });
+    }, 3000);
+
+    heartbeatTimeoutTimer = setTimeout(() => {
+      if (heartbeatRunState() !== "running") return;
+      clearHeartbeatTimers();
+      setHeartbeatRunState("warning");
+      setHeartbeatRunMessage("Still waiting for heartbeat output. Open the task thread to inspect tool results and retry.");
+    }, 45000);
+  };
+
+  const heartbeatStatusCardTone = createMemo(() => {
+    const state = heartbeatRunState();
+    if (state === "success") return "border-emerald-7/50 bg-emerald-3/30 text-emerald-11";
+    if (state === "warning") return "border-amber-7/50 bg-amber-3/30 text-amber-11";
+    if (state === "running") return "border-blue-7/50 bg-blue-3/30 text-blue-11";
+    return "border-dls-border bg-dls-hover/30 text-dls-secondary";
+  });
+
+  const heartbeatStatusTitle = createMemo(() => {
+    const state = heartbeatRunState();
+    if (state === "success") return "Heartbeat completed";
+    if (state === "warning") return "Heartbeat still running";
+    if (state === "running") return "Heartbeat in progress";
+    return "Run heartbeat now";
+  });
+
+  createEffect(() => {
+    if (heartbeatRunState() !== "running") return;
+    const latestTs = props.heartbeats[0]?.ts ?? props.status?.lastHeartbeatAt ?? null;
+    if (!latestTs) return;
+    const baselineTs = heartbeatBaselineTs();
+    const startedAt = heartbeatRunStartedAt();
+    const parsedLatest = Date.parse(latestTs);
+    if (baselineTs && latestTs === baselineTs) return;
+    if (Number.isFinite(parsedLatest) && startedAt && parsedLatest < startedAt - 1000) return;
+
+    clearHeartbeatTimers();
+    setHeartbeatRunState("success");
+    setHeartbeatRunMessage(`Latest check-in: ${relativeTime(latestTs)}.`);
+  });
+
+  onCleanup(() => {
+    clearHeartbeatTimers();
+  });
 
   const cadenceLabel = createMemo(() => {
     return cadenceOptions.find((option) => option.cron === cadence())?.label ?? cadence();
@@ -218,14 +297,10 @@ export default function SoulView(props: SoulViewProps) {
             <button
               type="button"
               class="rounded-xl border border-dls-border px-3 py-2 text-left text-sm text-dls-text hover:bg-dls-hover disabled:opacity-60"
-              disabled={props.newTaskDisabled}
-              onClick={() =>
-                runPrompt(
-                  "Run /soul-heartbeat now. Then summarize the latest status with loose ends and one concrete next action.",
-                )
-              }
+              disabled={props.newTaskDisabled || heartbeatRunState() === "running"}
+              onClick={runHeartbeatNow}
             >
-              Run heartbeat now
+              {heartbeatRunState() === "running" ? "Running heartbeat..." : "Run heartbeat now"}
             </button>
             <button
               type="button"
@@ -239,6 +314,11 @@ export default function SoulView(props: SoulViewProps) {
             >
               Prioritize loose ends
             </button>
+          </div>
+
+          <div class={`rounded-xl border px-3 py-2 text-xs ${heartbeatStatusCardTone()}`}>
+            <div class="font-medium">{heartbeatStatusTitle()}</div>
+            <div class="mt-1">{heartbeatRunMessage() || "Start a manual heartbeat and watch this card for live status."}</div>
           </div>
 
           <div class="space-y-2">
