@@ -375,22 +375,83 @@ export function createSessionStore(options: {
     return `${text.slice(0, Math.max(0, max - 3))}...`;
   };
 
+  const inferHttpStatus = (value: string | null) => {
+    if (!value) return null;
+    const match = value.match(/\b(?:status|code|http)\s*(?:=|:)?\s*(401|403|429)\b/i) ||
+      value.match(/\b(401|403|429)\b/);
+    if (!match) return null;
+    const parsed = Number.parseInt(match[1], 10);
+    if (!Number.isFinite(parsed)) return null;
+    return parsed;
+  };
+
+  const getNestedRecords = (source: Record<string, unknown>) => {
+    const records: Record<string, unknown>[] = [source];
+    const data = source.data;
+    if (data && typeof data === "object") records.push(data as Record<string, unknown>);
+    const cause = source.cause;
+    if (cause && typeof cause === "object") {
+      const causeRecord = cause as Record<string, unknown>;
+      records.push(causeRecord);
+      const causeData = causeRecord.data;
+      if (causeData && typeof causeData === "object") records.push(causeData as Record<string, unknown>);
+    }
+    return records;
+  };
+
+  const firstStringField = (records: Record<string, unknown>[], keys: string[]) => {
+    for (const record of records) {
+      for (const key of keys) {
+        const value = truncateErrorField(record[key], 800);
+        if (value) return value;
+      }
+    }
+    return null;
+  };
+
+  const firstNumberField = (records: Record<string, unknown>[], keys: string[]) => {
+    for (const record of records) {
+      for (const key of keys) {
+        const value = record[key];
+        if (typeof value !== "number" || !Number.isFinite(value)) continue;
+        return value;
+      }
+    }
+    return null;
+  };
+
+  const firstBooleanField = (records: Record<string, unknown>[], keys: string[]) => {
+    for (const record of records) {
+      for (const key of keys) {
+        const value = record[key];
+        if (typeof value !== "boolean") continue;
+        return value;
+      }
+    }
+    return null;
+  };
+
   const formatSessionError = (errorObj: Record<string, unknown>) => {
+    const records = getNestedRecords(errorObj);
     const errorName = typeof errorObj.name === "string" ? errorObj.name : "UnknownError";
-    const statusCode = typeof errorObj.statusCode === "number" ? errorObj.statusCode : null;
-    const providerID = typeof errorObj.providerID === "string" ? errorObj.providerID : null;
-    const isRetryable = typeof errorObj.isRetryable === "boolean" ? errorObj.isRetryable : null;
-    const code = truncateErrorField(errorObj.code, 120);
-    const responseBody = truncateErrorField(errorObj.responseBody, 800);
-    const rawMessage = truncateErrorField(errorObj.message, 700);
+    const rawMessage = firstStringField(records, ["message", "detail", "reason"]);
+    const responseBody = firstStringField(records, ["responseBody", "body", "response"]);
+    const providerID = firstStringField(records, ["providerID", "providerId", "provider"]);
+    const code = firstStringField(records, ["code", "errorCode"]);
+    const statusCode = firstNumberField(records, ["statusCode", "status"]);
+    const inferred = inferHttpStatus(rawMessage) ?? inferHttpStatus(responseBody);
+    const effectiveStatus = statusCode ?? inferred;
+    const isRetryable = firstBooleanField(records, ["isRetryable", "retryable"]);
 
     const heading = (() => {
       if (errorName === "ProviderAuthError") return `Provider auth error${providerID ? ` (${providerID})` : ""}`;
       if (errorName === "APIError") {
-        if (statusCode === 401 || statusCode === 403) return "Authentication failed";
-        if (statusCode === 429) return "Rate limit exceeded";
-        return `API error${statusCode ? ` (${statusCode})` : ""}`;
+        if (effectiveStatus === 401 || effectiveStatus === 403) return "Authentication failed";
+        if (effectiveStatus === 429) return "Rate limit exceeded";
+        return `API error${effectiveStatus ? ` (${effectiveStatus})` : ""}`;
       }
+      if (effectiveStatus === 401 || effectiveStatus === 403) return "Authentication failed";
+      if (effectiveStatus === 429) return "Rate limit exceeded";
       if (errorName === "MessageOutputLengthError") return "Output length limit exceeded";
       return errorName.replace(/([a-z])([A-Z])/g, "$1 $2");
     })();
@@ -398,7 +459,7 @@ export function createSessionStore(options: {
     const lines = [heading];
     if (rawMessage && rawMessage !== heading) lines.push(rawMessage);
     if (providerID && errorName !== "ProviderAuthError") lines.push(`Provider: ${providerID}`);
-    if (statusCode && errorName !== "APIError") lines.push(`Status: ${statusCode}`);
+    if (effectiveStatus && errorName !== "APIError") lines.push(`Status: ${effectiveStatus}`);
     if (code) lines.push(`Code: ${code}`);
     if (isRetryable !== null) lines.push(`Retryable: ${isRetryable ? "yes" : "no"}`);
     if (responseBody) lines.push(`Response: ${responseBody}`);
