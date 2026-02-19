@@ -675,7 +675,7 @@ export default function SettingsView(props: SettingsViewProps) {
             <Show when={updateToolbarActionLabel()}>
               <Button
                 variant="outline"
-                class="text-xs h-8 py-0 px-3"
+                class="text-xs h-8 py-0 px-3 rounded-full border-gray-6/60 bg-gray-1/70 hover:bg-gray-2/70"
                 onClick={handleUpdateToolbarAction}
                 disabled={updateToolbarDisabled()}
                 title={updateState() === "ready" && props.anyActiveRuns ? "Stop active runs to update" : ""}
@@ -906,10 +906,10 @@ export default function SettingsView(props: SettingsViewProps) {
                             <div class="text-xs text-gray-7">OpenWork always checks on launch. Also checks once per day (quiet).</div>
                           </div>
                           <button
-                            class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                            class={`min-w-[70px] px-4 py-1.5 rounded-full text-xs font-medium border shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-colors ${
                               props.updateAutoCheck
-                                ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
-                                : "text-gray-10 border-gray-6 hover:text-gray-12"
+                                ? "bg-gray-12/12 text-gray-12 border-gray-6/30"
+                                : "bg-gray-1/70 text-gray-10 border-gray-6/60 hover:text-gray-12 hover:bg-gray-2/70"
                             }`}
                             onClick={props.toggleUpdateAutoCheck}
                           >
@@ -923,10 +923,10 @@ export default function SettingsView(props: SettingsViewProps) {
                             <div class="text-xs text-gray-7">Download updates automatically (prompts to restart)</div>
                           </div>
                           <button
-                            class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                            class={`min-w-[70px] px-4 py-1.5 rounded-full text-xs font-medium border shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-colors ${
                               props.updateAutoDownload
-                                ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
-                                : "text-gray-10 border-gray-6 hover:text-gray-12"
+                                ? "bg-gray-12/12 text-gray-12 border-gray-6/30"
+                                : "bg-gray-1/70 text-gray-10 border-gray-6/60 hover:text-gray-12 hover:bg-gray-2/70"
                             }`}
                             onClick={props.toggleUpdateAutoDownload}
                           >
@@ -970,7 +970,7 @@ export default function SettingsView(props: SettingsViewProps) {
                           <div class="flex items-center gap-2">
                             <Button
                               variant="outline"
-                              class="text-xs h-8 py-0 px-3"
+                              class="text-xs h-9 py-0 px-4 rounded-full border-gray-6/60 bg-gray-1/70 hover:bg-gray-2/70"
                               onClick={props.checkForUpdates}
                               disabled={props.busy || updateState() === "checking" || updateState() === "downloading"}
                             >
@@ -980,7 +980,7 @@ export default function SettingsView(props: SettingsViewProps) {
                             <Show when={updateState() === "available"}>
                               <Button
                                 variant="secondary"
-                                class="text-xs h-8 py-0 px-3"
+                                class="text-xs h-9 py-0 px-4 rounded-full"
                                 onClick={props.downloadUpdate}
                                 disabled={props.busy || updateState() === "downloading"}
                               >
@@ -991,7 +991,7 @@ export default function SettingsView(props: SettingsViewProps) {
                             <Show when={updateState() === "ready"}>
                               <Button
                                 variant="secondary"
-                                class="text-xs h-8 py-0 px-3"
+                                class="text-xs h-9 py-0 px-4 rounded-full"
                                 onClick={props.installUpdateAndRestart}
                                 disabled={props.busy || props.anyActiveRuns}
                                 title={props.anyActiveRuns ? "Stop active runs to update" : ""}

@@ -4019,6 +4019,11 @@ export default function App() {
       } catch {
         // ignore
       }
+
+      if (!launchUpdateCheckTriggered()) {
+        setLaunchUpdateCheckTriggered(true);
+        checkForUpdates({ quiet: true }).catch(() => undefined);
+      }
     }
 
     void workspaceStore.bootstrapOnboarding().finally(() => setBooting(false));
