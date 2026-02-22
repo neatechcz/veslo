@@ -4,7 +4,7 @@
     "name": "den-control-plane-openwork-1771651835",
     "repo": "https://github.com/different-ai/openwork",
     "branch": "feat/den-cloud-worker-openwork-repo",
-    "rootDir": "services/den-control-plane",
+    "rootDir": "services/den",
     "url": "https://den-control-plane-openwork-1771651835.onrender.com"
   },
   "latestDeploy": {

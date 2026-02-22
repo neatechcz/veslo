@@ -1,5 +1,5 @@
 {
-  "name": "@openwork/den-control-plane",
+  "name": "@openwork/den",
   "private": true,
   "type": "module",
   "scripts": {

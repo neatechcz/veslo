@@ -4,7 +4,7 @@ Frontend for `app.openwork.software`.
 
 ## What it does
 
-- Signs up / signs in users against Den control plane auth.
+- Signs up / signs in users against Den service auth.
 - Launches cloud workers via `POST /v1/workers`.
 - Handles paywall responses (`402 payment_required`) and shows Polar checkout links.
 - Uses a Next.js proxy route (`/api/den/*`) to reach `api.openwork.software` without browser CORS issues.

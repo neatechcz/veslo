@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
+type Step = 1 | 2 | 3;
 type AuthMode = "sign-in" | "sign-up";
 
 type AuthUser = {
@@ -31,11 +32,11 @@ type WorkerTokens = {
   hostToken: string | null;
 };
 
-type LaunchEventLevel = "info" | "success" | "warning" | "error";
+type EventLevel = "info" | "success" | "warning" | "error";
 
 type LaunchEvent = {
   id: string;
-  level: LaunchEventLevel;
+  level: EventLevel;
   label: string;
   detail: string;
   at: string;
@@ -45,6 +46,13 @@ const LAST_WORKER_STORAGE_KEY = "openwork:web:last-worker";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function shortValue(value: string): string {
+  if (value.length <= 18) {
+    return value;
+  }
+  return `${value.slice(0, 8)}...${value.slice(-6)}`;
 }
 
 function getErrorMessage(payload: unknown, fallback: string): string {
@@ -59,6 +67,7 @@ function getErrorMessage(payload: unknown, fallback: string): string {
     }
     return trimmed;
   }
+
   if (!isRecord(payload)) {
     return fallback;
   }
@@ -82,15 +91,15 @@ function getUser(payload: unknown): AuthUser | null {
   }
 
   const user = payload.user;
-  const id = user.id;
-  const email = user.email;
-
-  if (typeof id !== "string" || typeof email !== "string") {
+  if (typeof user.id !== "string" || typeof user.email !== "string") {
     return null;
   }
 
-  const name = typeof user.name === "string" ? user.name : null;
-  return { id, email, name };
+  return {
+    id: user.id,
+    email: user.email,
+    name: typeof user.name === "string" ? user.name : null
+  };
 }
 
 function getToken(payload: unknown): string | null {
@@ -100,28 +109,30 @@ function getToken(payload: unknown): string | null {
   return typeof payload.token === "string" ? payload.token : null;
 }
 
+function getCheckoutUrl(payload: unknown): string | null {
+  if (!isRecord(payload) || !isRecord(payload.polar)) {
+    return null;
+  }
+  return typeof payload.polar.checkoutUrl === "string" ? payload.polar.checkoutUrl : null;
+}
+
 function getWorker(payload: unknown): WorkerLaunch | null {
   if (!isRecord(payload) || !isRecord(payload.worker)) {
     return null;
   }
 
   const worker = payload.worker;
-  const workerId = worker.id;
-  const workerName = worker.name;
-  const status = worker.status;
-
-  if (typeof workerId !== "string" || typeof workerName !== "string") {
+  if (typeof worker.id !== "string" || typeof worker.name !== "string") {
     return null;
   }
 
-  const parsedStatus = typeof status === "string" ? status : "unknown";
   const instance = isRecord(payload.instance) ? payload.instance : null;
   const tokens = isRecord(payload.tokens) ? payload.tokens : null;
 
   return {
-    workerId,
-    workerName,
-    status: parsedStatus,
+    workerId: worker.id,
+    workerName: worker.name,
+    status: typeof worker.status === "string" ? worker.status : "unknown",
     provider: instance && typeof instance.provider === "string" ? instance.provider : null,
     instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
     clientToken: tokens && typeof tokens.client === "string" ? tokens.client : null,
@@ -135,18 +146,14 @@ function getWorkerSummary(payload: unknown): WorkerSummary | null {
   }
 
   const worker = payload.worker;
-  const workerId = worker.id;
-  const workerName = worker.name;
-  const status = worker.status;
-
-  if (typeof workerId !== "string" || typeof workerName !== "string") {
+  if (typeof worker.id !== "string" || typeof worker.name !== "string") {
     return null;
   }
 
   return {
-    workerId,
-    workerName,
-    status: typeof status === "string" ? status : "unknown"
+    workerId: worker.id,
+    workerName: worker.name,
+    status: typeof worker.status === "string" ? worker.status : "unknown"
   };
 }
 
@@ -170,6 +177,7 @@ function isWorkerLaunch(value: unknown): value is WorkerLaunch {
   if (!isRecord(value)) {
     return false;
   }
+
   return (
     typeof value.workerId === "string" &&
     typeof value.workerName === "string" &&
@@ -179,21 +187,6 @@ function isWorkerLaunch(value: unknown): value is WorkerLaunch {
     (typeof value.clientToken === "string" || value.clientToken === null) &&
     (typeof value.hostToken === "string" || value.hostToken === null)
   );
-}
-
-function getCheckoutUrl(payload: unknown): string | null {
-  if (!isRecord(payload) || !isRecord(payload.polar)) {
-    return null;
-  }
-  const checkoutUrl = payload.polar.checkoutUrl;
-  return typeof checkoutUrl === "string" ? checkoutUrl : null;
-}
-
-function shortValue(value: string): string {
-  if (value.length <= 18) {
-    return value;
-  }
-  return `${value.slice(0, 8)}...${value.slice(-6)}`;
 }
 
 async function requestJson(path: string, init: RequestInit = {}, timeoutMs = 30000) {
@@ -228,6 +221,7 @@ async function requestJson(path: string, init: RequestInit = {}, timeoutMs = 300
 
   const text = await response.text();
   let payload: unknown = null;
+
   if (text) {
     try {
       payload = JSON.parse(text);
@@ -239,57 +233,28 @@ async function requestJson(path: string, init: RequestInit = {}, timeoutMs = 300
   return { response, payload, text };
 }
 
-function StepPill({ index, done, active }: { index: number; done: boolean; active: boolean }) {
-  const tone = done
-    ? "border-[#4eb18f] bg-[#ebfff6] text-[#196448]"
-    : active
-      ? "border-[#dea15a] bg-[#fff6ea] text-[#7f4a12]"
-      : "border-[#d5c8ba] bg-[#fffdf9] text-[#7f748d]";
-
-  return (
-    <span
-      className={`mono inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${tone}`}
-    >
-      {done ? "✓" : index}
-    </span>
-  );
-}
-
-function FieldWithCopy({
+function CredentialRow({
   label,
   value,
-  placeholder = "Not available yet."
+  placeholder,
+  canCopy,
+  copied,
+  onCopy
 }: {
   label: string;
   value: string | null;
-  placeholder?: string;
+  placeholder: string;
+  canCopy: boolean;
+  copied: boolean;
+  onCopy: () => void;
 }) {
-  const displayValue = value ?? placeholder;
-
   return (
-    <label className="block">
-      <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#62546f]">
-        {label}
-      </span>
-      <div className="flex items-center gap-2">
-        <input
-          readOnly
-          value={displayValue}
-          className="input-field mono text-xs !py-1.5"
-          onClick={(event) => event.currentTarget.select()}
-        />
-        <button
-          type="button"
-          className="btn-secondary shrink-0 !px-3 !py-1.5 text-xs"
-          disabled={!value}
-          onClick={() => {
-            if (!value) {
-              return;
-            }
-            void navigator.clipboard.writeText(value);
-          }}
-        >
-          {value ? "Copy" : "N/A"}
+    <label className="ow-field-block">
+      <span className="ow-field-label">{label}</span>
+      <div className="ow-copy-row">
+        <input readOnly value={value ?? placeholder} className="ow-input ow-mono" onClick={(event) => event.currentTarget.select()} />
+        <button type="button" className="ow-btn-icon" disabled={!canCopy} onClick={onCopy}>
+          {copied ? "Copied" : canCopy ? "Copy" : "N/A"}
         </button>
       </div>
     </label>
@@ -297,31 +262,35 @@ function FieldWithCopy({
 }
 
 export function CloudControlPanel() {
+  const [step, setStep] = useState<Step>(1);
+
   const [authMode, setAuthMode] = useState<AuthMode>("sign-in");
   const [name, setName] = useState("OpenWork Builder");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
-  const [authMessage, setAuthMessage] = useState("Log in to unlock cloud worker launch.");
+  const [authInfo, setAuthInfo] = useState("Sign in to launch and manage cloud workers.");
   const [authError, setAuthError] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null);
 
   const [workerName, setWorkerName] = useState("Founder Ops Pilot");
-  const [launchBusy, setLaunchBusy] = useState(false);
-  const [statusBusy, setStatusBusy] = useState(false);
-  const [launchAttempted, setLaunchAttempted] = useState(false);
-  const [paymentRequired, setPaymentRequired] = useState(false);
-  const [paymentReturned, setPaymentReturned] = useState(false);
-  const [launchMessage, setLaunchMessage] = useState("Sign in, then click Launch Cloud Worker.");
-  const [launchError, setLaunchError] = useState<string | null>(null);
   const [worker, setWorker] = useState<WorkerLaunch | null>(null);
   const [workerLookupId, setWorkerLookupId] = useState("");
+  const [launchBusy, setLaunchBusy] = useState(false);
+  const [actionBusy, setActionBusy] = useState<"status" | "token" | null>(null);
+  const [launchStatus, setLaunchStatus] = useState("Name your worker and click launch.");
+  const [launchError, setLaunchError] = useState<string | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
-  const [launchEvents, setLaunchEvents] = useState<LaunchEvent[]>([]);
+  const [paymentReturned, setPaymentReturned] = useState(false);
 
-  function appendLaunchEvent(level: LaunchEventLevel, label: string, detail: string) {
-    setLaunchEvents((previous) => {
+  const [events, setEvents] = useState<LaunchEvent[]>([]);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const progressWidth = step === 1 ? "33.333%" : step === 2 ? "66.666%" : "100%";
+
+  function appendEvent(level: EventLevel, label: string, detail: string) {
+    setEvents((current) => {
       const next: LaunchEvent[] = [
         {
           id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -330,46 +299,56 @@ export function CloudControlPanel() {
           detail,
           at: new Date().toISOString()
         },
-        ...previous
+        ...current
       ];
-      return next.slice(0, 12);
+
+      return next.slice(0, 10);
     });
   }
 
-  async function refreshSession(token?: string | null, quiet = false) {
-    const headers = new Headers();
-    const bearer = token ?? authToken;
-    if (bearer) {
-      headers.set("Authorization", `Bearer ${bearer}`);
+  async function copyToClipboard(field: string, value: string | null) {
+    if (!value) {
+      return;
     }
 
-    const { response, payload } = await requestJson("/v1/me", { method: "GET", headers });
+    await navigator.clipboard.writeText(value);
+    setCopiedField(field);
+    setTimeout(() => {
+      setCopiedField((current) => (current === field ? null : current));
+    }, 1800);
+  }
+
+  async function refreshSession(quiet = false) {
+    const headers = new Headers();
+    if (authToken) {
+      headers.set("Authorization", `Bearer ${authToken}`);
+    }
+
+    const { response, payload } = await requestJson("/v1/me", { method: "GET", headers }, 12000);
 
     if (!response.ok) {
       setUser(null);
       if (!quiet) {
         setAuthError("No active session found. Sign in first.");
       }
-      return false;
+      return null;
     }
 
     const sessionUser = getUser(payload);
     if (!sessionUser) {
       if (!quiet) {
-        setAuthError("Session response was missing user details.");
+        setAuthError("Session response did not include a user.");
       }
-      return false;
+      return null;
     }
 
     setUser(sessionUser);
-    if (!quiet) {
-      setAuthMessage(`Session active for ${sessionUser.email}.`);
-    }
-    return true;
+    setAuthInfo(`Signed in as ${sessionUser.email}.`);
+    return sessionUser;
   }
 
   useEffect(() => {
-    void refreshSession(undefined, true);
+    void refreshSession(true);
   }, []);
 
   useEffect(() => {
@@ -384,8 +363,9 @@ export function CloudControlPanel() {
     }
 
     setPaymentReturned(true);
-    setLaunchMessage("Payment return detected. Click Launch Cloud Worker to continue provisioning.");
-    appendLaunchEvent("success", "Returned from Polar checkout.", `Session ${shortValue(customerSessionToken)}`);
+    setCheckoutUrl(null);
+    setLaunchStatus("Checkout return detected. Click launch to continue worker provisioning.");
+    appendEvent("success", "Returned from checkout", `Session ${shortValue(customerSessionToken)}`);
 
     params.delete("customer_session_token");
     const nextQuery = params.toString();
@@ -398,28 +378,27 @@ export function CloudControlPanel() {
       return;
     }
 
-    const stored = window.localStorage.getItem(LAST_WORKER_STORAGE_KEY);
-    if (!stored) {
+    const raw = window.localStorage.getItem(LAST_WORKER_STORAGE_KEY);
+    if (!raw) {
       return;
     }
 
     try {
-      const parsed = JSON.parse(stored) as unknown;
+      const parsed = JSON.parse(raw) as unknown;
       if (!isWorkerLaunch(parsed)) {
         return;
       }
-      const restoredWorker: WorkerLaunch = {
+
+      const restored: WorkerLaunch = {
         ...parsed,
         clientToken: null,
         hostToken: null
       };
 
-      setWorker(restoredWorker);
-      setWorkerLookupId(restoredWorker.workerId);
-      setLaunchMessage(
-        `Recovered previous worker ${restoredWorker.workerName}. Generate a new API key if you need one.`
-      );
-      appendLaunchEvent("info", "Recovered worker context from this browser.", `Worker ID ${parsed.workerId}`);
+      setWorker(restored);
+      setWorkerLookupId(restored.workerId);
+      setLaunchStatus(`Recovered worker ${restored.workerName}. Generate a new API key if needed.`);
+      appendEvent("info", "Recovered worker context", `Worker ID ${restored.workerId}`);
     } catch {
       return;
     }
@@ -429,22 +408,39 @@ export function CloudControlPanel() {
     if (typeof window === "undefined" || !worker) {
       return;
     }
-    const storedWorker: WorkerLaunch = {
+
+    const serializable: WorkerLaunch = {
       ...worker,
       clientToken: null,
       hostToken: null
     };
-    window.localStorage.setItem(LAST_WORKER_STORAGE_KEY, JSON.stringify(storedWorker));
+
+    window.localStorage.setItem(LAST_WORKER_STORAGE_KEY, JSON.stringify(serializable));
   }, [worker]);
+
+  useEffect(() => {
+    if (worker) {
+      setStep(3);
+      return;
+    }
+
+    if (user || checkoutUrl || paymentReturned) {
+      setStep(2);
+      return;
+    }
+
+    setStep(1);
+  }, [worker, user, checkoutUrl, paymentReturned]);
 
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
     setAuthBusy(true);
     setAuthError(null);
 
     try {
-      const route = authMode === "sign-up" ? "/api/auth/sign-up/email" : "/api/auth/sign-in/email";
-      const payload =
+      const endpoint = authMode === "sign-up" ? "/api/auth/sign-up/email" : "/api/auth/sign-in/email";
+      const body =
         authMode === "sign-up"
           ? {
               name: name.trim() || "OpenWork Builder",
@@ -456,51 +452,36 @@ export function CloudControlPanel() {
               password
             };
 
-      const { response, payload: responsePayload } = await requestJson(route, {
+      const { response, payload } = await requestJson(endpoint, {
         method: "POST",
-        body: JSON.stringify(payload)
+        body: JSON.stringify(body)
       });
 
       if (!response.ok) {
-        const message = getErrorMessage(responsePayload, `Request failed with ${response.status}.`);
-        setAuthError(message);
+        setAuthError(getErrorMessage(payload, `Authentication failed with ${response.status}.`));
         return;
       }
 
-      const nextToken = getToken(responsePayload);
-      if (nextToken) {
-        setAuthToken(nextToken);
+      const token = getToken(payload);
+      if (token) {
+        setAuthToken(token);
       }
 
-      const parsedUser = getUser(responsePayload);
-      if (parsedUser) {
-        setUser(parsedUser);
-        setAuthMessage(`Logged in as ${parsedUser.email}.`);
+      const payloadUser = getUser(payload);
+      if (payloadUser) {
+        setUser(payloadUser);
+        setAuthInfo(`Signed in as ${payloadUser.email}.`);
+        appendEvent("success", authMode === "sign-up" ? "Account created" : "Signed in", payloadUser.email);
       } else {
-        setAuthMessage("Authentication succeeded. Refreshing session...");
+        const refreshed = await refreshSession(true);
+        if (!refreshed) {
+          setAuthInfo("Authentication succeeded, but session details are still syncing.");
+        } else {
+          appendEvent("success", authMode === "sign-up" ? "Account created" : "Signed in", refreshed.email);
+        }
       }
 
-      const sessionHealthy = await refreshSession(nextToken ?? undefined, true);
-      if (!sessionHealthy && !parsedUser) {
-        setAuthMessage("Authentication succeeded but session details are pending. Try Refresh session.");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown network error";
-      setAuthError(message);
-    } finally {
-      setAuthBusy(false);
-    }
-  }
-
-  async function handleRefreshSession() {
-    setAuthBusy(true);
-    setAuthError(null);
-
-    try {
-      const healthy = await refreshSession();
-      if (!healthy) {
-        setAuthError("No active session found. Sign in first.");
-      }
+      setStep(2);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown network error";
       setAuthError(message);
@@ -511,85 +492,90 @@ export function CloudControlPanel() {
 
   async function handleLaunchWorker() {
     if (!user) {
-      setLaunchError("Log in before launching a cloud worker.");
+      setAuthError("Sign in before launching a worker.");
       return;
     }
 
     setLaunchBusy(true);
-    setLaunchAttempted(true);
     setLaunchError(null);
     setCheckoutUrl(null);
-    setLaunchMessage("Submitting launch request to OpenWork Cloud...");
-    appendLaunchEvent("info", "Launch request started.", `Worker name: ${workerName.trim() || "Cloud Pilot"}`);
+    setLaunchStatus("Checking subscription and launch eligibility...");
+    appendEvent("info", "Launch requested", workerName.trim() || "Cloud worker");
 
     try {
-      const { response, payload } = await requestJson("/v1/workers", {
-        method: "POST",
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
-        body: JSON.stringify({
-          name: workerName.trim() || "Cloud Pilot",
-          destination: "cloud"
-        })
-      }, 30000);
+      const { response, payload } = await requestJson(
+        "/v1/workers",
+        {
+          method: "POST",
+          headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+          body: JSON.stringify({
+            name: workerName.trim() || "Cloud Worker",
+            destination: "cloud"
+          })
+        },
+        45000
+      );
 
       if (response.status === 402) {
-        const checkout = getCheckoutUrl(payload);
-        setPaymentRequired(true);
-        setCheckoutUrl(checkout);
-        setLaunchMessage("Payment required. Complete checkout and return to this card, then click Launch again.");
-        appendLaunchEvent(
-          "warning",
-          "Launch blocked by paywall.",
-          checkout ? "Checkout URL generated." : "Checkout URL missing."
-        );
-        if (!checkout) {
-          setLaunchError("Paywall returned without a checkout URL.");
-        }
+        const url = getCheckoutUrl(payload);
+        setCheckoutUrl(url);
+        setLaunchStatus("Payment is required. Complete checkout and return to continue launch.");
+        setLaunchError(url ? null : "Checkout URL missing from paywall response.");
+        appendEvent("warning", "Paywall required", url ? "Checkout URL generated" : "Checkout URL missing");
         return;
       }
 
       if (!response.ok) {
-        const message = getErrorMessage(payload, `Worker request failed with ${response.status}.`);
+        const message = getErrorMessage(payload, `Launch failed with ${response.status}.`);
         setLaunchError(message);
-        appendLaunchEvent("error", "Launch request failed.", message);
+        setLaunchStatus("Launch failed. Fix the error and retry.");
+        appendEvent("error", "Launch failed", message);
         return;
       }
 
       const parsedWorker = getWorker(payload);
       if (!parsedWorker) {
-        setLaunchError("Worker launched but response format was unexpected.");
-        appendLaunchEvent("error", "Launch response parsing failed.", "Worker payload format was unexpected.");
+        setLaunchError("Launch response was missing worker details.");
+        setLaunchStatus("Launch response format was unexpected.");
+        appendEvent("error", "Launch failed", "Worker payload missing");
         return;
       }
 
-      setPaymentRequired(false);
-      setPaymentReturned(false);
       setWorker(parsedWorker);
       setWorkerLookupId(parsedWorker.workerId);
-      setLaunchMessage("Worker launch completed. Copy the OpenWork address and worker API key below.");
-      appendLaunchEvent("success", "Worker launch completed.", `Worker ID ${parsedWorker.workerId}`);
+      setPaymentReturned(false);
+      setCheckoutUrl(null);
+      setLaunchStatus(`Worker ${parsedWorker.workerName} is ${parsedWorker.status}.`);
+      appendEvent("success", "Worker launched", `Worker ID ${parsedWorker.workerId}`);
     } catch (error) {
       const message =
         error instanceof DOMException && error.name === "AbortError"
-          ? "Launch request timed out after 30s. You can retry launch or come back later and check status with a Worker ID."
+          ? "Launch request timed out after 45s. Retry launch or come back later with your worker ID."
           : error instanceof Error
             ? error.message
             : "Unknown network error";
+
       setLaunchError(message);
-      appendLaunchEvent("error", "Launch request failed.", message);
+      setLaunchStatus("Launch request failed.");
+      appendEvent("error", "Launch failed", message);
     } finally {
       setLaunchBusy(false);
     }
   }
 
-  async function handleCheckWorkerStatus() {
+  async function handleCheckStatus() {
+    if (!user) {
+      setLaunchError("Sign in before checking worker status.");
+      return;
+    }
+
     const id = workerLookupId.trim();
     if (!id) {
       setLaunchError("Enter a worker ID first.");
       return;
     }
 
-    setStatusBusy(true);
+    setActionBusy("status");
     setLaunchError(null);
 
     try {
@@ -601,14 +587,14 @@ export function CloudControlPanel() {
       if (!response.ok) {
         const message = getErrorMessage(payload, `Status check failed with ${response.status}.`);
         setLaunchError(message);
-        appendLaunchEvent("error", "Status check failed.", message);
+        appendEvent("error", "Status check failed", message);
         return;
       }
 
       const summary = getWorkerSummary(payload);
       if (!summary) {
         setLaunchError("Status response was missing worker details.");
-        appendLaunchEvent("error", "Status check parsing failed.", "Worker summary was missing.");
+        appendEvent("error", "Status check failed", "Worker summary missing");
         return;
       }
 
@@ -632,25 +618,31 @@ export function CloudControlPanel() {
         };
       });
 
-      setLaunchMessage(`Worker ${summary.workerName} is currently ${summary.status}.`);
-      appendLaunchEvent("info", "Worker status refreshed.", `${summary.workerName}: ${summary.status}`);
+      setWorkerLookupId(summary.workerId);
+      setLaunchStatus(`Worker ${summary.workerName} is currently ${summary.status}.`);
+      appendEvent("info", "Status refreshed", `${summary.workerName}: ${summary.status}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown network error";
       setLaunchError(message);
-      appendLaunchEvent("error", "Status check failed.", message);
+      appendEvent("error", "Status check failed", message);
     } finally {
-      setStatusBusy(false);
+      setActionBusy(null);
     }
   }
 
-  async function handleGenerateWorkerKey() {
-    const id = workerLookupId.trim();
-    if (!id) {
-      setLaunchError("Enter a worker ID before generating keys.");
+  async function handleGenerateKey() {
+    if (!user) {
+      setLaunchError("Sign in before generating a worker API key.");
       return;
     }
 
-    setStatusBusy(true);
+    const id = workerLookupId.trim();
+    if (!id) {
+      setLaunchError("Enter a worker ID before generating an API key.");
+      return;
+    }
+
+    setActionBusy("token");
     setLaunchError(null);
 
     try {
@@ -661,16 +653,16 @@ export function CloudControlPanel() {
       });
 
       if (!response.ok) {
-        const message = getErrorMessage(payload, `Token generation failed with ${response.status}.`);
+        const message = getErrorMessage(payload, `Key generation failed with ${response.status}.`);
         setLaunchError(message);
-        appendLaunchEvent("error", "Worker key generation failed.", message);
+        appendEvent("error", "Key generation failed", message);
         return;
       }
 
       const tokens = getWorkerTokens(payload);
       if (!tokens) {
-        setLaunchError("Token generation succeeded but no keys were returned.");
-        appendLaunchEvent("error", "Worker key generation failed.", "No token payload was returned.");
+        setLaunchError("Key generation returned no token values.");
+        appendEvent("error", "Key generation failed", "Missing token payload");
         return;
       }
 
@@ -694,317 +686,305 @@ export function CloudControlPanel() {
         };
       });
 
-      setLaunchMessage("Generated a fresh worker API key.");
-      appendLaunchEvent("success", "Generated new worker keys.", `Worker ID ${id}`);
+      setLaunchStatus("Generated a fresh worker API key.");
+      appendEvent("success", "Generated new worker API key", `Worker ID ${id}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown network error";
       setLaunchError(message);
-      appendLaunchEvent("error", "Worker key generation failed.", message);
+      appendEvent("error", "Key generation failed", message);
     } finally {
-      setStatusBusy(false);
+      setActionBusy(null);
     }
   }
 
-  const launchSteps = useMemo(() => {
-    const signedIn = Boolean(user);
-    const launchDone = launchAttempted && !launchBusy;
-    const paywallDone = paymentReturned || (launchAttempted && !paymentRequired && !launchBusy);
-    const workerReady = Boolean(worker);
-
-    return [
+  const steps = useMemo(
+    () => [
       {
+        id: 1,
         title: "Sign in",
-        detail: signedIn ? `Signed in as ${user?.email}.` : "Use email + password to unlock launch.",
-        done: signedIn,
-        active: !signedIn
+        detail: user ? `Signed in as ${user.email}` : "Authenticate with your OpenWork account"
       },
       {
-        title: "Launch requested",
-        detail: launchBusy
-          ? "Launch request is in flight."
-          : launchAttempted
-            ? "Launch request sent to OpenWork Cloud."
-            : "Click Launch Cloud Worker to start.",
-        done: launchDone,
-        active: launchBusy
-      },
-      {
-        title: "Paywall",
-        detail: paymentRequired
-          ? paymentReturned
-            ? "Payment return detected. Launch again to finish."
-            : "Complete Polar checkout and return here."
+        id: 2,
+        title: "Launch",
+        detail: checkoutUrl
+          ? "Complete checkout, return, and relaunch"
           : launchBusy
-            ? "Waiting for launch response to confirm whether checkout is needed."
-          : launchAttempted
-            ? "No paywall block on the latest request."
-            : "Only appears when plan access is required.",
-        done: paywallDone,
-        active: paymentRequired && !paymentReturned
+            ? launchStatus
+            : "Launch a cloud worker from this card"
       },
       {
-        title: "Worker ready",
-        detail: worker
-          ? `Worker ${worker.workerName} is ${worker.status}.`
-          : "When ready, this card will show URL + API key.",
-        done: workerReady,
-        active: statusBusy
+        id: 3,
+        title: "Connect",
+        detail: worker ? "Copy URL + API key into the OpenWork app" : "Credentials appear when launch succeeds"
       }
-    ];
-  }, [launchAttempted, launchBusy, paymentRequired, paymentReturned, statusBusy, user, worker]);
+    ],
+    [checkoutUrl, launchBusy, launchStatus, user, worker]
+  );
 
   return (
-    <section className="surface fade-up p-5 sm:p-7">
-      <div className="grid gap-5 lg:grid-cols-[1fr,1.06fr]">
-        <div className="feature-card p-4 sm:p-5">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold">1) Log in</h2>
-            <span className="chip text-[11px]">Standard auth</span>
-          </div>
+    <section className="ow-card">
+      <div className="ow-progress-track">
+        <span className="ow-progress-fill" style={{ width: progressWidth }} />
+      </div>
 
-          <p className="mb-4 text-sm leading-relaxed text-[#544a64]">
-            Log in first. This unlocks worker launch and lets this page hold your launch state.
-          </p>
+      <div className="ow-card-body">
+        {step === 1 ? (
+          <div className="ow-stack">
+            <div className="ow-heading-block">
+              <span className="ow-icon-chip">01</span>
+              <h1 className="ow-title">Welcome back</h1>
+              <p className="ow-subtitle">Sign in to launch and manage cloud workers.</p>
+            </div>
 
-          <form className="space-y-3" onSubmit={handleAuthSubmit}>
-            {authMode === "sign-up" ? (
-              <label className="block">
-                <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.08em] text-[#62546f]">
-                  Name
-                </span>
+            <form className="ow-stack" onSubmit={handleAuthSubmit}>
+              {authMode === "sign-up" ? (
+                <label className="ow-field-block">
+                  <span className="ow-field-label">Name</span>
+                  <input
+                    className="ow-input"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    autoComplete="name"
+                    required
+                  />
+                </label>
+              ) : null}
+
+              <label className="ow-field-block">
+                <span className="ow-field-label">Email</span>
                 <input
-                  className="input-field"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  autoComplete="name"
+                  className="ow-input"
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  autoComplete="email"
                   required
                 />
               </label>
-            ) : null}
 
-            <label className="block">
-              <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.08em] text-[#62546f]">
-                Email
-              </span>
-              <input
-                className="input-field"
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                autoComplete="email"
-                required
-              />
-            </label>
+              <label className="ow-field-block">
+                <span className="ow-field-label">Password</span>
+                <input
+                  className="ow-input"
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  autoComplete={authMode === "sign-up" ? "new-password" : "current-password"}
+                  required
+                />
+              </label>
 
-            <label className="block">
-              <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.08em] text-[#62546f]">
-                Password
-              </span>
-              <input
-                className="input-field"
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                autoComplete={authMode === "sign-up" ? "new-password" : "current-password"}
-                required
-              />
-            </label>
-
-            <button type="submit" className="btn-primary w-full" disabled={authBusy}>
-              {authBusy ? "Working..." : authMode === "sign-in" ? "Log in" : "Create account"}
-            </button>
-          </form>
-
-          <div className="mt-3 flex items-center justify-between gap-3 text-xs text-[#5f4f71]">
-            <span>{authMode === "sign-in" ? "Need an account?" : "Already have an account?"}</span>
-            <button
-              type="button"
-              className="font-semibold text-[#7a2f08] underline-offset-2 hover:underline"
-              onClick={() => setAuthMode((current) => (current === "sign-in" ? "sign-up" : "sign-in"))}
-            >
-              {authMode === "sign-in" ? "Create account" : "Switch to login"}
-            </button>
-          </div>
-
-          <div className="mt-4 rounded-xl border border-[#e8dccd] bg-[#fffdf9] p-3">
-            <p className="text-sm text-[#3a3046]">{authMessage}</p>
-            {user ? (
-              <p className="mono mt-2 text-xs text-[#5f4f71]">
-                {user.email} ({shortValue(user.id)})
-              </p>
-            ) : null}
-            {authToken ? (
-              <div className="mt-3">
-                <FieldWithCopy label="Session API key" value={authToken} />
-              </div>
-            ) : null}
-            {authError ? <p className="mt-2 text-sm text-[#b64018]">{authError}</p> : null}
-          </div>
-
-          <button
-            type="button"
-            className="btn-secondary mt-3 w-full"
-            disabled={authBusy}
-            onClick={handleRefreshSession}
-          >
-            Refresh session
-          </button>
-        </div>
-
-        <div className="feature-card p-4 sm:p-5">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold">2) Launch Cloud Worker</h2>
-            <span className="chip text-[11px]">Paywall aware</span>
-          </div>
-
-          <p className="mb-4 text-sm leading-relaxed text-[#544a64]">
-            If paywall is required, finish payment and return here. Then click Launch Cloud Worker again.
-          </p>
-
-          <div className="mb-4 space-y-2 rounded-xl border border-[#e8dccd] bg-[#fffdf9] p-3">
-            {launchSteps.map((step, index) => (
-              <div key={step.title} className="flex items-start gap-3">
-                <StepPill index={index + 1} done={step.done} active={step.active} />
-                <div>
-                  <p className="text-sm font-semibold text-[#3b3148]">{step.title}</p>
-                  <p className="text-xs text-[#5f4f71]">{step.detail}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <label className="mb-3 block">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.08em] text-[#62546f]">
-              Worker name
-            </span>
-            <input
-              className="input-field"
-              value={workerName}
-              onChange={(event) => setWorkerName(event.target.value)}
-              maxLength={80}
-            />
-          </label>
-
-          <button
-            type="button"
-            className="btn-primary w-full"
-            disabled={launchBusy || !user}
-            onClick={handleLaunchWorker}
-          >
-            {launchBusy ? "Launching..." : "Launch Cloud Worker"}
-          </button>
-
-          {!user ? <p className="mt-2 text-xs text-[#6a5d78]">Log in to enable launch.</p> : null}
-
-          {checkoutUrl ? (
-            <div className="mt-4 rounded-xl border border-[#d5d6ef] bg-[#f5f7ff] p-3">
-              <p className="mb-2 text-sm font-semibold text-[#3b3677]">Payment required</p>
-              <a href={checkoutUrl} rel="noreferrer" className="btn-secondary inline-flex w-full justify-center">
-                Continue to Polar checkout
-              </a>
-              <p className="mt-2 text-xs text-[#54508a]">
-                After checkout, you should return to this app, then click Launch Cloud Worker again.
-              </p>
-            </div>
-          ) : null}
-
-          <div className="mt-4 rounded-xl border border-[#e8dccd] bg-[#fffdf9] p-3">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <p className="text-sm font-semibold text-[#3a3046]">Launch status</p>
-              <p className="mono text-[11px] text-[#5f4f71]">
-                {launchBusy ? "launching" : worker ? worker.status : "idle"}
-              </p>
-            </div>
-            <p className="text-sm text-[#3a3046]">{launchMessage}</p>
-            {launchError ? <p className="mt-2 text-sm text-[#b64018]">{launchError}</p> : null}
-
-            <div className="mt-3 grid gap-2 sm:grid-cols-[1fr,auto,auto]">
-              <input
-                className="input-field mono text-xs"
-                placeholder="Worker ID for status checks"
-                value={workerLookupId}
-                onChange={(event) => setWorkerLookupId(event.target.value)}
-              />
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={handleCheckWorkerStatus}
-                disabled={statusBusy}
-              >
-                {statusBusy ? "Checking..." : "Check status"}
+              <button type="submit" className="ow-btn-primary" disabled={authBusy}>
+                {authBusy ? "Working..." : authMode === "sign-in" ? "Continue" : "Create account"}
               </button>
+            </form>
+
+            <div className="ow-inline-row">
+              <p className="ow-caption">{authMode === "sign-in" ? "Need an account?" : "Already have an account?"}</p>
               <button
                 type="button"
-                className="btn-secondary"
-                onClick={handleGenerateWorkerKey}
-                disabled={statusBusy}
+                className="ow-link"
+                onClick={() => setAuthMode((current) => (current === "sign-in" ? "sign-up" : "sign-in"))}
               >
-                New API key
+                {authMode === "sign-in" ? "Create account" : "Switch to sign in"}
               </button>
             </div>
 
-            <p className="mt-2 text-xs text-[#5f4f71]">
-              You can come back later with the worker ID and use Check status or New API key.
-            </p>
+            <div className="ow-note-box">
+              <p>{authInfo}</p>
+              {authError ? <p className="ow-error-text">{authError}</p> : null}
+            </div>
           </div>
+        ) : null}
 
-          {worker ? (
-            <div className="mt-4 space-y-3 rounded-xl border border-[#d7d9eb] bg-[#f8fbff] p-3">
-              <p className="text-sm font-semibold text-[#2d3468]">Worker connection details</p>
-              <FieldWithCopy label="Worker ID" value={worker.workerId} />
-              <FieldWithCopy label="OpenWork address" value={worker.instanceUrl} placeholder="URL will appear after provisioning." />
-              <FieldWithCopy label="Worker API key" value={worker.clientToken} placeholder="Generate a key using New API key." />
+        {step === 2 ? (
+          <div className="ow-stack">
+            <div className="ow-heading-block">
+              <span className="ow-icon-chip">02</span>
+              <h1 className="ow-title">Launch a Worker</h1>
+              <p className="ow-subtitle">Signed in as {(user?.email ?? email) || "your account"}.</p>
+            </div>
 
-              {worker.hostToken ? (
-                <details className="rounded-lg border border-[#d1d7eb] bg-white px-3 py-2">
-                  <summary className="cursor-pointer text-xs font-semibold text-[#44518a]">Advanced: host key</summary>
-                  <div className="mt-2">
-                    <FieldWithCopy label="Host key" value={worker.hostToken} />
+            <div className="ow-step-list">
+              {steps.map((item) => (
+                <div key={item.id} className={`ow-step-item ${step >= item.id ? "is-done" : ""}`}>
+                  <span className="ow-step-index">{step > item.id ? "OK" : item.id}</span>
+                  <div>
+                    <p className="ow-step-title">{item.title}</p>
+                    <p className="ow-step-detail">{item.detail}</p>
                   </div>
-                </details>
-              ) : null}
+                </div>
+              ))}
+            </div>
 
-              <div className="rounded-lg border border-[#d1d7eb] bg-white px-3 py-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#44518a]">Connect in OpenWork app</p>
-                <ol className="mt-2 list-decimal space-y-1 pl-4 text-xs text-[#374372]">
-                  <li>Open the OpenWork app.</li>
-                  <li>Go to remote/cloud worker connect.</li>
-                  <li>Paste the OpenWork address and Worker API key from this card.</li>
-                </ol>
+            <label className="ow-field-block">
+              <span className="ow-field-label">Worker Name</span>
+              <input
+                className="ow-input"
+                value={workerName}
+                onChange={(event) => setWorkerName(event.target.value)}
+                maxLength={80}
+              />
+            </label>
+
+            <button type="button" className="ow-btn-primary" onClick={handleLaunchWorker} disabled={!user || launchBusy}>
+              {launchBusy ? "Launching..." : `Launch "${workerName || "Cloud Worker"}"`}
+            </button>
+
+            <div className="ow-note-box">
+              <p>{launchStatus}</p>
+              {launchError ? <p className="ow-error-text">{launchError}</p> : null}
+            </div>
+
+            {checkoutUrl ? (
+              <div className="ow-paywall-box">
+                <p className="ow-paywall-title">Payment required</p>
+                <a href={checkoutUrl} rel="noreferrer" className="ow-btn-secondary ow-full">
+                  Continue to Polar checkout
+                </a>
+                <p className="ow-caption">After checkout, return to this screen and click launch again.</p>
+              </div>
+            ) : null}
+
+            <div className="ow-lookup-box">
+              <p className="ow-section-title">Come back later</p>
+              <div className="ow-inline-actions">
+                <input
+                  className="ow-input ow-mono"
+                  value={workerLookupId}
+                  onChange={(event) => setWorkerLookupId(event.target.value)}
+                  placeholder="Worker ID"
+                />
+                <button
+                  type="button"
+                  className="ow-btn-secondary"
+                  onClick={handleCheckStatus}
+                  disabled={actionBusy !== null}
+                >
+                  {actionBusy === "status" ? "Checking..." : "Check status"}
+                </button>
+                <button
+                  type="button"
+                  className="ow-btn-secondary"
+                  onClick={handleGenerateKey}
+                  disabled={actionBusy !== null}
+                >
+                  {actionBusy === "token" ? "Generating..." : "New API key"}
+                </button>
               </div>
             </div>
-          ) : null}
 
-          {launchEvents.length > 0 ? (
-            <div className="mt-4 rounded-xl border border-[#e8dccd] bg-[#fffdf9] p-3">
-              <p className="mb-2 text-sm font-semibold text-[#3a3046]">Launch log</p>
-              <ul className="space-y-2">
-                {launchEvents.map((entry) => {
-                  const accent =
-                    entry.level === "success"
-                      ? "text-[#1e7a5b]"
-                      : entry.level === "warning"
-                        ? "text-[#8a4f14]"
-                        : entry.level === "error"
-                          ? "text-[#b64018]"
-                          : "text-[#5f4f71]";
-
-                  return (
-                    <li key={entry.id} className="rounded-lg border border-[#ede3d7] bg-white px-2 py-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className={`text-xs font-semibold ${accent}`}>{entry.label}</p>
-                        <span className="mono text-[10px] text-[#80748f]">
-                          {new Date(entry.at).toLocaleTimeString()}
-                        </span>
+            {events.length > 0 ? (
+              <div className="ow-log-box">
+                <p className="ow-section-title">Launch log</p>
+                <ul className="ow-log-list">
+                  {events.map((entry) => (
+                    <li key={entry.id} className={`ow-log-item level-${entry.level}`}>
+                      <div className="ow-log-head">
+                        <span>{entry.label}</span>
+                        <span className="ow-mono">{new Date(entry.at).toLocaleTimeString()}</span>
                       </div>
-                      <p className="mt-1 text-xs text-[#5a4f69]">{entry.detail}</p>
+                      <p>{entry.detail}</p>
                     </li>
-                  );
-                })}
-              </ul>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {step === 3 ? (
+          <div className="ow-stack">
+            <div className="ow-heading-block">
+              <span className="ow-icon-chip">03</span>
+              <h1 className="ow-title">Worker is live</h1>
+              <p className="ow-subtitle">Copy your connection details and paste them into the OpenWork app.</p>
             </div>
-          ) : null}
-        </div>
+
+            <CredentialRow
+              label="Worker URL"
+              value={worker?.instanceUrl ?? null}
+              placeholder="URL becomes available after provisioning."
+              canCopy={Boolean(worker?.instanceUrl)}
+              copied={copiedField === "worker-url"}
+              onCopy={() => void copyToClipboard("worker-url", worker?.instanceUrl ?? null)}
+            />
+
+            <CredentialRow
+              label="Worker API Key"
+              value={worker?.clientToken ?? null}
+              placeholder="Click New API key to generate credentials."
+              canCopy={Boolean(worker?.clientToken)}
+              copied={copiedField === "worker-key"}
+              onCopy={() => void copyToClipboard("worker-key", worker?.clientToken ?? null)}
+            />
+
+            <CredentialRow
+              label="Worker ID"
+              value={(worker?.workerId ?? workerLookupId) || null}
+              placeholder="Worker ID"
+              canCopy={Boolean(worker?.workerId || workerLookupId)}
+              copied={copiedField === "worker-id"}
+              onCopy={() => void copyToClipboard("worker-id", (worker?.workerId ?? workerLookupId) || null)}
+            />
+
+            {authToken ? (
+              <CredentialRow
+                label="Session API Key"
+                value={authToken}
+                placeholder="Session API key"
+                canCopy={true}
+                copied={copiedField === "session-key"}
+                onCopy={() => void copyToClipboard("session-key", authToken)}
+              />
+            ) : null}
+
+            <div className="ow-inline-actions">
+              <button type="button" className="ow-btn-secondary" onClick={handleCheckStatus} disabled={actionBusy !== null}>
+                {actionBusy === "status" ? "Checking..." : "Check status"}
+              </button>
+              <button type="button" className="ow-btn-secondary" onClick={handleGenerateKey} disabled={actionBusy !== null}>
+                {actionBusy === "token" ? "Generating..." : "New API key"}
+              </button>
+              <button
+                type="button"
+                className="ow-btn-secondary"
+                onClick={() => {
+                  setWorker(null);
+                  setLaunchError(null);
+                  setCheckoutUrl(null);
+                  setLaunchStatus("Ready to launch another worker.");
+                  appendEvent("info", "Starting a new launch", "Worker form reset");
+                }}
+              >
+                Launch another
+              </button>
+            </div>
+
+            <div className="ow-note-box">
+              <p>Open the OpenWork app and paste the Worker URL plus Worker API key into the remote worker connect flow.</p>
+              {launchError ? <p className="ow-error-text">{launchError}</p> : null}
+            </div>
+
+            {events.length > 0 ? (
+              <div className="ow-log-box">
+                <p className="ow-section-title">Launch log</p>
+                <ul className="ow-log-list">
+                  {events.map((entry) => (
+                    <li key={entry.id} className={`ow-log-item level-${entry.level}`}>
+                      <div className="ow-log-head">
+                        <span>{entry.label}</span>
+                        <span className="ow-mono">{new Date(entry.at).toLocaleTimeString()}</span>
+                      </div>
+                      <p>{entry.detail}</p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </section>
   );

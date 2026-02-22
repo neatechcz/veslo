@@ -274,7 +274,7 @@ importers:
         specifier: 5.4.5
         version: 5.4.5
 
-  services/den-control-plane:
+  services/den:
     dependencies:
       better-auth:
         specifier: ^1.4.18

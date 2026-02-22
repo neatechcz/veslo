@@ -1,4 +1,4 @@
-# Den Control Plane
+# Den Service
 
 Control plane for hosted workers. Provides Better Auth, worker CRUD, and provisioning hooks.
 
@@ -67,7 +67,7 @@ pnpm db:migrate
 
 ## CI deployment (dev == prod)
 
-The workflow `.github/workflows/deploy-den-control-plane.yml` updates Render env vars and deploys the service on every push to `dev` when this service changes.
+The workflow `.github/workflows/deploy-den.yml` updates Render env vars and deploys the service on every push to `dev` when this service changes.
 
 Required GitHub Actions secrets:
 

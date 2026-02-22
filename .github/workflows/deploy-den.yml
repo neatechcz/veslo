@@ -1,20 +1,20 @@
-name: Deploy Den Control Plane
+name: Deploy Den
 
 on:
   push:
     branches:
       - dev
     paths:
-      - "services/den-control-plane/**"
+      - "services/den/**"
       - "services/den-worker-runtime/**"
-      - ".github/workflows/deploy-den-control-plane.yml"
+      - ".github/workflows/deploy-den.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: deploy-den-control-plane-${{ github.ref }}
+  group: deploy-den-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

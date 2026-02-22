@@ -1,6 +1,6 @@
-# Agent Focus: Den Control Plane + Polar Gate
+# Agent Focus: Den Service + Polar Gate
 
-This guide explains how agents should operate, test, and troubleshoot the Den control plane.
+This guide explains how agents should operate, test, and troubleshoot the Den service.
 
 ## What this service does
 
@@ -63,7 +63,7 @@ Expected: worker creation `201` with Render-backed instance.
 
 `dev` is the production branch for this service. Workflow:
 
-- `.github/workflows/deploy-den-control-plane.yml`
+- `.github/workflows/deploy-den.yml`
 
 It updates Render env vars and triggers a deploy for the configured service ID.
 
