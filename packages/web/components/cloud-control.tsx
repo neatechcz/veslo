@@ -25,11 +25,24 @@ type WorkerSummary = {
   workerId: string;
   workerName: string;
   status: string;
+  instanceUrl: string | null;
+  provider: string | null;
+  isMine: boolean;
 };
 
 type WorkerTokens = {
   clientToken: string | null;
   hostToken: string | null;
+};
+
+type WorkerListItem = {
+  workerId: string;
+  workerName: string;
+  status: string;
+  instanceUrl: string | null;
+  provider: string | null;
+  isMine: boolean;
+  createdAt: string | null;
 };
 
 type EventLevel = "info" | "success" | "warning" | "error";
@@ -150,10 +163,15 @@ function getWorkerSummary(payload: unknown): WorkerSummary | null {
     return null;
   }
 
+  const instance = isRecord(payload.instance) ? payload.instance : null;
+
   return {
     workerId: worker.id,
     workerName: worker.name,
-    status: typeof worker.status === "string" ? worker.status : "unknown"
+    status: typeof worker.status === "string" ? worker.status : "unknown",
+    instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
+    provider: instance && typeof instance.provider === "string" ? instance.provider : null,
+    isMine: worker.isMine === true
   };
 }
 
@@ -173,6 +191,47 @@ function getWorkerTokens(payload: unknown): WorkerTokens | null {
   return { clientToken, hostToken };
 }
 
+function parseWorkerListItem(value: unknown): WorkerListItem | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const workerId = value.id;
+  const workerName = value.name;
+  if (typeof workerId !== "string" || typeof workerName !== "string") {
+    return null;
+  }
+
+  const instance = isRecord(value.instance) ? value.instance : null;
+  const createdAt = typeof value.createdAt === "string" ? value.createdAt : null;
+
+  return {
+    workerId,
+    workerName,
+    status: typeof value.status === "string" ? value.status : "unknown",
+    instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
+    provider: instance && typeof instance.provider === "string" ? instance.provider : null,
+    isMine: value.isMine === true,
+    createdAt
+  };
+}
+
+function getWorkersList(payload: unknown): WorkerListItem[] {
+  if (!isRecord(payload) || !Array.isArray(payload.workers)) {
+    return [];
+  }
+
+  const rows: WorkerListItem[] = [];
+  for (const item of payload.workers) {
+    const parsed = parseWorkerListItem(item);
+    if (parsed) {
+      rows.push(parsed);
+    }
+  }
+
+  return rows;
+}
+
 function isWorkerLaunch(value: unknown): value is WorkerLaunch {
   if (!isRecord(value)) {
     return false;
@@ -187,6 +246,18 @@ function isWorkerLaunch(value: unknown): value is WorkerLaunch {
     (typeof value.clientToken === "string" || value.clientToken === null) &&
     (typeof value.hostToken === "string" || value.hostToken === null)
   );
+}
+
+function listItemToWorker(item: WorkerListItem, current: WorkerLaunch | null = null): WorkerLaunch {
+  return {
+    workerId: item.workerId,
+    workerName: item.workerName,
+    status: item.status,
+    provider: item.provider,
+    instanceUrl: item.instanceUrl,
+    clientToken: current?.workerId === item.workerId ? current.clientToken : null,
+    hostToken: current?.workerId === item.workerId ? current.hostToken : null
+  };
 }
 
 async function requestJson(path: string, init: RequestInit = {}, timeoutMs = 30000) {
@@ -277,6 +348,9 @@ export function CloudControlPanel() {
   const [workerName, setWorkerName] = useState("Founder Ops Pilot");
   const [worker, setWorker] = useState<WorkerLaunch | null>(null);
   const [workerLookupId, setWorkerLookupId] = useState("");
+  const [workers, setWorkers] = useState<WorkerListItem[]>([]);
+  const [workersBusy, setWorkersBusy] = useState(false);
+  const [workersError, setWorkersError] = useState<string | null>(null);
   const [launchBusy, setLaunchBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState<"status" | "token" | null>(null);
   const [launchStatus, setLaunchStatus] = useState("Name your worker and click launch.");
@@ -286,6 +360,8 @@ export function CloudControlPanel() {
 
   const [events, setEvents] = useState<LaunchEvent[]>([]);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const selectedWorker = workers.find((item) => item.workerId === workerLookupId) ?? null;
 
   const progressWidth = step === 1 ? "33.333%" : step === 2 ? "66.666%" : "100%";
 
@@ -304,6 +380,53 @@ export function CloudControlPanel() {
 
       return next.slice(0, 10);
     });
+  }
+
+  async function refreshWorkers(options: { keepSelection?: boolean } = {}) {
+    if (!user) {
+      setWorkers([]);
+      setWorkersError(null);
+      return;
+    }
+
+    setWorkersBusy(true);
+    setWorkersError(null);
+
+    try {
+      const { response, payload } = await requestJson("/v1/workers?limit=20", {
+        method: "GET",
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
+      });
+
+      if (!response.ok) {
+        const message = getErrorMessage(payload, `Failed to load workers (${response.status}).`);
+        setWorkersError(message);
+        return;
+      }
+
+      const nextWorkers = getWorkersList(payload);
+      setWorkers(nextWorkers);
+
+      const currentSelection = options.keepSelection ? workerLookupId : "";
+      const nextSelectedId =
+        currentSelection && nextWorkers.some((item) => item.workerId === currentSelection)
+          ? currentSelection
+          : nextWorkers[0]?.workerId ?? "";
+
+      setWorkerLookupId(nextSelectedId);
+
+      if (nextSelectedId && worker && worker.workerId === nextSelectedId) {
+        const selected = nextWorkers.find((item) => item.workerId === nextSelectedId) ?? null;
+        if (selected) {
+          setWorker((current) => listItemToWorker(selected, current));
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown network error";
+      setWorkersError(message);
+    } finally {
+      setWorkersBusy(false);
+    }
   }
 
   async function copyToClipboard(field: string, value: string | null) {
@@ -350,6 +473,16 @@ export function CloudControlPanel() {
   useEffect(() => {
     void refreshSession(true);
   }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setWorkers([]);
+      setWorkersError(null);
+      return;
+    }
+
+    void refreshWorkers();
+  }, [user?.id, authToken]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -550,7 +683,7 @@ export function CloudControlPanel() {
     } catch (error) {
       const message =
         error instanceof DOMException && error.name === "AbortError"
-          ? "Launch request timed out after 45s. Retry launch or come back later with your worker ID."
+          ? "Launch request timed out after 45s. Refresh the worker list below to continue without manual IDs."
           : error instanceof Error
             ? error.message
             : "Unknown network error";
@@ -560,6 +693,7 @@ export function CloudControlPanel() {
       appendEvent("error", "Launch failed", message);
     } finally {
       setLaunchBusy(false);
+      void refreshWorkers({ keepSelection: true });
     }
   }
 
@@ -569,11 +703,13 @@ export function CloudControlPanel() {
       return;
     }
 
-    const id = workerLookupId.trim();
+    const id = workerLookupId.trim() || worker?.workerId || workers[0]?.workerId || "";
     if (!id) {
-      setLaunchError("Enter a worker ID first.");
+      setLaunchError("No worker selected yet. Launch one first, then use this panel.");
       return;
     }
+
+    setWorkerLookupId(id);
 
     setActionBusy("status");
     setLaunchError(null);
@@ -603,7 +739,9 @@ export function CloudControlPanel() {
           return {
             ...previous,
             workerName: summary.workerName,
-            status: summary.status
+            status: summary.status,
+            provider: summary.provider,
+            instanceUrl: summary.instanceUrl
           };
         }
 
@@ -611,8 +749,8 @@ export function CloudControlPanel() {
           workerId: summary.workerId,
           workerName: summary.workerName,
           status: summary.status,
-          provider: null,
-          instanceUrl: null,
+          provider: summary.provider,
+          instanceUrl: summary.instanceUrl,
           clientToken: null,
           hostToken: null
         };
@@ -621,6 +759,7 @@ export function CloudControlPanel() {
       setWorkerLookupId(summary.workerId);
       setLaunchStatus(`Worker ${summary.workerName} is currently ${summary.status}.`);
       appendEvent("info", "Status refreshed", `${summary.workerName}: ${summary.status}`);
+      void refreshWorkers({ keepSelection: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown network error";
       setLaunchError(message);
@@ -636,11 +775,13 @@ export function CloudControlPanel() {
       return;
     }
 
-    const id = workerLookupId.trim();
+    const id = workerLookupId.trim() || worker?.workerId || workers[0]?.workerId || "";
     if (!id) {
-      setLaunchError("Enter a worker ID before generating an API key.");
+      setLaunchError("No worker selected yet. Launch one first, then generate a key.");
       return;
     }
+
+    setWorkerLookupId(id);
 
     setActionBusy("token");
     setLaunchError(null);
@@ -688,6 +829,7 @@ export function CloudControlPanel() {
 
       setLaunchStatus("Generated a fresh worker API key.");
       appendEvent("success", "Generated new worker API key", `Worker ID ${id}`);
+      void refreshWorkers({ keepSelection: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown network error";
       setLaunchError(message);
@@ -848,19 +990,60 @@ export function CloudControlPanel() {
             ) : null}
 
             <div className="ow-lookup-box">
-              <p className="ow-section-title">Come back later</p>
+              <p className="ow-section-title">Your workers</p>
+              <p className="ow-caption">No Worker ID guessing. Pick from your recent workers and continue.</p>
+
+              {workersBusy ? <p className="ow-caption">Loading workers...</p> : null}
+              {workersError ? <p className="ow-error-text">{workersError}</p> : null}
+
+              {workers.length > 0 ? (
+                <ul className="ow-worker-list">
+                  {workers.map((item) => (
+                    <li
+                      key={item.workerId}
+                      className={`ow-worker-item ${workerLookupId === item.workerId ? "is-active" : ""}`}
+                    >
+                      <div className="ow-worker-head">
+                        <div>
+                          <p className="ow-step-title">{item.workerName}</p>
+                          <p className="ow-step-detail">{item.status}</p>
+                        </div>
+                        {item.isMine ? <span className="ow-badge">Yours</span> : null}
+                      </div>
+                      <p className="ow-worker-meta ow-mono">{item.instanceUrl ?? "URL pending provisioning"}</p>
+                      <button
+                        type="button"
+                        className="ow-btn-secondary"
+                        onClick={() => {
+                          setWorkerLookupId(item.workerId);
+                          setWorker((current) => listItemToWorker(item, current));
+                        }}
+                      >
+                        {workerLookupId === item.workerId ? "Selected" : "Select"}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+
+              {workers.length === 0 && !workersBusy ? (
+                <p className="ow-caption">No workers yet. Launch one and it will appear here automatically.</p>
+              ) : null}
+
               <div className="ow-inline-actions">
-                <input
-                  className="ow-input ow-mono"
-                  value={workerLookupId}
-                  onChange={(event) => setWorkerLookupId(event.target.value)}
-                  placeholder="Worker ID"
-                />
+                <button
+                  type="button"
+                  className="ow-btn-secondary"
+                  onClick={() => void refreshWorkers({ keepSelection: true })}
+                  disabled={workersBusy}
+                >
+                  Refresh list
+                </button>
                 <button
                   type="button"
                   className="ow-btn-secondary"
                   onClick={handleCheckStatus}
-                  disabled={actionBusy !== null}
+                  disabled={actionBusy !== null || !selectedWorker}
                 >
                   {actionBusy === "status" ? "Checking..." : "Check status"}
                 </button>
@@ -868,7 +1051,7 @@ export function CloudControlPanel() {
                   type="button"
                   className="ow-btn-secondary"
                   onClick={handleGenerateKey}
-                  disabled={actionBusy !== null}
+                  disabled={actionBusy !== null || !selectedWorker}
                 >
                   {actionBusy === "token" ? "Generating..." : "New API key"}
                 </button>

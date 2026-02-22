@@ -404,6 +404,57 @@ body {
   gap: 0.58rem;
 }
 
+.ow-worker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.46rem;
+}
+
+.ow-worker-item {
+  border: 1px solid #dbe3f4;
+  border-radius: 0.76rem;
+  background: #fff;
+  padding: 0.56rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.ow-worker-item.is-active {
+  border-color: #9fb2eb;
+  background: #f8fbff;
+}
+
+.ow-worker-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.ow-worker-meta {
+  margin: 0;
+  font-size: 0.72rem;
+  color: #475569;
+  word-break: break-all;
+}
+
+.ow-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid #b8c8ec;
+  background: #edf3ff;
+  color: #1e3a8a;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.42rem;
+}
+
 .ow-inline-actions {
   display: flex;
   flex-wrap: wrap;

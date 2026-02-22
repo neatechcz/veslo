@@ -60,9 +60,11 @@ pnpm db:migrate
 - `GET /health`
 - `GET /` demo web app (sign-up + auth + worker launch)
 - `GET /v1/me`
+- `GET /v1/workers` (list recent workers for signed-in user/org)
 - `POST /v1/workers`
   - Returns `402 payment_required` with Polar checkout URL when paywall is enabled and entitlement is missing.
 - `GET /v1/workers/:id`
+  - Includes latest instance metadata when available.
 - `POST /v1/workers/:id/tokens`
 
 ## CI deployment (dev == prod)

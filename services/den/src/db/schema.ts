@@ -132,6 +132,7 @@ export const WorkerTable = mysqlTable(
   {
     id: id().primaryKey(),
     org_id: varchar("org_id", { length: 64 }).notNull(),
+    created_by_user_id: varchar("created_by_user_id", { length: 64 }),
     name: varchar("name", { length: 255 }).notNull(),
     description: varchar("description", { length: 1024 }),
     destination: mysqlEnum("destination", WorkerDestination).notNull(),
@@ -141,7 +142,11 @@ export const WorkerTable = mysqlTable(
     sandbox_backend: varchar("sandbox_backend", { length: 64 }),
     ...timestamps,
   },
-  (table) => [index("worker_org_id").on(table.org_id), index("worker_status").on(table.status)],
+  (table) => [
+    index("worker_org_id").on(table.org_id),
+    index("worker_created_by_user_id").on(table.created_by_user_id),
+    index("worker_status").on(table.status),
+  ],
 )
 
 export const WorkerInstanceTable = mysqlTable(

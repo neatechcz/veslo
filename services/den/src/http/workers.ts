@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "crypto"
 import express from "express"
 import { fromNodeHeaders } from "better-auth/node"
-import { eq } from "drizzle-orm"
+import { and, desc, eq } from "drizzle-orm"
 import { z } from "zod"
 import { auth } from "../auth.js"
 import { requireCloudWorkerAccess } from "../billing/polar.js"
@@ -20,7 +20,14 @@ const createSchema = z.object({
   imageVersion: z.string().optional(),
 })
 
+const listSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+})
+
 const token = () => randomBytes(32).toString("hex")
+
+type WorkerRow = typeof WorkerTable.$inferSelect
+type WorkerInstanceRow = typeof WorkerInstanceTable.$inferSelect
 
 async function requireSession(req: express.Request, res: express.Response) {
   const session = await auth.api.getSession({
@@ -45,7 +52,87 @@ async function getOrgId(userId: string) {
   return membership[0].org_id
 }
 
+async function getLatestWorkerInstance(workerId: string) {
+  const rows = await db
+    .select()
+    .from(WorkerInstanceTable)
+    .where(eq(WorkerInstanceTable.worker_id, workerId))
+    .orderBy(desc(WorkerInstanceTable.created_at))
+    .limit(1)
+
+  return rows[0] ?? null
+}
+
+function toInstanceResponse(instance: WorkerInstanceRow | null) {
+  if (!instance) {
+    return null
+  }
+
+  return {
+    provider: instance.provider,
+    region: instance.region,
+    url: instance.url,
+    status: instance.status,
+    createdAt: instance.created_at,
+    updatedAt: instance.updated_at,
+  }
+}
+
+function toWorkerResponse(row: WorkerRow, userId: string) {
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    createdByUserId: row.created_by_user_id,
+    isMine: row.created_by_user_id === userId,
+    name: row.name,
+    description: row.description,
+    destination: row.destination,
+    status: row.status,
+    imageVersion: row.image_version,
+    workspacePath: row.workspace_path,
+    sandboxBackend: row.sandbox_backend,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
 export const workersRouter = express.Router()
+
+workersRouter.get("/", async (req, res) => {
+  const session = await requireSession(req, res)
+  if (!session) return
+
+  const orgId = await getOrgId(session.user.id)
+  if (!orgId) {
+    res.json({ workers: [] })
+    return
+  }
+
+  const parsed = listSchema.safeParse({ limit: req.query.limit })
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_request", details: parsed.error.flatten() })
+    return
+  }
+
+  const rows = await db
+    .select()
+    .from(WorkerTable)
+    .where(eq(WorkerTable.org_id, orgId))
+    .orderBy(desc(WorkerTable.created_at))
+    .limit(parsed.data.limit)
+
+  const workers = await Promise.all(
+    rows.map(async (row) => {
+      const instance = await getLatestWorkerInstance(row.id)
+      return {
+        ...toWorkerResponse(row, session.user.id),
+        instance: toInstanceResponse(instance),
+      }
+    }),
+  )
+
+  res.json({ workers })
+})
 
 workersRouter.post("/", async (req, res) => {
   const session = await requireSession(req, res)
@@ -86,12 +173,12 @@ workersRouter.post("/", async (req, res) => {
   const orgId =
     (await getOrgId(session.user.id)) ?? (await ensureDefaultOrg(session.user.id, session.user.name ?? session.user.email ?? "Personal"))
   const workerId = randomUUID()
-  let workerStatus: "provisioning" | "healthy" | "failed" | "stopped" =
-    parsed.data.destination === "cloud" ? "provisioning" : "healthy"
+  let workerStatus: WorkerRow["status"] = parsed.data.destination === "cloud" ? "provisioning" : "healthy"
 
   await db.insert(WorkerTable).values({
     id: workerId,
     org_id: orgId,
+    created_by_user_id: session.user.id,
     name: parsed.data.name,
     description: parsed.data.description,
     destination: parsed.data.destination,
@@ -156,17 +243,23 @@ workersRouter.post("/", async (req, res) => {
   }
 
   res.status(201).json({
-    worker: {
-      id: workerId,
-      orgId,
-      name: parsed.data.name,
-      description: parsed.data.description ?? null,
-      destination: parsed.data.destination,
-      status: workerStatus,
-      imageVersion: parsed.data.imageVersion ?? null,
-      workspacePath: parsed.data.workspacePath ?? null,
-      sandboxBackend: parsed.data.sandboxBackend ?? null,
-    },
+    worker: toWorkerResponse(
+      {
+        id: workerId,
+        org_id: orgId,
+        created_by_user_id: session.user.id,
+        name: parsed.data.name,
+        description: parsed.data.description ?? null,
+        destination: parsed.data.destination,
+        status: workerStatus,
+        image_version: parsed.data.imageVersion ?? null,
+        workspace_path: parsed.data.workspacePath ?? null,
+        sandbox_backend: parsed.data.sandboxBackend ?? null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      },
+      session.user.id,
+    ),
     tokens: {
       host: hostToken,
       client: clientToken,
@@ -188,28 +281,19 @@ workersRouter.get("/:id", async (req, res) => {
   const rows = await db
     .select()
     .from(WorkerTable)
-    .where(eq(WorkerTable.id, req.params.id))
+    .where(and(eq(WorkerTable.id, req.params.id), eq(WorkerTable.org_id, orgId)))
     .limit(1)
 
-  if (rows.length === 0 || rows[0].org_id !== orgId) {
+  if (rows.length === 0) {
     res.status(404).json({ error: "worker_not_found" })
     return
   }
 
+  const instance = await getLatestWorkerInstance(rows[0].id)
+
   res.json({
-    worker: {
-      id: rows[0].id,
-      orgId: rows[0].org_id,
-      name: rows[0].name,
-      description: rows[0].description,
-      destination: rows[0].destination,
-      status: rows[0].status,
-      imageVersion: rows[0].image_version,
-      workspacePath: rows[0].workspace_path,
-      sandboxBackend: rows[0].sandbox_backend,
-      createdAt: rows[0].created_at,
-      updatedAt: rows[0].updated_at,
-    },
+    worker: toWorkerResponse(rows[0], session.user.id),
+    instance: toInstanceResponse(instance),
   })
 })
 
