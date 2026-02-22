@@ -327,7 +327,22 @@ body {
   padding: 0.5rem;
   display: flex;
   flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ow-nav-group {
+  display: grid;
   gap: 0.34rem;
+}
+
+.ow-nav-label {
+  margin: 0;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+  padding-left: 0.22rem;
 }
 
 .ow-nav-item {
@@ -335,9 +350,9 @@ body {
   border-radius: 0.72rem;
   background: #fff;
   color: #334155;
-  font-size: 0.76rem;
+  font-size: 0.8rem;
   font-weight: 700;
-  padding: 0.54rem 0.48rem;
+  padding: 0.58rem 0.5rem;
   text-align: left;
 }
 
@@ -350,7 +365,7 @@ body {
 .ow-app-nav-footer {
   margin-top: auto;
   border-top: 1px solid #dbe3f4;
-  padding-top: 0.46rem;
+  padding-top: 0.58rem;
   display: grid;
   gap: 0.34rem;
 }
@@ -372,6 +387,104 @@ body {
 .ow-pane-head {
   display: grid;
   gap: 0.16rem;
+}
+
+.ow-pane-head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.ow-pane-block {
+  border: 1px solid #e3e9f7;
+  border-radius: 0.86rem;
+  background: #fbfcff;
+  padding: 0.62rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.ow-btn-compact {
+  font-size: 0.78rem;
+  padding: 0.54rem 0.72rem;
+}
+
+.ow-filter-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+}
+
+.ow-select {
+  border-radius: 0.78rem;
+  border: 1px solid #d9e1f2;
+  background: #fff;
+  color: #334155;
+  padding: 0.76rem 0.8rem;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.ow-select:focus-visible {
+  outline: none;
+  border-color: rgba(27, 41, 255, 0.55);
+  box-shadow: 0 0 0 0.22rem rgba(27, 41, 255, 0.16);
+}
+
+.ow-overview-grid {
+  display: grid;
+  gap: 0.5rem;
+}
+
+@media (min-width: 700px) {
+  .ow-overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.ow-overview-card {
+  border: 1px solid #e3e9f7;
+  border-radius: 0.86rem;
+  background: #fbfcff;
+  padding: 0.64rem;
+  display: grid;
+  gap: 0.22rem;
+}
+
+.ow-overview-label {
+  margin: 0;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ow-overview-value {
+  margin: 0;
+  font-size: 0.94rem;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.ow-overview-value.is-ready {
+  color: #0f9f66;
+}
+
+.ow-overview-value.is-starting {
+  color: #1e3a8a;
+}
+
+.ow-overview-value.is-attention {
+  color: #b45309;
+}
+
+.ow-howto-copy {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.75rem;
+  line-height: 1.4;
 }
 
 .ow-empty-detail {
@@ -401,6 +514,14 @@ body {
   .ow-nav-email {
     max-width: 11rem;
     text-align: right;
+  }
+
+  .ow-filter-row {
+    grid-template-columns: 1fr;
+  }
+
+  .ow-select {
+    width: 100%;
   }
 }
 

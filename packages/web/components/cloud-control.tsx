@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useState } from "react";
 type Step = 1 | 2;
 type AuthMode = "sign-in" | "sign-up";
 type ShellView = "workers" | "billing";
+type WorkerStatusBucket = "ready" | "starting" | "attention" | "other";
 
 type AuthUser = {
   id: string;
@@ -243,11 +244,32 @@ function getWorkersList(payload: unknown): WorkerListItem[] {
   return rows;
 }
 
+function getWorkerStatusMeta(status: string): { label: string; bucket: WorkerStatusBucket } {
+  const normalized = status.trim().toLowerCase();
+
+  if (normalized === "healthy" || normalized === "ready") {
+    return { label: "Ready", bucket: "ready" };
+  }
+
+  if (normalized === "provisioning" || normalized === "starting") {
+    return { label: "Starting", bucket: "starting" };
+  }
+
+  if (normalized === "failed" || normalized === "suspended") {
+    return { label: "Needs attention", bucket: "attention" };
+  }
+
+  return { label: "Unknown", bucket: "other" };
+}
+
 function getWorkerStatusCopy(status: string): string {
-  switch (status) {
+  const normalized = status.trim().toLowerCase();
+  switch (normalized) {
     case "provisioning":
+    case "starting":
       return "Starting... This may take a minute.";
     case "healthy":
+    case "ready":
       return "Ready to connect.";
     case "failed":
       return "Worker failed to start.";
@@ -550,6 +572,9 @@ export function CloudControlPanel() {
   const [events, setEvents] = useState<LaunchEvent[]>([]);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [tokenFetchedForWorkerId, setTokenFetchedForWorkerId] = useState<string | null>(null);
+  const [workerQuery, setWorkerQuery] = useState("");
+  const [workerStatusFilter, setWorkerStatusFilter] = useState<WorkerStatusBucket | "all">("all");
+  const [showLaunchForm, setShowLaunchForm] = useState(false);
 
   const selectedWorker = workers.find((item) => item.workerId === workerLookupId) ?? null;
   const activeWorker: WorkerLaunch | null =
@@ -569,6 +594,27 @@ export function CloudControlPanel() {
     activeWorker?.workerId ?? null,
     activeWorker?.workerName ?? null,
   );
+
+  const filteredWorkers = workers.filter((item) => {
+    const query = workerQuery.trim().toLowerCase();
+    const matchesQuery =
+      !query ||
+      item.workerName.toLowerCase().includes(query) ||
+      item.workerId.toLowerCase().includes(query);
+
+    if (!matchesQuery) {
+      return false;
+    }
+
+    if (workerStatusFilter === "all") {
+      return true;
+    }
+
+    return getWorkerStatusMeta(item.status).bucket === workerStatusFilter;
+  });
+
+  const selectedWorkerStatus = activeWorker?.status ?? selectedWorker?.status ?? "unknown";
+  const selectedStatusMeta = getWorkerStatusMeta(selectedWorkerStatus);
 
   function appendEvent(level: EventLevel, label: string, detail: string) {
     setEvents((current) => {
@@ -820,6 +866,16 @@ export function CloudControlPanel() {
   }, [worker, user, checkoutUrl, paymentReturned]);
 
   useEffect(() => {
+    if (step !== 2) {
+      return;
+    }
+
+    if (workers.length === 0) {
+      setShowLaunchForm(true);
+    }
+  }, [step, workers.length]);
+
+  useEffect(() => {
     if (!user || !worker) {
       return;
     }
@@ -957,6 +1013,9 @@ export function CloudControlPanel() {
     setLaunchBusy(false);
     setStep(1);
     setShellView("workers");
+    setWorkerQuery("");
+    setWorkerStatusFilter("all");
+    setShowLaunchForm(false);
     setAuthMode("sign-in");
     setPassword("");
     setAuthInfo("Sign in to launch and manage cloud workers.");
@@ -1024,6 +1083,7 @@ export function CloudControlPanel() {
       setWorkerLookupId(parsedWorker.workerId);
       setPaymentReturned(false);
       setCheckoutUrl(null);
+      setShowLaunchForm(false);
 
       if (resolvedWorker.status === "provisioning") {
         setLaunchStatus("Provisioning started. This can take a few minutes, and we will keep checking automatically.");
@@ -1317,22 +1377,26 @@ export function CloudControlPanel() {
         {step === 2 ? (
           <div className="ow-app-shell">
             <aside className="ow-app-nav">
-              <button
-                type="button"
-                className={`ow-nav-item ${shellView === "workers" ? "is-active" : ""}`}
-                onClick={() => setShellView("workers")}
-              >
-                workers
-              </button>
-              <button
-                type="button"
-                className={`ow-nav-item ${shellView === "billing" ? "is-active" : ""}`}
-                onClick={() => setShellView("billing")}
-              >
-                billing
-              </button>
+              <div className="ow-nav-group">
+                <p className="ow-nav-label">Workspace</p>
+                <button
+                  type="button"
+                  className={`ow-nav-item ${shellView === "workers" ? "is-active" : ""}`}
+                  onClick={() => setShellView("workers")}
+                >
+                  Workers
+                </button>
+                <button
+                  type="button"
+                  className={`ow-nav-item ${shellView === "billing" ? "is-active" : ""}`}
+                  onClick={() => setShellView("billing")}
+                >
+                  Billing
+                </button>
+              </div>
 
               <div className="ow-app-nav-footer">
+                <p className="ow-nav-label">Account</p>
                 <p className="ow-caption ow-nav-email">{(user?.email ?? email) || "account"}</p>
                 <button type="button" className="ow-link" onClick={() => void handleSignOut()} disabled={authBusy}>
                   {authBusy ? "Signing out..." : "Log out"}
@@ -1343,107 +1407,145 @@ export function CloudControlPanel() {
             {shellView === "workers" ? (
               <>
                 <section className="ow-pane ow-workers-pane">
-                  <div className="ow-pane-head">
-                    <p className="ow-section-title">workers</p>
-                    <p className="ow-caption">Launch and browse cloud workers.</p>
+                  <div className="ow-pane-head ow-pane-head-row">
+                    <div>
+                      <p className="ow-section-title">Workers</p>
+                      <p className="ow-caption">Pick a worker to see details.</p>
+                    </div>
+                    <button type="button" className="ow-btn-secondary ow-btn-compact" onClick={() => setShowLaunchForm((current) => !current)}>
+                      {showLaunchForm ? "Hide launch" : "Launch worker"}
+                    </button>
                   </div>
 
-                  <label className="ow-field-block">
-                    <span className="ow-field-label">Worker Name</span>
-                    <input
-                      className="ow-input"
-                      value={workerName}
-                      onChange={(event) => setWorkerName(event.target.value)}
-                      maxLength={80}
-                    />
-                  </label>
+                  {showLaunchForm ? (
+                    <div className="ow-pane-block">
+                      <label className="ow-field-block">
+                        <span className="ow-field-label">Worker Name</span>
+                        <input
+                          className="ow-input"
+                          value={workerName}
+                          onChange={(event) => setWorkerName(event.target.value)}
+                          maxLength={80}
+                        />
+                      </label>
 
-                  <button
-                    type="button"
-                    className="ow-btn-primary"
-                    onClick={handleLaunchWorker}
-                    disabled={!user || launchBusy || worker?.status === "provisioning"}
-                  >
-                    {launchBusy
-                      ? "Requesting launch..."
-                      : worker?.status === "provisioning"
-                        ? "Provisioning in progress..."
-                        : `Launch "${workerName || "Cloud Worker"}"`}
-                  </button>
+                      <button
+                        type="button"
+                        className="ow-btn-primary"
+                        onClick={handleLaunchWorker}
+                        disabled={!user || launchBusy || worker?.status === "provisioning"}
+                      >
+                      {launchBusy
+                        ? "Starting worker..."
+                        : worker?.status === "provisioning"
+                          ? "Worker is starting..."
+                          : `Launch "${workerName || "Cloud Worker"}"`}
+                    </button>
 
-                  <div className="ow-note-box">
-                    <p>{launchStatus}</p>
-                    {launchError ? <p className="ow-error-text">{launchError}</p> : null}
-                  </div>
+                      {(launchStatus || launchError) && showLaunchForm ? (
+                        <div className="ow-note-box">
+                          <p>{launchStatus}</p>
+                          {launchError ? <p className="ow-error-text">{launchError}</p> : null}
+                        </div>
+                      ) : null}
 
-                  {checkoutUrl ? (
-                    <div className="ow-paywall-box">
-                      <p className="ow-paywall-title">Payment required</p>
-                      <a href={checkoutUrl} rel="noreferrer" className="ow-btn-secondary ow-full">
-                        Continue to Polar checkout
-                      </a>
-                      <p className="ow-caption">After checkout, return and click launch again.</p>
+                      {checkoutUrl ? (
+                        <div className="ow-paywall-box">
+                          <p className="ow-paywall-title">Payment needed before launch</p>
+                          <a href={checkoutUrl} rel="noreferrer" className="ow-btn-secondary ow-full">
+                            Continue to checkout
+                          </a>
+                          <p className="ow-caption">After payment, come back and click launch again.</p>
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
 
-                  <div className="ow-pane-head">
-                    <p className="ow-section-title">Worker list</p>
-                    <p className="ow-caption">Select a worker to view details.</p>
+                  <div className="ow-filter-row">
+                    <input
+                      className="ow-input"
+                      value={workerQuery}
+                      onChange={(event) => setWorkerQuery(event.target.value)}
+                      placeholder="Search workers"
+                      aria-label="Search workers"
+                    />
+                    <select
+                      className="ow-select"
+                      value={workerStatusFilter}
+                      onChange={(event) => setWorkerStatusFilter(event.target.value as WorkerStatusBucket | "all")}
+                    >
+                      <option value="all">All statuses</option>
+                      <option value="ready">Ready</option>
+                      <option value="starting">Starting</option>
+                      <option value="attention">Needs attention</option>
+                    </select>
                   </div>
 
                   {workersBusy ? <p className="ow-caption">Loading workers...</p> : null}
                   {workersError ? <p className="ow-error-text">{workersError}</p> : null}
 
-                  {workers.length > 0 ? (
+                  {filteredWorkers.length > 0 ? (
                     <ul className="ow-worker-list ow-worker-list-panel">
-                      {workers.map((item) => (
-                        <li key={item.workerId}>
-                          <button
-                            type="button"
-                            className={`ow-worker-select ${workerLookupId === item.workerId ? "is-active" : ""}`}
-                            onClick={() => {
-                              setWorkerLookupId(item.workerId);
-                              setWorker((current) => listItemToWorker(item, current));
-                            }}
-                          >
-                            <div className="ow-worker-head">
-                              <div>
-                                <p className="ow-step-title">{item.workerName}</p>
-                                <p className="ow-step-detail">
-                                  {item.status === "healthy" ? "Ready" : item.status === "provisioning" ? "Starting..." : item.status}
-                                </p>
+                      {filteredWorkers.map((item) => {
+                        const meta = getWorkerStatusMeta(item.status);
+                        return (
+                          <li key={item.workerId}>
+                            <button
+                              type="button"
+                              className={`ow-worker-select ${workerLookupId === item.workerId ? "is-active" : ""}`}
+                              onClick={() => {
+                                setWorkerLookupId(item.workerId);
+                                setWorker((current) => listItemToWorker(item, current));
+                              }}
+                            >
+                              <div className="ow-worker-head">
+                                <div>
+                                  <p className="ow-step-title">{item.workerName}</p>
+                                  <p className="ow-step-detail">{meta.label}</p>
+                                </div>
+                                {item.isMine ? <span className="ow-badge">Yours</span> : null}
                               </div>
-                              {item.isMine ? <span className="ow-badge">Yours</span> : null}
-                            </div>
-                          </button>
-                        </li>
-                      ))}
+                            </button>
+                          </li>
+                        );
+                      })}
                     </ul>
                   ) : null}
 
+                  {workers.length > 0 && filteredWorkers.length === 0 ? (
+                    <p className="ow-caption">No workers match this filter.</p>
+                  ) : null}
+
                   {workers.length === 0 && !workersBusy ? (
-                    <p className="ow-caption">No workers yet. Launch one and it will appear here automatically.</p>
+                    <p className="ow-caption">No workers yet. Launch one to get started.</p>
                   ) : null}
                 </section>
 
                 <section className="ow-pane ow-detail-pane">
                   {selectedWorker ? (
                     <>
-                      <div className="ow-worker-head">
-                        <div>
-                          <p className="ow-section-title">{activeWorker?.workerName ?? selectedWorker.workerName}</p>
-                          <p className="ow-step-detail">
-                            {(activeWorker?.status ?? selectedWorker.status) === "healthy"
-                              ? "Ready"
-                              : (activeWorker?.status ?? selectedWorker.status) === "provisioning"
-                                ? "Starting..."
-                                : (activeWorker?.status ?? selectedWorker.status)}
-                          </p>
+                      <div className="ow-pane-head">
+                        <p className="ow-section-title">Overview</p>
+                        <div className="ow-worker-head">
+                          <div>
+                            <p className="ow-step-title">{activeWorker?.workerName ?? selectedWorker.workerName}</p>
+                            <p className="ow-step-detail">{selectedStatusMeta.label}</p>
+                          </div>
+                          {selectedWorker.isMine ? <span className="ow-badge">Yours</span> : null}
                         </div>
-                        {selectedWorker.isMine ? <span className="ow-badge">Yours</span> : null}
+                        <p className="ow-caption">{getWorkerStatusCopy(selectedWorkerStatus)}</p>
                       </div>
 
-                      <p className="ow-caption">{getWorkerStatusCopy(activeWorker?.status ?? selectedWorker.status)}</p>
+                      <div className="ow-overview-grid">
+                        <div className="ow-overview-card">
+                          <p className="ow-overview-label">Status</p>
+                          <p className={`ow-overview-value is-${selectedStatusMeta.bucket}`}>{selectedStatusMeta.label}</p>
+                        </div>
+                        <div className="ow-overview-card">
+                          <p className="ow-overview-label">Connect</p>
+                          <p className="ow-overview-value">{openworkDeepLink ? "One-click ready" : "Preparing"}</p>
+                        </div>
+                      </div>
 
                       <div className="ow-inline-actions">
                         <button
@@ -1455,7 +1557,7 @@ export function CloudControlPanel() {
                             }
                             window.location.href = openworkDeepLink;
                           }}
-                          disabled={!openworkDeepLink || (activeWorker?.status ?? selectedWorker.status) !== "healthy"}
+                          disabled={!openworkDeepLink || selectedStatusMeta.bucket !== "ready"}
                         >
                           {openworkDeepLink ? "Open in OpenWork" : "Preparing connection..."}
                         </button>
@@ -1463,23 +1565,21 @@ export function CloudControlPanel() {
 
                       {!openworkDeepLink || !openworkConnectUrl || (!hasWorkspaceScopedUrl && openworkConnectUrl) ? (
                         <div className="ow-note-box">
-                          {!openworkDeepLink ? <p className="ow-caption">Waiting for worker URL and token.</p> : null}
-                          {!openworkConnectUrl ? <p className="ow-caption">Keep this tab open.</p> : null}
-                          {!hasWorkspaceScopedUrl && openworkConnectUrl ? (
-                            <p className="ow-caption">Connection URL is still preparing...</p>
-                          ) : null}
+                          {!openworkDeepLink ? <p className="ow-caption">Getting connection details ready...</p> : null}
+                          {!openworkConnectUrl ? <p className="ow-caption">Keep this page open for a moment.</p> : null}
+                          {!hasWorkspaceScopedUrl && openworkConnectUrl ? <p className="ow-caption">Finishing your workspace URL...</p> : null}
                         </div>
                       ) : null}
 
                       <details className="ow-howto">
-                        <summary>Manual connect details</summary>
-                        <p className="ow-caption" style={{ marginBottom: "0.5rem" }}>
-                          If the "Open in OpenWork" button doesn't work, copy these details into the OpenWork app manually (Add a worker &gt; Connect remote).
+                        <summary>Copy details manually</summary>
+                        <p className="ow-howto-copy">
+                          If one-click open doesn't work, copy these into OpenWork: Add a worker &gt; Connect remote.
                         </p>
                         <CredentialRow
                           label="OpenWork worker URL"
                           value={openworkConnectUrl}
-                          placeholder="URL becomes available after provisioning."
+                          placeholder="URL appears once ready"
                           canCopy={Boolean(openworkConnectUrl)}
                           copied={copiedField === "openwork-url"}
                           onCopy={() => void copyToClipboard("openwork-url", openworkConnectUrl)}
@@ -1488,7 +1588,7 @@ export function CloudControlPanel() {
                         <CredentialRow
                           label="Access token"
                           value={activeWorker?.clientToken ?? null}
-                          placeholder="Use manual refresh to get access token."
+                          placeholder="Use more options to refresh"
                           canCopy={Boolean(activeWorker?.clientToken)}
                           copied={copiedField === "access-token"}
                           onCopy={() => void copyToClipboard("access-token", activeWorker?.clientToken ?? null)}
@@ -1500,7 +1600,7 @@ export function CloudControlPanel() {
                       </details>
 
                       <details className="ow-howto">
-                        <summary>Manual refresh and diagnostics</summary>
+                        <summary>More options</summary>
                         <div className="ow-inline-actions">
                           <button
                             type="button"
@@ -1524,13 +1624,13 @@ export function CloudControlPanel() {
                             onClick={handleGenerateKey}
                             disabled={actionBusy !== null}
                           >
-                            {actionBusy === "token" ? "Fetching..." : "Get access token"}
+                            {actionBusy === "token" ? "Fetching..." : "Refresh token"}
                           </button>
                         </div>
                       </details>
 
                       <details className="ow-howto">
-                        <summary>Advanced</summary>
+                        <summary>Technical details</summary>
                         <CredentialRow
                           label="Worker host URL"
                           value={activeWorker?.instanceUrl ?? null}
@@ -1551,7 +1651,7 @@ export function CloudControlPanel() {
 
                         {events.length > 0 ? (
                           <div className="ow-log-box">
-                            <p className="ow-section-title">Launch log</p>
+                            <p className="ow-section-title">Recent activity</p>
                             <ul className="ow-log-list">
                               {events.map((entry) => (
                                 <li key={entry.id} className={`ow-log-item level-${entry.level}`}>
@@ -1569,8 +1669,8 @@ export function CloudControlPanel() {
                     </>
                   ) : (
                     <div className="ow-empty-detail">
-                      <p className="ow-section-title">Launch your first worker</p>
-                      <p className="ow-caption">Use the launch form in the list panel, then select the worker here.</p>
+                      <p className="ow-section-title">Select a worker</p>
+                      <p className="ow-caption">Pick a worker from the list to see details and connect.</p>
                     </div>
                   )}
                 </section>
@@ -1578,21 +1678,21 @@ export function CloudControlPanel() {
             ) : (
               <section className="ow-pane ow-billing-pane ow-pane-span-2">
                 <div className="ow-pane-head">
-                  <p className="ow-section-title">billing</p>
-                  <p className="ow-caption">Manage plan and checkout details.</p>
+                  <p className="ow-section-title">Billing</p>
+                  <p className="ow-caption">Handle checkout when launching a new worker.</p>
                 </div>
 
                 {checkoutUrl ? (
                   <div className="ow-paywall-box">
-                    <p className="ow-paywall-title">Pending checkout</p>
+                    <p className="ow-paywall-title">Checkout in progress</p>
                     <a href={checkoutUrl} rel="noreferrer" className="ow-btn-secondary ow-full">
-                      Continue to Polar checkout
+                      Continue to checkout
                     </a>
                   </div>
                 ) : (
                   <div className="ow-note-box">
-                    <p>Billing appears automatically during worker launch if payment is required.</p>
-                    <p className="ow-caption">Switch back to workers and click launch to continue onboarding.</p>
+                    <p>No payment action right now.</p>
+                    <p className="ow-caption">Go to Workers and launch a worker when you're ready.</p>
                   </div>
                 )}
               </section>
