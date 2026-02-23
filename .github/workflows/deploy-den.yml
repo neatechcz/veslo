@@ -74,6 +74,7 @@ jobs:
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
           DEN_RENDER_WORKER_PLAN: ${{ vars.DEN_RENDER_WORKER_PLAN }}
           DEN_RENDER_WORKER_OPENWORK_VERSION: ${{ vars.DEN_RENDER_WORKER_OPENWORK_VERSION }}
+          DEN_CORS_ORIGINS: ${{ vars.DEN_CORS_ORIGINS }}
           DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX: ${{ vars.DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX }}
           DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS: ${{ vars.DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS }}
           DEN_VERCEL_API_BASE: ${{ vars.DEN_VERCEL_API_BASE }}
@@ -102,6 +103,7 @@ jobs:
           owner_id = os.environ["RENDER_OWNER_ID"]
           openwork_version = os.environ.get("DEN_RENDER_WORKER_OPENWORK_VERSION") or "0.11.113"
           worker_plan = os.environ.get("DEN_RENDER_WORKER_PLAN") or "standard"
+          configured_cors_origins = os.environ.get("DEN_CORS_ORIGINS") or ""
           worker_public_domain_suffix = os.environ.get("DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX") or "openwork.studio"
           custom_domain_ready_timeout_ms = os.environ.get("DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS") or "240000"
           vercel_api_base = os.environ.get("DEN_VERCEL_API_BASE") or "https://api.vercel.com"
@@ -130,6 +132,33 @@ jobs:
                   "DEN_POLAR_FEATURE_GATE_ENABLED=true requires POLAR_ACCESS_TOKEN, POLAR_PRODUCT_ID, and POLAR_BENEFIT_ID"
               )
 
+          def normalize_origin(value: str) -> str:
+              trimmed = value.strip()
+              if trimmed == "*":
+                  return trimmed
+              return trimmed.rstrip("/")
+
+          def build_cors_origins(raw: str, defaults: list[str]) -> str:
+              candidates: list[str] = []
+              if raw.strip():
+                  candidates.extend(raw.split(","))
+              else:
+                  candidates.extend(defaults)
+
+              seen = set()
+              normalized = []
+              for value in candidates:
+                  origin = normalize_origin(value)
+                  if not origin or origin in seen:
+                      continue
+                  seen.add(origin)
+                  normalized.append(origin)
+
+              if not normalized:
+                  raise RuntimeError("Unable to derive CORS_ORIGINS for Den deployment")
+
+              return ",".join(normalized)
+
           headers = {
               "Authorization": f"Bearer {api_key}",
               "Accept": "application/json",
@@ -155,10 +184,20 @@ jobs:
           if not service_url:
               raise RuntimeError(f"Render service {service_id} has no public URL")
 
+          cors_origins = build_cors_origins(
+              configured_cors_origins,
+              [
+                  "https://app.openwork.software",
+                  "https://api.openwork.software",
+                  service_url,
+              ],
+          )
+
           env_vars = [
               {"key": "DATABASE_URL", "value": os.environ["DEN_DATABASE_URL"]},
               {"key": "BETTER_AUTH_SECRET", "value": os.environ["DEN_BETTER_AUTH_SECRET"]},
               {"key": "BETTER_AUTH_URL", "value": service_url},
+              {"key": "CORS_ORIGINS", "value": cors_origins},
               {"key": "PROVISIONER_MODE", "value": "render"},
               {"key": "RENDER_API_BASE", "value": "https://api.render.com/v1"},
               {"key": "RENDER_API_KEY", "value": api_key},

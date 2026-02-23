@@ -39,8 +39,16 @@ const schema = z.object({
 
 const parsed = schema.parse(process.env)
 
+function normalizeOrigin(origin: string): string {
+  const value = origin.trim()
+  if (value === "*") {
+    return value
+  }
+  return value.replace(/\/+$/, "")
+}
+
 const corsOrigins = parsed.CORS_ORIGINS?.split(",")
-  .map((origin) => origin.trim())
+  .map((origin) => normalizeOrigin(origin))
   .filter(Boolean)
 
 const polarFeatureGateEnabled = (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true"
