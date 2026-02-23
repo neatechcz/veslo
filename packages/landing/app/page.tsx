@@ -2,6 +2,7 @@ import { SiteFooter } from "../components/site-footer";
 import { SiteNav } from "../components/site-nav";
 import { OpenCodeLogo } from "../components/opencode-logo";
 import { PaperMeshBackground } from "../components/paper-mesh-background";
+import { WaitlistForm } from "../components/waitlist-form";
 import { getGithubData } from "../lib/github";
 
 export default async function Home() {
@@ -28,13 +29,15 @@ export default async function Home() {
         <main className="pb-24 pt-20">
           <div className="content-max-width px-6">
           <div className="animate-fade-up">
-            <h1 className="mb-4 max-w-3xl text-5xl font-bold tracking-tight md:text-6xl">
-              Not just suggestions. Automate your work.
+            <h1 className="mb-4 max-w-4xl text-5xl font-bold tracking-tight md:text-6xl">
+              Turn one working agent into one usable team app.
             </h1>
             <p className="mb-10 max-w-4xl text-xl font-medium leading-relaxed text-gray-900/80">
-              OpenWork lets you open any project, package your agents as usable
-              apps, and give non-technical coworkers access via desktop or
-              WhatsApp - no terminal, no YAML, no prompt engineering required.
+              Open your project, run your agent, and share it with your team in
+              minutes. OpenWork plugs into Claude Code, Codex, OpenCode, or
+              your existing scripts, then gives non-technical coworkers a clean
+              interface on desktop, WhatsApp, or Telegram - no YAML, MCP, or
+              CLI setup required.
             </p>
           </div>
 
@@ -340,6 +343,17 @@ export default async function Home() {
               </div>
             </div>
 
+            <div className="mb-8 rounded-2xl border border-white/70 bg-white/70 p-6 shadow-lg backdrop-blur-sm">
+              <h3 className="mb-2 text-xl font-semibold tracking-tight text-gray-900">
+                Keep me in the loop
+              </h3>
+              <p className="mb-4 max-w-2xl text-[15px] leading-relaxed text-gray-700">
+                Get occasional product updates and practical automation guides.
+                No spam, just useful drops.
+              </p>
+              <WaitlistForm />
+            </div>
+
             <div className="mb-6">
               <a href="/den" className="doc-button">
                 Explore Den preorder
@@ -359,7 +373,6 @@ export default async function Home() {
                 </svg>
               </a>
             </div>
-
           </section>
 
           <hr />
