@@ -134,6 +134,8 @@ body {
   width: calc(100vw - 3rem);
   max-width: none;
   min-height: calc(100vh - 8rem);
+  height: calc(100vh - 8rem);
+  height: calc(100dvh - 8rem);
   border-radius: 2rem;
   background: transparent;
   border-color: transparent;
@@ -143,6 +145,10 @@ body {
 
 .ow-card-shell .ow-card-body {
   min-height: calc(100vh - 8rem);
+  height: calc(100vh - 8rem);
+  height: calc(100dvh - 8rem);
+  display: flex;
+  flex-direction: column;
   padding: 0;
 }
 
@@ -975,11 +981,15 @@ body {
   .ow-card-shell {
     width: calc(100vw - 1rem);
     min-height: calc(100vh - 5.2rem);
+    height: calc(100vh - 5.2rem);
+    height: calc(100dvh - 5.2rem);
     border-radius: 0.95rem;
   }
 
   .ow-card-shell .ow-card-body {
     min-height: calc(100vh - 5.2rem);
+    height: calc(100vh - 5.2rem);
+    height: calc(100dvh - 5.2rem);
     padding: 0.72rem;
   }
 

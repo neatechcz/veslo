@@ -1465,7 +1465,7 @@ export function CloudControlPanel() {
         ) : null}
 
         {step === 2 ? (
-          <div className="space-y-3">
+          <div className="flex h-full flex-col gap-3">
             <div className="mb-3 flex items-center justify-between rounded-[18px] border border-slate-200 bg-white p-2 lg:hidden">
               <div className="flex gap-2">
                 <button
@@ -1498,8 +1498,8 @@ export function CloudControlPanel() {
             </div>
 
             {shellView === "workers" ? (
-              <div className="flex h-full flex-col gap-4 lg:flex-row">
-                <aside className="hidden w-[260px] shrink-0 flex-col justify-between rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm lg:flex">
+              <div className="flex h-full min-h-0 flex-col gap-4 lg:flex-row">
+                <aside className="hidden h-full w-[260px] shrink-0 flex-col justify-between rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm lg:flex">
                   <div>
                     <div className="mb-6">
                       <div className="mb-3 flex items-center gap-2 px-2 text-xs font-medium uppercase tracking-[0.08em] text-slate-400">
@@ -1540,7 +1540,7 @@ export function CloudControlPanel() {
                   </div>
                 </aside>
 
-                <section className="w-full shrink-0 rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm md:w-[340px]">
+                <section className="flex h-full w-full shrink-0 flex-col rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm md:w-[340px]">
                   <div className="mb-6 flex items-center justify-between">
                     <h2 className="text-xl font-semibold tracking-tight text-slate-900">Workers</h2>
                     <button
@@ -1622,7 +1622,7 @@ export function CloudControlPanel() {
                   {workersBusy ? <p className="mb-2 text-xs text-slate-500">Loading workers...</p> : null}
                   {workersError ? <p className="mb-2 text-xs font-medium text-rose-600">{workersError}</p> : null}
 
-                  <div className="space-y-3 overflow-y-auto pr-1">
+                  <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
                     {filteredWorkers.map((item) => {
                       const meta = getWorkerStatusMeta(item.status);
                       const isActive = workerLookupId === item.workerId;
@@ -1689,14 +1689,14 @@ export function CloudControlPanel() {
                   ) : null}
                 </section>
 
-                <section className="min-w-0 flex-1 rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+                <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm md:p-8">
                   {selectedWorker ? (
                     <>
                       <div className="mb-2 px-1">
                         <h1 className="mb-1 text-2xl font-bold tracking-tight text-slate-900">Overview</h1>
                       </div>
 
-                      <div className="space-y-6 overflow-y-auto pb-2">
+                      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto pb-2">
                         <div className="rounded-[28px] border border-slate-100 bg-white p-6">
                           <h2 className="mb-2 text-3xl font-bold tracking-tight text-slate-900">
                             {activeWorker?.workerName ?? selectedWorker.workerName}
@@ -1937,7 +1937,7 @@ export function CloudControlPanel() {
                 </section>
               </div>
             ) : (
-              <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+              <section className="flex h-full flex-1 flex-col rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm md:p-8">
                 <h2 className="text-2xl font-bold tracking-tight text-slate-900">Billing</h2>
                 <p className="mt-1 text-sm text-slate-500">Handle checkout when launching a new worker.</p>
                 {checkoutUrl ? (
