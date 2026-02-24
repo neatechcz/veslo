@@ -504,6 +504,89 @@ export function buildOpenworkWorkspaceBaseUrl(hostUrl: string, workspaceId?: str
   }
 }
 
+export const DEFAULT_OPENWORK_CONNECT_APP_URL = "https://app.openwork.software";
+
+const OPENWORK_INVITE_PARAM_URL = "ow_url";
+const OPENWORK_INVITE_PARAM_TOKEN = "ow_token";
+const OPENWORK_INVITE_PARAM_STARTUP = "ow_startup";
+
+export type OpenworkConnectInvite = {
+  url: string;
+  token?: string;
+  startup?: "server";
+};
+
+export function buildOpenworkConnectInviteUrl(input: {
+  workspaceUrl: string;
+  token?: string | null;
+  appUrl?: string | null;
+  startup?: "server";
+}) {
+  const workspaceUrl = normalizeOpenworkServerUrl(input.workspaceUrl ?? "") ?? "";
+  if (!workspaceUrl) return "";
+
+  const base = normalizeOpenworkServerUrl(input.appUrl ?? "") ?? DEFAULT_OPENWORK_CONNECT_APP_URL;
+
+  try {
+    const url = new URL(base);
+    const search = new URLSearchParams(url.search);
+    search.set(OPENWORK_INVITE_PARAM_URL, workspaceUrl);
+
+    const token = input.token?.trim() ?? "";
+    if (token) {
+      search.set(OPENWORK_INVITE_PARAM_TOKEN, token);
+    }
+
+    const startup = input.startup ?? "server";
+    search.set(OPENWORK_INVITE_PARAM_STARTUP, startup);
+
+    url.search = search.toString();
+    return url.toString();
+  } catch {
+    const search = new URLSearchParams();
+    search.set(OPENWORK_INVITE_PARAM_URL, workspaceUrl);
+    const token = input.token?.trim() ?? "";
+    if (token) {
+      search.set(OPENWORK_INVITE_PARAM_TOKEN, token);
+    }
+    search.set(OPENWORK_INVITE_PARAM_STARTUP, input.startup ?? "server");
+    return `${DEFAULT_OPENWORK_CONNECT_APP_URL}?${search.toString()}`;
+  }
+}
+
+export function readOpenworkConnectInviteFromSearch(input: string | URLSearchParams) {
+  const search =
+    typeof input === "string"
+      ? new URLSearchParams(input.startsWith("?") ? input.slice(1) : input)
+      : input;
+
+  const rawUrl = search.get(OPENWORK_INVITE_PARAM_URL)?.trim() ?? "";
+  const url = normalizeOpenworkServerUrl(rawUrl);
+  if (!url) return null;
+
+  const token = search.get(OPENWORK_INVITE_PARAM_TOKEN)?.trim() ?? "";
+  const startupRaw = search.get(OPENWORK_INVITE_PARAM_STARTUP)?.trim() ?? "";
+  const startup = startupRaw === "server" ? "server" : undefined;
+
+  return {
+    url,
+    token: token || undefined,
+    startup,
+  } satisfies OpenworkConnectInvite;
+}
+
+export function stripOpenworkConnectInviteFromUrl(input: string) {
+  try {
+    const url = new URL(input);
+    url.searchParams.delete(OPENWORK_INVITE_PARAM_URL);
+    url.searchParams.delete(OPENWORK_INVITE_PARAM_TOKEN);
+    url.searchParams.delete(OPENWORK_INVITE_PARAM_STARTUP);
+    return url.toString();
+  } catch {
+    return input;
+  }
+}
+
 export function readOpenworkServerSettings(): OpenworkServerSettings {
   if (typeof window === "undefined") return {};
   try {

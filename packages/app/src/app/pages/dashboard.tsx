@@ -21,7 +21,11 @@ import {
   isTauriRuntime,
   normalizeDirectoryPath,
 } from "../utils";
-import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../lib/openwork-server";
+import {
+  buildOpenworkConnectInviteUrl,
+  buildOpenworkWorkspaceBaseUrl,
+  createOpenworkServerClient,
+} from "../lib/openwork-server";
 import type {
   OpenworkAuditEntry,
   OpenworkSoulHeartbeatEntry,
@@ -665,7 +669,18 @@ export default function DashboardView(props: DashboardViewProps) {
         : null;
       const url = mountedUrl || hostUrl;
       const token = props.openworkServerHostInfo?.clientToken?.trim() || "";
+      const inviteUrl = buildOpenworkConnectInviteUrl({
+        workspaceUrl: url,
+        token,
+      });
       return [
+        {
+          label: "OpenWork invite link",
+          value: inviteUrl,
+          secret: true,
+          placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
+          hint: "One link that prefills worker URL and token.",
+        },
         {
           label: "OpenWork worker URL",
           value: url,
@@ -695,7 +710,17 @@ export default function DashboardView(props: DashboardViewProps) {
         ws.openworkToken?.trim() ||
         props.openworkServerSettings.token?.trim() ||
         "";
+      const inviteUrl = buildOpenworkConnectInviteUrl({
+        workspaceUrl: url,
+        token,
+      });
       return [
+        {
+          label: "OpenWork invite link",
+          value: inviteUrl,
+          secret: true,
+          hint: "One link that prefills worker URL and token.",
+        },
         {
           label: "OpenWork worker URL",
           value: url,

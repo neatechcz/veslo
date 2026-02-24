@@ -55,7 +55,11 @@ import RenameSessionModal from "../components/rename-session-modal";
 import ProviderAuthModal, { type ProviderOAuthStartResult } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import StatusBar from "../components/status-bar";
-import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../lib/openwork-server";
+import {
+  buildOpenworkConnectInviteUrl,
+  buildOpenworkWorkspaceBaseUrl,
+  createOpenworkServerClient,
+} from "../lib/openwork-server";
 import type {
   OpenworkServerClient,
   OpenworkServerSettings,
@@ -1994,7 +1998,18 @@ export default function SessionView(props: SessionViewProps) {
         : null;
       const url = mountedUrl || hostUrl;
       const token = props.openworkServerHostInfo?.clientToken?.trim() || "";
+      const inviteUrl = buildOpenworkConnectInviteUrl({
+        workspaceUrl: url,
+        token,
+      });
       return [
+        {
+          label: "OpenWork invite link",
+          value: inviteUrl,
+          secret: true,
+          placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
+          hint: "One link that prefills worker URL and token.",
+        },
         {
           label: "OpenWork worker URL",
           value: url,
@@ -2024,7 +2039,17 @@ export default function SessionView(props: SessionViewProps) {
         ws.openworkToken?.trim() ||
         props.openworkServerSettings.token?.trim() ||
         "";
+      const inviteUrl = buildOpenworkConnectInviteUrl({
+        workspaceUrl: url,
+        token,
+      });
       return [
+        {
+          label: "OpenWork invite link",
+          value: inviteUrl,
+          secret: true,
+          hint: "One link that prefills worker URL and token.",
+        },
         {
           label: "OpenWork worker URL",
           value: url,
