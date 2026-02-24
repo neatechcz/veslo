@@ -62,12 +62,6 @@ export default async function Home() {
                 />
               </svg>
             </a>
-            <a
-              href="/docs"
-              className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-[13px] font-semibold text-gray-800 transition hover:bg-gray-50"
-            >
-              Read docs
-            </a>
             <div className="ml-2 flex gap-4">
               <a
                 href="/download#windows"

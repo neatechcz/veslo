@@ -56,7 +56,7 @@
     "primary": {
       "type": "button",
       "label": "Download OpenWork",
-      "href": "https://github.com/different-ai/openwork/releases"
+      "href": "https://openwork.software/download"
     }
   }
 }
