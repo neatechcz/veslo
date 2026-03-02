@@ -132,6 +132,7 @@ function getAuthInfoForMode(mode: AuthMode): string {
 
 const LAST_WORKER_STORAGE_KEY = "openwork:web:last-worker";
 const PENDING_GITHUB_SIGNUP_STORAGE_KEY = "openwork:web:pending-github-signup";
+const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
 const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "OpenWork User";
 const OPENWORK_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL ?? "").trim();
@@ -913,7 +914,18 @@ export function CloudControlPanel() {
   const [authInfo, setAuthInfo] = useState(getAuthInfoForMode("sign-up"));
   const [authError, setAuthError] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    const token = window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+    if (!token || token.trim().length === 0) {
+      return null;
+    }
+
+    return token;
+  });
 
   const [workerName, setWorkerName] = useState("Founder Ops Pilot");
   const [worker, setWorker] = useState<WorkerLaunch | null>(null);
@@ -1112,7 +1124,9 @@ export function CloudControlPanel() {
   async function refreshBilling(options: { includeCheckout?: boolean; quiet?: boolean } = {}) {
     if (!user) {
       setBillingSummary(null);
-      setBillingError(null);
+      if (!options.quiet) {
+        setBillingError("Sign in to view billing details.");
+      }
       return null;
     }
 
@@ -1254,6 +1268,9 @@ export function CloudControlPanel() {
 
     if (!response.ok) {
       setUser(null);
+      if (response.status === 401 && authToken) {
+        setAuthToken(null);
+      }
       if (!quiet) {
         setAuthError("No active session found. Sign in first.");
       }
@@ -1274,8 +1291,20 @@ export function CloudControlPanel() {
   }
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (authToken) {
+      window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, authToken);
+    } else {
+      window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    }
+  }, [authToken]);
+
+  useEffect(() => {
     void refreshSession(true);
-  }, []);
+  }, [authToken]);
 
   useEffect(() => {
     if (!user) {
@@ -1302,7 +1331,7 @@ export function CloudControlPanel() {
       return;
     }
 
-    void refreshBilling({ quiet: true });
+    void refreshBilling();
   }, [shellView, user?.id, authToken]);
 
   useEffect(() => {
@@ -1346,6 +1375,7 @@ export function CloudControlPanel() {
     setCheckoutUrl(null);
     setShellView("billing");
     setLaunchStatus("Checkout return detected. Click launch to continue worker provisioning.");
+    setAuthInfo("Checkout return detected. Sign in to continue to Billing.");
     appendEvent("success", "Returned from checkout", `Session ${shortValue(customerSessionToken)}`);
     trackPosthogEvent("den_paywall_checkout_returned", {
       source: "polar",
@@ -1414,13 +1444,13 @@ export function CloudControlPanel() {
   }, [worker]);
 
   useEffect(() => {
-    if (user || checkoutUrl || paymentReturned || worker) {
+    if (user || checkoutUrl) {
       setStep(2);
       return;
     }
 
     setStep(1);
-  }, [worker, user, checkoutUrl, paymentReturned]);
+  }, [user, checkoutUrl]);
 
   useEffect(() => {
     if (step !== 2) {
@@ -2693,7 +2723,12 @@ export function CloudControlPanel() {
 
                 {billingBusy && !billingSummary ? <p className="text-sm text-slate-500">Loading billing status...</p> : null}
 
-                {billingSummary ? (
+                {!user ? (
+                  <div className="rounded-[16px] border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-sm font-semibold text-slate-900">Sign in required</p>
+                    <p className="mt-1 text-sm text-slate-600">Sign in to view subscription details, manage cancellation, and access invoices.</p>
+                  </div>
+                ) : billingSummary ? (
                   <div className="space-y-4">
                     <div className="grid gap-4 md:grid-cols-2">
                       <div className="rounded-[18px] border border-slate-200 bg-slate-50 p-4">
