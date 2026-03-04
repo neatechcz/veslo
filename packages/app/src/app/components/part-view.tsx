@@ -493,10 +493,15 @@ export default function PartView(props: Props) {
     if (typeof messageId === "number") return `msg:${String(messageId)}`;
     return "";
   });
-  const [expandedLongText, setExpandedLongText] = createSignal(false);
-  createEffect(() => {
+  const isPersistedExpanded = () => {
     const id = textPartStableId();
-    setExpandedLongText(Boolean(id && expandedLargeTextPartIds.has(id)));
+    return Boolean(id && expandedLargeTextPartIds.has(id));
+  };
+  const [expandedLongText, setExpandedLongText] = createSignal(isPersistedExpanded());
+  createEffect(() => {
+    if (!isPersistedExpanded()) return;
+    if (expandedLongText()) return;
+    setExpandedLongText(true);
   });
   const rawText = createMemo(() => {
     if (p().type !== "text") return "";
@@ -505,7 +510,9 @@ export default function PartView(props: Props) {
   const shouldCollapseLongText = createMemo(
     () => renderMarkdown() && p().type === "text" && rawText().length >= LARGE_TEXT_COLLAPSE_CHAR_THRESHOLD,
   );
-  const collapsedLongText = createMemo(() => shouldCollapseLongText() && !expandedLongText());
+  const collapsedLongText = createMemo(
+    () => shouldCollapseLongText() && !(expandedLongText() || isPersistedExpanded()),
+  );
   const collapsedPreviewText = createMemo(() => {
     const text = rawText();
     if (!collapsedLongText()) return text;
