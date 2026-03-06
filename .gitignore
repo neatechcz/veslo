@@ -41,3 +41,6 @@ vendor/opencode/
 .opencode/openwork/
 .vercel
 .env*.local
+
+# Triple-Agent Protocol solutions
+.solutions/

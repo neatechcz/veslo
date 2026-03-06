@@ -88,6 +88,7 @@ export type DashboardViewProps = {
   startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
   completeProviderAuthOAuth: (providerId: string, methodIndex: number, code?: string) => Promise<string | void>;
   submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
+  testProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
   view: View;
   setView: (view: View, sessionId?: string) => void;
   startupPreference: StartupPreference | null;
@@ -437,6 +438,18 @@ export default function DashboardView(props: DashboardViewProps) {
     try {
       await props.submitProviderApiKey(providerId, apiKey);
       props.closeProviderAuthModal();
+    } catch {
+      // Errors are surfaced in the modal.
+    } finally {
+      setProviderAuthActionBusy(false);
+    }
+  };
+
+  const handleProviderAuthApiKeyTest = async (providerId: string, apiKey: string) => {
+    if (providerAuthActionBusy()) return;
+    setProviderAuthActionBusy(true);
+    try {
+      await props.testProviderApiKey(providerId, apiKey);
     } catch {
       // Errors are surfaced in the modal.
     } finally {
@@ -1434,6 +1447,7 @@ export default function DashboardView(props: DashboardViewProps) {
           authMethods={props.providerAuthMethods}
           onSelect={handleProviderAuthSelect}
           onSubmitApiKey={handleProviderAuthApiKey}
+          onTestApiKey={handleProviderAuthApiKeyTest}
           onSubmitOAuth={handleProviderAuthOAuth}
           onClose={props.closeProviderAuthModal}
         />

@@ -1980,11 +1980,106 @@ export default function App() {
     }
   }
 
-  async function submitProviderApiKey(providerId: string, apiKey: string) {
-    setProviderAuthError(null);
+  const resolveProviderConnectionTestModelID = (providerId: string) => {
+    const provider = providers().find((item) => item.id === providerId);
+    if (!provider) {
+      throw new Error(`Unknown provider: ${providerId}`);
+    }
+
+    if (providerId === "openai" && provider.models?.["gpt-4o-mini"]) {
+      return "gpt-4o-mini";
+    }
+
+    const configuredDefault = providerDefaults()[providerId];
+    if (configuredDefault && provider.models?.[configuredDefault]) {
+      return configuredDefault;
+    }
+
+    const firstModel = Object.keys(provider.models ?? {})[0];
+    if (firstModel) {
+      return firstModel;
+    }
+
+    throw new Error(`No models available for ${providerId}`);
+  };
+
+  const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, label: string) => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(`Timed out during ${label}.`));
+      }, timeoutMs);
+    });
+
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  };
+
+  const runProviderConnectionTest = async (c: Client, providerId: string) => {
+    const modelID = resolveProviderConnectionTestModelID(providerId);
+    const directory = workspaceStore.activeWorkspaceRoot().trim();
+    const created = unwrap(
+      await c.session.create({
+        directory: directory || undefined,
+        title: `[OpenWork] Connection test · ${providerId}`,
+      }),
+    );
+    const sessionID = created.id;
+
+    try {
+      unwrap(
+        await withTimeout(
+          c.session.prompt({
+            sessionID,
+            model: { providerID: providerId, modelID },
+            parts: [{ type: "text", text: "Connection test. Reply with OK." } as TextPartInput],
+          }),
+          30_000,
+          "provider connection test",
+        ),
+      );
+    } finally {
+      try {
+        await c.session.abort({ sessionID });
+      } catch {
+        // ignore
+      }
+      try {
+        await c.session.delete({ sessionID });
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const refreshProviderState = async (c: Client, forceConnectedProviderId?: string) => {
+    const updated = unwrap(await c.provider.list());
+    if (!forceConnectedProviderId) {
+      globalSync.set("provider", updated);
+      return;
+    }
+
+    const mergedConnected = Array.from(
+      new Set([...(updated.connected ?? []), forceConnectedProviderId]),
+    );
+    globalSync.set("provider", {
+      ...updated,
+      connected: mergedConnected,
+    });
+  };
+
+  const saveAndTestProviderApiKey = async (providerId: string, apiKey: string) => {
     const c = client();
     if (!c) {
       throw new Error("Not connected to a server");
+    }
+
+    const resolvedProviderId = providerId.trim();
+    if (!resolvedProviderId) {
+      throw new Error("Provider ID is required");
     }
 
     const trimmed = apiKey.trim();
@@ -1992,16 +2087,33 @@ export default function App() {
       throw new Error("API key is required");
     }
 
+    await c.auth.set({
+      providerID: resolvedProviderId,
+      auth: { type: "api", key: trimmed },
+    });
+    await runProviderConnectionTest(c, resolvedProviderId);
+    await refreshProviderState(c, resolvedProviderId);
+
+    return `Connected ${resolvedProviderId}`;
+  };
+
+  async function submitProviderApiKey(providerId: string, apiKey: string) {
+    setProviderAuthError(null);
     try {
-      await c.auth.set({
-        providerID: providerId,
-        auth: { type: "api", key: trimmed },
-      });
-      const updated = unwrap(await c.provider.list());
-      globalSync.set("provider", updated);
-      return `Connected ${providerId}`;
+      return await saveAndTestProviderApiKey(providerId, apiKey);
     } catch (error) {
-      const message = describeProviderError(error, "Failed to save API key");
+      const message = describeProviderError(error, "Connection test failed");
+      setProviderAuthError(message);
+      throw error instanceof Error ? error : new Error(message);
+    }
+  }
+
+  async function testProviderApiKey(providerId: string, apiKey: string) {
+    setProviderAuthError(null);
+    try {
+      return await saveAndTestProviderApiKey(providerId, apiKey);
+    } catch (error) {
+      const message = describeProviderError(error, "Connection test failed");
       setProviderAuthError(message);
       throw error instanceof Error ? error : new Error(message);
     }
@@ -5697,6 +5809,7 @@ export default function App() {
       startProviderAuth,
       completeProviderAuthOAuth,
       submitProviderApiKey,
+      testProviderApiKey,
       view: currentView(),
       setView,
       startupPreference: startupPreference(),
@@ -6027,6 +6140,7 @@ export default function App() {
     startProviderAuth: startProviderAuth,
     completeProviderAuthOAuth: completeProviderAuthOAuth,
     submitProviderApiKey: submitProviderApiKey,
+    testProviderApiKey: testProviderApiKey,
     openProviderAuthModal: openProviderAuthModal,
     closeProviderAuthModal: closeProviderAuthModal,
     providerAuthModalOpen: providerAuthModalOpen(),

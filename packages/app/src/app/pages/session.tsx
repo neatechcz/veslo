@@ -208,6 +208,7 @@ export type SessionViewProps = {
   startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
   completeProviderAuthOAuth: (providerId: string, methodIndex: number, code?: string) => Promise<string | void>;
   submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
+  testProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
   openProviderAuthModal: () => Promise<void>;
   closeProviderAuthModal: () => void;
   providerAuthModalOpen: boolean;
@@ -2550,6 +2551,20 @@ export default function SessionView(props: SessionViewProps) {
     }
   };
 
+  const handleProviderAuthApiKeyTest = async (providerId: string, apiKey: string) => {
+    if (providerAuthActionBusy()) return;
+    setProviderAuthActionBusy(true);
+    try {
+      const message = await props.testProviderApiKey(providerId, apiKey);
+      setToastMessage(message || "Connection verified");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Connection test failed";
+      setToastMessage(message);
+    } finally {
+      setProviderAuthActionBusy(false);
+    }
+  };
+
   const shareWorkspace = createMemo(() => {
     const id = shareWorkspaceId();
     if (!id) return null;
@@ -4141,6 +4156,7 @@ export default function SessionView(props: SessionViewProps) {
         authMethods={props.providerAuthMethods}
         onSelect={handleProviderAuthSelect}
         onSubmitApiKey={handleProviderAuthApiKey}
+        onTestApiKey={handleProviderAuthApiKeyTest}
         onSubmitOAuth={handleProviderAuthOAuth}
         onClose={props.closeProviderAuthModal}
       />

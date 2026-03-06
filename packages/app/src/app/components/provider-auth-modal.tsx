@@ -43,6 +43,7 @@ export type ProviderAuthModalProps = {
   authMethods: Record<string, ProviderAuthMethod[]>;
   onSelect: (providerId: string) => Promise<ProviderOAuthStartResult>;
   onSubmitApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
+  onTestApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
   onSubmitOAuth: (providerId: string, methodIndex: number, code?: string) => Promise<string | void>;
   onClose: () => void;
 };
@@ -109,6 +110,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const [searchQuery, setSearchQuery] = createSignal("");
   const [activeEntryIndex, setActiveEntryIndex] = createSignal(0);
   const [localError, setLocalError] = createSignal<string | null>(null);
+  const [apiAction, setApiAction] = createSignal<"save" | "test" | null>(null);
+  const [apiValidationLocked, setApiValidationLocked] = createSignal(false);
   let searchInputEl: HTMLInputElement | undefined;
 
   const selectedEntry = createMemo(() =>
@@ -149,6 +152,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setSearchQuery("");
     setActiveEntryIndex(0);
     setLocalError(null);
+    setApiAction(null);
+    setApiValidationLocked(false);
   };
 
   createEffect(() => {
@@ -282,11 +287,42 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     }
 
     setLocalError(null);
+    setApiAction("save");
+    setApiValidationLocked(false);
     try {
       await props.onSubmitApiKey(entry.id, trimmed);
+      setApiValidationLocked(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save API key";
       setLocalError(message);
+      setApiValidationLocked(true);
+    } finally {
+      setApiAction(null);
+    }
+  };
+
+  const handleApiTest = async () => {
+    const entry = selectedEntry();
+    if (!entry || actionDisabled()) return;
+
+    const trimmed = apiKeyInput().trim();
+    if (!trimmed) {
+      setLocalError("API key is required.");
+      return;
+    }
+
+    setLocalError(null);
+    setApiAction("test");
+    setApiValidationLocked(false);
+    try {
+      await props.onTestApiKey(entry.id, trimmed);
+      setApiValidationLocked(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Connection test failed";
+      setLocalError(message);
+      setApiValidationLocked(true);
+    } finally {
+      setApiAction(null);
     }
   };
 
@@ -325,6 +361,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     }
 
     if (resolvedView() === "api" && hasMethod(selectedEntry(), "oauth")) {
+      if (apiValidationLocked()) return;
       setView("method");
       setApiKeyInput("");
       setLocalError(null);
@@ -335,7 +372,10 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   const submittingLabel = () => {
     if (!props.submitting) return null;
-    if (resolvedView() === "api") return "Saving API key...";
+    if (resolvedView() === "api") {
+      if (apiAction() === "test") return "Testing connection...";
+      return "Saving and testing API key...";
+    }
     if (resolvedView() === "oauth-code") return "Verifying authorization code...";
     if (resolvedView() === "oauth-auto") return "Waiting for OAuth confirmation...";
     return "Opening authentication...";
@@ -542,7 +582,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                         <div class="text-sm font-medium text-gray-12">{selectedEntry()!.name}</div>
                         <div class="text-xs text-gray-10 mt-1">Paste your API key to connect.</div>
                       </div>
-                      <Button variant="ghost" onClick={handleBack} disabled={actionDisabled()}>
+                      <Button variant="ghost" onClick={handleBack} disabled={actionDisabled() || apiValidationLocked()}>
                         Back
                       </Button>
                     </div>
@@ -566,17 +606,29 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       </div>
                     </Show>
                     <div class="flex items-center justify-between gap-3">
-                      <div class="text-[11px] text-gray-9">
-                        Keys are stored locally by OpenCode.
+                      <div class="text-[11px] text-gray-9">Keys are stored locally by OpenCode.</div>
+                      <div class="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => void handleApiTest()}
+                          disabled={actionDisabled() || !apiKeyInput().trim()}
+                        >
+                          {props.submitting && apiAction() === "test" ? "Testing..." : "Test connection"}
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          onClick={() => void handleApiSubmit()}
+                          disabled={actionDisabled() || !apiKeyInput().trim()}
+                        >
+                          {props.submitting && apiAction() !== "test" ? "Saving..." : "Save & test"}
+                        </Button>
                       </div>
-                      <Button
-                        variant="secondary"
-                        onClick={handleApiSubmit}
-                        disabled={actionDisabled() || !apiKeyInput().trim()}
-                      >
-                        {props.submitting ? "Saving..." : "Save key"}
-                      </Button>
                     </div>
+                    <Show when={apiValidationLocked()}>
+                      <div class="text-[11px] text-amber-11">
+                        Connection failed. Update the key and retry, or cancel.
+                      </div>
+                    </Show>
                   </div>
                 </Show>
 
@@ -689,7 +741,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
               <span class="font-mono">/models</span> to pick a default.
             </div>
             <Button variant="ghost" onClick={handleClose} disabled={actionDisabled()}>
-              Close
+              {resolvedView() === "api" ? "Cancel" : "Close"}
             </Button>
           </div>
         </div>
