@@ -13,6 +13,11 @@ if (!tag) {
   process.exit(1);
 }
 
+if (!/^v\d{4}\.(?:[1-9]|1[0-2])\.\d+(?:[.-][0-9A-Za-z.-]+)?$/.test(tag)) {
+  console.error(`Invalid release tag '${tag}'. Expected CalVer format vYYYY.M.P`);
+  process.exit(1);
+}
+
 const version = tag.startsWith("v") ? tag.slice(1) : tag;
 
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));

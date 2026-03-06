@@ -33,6 +33,17 @@ const FILE_SESSION_MAX_BATCH_ITEMS = 64;
 const FILE_SESSION_MAX_FILE_BYTES = 5_000_000;
 const FILE_SESSION_CATALOG_DEFAULT_LIMIT = 2000;
 const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
+export const REDACTED_SECRET_VALUE = "[REDACTED]";
+
+const REDACTED_CONFIG_KEYS = [
+  "password",
+  "token",
+  "secret",
+  "apikey",
+  "accesskey",
+  "privatekey",
+  "authorization",
+];
 
 type LogLevel = "info" | "warn" | "error";
 
@@ -41,6 +52,37 @@ type LogAttributes = Record<string, unknown>;
 type ServerLogger = {
   log: (level: LogLevel, message: string, attributes?: LogAttributes) => void;
 };
+
+function normalizeConfigKey(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isSensitiveConfigKey(key: string): boolean {
+  const normalized = normalizeConfigKey(key);
+  if (!normalized) return false;
+  if (normalized === "tokensource") return false;
+  return REDACTED_CONFIG_KEYS.some((segment) => normalized === segment || normalized.endsWith(segment));
+}
+
+export function redactSensitiveConfig<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSensitiveConfig(item)) as T;
+  }
+  if (!value || typeof value !== "object") return value;
+
+  const input = value as Record<string, unknown>;
+  const output: Record<string, unknown> = {};
+  for (const [key, rawValue] of Object.entries(input)) {
+    if (isSensitiveConfigKey(key)) {
+      output[key] = rawValue === null || rawValue === undefined || rawValue === ""
+        ? rawValue
+        : REDACTED_SECRET_VALUE;
+      continue;
+    }
+    output[key] = redactSensitiveConfig(rawValue);
+  }
+  return output as T;
+}
 
 const LOG_LEVEL_NUMBERS: Record<LogLevel, number> = {
   info: 9,
@@ -1234,7 +1276,7 @@ function buildConfigTrigger(path: string): ReloadTrigger {
   };
 }
 
-function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
+export function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
   const { opencodeUsername, opencodePassword, ...rest } = workspace;
   const opencodeDirectory = resolveOpencodeDirectory(workspace);
   const opencode =
@@ -1243,7 +1285,6 @@ function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
           baseUrl: workspace.baseUrl,
           directory: opencodeDirectory ?? undefined,
           username: opencodeUsername,
-          password: opencodePassword,
         }
       : undefined;
   return {
@@ -1489,8 +1530,8 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "GET", "/workspace/:id/config", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const opencode = await readOpencodeConfig(workspace.path);
-    const openwork = await readOpenworkConfig(workspace.path);
+    const opencode = redactSensitiveConfig(await readOpencodeConfig(workspace.path));
+    const openwork = redactSensitiveConfig(await readOpenworkConfig(workspace.path));
     const lastAudit = await readLastAudit(workspace.path, workspace.id);
     return jsonResponse({ opencode, openwork, updatedAt: lastAudit?.timestamp ?? null });
   });
@@ -5108,8 +5149,8 @@ async function requireApproval(
 }
 
 async function exportWorkspace(workspace: WorkspaceInfo) {
-  const opencode = await readOpencodeConfig(workspace.path);
-  const openwork = await readOpenworkConfig(workspace.path);
+  const opencode = redactSensitiveConfig(await readOpencodeConfig(workspace.path));
+  const openwork = redactSensitiveConfig(await readOpenworkConfig(workspace.path));
   const skills = await listSkills(workspace.path, false);
   const commands = await listCommands(workspace.path, "workspace");
   const skillContents = await Promise.all(

@@ -13,6 +13,7 @@ import { once } from "node:events";
 
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { TuiHandle } from "./tui/app.js";
+import { sanitizeRuntimePayloadForLogs } from "./security.js";
 
 type ApprovalMode = "manual" | "auto";
 
@@ -5707,16 +5708,18 @@ async function runStart(args: ParsedArgs) {
       },
     };
 
+    const safePayload = sanitizeRuntimePayloadForLogs(payload);
+
     if (outputJson) {
-      console.log(JSON.stringify(payload, null, 2));
+      console.log(JSON.stringify(safePayload, null, 2));
     } else if (useTui) {
       logger.info(
         "Ready",
         {
-          workspace: payload.workspace,
-          opencode: payload.opencode,
-          openwork: payload.openwork,
-          opencodeRouter: payload.opencodeRouter,
+          workspace: safePayload.workspace,
+          opencode: safePayload.opencode,
+          openwork: safePayload.openwork,
+          opencodeRouter: safePayload.opencodeRouter,
         },
         "openwork-orchestrator",
       );
@@ -5724,26 +5727,26 @@ async function runStart(args: ParsedArgs) {
       logger.info(
         "Ready",
         {
-          workspace: payload.workspace,
-          opencode: payload.opencode,
-          openwork: payload.openwork,
-          opencodeRouter: payload.opencodeRouter,
+          workspace: safePayload.workspace,
+          opencode: safePayload.opencode,
+          openwork: safePayload.openwork,
+          opencodeRouter: safePayload.opencodeRouter,
         },
         "openwork-orchestrator",
       );
     } else {
       console.log("OpenWork orchestrator running");
-      console.log(`Run ID: ${runId}`);
-      console.log(`Workspace: ${payload.workspace}`);
-      console.log(`OpenCode: ${payload.opencode.baseUrl}`);
-      console.log(`OpenCode connect URL: ${payload.opencode.connectUrl}`);
-      if (payload.opencode.username && payload.opencode.password) {
-        console.log(`OpenCode auth: ${payload.opencode.username} / ${payload.opencode.password}`);
+      console.log(`Run ID: ${safePayload.runId}`);
+      console.log(`Workspace: ${safePayload.workspace}`);
+      console.log(`OpenCode: ${safePayload.opencode.baseUrl}`);
+      console.log(`OpenCode connect URL: ${safePayload.opencode.connectUrl}`);
+      if (safePayload.opencode.username) {
+        console.log("OpenCode auth: configured");
       }
-      console.log(`OpenWork server: ${payload.openwork.baseUrl}`);
-      console.log(`OpenWork connect URL: ${payload.openwork.connectUrl}`);
-      console.log(`Client token: ${payload.openwork.token}`);
-      console.log(`Host token: ${payload.openwork.hostToken}`);
+      console.log(`OpenWork server: ${safePayload.openwork.baseUrl}`);
+      console.log(`OpenWork connect URL: ${safePayload.openwork.connectUrl}`);
+      console.log("Client token: [REDACTED]");
+      console.log("Host token: [REDACTED]");
     }
 
     if (detachRequested) {

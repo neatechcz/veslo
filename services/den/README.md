@@ -10,6 +10,22 @@ cp .env.example .env
 pnpm dev
 ```
 
+## Development deploy environment
+
+For development deployments, use `services/den/.env.development` as the source of truth.
+
+Run Den with:
+
+```bash
+DOTENV_CONFIG_PATH=.env.development pnpm dev
+```
+
+If you need local `.env` compatibility for other tooling, copy it explicitly:
+
+```bash
+cp .env.development .env
+```
+
 ## Environment
 
 - `DATABASE_URL` MySQL connection URL

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * release:prepare [patch|minor|major]
+ * release:prepare [calver]
  *
  * Bumps versions, runs lockfile check, runs release:review,
  * commits, and tags — but does NOT push.
@@ -19,7 +19,7 @@ const args = process.argv.slice(2);
 
 const dryRun = args.includes("--dry-run");
 const ci = args.includes("--ci");
-const bumpType = args.find((a) => ["patch", "minor", "major"].includes(a)) ?? "patch";
+const bumpType = args.find((a) => ["calver", "patch", "minor", "major"].includes(a)) ?? "calver";
 
 const log = (msg) => console.log(`  ${msg}`);
 const heading = (msg) => console.log(`\n▸ ${msg}`);

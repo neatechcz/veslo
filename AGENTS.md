@@ -196,7 +196,7 @@ This captures OpenWork’s preferred reactivity + UI state patterns (avoid globa
 
 ## Skill: Trigger a Release
 
-OpenWork releases are built by GitHub Actions (`Release App`). A release is triggered by pushing a `v*` tag (e.g. `v0.1.6`).
+OpenWork releases are built by GitHub Actions (`Release App`). A release is triggered by pushing a `v*` tag (CalVer: `vYYYY.M.P`, e.g. `v2026.3.0`).
 `Release App` can also publish openwork-orchestrator sidecars and npm packages when enabled via workflow inputs or repo vars (`RELEASE_PUBLISH_SIDECARS`, `RELEASE_PUBLISH_NPM`).
 
 ### Standard release (recommended)
@@ -212,15 +212,13 @@ OpenWork releases are built by GitHub Actions (`Release App`). A release is trig
 
 You can bump all three non-interactively with:
 
-* `pnpm bump:patch`
-* `pnpm bump:minor`
-* `pnpm bump:major`
-* `pnpm bump:set -- 0.1.21`
+* `pnpm bump:calver`
+* `pnpm bump:set -- 2026.3.0`
 
 3.  Merge the version bump to `main`.
 4.  Create and push a tag:
-    * `git tag vX.Y.Z`
-    * `git push origin vX.Y.Z`
+    * `git tag vYYYY.M.P`
+    * `git push origin vYYYY.M.P`
 
 This triggers the workflow automatically (`on: push.tags: v*`).
 
@@ -228,12 +226,12 @@ This triggers the workflow automatically (`on: push.tags: v*`).
 
 If the workflow needs to be re-run for an existing tag (e.g. notarization retry), use workflow dispatch:
 
-* `gh workflow run "Release App" --repo different-ai/openwork -f tag=vX.Y.Z`
+* `gh workflow run "Release App" --repo different-ai/openwork -f tag=vYYYY.M.P`
 
 ### Verify
 
 * Runs: `gh run list --repo different-ai/openwork --workflow "Release App" --limit 5`
-* Release: `gh release view vX.Y.Z --repo different-ai/openwork`
+* Release: `gh release view vYYYY.M.P --repo different-ai/openwork`
 
 Confirm the DMG assets are attached and versioned correctly.
 
@@ -246,7 +244,7 @@ This is usually covered by `Release App` when `publish_sidecars` + `publish_npm`
 3.  Commit the bump.
 4.  Build and upload sidecar assets for the same version tag:
     * `pnpm --filter openwork-orchestrator build:sidecars`
-    * `gh release create openwork-orchestrator-vX.Y.Z packages/orchestrator/dist/sidecars/* --repo different-ai/openwork`
+    * `gh release create openwork-orchestrator-vYYYY.M.P packages/orchestrator/dist/sidecars/* --repo different-ai/openwork`
 5.  Publish:
     * `pnpm --filter openwork-orchestrator publish --access public`
 6.  Verify:

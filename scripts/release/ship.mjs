@@ -55,12 +55,12 @@ const tag = run("git describe --tags --exact-match HEAD", {
 if (!tag) {
   fail(
     "HEAD is not tagged. Run 'pnpm release:prepare' first.\n" +
-    "  (Expected a vX.Y.Z tag on HEAD)"
+    "  (Expected a CalVer tag like v2026.3.0 on HEAD)"
   );
 }
 
-if (!/^v\d+\.\d+\.\d+/.test(tag)) {
-  fail(`Tag '${tag}' does not look like a release tag (expected vX.Y.Z)`);
+if (!/^v\d{4}\.(?:[1-9]|1[0-2])\.\d+(?:[.-][0-9A-Za-z.-]+)?$/.test(tag)) {
+  fail(`Tag '${tag}' does not look like a CalVer release tag (expected vYYYY.M.P)`);
 }
 
 success(`Found tag: ${tag}`);

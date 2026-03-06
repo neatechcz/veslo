@@ -6,6 +6,7 @@ const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const args = process.argv.slice(2);
 const outputJson = args.includes("--json");
 const strict = args.includes("--strict");
+const calverPattern = /^\d{4}\.(?:[1-9]|1[0-2])\.\d+$/;
 
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const readText = (path) => readFileSync(path, "utf8");
@@ -50,6 +51,23 @@ const addCheck = (label, pass, details) => {
 };
 
 const addWarning = (message) => warnings.push(message);
+
+const versionChecks = [
+  ["app", versions.app],
+  ["desktop", versions.desktop],
+  ["tauri", versions.tauri],
+  ["cargo", versions.cargo],
+  ["openwork-orchestrator", versions.orchestrator],
+  ["openwork-server", versions.server],
+  ["opencode-router", versions.opencodeRouter],
+];
+for (const [label, value] of versionChecks) {
+  addCheck(
+    `${label} uses CalVer (YYYY.M.P)`,
+    typeof value === "string" && calverPattern.test(value),
+    value ?? "?",
+  );
+}
 
 addCheck(
   "App/desktop versions match",
@@ -101,7 +119,7 @@ if (versions.opencode.desktop || versions.opencode.orchestrator) {
 }
 
 const openworkServerRange = versions.orchestratorOpenworkServerRange ?? "";
-const openworkServerPinned = /^\d+\.\d+\.\d+/.test(openworkServerRange);
+const openworkServerPinned = calverPattern.test(openworkServerRange);
 if (!openworkServerRange) {
   addWarning("openwork-orchestrator is missing an openwork-server dependency.");
 } else if (!openworkServerPinned) {

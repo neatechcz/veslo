@@ -1,7 +1,7 @@
 {
   "name": "@different-ai/openwork-ui",
   "private": true,
-  "version": "0.11.134",
+  "version": "2026.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -22,6 +22,7 @@
     "test:local-file-path": "node scripts/local-file-path.mjs",
     "test:browser-entry": "node scripts/browser-entry.mjs",
     "test:e2e": "pnpm test:local-file-path && node scripts/e2e.mjs && node scripts/session-switch.mjs && node scripts/fs-engine.mjs && node scripts/browser-entry.mjs",
+    "bump:calver": "node scripts/bump-version.mjs calver",
     "bump:patch": "node scripts/bump-version.mjs patch",
     "bump:minor": "node scripts/bump-version.mjs minor",
     "bump:major": "node scripts/bump-version.mjs major",

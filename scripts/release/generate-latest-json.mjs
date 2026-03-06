@@ -39,7 +39,7 @@ function parseArgs(argv) {
   }
 
   if (!options.tag) {
-    throw new Error("Missing release tag. Pass --tag vX.Y.Z or set RELEASE_TAG.");
+    throw new Error("Missing release tag. Pass --tag vYYYY.M.P or set RELEASE_TAG.");
   }
 
   return options;

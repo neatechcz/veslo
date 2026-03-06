@@ -11,23 +11,23 @@ OpenWork releases should be deterministic, easy to reproduce, and fully verifiab
 ## App release (desktop)
 
 1. Bump versions (app + desktop + Tauri + Cargo):
-    - `pnpm bump:patch` or `pnpm bump:minor` or `pnpm bump:major`
+    - `pnpm bump:calver` (CalVer format: `YYYY.M.P`)
 2. Re-run `pnpm release:review`.
 3. Build sidecars for the desktop bundle:
    - `pnpm --filter @different-ai/openwork prepare:sidecar`
 4. Commit the version bump.
 5. Tag and push:
-   - `git tag vX.Y.Z`
-   - `git push origin vX.Y.Z`
+   - `git tag vYYYY.M.P`
+   - `git push origin vYYYY.M.P`
 
 ## openwork-orchestrator (npm + sidecars)
 
 1. Bump versions (includes `packages/orchestrator/package.json`):
-   - `pnpm bump:patch` or `pnpm bump:minor` or `pnpm bump:major`
+   - `pnpm bump:calver`
 2. Build sidecar assets and manifest:
    - `pnpm --filter openwork-orchestrator build:sidecars`
 3. Create the GitHub release for sidecars:
-   - `gh release create openwork-orchestrator-vX.Y.Z packages/orchestrator/dist/sidecars/* --repo different-ai/openwork`
+   - `gh release create openwork-orchestrator-vYYYY.M.P packages/orchestrator/dist/sidecars/* --repo different-ai/openwork`
 4. Publish the package:
    - `pnpm --filter openwork-orchestrator publish --access public`
 
@@ -40,7 +40,7 @@ OpenWork releases should be deterministic, easy to reproduce, and fully verifiab
 
 - `openwork start --workspace /path/to/workspace --check --check-events`
 - `gh run list --repo different-ai/openwork --workflow "Release App" --limit 5`
-- `gh release view vX.Y.Z --repo different-ai/openwork`
+- `gh release view vYYYY.M.P --repo different-ai/openwork`
 
 Use `pnpm release:review --json` when automating these checks in scripts or agents.
 

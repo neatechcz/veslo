@@ -8,15 +8,32 @@ const args = process.argv.slice(2);
 
 const usage = () => {
   console.log(`Usage:
-  node scripts/bump-version.mjs patch|minor|major
-  node scripts/bump-version.mjs --set x.y.z
-  node scripts/bump-version.mjs --dry-run [patch|minor|major|--set x.y.z]`);
+  node scripts/bump-version.mjs calver
+  node scripts/bump-version.mjs --set YYYY.M.P
+  node scripts/bump-version.mjs --date YYYY-MM calver
+  node scripts/bump-version.mjs --dry-run [calver|--set YYYY.M.P]`);
 };
 
 const isDryRun = args.includes("--dry-run");
 // pnpm forwards args to scripts with an explicit "--" separator; strip it so
-// "pnpm bump:set -- 0.1.21" works as expected.
-const filtered = args.filter((arg) => arg !== "--dry-run" && arg !== "--");
+// "pnpm bump:set -- 2026.3.0" works as expected.
+let dateOverride = null;
+const filtered = [];
+for (let index = 0; index < args.length; index += 1) {
+  const arg = args[index];
+  if (arg === "--dry-run" || arg === "--") continue;
+  if (arg === "--date") {
+    const value = args[index + 1];
+    if (!value) {
+      console.error("--date requires a value like 2026-03");
+      process.exit(1);
+    }
+    dateOverride = value;
+    index += 1;
+    continue;
+  }
+  filtered.push(arg);
+}
 
 if (!filtered.length) {
   usage();
@@ -29,30 +46,56 @@ let explicit = null;
 if (mode === "--set") {
   explicit = filtered[1] ?? null;
   if (!explicit) {
-    console.error("--set requires a version like 0.1.21");
+    console.error("--set requires a version like 2026.3.0");
     process.exit(1);
   }
 }
 
-const semverPattern = /^\d+\.\d+\.\d+$/;
+const calverPattern = /^\d{4}\.(?:[1-9]|1[0-2])\.\d+$/;
+const calverInputPattern = /^(\d{4})-(0?[1-9]|1[0-2])$/;
+const calverModes = new Set(["calver", "patch", "minor", "major"]);
 
 const readJson = async (filePath) => JSON.parse(await readFile(filePath, "utf8"));
 
-const bump = (value, bumpMode) => {
-  if (!semverPattern.test(value)) {
-    throw new Error(`Invalid version: ${value}`);
+const resolveCalverDate = () => {
+  if (!dateOverride) {
+    const now = new Date();
+    return { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 };
   }
-  const [major, minor, patch] = value.split(".").map(Number);
-  if (bumpMode === "major") return `${major + 1}.0.0`;
-  if (bumpMode === "minor") return `${major}.${minor + 1}.0`;
-  if (bumpMode === "patch") return `${major}.${minor}.${patch + 1}`;
-  throw new Error(`Unknown bump mode: ${bumpMode}`);
+
+  const match = dateOverride.match(calverInputPattern);
+  if (!match) {
+    throw new Error(`Invalid --date value: ${dateOverride}. Expected YYYY-MM.`);
+  }
+
+  return {
+    year: Number(match[1]),
+    month: Number(match[2]),
+  };
+};
+
+const bumpCalver = (value) => {
+  const { year, month } = resolveCalverDate();
+
+  if (calverPattern.test(value)) {
+    const [currentYear, currentMonth, currentPatch] = value.split(".").map(Number);
+    if (currentYear === year && currentMonth === month) {
+      return `${year}.${month}.${currentPatch + 1}`;
+    }
+  }
+
+  return `${year}.${month}.0`;
 };
 
 const targetVersion = async () => {
   if (explicit) return explicit;
   const pkg = await readJson(path.join(ROOT, "package.json"));
-  return bump(pkg.version, mode);
+  if (mode !== "calver") {
+    console.warn(
+      `[bump-version] '${mode}' now aliases to CalVer. Use 'pnpm bump:calver' explicitly.`,
+    );
+  }
+  return bumpCalver(pkg.version);
 };
 
 const updatePackageJson = async (nextVersion) => {
@@ -117,11 +160,11 @@ const updateTauriConfig = async (nextVersion) => {
 };
 
 const main = async () => {
-  if (explicit && !semverPattern.test(explicit)) {
-    throw new Error(`Invalid explicit version: ${explicit}`);
+  if (explicit && !calverPattern.test(explicit)) {
+    throw new Error(`Invalid explicit version: ${explicit}. Expected YYYY.M.P`);
   }
-  if (explicit === null && !["patch", "minor", "major"].includes(mode)) {
-    throw new Error(`Unknown mode: ${mode}`);
+  if (explicit === null && !calverModes.has(mode)) {
+    throw new Error(`Unknown mode: ${mode}. Use 'calver' or '--set YYYY.M.P'.`);
   }
 
   const nextVersion = await targetVersion();
