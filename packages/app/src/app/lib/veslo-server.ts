@@ -1,6 +1,7 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 import type { ScheduledJob } from "./tauri";
+import { resolveVesloCloudEnvironment } from "./cloud-policy";
 
 export type VesloServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "veslo" | "opencode" };
@@ -860,15 +861,13 @@ export function writeVesloServerSettings(next: VesloServerSettings): VesloServer
 export function hydrateVesloServerSettingsFromEnv() {
   if (typeof window === "undefined") return;
 
-  const envUrl = typeof import.meta.env?.VITE_VESLO_URL === "string"
-    ? import.meta.env.VITE_VESLO_URL.trim()
-    : "";
-  const envPort = typeof import.meta.env?.VITE_VESLO_PORT === "string"
-    ? import.meta.env.VITE_VESLO_PORT.trim()
-    : "";
-  const envToken = typeof import.meta.env?.VITE_VESLO_TOKEN === "string"
-    ? import.meta.env.VITE_VESLO_TOKEN.trim()
-    : "";
+  const envPort =
+    typeof import.meta.env?.VITE_VESLO_PORT === "string"
+      ? import.meta.env.VITE_VESLO_PORT.trim()
+      : "";
+  const resolvedEnv = resolveVesloCloudEnvironment(import.meta.env as Record<string, string | undefined>);
+  const envUrl = resolvedEnv.vesloUrl;
+  const envToken = resolvedEnv.token ?? "";
 
   if (!envUrl && !envPort && !envToken) return;
 

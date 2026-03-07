@@ -99,8 +99,8 @@ export function readStartupPreference(): "local" | "server" | null {
       window.localStorage.getItem(LEGACY_PREF_KEY) ??
       window.localStorage.getItem(LEGACY_PREF_KEY_ALT);
 
-    if (pref === "local" || pref === "server") return pref;
-    if (pref === "host") return "local";
+    if (pref === "local" || pref === "server") return "server";
+    if (pref === "host") return "server";
     if (pref === "client") return "server";
   } catch {
     // ignore
@@ -113,7 +113,7 @@ export function writeStartupPreference(nextPref: "local" | "server") {
   if (typeof window === "undefined") return;
 
   try {
-    window.localStorage.setItem(STARTUP_PREF_KEY, nextPref);
+    window.localStorage.setItem(STARTUP_PREF_KEY, nextPref === "local" ? "server" : nextPref);
     window.localStorage.removeItem(LEGACY_PREF_KEY);
     window.localStorage.removeItem(LEGACY_PREF_KEY_ALT);
   } catch {

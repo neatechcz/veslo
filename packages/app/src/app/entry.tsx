@@ -4,6 +4,7 @@ import { GlobalSyncProvider } from "./context/global-sync";
 import { LocalProvider } from "./context/local";
 import { ServerProvider } from "./context/server";
 import { isTauriRuntime } from "./utils";
+import { resolveVesloCloudEnvironment } from "./lib/cloud-policy";
 
 export default function AppEntry() {
   const defaultUrl = (() => {
@@ -12,10 +13,8 @@ export default function AppEntry() {
 
     // When running the web UI against an Veslo server (e.g. Docker dev stack),
     // use the server's `/opencode` proxy instead of loopback.
-    const vesloUrl =
-      typeof import.meta.env?.VITE_VESLO_URL === "string"
-        ? import.meta.env.VITE_VESLO_URL.trim()
-        : "";
+    const cloudEnv = resolveVesloCloudEnvironment(import.meta.env as Record<string, string | undefined>);
+    const vesloUrl = cloudEnv.vesloUrl;
     if (vesloUrl) {
       return `${vesloUrl.replace(/\/+$/, "")}/opencode`;
     }

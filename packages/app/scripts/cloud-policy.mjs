@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   CLOUD_ONLY_MODE,
@@ -36,4 +37,36 @@ assert.equal(devEnv.vesloUrl, "https://dev.veslo.example");
 const fallbackEnv = resolveVesloCloudEnvironment({});
 assert.equal(fallbackEnv.name, "production");
 
-console.log(JSON.stringify({ ok: true, checks: 11 }));
+const vesloServerSource = readFileSync(
+  new URL("../src/app/lib/veslo-server.ts", import.meta.url),
+  "utf8",
+);
+assert.equal(
+  vesloServerSource.includes("resolveVesloCloudEnvironment"),
+  true,
+  "veslo-server.ts must use environment resolver",
+);
+
+const entrySource = readFileSync(new URL("../src/app/entry.tsx", import.meta.url), "utf8");
+assert.equal(
+  entrySource.includes("resolveVesloCloudEnvironment"),
+  true,
+  "entry.tsx must use environment resolver",
+);
+
+const workspaceSource = readFileSync(
+  new URL("../src/app/context/workspace.ts", import.meta.url),
+  "utf8",
+);
+assert.equal(
+  workspaceSource.includes("filterRemoteWorkspaces(ws.workspaces)"),
+  true,
+  "workspace bootstrap must filter local workers",
+);
+assert.equal(
+  workspaceSource.includes("cloud_only_local_disabled"),
+  true,
+  "workspace store must expose cloud-only local action guard code",
+);
+
+console.log(JSON.stringify({ ok: true, checks: 15 }));
