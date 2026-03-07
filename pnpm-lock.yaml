@@ -189,15 +189,15 @@ importers:
       '@opentui/solid':
         specifier: 0.1.77
         version: 0.1.77(solid-js@1.9.9)(stage-js@1.0.0-alpha.17)(typescript@5.9.3)(web-tree-sitter@0.25.10)
-      opencode-router:
-        specifier: 0.11.134
-        version: link:../opencode-router
-      openwork-server:
-        specifier: 0.11.134
-        version: link:../server
       solid-js:
         specifier: 1.9.9
         version: 1.9.9
+      veslo-code-router:
+        specifier: 2026.3.0
+        version: link:../opencode-router
+      veslo-server:
+        specifier: 2026.3.0
+        version: link:../server
     devDependencies:
       '@opentui/core-darwin-arm64':
         specifier: 0.1.77

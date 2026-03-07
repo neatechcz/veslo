@@ -79,13 +79,49 @@ services:
             ;;
         esac
 
+        build_compiled_binary() {
+          local workdir="$$1"
+          local outfile="$$2"
+          shift 2
+
+          local build_log
+          build_log="$$(mktemp /tmp/veslo-bun-build.XXXXXX.log)"
+
+          if (cd "$$workdir" && bun build --compile --target "$$BUN_TARGET" "$$@" --outfile "$$outfile" 2>"$$build_log"); then
+            rm -f "$$build_log"
+            return 0
+          fi
+
+          local tmp_binary=""
+          tmp_binary="$$(sed -n 's/.*failed to rename \\([^ ]*\\.bun-build\\) to .*/\\1/p' "$$build_log" | tail -n1)"
+
+          if [ -z "$$tmp_binary" ]; then
+            tmp_binary="$$(cd "$$workdir" && ls -1t .*.bun-build 2>/dev/null | head -n1 || true)"
+            if [ -n "$$tmp_binary" ]; then
+              tmp_binary="$$workdir/$$tmp_binary"
+            fi
+          fi
+
+          if [ -n "$$tmp_binary" ] && [ -f "$$tmp_binary" ]; then
+            echo "[orchestrator] Bun rename fallback: $$tmp_binary -> $$outfile"
+            mv "$$tmp_binary" "$$outfile"
+            chmod +x "$$outfile" || true
+            rm -f "$$build_log"
+            return 0
+          fi
+
+          cat "$$build_log" >&2
+          rm -f "$$build_log"
+          return 1
+        }
+
         echo "[orchestrator] Building veslo-server binary (linux)..."
-        cd /app/packages/server && bun build --compile --target "$$BUN_TARGET" src/cli.ts --outfile "$$VESLO_SERVER_BIN"
+        build_compiled_binary /app/packages/server "$$VESLO_SERVER_BIN" src/cli.ts
 
         echo "[orchestrator] Building veslo-code-router binary (linux)..."
         VESLO_CODE_ROUTER_VERSION=$$(node -p "require('/app/packages/opencode-router/package.json').version")
-        cd /app/packages/opencode-router && bun build --compile --target "$$BUN_TARGET" src/cli.ts \
-          --define "__OPENCODE_ROUTER_VERSION__=\"$${VESLO_CODE_ROUTER_VERSION}\"" --outfile "$$VESLO_CODE_ROUTER_BIN"
+        build_compiled_binary /app/packages/opencode-router "$$VESLO_CODE_ROUTER_BIN" src/cli.ts \
+          --define "__OPENCODE_ROUTER_VERSION__=\"$${VESLO_CODE_ROUTER_VERSION}\""
 
         cd /app
 
