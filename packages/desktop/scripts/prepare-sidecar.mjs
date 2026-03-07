@@ -29,15 +29,15 @@ const readArg = (name) => {
 };
 
 const hasFlag = (name) => process.argv.slice(2).includes(name);
-const forceBuild = hasFlag("--force") || process.env.OPENWORK_SIDECAR_FORCE_BUILD === "1";
-const sidecarOverride = process.env.OPENWORK_SIDECAR_DIR?.trim() || readArg("--outdir");
+const forceBuild = hasFlag("--force") || process.env.VESLO_SIDECAR_FORCE_BUILD === "1";
+const sidecarOverride = process.env.VESLO_SIDECAR_DIR?.trim() || readArg("--outdir");
 const sidecarDir = sidecarOverride ? resolve(sidecarOverride) : join(__dirname, "..", "src-tauri", "sidecars");
 const packageJsonPath = resolve(__dirname, "..", "package.json");
 
 const opencodeGithubRepo = (() => {
   const raw =
     process.env.OPENCODE_GITHUB_REPO?.trim() ||
-    process.env.OPENWORK_OPENCODE_GITHUB_REPO?.trim() ||
+    process.env.VESLO_OPENCODE_GITHUB_REPO?.trim() ||
     "anomalyco/opencode";
   const normalized = raw
     .replace(/^https:\/\/github\.com\//i, "")
@@ -104,7 +104,7 @@ const opencodeRouterVersion = (() => {
 })();
 const chromeDevtoolsMcpVersion =
   process.env.CHROME_DEVTOOLS_MCP_VERSION?.trim() ||
-  process.env.OPENWORK_CHROME_DEVTOOLS_MCP_VERSION?.trim() ||
+  process.env.VESLO_CHROME_DEVTOOLS_MCP_VERSION?.trim() ||
   "0.17.0";
 
 // Target triple for native platform binaries
@@ -145,31 +145,31 @@ const bunTarget = (() => {
   }
 })();
 
-const opencodeBaseName = process.platform === "win32" ? "opencode.exe" : "opencode";
-const opencodePath = join(sidecarDir, opencodeBaseName);
-const opencodeTargetName = resolvedTargetTriple
-  ? `opencode-${resolvedTargetTriple}${process.platform === "win32" ? ".exe" : ""}`
+const vesloCodeBaseName = process.platform === "win32" ? "veslo-code.exe" : "veslo-code";
+const vesloCodePath = join(sidecarDir, vesloCodeBaseName);
+const vesloCodeTargetName = resolvedTargetTriple
+  ? `veslo-code-${resolvedTargetTriple}${process.platform === "win32" ? ".exe" : ""}`
   : null;
-const opencodeTargetPath = opencodeTargetName ? join(sidecarDir, opencodeTargetName) : null;
+const vesloCodeTargetPath = vesloCodeTargetName ? join(sidecarDir, vesloCodeTargetName) : null;
 
-const opencodeCandidatePath = opencodeTargetPath ?? opencodePath;
+const vesloCodeCandidatePath = vesloCodeTargetPath ?? vesloCodePath;
 let existingOpencodeVersion = null;
 
-// openwork-server paths
-const openworkServerBaseName = "openwork-server";
-const openworkServerName = process.platform === "win32" ? `${openworkServerBaseName}.exe` : openworkServerBaseName;
-const openworkServerPath = join(sidecarDir, openworkServerName);
-const openworkServerBuildName = bunTarget
-  ? `${openworkServerBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
-  : openworkServerName;
-const openworkServerBuildPath = join(sidecarDir, openworkServerBuildName);
-const openworkServerTargetTriple = resolvedTargetTriple;
-const openworkServerTargetName = openworkServerTargetTriple
-  ? `${openworkServerBaseName}-${openworkServerTargetTriple}${openworkServerTargetTriple.includes("windows") ? ".exe" : ""}`
+// veslo-server paths
+const vesloServerBaseName = "veslo-server";
+const vesloServerName = process.platform === "win32" ? `${vesloServerBaseName}.exe` : vesloServerBaseName;
+const vesloServerPath = join(sidecarDir, vesloServerName);
+const vesloServerBuildName = bunTarget
+  ? `${vesloServerBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
+  : vesloServerName;
+const vesloServerBuildPath = join(sidecarDir, vesloServerBuildName);
+const vesloServerTargetTriple = resolvedTargetTriple;
+const vesloServerTargetName = vesloServerTargetTriple
+  ? `${vesloServerBaseName}-${vesloServerTargetTriple}${vesloServerTargetTriple.includes("windows") ? ".exe" : ""}`
   : null;
-const openworkServerTargetPath = openworkServerTargetName ? join(sidecarDir, openworkServerTargetName) : null;
+const vesloServerTargetPath = vesloServerTargetName ? join(sidecarDir, vesloServerTargetName) : null;
 
-const openworkServerDir = resolve(__dirname, "..", "..", "server");
+const vesloServerDir = resolve(__dirname, "..", "..", "server");
 
 const resolveBuildScript = (dir) => {
   const scriptPath = resolve(dir, "script", "build.ts");
@@ -179,23 +179,23 @@ const resolveBuildScript = (dir) => {
   return scriptPath;
 };
 
-// opencode-router paths
-const opencodeRouterBaseName = "opencode-router";
-const opencodeRouterName = process.platform === "win32" ? `${opencodeRouterBaseName}.exe` : opencodeRouterBaseName;
-const opencodeRouterPath = join(sidecarDir, opencodeRouterName);
-const opencodeRouterBuildName = bunTarget
-  ? `${opencodeRouterBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
-  : opencodeRouterName;
-const opencodeRouterBuildPath = join(sidecarDir, opencodeRouterBuildName);
-const opencodeRouterTargetTriple = resolvedTargetTriple;
-const opencodeRouterTargetName = opencodeRouterTargetTriple
-  ? `${opencodeRouterBaseName}-${opencodeRouterTargetTriple}${opencodeRouterTargetTriple.includes("windows") ? ".exe" : ""}`
+// veslo-code-router paths
+const vesloCodeRouterBaseName = "veslo-code-router";
+const vesloCodeRouterName = process.platform === "win32" ? `${vesloCodeRouterBaseName}.exe` : vesloCodeRouterBaseName;
+const vesloCodeRouterPath = join(sidecarDir, vesloCodeRouterName);
+const vesloCodeRouterBuildName = bunTarget
+  ? `${vesloCodeRouterBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
+  : vesloCodeRouterName;
+const vesloCodeRouterBuildPath = join(sidecarDir, vesloCodeRouterBuildName);
+const vesloCodeRouterTargetTriple = resolvedTargetTriple;
+const vesloCodeRouterTargetName = vesloCodeRouterTargetTriple
+  ? `${vesloCodeRouterBaseName}-${vesloCodeRouterTargetTriple}${vesloCodeRouterTargetTriple.includes("windows") ? ".exe" : ""}`
   : null;
-const opencodeRouterTargetPath = opencodeRouterTargetName ? join(sidecarDir, opencodeRouterTargetName) : null;
+const vesloCodeRouterTargetPath = vesloCodeRouterTargetName ? join(sidecarDir, vesloCodeRouterTargetName) : null;
 const opencodeRouterDir = resolve(__dirname, "..", "..", "opencode-router");
 
 // orchestrator paths
-const orchestratorBaseName = "openwork-orchestrator";
+const orchestratorBaseName = "veslo-orchestrator";
 const orchestratorName =
   process.platform === "win32" ? `${orchestratorBaseName}.exe` : orchestratorBaseName;
 const orchestratorPath = join(sidecarDir, orchestratorName);
@@ -272,18 +272,19 @@ const readDirectory = (dir) => {
 
 const findOpencodeBinary = (dir) => {
   const candidates = readDirectory(dir);
+  // The upstream OpenCode binary is named "opencode" inside the release archive.
   return (
-    candidates.find((file) => file.endsWith(`/${opencodeBaseName}`) || file.endsWith(`\\${opencodeBaseName}`)) ??
     candidates.find((file) => file.endsWith("/opencode") || file.endsWith("\\opencode")) ??
+    candidates.find((file) => file.endsWith("/opencode.exe") || file.endsWith("\\opencode.exe")) ??
     null
   );
 };
 
-const findOpenCodeRouterBinary = (dir) => {
+const findVesloCodeRouterBinary = (dir) => {
   const candidates = readDirectory(dir);
   return (
-    candidates.find((file) => file.endsWith(`/${opencodeRouterName}`) || file.endsWith(`\\${opencodeRouterName}`)) ??
-    candidates.find((file) => file.endsWith("/opencode-router") || file.endsWith("\\opencodeRouter")) ??
+    candidates.find((file) => file.endsWith(`/${vesloCodeRouterName}`) || file.endsWith(`\\${vesloCodeRouterName}`)) ??
+    candidates.find((file) => file.endsWith("/veslo-code-router") || file.endsWith("\\veslo-code-router")) ??
     null
   );
 };
@@ -318,30 +319,30 @@ const parseChecksum = (content, assetName) => {
   return null;
 };
 
-let didBuildOpenworkServer = false;
-const shouldBuildOpenworkServer =
-  forceBuild || !existsSync(openworkServerBuildPath) || isStubBinary(openworkServerBuildPath);
+let didBuildVesloServer = false;
+const shouldBuildVesloServer =
+  forceBuild || !existsSync(vesloServerBuildPath) || isStubBinary(vesloServerBuildPath);
 
-if (shouldBuildOpenworkServer) {
+if (shouldBuildVesloServer) {
   mkdirSync(sidecarDir, { recursive: true });
-  if (existsSync(openworkServerBuildPath)) {
+  if (existsSync(vesloServerBuildPath)) {
     try {
-      unlinkSync(openworkServerBuildPath);
+      unlinkSync(vesloServerBuildPath);
     } catch {
       // ignore
     }
   }
-  const openworkServerScript = resolveBuildScript(openworkServerDir);
-  if (!existsSync(openworkServerScript)) {
-    console.error(`OpenWork server build script not found at ${openworkServerScript}`);
+  const vesloServerScript = resolveBuildScript(vesloServerDir);
+  if (!existsSync(vesloServerScript)) {
+    console.error(`Veslo server build script not found at ${vesloServerScript}`);
     process.exit(1);
   }
-  const openworkServerArgs = [openworkServerScript, "--outdir", sidecarDir, "--filename", "openwork-server"];
+  const vesloServerArgs = [vesloServerScript, "--outdir", sidecarDir, "--filename", "veslo-server"];
   if (bunTarget) {
-    openworkServerArgs.push("--target", bunTarget);
+    vesloServerArgs.push("--target", bunTarget);
   }
-  const buildResult = spawnSync("bun", openworkServerArgs, {
-    cwd: openworkServerDir,
+  const buildResult = spawnSync("bun", vesloServerArgs, {
+    cwd: vesloServerDir,
     stdio: "inherit",
   });
 
@@ -349,42 +350,42 @@ if (shouldBuildOpenworkServer) {
     process.exit(buildResult.status ?? 1);
   }
 
-  didBuildOpenworkServer = true;
+  didBuildVesloServer = true;
 }
 
-if (existsSync(openworkServerBuildPath)) {
-  const shouldCopyCanonical = didBuildOpenworkServer || !existsSync(openworkServerPath) || isStubBinary(openworkServerPath);
-  if (shouldCopyCanonical && openworkServerBuildPath !== openworkServerPath) {
+if (existsSync(vesloServerBuildPath)) {
+  const shouldCopyCanonical = didBuildVesloServer || !existsSync(vesloServerPath) || isStubBinary(vesloServerPath);
+  if (shouldCopyCanonical && vesloServerBuildPath !== vesloServerPath) {
     try {
-      if (existsSync(openworkServerPath)) {
-        unlinkSync(openworkServerPath);
+      if (existsSync(vesloServerPath)) {
+        unlinkSync(vesloServerPath);
       }
     } catch {
       // ignore
     }
-    copyFileSync(openworkServerBuildPath, openworkServerPath);
+    copyFileSync(vesloServerBuildPath, vesloServerPath);
   }
 
-  if (openworkServerTargetPath) {
+  if (vesloServerTargetPath) {
     const shouldCopyTarget =
-      didBuildOpenworkServer || !existsSync(openworkServerTargetPath) || isStubBinary(openworkServerTargetPath);
-    if (shouldCopyTarget && openworkServerBuildPath !== openworkServerTargetPath) {
+      didBuildVesloServer || !existsSync(vesloServerTargetPath) || isStubBinary(vesloServerTargetPath);
+    if (shouldCopyTarget && vesloServerBuildPath !== vesloServerTargetPath) {
       try {
-        if (existsSync(openworkServerTargetPath)) {
-          unlinkSync(openworkServerTargetPath);
+        if (existsSync(vesloServerTargetPath)) {
+          unlinkSync(vesloServerTargetPath);
         }
       } catch {
         // ignore
       }
-      copyFileSync(openworkServerBuildPath, openworkServerTargetPath);
+      copyFileSync(vesloServerBuildPath, vesloServerTargetPath);
     }
   }
 }
 
-if (!existingOpencodeVersion && opencodeCandidatePath) {
+if (!existingOpencodeVersion && vesloCodeCandidatePath) {
   existingOpencodeVersion =
-    existsSync(opencodeCandidatePath) && !isStubBinary(opencodeCandidatePath)
-      ? readBinaryVersion(opencodeCandidatePath)
+    existsSync(vesloCodeCandidatePath) && !isStubBinary(vesloCodeCandidatePath)
+      ? readBinaryVersion(vesloCodeCandidatePath)
       : null;
 }
 
@@ -425,9 +426,9 @@ const opencodeUrl = opencodeAsset
   : null;
 
 const shouldDownloadOpencode =
-  !opencodeCandidatePath ||
-  !existsSync(opencodeCandidatePath) ||
-  isStubBinary(opencodeCandidatePath) ||
+  !vesloCodeCandidatePath ||
+  !existsSync(vesloCodeCandidatePath) ||
+  isStubBinary(vesloCodeCandidatePath) ||
   !existingOpencodeVersion ||
   existingOpencodeVersion !== normalizedOpencodeVersion;
 
@@ -502,7 +503,7 @@ if (shouldDownloadOpencode) {
     process.exit(1);
   }
 
-  const opencodeTargets = [opencodeTargetPath, opencodePath].filter(Boolean);
+  const opencodeTargets = [vesloCodeTargetPath, vesloCodePath].filter(Boolean);
   for (const target of opencodeTargets) {
     try {
       if (existsSync(target)) {
@@ -541,12 +542,12 @@ if (normalizedOpenCodeRouterVersion && opencodeRouterPkgVersion && normalizedOpe
 }
 
 let didBuildOpenCodeRouter = false;
-const shouldBuildOpenCodeRouter = forceBuild || !existsSync(opencodeRouterBuildPath) || isStubBinary(opencodeRouterBuildPath);
+const shouldBuildOpenCodeRouter = forceBuild || !existsSync(vesloCodeRouterBuildPath) || isStubBinary(vesloCodeRouterBuildPath);
 if (shouldBuildOpenCodeRouter) {
   mkdirSync(sidecarDir, { recursive: true });
-  if (existsSync(opencodeRouterBuildPath)) {
+  if (existsSync(vesloCodeRouterBuildPath)) {
     try {
-      unlinkSync(opencodeRouterBuildPath);
+      unlinkSync(vesloCodeRouterBuildPath);
     } catch {
       // ignore
     }
@@ -556,7 +557,7 @@ if (shouldBuildOpenCodeRouter) {
     console.error(`OpenCodeRouter build script not found at ${opencodeRouterScript}`);
     process.exit(1);
   }
-  const opencodeRouterArgs = [opencodeRouterScript, "--outdir", sidecarDir, "--filename", "opencode-router"];
+  const opencodeRouterArgs = [opencodeRouterScript, "--outdir", sidecarDir, "--filename", "veslo-code-router"];
   if (bunTarget) {
     opencodeRouterArgs.push("--target", bunTarget);
   }
@@ -568,26 +569,26 @@ if (shouldBuildOpenCodeRouter) {
   didBuildOpenCodeRouter = true;
 }
 
-if (existsSync(opencodeRouterBuildPath)) {
-  const shouldCopyCanonical = didBuildOpenCodeRouter || !existsSync(opencodeRouterPath) || isStubBinary(opencodeRouterPath);
-  if (shouldCopyCanonical && opencodeRouterBuildPath !== opencodeRouterPath) {
+if (existsSync(vesloCodeRouterBuildPath)) {
+  const shouldCopyCanonical = didBuildOpenCodeRouter || !existsSync(vesloCodeRouterPath) || isStubBinary(vesloCodeRouterPath);
+  if (shouldCopyCanonical && vesloCodeRouterBuildPath !== vesloCodeRouterPath) {
     try {
-      if (existsSync(opencodeRouterPath)) unlinkSync(opencodeRouterPath);
+      if (existsSync(vesloCodeRouterPath)) unlinkSync(vesloCodeRouterPath);
     } catch {
       // ignore
     }
-    copyFileSync(opencodeRouterBuildPath, opencodeRouterPath);
+    copyFileSync(vesloCodeRouterBuildPath, vesloCodeRouterPath);
   }
 
-  if (opencodeRouterTargetPath) {
-    const shouldCopyTarget = didBuildOpenCodeRouter || !existsSync(opencodeRouterTargetPath) || isStubBinary(opencodeRouterTargetPath);
-    if (shouldCopyTarget && opencodeRouterBuildPath !== opencodeRouterTargetPath) {
+  if (vesloCodeRouterTargetPath) {
+    const shouldCopyTarget = didBuildOpenCodeRouter || !existsSync(vesloCodeRouterTargetPath) || isStubBinary(vesloCodeRouterTargetPath);
+    if (shouldCopyTarget && vesloCodeRouterBuildPath !== vesloCodeRouterTargetPath) {
       try {
-        if (existsSync(opencodeRouterTargetPath)) unlinkSync(opencodeRouterTargetPath);
+        if (existsSync(vesloCodeRouterTargetPath)) unlinkSync(vesloCodeRouterTargetPath);
       } catch {
         // ignore
       }
-      copyFileSync(opencodeRouterBuildPath, opencodeRouterTargetPath);
+      copyFileSync(vesloCodeRouterBuildPath, vesloCodeRouterTargetPath);
     }
   }
 }
@@ -738,9 +739,9 @@ if (existsSync(chromeDevtoolsBuildPath)) {
   }
 }
 
-const openworkServerVersion = (() => {
+const vesloServerVersion = (() => {
   try {
-    const raw = readFileSync(resolve(openworkServerDir, "package.json"), "utf8");
+    const raw = readFileSync(resolve(vesloServerDir, "package.json"), "utf8");
     return String(JSON.parse(raw).version ?? "").trim();
   } catch {
     return null;
@@ -757,19 +758,19 @@ const orchestratorVersion = (() => {
 })();
 
 const versions = {
-  opencode: {
+  "veslo-code": {
     version: normalizedOpencodeVersion,
-    sha256: opencodeCandidatePath && existsSync(opencodeCandidatePath) ? sha256File(opencodeCandidatePath) : null,
+    sha256: vesloCodeCandidatePath && existsSync(vesloCodeCandidatePath) ? sha256File(vesloCodeCandidatePath) : null,
   },
-  "openwork-server": {
-    version: openworkServerVersion,
-    sha256: existsSync(openworkServerPath) ? sha256File(openworkServerPath) : null,
+  "veslo-server": {
+    version: vesloServerVersion,
+    sha256: existsSync(vesloServerPath) ? sha256File(vesloServerPath) : null,
   },
-  opencodeRouter: {
+  "veslo-code-router": {
     version: expectedOpenCodeRouterVersion,
-    sha256: existsSync(opencodeRouterPath) ? sha256File(opencodeRouterPath) : null,
+    sha256: existsSync(vesloCodeRouterPath) ? sha256File(vesloCodeRouterPath) : null,
   },
-  "openwork-orchestrator": {
+  "veslo-orchestrator": {
     version: orchestratorVersion,
     sha256: existsSync(orchestratorPath) ? sha256File(orchestratorPath) : null,
   },

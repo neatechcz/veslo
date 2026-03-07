@@ -34,7 +34,7 @@ impl OrchestratorManager {
         };
 
         if let Some(child) = state.child.take() {
-            // Prefer daemon-owned graceful shutdown so openwork-orchestrator can
+            // Prefer daemon-owned graceful shutdown so veslo-orchestrator can
             // terminate its managed OpenCode child before exiting.
             if !shutdown_requested {
                 let _ = child.kill();

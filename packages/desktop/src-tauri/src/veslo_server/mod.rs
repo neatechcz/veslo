@@ -4,14 +4,14 @@ use tauri::AppHandle;
 use tauri_plugin_shell::process::CommandEvent;
 use uuid::Uuid;
 
-use crate::types::OpenworkServerInfo;
+use crate::types::VesloServerInfo;
 use crate::utils::truncate_output;
 
 pub mod manager;
 pub mod spawn;
 
-use manager::OpenworkServerManager;
-use spawn::{resolve_openwork_port, spawn_openwork_server};
+use manager::VesloServerManager;
+use spawn::{resolve_veslo_port, spawn_veslo_server};
 
 fn generate_token() -> String {
     Uuid::new_v4().to_string()
@@ -38,23 +38,23 @@ pub fn resolve_connect_url(port: u16) -> Option<String> {
     connect_url
 }
 
-pub fn start_openwork_server(
+pub fn start_veslo_server(
     app: &AppHandle,
-    manager: &OpenworkServerManager,
+    manager: &VesloServerManager,
     workspace_paths: &[String],
     opencode_base_url: Option<&str>,
     opencode_username: Option<&str>,
     opencode_password: Option<&str>,
     opencode_router_health_port: Option<u16>,
-) -> Result<OpenworkServerInfo, String> {
+) -> Result<VesloServerInfo, String> {
     let mut state = manager
         .inner
         .lock()
-        .map_err(|_| "openwork server mutex poisoned".to_string())?;
-    OpenworkServerManager::stop_locked(&mut state);
+        .map_err(|_| "veslo server mutex poisoned".to_string())?;
+    VesloServerManager::stop_locked(&mut state);
 
     let host = "0.0.0.0".to_string();
-    let port = resolve_openwork_port()?;
+    let port = resolve_veslo_port()?;
     let client_token = generate_token();
     let host_token = generate_token();
     let active_workspace = workspace_paths
@@ -62,7 +62,7 @@ pub fn start_openwork_server(
         .map(|path| path.as_str())
         .unwrap_or("");
 
-    let (mut rx, child) = spawn_openwork_server(
+    let (mut rx, child) = spawn_veslo_server(
         app,
         &host,
         port,
@@ -119,7 +119,7 @@ pub fn start_openwork_server(
                     if let Ok(mut state) = state_handle.try_lock() {
                         state.child_exited = true;
                         if let Some(code) = payload.code {
-                            let next = format!("OpenWork server exited (code {code}).");
+                            let next = format!("Veslo server exited (code {code}).");
                             state.last_stderr = Some(truncate_output(&next, 8000));
                         }
                     }
@@ -137,5 +137,5 @@ pub fn start_openwork_server(
         }
     });
 
-    Ok(OpenworkServerManager::snapshot_locked(&mut state))
+    Ok(VesloServerManager::snapshot_locked(&mut state))
 }

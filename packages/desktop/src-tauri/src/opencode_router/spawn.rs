@@ -11,7 +11,7 @@ pub const DEFAULT_OPENCODE_ROUTER_HEALTH_PORT: u16 = 3005;
 
 pub fn resolve_opencode_router_health_port() -> Result<u16, String> {
     // Pick an ephemeral localhost port by default to avoid conflicts when
-    // multiple OpenWork desktop instances run on the same machine.
+    // multiple Veslo desktop instances run on the same machine.
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     Ok(port)

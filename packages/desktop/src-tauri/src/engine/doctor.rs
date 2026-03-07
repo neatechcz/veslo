@@ -172,7 +172,7 @@ mod tests {
             .unwrap_or(0);
 
         let mut dir = std::env::temp_dir();
-        dir.push(format!("openwork-{name}-{}-{}", std::process::id(), nanos));
+        dir.push(format!("veslo-{name}-{}-{}", std::process::id(), nanos));
         dir
     }
 

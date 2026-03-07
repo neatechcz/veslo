@@ -75,8 +75,8 @@ pub fn spawn_engine(
         command = command.env("XDG_CONFIG_HOME", xdg_config_home);
     }
 
-    command = command.env("OPENCODE_CLIENT", "openwork");
-    command = command.env("OPENWORK", "1");
+    command = command.env("OPENCODE_CLIENT", "veslo");
+    command = command.env("VESLO", "1");
 
     for (key, value) in crate::bun_env::bun_env_overrides() {
         command = command.env(key, value);

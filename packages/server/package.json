@@ -1,16 +1,16 @@
 {
-  "name": "openwork-server",
+  "name": "veslo-server",
   "version": "2026.3.0",
-  "description": "Filesystem-backed API for OpenWork remote clients",
+  "description": "Filesystem-backed API for Veslo remote clients",
   "type": "module",
   "bin": {
-    "openwork-server": "dist/bin/openwork-server"
+    "veslo-server": "dist/bin/veslo-server"
   },
   "scripts": {
     "dev": "bun src/cli.ts",
     "test": "bun test",
     "build": "tsc -p tsconfig.json",
-    "build:bin": "bun build --compile src/cli.ts --outfile dist/bin/openwork-server",
+    "build:bin": "bun build --compile src/cli.ts --outfile dist/bin/veslo-server",
     "build:bin:all": "bun ./script/build.ts --outdir dist/bin --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64",
     "start": "bun dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -22,15 +22,15 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/different-ai/openwork.git",
+    "url": "git+https://github.com/neatech/veslo.git",
     "directory": "packages/server"
   },
-  "homepage": "https://github.com/different-ai/openwork/tree/dev/packages/server",
+  "homepage": "https://github.com/neatech/veslo/tree/dev/packages/server",
   "bugs": {
-    "url": "https://github.com/different-ai/openwork/issues"
+    "url": "https://github.com/neatech/veslo/issues"
   },
   "keywords": [
-    "openwork",
+    "veslo",
     "server",
     "opencode",
     "headless",

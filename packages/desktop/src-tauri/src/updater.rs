@@ -24,7 +24,7 @@ pub fn updater_environment() -> UpdaterEnvironment {
         if is_mac_dmg_or_translocated(exe) {
             supported = false;
             reason = Some(
-        "OpenWork is running from a mounted disk image. Install it to Applications to enable updates."
+        "Veslo is running from a mounted disk image. Install it to Applications to enable updates."
           .to_string(),
       );
         }
@@ -35,7 +35,7 @@ pub fn updater_environment() -> UpdaterEnvironment {
             if is_mac_dmg_or_translocated(bundle) {
                 supported = false;
                 reason = Some(
-          "OpenWork is running from a mounted disk image. Install it to Applications to enable updates."
+          "Veslo is running from a mounted disk image. Install it to Applications to enable updates."
             .to_string(),
         );
             }

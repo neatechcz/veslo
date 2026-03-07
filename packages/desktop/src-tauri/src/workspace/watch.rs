@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::types::{WorkspaceInfo, WorkspaceType};
 
-const RELOAD_EVENT: &str = "openwork://reload-required";
+const RELOAD_EVENT: &str = "veslo://reload-required";
 
 #[derive(Default)]
 pub struct WorkspaceWatchState {
@@ -25,8 +25,8 @@ fn reason_for_path(path: &Path) -> Option<&'static str> {
     let normalized = normalize_path(path);
     let lower = normalized.to_lowercase();
 
-    // Ignore OpenWork metadata files — they don't affect the OpenCode engine.
-    if lower.ends_with("/openwork.json") {
+    // Ignore Veslo metadata files — they don't affect the OpenCode engine.
+    if lower.ends_with("/veslo.json") {
         return None;
     }
 

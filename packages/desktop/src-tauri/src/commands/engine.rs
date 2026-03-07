@@ -9,8 +9,8 @@ use crate::engine::manager::EngineManager;
 use crate::engine::spawn::{find_free_port, spawn_engine};
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::opencode_router::spawn::resolve_opencode_router_health_port;
-use crate::openwork_server::{
-    manager::OpenworkServerManager, resolve_connect_url, start_openwork_server,
+use crate::veslo_server::{
+    manager::VesloServerManager, resolve_connect_url, start_veslo_server,
 };
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{self, OrchestratorSpawnOptions};
@@ -94,7 +94,7 @@ pub fn engine_info(
 
         // The orchestrator can keep running across app relaunches. In that case, the in-memory
         // EngineManager state (including opencode basic auth) is lost. Persist a small
-        // auth snapshot next to openwork-orchestrator-state.json so the UI can reconnect.
+        // auth snapshot next to veslo-orchestrator-state.json so the UI can reconnect.
         let auth_snapshot = orchestrator::read_orchestrator_auth(&data_dir);
         let opencode_username = state.opencode_username.clone().or_else(|| {
             auth_snapshot
@@ -128,7 +128,7 @@ pub fn engine_info(
 pub fn engine_stop(
     manager: State<EngineManager>,
     orchestrator_manager: State<OrchestratorManager>,
-    openwork_manager: State<OpenworkServerManager>,
+    veslo_manager: State<VesloServerManager>,
     opencode_router_manager: State<OpenCodeRouterManager>,
 ) -> EngineInfo {
     let mut state = manager.inner.lock().expect("engine mutex poisoned");
@@ -136,8 +136,8 @@ pub fn engine_stop(
         OrchestratorManager::stop_locked(&mut orchestrator_state);
     }
     EngineManager::stop_locked(&mut state);
-    if let Ok(mut openwork_state) = openwork_manager.inner.lock() {
-        OpenworkServerManager::stop_locked(&mut openwork_state);
+    if let Ok(mut veslo_state) = veslo_manager.inner.lock() {
+        VesloServerManager::stop_locked(&mut veslo_state);
     }
     if let Ok(mut opencode_router_state) = opencode_router_manager.inner.lock() {
         OpenCodeRouterManager::stop_locked(&mut opencode_router_state);
@@ -150,7 +150,7 @@ pub fn engine_restart(
     app: AppHandle,
     manager: State<EngineManager>,
     orchestrator_manager: State<OrchestratorManager>,
-    openwork_manager: State<OpenworkServerManager>,
+    veslo_manager: State<VesloServerManager>,
     opencode_router_manager: State<OpenCodeRouterManager>,
 ) -> Result<EngineInfo, String> {
     let (project_dir, runtime) = {
@@ -169,7 +169,7 @@ pub fn engine_restart(
         app,
         manager,
         orchestrator_manager,
-        openwork_manager,
+        veslo_manager,
         opencode_router_manager,
         project_dir,
         None,
@@ -236,7 +236,7 @@ pub fn engine_install() -> Result<ExecResult, String> {
       ok: false,
       status: -1,
       stdout: String::new(),
-      stderr: "Guided install is not supported on Windows yet. Install OpenCode via Scoop/Chocolatey or https://opencode.ai/install, then restart OpenWork.".to_string(),
+      stderr: "Guided install is not supported on Windows yet. Install OpenCode via Scoop/Chocolatey or https://opencode.ai/install, then restart Veslo.".to_string(),
     });
     }
 
@@ -269,7 +269,7 @@ pub fn engine_start(
     app: AppHandle,
     manager: State<EngineManager>,
     orchestrator_manager: State<OrchestratorManager>,
-    openwork_manager: State<OpenworkServerManager>,
+    veslo_manager: State<VesloServerManager>,
     opencode_router_manager: State<OpenCodeRouterManager>,
     project_dir: String,
     prefer_sidecar: Option<bool>,
@@ -307,13 +307,13 @@ pub fn engine_start(
     workspace_paths.retain(|path| path.trim() != project_dir);
     workspace_paths.insert(0, project_dir.clone());
 
-    let bind_host = std::env::var("OPENWORK_OPENCODE_BIND_HOST")
+    let bind_host = std::env::var("VESLO_OPENCODE_BIND_HOST")
         .ok()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "0.0.0.0".to_string());
     let client_host = "127.0.0.1".to_string();
     let port = find_free_port()?;
-    let enable_auth = std::env::var("OPENWORK_OPENCODE_AUTH")
+    let enable_auth = std::env::var("VESLO_OPENCODE_AUTH")
         .ok()
         .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
         .unwrap_or(true);
@@ -444,13 +444,13 @@ pub fn engine_start(
 
         let daemon_base_url = format!("http://{}:{}", daemon_host, daemon_port);
 
-        // openwork-orchestrator doesn't start its daemon HTTP server until it has ensured that
+        // veslo-orchestrator doesn't start its daemon HTTP server until it has ensured that
         // OpenCode is available. On fresh installs (or after schema changes), OpenCode can run a
         // one-time SQLite migration that takes longer than a few seconds.
         //
         // If we give up too early, the desktop app reports the engine as offline even though the
         // orchestrator is still booting in the background.
-        let health_timeout_ms = std::env::var("OPENWORK_ORCHESTRATOR_START_TIMEOUT_MS")
+        let health_timeout_ms = std::env::var("VESLO_ORCHESTRATOR_START_TIMEOUT_MS")
             .ok()
             .and_then(|value| value.trim().parse::<u64>().ok())
             .filter(|value| *value >= 1_000)
@@ -495,9 +495,9 @@ pub fn engine_start(
             }
         };
 
-        if let Err(error) = start_openwork_server(
+        if let Err(error) = start_veslo_server(
             &app,
-            &openwork_manager,
+            &veslo_manager,
             &workspace_paths,
             Some(&opencode_connect_url),
             opencode_username.as_deref(),
@@ -506,7 +506,7 @@ pub fn engine_start(
         ) {
             if let Ok(mut state) = manager.inner.lock() {
                 state.last_stderr =
-                    Some(truncate_output(&format!("OpenWork server: {error}"), 8000));
+                    Some(truncate_output(&format!("Veslo server: {error}"), 8000));
             }
         }
 
@@ -676,16 +676,16 @@ pub fn engine_start(
         }
     };
 
-    if let Err(error) = start_openwork_server(
+    if let Err(error) = start_veslo_server(
         &app,
-        &openwork_manager,
+        &veslo_manager,
         &workspace_paths,
         Some(&opencode_connect_url),
         opencode_username.as_deref(),
         opencode_password.as_deref(),
         opencode_router_health_port,
     ) {
-        state.last_stderr = Some(truncate_output(&format!("OpenWork server: {error}"), 8000));
+        state.last_stderr = Some(truncate_output(&format!("Veslo server: {error}"), 8000));
     }
 
     if let Err(error) = opencodeRouter_start(

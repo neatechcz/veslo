@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::types::{
-    ExecResult, RemoteType, WorkspaceInfo, WorkspaceList, WorkspaceOpenworkConfig, WorkspaceType,
+    ExecResult, RemoteType, WorkspaceInfo, WorkspaceList, WorkspaceVesloConfig, WorkspaceType,
 };
 use crate::workspace::files::ensure_workspace_files;
 use crate::workspace::state::{
     ensure_starter_workspace, load_workspace_state, save_workspace_state, stable_workspace_id,
-    stable_workspace_id_for_openwork, stable_workspace_id_for_remote,
+    stable_workspace_id_for_veslo, stable_workspace_id_for_remote,
 };
 use crate::workspace::watch::{update_workspace_watch, WorkspaceWatchState};
 use serde::Serialize;
@@ -207,10 +207,10 @@ pub fn workspace_create(
         base_url: None,
         directory: None,
         display_name: None,
-        openwork_host_url: None,
-        openwork_token: None,
-        openwork_workspace_id: None,
-        openwork_workspace_name: None,
+        veslo_host_url: None,
+        veslo_token: None,
+        veslo_workspace_id: None,
+        veslo_workspace_name: None,
         sandbox_backend: None,
         sandbox_run_id: None,
         sandbox_container_name: None,
@@ -235,10 +235,10 @@ pub fn workspace_create_remote(
     directory: Option<String>,
     display_name: Option<String>,
     remote_type: Option<RemoteType>,
-    openwork_host_url: Option<String>,
-    openwork_token: Option<String>,
-    openwork_workspace_id: Option<String>,
-    openwork_workspace_name: Option<String>,
+    veslo_host_url: Option<String>,
+    veslo_token: Option<String>,
+    veslo_workspace_id: Option<String>,
+    veslo_workspace_name: Option<String>,
     sandbox_backend: Option<String>,
     sandbox_run_id: Option<String>,
     sandbox_container_name: Option<String>,
@@ -261,39 +261,39 @@ pub fn workspace_create_remote(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
-    let openwork_host_url = openwork_host_url
+    let veslo_host_url = veslo_host_url
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
-    let openwork_token = openwork_token
+    let veslo_token = veslo_token
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
-    if remote_type == RemoteType::Openwork {
-        let host_url = openwork_host_url.clone().unwrap_or_default();
+    if remote_type == RemoteType::Veslo {
+        let host_url = veslo_host_url.clone().unwrap_or_default();
         if host_url.is_empty() {
-            return Err("openworkHostUrl is required for OpenWork remote".to_string());
+            return Err("vesloHostUrl is required for Veslo remote".to_string());
         }
         if !host_url.starts_with("http://") && !host_url.starts_with("https://") {
-            return Err("openworkHostUrl must start with http:// or https://".to_string());
+            return Err("vesloHostUrl must start with http:// or https://".to_string());
         }
     }
 
-    let id = if remote_type == RemoteType::Openwork {
-        stable_workspace_id_for_openwork(
-            openwork_host_url.as_deref().unwrap_or(""),
-            openwork_workspace_id.as_deref(),
+    let id = if remote_type == RemoteType::Veslo {
+        stable_workspace_id_for_veslo(
+            veslo_host_url.as_deref().unwrap_or(""),
+            veslo_workspace_id.as_deref(),
         )
     } else {
         stable_workspace_id_for_remote(&base_url, directory.as_deref())
     };
-    let name = openwork_workspace_name
+    let name = veslo_workspace_name
         .clone()
         .filter(|value| !value.trim().is_empty())
         .or_else(|| display_name.clone())
         .unwrap_or_else(|| {
-            if remote_type == RemoteType::Openwork {
-                openwork_host_url
+            if remote_type == RemoteType::Veslo {
+                veslo_host_url
                     .clone()
                     .unwrap_or_else(|| base_url.clone())
             } else {
@@ -314,10 +314,10 @@ pub fn workspace_create_remote(
         base_url: Some(base_url),
         directory,
         display_name,
-        openwork_host_url,
-        openwork_token,
-        openwork_workspace_id,
-        openwork_workspace_name,
+        veslo_host_url,
+        veslo_token,
+        veslo_workspace_id,
+        veslo_workspace_name,
         sandbox_backend: sandbox_backend
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty()),
@@ -348,10 +348,10 @@ pub fn workspace_update_remote(
     directory: Option<String>,
     display_name: Option<String>,
     remote_type: Option<RemoteType>,
-    openwork_host_url: Option<String>,
-    openwork_token: Option<String>,
-    openwork_workspace_id: Option<String>,
-    openwork_workspace_name: Option<String>,
+    veslo_host_url: Option<String>,
+    veslo_token: Option<String>,
+    veslo_workspace_id: Option<String>,
+    veslo_workspace_name: Option<String>,
     sandbox_backend: Option<String>,
     sandbox_run_id: Option<String>,
     sandbox_container_name: Option<String>,
@@ -403,33 +403,33 @@ pub fn workspace_update_remote(
         entry.remote_type = Some(next_remote_type);
     }
 
-    if let Some(next_host_url) = openwork_host_url
+    if let Some(next_host_url) = veslo_host_url
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
     {
         if !next_host_url.starts_with("http://") && !next_host_url.starts_with("https://") {
-            return Err("openworkHostUrl must start with http:// or https://".to_string());
+            return Err("vesloHostUrl must start with http:// or https://".to_string());
         }
-        entry.openwork_host_url = Some(next_host_url);
+        entry.veslo_host_url = Some(next_host_url);
     }
 
-    if openwork_token.is_some() {
-        entry.openwork_token = openwork_token
+    if veslo_token.is_some() {
+        entry.veslo_token = veslo_token
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
     }
 
-    if openwork_workspace_id.is_some() {
-        entry.openwork_workspace_id = openwork_workspace_id
+    if veslo_workspace_id.is_some() {
+        entry.veslo_workspace_id = veslo_workspace_id
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
     }
 
-    if let Some(next_name) = openwork_workspace_name
+    if let Some(next_name) = veslo_workspace_name
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
     {
-        entry.openwork_workspace_name = Some(next_name.clone());
+        entry.veslo_workspace_name = Some(next_name.clone());
         if entry.display_name.is_none() {
             entry.name = next_name;
         }
@@ -481,21 +481,21 @@ pub fn workspace_add_authorized_root(
         return Err("folderPath is required".to_string());
     }
 
-    let openwork_path = PathBuf::from(&workspace_path)
+    let veslo_path = PathBuf::from(&workspace_path)
         .join(".opencode")
-        .join("openwork.json");
+        .join("veslo.json");
 
-    if let Some(parent) = openwork_path.parent() {
+    if let Some(parent) = veslo_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
     }
 
-    let mut config: WorkspaceOpenworkConfig = if openwork_path.exists() {
-        let raw = fs::read_to_string(&openwork_path)
-            .map_err(|e| format!("Failed to read {}: {e}", openwork_path.display()))?;
+    let mut config: WorkspaceVesloConfig = if veslo_path.exists() {
+        let raw = fs::read_to_string(&veslo_path)
+            .map_err(|e| format!("Failed to read {}: {e}", veslo_path.display()))?;
         serde_json::from_str(&raw).unwrap_or_default()
     } else {
-        let mut cfg = WorkspaceOpenworkConfig::default();
+        let mut cfg = WorkspaceVesloConfig::default();
         if !cfg.authorized_roots.iter().any(|p| p == &workspace_path) {
             cfg.authorized_roots.push(workspace_path.clone());
         }
@@ -507,10 +507,10 @@ pub fn workspace_add_authorized_root(
     }
 
     fs::write(
-        &openwork_path,
+        &veslo_path,
         serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?,
     )
-    .map_err(|e| format!("Failed to write {}: {e}", openwork_path.display()))?;
+    .map_err(|e| format!("Failed to write {}: {e}", veslo_path.display()))?;
 
     Ok(ExecResult {
         ok: true,
@@ -521,62 +521,62 @@ pub fn workspace_add_authorized_root(
 }
 
 #[tauri::command]
-pub fn workspace_openwork_read(
+pub fn workspace_veslo_read(
     _app: tauri::AppHandle,
     workspace_path: String,
-) -> Result<WorkspaceOpenworkConfig, String> {
+) -> Result<WorkspaceVesloConfig, String> {
     let workspace_path = workspace_path.trim().to_string();
     if workspace_path.is_empty() {
         return Err("workspacePath is required".to_string());
     }
 
-    let openwork_path = PathBuf::from(&workspace_path)
+    let veslo_path = PathBuf::from(&workspace_path)
         .join(".opencode")
-        .join("openwork.json");
+        .join("veslo.json");
 
-    if !openwork_path.exists() {
-        let mut cfg = WorkspaceOpenworkConfig::default();
+    if !veslo_path.exists() {
+        let mut cfg = WorkspaceVesloConfig::default();
         cfg.authorized_roots.push(workspace_path);
         return Ok(cfg);
     }
 
-    let raw = fs::read_to_string(&openwork_path)
-        .map_err(|e| format!("Failed to read {}: {e}", openwork_path.display()))?;
+    let raw = fs::read_to_string(&veslo_path)
+        .map_err(|e| format!("Failed to read {}: {e}", veslo_path.display()))?;
 
-    serde_json::from_str::<WorkspaceOpenworkConfig>(&raw)
-        .map_err(|e| format!("Failed to parse {}: {e}", openwork_path.display()))
+    serde_json::from_str::<WorkspaceVesloConfig>(&raw)
+        .map_err(|e| format!("Failed to parse {}: {e}", veslo_path.display()))
 }
 
 #[tauri::command]
-pub fn workspace_openwork_write(
+pub fn workspace_veslo_write(
     _app: tauri::AppHandle,
     workspace_path: String,
-    config: WorkspaceOpenworkConfig,
+    config: WorkspaceVesloConfig,
 ) -> Result<ExecResult, String> {
     let workspace_path = workspace_path.trim().to_string();
     if workspace_path.is_empty() {
         return Err("workspacePath is required".to_string());
     }
 
-    let openwork_path = PathBuf::from(&workspace_path)
+    let veslo_path = PathBuf::from(&workspace_path)
         .join(".opencode")
-        .join("openwork.json");
+        .join("veslo.json");
 
-    if let Some(parent) = openwork_path.parent() {
+    if let Some(parent) = veslo_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
     }
 
     fs::write(
-        &openwork_path,
+        &veslo_path,
         serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?,
     )
-    .map_err(|e| format!("Failed to write {}: {e}", openwork_path.display()))?;
+    .map_err(|e| format!("Failed to write {}: {e}", veslo_path.display()))?;
 
     Ok(ExecResult {
         ok: true,
         status: 0,
-        stdout: format!("Wrote {}", openwork_path.display()),
+        stdout: format!("Wrote {}", veslo_path.display()),
         stderr: String::new(),
     })
 }
@@ -839,14 +839,14 @@ pub fn workspace_import_config(
         return Err("Archive is missing .opencode config".to_string());
     }
 
-    let openwork_path = target_path.join(".opencode").join("openwork.json");
+    let veslo_path = target_path.join(".opencode").join("veslo.json");
     let mut preset = "starter".to_string();
     let mut workspace_name = name.clone().filter(|value| !value.trim().is_empty());
 
-    if openwork_path.exists() {
-        let raw = fs::read_to_string(&openwork_path)
-            .map_err(|e| format!("Failed to read {}: {e}", openwork_path.display()))?;
-        if let Ok(mut config) = serde_json::from_str::<WorkspaceOpenworkConfig>(&raw) {
+    if veslo_path.exists() {
+        let raw = fs::read_to_string(&veslo_path)
+            .map_err(|e| format!("Failed to read {}: {e}", veslo_path.display()))?;
+        if let Ok(mut config) = serde_json::from_str::<WorkspaceVesloConfig>(&raw) {
             config.authorized_roots = vec![target_dir.clone()];
             if let Some(workspace) = &config.workspace {
                 if workspace_name.is_none() {
@@ -862,22 +862,22 @@ pub fn workspace_import_config(
                 }
             }
             fs::write(
-                &openwork_path,
+                &veslo_path,
                 serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?,
             )
-            .map_err(|e| format!("Failed to write {}: {e}", openwork_path.display()))?;
+            .map_err(|e| format!("Failed to write {}: {e}", veslo_path.display()))?;
         }
     } else {
-        let config = WorkspaceOpenworkConfig::new(&target_dir, &preset, now_ms());
-        if let Some(parent) = openwork_path.parent() {
+        let config = WorkspaceVesloConfig::new(&target_dir, &preset, now_ms());
+        if let Some(parent) = veslo_path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
         }
         fs::write(
-            &openwork_path,
+            &veslo_path,
             serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?,
         )
-        .map_err(|e| format!("Failed to write {}: {e}", openwork_path.display()))?;
+        .map_err(|e| format!("Failed to write {}: {e}", veslo_path.display()))?;
     }
 
     let name = workspace_name
@@ -905,10 +905,10 @@ pub fn workspace_import_config(
         base_url: None,
         directory: None,
         display_name: None,
-        openwork_host_url: None,
-        openwork_token: None,
-        openwork_workspace_id: None,
-        openwork_workspace_name: None,
+        veslo_host_url: None,
+        veslo_token: None,
+        veslo_workspace_id: None,
+        veslo_workspace_name: None,
         sandbox_backend: None,
         sandbox_run_id: None,
         sandbox_container_name: None,

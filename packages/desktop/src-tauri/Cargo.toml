@@ -1,8 +1,8 @@
 [package]
-name = "openwork"
+name = "veslo"
 version = "2026.3.0"
-description = "OpenWork"
-authors = ["Different AI"]
+description = "Veslo"
+authors = ["Neatech"]
 edition = "2021"
 
 [build-dependencies]

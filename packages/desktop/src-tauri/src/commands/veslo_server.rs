@@ -2,26 +2,26 @@ use tauri::{AppHandle, State};
 
 use crate::engine::manager::EngineManager;
 use crate::opencode_router::manager::OpenCodeRouterManager;
-use crate::openwork_server::manager::OpenworkServerManager;
-use crate::openwork_server::start_openwork_server;
-use crate::types::OpenworkServerInfo;
+use crate::veslo_server::manager::VesloServerManager;
+use crate::veslo_server::start_veslo_server;
+use crate::types::VesloServerInfo;
 
 #[tauri::command]
-pub fn openwork_server_info(manager: State<OpenworkServerManager>) -> OpenworkServerInfo {
+pub fn veslo_server_info(manager: State<VesloServerManager>) -> VesloServerInfo {
     let mut state = manager
         .inner
         .lock()
-        .expect("openwork server mutex poisoned");
-    OpenworkServerManager::snapshot_locked(&mut state)
+        .expect("veslo server mutex poisoned");
+    VesloServerManager::snapshot_locked(&mut state)
 }
 
 #[tauri::command]
-pub fn openwork_server_restart(
+pub fn veslo_server_restart(
     app: AppHandle,
-    manager: State<OpenworkServerManager>,
+    manager: State<VesloServerManager>,
     engine_manager: State<EngineManager>,
     opencode_router_manager: State<OpenCodeRouterManager>,
-) -> Result<OpenworkServerInfo, String> {
+) -> Result<VesloServerInfo, String> {
     let (workspace_path, opencode_url, opencode_username, opencode_password) = {
         let engine = engine_manager
             .inner
@@ -44,7 +44,7 @@ pub fn openwork_server_restart(
         .ok()
         .and_then(|state| state.health_port);
 
-    start_openwork_server(
+    start_veslo_server(
         &app,
         &manager,
         &[workspace_path],

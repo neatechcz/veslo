@@ -12,17 +12,17 @@ pub fn stable_workspace_id(path: &str) -> String {
     format!("ws-{:x}", hasher.finish())
 }
 
-pub fn openwork_state_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
+pub fn veslo_state_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
     let data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
-    let file_path = data_dir.join("openwork-workspaces.json");
+    let file_path = data_dir.join("veslo-workspaces.json");
     Ok((data_dir, file_path))
 }
 
 pub fn load_workspace_state(app: &tauri::AppHandle) -> Result<WorkspaceState, String> {
-    let (_, path) = openwork_state_paths(app)?;
+    let (_, path) = veslo_state_paths(app)?;
     if !path.exists() {
         return Ok(WorkspaceState::default());
     }
@@ -40,7 +40,7 @@ pub fn load_workspace_state(app: &tauri::AppHandle) -> Result<WorkspaceState, St
 }
 
 pub fn save_workspace_state(app: &tauri::AppHandle, state: &WorkspaceState) -> Result<(), String> {
-    let (dir, path) = openwork_state_paths(app)?;
+    let (dir, path) = veslo_state_paths(app)?;
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create {}: {e}", dir.display()))?;
     fs::write(
         &path,
@@ -69,10 +69,10 @@ pub fn ensure_starter_workspace(app: &tauri::AppHandle) -> Result<WorkspaceInfo,
         base_url: None,
         directory: None,
         display_name: None,
-        openwork_host_url: None,
-        openwork_token: None,
-        openwork_workspace_id: None,
-        openwork_workspace_name: None,
+        veslo_host_url: None,
+        veslo_token: None,
+        veslo_workspace_id: None,
+        veslo_workspace_name: None,
         sandbox_backend: None,
         sandbox_run_id: None,
         sandbox_container_name: None,
@@ -90,8 +90,8 @@ pub fn stable_workspace_id_for_remote(base_url: &str, directory: Option<&str>) -
     stable_workspace_id(&key)
 }
 
-pub fn stable_workspace_id_for_openwork(host_url: &str, workspace_id: Option<&str>) -> String {
-    let mut key = format!("openwork::{host_url}");
+pub fn stable_workspace_id_for_veslo(host_url: &str, workspace_id: Option<&str>) -> String {
+    let mut key = format!("veslo::{host_url}");
     if let Some(id) = workspace_id {
         if !id.trim().is_empty() {
             key.push_str("::");

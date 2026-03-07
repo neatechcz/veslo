@@ -1,18 +1,18 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "OpenWork",
+  "productName": "Veslo",
   "version": "2026.3.0",
-  "identifier": "com.differentai.openwork",
+  "identifier": "com.neatech.veslo",
   "build": {
     "beforeDevCommand": "node ./scripts/tauri-before-dev.mjs",
-    "beforeBuildCommand": "pnpm -C ../.. --filter @different-ai/openwork run prepare:sidecar && pnpm -w build:ui",
+    "beforeBuildCommand": "pnpm -C ../.. --filter @neatech/veslo run prepare:sidecar && pnpm -w build:ui",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../../app/dist"
   },
   "app": {
     "windows": [
       {
-        "title": "OpenWork",
+        "title": "Veslo",
         "width": 1180,
         "height": 820,
         "resizable": true
@@ -35,10 +35,10 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "sidecars/opencode",
-      "sidecars/openwork-server",
-      "sidecars/opencode-router",
-      "sidecars/openwork-orchestrator",
+      "sidecars/veslo-code",
+      "sidecars/veslo-server",
+      "sidecars/veslo-code-router",
+      "sidecars/veslo-orchestrator",
       "sidecars/chrome-devtools-mcp",
       "sidecars/versions.json"
     ]
@@ -47,14 +47,14 @@
     "deep-link": {
       "desktop": {
         "schemes": [
-          "openwork"
+          "veslo"
         ]
       }
     },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUwNDdCNTAwMTcxNUUxQTQKUldTazRSVVhBTFZIVUpNRi9OQnNRaElZY1NUWUQxS1ZJOTFUeUdPd2d6ZnFmMW5QV2xJQ1hXTTkK",
       "endpoints": [
-        "https://github.com/different-ai/openwork/releases/latest/download/latest.json"
+        "https://github.com/neatech/veslo/releases/latest/download/latest.json"
       ]
     }
   }

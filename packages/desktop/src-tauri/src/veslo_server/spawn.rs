@@ -6,18 +6,18 @@ use tauri::AppHandle;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
-const DEFAULT_OPENWORK_PORT: u16 = 8787;
+const DEFAULT_VESLO_PORT: u16 = 8787;
 
-pub fn resolve_openwork_port() -> Result<u16, String> {
-    if TcpListener::bind(("0.0.0.0", DEFAULT_OPENWORK_PORT)).is_ok() {
-        return Ok(DEFAULT_OPENWORK_PORT);
+pub fn resolve_veslo_port() -> Result<u16, String> {
+    if TcpListener::bind(("0.0.0.0", DEFAULT_VESLO_PORT)).is_ok() {
+        return Ok(DEFAULT_VESLO_PORT);
     }
     let listener = TcpListener::bind(("0.0.0.0", 0)).map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     Ok(port)
 }
 
-pub fn build_openwork_args(
+pub fn build_veslo_args(
     host: &str,
     port: u16,
     workspace_paths: &[String],
@@ -35,7 +35,7 @@ pub fn build_openwork_args(
         token.to_string(),
         "--host-token".to_string(),
         host_token.to_string(),
-        // Always allow all origins since the OpenWork server is designed to accept
+        // Always allow all origins since the Veslo server is designed to accept
         // remote connections from client devices (phones, laptops) which may use
         // different origins (localhost dev servers, tauri apps, web browsers).
         "--cors".to_string(),
@@ -70,7 +70,7 @@ pub fn build_openwork_args(
     args
 }
 
-pub fn spawn_openwork_server(
+pub fn spawn_veslo_server(
     app: &AppHandle,
     host: &str,
     port: u16,
@@ -83,12 +83,12 @@ pub fn spawn_openwork_server(
     opencode_password: Option<&str>,
     opencode_router_health_port: Option<u16>,
 ) -> Result<(Receiver<CommandEvent>, CommandChild), String> {
-    let command = match app.shell().sidecar("openwork-server") {
+    let command = match app.shell().sidecar("veslo-server") {
         Ok(command) => command,
-        Err(_) => app.shell().command("openwork-server"),
+        Err(_) => app.shell().command("veslo-server"),
     };
 
-    let args = build_openwork_args(
+    let args = build_veslo_args(
         host,
         port,
         workspace_paths,
@@ -109,13 +109,13 @@ pub fn spawn_openwork_server(
 
     if let Some(username) = opencode_username {
         if !username.trim().is_empty() {
-            command = command.env("OPENWORK_OPENCODE_USERNAME", username);
+            command = command.env("VESLO_OPENCODE_USERNAME", username);
         }
     }
 
     if let Some(password) = opencode_password {
         if !password.trim().is_empty() {
-            command = command.env("OPENWORK_OPENCODE_PASSWORD", password);
+            command = command.env("VESLO_OPENCODE_PASSWORD", password);
         }
     }
 
@@ -125,5 +125,5 @@ pub fn spawn_openwork_server(
 
     command
         .spawn()
-        .map_err(|e| format!("Failed to start OpenWork server: {e}"))
+        .map_err(|e| format!("Failed to start Veslo server: {e}"))
 }

@@ -2,15 +2,15 @@ use std::sync::{Arc, Mutex};
 
 use tauri_plugin_shell::process::CommandChild;
 
-use crate::types::OpenworkServerInfo;
+use crate::types::VesloServerInfo;
 
 #[derive(Default)]
-pub struct OpenworkServerManager {
-    pub inner: Arc<Mutex<OpenworkServerState>>,
+pub struct VesloServerManager {
+    pub inner: Arc<Mutex<VesloServerState>>,
 }
 
 #[derive(Default)]
-pub struct OpenworkServerState {
+pub struct VesloServerState {
     pub child: Option<CommandChild>,
     pub child_exited: bool,
     pub host: Option<String>,
@@ -25,8 +25,8 @@ pub struct OpenworkServerState {
     pub last_stderr: Option<String>,
 }
 
-impl OpenworkServerManager {
-    pub fn snapshot_locked(state: &mut OpenworkServerState) -> OpenworkServerInfo {
+impl VesloServerManager {
+    pub fn snapshot_locked(state: &mut VesloServerState) -> VesloServerInfo {
         let (running, pid) = match state.child.as_ref() {
             None => (false, None),
             Some(_child) if state.child_exited => {
@@ -36,7 +36,7 @@ impl OpenworkServerManager {
             Some(child) => (true, Some(child.pid())),
         };
 
-        OpenworkServerInfo {
+        VesloServerInfo {
             running,
             host: state.host.clone(),
             port: state.port,
@@ -52,7 +52,7 @@ impl OpenworkServerManager {
         }
     }
 
-    pub fn stop_locked(state: &mut OpenworkServerState) {
+    pub fn stop_locked(state: &mut VesloServerState) {
         if let Some(child) = state.child.take() {
             let _ = child.kill();
         }

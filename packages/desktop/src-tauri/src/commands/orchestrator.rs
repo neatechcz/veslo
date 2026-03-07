@@ -20,12 +20,12 @@ use crate::orchestrator::{resolve_orchestrator_data_dir, resolve_orchestrator_st
 use crate::platform::configure_hidden;
 use crate::types::{ExecResult, OrchestratorStatus, OrchestratorWorkspace};
 
-const SANDBOX_PROGRESS_EVENT: &str = "openwork://sandbox-create-progress";
+const SANDBOX_PROGRESS_EVENT: &str = "veslo://sandbox-create-progress";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrchestratorDetachedHost {
-    pub openwork_url: String,
+    pub veslo_url: String,
     pub token: String,
     pub host_token: String,
     pub port: u16,
@@ -83,7 +83,7 @@ struct DockerCommandResult {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenworkDockerCleanupResult {
+pub struct VesloDockerCleanupResult {
     pub candidates: Vec<String>,
     pub removed: Vec<String>,
     pub errors: Vec<String>,
@@ -264,7 +264,7 @@ fn resolve_docker_candidates() -> Vec<PathBuf> {
     let mut seen: HashSet<PathBuf> = HashSet::new();
 
     // 1) Explicit override (most reliable in odd environments)
-    for key in ["OPENWORK_DOCKER_BIN", "OPENWRK_DOCKER_BIN", "DOCKER_BIN"] {
+    for key in ["VESLO_DOCKER_BIN", "VESLO_DOCKER_BIN_ALT", "DOCKER_BIN"] {
         if let Some(value) = env::var_os(key) {
             let raw = value.to_string_lossy().trim().to_string();
             if !raw.is_empty() {
@@ -358,7 +358,7 @@ fn run_docker_command_detailed(
         }
     }
 
-    let hint = "Set OPENWORK_DOCKER_BIN (or OPENWRK_DOCKER_BIN) to your docker binary, e.g. /opt/homebrew/bin/docker";
+    let hint = "Set VESLO_DOCKER_BIN (or VESLO_DOCKER_BIN_ALT) to your docker binary, e.g. /opt/homebrew/bin/docker";
     Err(format!(
         "Failed to run docker: {} ({})",
         errors.join("; "),
@@ -416,8 +416,8 @@ fn to_command_debug(result: DockerCommandResult) -> SandboxDoctorCommandDebug {
 }
 
 fn derive_orchestrator_container_name(run_id: &str) -> String {
-    // Must match openwork-orchestrator's docker naming scheme:
-    // `openwork-orchestrator-${runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 24)}`
+    // Must match veslo-orchestrator's docker naming scheme:
+    // `veslo-orchestrator-${runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 24)}`
     let mut sanitized = String::new();
     for ch in run_id.chars() {
         let ok = ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' || ch == '-';
@@ -426,16 +426,16 @@ fn derive_orchestrator_container_name(run_id: &str) -> String {
     if sanitized.len() > 24 {
         sanitized.truncate(24);
     }
-    format!("openwork-orchestrator-{sanitized}")
+    format!("veslo-orchestrator-{sanitized}")
 }
 
-fn is_openwork_managed_container(name: &str) -> bool {
-    name.starts_with("openwork-orchestrator-")
-        || name.starts_with("openwork-dev-")
-        || name.starts_with("openwrk-")
+fn is_veslo_managed_container(name: &str) -> bool {
+    name.starts_with("veslo-orchestrator-")
+        || name.starts_with("veslo-dev-")
+        || name.starts_with("veslo-dev-alt-")
 }
 
-fn list_openwork_managed_containers() -> Result<Vec<String>, String> {
+fn list_veslo_managed_containers() -> Result<Vec<String>, String> {
     let (status, stdout, stderr) = run_docker_command(
         &["ps", "-a", "--format", "{{.Names}}"],
         Duration::from_secs(8),
@@ -455,7 +455,7 @@ fn list_openwork_managed_containers() -> Result<Vec<String>, String> {
     let mut names: Vec<String> = stdout
         .lines()
         .map(|line| line.trim().to_string())
-        .filter(|name| !name.is_empty() && is_openwork_managed_container(name))
+        .filter(|name| !name.is_empty() && is_veslo_managed_container(name))
         .collect();
     names.sort();
     names.dedup();
@@ -666,8 +666,8 @@ pub fn orchestrator_start_detached(
     workspace_path: String,
     sandbox_backend: Option<String>,
     run_id: Option<String>,
-    openwork_token: Option<String>,
-    openwork_host_token: Option<String>,
+    veslo_token: Option<String>,
+    veslo_host_token: Option<String>,
 ) -> Result<OrchestratorDetachedHost, String> {
     let start_ts = now_ms();
     let workspace_path = workspace_path.trim().to_string();
@@ -698,15 +698,15 @@ pub fn orchestrator_start_detached(
     );
 
     let port = allocate_free_port()?;
-    let token = openwork_token
+    let token = veslo_token
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let host_token = openwork_host_token
+    let host_token = veslo_host_token
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let openwork_url = format!("http://127.0.0.1:{port}");
+    let veslo_url = format!("http://127.0.0.1:{port}");
 
     emit_sandbox_progress(
         &app,
@@ -715,7 +715,7 @@ pub fn orchestrator_start_detached(
         "Starting sandbox...",
         json!({
             "workspacePath": workspace_path,
-            "openworkUrl": openwork_url,
+            "vesloUrl": veslo_url,
             "port": port,
             "sandboxBackend": if wants_docker_sandbox { "docker" } else { "none" },
             "containerName": sandbox_container_name,
@@ -734,16 +734,16 @@ pub fn orchestrator_start_detached(
             "Inspecting Docker configuration...",
             json!({
                 "candidates": candidates,
-                "openworkDockerBin": env::var("OPENWORK_DOCKER_BIN").ok(),
-                "openwrkDockerBin": env::var("OPENWRK_DOCKER_BIN").ok(),
+                "vesloDockerBin": env::var("VESLO_DOCKER_BIN").ok(),
+                "vesloDockerBinAlt": env::var("VESLO_DOCKER_BIN_ALT").ok(),
                 "dockerBin": env::var("DOCKER_BIN").ok(),
             }),
         );
     }
 
-    let command = match app.shell().sidecar("openwork-orchestrator") {
+    let command = match app.shell().sidecar("veslo-orchestrator") {
         Ok(command) => command,
-        Err(_) => app.shell().command("openwork"),
+        Err(_) => app.shell().command("veslo"),
     };
 
     // Start a dedicated host stack for this workspace.
@@ -759,13 +759,13 @@ pub fn orchestrator_start_detached(
             "--opencode-router".to_string(),
             "true".to_string(),
             "--detach".to_string(),
-            "--openwork-host".to_string(),
+            "--veslo-host".to_string(),
             "0.0.0.0".to_string(),
-            "--openwork-port".to_string(),
+            "--veslo-port".to_string(),
             port.to_string(),
-            "--openwork-token".to_string(),
+            "--veslo-token".to_string(),
             token.clone(),
-            "--openwork-host-token".to_string(),
+            "--veslo-host-token".to_string(),
             host_token.clone(),
             "--run-id".to_string(),
             sandbox_run_id.clone(),
@@ -785,9 +785,9 @@ pub fn orchestrator_start_detached(
         command
             .args(str_args)
             .spawn()
-            .map_err(|e| format!("Failed to start openwork orchestrator: {e}"))?;
+            .map_err(|e| format!("Failed to start veslo orchestrator: {e}"))?;
         eprintln!(
-            "[sandbox-create][at={}][runId={}][stage=spawn] launched openwork sidecar for detached sandbox host",
+            "[sandbox-create][at={}][runId={}][stage=spawn] launched veslo sidecar for detached sandbox host",
             now_ms(),
             sandbox_run_id
         );
@@ -797,9 +797,9 @@ pub fn orchestrator_start_detached(
         &app,
         &sandbox_run_id,
         "spawned",
-        "Sandbox process launched. Waiting for OpenWork server...",
+        "Sandbox process launched. Waiting for Veslo server...",
         json!({
-            "openworkUrl": openwork_url,
+            "vesloUrl": veslo_url,
         }),
     );
 
@@ -861,15 +861,15 @@ pub fn orchestrator_start_detached(
             }
         }
 
-        match ureq::get(&format!("{}/health", openwork_url.trim_end_matches('/'))).call() {
+        match ureq::get(&format!("{}/health", veslo_url.trim_end_matches('/'))).call() {
             Ok(response) if response.status() >= 200 && response.status() < 300 => {
                 emit_sandbox_progress(
                     &app,
                     &sandbox_run_id,
-                    "openwork.healthy",
-                    "OpenWork server is ready.",
+                    "veslo.healthy",
+                    "Veslo server is ready.",
                     json!({
-                        "openworkUrl": openwork_url,
+                        "vesloUrl": veslo_url,
                         "elapsedMs": elapsed_ms,
                         "containerState": last_container_state,
                     }),
@@ -890,10 +890,10 @@ pub fn orchestrator_start_detached(
             emit_sandbox_progress(
                 &app,
                 &sandbox_run_id,
-                "openwork.waiting",
-                "Waiting for OpenWork server...",
+                "veslo.waiting",
+                "Waiting for Veslo server...",
                 json!({
-                    "openworkUrl": openwork_url,
+                    "vesloUrl": veslo_url,
                     "elapsedMs": elapsed_ms,
                     "lastError": last_error,
                     "containerState": last_container_state,
@@ -907,7 +907,7 @@ pub fn orchestrator_start_detached(
 
     if start.elapsed() >= Duration::from_millis(health_timeout_ms) {
         let message =
-            last_error.unwrap_or_else(|| "Timed out waiting for OpenWork server".to_string());
+            last_error.unwrap_or_else(|| "Timed out waiting for Veslo server".to_string());
         emit_sandbox_progress(
             &app,
             &sandbox_run_id,
@@ -916,7 +916,7 @@ pub fn orchestrator_start_detached(
             json!({
                 "error": message,
                 "elapsedMs": start.elapsed().as_millis() as u64,
-                "openworkUrl": openwork_url,
+                "vesloUrl": veslo_url,
                 "containerState": last_container_state,
                 "containerProbeError": last_container_probe_error,
             }),
@@ -936,11 +936,11 @@ pub fn orchestrator_start_detached(
         now_ms(),
         sandbox_run_id,
         start.elapsed().as_millis(),
-        openwork_url
+        veslo_url
     );
 
     Ok(OrchestratorDetachedHost {
-        openwork_url,
+        veslo_url,
         token,
         host_token,
         port,
@@ -1135,9 +1135,9 @@ pub fn sandbox_stop(container_name: String) -> Result<ExecResult, String> {
     if name.is_empty() {
         return Err("containerName is required".to_string());
     }
-    if !name.starts_with("openwork-orchestrator-") {
+    if !name.starts_with("veslo-orchestrator-") {
         return Err(
-            "Refusing to stop container: expected name starting with 'openwork-orchestrator-'"
+            "Refusing to stop container: expected name starting with 'veslo-orchestrator-'"
                 .to_string(),
         );
     }
@@ -1158,10 +1158,10 @@ pub fn sandbox_stop(container_name: String) -> Result<ExecResult, String> {
 }
 
 #[tauri::command]
-pub fn sandbox_cleanup_openwork_containers() -> Result<OpenworkDockerCleanupResult, String> {
-    let candidates = list_openwork_managed_containers()?;
+pub fn sandbox_cleanup_veslo_containers() -> Result<VesloDockerCleanupResult, String> {
+    let candidates = list_veslo_managed_containers()?;
     if candidates.is_empty() {
-        return Ok(OpenworkDockerCleanupResult {
+        return Ok(VesloDockerCleanupResult {
             candidates,
             removed: Vec::new(),
             errors: Vec::new(),
@@ -1192,7 +1192,7 @@ pub fn sandbox_cleanup_openwork_containers() -> Result<OpenworkDockerCleanupResu
         }
     }
 
-    Ok(OpenworkDockerCleanupResult {
+    Ok(VesloDockerCleanupResult {
         candidates,
         removed,
         errors,
@@ -1203,7 +1203,7 @@ pub fn sandbox_cleanup_openwork_containers() -> Result<OpenworkDockerCleanupResu
 pub fn sandbox_debug_probe(app: AppHandle) -> SandboxDebugProbeResult {
     let started_at = now_ms();
     let run_id = format!("probe-{}", Uuid::new_v4());
-    let workspace_dir = env::temp_dir().join(format!("openwork-sandbox-probe-{}", Uuid::new_v4()));
+    let workspace_dir = env::temp_dir().join(format!("veslo-sandbox-probe-{}", Uuid::new_v4()));
     let workspace_path = workspace_dir.to_string_lossy().to_string();
 
     let mut cleanup_errors: Vec<String> = Vec::new();
@@ -1410,7 +1410,7 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let tmp =
-            std::env::temp_dir().join(format!("openwork-docker-timeout-test-{}", Uuid::new_v4()));
+            std::env::temp_dir().join(format!("veslo-docker-timeout-test-{}", Uuid::new_v4()));
         fs::create_dir_all(&tmp).expect("create tmp dir");
 
         let slow = tmp.join("slow-docker");
@@ -1433,8 +1433,8 @@ exit 0
         );
 
         let _path = EnvGuard::set("PATH", tmp.to_string_lossy().to_string());
-        let _docker = EnvGuard::set("OPENWORK_DOCKER_BIN", slow.to_string_lossy().to_string());
-        let _docker_alt = EnvGuard::unset("OPENWRK_DOCKER_BIN");
+        let _docker = EnvGuard::set("VESLO_DOCKER_BIN", slow.to_string_lossy().to_string());
+        let _docker_alt = EnvGuard::unset("VESLO_DOCKER_BIN_ALT");
         let _docker_bin = EnvGuard::unset("DOCKER_BIN");
 
         let (status, stdout, _stderr) =
@@ -1455,7 +1455,7 @@ exit 0
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let tmp =
-            std::env::temp_dir().join(format!("openwork-docker-doctor-test-{}", Uuid::new_v4()));
+            std::env::temp_dir().join(format!("veslo-docker-doctor-test-{}", Uuid::new_v4()));
         fs::create_dir_all(&tmp).expect("create tmp dir");
 
         let fast = tmp.join("docker");
@@ -1475,8 +1475,8 @@ exit 0
         );
 
         let _path = EnvGuard::set("PATH", tmp.to_string_lossy().to_string());
-        let _docker = EnvGuard::set("OPENWORK_DOCKER_BIN", fast.to_string_lossy().to_string());
-        let _docker_alt = EnvGuard::unset("OPENWRK_DOCKER_BIN");
+        let _docker = EnvGuard::set("VESLO_DOCKER_BIN", fast.to_string_lossy().to_string());
+        let _docker_alt = EnvGuard::unset("VESLO_DOCKER_BIN_ALT");
         let _docker_bin = EnvGuard::unset("DOCKER_BIN");
 
         let result = sandbox_doctor();
