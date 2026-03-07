@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Cyan bg, white oar, with small Neatech accent squares on the bg -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <!-- T-grip -->
+  <rect x="222" y="34" width="68" height="18" rx="9" fill="#F8F8F8"/>
+  <!-- Shaft -->
+  <rect x="244" y="34" width="24" height="268" rx="12" fill="#F8F8F8"/>
+  <!-- Blade -->
+  <path d="M256 282 C210 288, 150 322, 147 392 C145 436, 178 468, 224 474 L288 474 C334 468, 367 436, 365 392 C362 322, 302 288, 256 282Z" fill="#F8F8F8"/>
+  <!-- Neatech-style accent squares at corners of bg -->
+  <rect x="32" y="32" width="36" height="36" rx="4" fill="#E84C9A" opacity="0.85"/>
+  <rect x="444" y="444" width="36" height="36" rx="4" fill="#9B3FA4" opacity="0.85"/>
+</svg>

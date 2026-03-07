@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- No grip, thick chunky shaft -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <rect x="236" y="32" width="40" height="270" rx="20" fill="#F8F8F8"/>
+    <path d="M256 280 C218 284, 155 310, 150 378 C146 420, 168 456, 204 464 L308 464 C344 456, 366 420, 362 378 C357 310, 294 284, 256 280Z" fill="#F8F8F8"/>
+  </g>
+</svg>

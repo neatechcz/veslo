@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Modern oar matching Neatech's rounded-geometric style with accent square -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <!-- Shaft — thick rounded bar -->
+  <rect x="224" y="48" width="64" height="260" rx="32" fill="#2D2D2D"/>
+  <!-- Blade — rounded leaf/teardrop -->
+  <path d="M256 270 C208 278, 168 330, 168 395 C168 440, 200 470, 256 470 C312 470, 344 440, 344 395 C344 330, 304 278, 256 270Z" fill="#2D2D2D"/>
+  <!-- Neatech-style colored accent square at shaft-blade junction -->
+  <rect x="232" y="268" width="48" height="48" rx="4" fill="#00C4E8"/>
+  <!-- Small accent square at grip -->
+  <rect x="240" y="42" width="32" height="16" rx="4" fill="#E84C9A"/>
+</svg>

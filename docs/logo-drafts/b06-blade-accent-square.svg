@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Blade with Neatech-style accent square cutout -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <rect x="232" y="48" width="48" height="120" rx="24" fill="#2D2D2D"/>
+  <path d="M256 140 C196 150, 140 230, 140 330 C140 400, 185 455, 256 455 C327 455, 372 400, 372 330 C372 230, 316 150, 256 140Z" fill="#2D2D2D"/>
+  <!-- Cyan accent square at junction -->
+  <rect x="232" y="142" width="48" height="48" rx="6" fill="#00C4E8"/>
+  <!-- Pink accent at grip -->
+  <rect x="240" y="42" width="32" height="12" rx="4" fill="#E84C9A"/>
+</svg>

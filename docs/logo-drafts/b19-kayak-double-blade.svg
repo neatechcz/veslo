@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Kayak-style double blade — blade top and bottom -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <!-- Central shaft -->
+  <rect x="240" y="120" width="32" height="272" rx="16" fill="#2D2D2D"/>
+  <!-- Top blade (flipped) -->
+  <path d="M256 145 C216 138, 185 108, 185 68 C185 44, 210 30, 256 30 C302 30, 327 44, 327 68 C327 108, 296 138, 256 145Z" fill="#00C4E8"/>
+  <!-- Bottom blade -->
+  <path d="M256 367 C216 374, 185 404, 185 444 C185 468, 210 482, 256 482 C302 482, 327 468, 327 444 C327 404, 296 374, 256 367Z" fill="#E84C9A"/>
+</svg>

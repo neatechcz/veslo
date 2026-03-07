@@ -60,9 +60,9 @@ test("renderBundlePage includes machine-readable metadata and escaped json scrip
   assert.match(html, /meta name="veslo:bundle-id" content="01TEST"/);
   assert.match(html, /\?format=json/);
   assert.match(html, /veslo:\/\/import-bundle\?/);
-  assert.match(html, /ow_bundle=https%3A%2F%2Fshare\.veslo\.neatech\.com%2Fb%2F01TEST/);
-  assert.match(html, /ow_intent=new_worker/);
-  assert.match(html, /ow_source=share_service/);
+  assert.match(html, /veslo_bundle=https%3A%2F%2Fshare\.veslo\.neatech\.com%2Fb%2F01TEST/);
+  assert.match(html, /veslo_intent=new_worker/);
+  assert.match(html, /veslo_source=share_service/);
   assert.match(html, /id="veslo-bundle-json" type="application\/json"/);
   assert.match(html, /demo \\u003c\/script\\u003e skill/);
 });
@@ -86,7 +86,7 @@ test("renderBundlePage shows workspace profile metadata", () => {
     req: makeReq({ accept: "text/html", host: "share.veslo.neatech.com" }),
   });
 
-  assert.match(html, /<dt>Skills<\/dt><dd>2<\/dd>/);
-  assert.match(html, /<dt>Commands<\/dt><dd>1<\/dd>/);
-  assert.match(html, /<dt>Config<\/dt><dd>yes<\/dd>/);
+  assert.match(html, /<dt[^>]*>Skills<\/dt>\s*<dd[^>]*>2<\/dd>/);
+  assert.match(html, /<dt[^>]*>Commands<\/dt>\s*<dd[^>]*>1<\/dd>/);
+  assert.match(html, /<dt[^>]*>Config<\/dt>\s*<dd[^>]*>yes<\/dd>/);
 });

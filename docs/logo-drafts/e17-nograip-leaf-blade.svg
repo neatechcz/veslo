@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- No grip, leaf/organic blade shape -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <rect x="244" y="32" width="24" height="278" rx="12" fill="#F8F8F8"/>
+    <path d="M256 288 C230 292, 170 318, 160 368 C150 418, 168 454, 210 470 C234 478, 256 480, 256 480 C256 480, 278 478, 302 470 C344 454, 362 418, 352 368 C342 318, 282 292, 256 288Z" fill="#F8F8F8"/>
+  </g>
+</svg>

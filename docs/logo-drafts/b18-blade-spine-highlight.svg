@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Blade with prominent spine/ridge in darker color -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <rect x="232" y="48" width="48" height="120" rx="24" fill="#2D2D2D"/>
+  <path d="M256 140 C196 150, 140 230, 140 330 C140 400, 185 455, 256 455 C327 455, 372 400, 372 330 C372 230, 316 150, 256 140Z" fill="#00C4E8"/>
+  <!-- Prominent spine -->
+  <path d="M256 145 C250 145, 246 170, 246 200 L246 430 C246 445, 250 450, 256 450 C262 450, 266 445, 266 430 L266 200 C266 170, 262 145, 256 145Z" fill="#2D2D2D" opacity="0.25"/>
+</svg>

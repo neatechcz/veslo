@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Negative space: organic flowing blade with smooth shaft transition -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <!-- Grip knob -->
+  <ellipse cx="256" cy="40" rx="22" ry="14" fill="#F8F8F8"/>
+  <!-- Shaft that flows into blade — single continuous shape -->
+  <path d="M244 40 L244 260 C200 270, 148 320, 145 390 C142 440, 180 475, 256 478 C332 475, 370 440, 367 390 C364 320, 312 270, 268 260 L268 40 Z" fill="#F8F8F8"/>
+</svg>

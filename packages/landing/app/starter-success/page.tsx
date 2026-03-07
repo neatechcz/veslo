@@ -3,7 +3,7 @@ import { SiteNav } from "../../components/site-nav";
 import { getGithubData } from "../../lib/github";
 
 export const metadata = {
-  title: "Veslo - Starter Success",
+  title: "Veslo by Neatech - Starter Success",
   description: "Thanks for pre-ordering Veslo Team Starter.",
 };
 

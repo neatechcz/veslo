@@ -56,13 +56,13 @@ function normalizeAppUrl(input) {
 
 function buildOpenInAppUrls(shareUrl, options = {}) {
   const query = new URLSearchParams();
-  query.set("ow_bundle", shareUrl);
-  query.set("ow_intent", "new_worker");
-  query.set("ow_source", "share_service");
+  query.set("veslo_bundle", shareUrl);
+  query.set("veslo_intent", "new_worker");
+  query.set("veslo_source", "share_service");
 
   const label = String(options.label ?? "").trim();
   if (label) {
-    query.set("ow_label", label.slice(0, 120));
+    query.set("veslo_label", label.slice(0, 120));
   }
 
   const openInAppDeepLink = `veslo://import-bundle?${query.toString()}`;

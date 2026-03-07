@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Negative space: ultra-minimal — thin line shaft, clean blade -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <!-- Thin T-grip -->
+  <rect x="228" y="38" width="56" height="10" rx="5" fill="#F8F8F8"/>
+  <!-- Thin shaft -->
+  <rect x="250" y="38" width="12" height="260" rx="6" fill="#F8F8F8"/>
+  <!-- Clean blade -->
+  <path d="M256 280 C210 286, 155 322, 152 388 C150 430, 182 464, 228 470 L284 470 C330 464, 362 430, 360 388 C357 322, 302 286, 256 280Z" fill="#F8F8F8"/>
+</svg>

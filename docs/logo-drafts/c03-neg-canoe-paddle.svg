@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Negative space: canoe paddle with T-grip, clear proportions -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <!-- T-grip -->
+  <rect x="216" y="32" width="80" height="20" rx="10" fill="#F8F8F8"/>
+  <rect x="246" y="32" width="20" height="20" rx="2" fill="#F8F8F8"/>
+  <!-- Shaft -->
+  <rect x="246" y="32" width="20" height="240" rx="10" fill="#F8F8F8"/>
+  <!-- Blade — teardrop widening from shaft -->
+  <path d="M256 255 C236 260, 170 295, 165 370 C162 415, 185 460, 222 472 C238 477, 274 477, 290 472 C327 460, 350 415, 347 370 C342 295, 276 260, 256 255Z" fill="#F8F8F8"/>
+</svg>

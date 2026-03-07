@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Negative space: long shaft + traditional spoon blade -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <!-- Round grip -->
+  <circle cx="256" cy="40" r="16" fill="#F8F8F8"/>
+  <!-- Long shaft -->
+  <rect x="244" y="40" width="24" height="270" rx="12" fill="#F8F8F8"/>
+  <!-- Spoon/oval blade -->
+  <ellipse cx="256" cy="390" rx="80" ry="85" fill="#F8F8F8"/>
+</svg>

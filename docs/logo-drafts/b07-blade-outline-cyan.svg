@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Blade as outline only — minimal line art -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <rect x="236" y="50" width="40" height="110" rx="20" fill="none" stroke="#2D2D2D" stroke-width="10"/>
+  <path d="M256 135 C196 145, 140 225, 140 325 C140 395, 185 450, 256 450 C327 450, 372 395, 372 325 C372 225, 316 145, 256 135Z" fill="none" stroke="#00C4E8" stroke-width="10"/>
+</svg>

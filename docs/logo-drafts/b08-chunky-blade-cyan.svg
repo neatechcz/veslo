@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Extra chunky/bold blade — big presence -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <rect x="216" y="36" width="80" height="130" rx="40" fill="#2D2D2D"/>
+  <path d="M256 130 C180 142, 110 240, 110 350 C110 420, 165 475, 256 475 C347 475, 402 420, 402 350 C402 240, 332 142, 256 130Z" fill="#00C4E8"/>
+</svg>

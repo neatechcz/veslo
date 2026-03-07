@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Geometric diamond/rhombus blade shape -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <rect x="232" y="36" width="48" height="120" rx="24" fill="#2D2D2D"/>
+  <path d="M256 140 L150 310 L256 470 L362 310 Z" fill="#00C4E8" stroke="#2D2D2D" stroke-width="0"/>
+</svg>

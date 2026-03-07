@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Negative space oar with visible spine running down blade center -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <!-- T-grip -->
+  <rect x="222" y="34" width="68" height="18" rx="9" fill="#F8F8F8"/>
+  <!-- Shaft -->
+  <rect x="244" y="34" width="24" height="270" rx="12" fill="#F8F8F8"/>
+  <!-- Blade -->
+  <path d="M256 284 C208 290, 148 325, 145 395 C143 440, 178 472, 224 476 L288 476 C334 472, 369 440, 367 395 C364 325, 304 290, 256 284Z" fill="#F8F8F8"/>
+  <!-- Spine line (background color cutting through) -->
+  <rect x="250" y="300" width="12" height="165" rx="6" fill="#00C4E8" opacity="0.4"/>
+</svg>

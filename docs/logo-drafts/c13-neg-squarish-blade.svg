@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Negative space: squarish blade — like a Concept2 oar -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <!-- T-grip -->
+  <rect x="224" y="30" width="64" height="18" rx="9" fill="#F8F8F8"/>
+  <!-- Shaft -->
+  <rect x="244" y="30" width="24" height="260" rx="12" fill="#F8F8F8"/>
+  <!-- Squarish blade with rounded corners -->
+  <path d="M176 295 C164 295, 152 307, 152 320 L152 440 C152 460, 168 475, 188 475 L324 475 C344 475, 360 460, 360 440 L360 320 C360 307, 348 295, 336 295 L280 295 C268 295, 268 290, 256 290 C244 290, 244 295, 232 295 Z" fill="#F8F8F8"/>
+</svg>

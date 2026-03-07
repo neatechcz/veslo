@@ -15,7 +15,7 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata = {
-  title: "Veslo — Local-first, open-source Cowork alternative",
+  title: "Veslo by Neatech — Local-first, open-source Cowork alternative",
   description:
     "Veslo is the open-source Cowork alternative powered by OpenCode—run local-first workflows with any model, and extend with skills.",
   icons: {

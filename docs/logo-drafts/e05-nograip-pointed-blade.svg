@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- No grip, pointed/angular blade bottom -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <rect x="244" y="32" width="24" height="280" rx="12" fill="#F8F8F8"/>
+    <path d="M256 290 C222 294, 162 318, 156 370 C152 400, 166 430, 200 446 L256 480 L312 446 C346 430, 360 400, 356 370 C350 318, 290 294, 256 290Z" fill="#F8F8F8"/>
+  </g>
+</svg>

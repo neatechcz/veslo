@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Negative space: long shaft + hatchet blade (modern rowing oar shape) -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <!-- T-grip handle -->
+  <rect x="224" y="36" width="64" height="18" rx="9" fill="#F8F8F8"/>
+  <!-- Long shaft -->
+  <rect x="244" y="36" width="24" height="280" rx="12" fill="#F8F8F8"/>
+  <!-- Hatchet blade — wider, more rectangular, clearly an oar -->
+  <path d="M256 295 C220 298, 158 320, 152 380 C148 420, 165 455, 200 465 L312 465 C347 455, 364 420, 360 380 C354 320, 292 298, 256 295Z" fill="#F8F8F8"/>
+</svg>

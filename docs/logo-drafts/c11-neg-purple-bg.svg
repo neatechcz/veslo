@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Purple background, white oar negative space -->
+  <rect width="512" height="512" fill="#9B3FA4" rx="24"/>
+  <!-- T-grip -->
+  <rect x="222" y="34" width="68" height="18" rx="9" fill="#F8F8F8"/>
+  <!-- Shaft -->
+  <rect x="244" y="34" width="24" height="270" rx="12" fill="#F8F8F8"/>
+  <!-- Blade -->
+  <path d="M256 284 C214 290, 152 320, 148 390 C145 435, 175 468, 218 474 L294 474 C337 468, 367 435, 364 390 C360 320, 298 290, 256 284Z" fill="#F8F8F8"/>
+</svg>

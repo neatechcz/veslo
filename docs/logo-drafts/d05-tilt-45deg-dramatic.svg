@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Dramatic 45° tilt -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-45, 256, 256)">
+    <rect x="226" y="50" width="60" height="16" rx="8" fill="#F8F8F8"/>
+    <rect x="246" y="50" width="20" height="250" rx="10" fill="#F8F8F8"/>
+    <path d="M256 278 C224 282, 172 305, 168 360 C165 395, 184 425, 212 432 L300 432 C328 425, 347 395, 344 360 C340 305, 288 282, 256 278Z" fill="#F8F8F8"/>
+  </g>
+</svg>

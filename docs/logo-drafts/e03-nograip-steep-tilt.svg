@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- No grip, steeper 25° tilt -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-25, 256, 256)">
+    <rect x="244" y="36" width="24" height="280" rx="12" fill="#F8F8F8"/>
+    <path d="M256 294 C222 298, 162 320, 156 382 C152 420, 170 454, 204 462 L308 462 C342 454, 360 420, 356 382 C350 320, 290 298, 256 294Z" fill="#F8F8F8"/>
+  </g>
+</svg>

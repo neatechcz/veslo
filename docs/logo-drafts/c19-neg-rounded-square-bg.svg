@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Heavier rounded corners on bg (more app-icon), clean oar -->
+  <rect width="512" height="512" fill="#00C4E8" rx="100"/>
+  <!-- T-grip -->
+  <rect x="222" y="48" width="68" height="18" rx="9" fill="#F8F8F8"/>
+  <!-- Shaft -->
+  <rect x="244" y="48" width="24" height="254" rx="12" fill="#F8F8F8"/>
+  <!-- Blade -->
+  <path d="M256 282 C212 288, 156 320, 153 385 C151 428, 180 458, 222 464 L290 464 C332 458, 361 428, 359 385 C356 320, 300 288, 256 282Z" fill="#F8F8F8"/>
+</svg>

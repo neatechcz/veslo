@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- No grip, wide hatchet blade -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <rect x="244" y="40" width="24" height="260" rx="12" fill="#F8F8F8"/>
+    <path d="M256 278 C210 284, 130 316, 124 390 C120 436, 148 470, 196 478 L316 478 C364 470, 392 436, 388 390 C382 316, 302 284, 256 278Z" fill="#F8F8F8"/>
+  </g>
+</svg>

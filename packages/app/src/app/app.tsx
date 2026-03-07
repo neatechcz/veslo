@@ -433,6 +433,7 @@ function parseSharedBundleDeepLink(rawUrl: string): SharedBundleDeepLink | null 
     routeTail === "import-bundle";
 
   const rawBundleUrl =
+    url.searchParams.get("veslo_bundle") ??
     url.searchParams.get("ow_bundle") ??
     url.searchParams.get("bundleUrl") ??
     "";
@@ -446,10 +447,19 @@ function parseSharedBundleDeepLink(rawUrl: string): SharedBundleDeepLink | null 
     if (parsedBundleUrl.protocol !== "https:" && parsedBundleUrl.protocol !== "http:") {
       return null;
     }
-    const intent = normalizeSharedBundleImportIntent(url.searchParams.get("ow_intent") ?? url.searchParams.get("intent"));
-    const source = url.searchParams.get("ow_source")?.trim() ?? url.searchParams.get("source")?.trim() ?? "";
-    const orgId = url.searchParams.get("ow_org")?.trim() ?? "";
-    const label = url.searchParams.get("ow_label")?.trim() ?? "";
+    const intent = normalizeSharedBundleImportIntent(
+      url.searchParams.get("veslo_intent") ??
+        url.searchParams.get("ow_intent") ??
+        url.searchParams.get("intent"),
+    );
+    const source = (
+      url.searchParams.get("veslo_source") ??
+      url.searchParams.get("ow_source") ??
+      url.searchParams.get("source") ??
+      ""
+    ).trim();
+    const orgId = (url.searchParams.get("veslo_org") ?? url.searchParams.get("ow_org") ?? "").trim();
+    const label = (url.searchParams.get("veslo_label") ?? url.searchParams.get("ow_label") ?? "").trim();
     return {
       bundleUrl: parsedBundleUrl.toString(),
       intent,
@@ -471,7 +481,21 @@ function stripSharedBundleQuery(rawUrl: string): string | null {
   }
 
   let changed = false;
-  for (const key of ["ow_bundle", "bundleUrl", "ow_intent", "intent", "ow_source", "source", "ow_org", "ow_label"]) {
+  for (const key of [
+    "veslo_bundle",
+    "ow_bundle",
+    "bundleUrl",
+    "veslo_intent",
+    "ow_intent",
+    "intent",
+    "veslo_source",
+    "ow_source",
+    "source",
+    "veslo_org",
+    "ow_org",
+    "veslo_label",
+    "ow_label",
+  ]) {
     if (url.searchParams.has(key)) {
       url.searchParams.delete(key);
       changed = true;

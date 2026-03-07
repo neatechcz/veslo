@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OpenWork</title>
+    <title>Veslo by Neatech</title>
 
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
@@ -22,8 +22,100 @@
         }
       })();
     </script>
+    <style>
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0;
+        background: #ffffff;
+        transition: opacity 0.5s ease, visibility 0.5s ease;
+      }
+      [data-theme="dark"] #splash {
+        background: #121212;
+      }
+      #splash.splash-hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      #splash-logo-wrap {
+        perspective: 800px;
+      }
+      #splash-logo {
+        width: 128px;
+        height: 128px;
+        animation: splash-flip 1.2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+        transform-style: preserve-3d;
+      }
+      #splash-by {
+        margin-top: 40px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        opacity: 0;
+        animation: splash-fade-up 0.5s ease 0.7s forwards;
+      }
+      #splash-by span {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-size: 16px;
+        font-weight: 400;
+        color: #9ca3af;
+        letter-spacing: 0.05em;
+      }
+      #splash-by img {
+        height: 52px;
+        width: auto;
+      }
+      [data-theme="dark"] #splash-by img {
+        filter: invert(1) brightness(1.8);
+      }
+      @keyframes splash-flip {
+        0% {
+          opacity: 0;
+          transform: rotateY(-90deg) scale(0.85);
+        }
+        30% {
+          opacity: 1;
+        }
+        100% {
+          opacity: 1;
+          transform: rotateY(0deg) scale(1);
+        }
+      }
+      @keyframes splash-fade-up {
+        from {
+          opacity: 0;
+          transform: translateY(8px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+    </style>
   </head>
   <body class="bg-dls-surface text-dls-text">
+    <div id="splash">
+      <div id="splash-logo-wrap">
+        <svg id="splash-logo" xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 512 512">
+          <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+          <g transform="rotate(-15, 256, 256)">
+            <rect x="246" y="32" width="20" height="270" rx="10" fill="#F8F8F8"/>
+            <path d="M256 280 C236 284, 192 306, 188 370 C185 410, 200 448, 224 458 L288 458 C312 448, 327 410, 324 370 C320 306, 276 284, 256 280Z" fill="#F8F8F8"/>
+          </g>
+        </svg>
+      </div>
+      <div id="splash-by">
+        <span>by</span>
+        <img src="/neatech-logo.png" alt="Neatech" />
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/index.tsx"></script>
   </body>

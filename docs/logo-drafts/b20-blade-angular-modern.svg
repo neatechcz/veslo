@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Angular modern blade — mix of curves and straight edges -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <rect x="232" y="40" width="48" height="120" rx="24" fill="#2D2D2D"/>
+  <path d="M256 135 C200 145, 150 210, 150 300 L150 400 C150 435, 180 460, 215 460 L297 460 C332 460, 362 435, 362 400 L362 300 C362 210, 312 145, 256 135Z" fill="#00C4E8"/>
+</svg>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- No grip, asymmetric blade (wider on one side) -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <rect x="244" y="32" width="24" height="280" rx="12" fill="#F8F8F8"/>
+    <path d="M256 290 C230 294, 150 318, 140 382 C134 426, 158 460, 200 468 L320 468 C348 458, 364 426, 360 382 C354 318, 282 294, 256 290Z" fill="#F8F8F8"/>
+  </g>
+</svg>
