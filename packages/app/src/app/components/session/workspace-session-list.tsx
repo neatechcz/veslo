@@ -30,6 +30,7 @@ type Props = {
   onOpenCreateWorkspace: () => void;
   onOpenCreateRemoteWorkspace: () => void;
   onImportWorkspaceConfig: () => void;
+  onQuickAddWorker?: () => void;
 };
 
 const MAX_SESSIONS_PREVIEW = 6;
@@ -498,13 +499,19 @@ export default function WorkspaceSessionList(props: Props) {
         <button
           type="button"
           class="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-[13px] font-medium text-gray-11 border border-gray-6 bg-gray-1 hover:bg-gray-2 shadow-sm transition-colors"
-          onClick={() => setAddWorkspaceMenuOpen((prev) => !prev)}
+          onClick={() => {
+            if (props.onQuickAddWorker) {
+              props.onQuickAddWorker();
+              return;
+            }
+            setAddWorkspaceMenuOpen((prev) => !prev);
+          }}
         >
           <Plus size={14} />
           Add a worker
         </button>
 
-        <Show when={addWorkspaceMenuOpen()}>
+        <Show when={!props.onQuickAddWorker && addWorkspaceMenuOpen()}>
           <div class="absolute left-0 right-0 top-full mt-2 rounded-lg border border-gray-6 bg-gray-1 shadow-xl overflow-hidden z-20">
             <button
               type="button"

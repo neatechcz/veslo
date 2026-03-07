@@ -140,6 +140,7 @@ export type DashboardViewProps = {
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
   openCreateWorkspace: () => void;
   openCreateRemoteWorkspace: () => void;
+  quickAddWorker: boolean;
   importWorkspaceConfig: () => void;
   importingWorkspaceConfig: boolean;
   exportWorkspaceConfig: (workspaceId?: string) => void;
@@ -1104,6 +1105,7 @@ export default function DashboardView(props: DashboardViewProps) {
             onOpenCreateWorkspace={props.openCreateWorkspace}
             onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
             onImportWorkspaceConfig={props.importWorkspaceConfig}
+            onQuickAddWorker={props.quickAddWorker ? props.openCreateRemoteWorkspace : undefined}
           />
         </div>
 
