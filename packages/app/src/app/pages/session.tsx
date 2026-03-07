@@ -120,6 +120,7 @@ export type SessionViewProps = {
   soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
   openCreateWorkspace: () => void;
   openCreateRemoteWorkspace: () => void;
+  quickAddWorker: boolean;
   importWorkspaceConfig: () => void;
   importingWorkspaceConfig: boolean;
   exportWorkspaceConfig: (workspaceId?: string) => void;
@@ -3419,6 +3420,7 @@ export default function SessionView(props: SessionViewProps) {
             onOpenCreateWorkspace={props.openCreateWorkspace}
             onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
             onImportWorkspaceConfig={props.importWorkspaceConfig}
+            onQuickAddWorker={props.quickAddWorker ? props.openCreateRemoteWorkspace : undefined}
           />
         </div>
 

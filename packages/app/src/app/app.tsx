@@ -3299,6 +3299,43 @@ export default function App() {
     setDeepLinkRemoteWorkspaceDefaults(null);
   });
 
+  const quickAddWorkerEnabled = createMemo(() => !isTauriRuntime());
+
+  const openCreateRemoteWorkspace = () => {
+    if (!quickAddWorkerEnabled()) {
+      workspaceStore.setCreateRemoteWorkspaceOpen(true);
+      return;
+    }
+
+    const target = resolveSharedBundleWorkerTarget();
+    const hostUrl = normalizeVesloServerUrl(target.hostUrl ?? "") ?? "";
+    const token = target.token?.trim() ?? "";
+    const defaults: RemoteWorkspaceDefaults = {
+      vesloHostUrl: hostUrl || null,
+      vesloToken: token || null,
+      directory: null,
+      displayName: null,
+    };
+
+    if (!hostUrl || !token) {
+      setDeepLinkRemoteWorkspaceDefaults(defaults);
+      workspaceStore.setCreateRemoteWorkspaceOpen(true);
+      return;
+    }
+
+    void (async () => {
+      const ok = await workspaceStore.createRemoteWorkspaceFlow({
+        vesloHostUrl: hostUrl,
+        vesloToken: token,
+        directory: null,
+        displayName: null,
+      });
+      if (ok) return;
+      setDeepLinkRemoteWorkspaceDefaults(defaults);
+      workspaceStore.setCreateRemoteWorkspaceOpen(true);
+    })();
+  };
+
   const editRemoteWorkspaceDefaults = createMemo(() => {
     const workspaceId = editRemoteWorkspaceId();
     if (!workspaceId) return null;
@@ -5860,7 +5897,8 @@ export default function App() {
       testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
       recoverWorkspace: workspaceStore.recoverWorkspace,
       openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
-      openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
+      openCreateRemoteWorkspace,
+      quickAddWorker: quickAddWorkerEnabled(),
       importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
       importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
       exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
@@ -6063,7 +6101,8 @@ export default function App() {
     editWorkspaceConnection: openWorkspaceConnectionSettings,
     forgetWorkspace: workspaceStore.forgetWorkspace,
     openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
-    openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
+    openCreateRemoteWorkspace,
+    quickAddWorker: quickAddWorkerEnabled(),
     importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
     importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
     exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
