@@ -7,7 +7,7 @@ import { addMcp, listMcp, removeMcp } from "./mcp.js";
 
 describe("mcp remote connect flow", () => {
   test("adds, lists, and removes a remote MCP without OAuth", async () => {
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "openwork-mcp-remote-e2e-"));
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-mcp-remote-e2e-"));
 
     try {
       const added = await addMcp(workspaceRoot, "simple-remote", {

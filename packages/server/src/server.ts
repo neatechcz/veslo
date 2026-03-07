@@ -15,7 +15,7 @@ import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
 import { ReloadEventStore } from "./events.js";
 import { parseFrontmatter } from "./frontmatter.js";
-import { opencodeConfigPath, openworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
+import { opencodeConfigPath, vesloConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
 import { workspaceIdForPath } from "./workspaces.js";
 import { sanitizeCommandName, validateMcpName } from "./validators.js";
@@ -95,10 +95,10 @@ function toUnixNano(): string {
 }
 
 export function createServerLogger(config: ServerConfig): ServerLogger {
-  const runId = process.env.OPENWORK_RUN_ID ?? shortId();
+  const runId = process.env.VESLO_RUN_ID ?? shortId();
   const host = hostname().trim();
   const resource: Record<string, string> = {
-    "service.name": "openwork-server",
+    "service.name": "veslo-server",
     "service.version": SERVER_VERSION,
     "service.instance.id": runId,
   };
@@ -490,7 +490,7 @@ export function startServer(config: ServerConfig) {
         return finalize(response);
       } catch (error) {
         if (!(error instanceof ApiError)) {
-          console.error("[openwork-server] Unhandled error:", error);
+          console.error("[veslo-server] Unhandled error:", error);
         }
         const apiError = error instanceof ApiError
           ? error
@@ -615,8 +615,8 @@ async function proxyOpencodeRequest(input: {
   const targetUrl = buildOpencodeProxyUrl(baseUrl, proxyPath, input.url.search);
   const headers = new Headers(input.request.headers);
   headers.delete("authorization");
-  headers.delete("x-openwork-host-token");
-  headers.delete("x-openwork-client-id");
+  headers.delete("x-veslo-host-token");
+  headers.delete("x-veslo-client-id");
   headers.delete("host");
   headers.delete("origin");
 
@@ -659,8 +659,8 @@ async function proxyOpenCodeRouterRequest(input: {
   const targetUrl = buildOpenCodeRouterProxyUrl(baseUrl, proxyPath, input.url.search);
   const headers = new Headers(input.request.headers);
   headers.delete("authorization");
-  headers.delete("x-openwork-host-token");
-  headers.delete("x-openwork-client-id");
+  headers.delete("x-veslo-host-token");
+  headers.delete("x-veslo-client-id");
   headers.delete("host");
   headers.delete("origin");
 
@@ -692,7 +692,7 @@ function jsonResponse(data: unknown, status = 200) {
 }
 
 function opencodeRouterDebugEnabled(): boolean {
-  return ["1", "true", "yes"].includes((process.env.OPENWORK_DEBUG_OPENCODE_ROUTER ?? "").toLowerCase());
+  return ["1", "true", "yes"].includes((process.env.VESLO_DEBUG_OPENCODE_ROUTER ?? "").toLowerCase());
 }
 
 function logOpenCodeRouterDebug(message: string, details?: Record<string, unknown>) {
@@ -716,7 +716,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   headers.set("Access-Control-Allow-Origin", allowOrigin);
   headers.set(
     "Access-Control-Allow-Headers",
-    "Authorization, Content-Type, X-OpenWork-Host-Token, X-OpenWork-Client-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
+    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
   );
   headers.set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
   headers.set("Vary", "Origin");
@@ -734,12 +734,12 @@ async function requireClient(request: Request, config: ServerConfig, tokens: Tok
   if (!scope) {
     throw new ApiError(401, "unauthorized", "Invalid bearer token");
   }
-  const clientId = request.headers.get("x-openwork-client-id") ?? undefined;
+  const clientId = request.headers.get("x-veslo-client-id") ?? undefined;
   return { type: "remote", clientId, tokenHash: hashToken(token), scope };
 }
 
 async function requireHost(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
-  const hostToken = request.headers.get("x-openwork-host-token");
+  const hostToken = request.headers.get("x-veslo-host-token");
   if (hostToken && hostToken === config.hostToken) {
     return { type: "host", tokenHash: hashToken(hostToken), scope: "owner" };
   }
@@ -754,7 +754,7 @@ async function requireHost(request: Request, config: ServerConfig, tokens: Token
   if (scope !== "owner") {
     throw new ApiError(401, "unauthorized", "Invalid host token");
   }
-  const clientId = request.headers.get("x-openwork-client-id") ?? undefined;
+  const clientId = request.headers.get("x-veslo-client-id") ?? undefined;
   return { type: "remote", clientId, tokenHash: hashToken(bearer), scope };
 }
 
@@ -773,12 +773,12 @@ function buildCapabilities(config: ServerConfig): Capabilities {
   return {
     schemaVersion,
     serverVersion: SERVER_VERSION,
-    skills: { read: true, write: writeEnabled, source: "openwork" },
+    skills: { read: true, write: writeEnabled, source: "veslo" },
     hub: {
       skills: {
         read: true,
         install: writeEnabled,
-        repo: { owner: "different-ai", name: "openwork-hub", ref: "main" },
+        repo: { owner: "neatech", name: "veslo-hub", ref: "main" },
       },
     },
     plugins: { read: true, write: writeEnabled },
@@ -799,8 +799,8 @@ function buildCapabilities(config: ServerConfig): Capabilities {
       files: {
         injection: writeEnabled && inboxEnabled,
         outbox: outboxEnabled,
-        inboxPath: ".opencode/openwork/inbox/",
-        outboxPath: ".opencode/openwork/outbox/",
+        inboxPath: ".opencode/veslo/inbox/",
+        outboxPath: ".opencode/veslo/outbox/",
         maxBytes,
       },
     },
@@ -808,33 +808,33 @@ function buildCapabilities(config: ServerConfig): Capabilities {
 }
 
 function resolveSandboxBackend(): Capabilities["sandbox"]["backend"] {
-  const raw = (process.env.OPENWORK_SANDBOX_BACKEND ?? "").trim().toLowerCase();
+  const raw = (process.env.VESLO_SANDBOX_BACKEND ?? "").trim().toLowerCase();
   if (raw === "docker") return "docker";
   if (raw === "container") return "container";
   return "none";
 }
 
 function resolveSandboxEnabled(backend: Capabilities["sandbox"]["backend"]): boolean {
-  const raw = (process.env.OPENWORK_SANDBOX_ENABLED ?? "").trim().toLowerCase();
+  const raw = (process.env.VESLO_SANDBOX_ENABLED ?? "").trim().toLowerCase();
   if (["1", "true", "yes", "on"].includes(raw)) return true;
   if (["0", "false", "no", "off"].includes(raw)) return false;
   return backend !== "none";
 }
 
 function resolveInboxEnabled(): boolean {
-  const raw = (process.env.OPENWORK_INBOX_ENABLED ?? "").trim().toLowerCase();
+  const raw = (process.env.VESLO_INBOX_ENABLED ?? "").trim().toLowerCase();
   if (!raw) return true;
   return ["1", "true", "yes", "on"].includes(raw);
 }
 
 function resolveOutboxEnabled(): boolean {
-  const raw = (process.env.OPENWORK_OUTBOX_ENABLED ?? "").trim().toLowerCase();
+  const raw = (process.env.VESLO_OUTBOX_ENABLED ?? "").trim().toLowerCase();
   if (!raw) return true;
   return ["1", "true", "yes", "on"].includes(raw);
 }
 
 function resolveInboxMaxBytes(): number {
-  const raw = (process.env.OPENWORK_INBOX_MAX_BYTES ?? "").trim();
+  const raw = (process.env.VESLO_INBOX_MAX_BYTES ?? "").trim();
   const parsed = raw ? Number(raw) : NaN;
   if (Number.isFinite(parsed) && parsed > 0) {
     return Math.min(Math.trunc(parsed), 250_000_000);
@@ -843,13 +843,13 @@ function resolveInboxMaxBytes(): number {
 }
 
 function resolveToyUiEnabled(): boolean {
-  const raw = (process.env.OPENWORK_TOY_UI ?? "").trim().toLowerCase();
+  const raw = (process.env.VESLO_TOY_UI ?? "").trim().toLowerCase();
   if (!raw) return true;
   return ["1", "true", "yes", "on"].includes(raw);
 }
 
 function resolveBrowserProvider(): Capabilities["toolProviders"]["browser"] {
-  const raw = (process.env.OPENWORK_BROWSER_PROVIDER ?? "").trim().toLowerCase();
+  const raw = (process.env.VESLO_BROWSER_PROVIDER ?? "").trim().toLowerCase();
   if (raw === "sandbox-headless") {
     return { enabled: true, placement: "in-sandbox", mode: "headless" };
   }
@@ -863,15 +863,15 @@ function resolveBrowserProvider(): Capabilities["toolProviders"]["browser"] {
 }
 
 function resolveInboxDir(workspaceRoot: string): string {
-  return join(workspaceRoot, ".opencode", "openwork", "inbox");
+  return join(workspaceRoot, ".opencode", "veslo", "inbox");
 }
 
 function resolveOutboxDir(workspaceRoot: string): string {
-  return join(workspaceRoot, ".opencode", "openwork", "outbox");
+  return join(workspaceRoot, ".opencode", "veslo", "outbox");
 }
 
 function resolveAgentLabDir(workspaceRoot: string): string {
-  return join(workspaceRoot, ".opencode", "openwork", "agentlab");
+  return join(workspaceRoot, ".opencode", "veslo", "agentlab");
 }
 
 function resolveAgentLabAutomationsPath(workspaceRoot: string): string {
@@ -1514,7 +1514,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       actor: ctx.actor ?? { type: "host" },
       action: "workspace.delete",
       target: "workspace",
-      summary: "Deleted workspace from OpenWork server",
+      summary: "Deleted workspace from Veslo server",
       timestamp: Date.now(),
     });
 
@@ -1531,9 +1531,9 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
   addRoute(routes, "GET", "/workspace/:id/config", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const opencode = redactSensitiveConfig(await readOpencodeConfig(workspace.path));
-    const openwork = redactSensitiveConfig(await readOpenworkConfig(workspace.path));
+    const veslo = redactSensitiveConfig(await readVesloConfig(workspace.path));
     const lastAudit = await readLastAudit(workspace.path, workspace.id);
-    return jsonResponse({ opencode, openwork, updatedAt: lastAudit?.timestamp ?? null });
+    return jsonResponse({ opencode, veslo, updatedAt: lastAudit?.timestamp ?? null });
   });
 
   addRoute(routes, "GET", "/workspace/:id/audit", "client", async (ctx) => {
@@ -1569,24 +1569,24 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
     const opencode = body.opencode as Record<string, unknown> | undefined;
-    const openwork = body.openwork as Record<string, unknown> | undefined;
+    const veslo = body.veslo as Record<string, unknown> | undefined;
 
-    if (!opencode && !openwork) {
-      throw new ApiError(400, "invalid_payload", "opencode or openwork updates required");
+    if (!opencode && !veslo) {
+      throw new ApiError(400, "invalid_payload", "opencode or veslo updates required");
     }
 
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "config.patch",
       summary: "Patch workspace config",
-      paths: [opencode ? opencodeConfigPath(workspace.path) : null, openwork ? openworkConfigPath(workspace.path) : null].filter(Boolean) as string[],
+      paths: [opencode ? opencodeConfigPath(workspace.path) : null, veslo ? vesloConfigPath(workspace.path) : null].filter(Boolean) as string[],
     });
 
     if (opencode) {
       await updateJsoncTopLevel(opencodeConfigPath(workspace.path), opencode);
     }
-    if (openwork) {
-      await writeOpenworkConfig(workspace.path, openwork, true);
+    if (veslo) {
+      await writeVesloConfig(workspace.path, veslo, true);
     }
 
     await recordAudit(workspace.path, {
@@ -3758,7 +3758,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       workspaceId: workspace.id,
       action: "config.import",
       summary: "Import workspace config",
-      paths: [opencodeConfigPath(workspace.path), openworkConfigPath(workspace.path)],
+      paths: [opencodeConfigPath(workspace.path), vesloConfigPath(workspace.path)],
     });
     await importWorkspace(workspace, body);
     await recordAudit(workspace.path, {
@@ -3861,7 +3861,7 @@ function expandHome(value: string): string {
 function resolveOpenCodeRouterConfigPath(): string {
   const override = process.env.OPENCODE_ROUTER_CONFIG_PATH?.trim();
   if (override) return expandHome(override);
-  const dataDir = process.env.OPENCODE_ROUTER_DATA_DIR?.trim() || join(homedir(), ".openwork", "opencode-router");
+  const dataDir = process.env.OPENCODE_ROUTER_DATA_DIR?.trim() || join(homedir(), ".veslo", "opencode-router");
   return join(expandHome(dataDir), "opencode-router.json");
 }
 
@@ -3905,7 +3905,7 @@ function ensurePlainObject(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-type OpenworkServerConfigFile = Record<string, unknown> & {
+type VesloServerConfigFile = Record<string, unknown> & {
   workspaces?: Array<Record<string, unknown>>;
   authorizedRoots?: string[];
 };
@@ -3928,9 +3928,9 @@ async function persistWorkspaceDeletion(configPath: string, workspaceId: string,
     });
   }
 
-  let parsed: OpenworkServerConfigFile;
+  let parsed: VesloServerConfigFile;
   try {
-    parsed = ensurePlainObject(JSON.parse(raw)) as OpenworkServerConfigFile;
+    parsed = ensurePlainObject(JSON.parse(raw)) as VesloServerConfigFile;
   } catch (error) {
     throw new ApiError(422, "invalid_json", "Failed to parse server config", {
       path: configPath,
@@ -3962,7 +3962,7 @@ async function persistWorkspaceDeletion(configPath: string, workspaceId: string,
   const rootsChanged = nextRoots.length !== roots.length;
   if (!workspacesChanged && !rootsChanged) return false;
 
-  const next: OpenworkServerConfigFile = {
+  const next: VesloServerConfigFile = {
     ...parsed,
     ...(workspacesChanged ? { workspaces: nextWorkspaces } : {}),
     ...(rootsChanged ? { authorizedRoots: nextRoots } : {}),
@@ -5057,14 +5057,14 @@ async function readOpencodeConfig(workspaceRoot: string): Promise<Record<string,
   return data;
 }
 
-async function readOpenworkConfig(workspaceRoot: string): Promise<Record<string, unknown>> {
-  const path = openworkConfigPath(workspaceRoot);
+async function readVesloConfig(workspaceRoot: string): Promise<Record<string, unknown>> {
+  const path = vesloConfigPath(workspaceRoot);
   if (!(await exists(path))) return {};
   try {
     const raw = await readFile(path, "utf8");
     return JSON.parse(raw) as Record<string, unknown>;
   } catch {
-    throw new ApiError(422, "invalid_json", "Failed to parse openwork.json");
+    throw new ApiError(422, "invalid_json", "Failed to parse veslo.json");
   }
 }
 
@@ -5127,9 +5127,9 @@ async function reloadOpencodeEngine(workspace: WorkspaceInfo): Promise<void> {
   });
 }
 
-async function writeOpenworkConfig(workspaceRoot: string, payload: Record<string, unknown>, merge: boolean): Promise<void> {
-  const path = openworkConfigPath(workspaceRoot);
-  const next = merge ? { ...(await readOpenworkConfig(workspaceRoot)), ...payload } : payload;
+async function writeVesloConfig(workspaceRoot: string, payload: Record<string, unknown>, merge: boolean): Promise<void> {
+  const path = vesloConfigPath(workspaceRoot);
+  const next = merge ? { ...(await readVesloConfig(workspaceRoot)), ...payload } : payload;
   await ensureDir(join(workspaceRoot, ".opencode"));
   await writeFile(path, JSON.stringify(next, null, 2) + "\n", "utf8");
 }
@@ -5150,7 +5150,7 @@ async function requireApproval(
 
 async function exportWorkspace(workspace: WorkspaceInfo) {
   const opencode = redactSensitiveConfig(await readOpencodeConfig(workspace.path));
-  const openwork = redactSensitiveConfig(await readOpenworkConfig(workspace.path));
+  const veslo = redactSensitiveConfig(await readVesloConfig(workspace.path));
   const skills = await listSkills(workspace.path, false);
   const commands = await listCommands(workspace.path, "workspace");
   const skillContents = await Promise.all(
@@ -5172,7 +5172,7 @@ async function exportWorkspace(workspace: WorkspaceInfo) {
     workspaceId: workspace.id,
     exportedAt: Date.now(),
     opencode,
-    openwork,
+    veslo,
     skills: skillContents,
     commands: commandContents,
   };
@@ -5181,7 +5181,7 @@ async function exportWorkspace(workspace: WorkspaceInfo) {
 async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string, unknown>): Promise<void> {
   const modes = (payload.mode as Record<string, string> | undefined) ?? {};
   const opencode = payload.opencode as Record<string, unknown> | undefined;
-  const openwork = payload.openwork as Record<string, unknown> | undefined;
+  const veslo = payload.veslo as Record<string, unknown> | undefined;
   const skills = (payload.skills as { name: string; content: string; description?: string }[] | undefined) ?? [];
   const commands = (payload.commands as { name: string; content?: string; description?: string; template?: string; agent?: string; model?: string | null; subtask?: boolean }[] | undefined) ?? [];
 
@@ -5193,11 +5193,11 @@ async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string,
     }
   }
 
-  if (openwork) {
-    if (modes.openwork === "replace") {
-      await writeOpenworkConfig(workspace.path, openwork, false);
+  if (veslo) {
+    if (modes.veslo === "replace") {
+      await writeVesloConfig(workspace.path, veslo, false);
     } else {
-      await writeOpenworkConfig(workspace.path, openwork, true);
+      await writeVesloConfig(workspace.path, veslo, true);
     }
   }
 

@@ -1,6 +1,6 @@
-# OpenWork Repo Non-Stub Render E2E Proof
+# Veslo Repo Non-Stub Render E2E Proof
 
-This directory captures end-to-end proof for the OpenWork-repo implementation of the Den service and worker provisioning flow.
+This directory captures end-to-end proof for the Veslo-repo implementation of the Den service and worker provisioning flow.
 
 ## Control-plane deployment proof
 

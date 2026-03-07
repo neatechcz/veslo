@@ -11,18 +11,18 @@ function expandHome(value: string): string {
   return value;
 }
 
-function resolveOpenworkDataDir(): string {
-  const override = process.env.OPENWORK_DATA_DIR?.trim();
+function resolveVesloDataDir(): string {
+  const override = process.env.VESLO_DATA_DIR?.trim();
   if (override) return expandHome(override);
-  return join(homedir(), ".openwork", "openwork-server");
+  return join(homedir(), ".veslo", "veslo-server");
 }
 
 export function auditLogPath(workspaceId: string): string {
-  return join(resolveOpenworkDataDir(), "audit", `${workspaceId}.jsonl`);
+  return join(resolveVesloDataDir(), "audit", `${workspaceId}.jsonl`);
 }
 
 export function legacyAuditLogPath(workspaceRoot: string): string {
-  return join(workspaceRoot, ".opencode", "openwork", "audit.jsonl");
+  return join(workspaceRoot, ".opencode", "veslo", "audit.jsonl");
 }
 
 async function resolveReadableAuditPath(workspaceRoot: string, workspaceId: string): Promise<string | null> {

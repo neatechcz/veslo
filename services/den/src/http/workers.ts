@@ -43,7 +43,7 @@ function normalizeUrl(value: string): string {
   return value.trim().replace(/\/+$/, "")
 }
 
-function parseWorkspaceSelection(payload: unknown): { workspaceId: string; openworkUrl: string } | null {
+function parseWorkspaceSelection(payload: unknown): { workspaceId: string; vesloUrl: string } | null {
   if (!isRecord(payload) || !Array.isArray(payload.items)) {
     return null
   }
@@ -67,7 +67,7 @@ function parseWorkspaceSelection(payload: unknown): { workspaceId: string; openw
 
   return {
     workspaceId,
-    openworkUrl: `${baseUrl}/w/${encodeURIComponent(workspaceId)}`,
+    vesloUrl: `${baseUrl}/w/${encodeURIComponent(workspaceId)}`,
   }
 }
 
@@ -317,7 +317,7 @@ workersRouter.post("/", asyncRoute(async (req, res) => {
     const access = await requireCloudWorkerAccess({
       userId: session.user.id,
       email: session.user.email ?? `${session.user.id}@placeholder.local`,
-      name: session.user.name ?? session.user.email ?? "OpenWork User",
+      name: session.user.name ?? session.user.email ?? "Veslo User",
     })
 
     if (!access.allowed) {
@@ -416,7 +416,7 @@ workersRouter.get("/billing", asyncRoute(async (req, res) => {
   const billingInput = {
     userId: session.user.id,
     email: session.user.email ?? `${session.user.id}@placeholder.local`,
-    name: session.user.name ?? session.user.email ?? "OpenWork User",
+    name: session.user.name ?? session.user.email ?? "Veslo User",
   }
 
   const billing = await getCloudWorkerBillingStatus(
@@ -450,7 +450,7 @@ workersRouter.post("/billing/subscription", asyncRoute(async (req, res) => {
   const billingInput = {
     userId: session.user.id,
     email: session.user.email ?? `${session.user.id}@placeholder.local`,
-    name: session.user.name ?? session.user.email ?? "OpenWork User",
+    name: session.user.name ?? session.user.email ?? "Veslo User",
   }
 
   const subscription = await setCloudWorkerSubscriptionCancellation(billingInput, parsed.data.cancelAtPeriodEnd)
@@ -545,7 +545,7 @@ workersRouter.post("/:id/tokens", asyncRoute(async (req, res) => {
       host: hostToken,
       client: clientToken,
     },
-    connect: connect ?? (instance?.url ? { openworkUrl: instance.url, workspaceId: null } : null),
+    connect: connect ?? (instance?.url ? { vesloUrl: instance.url, workspaceId: null } : null),
   })
 }))
 

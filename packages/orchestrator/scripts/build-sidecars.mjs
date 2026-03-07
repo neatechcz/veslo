@@ -11,7 +11,7 @@ const outdir = resolve(root, "dist", "sidecars");
 const orchestratorPkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
 const orchestratorVersion = String(orchestratorPkg.version ?? "").trim();
 if (!orchestratorVersion) {
-  throw new Error("openwork-orchestrator version missing in packages/orchestrator/package.json");
+  throw new Error("veslo-orchestrator version missing in packages/orchestrator/package.json");
 }
 
 const sourceDateEpoch = process.env.SOURCE_DATE_EPOCH
@@ -24,15 +24,15 @@ const generatedAt = Number.isFinite(sourceDateEpoch)
 const serverPkg = JSON.parse(readFileSync(resolve(repoRoot, "packages", "server", "package.json"), "utf8"));
 const serverVersion = String(serverPkg.version ?? "").trim();
 if (!serverVersion) {
-  throw new Error("openwork-server version missing in packages/server/package.json");
+  throw new Error("veslo-server version missing in packages/server/package.json");
 }
 
 const routerPkg = JSON.parse(
-  readFileSync(resolve(repoRoot, "packages", "opencode-router", "package.json"), "utf8"),
+  readFileSync(resolve(repoRoot, "packages", "veslo-code-router", "package.json"), "utf8"),
 );
 const routerVersion = String(routerPkg.version ?? "").trim();
 if (!routerVersion) {
-  throw new Error("opencode-router version missing in packages/opencode-router/package.json");
+  throw new Error("veslo-code-router version missing in packages/veslo-code-router/package.json");
 }
 
 const run = (command, args, cwd) => {
@@ -42,8 +42,8 @@ const run = (command, args, cwd) => {
   }
 };
 
-run("pnpm", ["--filter", "openwork-server", "build:bin:all"], repoRoot);
-run("pnpm", ["--filter", "opencode-router", "build:bin:all"], repoRoot);
+run("pnpm", ["--filter", "veslo-server", "build:bin:all"], repoRoot);
+run("pnpm", ["--filter", "veslo-code-router", "build:bin:all"], repoRoot);
 
 const targets = [
   { id: "darwin-arm64", bun: "bun-darwin-arm64" },
@@ -59,37 +59,37 @@ const sha256File = (path) => {
 };
 
 const serverDir = resolve(repoRoot, "packages", "server", "dist", "bin");
-const routerDir = resolve(repoRoot, "packages", "opencode-router", "dist", "bin");
+const routerDir = resolve(repoRoot, "packages", "veslo-code-router", "dist", "bin");
 
 mkdirSync(outdir, { recursive: true });
 
 const entries = {
-  "openwork-server": { version: serverVersion, targets: {} },
-  "opencode-router": { version: routerVersion, targets: {} },
+  "veslo-server": { version: serverVersion, targets: {} },
+  "veslo-code-router": { version: routerVersion, targets: {} },
 };
 
 for (const target of targets) {
   const ext = target.id.startsWith("windows") ? ".exe" : "";
-  const serverSrc = join(serverDir, `openwork-server-${target.bun}${ext}`);
+  const serverSrc = join(serverDir, `veslo-server-${target.bun}${ext}`);
   if (!existsSync(serverSrc)) {
-    throw new Error(`Missing openwork-server binary at ${serverSrc}`);
+    throw new Error(`Missing veslo-server binary at ${serverSrc}`);
   }
-  const serverDest = join(outdir, `openwork-server-${target.id}${ext}`);
+  const serverDest = join(outdir, `veslo-server-${target.id}${ext}`);
   copyFileSync(serverSrc, serverDest);
 
-  const routerSrc = join(routerDir, `opencode-router-${target.bun}${ext}`);
+  const routerSrc = join(routerDir, `veslo-code-router-${target.bun}${ext}`);
   if (!existsSync(routerSrc)) {
-    throw new Error(`Missing opencode-router binary at ${routerSrc}`);
+    throw new Error(`Missing veslo-code-router binary at ${routerSrc}`);
   }
-  const routerDest = join(outdir, `opencode-router-${target.id}${ext}`);
+  const routerDest = join(outdir, `veslo-code-router-${target.id}${ext}`);
   copyFileSync(routerSrc, routerDest);
 
-  entries["openwork-server"].targets[target.id] = {
+  entries["veslo-server"].targets[target.id] = {
     asset: basename(serverDest),
     sha256: sha256File(serverDest),
     size: statSync(serverDest).size,
   };
-  entries["opencode-router"].targets[target.id] = {
+  entries["veslo-code-router"].targets[target.id] = {
     asset: basename(routerDest),
     sha256: sha256File(routerDest),
     size: statSync(routerDest).size,
@@ -103,7 +103,7 @@ const manifest = {
 };
 
 writeFileSync(
-  join(outdir, "openwork-orchestrator-sidecars.json"),
+  join(outdir, "veslo-orchestrator-sidecars.json"),
   `${JSON.stringify(manifest, null, 2)}\n`,
   "utf8",
 );

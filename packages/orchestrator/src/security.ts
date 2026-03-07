@@ -14,12 +14,12 @@ export function sanitizeRuntimePayloadForLogs<T extends Record<string, any>>(pay
           password: redactIfPresent(payload.opencode.password),
         }
       : payload.opencode,
-    openwork: payload.openwork
+    veslo: payload.veslo
       ? {
-          ...payload.openwork,
-          token: redactIfPresent(payload.openwork.token),
-          hostToken: redactIfPresent(payload.openwork.hostToken),
+          ...payload.veslo,
+          token: redactIfPresent(payload.veslo.token),
+          hostToken: redactIfPresent(payload.veslo.hostToken),
         }
-      : payload.openwork,
+      : payload.veslo,
   };
 }

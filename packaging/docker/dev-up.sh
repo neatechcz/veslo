@@ -3,12 +3,12 @@ set -euo pipefail
 
 # Bring up a dev stack with random host ports.
 #
-# Usage (from _repos/openwork repo root):
+# Usage (from _repos/veslo repo root):
 #   packaging/docker/dev-up.sh
 #
 # Outputs:
 # - Web UI URL
-# - OpenWork server URL
+# - Veslo server URL
 # - Token file path
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -17,13 +17,13 @@ WORKSPACE_DIR="$ROOT_DIR/packaging/docker/workspace"
 DEV_RUNTIME_DIR="$ROOT_DIR/tmp/docker-dev"
 
 resolve_opencode_config_dir() {
-  local override="${OPENWORK_OPENCODE_CONFIG_DIR:-}"
+  local override="${VESLO_OPENCODE_CONFIG_DIR:-}"
   if [ -n "$override" ]; then
     if [ -d "$override" ]; then
       printf '%s\n' "$override"
       return 0
     fi
-    echo "warning: OPENWORK_OPENCODE_CONFIG_DIR is not a directory: $override" >&2
+    echo "warning: VESLO_OPENCODE_CONFIG_DIR is not a directory: $override" >&2
   fi
 
   local candidates=()
@@ -55,13 +55,13 @@ resolve_opencode_config_dir() {
 }
 
 resolve_opencode_data_dir() {
-  local override="${OPENWORK_OPENCODE_DATA_DIR:-}"
+  local override="${VESLO_OPENCODE_DATA_DIR:-}"
   if [ -n "$override" ]; then
     if [ -d "$override" ]; then
       printf '%s\n' "$override"
       return 0
     fi
-    echo "warning: OPENWORK_OPENCODE_DATA_DIR is not a directory: $override" >&2
+    echo "warning: VESLO_OPENCODE_DATA_DIR is not a directory: $override" >&2
   fi
 
   local candidates=()
@@ -106,7 +106,7 @@ pick_port() {
 }
 
 DEV_ID="$(node -e "console.log(require('crypto').randomUUID().slice(0, 8))")"
-PROJECT="openwork-dev-$DEV_ID"
+PROJECT="veslo-dev-$DEV_ID"
 
 mkdir -p "$WORKSPACE_DIR"
 mkdir -p "$DEV_RUNTIME_DIR"
@@ -125,30 +125,30 @@ if [ -z "$HOST_OPENCODE_DATA_DIR" ]; then
   HOST_OPENCODE_DATA_DIR="$OPENCODE_DATA_FALLBACK_DIR"
 fi
 
-OPENWORK_PORT="$(pick_port)"
+VESLO_PORT="$(pick_port)"
 WEB_PORT="$(pick_port)"
-if [ "$WEB_PORT" = "$OPENWORK_PORT" ]; then
+if [ "$WEB_PORT" = "$VESLO_PORT" ]; then
   WEB_PORT="$(pick_port)"
 fi
 
 echo "Starting Docker Compose project: $PROJECT" >&2
-echo "- OPENWORK_PORT=$OPENWORK_PORT" >&2
+echo "- VESLO_PORT=$VESLO_PORT" >&2
 echo "- WEB_PORT=$WEB_PORT" >&2
 
 start_stack() {
   local config_dir="$1"
   local data_dir="$2"
-  OPENWORK_DEV_ID="$DEV_ID" OPENWORK_PORT="$OPENWORK_PORT" WEB_PORT="$WEB_PORT" \
-    OPENWORK_HOST_OPENCODE_CONFIG_DIR="$config_dir" \
-    OPENWORK_HOST_OPENCODE_DATA_DIR="$data_dir" \
+  VESLO_DEV_ID="$DEV_ID" VESLO_PORT="$VESLO_PORT" WEB_PORT="$WEB_PORT" \
+    VESLO_HOST_OPENCODE_CONFIG_DIR="$config_dir" \
+    VESLO_HOST_OPENCODE_DATA_DIR="$data_dir" \
     docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d
 }
 
 ACTIVE_OPENCODE_CONFIG_DIR="$HOST_OPENCODE_CONFIG_DIR"
 ACTIVE_OPENCODE_DATA_DIR="$HOST_OPENCODE_DATA_DIR"
 
-echo "- OPENWORK_HOST_OPENCODE_CONFIG_DIR=$ACTIVE_OPENCODE_CONFIG_DIR" >&2
-echo "- OPENWORK_HOST_OPENCODE_DATA_DIR=$ACTIVE_OPENCODE_DATA_DIR" >&2
+echo "- VESLO_HOST_OPENCODE_CONFIG_DIR=$ACTIVE_OPENCODE_CONFIG_DIR" >&2
+echo "- VESLO_HOST_OPENCODE_DATA_DIR=$ACTIVE_OPENCODE_DATA_DIR" >&2
 
 if ! start_stack "$ACTIVE_OPENCODE_CONFIG_DIR" "$ACTIVE_OPENCODE_DATA_DIR"; then
   if [ "$ACTIVE_OPENCODE_CONFIG_DIR" != "$OPENCODE_CONFIG_FALLBACK_DIR" ] || [ "$ACTIVE_OPENCODE_DATA_DIR" != "$OPENCODE_DATA_FALLBACK_DIR" ]; then
@@ -156,8 +156,8 @@ if ! start_stack "$ACTIVE_OPENCODE_CONFIG_DIR" "$ACTIVE_OPENCODE_DATA_DIR"; then
     docker compose -p "$PROJECT" -f "$COMPOSE_FILE" down >/dev/null 2>&1 || true
     ACTIVE_OPENCODE_CONFIG_DIR="$OPENCODE_CONFIG_FALLBACK_DIR"
     ACTIVE_OPENCODE_DATA_DIR="$OPENCODE_DATA_FALLBACK_DIR"
-    echo "- OPENWORK_HOST_OPENCODE_CONFIG_DIR=$ACTIVE_OPENCODE_CONFIG_DIR" >&2
-    echo "- OPENWORK_HOST_OPENCODE_DATA_DIR=$ACTIVE_OPENCODE_DATA_DIR" >&2
+    echo "- VESLO_HOST_OPENCODE_CONFIG_DIR=$ACTIVE_OPENCODE_CONFIG_DIR" >&2
+    echo "- VESLO_HOST_OPENCODE_DATA_DIR=$ACTIVE_OPENCODE_DATA_DIR" >&2
     start_stack "$ACTIVE_OPENCODE_CONFIG_DIR" "$ACTIVE_OPENCODE_DATA_DIR"
   else
     exit 1
@@ -165,8 +165,8 @@ if ! start_stack "$ACTIVE_OPENCODE_CONFIG_DIR" "$ACTIVE_OPENCODE_DATA_DIR"; then
 fi
 
 echo "" >&2
-echo "OpenWork web UI:     http://localhost:$WEB_PORT" >&2
-echo "OpenWork server:     http://localhost:$OPENWORK_PORT" >&2
+echo "Veslo web UI:        http://localhost:$WEB_PORT" >&2
+echo "Veslo server:        http://localhost:$VESLO_PORT" >&2
 echo "Token file:          $ROOT_DIR/tmp/.dev-env-$DEV_ID" >&2
 echo "" >&2
 echo "To stop this stack:" >&2

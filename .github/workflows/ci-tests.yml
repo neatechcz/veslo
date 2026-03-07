@@ -1,4 +1,4 @@
-name: OpenWork Tests
+name: Veslo Tests
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 jobs:
-  openwork-tests:
+  veslo-tests:
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -140,4 +140,4 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run e2e tests
-        run: pnpm --filter @different-ai/openwork-ui test:e2e
+        run: pnpm --filter @neatech/veslo-ui test:e2e

@@ -63,7 +63,7 @@ type WorkerLaunch = {
   status: string;
   provider: string | null;
   instanceUrl: string | null;
-  openworkUrl: string | null;
+  vesloUrl: string | null;
   workspaceId: string | null;
   clientToken: string | null;
   hostToken: string | null;
@@ -81,7 +81,7 @@ type WorkerSummary = {
 type WorkerTokens = {
   clientToken: string | null;
   hostToken: string | null;
-  openworkUrl: string | null;
+  vesloUrl: string | null;
   workspaceId: string | null;
 };
 
@@ -135,8 +135,8 @@ const PENDING_GITHUB_SIGNUP_STORAGE_KEY = "veslo:web:pending-github-signup";
 const AUTH_TOKEN_STORAGE_KEY = "veslo:web:auth-token";
 const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "Veslo User";
-const OPENWORK_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL ?? "").trim();
-const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL ?? "https://app.veslo.neatech.com").trim();
+const VESLO_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_VESLO_APP_CONNECT_URL ?? "").trim();
+const VESLO_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_VESLO_AUTH_CALLBACK_URL ?? "https://app.veslo.neatech.com").trim();
 
 function getEmailDomain(email: string): string {
   const atIndex = email.lastIndexOf("@");
@@ -206,7 +206,7 @@ async function trackDenSignupInLoops(payload: DenSignupTrackPayload) {
 
 function getGithubCallbackUrl(): string {
   try {
-    return new URL("/", OPENWORK_AUTH_CALLBACK_BASE_URL || "https://app.veslo.neatech.com").toString();
+    return new URL("/", VESLO_AUTH_CALLBACK_BASE_URL || "https://app.veslo.neatech.com").toString();
   } catch {
     return "https://app.veslo.neatech.com/";
   }
@@ -365,7 +365,7 @@ function getWorker(payload: unknown): WorkerLaunch | null {
     status: typeof worker.status === "string" ? worker.status : "unknown",
     provider: instance && typeof instance.provider === "string" ? instance.provider : null,
     instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
-    openworkUrl: instance && typeof instance.url === "string" ? instance.url : null,
+    vesloUrl: instance && typeof instance.url === "string" ? instance.url : null,
     workspaceId: null,
     clientToken: tokens && typeof tokens.client === "string" ? tokens.client : null,
     hostToken: tokens && typeof tokens.host === "string" ? tokens.host : null
@@ -403,14 +403,14 @@ function getWorkerTokens(payload: unknown): WorkerTokens | null {
   const connect = isRecord(payload.connect) ? payload.connect : null;
   const clientToken = typeof tokens.client === "string" ? tokens.client : null;
   const hostToken = typeof tokens.host === "string" ? tokens.host : null;
-  const openworkUrl = connect && typeof connect.openworkUrl === "string" ? connect.openworkUrl : null;
+  const vesloUrl = connect && typeof connect.vesloUrl === "string" ? connect.vesloUrl : null;
   const workspaceId = connect && typeof connect.workspaceId === "string" ? connect.workspaceId : null;
 
   if (!clientToken && !hostToken) {
     return null;
   }
 
-  return { clientToken, hostToken, openworkUrl, workspaceId };
+  return { clientToken, hostToken, vesloUrl, workspaceId };
 }
 
 function getBillingPrice(value: unknown): BillingPrice | null {
@@ -599,7 +599,7 @@ function isWorkerLaunch(value: unknown): value is WorkerLaunch {
     typeof value.status === "string" &&
     (typeof value.provider === "string" || value.provider === null) &&
     (typeof value.instanceUrl === "string" || value.instanceUrl === null) &&
-    (typeof value.openworkUrl === "string" || value.openworkUrl === null || typeof value.openworkUrl === "undefined") &&
+    (typeof value.vesloUrl === "string" || value.vesloUrl === null || typeof value.vesloUrl === "undefined") &&
     (typeof value.workspaceId === "string" || value.workspaceId === null || typeof value.workspaceId === "undefined") &&
     (typeof value.clientToken === "string" || value.clientToken === null) &&
     (typeof value.hostToken === "string" || value.hostToken === null)
@@ -613,7 +613,7 @@ function listItemToWorker(item: WorkerListItem, current: WorkerLaunch | null = n
     status: item.status,
     provider: item.provider,
     instanceUrl: item.instanceUrl,
-    openworkUrl: item.instanceUrl,
+    vesloUrl: item.instanceUrl,
     workspaceId: null,
     clientToken: current?.workerId === item.workerId ? current.clientToken : null,
     hostToken: current?.workerId === item.workerId ? current.hostToken : null
@@ -656,19 +656,19 @@ function buildWorkspaceUrl(instanceUrl: string, workspaceId: string): string {
   return `${normalizeUrl(instanceUrl)}/w/${encodeURIComponent(workspaceId)}`;
 }
 
-function buildOpenworkDeepLink(
-  openworkUrl: string | null,
+function buildVesloDeepLink(
+  vesloUrl: string | null,
   accessToken: string | null,
   workerId: string | null,
   workerName: string | null,
 ): string | null {
-  if (!openworkUrl || !accessToken) {
+  if (!vesloUrl || !accessToken) {
     return null;
   }
 
   const params = new URLSearchParams({
-    openworkHostUrl: openworkUrl,
-    openworkToken: accessToken,
+    vesloHostUrl: vesloUrl,
+    vesloToken: accessToken,
     source: "veslo-web"
   });
 
@@ -683,14 +683,14 @@ function buildOpenworkDeepLink(
   return `veslo://connect-remote?${params.toString()}`;
 }
 
-function buildOpenworkAppConnectUrl(
+function buildVesloAppConnectUrl(
   appConnectBaseUrl: string,
-  openworkUrl: string | null,
+  vesloUrl: string | null,
   accessToken: string | null,
   workerId: string | null,
   workerName: string | null,
 ): string | null {
-  if (!appConnectBaseUrl || !openworkUrl || !accessToken) {
+  if (!appConnectBaseUrl || !vesloUrl || !accessToken) {
     return null;
   }
 
@@ -711,8 +711,8 @@ function buildOpenworkAppConnectUrl(
       lastSegment === "connect-remote" ? normalizedPath : `${normalizedPath}/connect-remote`;
   }
 
-  connectUrl.searchParams.set("openworkHostUrl", openworkUrl);
-  connectUrl.searchParams.set("openworkToken", accessToken);
+  connectUrl.searchParams.set("vesloHostUrl", vesloUrl);
+  connectUrl.searchParams.set("vesloToken", accessToken);
   connectUrl.searchParams.set("source", "veslo-web");
 
   if (workerId) {
@@ -784,7 +784,7 @@ async function requestAbsoluteJson(url: string, init: RequestInit = {}, timeoutM
   return { response, payload };
 }
 
-async function resolveOpenworkWorkspaceUrl(instanceUrl: string, accessToken: string): Promise<{ workspaceId: string; openworkUrl: string } | null> {
+async function resolveVesloWorkspaceUrl(instanceUrl: string, accessToken: string): Promise<{ workspaceId: string; vesloUrl: string } | null> {
   const baseUrl = normalizeUrl(instanceUrl);
   const token = accessToken.trim();
   if (!baseUrl || !token) {
@@ -795,7 +795,7 @@ async function resolveOpenworkWorkspaceUrl(instanceUrl: string, accessToken: str
   if (mountedWorkspaceId) {
     return {
       workspaceId: mountedWorkspaceId,
-      openworkUrl: baseUrl
+      vesloUrl: baseUrl
     };
   }
 
@@ -817,7 +817,7 @@ async function resolveOpenworkWorkspaceUrl(instanceUrl: string, accessToken: str
 
   return {
     workspaceId,
-    openworkUrl: buildWorkspaceUrl(baseUrl, workspaceId)
+    vesloUrl: buildWorkspaceUrl(baseUrl, workspaceId)
   };
 }
 
@@ -965,17 +965,17 @@ export function CloudControlPanel() {
 
   const progressWidth = step === 1 ? "45%" : "100%";
   const isShellStep = step === 2;
-  const openworkConnectUrl = activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null;
-  const hasWorkspaceScopedUrl = Boolean(openworkConnectUrl && /\/w\/[^/?#]+/.test(openworkConnectUrl));
-  const openworkDeepLink = buildOpenworkDeepLink(
-    openworkConnectUrl,
+  const vesloConnectUrl = activeWorker?.vesloUrl ?? activeWorker?.instanceUrl ?? null;
+  const hasWorkspaceScopedUrl = Boolean(vesloConnectUrl && /\/w\/[^/?#]+/.test(vesloConnectUrl));
+  const vesloDeepLink = buildVesloDeepLink(
+    vesloConnectUrl,
     activeWorker?.clientToken ?? null,
     activeWorker?.workerId ?? null,
     activeWorker?.workerName ?? null,
   );
-  const openworkAppConnectUrl = buildOpenworkAppConnectUrl(
-    OPENWORK_APP_CONNECT_BASE_URL,
-    openworkConnectUrl,
+  const vesloAppConnectUrl = buildVesloAppConnectUrl(
+    VESLO_APP_CONNECT_BASE_URL,
+    vesloConnectUrl,
     activeWorker?.clientToken ?? null,
     activeWorker?.workerId ?? null,
     activeWorker?.workerName ?? null,
@@ -1022,13 +1022,13 @@ export function CloudControlPanel() {
     });
   }
 
-  async function withResolvedOpenworkCredentials(candidate: WorkerLaunch, options: { quiet?: boolean } = {}) {
-    const existingConnectUrl = candidate.openworkUrl?.trim() ?? "";
+  async function withResolvedVesloCredentials(candidate: WorkerLaunch, options: { quiet?: boolean } = {}) {
+    const existingConnectUrl = candidate.vesloUrl?.trim() ?? "";
     const existingWorkspaceId = candidate.workspaceId?.trim() ?? "";
     if (existingConnectUrl && existingWorkspaceId) {
       return {
         ...candidate,
-        openworkUrl: existingConnectUrl,
+        vesloUrl: existingConnectUrl,
         workspaceId: existingWorkspaceId
       };
     }
@@ -1037,7 +1037,7 @@ export function CloudControlPanel() {
     if (!instanceUrl) {
       return {
         ...candidate,
-        openworkUrl: null,
+        vesloUrl: null,
         workspaceId: null
       };
     }
@@ -1047,17 +1047,17 @@ export function CloudControlPanel() {
       const mountedWorkspaceId = parseWorkspaceIdFromUrl(instanceUrl);
       return {
         ...candidate,
-        openworkUrl: normalizeUrl(instanceUrl),
+        vesloUrl: normalizeUrl(instanceUrl),
         workspaceId: mountedWorkspaceId
       };
     }
 
     try {
-      const resolved = await resolveOpenworkWorkspaceUrl(instanceUrl, accessToken);
+      const resolved = await resolveVesloWorkspaceUrl(instanceUrl, accessToken);
       if (resolved) {
         return {
           ...candidate,
-          openworkUrl: resolved.openworkUrl,
+          vesloUrl: resolved.vesloUrl,
           workspaceId: resolved.workspaceId
         };
       }
@@ -1069,7 +1069,7 @@ export function CloudControlPanel() {
 
     return {
       ...candidate,
-      openworkUrl: normalizeUrl(instanceUrl),
+      vesloUrl: normalizeUrl(instanceUrl),
       workspaceId: parseWorkspaceIdFromUrl(instanceUrl)
     };
   }
@@ -1414,7 +1414,7 @@ export function CloudControlPanel() {
 
       const restored: WorkerLaunch = {
         ...parsed,
-        openworkUrl: parsed.openworkUrl ?? parsed.instanceUrl,
+        vesloUrl: parsed.vesloUrl ?? parsed.instanceUrl,
         workspaceId: parsed.workspaceId ?? parseWorkspaceIdFromUrl(parsed.instanceUrl ?? ""),
         clientToken: null,
         hostToken: null
@@ -1829,7 +1829,7 @@ export function CloudControlPanel() {
         return;
       }
 
-      const resolvedWorker = await withResolvedOpenworkCredentials(parsedWorker);
+      const resolvedWorker = await withResolvedVesloCredentials(parsedWorker);
       setWorker(resolvedWorker);
       setWorkerLookupId(parsedWorker.workerId);
       setPaymentReturned(false);
@@ -1938,13 +1938,13 @@ export function CloudControlPanel() {
               status: summary.status,
               provider: summary.provider,
               instanceUrl: summary.instanceUrl,
-              openworkUrl: summary.instanceUrl,
+              vesloUrl: summary.instanceUrl,
               workspaceId: null,
               clientToken: null,
               hostToken: null
             };
 
-      const resolvedWorker = await withResolvedOpenworkCredentials(nextWorker, { quiet: true });
+      const resolvedWorker = await withResolvedVesloCredentials(nextWorker, { quiet: true });
       setWorker(resolvedWorker);
 
       setWorkerLookupId(summary.workerId);
@@ -2022,7 +2022,7 @@ export function CloudControlPanel() {
         worker && worker.workerId === id
           ? {
               ...worker,
-              openworkUrl: tokens.openworkUrl ?? worker.openworkUrl,
+              vesloUrl: tokens.vesloUrl ?? worker.vesloUrl,
               workspaceId: tokens.workspaceId ?? worker.workspaceId,
               clientToken: tokens.clientToken,
               hostToken: tokens.hostToken
@@ -2033,13 +2033,13 @@ export function CloudControlPanel() {
               status: "unknown",
               provider: null,
               instanceUrl: null,
-              openworkUrl: tokens.openworkUrl,
+              vesloUrl: tokens.vesloUrl,
               workspaceId: tokens.workspaceId,
               clientToken: tokens.clientToken,
               hostToken: tokens.hostToken
             };
 
-      const resolvedWorker = await withResolvedOpenworkCredentials(nextWorker, { quiet: true });
+      const resolvedWorker = await withResolvedVesloCredentials(nextWorker, { quiet: true });
       setWorker(resolvedWorker);
 
       setLaunchStatus("Worker is ready to connect.");
@@ -2442,7 +2442,7 @@ export function CloudControlPanel() {
                             </div>
                             <div className="rounded-[20px] border border-slate-100 bg-white p-4">
                               <p className="text-sm font-medium text-slate-500">Connection</p>
-                              <p className="mt-2 text-2xl font-bold text-slate-900">{openworkDeepLink ? "Ready" : "Preparing"}</p>
+                              <p className="mt-2 text-2xl font-bold text-slate-900">{vesloDeepLink ? "Ready" : "Preparing"}</p>
                             </div>
                           </div>
                         </div>
@@ -2459,19 +2459,19 @@ export function CloudControlPanel() {
                                 type="button"
                                 className="rounded-[14px] bg-[#1B29FF] px-6 py-3 text-sm font-semibold text-white shadow-md shadow-[#1B29FF]/25 transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-60"
                                 onClick={() => {
-                                  if (!openworkDeepLink) {
+                                  if (!vesloDeepLink) {
                                     return;
                                   }
-                                  window.location.href = openworkDeepLink;
+                                  window.location.href = vesloDeepLink;
                                 }}
-                                disabled={!openworkDeepLink || selectedStatusMeta.bucket !== "ready"}
+                                disabled={!vesloDeepLink || selectedStatusMeta.bucket !== "ready"}
                               >
-                                {openworkDeepLink ? "Open in Veslo" : "Preparing connection..."}
+                                {vesloDeepLink ? "Open in Veslo" : "Preparing connection..."}
                               </button>
 
-                              {openworkAppConnectUrl ? (
+                              {vesloAppConnectUrl ? (
                                 <a
-                                  href={openworkAppConnectUrl}
+                                  href={vesloAppConnectUrl}
                                   target="_blank"
                                   rel="noreferrer"
                                   className={`rounded-[14px] border px-5 py-3 text-sm font-semibold transition ${
@@ -2489,8 +2489,8 @@ export function CloudControlPanel() {
 
                           <div className="rounded-[14px] border border-slate-100 bg-slate-50 px-4 py-3">
                             <p className="text-sm text-slate-600">
-                              {openworkDeepLink
-                                ? openworkAppConnectUrl
+                              {vesloDeepLink
+                                ? vesloAppConnectUrl
                                   ? "You are all set. Open in Veslo or Open in App to start working."
                                   : "You are all set. Open in Veslo to start working."
                                 : "We are still preparing your connection. The button will unlock when ready."}
@@ -2520,24 +2520,24 @@ export function CloudControlPanel() {
                                   <input
                                     type="text"
                                     readOnly
-                                    value={openworkConnectUrl ?? "Connection URL is still preparing..."}
+                                    value={vesloConnectUrl ?? "Connection URL is still preparing..."}
                                     className="w-full flex-1 bg-transparent px-3 py-2 font-mono text-xs text-slate-600 outline-none"
                                     onClick={(event) => event.currentTarget.select()}
                                   />
                                   <button
                                     type="button"
                                     className="rounded-xl border border-transparent bg-white px-3 py-2 text-xs font-medium text-slate-500 transition hover:border-slate-200 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                                    disabled={!openworkConnectUrl}
-                                    onClick={() => void copyToClipboard("openwork-url", openworkConnectUrl)}
+                                    disabled={!vesloConnectUrl}
+                                    onClick={() => void copyToClipboard("veslo-url", vesloConnectUrl)}
                                   >
-                                    {copiedField === "openwork-url" ? "Copied" : "Copy"}
+                                    {copiedField === "veslo-url" ? "Copied" : "Copy"}
                                   </button>
                                 </div>
-                                {!openworkDeepLink || !openworkConnectUrl || (!hasWorkspaceScopedUrl && openworkConnectUrl) ? (
+                                {!vesloDeepLink || !vesloConnectUrl || (!hasWorkspaceScopedUrl && vesloConnectUrl) ? (
                                   <p className="mt-2 text-xs text-slate-500">
-                                    {!openworkDeepLink
+                                    {!vesloDeepLink
                                       ? "Getting connection details ready..."
-                                      : !openworkConnectUrl
+                                      : !vesloConnectUrl
                                         ? "Keep this page open for a moment."
                                         : "Finishing your workspace URL..."}
                                   </p>
@@ -2558,11 +2558,11 @@ export function CloudControlPanel() {
                                     <div className="space-y-3 px-4 pb-4">
                                       <CredentialRow
                                         label="Veslo worker URL"
-                                        value={openworkConnectUrl}
+                                        value={vesloConnectUrl}
                                         placeholder="URL appears once ready"
-                                        canCopy={Boolean(openworkConnectUrl)}
-                                        copied={copiedField === "manual-openwork-url"}
-                                        onCopy={() => void copyToClipboard("manual-openwork-url", openworkConnectUrl)}
+                                        canCopy={Boolean(vesloConnectUrl)}
+                                        copied={copiedField === "manual-veslo-url"}
+                                        onCopy={() => void copyToClipboard("manual-veslo-url", vesloConnectUrl)}
                                       />
 
                                       <CredentialRow

@@ -6,16 +6,16 @@
 # Then open http://localhost:5173 — already wired to headless, no config needed.
 #
 # Env overrides (optional, via .env or export):
-#   OPENWORK_TOKEN        — shared client token (auto-generated if unset)
-#   OPENWORK_HOST_TOKEN   — host/admin token (auto-generated if unset)
-#   OPENWORK_WORKSPACE    — host path to mount as workspace (default: ./workspace)
-#   OPENWORK_PORT         — host port to map to container :8787 (default: 8787)
+#   VESLO_TOKEN        — shared client token (auto-generated if unset)
+#   VESLO_HOST_TOKEN   — host/admin token (auto-generated if unset)
+#   VESLO_WORKSPACE    — host path to mount as workspace (default: ./workspace)
+#   VESLO_PORT         — host port to map to container :8787 (default: 8787)
 #   WEB_PORT              — host port to map to container :5173 (default: 5173)
-#   OPENWORK_DEV_ID       — unique ID for this stack (default: default)
-#   OPENWORK_OPENCODE_CONFIG_DIR      — host OpenCode config dir detection override (read by dev-up.sh)
-#   OPENWORK_OPENCODE_DATA_DIR        — host OpenCode data dir detection override (read by dev-up.sh)
-#   OPENWORK_HOST_OPENCODE_CONFIG_DIR — resolved mount source for host OpenCode config (set by dev-up.sh)
-#   OPENWORK_HOST_OPENCODE_DATA_DIR   — resolved mount source for host OpenCode data (set by dev-up.sh)
+#   VESLO_DEV_ID       — unique ID for this stack (default: default)
+#   VESLO_OPENCODE_CONFIG_DIR      — host OpenCode config dir detection override (read by dev-up.sh)
+#   VESLO_OPENCODE_DATA_DIR        — host OpenCode data dir detection override (read by dev-up.sh)
+#   VESLO_HOST_OPENCODE_CONFIG_DIR — resolved mount source for host OpenCode config (set by dev-up.sh)
+#   VESLO_HOST_OPENCODE_DATA_DIR   — resolved mount source for host OpenCode data (set by dev-up.sh)
 
 x-shared: &shared
   image: node:22-bookworm-slim
@@ -25,9 +25,9 @@ x-shared: &shared
     - ../../:/app
     - pnpm-store:/root/.local/share/pnpm/store
     - bun-install:/root/.bun
-    - ${OPENWORK_WORKSPACE:-./workspace}:/workspace
-    - ${OPENWORK_HOST_OPENCODE_CONFIG_DIR:-./workspace/.openwork-host-opencode-config}:/persist/.config/opencode:ro
-    - ${OPENWORK_HOST_OPENCODE_DATA_DIR:-./workspace/.openwork-host-opencode-data}:/persist/.openwork-host-opencode-data:ro
+    - ${VESLO_WORKSPACE:-./workspace}:/workspace
+    - ${VESLO_HOST_OPENCODE_CONFIG_DIR:-./workspace/.veslo-host-opencode-config}:/persist/.config/opencode:ro
+    - ${VESLO_HOST_OPENCODE_DATA_DIR:-./workspace/.veslo-host-opencode-data}:/persist/.veslo-host-opencode-data:ro
 
 services:
   orchestrator:
@@ -61,9 +61,9 @@ services:
 
         # --- Build Linux binaries into container-local path ---
         # Avoids overwriting macOS-native binaries on the host mount.
-        export OPENWORK_SERVER_BIN="/tmp/openwork-bins/openwork-server"
-        export OPENCODE_ROUTER_BIN="/tmp/openwork-bins/opencode-router"
-        mkdir -p /tmp/openwork-bins
+        export VESLO_SERVER_BIN="/tmp/veslo-bins/veslo-server"
+        export VESLO_CODE_ROUTER_BIN="/tmp/veslo-bins/veslo-code-router"
+        mkdir -p /tmp/veslo-bins
 
         # --- Compile sidecars for the container architecture ---
         case "$(uname -m)" in
@@ -79,24 +79,24 @@ services:
             ;;
         esac
 
-        echo "[orchestrator] Building openwork-server binary (linux)..."
-        cd /app/packages/server && bun build --compile --target "$$BUN_TARGET" src/cli.ts --outfile "$$OPENWORK_SERVER_BIN"
+        echo "[orchestrator] Building veslo-server binary (linux)..."
+        cd /app/packages/server && bun build --compile --target "$$BUN_TARGET" src/cli.ts --outfile "$$VESLO_SERVER_BIN"
 
-        echo "[orchestrator] Building opencode-router binary (linux)..."
-        OPENCODE_ROUTER_VERSION=$$(node -p "require('/app/packages/opencode-router/package.json').version")
+        echo "[orchestrator] Building veslo-code-router binary (linux)..."
+        VESLO_CODE_ROUTER_VERSION=$$(node -p "require('/app/packages/opencode-router/package.json').version")
         cd /app/packages/opencode-router && bun build --compile --target "$$BUN_TARGET" src/cli.ts \
-          --define "__OPENCODE_ROUTER_VERSION__=\"$${OPENCODE_ROUTER_VERSION}\"" --outfile "$$OPENCODE_ROUTER_BIN"
+          --define "__OPENCODE_ROUTER_VERSION__=\"$${VESLO_CODE_ROUTER_VERSION}\"" --outfile "$$VESLO_CODE_ROUTER_BIN"
 
         cd /app
 
         # --- Resolve tokens ---
-        if [ -z "$$OPENWORK_TOKEN" ]; then
-          OPENWORK_TOKEN=$$(cat /proc/sys/kernel/random/uuid)
-          export OPENWORK_TOKEN
+        if [ -z "$$VESLO_TOKEN" ]; then
+          VESLO_TOKEN=$$(cat /proc/sys/kernel/random/uuid)
+          export VESLO_TOKEN
         fi
-        if [ -z "$$OPENWORK_HOST_TOKEN" ]; then
-          OPENWORK_HOST_TOKEN=$$(cat /proc/sys/kernel/random/uuid)
-          export OPENWORK_HOST_TOKEN
+        if [ -z "$$VESLO_HOST_TOKEN" ]; then
+          VESLO_HOST_TOKEN=$$(cat /proc/sys/kernel/random/uuid)
+          export VESLO_HOST_TOKEN
         fi
 
         # --- Import host OpenCode config + auth material when mounted ---
@@ -104,40 +104,40 @@ services:
         if [ -d /persist/.config/opencode ]; then
           cp -R /persist/.config/opencode/. /root/.config/opencode 2>/dev/null || true
         fi
-        if [ -d /persist/.openwork-host-opencode-data ]; then
-          cp /persist/.openwork-host-opencode-data/auth.json /root/.local/share/opencode/auth.json 2>/dev/null || true
-          cp /persist/.openwork-host-opencode-data/mcp-auth.json /root/.local/share/opencode/mcp-auth.json 2>/dev/null || true
+        if [ -d /persist/.veslo-host-opencode-data ]; then
+          cp /persist/.veslo-host-opencode-data/auth.json /root/.local/share/opencode/auth.json 2>/dev/null || true
+          cp /persist/.veslo-host-opencode-data/mcp-auth.json /root/.local/share/opencode/mcp-auth.json 2>/dev/null || true
         fi
 
         # Write tokens so the web service can source them
         mkdir -p /app/tmp
-        printf 'OPENWORK_TOKEN=%s\nOPENWORK_HOST_TOKEN=%s\n' \
-          "$$OPENWORK_TOKEN" "$$OPENWORK_HOST_TOKEN" > "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}"
+        printf 'VESLO_TOKEN=%s\nVESLO_HOST_TOKEN=%s\n' \
+          "$$VESLO_TOKEN" "$$VESLO_HOST_TOKEN" > "/app/tmp/.dev-env-${VESLO_DEV_ID:-default}"
 
         echo ""
         echo "============================================"
-        echo "  OpenWork orchestrator"
-        echo "  Server:     http://localhost:${OPENWORK_PORT:-8787}"
-        echo "  Health:     http://localhost:${OPENWORK_PORT:-8787}/health"
-        echo "  Token:      $$OPENWORK_TOKEN"
-        echo "  Host token: $$OPENWORK_HOST_TOKEN"
+        echo "  Veslo orchestrator"
+        echo "  Server:     http://localhost:${VESLO_PORT:-8787}"
+        echo "  Health:     http://localhost:${VESLO_PORT:-8787}/health"
+        echo "  Token:      $$VESLO_TOKEN"
+        echo "  Host token: $$VESLO_HOST_TOKEN"
         echo "============================================"
         echo ""
 
-        exec pnpm --filter openwork-orchestrator dev -- start \
+        exec pnpm --filter veslo-orchestrator dev -- start \
           --workspace /workspace \
-          --openwork-host 0.0.0.0 \
-          --openwork-port 8787 \
-          --openwork-token "$$OPENWORK_TOKEN" \
-          --openwork-host-token "$$OPENWORK_HOST_TOKEN" \
-          --openwork-server-bin "$$OPENWORK_SERVER_BIN" \
-          --opencode-router-bin "$$OPENCODE_ROUTER_BIN" \
+          --veslo-host 0.0.0.0 \
+          --veslo-port 8787 \
+          --veslo-token "$$VESLO_TOKEN" \
+          --veslo-host-token "$$VESLO_HOST_TOKEN" \
+          --veslo-server-bin "$$VESLO_SERVER_BIN" \
+          --veslo-code-router-bin "$$VESLO_CODE_ROUTER_BIN" \
           --approval auto \
           --allow-external \
           --no-opencode-auth \
           --cors "*"
     ports:
-      - "${OPENWORK_PORT:-8787}:8787"
+      - "${VESLO_PORT:-8787}:8787"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8787/health || exit 1"]
       interval: 5s
@@ -146,10 +146,10 @@ services:
       start_period: 90s
     environment:
       CI: "true"
-      OPENWORK_TOKEN: ${OPENWORK_TOKEN:-}
-      OPENWORK_HOST_TOKEN: ${OPENWORK_HOST_TOKEN:-}
-      OPENWORK_DEV_ID: ${OPENWORK_DEV_ID:-default}
-      OPENWORK_SIDECAR_SOURCE: external
+      VESLO_TOKEN: ${VESLO_TOKEN:-}
+      VESLO_HOST_TOKEN: ${VESLO_HOST_TOKEN:-}
+      VESLO_DEV_ID: ${VESLO_DEV_ID:-default}
+      VESLO_SIDECAR_SOURCE: external
  
   web:
     <<: *shared
@@ -174,36 +174,36 @@ services:
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 
         # --- Read token written by orchestrator ---
-        if [ -f "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}" ]; then
-          . "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}"
-          export VITE_OPENWORK_TOKEN="$$OPENWORK_TOKEN"
+        if [ -f "/app/tmp/.dev-env-${VESLO_DEV_ID:-default}" ]; then
+          . "/app/tmp/.dev-env-${VESLO_DEV_ID:-default}"
+          export VITE_VESLO_TOKEN="$$VESLO_TOKEN"
         fi
 
         echo ""
         echo "============================================"
-        echo "  OpenWork web UI"
+        echo "  Veslo web UI"
         echo "  URL:   http://localhost:${WEB_PORT:-5173}"
-        echo "  Token: $${VITE_OPENWORK_TOKEN:-<see orchestrator logs>}"
+        echo "  Token: $${VITE_VESLO_TOKEN:-<see orchestrator logs>}"
         echo "============================================"
         echo ""
 
-        export VITE_OPENWORK_URL="http://localhost:${OPENWORK_PORT:-8787}"
-        export VITE_OPENWORK_PORT="${OPENWORK_PORT:-8787}"
+        export VITE_VESLO_URL="http://localhost:${VESLO_PORT:-8787}"
+        export VITE_VESLO_PORT="${VESLO_PORT:-8787}"
         export VITE_ALLOWED_HOSTS="all"
         export HOST="0.0.0.0"
         export PORT="5173"
 
-        exec pnpm --filter @different-ai/openwork-ui exec vite \
+        exec pnpm --filter @neatech/veslo-ui exec vite \
           --host 0.0.0.0 \
           --port 5173 \
           --strictPort
     ports:
       - "${WEB_PORT:-5173}:5173"
     environment:
-      OPENWORK_DEV_ID: ${OPENWORK_DEV_ID:-default}
+      VESLO_DEV_ID: ${VESLO_DEV_ID:-default}
 
 volumes:
   pnpm-store:
-    name: openwork-dev-pnpm-store
+    name: veslo-dev-pnpm-store
   bun-install:
-    name: openwork-dev-bun-install
+    name: veslo-dev-bun-install

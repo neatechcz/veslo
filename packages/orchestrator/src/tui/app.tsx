@@ -19,8 +19,8 @@ export type TuiService = {
 export type TuiConnectInfo = {
   runId: string;
   workspace: string;
-  openworkUrl: string;
-  openworkToken: string;
+  vesloUrl: string;
+  vesloToken: string;
   hostToken: string;
   opencodeUrl: string;
   opencodePassword?: string;
@@ -133,12 +133,12 @@ const levelColor: Record<TuiLogLevel, RGBA> = {
 
 const levelCycle: Array<"all" | TuiLogLevel> = ["all", "info", "warn", "error", "debug"];
 
-const serviceCycle = ["all", "openwork-orchestrator", "opencode", "openwork-server", "router"];
+const serviceCycle = ["all", "veslo-orchestrator", "opencode", "veslo-server", "router"];
 
 const viewTabs: Array<{ name: string; description: string; value: ViewName }> = [
   { name: "Overview", description: "Overview", value: "overview" },
   { name: "Logs", description: "Logs", value: "logs" },
-  { name: "Router", description: "opencode-router", value: "router" },
+  { name: "Router", description: "veslo-code-router", value: "router" },
   { name: "Help", description: "Help", value: "help" },
 ];
 
@@ -567,7 +567,7 @@ export function startOrchestratorTui(options: TuiOptions): TuiHandle {
         <box flexDirection="column" width={dimensions().width} height={dimensions().height} paddingLeft={2} paddingRight={2}>
           <box flexDirection="row" justifyContent="space-between" paddingTop={1}>
             <text fg={theme.text} attributes={TextAttributes.BOLD}>
-              openwork · {state.view}
+              veslo · {state.view}
             </text>
             <text fg={theme.textMuted}>v{options.version}</text>
           </box>
@@ -637,10 +637,10 @@ export function startOrchestratorTui(options: TuiOptions): TuiHandle {
                 <text fg={theme.text} attributes={TextAttributes.BOLD}>
                   Connect
                 </text>
-                <text fg={theme.textMuted}>OpenWork URL (LAN)</text>
-                <text fg={theme.text}>{state.connect.openworkUrl}</text>
-                <text fg={theme.textMuted}>OpenWork Token</text>
-                <text fg={theme.text}>{state.connect.openworkToken}</text>
+                <text fg={theme.textMuted}>Veslo URL (LAN)</text>
+                <text fg={theme.text}>{state.connect.vesloUrl}</text>
+                <text fg={theme.textMuted}>Veslo Token</text>
+                <text fg={theme.text}>{state.connect.vesloToken}</text>
                 <text fg={theme.textMuted}>Host Token</text>
                 <text fg={theme.text}>{state.connect.hostToken}</text>
                 <text fg={theme.textMuted}>OpenCode URL</text>
@@ -677,7 +677,7 @@ export function startOrchestratorTui(options: TuiOptions): TuiHandle {
           <Show when={state.view === "router"}>
             <box flexDirection="column" paddingTop={1} gap={1}>
               <text fg={theme.text} attributes={TextAttributes.BOLD}>
-                opencode-router
+                veslo-code-router
               </text>
 
               <text fg={theme.textMuted}>Health: {routerStatus()}</text>

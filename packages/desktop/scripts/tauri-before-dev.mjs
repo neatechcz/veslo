@@ -9,7 +9,7 @@ const readPort = () => {
   return Number.isFinite(value) && value > 0 ? value : 5173;
 };
 
-const hostOverride = process.env.OPENWORK_DEV_HOST?.trim() || null;
+const hostOverride = process.env.VESLO_DEV_HOST?.trim() || null;
 const port = readPort();
 const baseUrls = (hostOverride ? [hostOverride] : ["127.0.0.1", "localhost"]).map((host) => `http://${host}:${port}`);
 
@@ -113,7 +113,7 @@ const looksLikeVite = async (baseUrl) => {
 const runPrepareSidecars = () => {
   const prepareScript = resolve(fileURLToPath(new URL("./prepare-sidecar.mjs", import.meta.url)));
   const args = [prepareScript];
-  if (process.env.OPENWORK_SIDECAR_FORCE_BUILD !== "0") {
+  if (process.env.VESLO_SIDECAR_FORCE_BUILD !== "0") {
     args.push("--force");
   }
   const result = spawnSync(process.execPath, args, {
@@ -167,7 +167,7 @@ const main = async () => {
   }
 
   if (detectedViteUrl) {
-    console.log(`[openwork] UI dev server already running at ${detectedViteUrl} (reusing).`);
+    console.log(`[veslo] UI dev server already running at ${detectedViteUrl} (reusing).`);
     holdOpenUntilSignal();
     return;
   }
@@ -182,13 +182,13 @@ const main = async () => {
 
   if (portInUse) {
     console.error(
-      `[openwork] Port ${port} is in use, but it does not look like a Vite dev server.\n` +
+      `[veslo] Port ${port} is in use, but it does not look like a Vite dev server.\n` +
         `Set PORT to a free port (e.g. PORT=5174) or stop the process using port ${port}.`
     );
     process.exit(1);
   }
 
-  console.log(`[openwork] Starting UI dev server on port ${port}...`);
+  console.log(`[veslo] Starting UI dev server on port ${port}...`);
   const uiChild = runUiDevServer();
   holdOpenUntilSignal({ uiChild });
 };

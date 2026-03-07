@@ -310,15 +310,15 @@ export const TOY_UI_HTML = `<!doctype html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenWork Toy UI</title>
+    <title>Veslo Toy UI</title>
     <link rel="stylesheet" href="/ui/assets/toy.css" />
   </head>
   <body>
     <div class="wrap">
       <div class="top">
         <div class="title">
-          <h1>OpenWork Toy UI</h1>
-          <div class="sub">Local-first host contract harness (served by openwork-server)</div>
+          <h1>Veslo Toy UI</h1>
+          <div class="sub">Local-first host contract harness (served by veslo-server)</div>
         </div>
         <div class="row">
           <span class="pill" id="pill-conn">disconnected</span>
@@ -433,7 +433,7 @@ export const TOY_UI_HTML = `<!doctype html>
             <div class="panel hidden" data-panel="automations">
               <div class="row">
                 <button class="btn" id="btn-auto-refresh">Refresh</button>
-                <span class="small">Apply schedule on host via <span class="mono">openwork-agent-lab scheduler sync</span>.</span>
+                <span class="small">Apply schedule on host via <span class="mono">veslo-agent-lab scheduler sync</span>.</span>
               </div>
               <div class="list" id="automations"></div>
 
@@ -508,13 +508,13 @@ export const TOY_UI_HTML = `<!doctype html>
                 <input id="file" type="file" />
                 <button class="btn" id="btn-upload">Upload to inbox</button>
               </div>
-              <div class="small">Uploads go to <span class="mono">.opencode/openwork/inbox/</span> inside the workspace.</div>
+              <div class="small">Uploads go to <span class="mono">.opencode/veslo/inbox/</span> inside the workspace.</div>
 
               <div class="hr"></div>
 
               <div class="row">
                 <button class="btn" id="btn-artifacts">List artifacts</button>
-                <span class="small">Downloads read from <span class="mono">.opencode/openwork/outbox/</span>.</span>
+                <span class="small">Downloads read from <span class="mono">.opencode/veslo/outbox/</span>.</span>
               </div>
               <div class="list" id="artifacts"></div>
 
@@ -581,8 +581,8 @@ const autoDailyRow = qs("#auto-daily-row");
 const autoWeeklyRow = qs("#auto-weekly-row");
 const autoLogEl = qs("#auto-log");
 
-const STORAGE_TOKEN = "openwork.toy.token";
-const STORAGE_SESSION_PREFIX = "openwork.toy.session.";
+const STORAGE_TOKEN = "veslo.toy.token";
+const STORAGE_SESSION_PREFIX = "veslo.toy.session.";
 
 function setPill(el, label, kind) {
   el.textContent = label;
@@ -803,7 +803,7 @@ async function ensureSession(workspaceId) {
   if (existing) return existing;
   const created = await apiFetch("/w/" + encodeURIComponent(workspaceId) + "/opencode/session", {
     method: "POST",
-    body: JSON.stringify({ title: "OpenWork Toy UI" }),
+    body: JSON.stringify({ title: "Veslo Toy UI" }),
   });
   const id = created && created.id ? String(created.id) : "";
   if (!id) throw new Error("session_create_failed");
@@ -1072,7 +1072,7 @@ function renderConnectArtifact(workspaceId, token, scope) {
   const hostUrl = location.origin;
   const workspaceUrl = hostUrl + "/w/" + encodeURIComponent(workspaceId);
   const payload = {
-    kind: "openwork.connect.v1",
+    kind: "veslo.connect.v1",
     hostUrl: hostUrl,
     workspaceId: workspaceId,
     workspaceUrl: workspaceUrl,
@@ -1724,7 +1724,7 @@ async function main() {
   };
 
   qs("#btn-delete-workspace").onclick = async () => {
-    if (!confirm("Delete this workspace from the host's OpenWork server config?")) return;
+    if (!confirm("Delete this workspace from the host's Veslo server config?")) return;
     try {
       await apiFetch("/workspaces/" + encodeURIComponent(workspaceId), { method: "DELETE" });
       setStatus("Workspace deleted (refresh workspaces)", "ok");

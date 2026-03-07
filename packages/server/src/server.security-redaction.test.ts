@@ -40,7 +40,7 @@ describe("serializeWorkspace", () => {
       workspaceType: "local",
       baseUrl: "http://127.0.0.1:4096",
       directory: "/tmp/workspace",
-      opencodeUsername: "openwork",
+      opencodeUsername: "veslo",
       opencodePassword: "super-secret-password",
     } as const;
 
@@ -48,7 +48,7 @@ describe("serializeWorkspace", () => {
       opencode?: { username?: string; password?: string };
     };
 
-    expect(result.opencode?.username).toBe("openwork");
+    expect(result.opencode?.username).toBe("veslo");
     expect(result.opencode?.password).toBeUndefined();
   });
 });

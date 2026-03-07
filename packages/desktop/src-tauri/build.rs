@@ -9,7 +9,7 @@ use std::os::unix::fs::PermissionsExt;
 fn main() {
     emit_build_info();
     ensure_opencode_sidecar();
-    ensure_openwork_server_sidecar();
+    ensure_veslo_server_sidecar();
     ensure_opencode_router_sidecar();
     ensure_orchestrator_sidecar();
     ensure_chrome_devtools_mcp_sidecar();
@@ -92,7 +92,7 @@ fn ensure_versions_manifest() {
 }
 
 fn emit_build_info() {
-    let sha = env::var("OPENWORK_GIT_SHA")
+    let sha = env::var("VESLO_GIT_SHA")
         .ok()
         .and_then(|value| {
             let trimmed = value.trim().to_string();
@@ -118,7 +118,7 @@ fn emit_build_info() {
             }
         });
     if let Some(value) = sha {
-        println!("cargo:rustc-env=OPENWORK_GIT_SHA={}", value);
+        println!("cargo:rustc-env=VESLO_GIT_SHA={}", value);
     }
 
     let build_epoch = env::var("SOURCE_DATE_EPOCH")
@@ -141,7 +141,7 @@ fn emit_build_info() {
         });
 
     if let Some(value) = build_epoch {
-        println!("cargo:rustc-env=OPENWORK_BUILD_EPOCH={}", value);
+        println!("cargo:rustc-env=VESLO_BUILD_EPOCH={}", value);
     }
 }
 
@@ -160,11 +160,11 @@ fn ensure_orchestrator_sidecar() {
     let sidecar_dir = manifest_dir.join("sidecars");
 
     let canonical_name = if target.contains("windows") {
-        "openwork-orchestrator.exe"
+        "veslo-orchestrator.exe"
     } else {
-        "openwork-orchestrator"
+        "veslo-orchestrator"
     };
-    let mut target_name = format!("openwork-orchestrator-{target}");
+    let mut target_name = format!("veslo-orchestrator-{target}");
     if target.contains("windows") {
         target_name.push_str(".exe");
     }
@@ -190,21 +190,21 @@ fn ensure_orchestrator_sidecar() {
         }
     }
 
-    let source_path = env::var("OPENWORK_ORCHESTRATOR_BIN_PATH")
+    let source_path = env::var("VESLO_ORCHESTRATOR_BIN_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())
         .or_else(|| {
             find_in_path(if target.contains("windows") {
-                "openwork.exe"
+                "veslo-orchestrator.exe"
             } else {
-                "openwork"
+                "veslo-orchestrator"
             })
         });
 
     let Some(source_path) = source_path else {
         println!(
-            "cargo:warning=orchestrator sidecar missing at {} (set OPENWORK_ORCHESTRATOR_BIN_PATH or install openwork-orchestrator)",
+            "cargo:warning=orchestrator sidecar missing at {} (set VESLO_ORCHESTRATOR_BIN_PATH or install veslo-orchestrator)",
             dest_path.display()
         );
         create_debug_stub(&dest_path, &sidecar_dir, &profile, &target);
@@ -331,7 +331,7 @@ fn ensure_opencode_sidecar() {
     }
 }
 
-fn ensure_openwork_server_sidecar() {
+fn ensure_veslo_server_sidecar() {
     let target = env::var("CARGO_CFG_TARGET_TRIPLE")
         .or_else(|_| env::var("TARGET"))
         .or_else(|_| env::var("TAURI_ENV_TARGET_TRIPLE"))
@@ -346,12 +346,12 @@ fn ensure_openwork_server_sidecar() {
     let sidecar_dir = manifest_dir.join("sidecars");
 
     let canonical_name = if target.contains("windows") {
-        "openwork-server.exe"
+        "veslo-server.exe"
     } else {
-        "openwork-server"
+        "veslo-server"
     };
 
-    let mut target_name = format!("openwork-server-{target}");
+    let mut target_name = format!("veslo-server-{target}");
     if target.contains("windows") {
         target_name.push_str(".exe");
     }
@@ -369,15 +369,15 @@ fn ensure_openwork_server_sidecar() {
         }
     }
 
-    let source_path = env::var("OPENWORK_SERVER_BIN_PATH")
+    let source_path = env::var("VESLO_SERVER_BIN_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())
         .or_else(|| {
             find_in_path(if target.contains("windows") {
-                "openwork-server.exe"
+                "veslo-server.exe"
             } else {
-                "openwork-server"
+                "veslo-server"
             })
         });
 
@@ -385,7 +385,7 @@ fn ensure_openwork_server_sidecar() {
 
     let Some(source_path) = source_path else {
         println!(
-      "cargo:warning=OpenWork server sidecar missing at {} (set OPENWORK_SERVER_BIN_PATH or install openwork-server)",
+      "cargo:warning=Veslo server sidecar missing at {} (set VESLO_SERVER_BIN_PATH or install veslo-server)",
       dest_path.display()
     );
 
@@ -408,7 +408,7 @@ fn ensure_openwork_server_sidecar() {
         let _ = copy_sidecar(&dest_path, &target_dest_path, &target);
     } else {
         println!(
-            "cargo:warning=Failed to copy OpenWork server sidecar from {} to {}",
+            "cargo:warning=Failed to copy Veslo server sidecar from {} to {}",
             source_path.display(),
             dest_path.display()
         );

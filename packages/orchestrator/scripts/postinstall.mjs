@@ -24,17 +24,17 @@ function detect() {
 
 function name() {
   const { platform, arch } = detect()
-  return `openwork-orchestrator-${platform}-${arch}`
+  return `veslo-orchestrator-${platform}-${arch}`
 }
 
 try {
   const pkg = name()
   require.resolve(`${pkg}/package.json`)
-  console.log(`openwork-orchestrator: verified platform package: ${pkg}`)
+  console.log(`veslo-orchestrator: verified platform package: ${pkg}`)
 } catch (error) {
   const pkg = name()
   console.error(
-    `openwork-orchestrator: failed to locate platform binary package (${pkg}).\n` +
+    `veslo-orchestrator: failed to locate platform binary package (${pkg}).\n` +
       `Your package manager may have skipped optionalDependencies.\n` +
       `Try installing it manually: npm i -g ${pkg}`,
   )

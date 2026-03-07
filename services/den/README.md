@@ -45,9 +45,9 @@ cp .env.development .env
 - `RENDER_WORKER_ROOT_DIR` render `rootDir` for worker services
 - `RENDER_WORKER_PLAN` Render plan for worker services
 - `RENDER_WORKER_REGION` Render region for worker services
-- `RENDER_WORKER_OPENWORK_VERSION` `openwork-orchestrator` npm version installed in workers
+- `RENDER_WORKER_VESLO_VERSION` `veslo-orchestrator` npm version installed in workers
 - `RENDER_WORKER_NAME_PREFIX` service name prefix
-- `RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` optional domain suffix for worker custom URLs (e.g. `openwork.studio` -> `<worker-id>.openwork.studio`)
+- `RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` optional domain suffix for worker custom URLs (e.g. `veslo.studio` -> `<worker-id>.veslo.studio`)
 - `RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` max time to wait for vanity URL health before falling back to Render URL
 - `RENDER_PROVISION_TIMEOUT_MS` max time to wait for deploy to become live
 - `RENDER_HEALTHCHECK_TIMEOUT_MS` max time to wait for worker health checks
@@ -56,7 +56,7 @@ cp .env.development .env
 - `VERCEL_TOKEN` Vercel API token used to upsert worker DNS records
 - `VERCEL_TEAM_ID` optional Vercel team id for scoped API calls
 - `VERCEL_TEAM_SLUG` optional Vercel team slug for scoped API calls (used when `VERCEL_TEAM_ID` is unset)
-- `VERCEL_DNS_DOMAIN` Vercel-managed DNS zone used for worker records (default `openwork.studio`)
+- `VERCEL_DNS_DOMAIN` Vercel-managed DNS zone used for worker records (default `veslo.studio`)
 - `POLAR_FEATURE_GATE_ENABLED` enable cloud-worker paywall (`true` or `false`)
 - `POLAR_API_BASE` Polar API base URL (default `https://api.polar.sh`)
 - `POLAR_ACCESS_TOKEN` Polar organization access token (required when paywall enabled)
@@ -116,17 +116,17 @@ Optional GitHub Actions secrets (enable GitHub social sign-in):
 Optional GitHub Actions variable:
 
 - `DEN_RENDER_WORKER_PLAN` (defaults to `standard`)
-- `DEN_RENDER_WORKER_OPENWORK_VERSION` (defaults to `0.11.113`)
-- `DEN_CORS_ORIGINS` (defaults to `https://app.openwork.software,https://api.openwork.software,<render-service-url>`)
-- `DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` (defaults to `openwork.studio`)
+- `DEN_RENDER_WORKER_VESLO_VERSION` (defaults to `0.11.113`)
+- `DEN_CORS_ORIGINS` (defaults to `https://app.veslo.neatech.com,https://api.veslo.neatech.com,<render-service-url>`)
+- `DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` (defaults to `veslo.studio`)
 - `DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` (defaults to `240000`)
 - `DEN_VERCEL_API_BASE` (defaults to `https://api.vercel.com`)
 - `DEN_VERCEL_TEAM_ID` (optional)
 - `DEN_VERCEL_TEAM_SLUG` (optional, defaults to `prologe`)
-- `DEN_VERCEL_DNS_DOMAIN` (defaults to `openwork.studio`)
+- `DEN_VERCEL_DNS_DOMAIN` (defaults to `veslo.studio`)
 - `DEN_POLAR_FEATURE_GATE_ENABLED` (`true`/`false`, defaults to `false`)
 - `DEN_POLAR_API_BASE` (defaults to `https://api.polar.sh`)
-- `DEN_POLAR_SUCCESS_URL` (defaults to `https://app.openwork.software`)
+- `DEN_POLAR_SUCCESS_URL` (defaults to `https://app.veslo.neatech.com`)
 - `DEN_POLAR_RETURN_URL` (defaults to `DEN_POLAR_SUCCESS_URL`)
 
 Required additional secret when using vanity worker domains:

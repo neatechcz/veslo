@@ -13,7 +13,7 @@ set -euo pipefail
 # - self-improving memory (heartbeat writes back suggested improvements)
 # - repeated heartbeats across process restarts (via Docker volumes)
 #
-# Usage (from openwork repo root):
+# Usage (from veslo repo root):
 #   packaging/docker/soul-mode-proof.sh
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -26,8 +26,8 @@ SUFFIX="${SOUL_PROOF_SUFFIX:-$(date +%s)-$$}"
 IMAGE="${SOUL_PROOF_IMAGE:-bash:5.2}"
 INTERVAL_SECONDS="${SOUL_PROOF_INTERVAL_SECONDS:-30}"
 
-WS_VOL="openwork-soul-proof-ws-$SUFFIX"
-DATA_VOL="openwork-soul-proof-data-$SUFFIX"
+WS_VOL="veslo-soul-proof-ws-$SUFFIX"
+DATA_VOL="veslo-soul-proof-data-$SUFFIX"
 
 cleanup() {
   docker volume rm -f "$WS_VOL" "$DATA_VOL" >/dev/null 2>&1 || true

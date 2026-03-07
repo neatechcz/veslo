@@ -79,22 +79,22 @@ type OpenCodeRouterHealthSnapshot = {
 
 const FALLBACK_VERSION = "0.1.0";
 
-declare const __OPENWORK_ORCHESTRATOR_VERSION__: string | undefined;
-const DEFAULT_OPENWORK_PORT = 8787;
+declare const __VESLO_ORCHESTRATOR_VERSION__: string | undefined;
+const DEFAULT_VESLO_PORT = 8787;
 const DEFAULT_APPROVAL_TIMEOUT = 30000;
 const DEFAULT_OPENCODE_USERNAME = "opencode";
 const DEFAULT_OPENCODE_HOT_RELOAD_DEBOUNCE_MS = 700;
 const DEFAULT_OPENCODE_HOT_RELOAD_COOLDOWN_MS = 1500;
 
 const SANDBOX_INTERNAL_OPENCODE_PORT = 4096;
-const SANDBOX_INTERNAL_OPENWORK_PORT = DEFAULT_OPENWORK_PORT;
+const SANDBOX_INTERNAL_VESLO_PORT = DEFAULT_VESLO_PORT;
 // OpenCodeRouter defaults its health server to 3005 when not overridden. In sandbox
 // mode we keep the *internal* port stable and only vary the published host
 // port to avoid collisions.
 const SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT = 3005;
 
 const SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH = "/persist/.config/opencode";
-const SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH = "/persist/.openwork-host-opencode-data";
+const SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH = "/persist/.veslo-host-opencode-data";
 
 type ParsedArgs = {
   positionals: string[];
@@ -111,7 +111,7 @@ type VersionInfo = {
   sha256: string;
 };
 
-type SidecarName = "openwork-server" | "opencode-router" | "opencode";
+type SidecarName = "veslo-server" | "veslo-code-router" | "veslo-code";
 
 type SidecarTarget =
   | "darwin-arm64"
@@ -487,9 +487,9 @@ let cachedSandboxAllowlist: SandboxMountAllowlist | null | undefined;
 let cachedSandboxAllowlistError: string | null = null;
 
 function resolveSandboxAllowlistPath(): string {
-  const override = process.env.OPENWORK_SANDBOX_MOUNT_ALLOWLIST?.trim();
+  const override = process.env.VESLO_SANDBOX_MOUNT_ALLOWLIST?.trim();
   if (override) return resolve(override);
-  return join(homedir(), ".config", "openwork", "sandbox-mount-allowlist.json");
+  return join(homedir(), ".config", "veslo", "sandbox-mount-allowlist.json");
 }
 
 function expandTildePath(input: string): string {
@@ -509,7 +509,7 @@ async function isDir(input: string): Promise<boolean> {
 }
 
 async function resolveHostOpencodeGlobalConfigDir(): Promise<string | null> {
-  const enabled = (process.env.OPENWORK_SANDBOX_MOUNT_OPENCODE_CONFIG ?? "1").trim() !== "0";
+  const enabled = (process.env.VESLO_SANDBOX_MOUNT_OPENCODE_CONFIG ?? "1").trim() !== "0";
   if (!enabled) return null;
 
   const candidates: string[] = [];
@@ -546,7 +546,7 @@ async function resolveHostOpencodeGlobalConfigDir(): Promise<string | null> {
 }
 
 async function resolveHostOpencodeGlobalDataDir(): Promise<string | null> {
-  const enabled = (process.env.OPENWORK_SANDBOX_MOUNT_OPENCODE_CONFIG ?? "1").trim() !== "0";
+  const enabled = (process.env.VESLO_SANDBOX_MOUNT_OPENCODE_CONFIG ?? "1").trim() !== "0";
   if (!enabled) return null;
 
   const candidates: string[] = [];
@@ -762,10 +762,10 @@ async function fileExists(path: string): Promise<boolean> {
 
 async function resolveCliVersion(): Promise<string> {
   if (
-    typeof __OPENWORK_ORCHESTRATOR_VERSION__ === "string" &&
-    __OPENWORK_ORCHESTRATOR_VERSION__.trim()
+    typeof __VESLO_ORCHESTRATOR_VERSION__ === "string" &&
+    __VESLO_ORCHESTRATOR_VERSION__.trim()
   ) {
-    return __OPENWORK_ORCHESTRATOR_VERSION__.trim();
+    return __VESLO_ORCHESTRATOR_VERSION__.trim();
   }
   const candidates = [
     join(dirname(process.execPath), "..", "package.json"),
@@ -969,7 +969,7 @@ function prefixStream(
 
 function shouldUseBun(bin: string): boolean {
   if (!bin.endsWith(`${join("dist", "cli.js")}`)) return false;
-  if (bin.includes("openwork-server")) return true;
+  if (bin.includes("veslo-server")) return true;
   return bin.includes(`${join("packages", "server")}`);
 }
 
@@ -1102,21 +1102,21 @@ function shQuote(value: string): string {
 }
 
 function resolveSidecarDir(flags: Map<string, string | boolean>): string {
-  const override = readFlag(flags, "sidecar-dir") ?? process.env.OPENWORK_SIDECAR_DIR;
+  const override = readFlag(flags, "sidecar-dir") ?? process.env.VESLO_SIDECAR_DIR;
   if (override && override.trim()) return resolve(override.trim());
   return join(resolveRouterDataDir(flags), "sidecars");
 }
 
 function resolveSidecarBaseUrl(flags: Map<string, string | boolean>, cliVersion: string): string {
-  const override = readFlag(flags, "sidecar-base-url") ?? process.env.OPENWORK_SIDECAR_BASE_URL;
+  const override = readFlag(flags, "sidecar-base-url") ?? process.env.VESLO_SIDECAR_BASE_URL;
   if (override && override.trim()) return override.trim();
-  return `https://github.com/different-ai/openwork/releases/download/openwork-orchestrator-v${cliVersion}`;
+  return `https://github.com/neatech/veslo/releases/download/veslo-orchestrator-v${cliVersion}`;
 }
 
 function resolveSidecarManifestUrl(flags: Map<string, string | boolean>, baseUrl: string): string {
-  const override = readFlag(flags, "sidecar-manifest") ?? process.env.OPENWORK_SIDECAR_MANIFEST_URL;
+  const override = readFlag(flags, "sidecar-manifest") ?? process.env.VESLO_SIDECAR_MANIFEST_URL;
   if (override && override.trim()) return override.trim();
-  return `${baseUrl.replace(/\/$/, "")}/openwork-orchestrator-sidecars.json`;
+  return `${baseUrl.replace(/\/$/, "")}/veslo-orchestrator-sidecars.json`;
 }
 
 function resolveSidecarConfig(flags: Map<string, string | boolean>, cliVersion: string): SidecarConfig {
@@ -1284,7 +1284,7 @@ async function resolveOpencodeDownload(sidecar: SidecarConfig, expectedVersion?:
   if (!expectedVersion) return null;
   if (!sidecar.target) return null;
 
-  const assetOverride = process.env.OPENWORK_OPENCODE_ASSET ?? process.env.OPENCODE_ASSET;
+  const assetOverride = process.env.VESLO_OPENCODE_ASSET ?? process.env.OPENCODE_ASSET;
   const asset = assetOverride?.trim() || resolveOpencodeAsset(sidecar.target);
   if (!asset) return null;
 
@@ -1310,8 +1310,8 @@ async function resolveOpencodeDownload(sidecar: SidecarConfig, expectedVersion?:
 
   await mkdir(targetDir, { recursive: true });
   const stamp = Date.now();
-  const archivePath = join(tmpdir(), `openwork-orchestrator-opencode-${stamp}-${asset}`);
-  const extractDir = await mkdtemp(join(tmpdir(), "openwork-orchestrator-opencode-"));
+  const archivePath = join(tmpdir(), `veslo-orchestrator-opencode-${stamp}-${asset}`);
+  const extractDir = await mkdtemp(join(tmpdir(), "veslo-orchestrator-opencode-"));
 
   try {
     await downloadToPath(url, archivePath);
@@ -1409,7 +1409,7 @@ async function resolveOpenCodeRouterRepoDir(): Promise<string | null> {
   const envPath = process.env.OPENCODE_ROUTER_DIR?.trim();
   const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
   const repoRoot = resolve(root, "..", "..");
-  const candidates = [envPath, resolve(repoRoot, "packages", "opencode-router")].filter(Boolean) as string[];
+  const candidates = [envPath, resolve(repoRoot, "packages", "veslo-code-router")].filter(Boolean) as string[];
 
   for (const candidate of candidates) {
     const pkgPath = join(candidate, "package.json");
@@ -1428,18 +1428,18 @@ async function resolveExpectedVersion(
 
   try {
     const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-    if (name === "openwork-server") {
+    if (name === "veslo-server") {
       const localPath = join(root, "..", "server", "package.json");
       const localVersion = await readPackageVersion(localPath);
       if (localVersion) return localVersion;
     }
-    if (name === "opencode-router") {
+    if (name === "veslo-code-router") {
       const repoDir = await resolveOpenCodeRouterRepoDir();
-      const localPath = repoDir ? join(repoDir, "package.json") : join(root, "..", "opencode-router", "package.json");
+      const localPath = repoDir ? join(repoDir, "package.json") : join(root, "..", "veslo-code-router", "package.json");
       const localVersion = await readPackageVersion(localPath);
       if (localVersion) return localVersion;
     }
-    if (name === "opencode") {
+    if (name === "veslo-code") {
       const envVersion = process.env.OPENCODE_VERSION?.trim();
       if (envVersion && envVersion.toLowerCase() !== "latest") {
         return envVersion.startsWith("v") ? envVersion.slice(1) : envVersion;
@@ -1456,18 +1456,18 @@ async function resolveExpectedVersion(
   }
 
   const require = createRequire(import.meta.url);
-  if (name === "openwork-server") {
+  if (name === "veslo-server") {
     try {
-      const pkgPath = require.resolve("openwork-server/package.json");
+      const pkgPath = require.resolve("veslo-server/package.json");
       const version = await readPackageVersion(pkgPath);
       if (version) return version;
     } catch {
       // ignore
     }
   }
-  if (name === "opencode-router") {
+  if (name === "veslo-code-router") {
     try {
-      const pkgPath = require.resolve("opencode-router/package.json");
+      const pkgPath = require.resolve("veslo-code-router/package.json");
       const version = await readPackageVersion(pkgPath);
       if (version) return version;
     } catch {
@@ -1627,7 +1627,7 @@ async function assertSandboxBinaryFile(name: string, bin: string): Promise<void>
   }
 }
 
-async function resolveOpenworkServerBin(options: {
+async function resolveVesloServerBin(options: {
   explicit?: string;
   manifest: VersionManifest | null;
   allowExternal: boolean;
@@ -1635,30 +1635,30 @@ async function resolveOpenworkServerBin(options: {
   source: BinarySourcePreference;
 }): Promise<ResolvedBinary> {
   if (options.explicit && !options.allowExternal) {
-    throw new Error("openwork-server-bin requires --allow-external");
+    throw new Error("veslo-server-bin requires --allow-external");
   }
   if (options.explicit && options.source !== "auto" && options.source !== "external") {
-    throw new Error("openwork-server-bin requires --sidecar-source external or auto");
+    throw new Error("veslo-server-bin requires --sidecar-source external or auto");
   }
 
-  const expectedVersion = await resolveExpectedVersion(options.manifest, "openwork-server");
+  const expectedVersion = await resolveExpectedVersion(options.manifest, "veslo-server");
   const resolveExternal = async (): Promise<ResolvedBinary> => {
     if (!options.allowExternal) {
-      throw new Error("External openwork-server requires --allow-external");
+      throw new Error("External veslo-server requires --allow-external");
     }
     if (options.explicit) {
       const resolved = resolveBinPath(options.explicit);
       if ((resolved.includes("/") || resolved.startsWith(".")) && !(await fileExists(resolved))) {
-        throw new Error(`openwork-server-bin not found: ${resolved}`);
+        throw new Error(`veslo-server-bin not found: ${resolved}`);
       }
       return { bin: resolved, source: "external", expectedVersion };
     }
 
     const require = createRequire(import.meta.url);
     try {
-      const pkgPath = require.resolve("openwork-server/package.json");
+      const pkgPath = require.resolve("veslo-server/package.json");
       const pkgDir = dirname(pkgPath);
-      const binaryPath = join(pkgDir, "dist", "bin", "openwork-server");
+      const binaryPath = join(pkgDir, "dist", "bin", "veslo-server");
       if (await isExecutable(binaryPath)) {
         return { bin: binaryPath, source: "external", expectedVersion };
       }
@@ -1670,23 +1670,23 @@ async function resolveOpenworkServerBin(options: {
       // ignore
     }
 
-    return { bin: "openwork-server", source: "external", expectedVersion };
+    return { bin: "veslo-server", source: "external", expectedVersion };
   };
 
   if (options.source === "bundled") {
-    const bundled = await resolveBundledBinary(options.manifest, "openwork-server");
+    const bundled = await resolveBundledBinary(options.manifest, "veslo-server");
     if (!bundled) {
       throw new Error(
-        "Bundled openwork-server binary missing. Build with pnpm --filter openwork-orchestrator build:bin:bundled.",
+        "Bundled veslo-server binary missing. Build with pnpm --filter veslo-orchestrator build:bin:bundled.",
       );
     }
     return { bin: bundled, source: "bundled", expectedVersion };
   }
 
   if (options.source === "downloaded") {
-    const downloaded = await downloadSidecarBinary({ name: "openwork-server", sidecar: options.sidecar });
+    const downloaded = await downloadSidecarBinary({ name: "veslo-server", sidecar: options.sidecar });
     if (!downloaded) {
-      throw new Error("openwork-server download failed. Check sidecar manifest or base URL.");
+      throw new Error("veslo-server download failed. Check sidecar manifest or base URL.");
     }
     return downloaded;
   }
@@ -1695,7 +1695,7 @@ async function resolveOpenworkServerBin(options: {
     return resolveExternal();
   }
 
-  const bundled = await resolveBundledBinary(options.manifest, "openwork-server");
+  const bundled = await resolveBundledBinary(options.manifest, "veslo-server");
   if (bundled && !(options.allowExternal && options.explicit)) {
     return { bin: bundled, source: "bundled", expectedVersion };
   }
@@ -1704,12 +1704,12 @@ async function resolveOpenworkServerBin(options: {
     return resolveExternal();
   }
 
-  const downloaded = await downloadSidecarBinary({ name: "openwork-server", sidecar: options.sidecar });
+  const downloaded = await downloadSidecarBinary({ name: "veslo-server", sidecar: options.sidecar });
   if (downloaded) return downloaded;
 
   if (!options.allowExternal) {
     throw new Error(
-      "Bundled openwork-server binary missing and download failed. Use --allow-external or --sidecar-source external.",
+      "Bundled veslo-server binary missing and download failed. Use --allow-external or --sidecar-source external.",
     );
   }
 
@@ -1730,7 +1730,7 @@ async function resolveOpencodeBin(options: {
     throw new Error("opencode-bin requires --opencode-source external or auto");
   }
 
-  const expectedVersion = await resolveExpectedVersion(options.manifest, "opencode");
+  const expectedVersion = await resolveExpectedVersion(options.manifest, "veslo-code");
   const resolveExternal = async (): Promise<ResolvedBinary> => {
     if (!options.allowExternal) {
       throw new Error("External opencode requires --allow-external");
@@ -1746,17 +1746,17 @@ async function resolveOpencodeBin(options: {
   };
 
   if (options.source === "bundled") {
-    const bundled = await resolveBundledBinary(options.manifest, "opencode");
+    const bundled = await resolveBundledBinary(options.manifest, "veslo-code");
     if (!bundled) {
       throw new Error(
-        "Bundled opencode binary missing. Build with pnpm --filter openwork-orchestrator build:bin:bundled.",
+        "Bundled opencode binary missing. Build with pnpm --filter veslo-orchestrator build:bin:bundled.",
       );
     }
     return { bin: bundled, source: "bundled", expectedVersion };
   }
 
   if (options.source === "downloaded") {
-    const downloaded = await downloadSidecarBinary({ name: "opencode", sidecar: options.sidecar });
+    const downloaded = await downloadSidecarBinary({ name: "veslo-code", sidecar: options.sidecar });
     if (downloaded) return downloaded;
     const opencodeDownloaded = await resolveOpencodeDownload(options.sidecar, expectedVersion);
     if (opencodeDownloaded) {
@@ -1771,7 +1771,7 @@ async function resolveOpencodeBin(options: {
     return resolveExternal();
   }
 
-  const bundled = await resolveBundledBinary(options.manifest, "opencode");
+  const bundled = await resolveBundledBinary(options.manifest, "veslo-code");
   if (bundled && !(options.allowExternal && options.explicit)) {
     return { bin: bundled, source: "bundled", expectedVersion };
   }
@@ -1780,7 +1780,7 @@ async function resolveOpencodeBin(options: {
     return resolveExternal();
   }
 
-  const downloaded = await downloadSidecarBinary({ name: "opencode", sidecar: options.sidecar });
+  const downloaded = await downloadSidecarBinary({ name: "veslo-code", sidecar: options.sidecar });
   if (downloaded) return downloaded;
 
   const opencodeDownloaded = await resolveOpencodeDownload(options.sidecar, expectedVersion);
@@ -1805,13 +1805,13 @@ async function resolveOpenCodeRouterBin(options: {
   source: BinarySourcePreference;
 }): Promise<ResolvedBinary> {
   if (options.explicit && !options.allowExternal) {
-    throw new Error("opencode-router-bin requires --allow-external");
+    throw new Error("veslo-code-router-bin requires --allow-external");
   }
   if (options.explicit && options.source !== "auto" && options.source !== "external") {
-    throw new Error("opencode-router-bin requires --sidecar-source external or auto");
+    throw new Error("veslo-code-router-bin requires --sidecar-source external or auto");
   }
 
-  const expectedVersion = await resolveExpectedVersion(options.manifest, "opencode-router");
+  const expectedVersion = await resolveExpectedVersion(options.manifest, "veslo-code-router");
   const resolveExternal = async (): Promise<ResolvedBinary> => {
     if (!options.allowExternal) {
       throw new Error("External opencodeRouter requires --allow-external");
@@ -1819,14 +1819,14 @@ async function resolveOpenCodeRouterBin(options: {
     if (options.explicit) {
       const resolved = resolveBinPath(options.explicit);
       if ((resolved.includes("/") || resolved.startsWith(".")) && !(await fileExists(resolved))) {
-        throw new Error(`opencode-router-bin not found: ${resolved}`);
+        throw new Error(`veslo-code-router-bin not found: ${resolved}`);
       }
       return { bin: resolved, source: "external", expectedVersion };
     }
 
     const repoDir = await resolveOpenCodeRouterRepoDir();
     if (repoDir) {
-      const binPath = join(repoDir, "dist", "bin", "opencode-router");
+      const binPath = join(repoDir, "dist", "bin", "veslo-code-router");
       if (await isExecutable(binPath)) {
         return { bin: binPath, source: "external", expectedVersion };
       }
@@ -1838,9 +1838,9 @@ async function resolveOpenCodeRouterBin(options: {
 
     const require = createRequire(import.meta.url);
     try {
-      const pkgPath = require.resolve("opencode-router/package.json");
+      const pkgPath = require.resolve("veslo-code-router/package.json");
       const pkgDir = dirname(pkgPath);
-      const binaryPath = join(pkgDir, "dist", "bin", "opencode-router");
+      const binaryPath = join(pkgDir, "dist", "bin", "veslo-code-router");
       if (await isExecutable(binaryPath)) {
         return { bin: binaryPath, source: "external", expectedVersion };
       }
@@ -1853,22 +1853,22 @@ async function resolveOpenCodeRouterBin(options: {
     }
 
     throw new Error(
-      "opencode-router binary not found. Install the opencode-router dependency or pass --opencode-router-bin with --allow-external.",
+      "veslo-code-router binary not found. Install the veslo-code-router dependency or pass --veslo-code-router-bin with --allow-external.",
     );
   };
 
   if (options.source === "bundled") {
-    const bundled = await resolveBundledBinary(options.manifest, "opencode-router");
+    const bundled = await resolveBundledBinary(options.manifest, "veslo-code-router");
     if (!bundled) {
       throw new Error(
-        "Bundled opencodeRouter binary missing. Build with pnpm --filter openwork-orchestrator build:bin:bundled.",
+        "Bundled opencodeRouter binary missing. Build with pnpm --filter veslo-orchestrator build:bin:bundled.",
       );
     }
     return { bin: bundled, source: "bundled", expectedVersion };
   }
 
   if (options.source === "downloaded") {
-    const downloaded = await downloadSidecarBinary({ name: "opencode-router", sidecar: options.sidecar });
+    const downloaded = await downloadSidecarBinary({ name: "veslo-code-router", sidecar: options.sidecar });
     if (!downloaded) {
       throw new Error("opencodeRouter download failed. Check sidecar manifest or base URL.");
     }
@@ -1879,7 +1879,7 @@ async function resolveOpenCodeRouterBin(options: {
     return resolveExternal();
   }
 
-  const bundled = await resolveBundledBinary(options.manifest, "opencode-router");
+  const bundled = await resolveBundledBinary(options.manifest, "veslo-code-router");
   if (bundled && !(options.allowExternal && options.explicit)) {
     return { bin: bundled, source: "bundled", expectedVersion };
   }
@@ -1888,7 +1888,7 @@ async function resolveOpenCodeRouterBin(options: {
     return resolveExternal();
   }
 
-  const downloaded = await downloadSidecarBinary({ name: "opencode-router", sidecar: options.sidecar });
+  const downloaded = await downloadSidecarBinary({ name: "veslo-code-router", sidecar: options.sidecar });
   if (downloaded) return downloaded;
 
   if (!options.allowExternal) {
@@ -1901,15 +1901,15 @@ async function resolveOpenCodeRouterBin(options: {
 }
 
 function resolveRouterDataDir(flags: Map<string, string | boolean>): string {
-  const override = readFlag(flags, "data-dir") ?? process.env.OPENWORK_DATA_DIR;
+  const override = readFlag(flags, "data-dir") ?? process.env.VESLO_DATA_DIR;
   if (override && override.trim()) {
     return resolve(override.trim());
   }
-  return join(homedir(), ".openwork", "openwork-orchestrator");
+  return join(homedir(), ".veslo", "veslo-orchestrator");
 }
 
 function routerStatePath(dataDir: string): string {
-  return join(dataDir, "openwork-orchestrator-state.json");
+  return join(dataDir, "veslo-orchestrator-state.json");
 }
 
 function nowMs(): number {
@@ -2294,8 +2294,8 @@ async function fetchOpenCodeRouterHealth(baseUrl: string): Promise<OpenCodeRoute
   return (await fetchJson(`${baseUrl.replace(/\/$/, "")}/health`)) as OpenCodeRouterHealthSnapshot;
 }
 
-async function fetchOpenCodeRouterHealthViaOpenwork(openworkUrl: string, token: string): Promise<OpenCodeRouterHealthSnapshot> {
-  const url = `${openworkUrl.replace(/\/$/, "")}/opencode-router/health`;
+async function fetchOpenCodeRouterHealthViaVeslo(vesloUrl: string, token: string): Promise<OpenCodeRouterHealthSnapshot> {
+  const url = `${vesloUrl.replace(/\/$/, "")}/veslo-code-router/health`;
   return (await fetchJson(url, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -2321,13 +2321,13 @@ async function waitForOpenCodeRouterHealthy(baseUrl: string, timeoutMs = 10_000,
   throw new Error(lastError ?? "Timed out waiting for opencodeRouter health");
 }
 
-async function waitForOpenCodeRouterHealthyViaOpenwork(
-  openworkUrl: string,
+async function waitForOpenCodeRouterHealthyViaVeslo(
+  vesloUrl: string,
   token: string,
   timeoutMs = 10_000,
   pollMs = 500,
 ): Promise<OpenCodeRouterHealthSnapshot> {
-  const url = `${openworkUrl.replace(/\/$/, "")}/opencode-router/health`;
+  const url = `${vesloUrl.replace(/\/$/, "")}/veslo-code-router/health`;
   const start = Date.now();
   let lastError: string | null = null;
   while (Date.now() - start < timeoutMs) {
@@ -2346,7 +2346,7 @@ async function waitForOpenCodeRouterHealthyViaOpenwork(
     }
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
-  throw new Error(lastError ?? "Timed out waiting for opencodeRouter health via openwork-server");
+  throw new Error(lastError ?? "Timed out waiting for opencodeRouter health via veslo-server");
 }
 
 async function waitForOpencodeHealthy(client: ReturnType<typeof createOpencodeClient>, timeoutMs = 10_000, pollMs = 250) {
@@ -2366,7 +2366,7 @@ async function waitForOpencodeHealthy(client: ReturnType<typeof createOpencodeCl
 }
 
 /**
- * In sandbox mode the released openwork-server binary may not have our latest
+ * In sandbox mode the released veslo-server binary may not have our latest
  * token/proxy changes.  Instead of relying on the OpenCode SDK client (which
  * sends Bearer auth that the proxy may not understand yet), we do a simple
  * HTTP fetch through the proxy path.  The server's /opencode/* proxy already
@@ -2377,7 +2377,7 @@ async function waitForOpencodeHealthy(client: ReturnType<typeof createOpencodeCl
  * We try multiple path patterns because:
  * - `/opencode/health` — most common OpenCode health endpoint proxied by the
  *   server's catch-all /opencode/* route.
- * - `/health` on the openwork-server itself — already verified by the caller,
+ * - `/health` on the veslo-server itself — already verified by the caller,
  *   but serves as a fallback signal.
  */
 async function waitForHealthyViaProxy(
@@ -2398,7 +2398,7 @@ async function waitForHealthyViaProxy(
       if (res.ok) return;
       // Some older server versions may return 401/403 on the proxy but that
       // still proves the server is up and proxying.  Accept any non-5xx as
-      // "alive" — the real auth validation happens in verifyOpenworkServer.
+      // "alive" — the real auth validation happens in verifyVesloServer.
       if (res.status < 500) return;
       lastError = `Proxy returned ${res.status}`;
     } catch (error) {
@@ -2411,21 +2411,21 @@ async function waitForHealthyViaProxy(
 
 function printHelp(): void {
   const message = [
-    "openwork",
+    "veslo",
     "",
     "Usage:",
-    "  openwork start [--workspace <path>] [options]",
-    "  openwork serve [--workspace <path>] [options]",
-    "  openwork daemon [run|start|stop|status] [options]",
-    "  openwork workspace <action> [options]",
-    "  openwork instance dispose <id> [options]",
-    "  openwork approvals list --openwork-url <url> --host-token <token>",
-    "  openwork approvals reply <id> --allow|--deny --openwork-url <url> --host-token <token>",
-    "  openwork files <action> [options]",
-    "  openwork status [--openwork-url <url>] [--opencode-url <url>]",
+    "  veslo start [--workspace <path>] [options]",
+    "  veslo serve [--workspace <path>] [options]",
+    "  veslo daemon [run|start|stop|status] [options]",
+    "  veslo workspace <action> [options]",
+    "  veslo instance dispose <id> [options]",
+    "  veslo approvals list --veslo-url <url> --host-token <token>",
+    "  veslo approvals reply <id> --allow|--deny --veslo-url <url> --host-token <token>",
+    "  veslo files <action> [options]",
+    "  veslo status [--veslo-url <url>] [--opencode-url <url>]",
     "",
     "Commands:",
-    "  start                   Start OpenCode + OpenWork server + OpenCodeRouter",
+    "  start                   Start OpenCode + Veslo server + OpenCodeRouter",
     "  serve                   Start services and stream logs (no TUI)",
     "  daemon                  Run orchestrator router daemon (multi-workspace)",
     "  workspace               Manage workspaces (add/list/switch/path)",
@@ -2433,7 +2433,7 @@ function printHelp(): void {
     "  approvals list           List pending approval requests",
     "  approvals reply <id>     Approve or deny a request",
     "  files                   Manage file sessions and batch file sync",
-    "  status                  Check OpenCode/OpenWork health",
+    "  status                  Check OpenCode/Veslo health",
     "",
     "Options:",
     "  --workspace <path>        Workspace directory (default: cwd)",
@@ -2451,10 +2451,10 @@ function printHelp(): void {
     "  --opencode-hot-reload-cooldown-ms <ms>  Minimum interval between hot reloads (default: 1500)",
     "  --opencode-username <u>   OpenCode basic auth username",
     "  --opencode-password <p>   OpenCode basic auth password",
-    "  --openwork-host <host>    Bind host for openwork-server (default: 0.0.0.0)",
-    "  --openwork-port <port>    Port for openwork-server (default: 8787)",
-    "  --openwork-token <token>  Client token for openwork-server",
-    "  --openwork-host-token <t> Host token for approvals",
+    "  --veslo-host <host>    Bind host for veslo-server (default: 0.0.0.0)",
+    "  --veslo-port <port>    Port for veslo-server (default: 8787)",
+    "  --veslo-token <token>  Client token for veslo-server",
+    "  --veslo-host-token <t> Host token for approvals",
     "  --workspace-id <id>       Workspace id for file session commands",
     "  --session-id <id>         File session id for file session commands",
     "  --path <path>             Workspace-relative file path",
@@ -2471,14 +2471,14 @@ function printHelp(): void {
     "  --recursive               Recursive delete for files delete",
     "  --approval <mode>         manual | auto (default: manual)",
     "  --approval-timeout <ms>   Approval timeout in ms",
-    "  --read-only               Start OpenWork server in read-only mode",
+    "  --read-only               Start Veslo server in read-only mode",
     "  --cors <origins>          Comma-separated CORS origins or *",
     "  --connect-host <host>     Override LAN host used for pairing URLs",
-    "  --openwork-server-bin <p> Path to openwork-server binary (requires --allow-external)",
-    "  --opencode-router-bin <path>     Path to opencodeRouter binary (requires --allow-external)",
-    "  --opencode-router-health-port <p> Health server port for opencodeRouter (default: random)",
-    "  --no-opencode-router             Disable opencodeRouter sidecar",
-    "  --opencode-router-required       Exit if opencodeRouter stops",
+    "  --veslo-server-bin <p> Path to veslo-server binary (requires --allow-external)",
+    "  --veslo-code-router-bin <path>     Path to opencodeRouter binary (requires --allow-external)",
+    "  --veslo-code-router-health-port <p> Health server port for opencodeRouter (default: random)",
+    "  --no-veslo-code-router             Disable opencodeRouter sidecar",
+    "  --veslo-code-router-required       Exit if opencodeRouter stops",
     "  --allow-external          Allow external sidecar binaries (dev only, required for custom bins)",
     "  --sidecar-dir <path>      Cache directory for downloaded sidecars",
     "  --sidecar-base-url <url>  Base URL for sidecar downloads",
@@ -2554,10 +2554,10 @@ async function startOpencode(options: {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
-      OPENCODE_CLIENT: "openwork-orchestrator",
-      OPENWORK: "1",
-      OPENWORK_RUN_ID: options.runId,
-      OPENWORK_LOG_FORMAT: options.logFormat,
+      OPENCODE_CLIENT: "veslo-orchestrator",
+      VESLO: "1",
+      VESLO_RUN_ID: options.runId,
+      VESLO_LOG_FORMAT: options.logFormat,
       OTEL_RESOURCE_ATTRIBUTES: mergeResourceAttributes(
         {
           "service.name": "opencode",
@@ -2581,7 +2581,7 @@ async function startOpencode(options: {
   return child;
 }
 
-async function startOpenworkServer(options: {
+async function startVesloServer(options: {
   bin: string;
   host: string;
   port: number;
@@ -2649,28 +2649,28 @@ async function startOpenworkServer(options: {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
-      OPENWORK_TOKEN: options.token,
-      OPENWORK_HOST_TOKEN: options.hostToken,
-      OPENWORK_RUN_ID: options.runId,
-      OPENWORK_LOG_FORMAT: options.logFormat,
+      VESLO_TOKEN: options.token,
+      VESLO_HOST_TOKEN: options.hostToken,
+      VESLO_RUN_ID: options.runId,
+      VESLO_LOG_FORMAT: options.logFormat,
       OTEL_RESOURCE_ATTRIBUTES: mergeResourceAttributes(
         {
-          "service.name": "openwork-server",
+          "service.name": "veslo-server",
           "service.instance.id": options.runId,
         },
         process.env.OTEL_RESOURCE_ATTRIBUTES,
       ),
       ...(options.opencodeRouterHealthPort ? { OPENCODE_ROUTER_HEALTH_PORT: String(options.opencodeRouterHealthPort) } : {}),
       ...(options.opencodeRouterDataDir ? { OPENCODE_ROUTER_DATA_DIR: options.opencodeRouterDataDir } : {}),
-      ...(options.opencodeBaseUrl ? { OPENWORK_OPENCODE_BASE_URL: options.opencodeBaseUrl } : {}),
-      ...(options.opencodeDirectory ? { OPENWORK_OPENCODE_DIRECTORY: options.opencodeDirectory } : {}),
-      ...(options.opencodeUsername ? { OPENWORK_OPENCODE_USERNAME: options.opencodeUsername } : {}),
-      ...(options.opencodePassword ? { OPENWORK_OPENCODE_PASSWORD: options.opencodePassword } : {}),
+      ...(options.opencodeBaseUrl ? { VESLO_OPENCODE_BASE_URL: options.opencodeBaseUrl } : {}),
+      ...(options.opencodeDirectory ? { VESLO_OPENCODE_DIRECTORY: options.opencodeDirectory } : {}),
+      ...(options.opencodeUsername ? { VESLO_OPENCODE_USERNAME: options.opencodeUsername } : {}),
+      ...(options.opencodePassword ? { VESLO_OPENCODE_PASSWORD: options.opencodePassword } : {}),
     },
   });
 
-  prefixStream(child.stdout, "openwork-server", "stdout", options.logger, child.pid ?? undefined);
-  prefixStream(child.stderr, "openwork-server", "stderr", options.logger, child.pid ?? undefined);
+  prefixStream(child.stdout, "veslo-server", "stdout", options.logger, child.pid ?? undefined);
+  prefixStream(child.stderr, "veslo-server", "stderr", options.logger, child.pid ?? undefined);
 
   return child;
 }
@@ -2701,11 +2701,11 @@ async function startOpenCodeRouter(options: {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
-      OPENWORK_RUN_ID: options.runId,
-      OPENWORK_LOG_FORMAT: options.logFormat,
+      VESLO_RUN_ID: options.runId,
+      VESLO_LOG_FORMAT: options.logFormat,
       OTEL_RESOURCE_ATTRIBUTES: mergeResourceAttributes(
         {
-          "service.name": "opencode-router",
+          "service.name": "veslo-code-router",
           "service.instance.id": options.runId,
         },
         process.env.OTEL_RESOURCE_ATTRIBUTES,
@@ -2719,8 +2719,8 @@ async function startOpenCodeRouter(options: {
     },
   });
 
-  prefixStream(child.stdout, "opencode-router", "stdout", options.logger, child.pid ?? undefined);
-  prefixStream(child.stderr, "opencode-router", "stderr", options.logger, child.pid ?? undefined);
+  prefixStream(child.stdout, "veslo-code-router", "stdout", options.logger, child.pid ?? undefined);
+  prefixStream(child.stderr, "veslo-code-router", "stderr", options.logger, child.pid ?? undefined);
 
   return child;
 }
@@ -2827,7 +2827,7 @@ async function ensureAppleContainerSystemReady(): Promise<void> {
 async function stageSandboxRuntime(options: {
   persistDir: string;
   containerName: string;
-  sidecars: { opencode: string; openworkServer: string; opencodeRouter?: string | null };
+  sidecars: { opencode: string; vesloServer: string; opencodeRouter?: string | null };
   detach: boolean;
 }): Promise<{
   baseDir: string;
@@ -2835,27 +2835,27 @@ async function stageSandboxRuntime(options: {
   entrypointHostPath: string;
   cleanup: () => Promise<void>;
 }> {
-  const baseDir = join(options.persistDir, "openwork-orchestrator-sandbox", options.containerName);
+  const baseDir = join(options.persistDir, "veslo-orchestrator-sandbox", options.containerName);
   await mkdir(baseDir, { recursive: true });
 
   const sidecarsDir = join(baseDir, "sidecars");
   await mkdir(sidecarsDir, { recursive: true });
   const entrypointHostPath = join(baseDir, "entrypoint.sh");
 
-  const stagedOpencode = join(sidecarsDir, "opencode");
-  const stagedOpenwork = join(sidecarsDir, "openwork-server");
+  const stagedOpencode = join(sidecarsDir, "veslo-code");
+  const stagedVeslo = join(sidecarsDir, "veslo-server");
   await copyFile(options.sidecars.opencode, stagedOpencode);
-  await copyFile(options.sidecars.openworkServer, stagedOpenwork);
+  await copyFile(options.sidecars.vesloServer, stagedVeslo);
   await ensureExecutable(stagedOpencode);
-  await ensureExecutable(stagedOpenwork);
+  await ensureExecutable(stagedVeslo);
 
   if (options.sidecars.opencodeRouter) {
-    const stagedOpenCodeRouter = join(sidecarsDir, "opencode-router");
+    const stagedOpenCodeRouter = join(sidecarsDir, "veslo-code-router");
     await copyFile(options.sidecars.opencodeRouter, stagedOpenCodeRouter);
     await ensureExecutable(stagedOpenCodeRouter);
   }
 
-  const rootInContainer = `/persist/openwork-orchestrator-sandbox/${options.containerName}`;
+  const rootInContainer = `/persist/veslo-orchestrator-sandbox/${options.containerName}`;
   const cleanup = async () => {
     if (options.detach) return;
     try {
@@ -2879,7 +2879,7 @@ async function writeSandboxEntrypoint(options: {
     password?: string;
     hotReload: OpencodeHotReload;
   };
-  openwork: {
+  veslo: {
     token: string;
     hostToken: string;
     approvalMode: ApprovalMode;
@@ -2894,9 +2894,9 @@ async function writeSandboxEntrypoint(options: {
   runId: string;
   logFormat: LogFormat;
 }): Promise<void> {
-  const opencodeBin = `${options.rootInContainer}/sidecars/opencode`;
-  const openworkBin = `${options.rootInContainer}/sidecars/openwork-server`;
-  const opencodeRouterBin = `${options.rootInContainer}/sidecars/opencode-router`;
+  const opencodeBin = `${options.rootInContainer}/sidecars/veslo-code`;
+  const vesloBin = `${options.rootInContainer}/sidecars/veslo-server`;
+  const opencodeRouterBin = `${options.rootInContainer}/sidecars/veslo-code-router`;
   const workspaceDir = "/workspace";
   const opencodeConfigDir = options.opencodeConfigDirInContainer;
   const hostOpencodeConfigDir = SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH;
@@ -2906,8 +2906,8 @@ async function writeSandboxEntrypoint(options: {
     .map((origin) => `--cors ${shQuote(origin)}`)
     .join(" ");
 
-  const openworkCors = options.openwork.corsOrigins.length
-    ? `--cors ${shQuote(options.openwork.corsOrigins.join(","))}`
+  const vesloCors = options.veslo.corsOrigins.length
+    ? `--cors ${shQuote(options.veslo.corsOrigins.join(","))}`
     : "";
 
   const opencodeAuthEnv = [
@@ -2917,14 +2917,14 @@ async function writeSandboxEntrypoint(options: {
     .filter(Boolean)
     .join("\n");
 
-  const openworkAuthArgs = [
-    options.openwork.opencodeUsername ? `--opencode-username ${shQuote(options.openwork.opencodeUsername)}` : "",
-    options.openwork.opencodePassword ? `--opencode-password ${shQuote(options.openwork.opencodePassword)}` : "",
+  const vesloAuthArgs = [
+    options.veslo.opencodeUsername ? `--opencode-username ${shQuote(options.veslo.opencodeUsername)}` : "",
+    options.veslo.opencodePassword ? `--opencode-password ${shQuote(options.veslo.opencodePassword)}` : "",
   ]
     .filter(Boolean)
     .join(" ");
 
-  const opencodeRouterEnv = options.openwork.opencodeRouterEnabled
+  const opencodeRouterEnv = options.veslo.opencodeRouterEnabled
     ? `export OPENCODE_ROUTER_HEALTH_PORT=${shQuote(String(SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT))}`
     : "";
 
@@ -2946,15 +2946,15 @@ async function writeSandboxEntrypoint(options: {
     "mkdir -p \"$XDG_DATA_HOME/opencode\"",
     `if [ -d ${shQuote(hostOpencodeDataDir)} ]; then cp ${shQuote(`${hostOpencodeDataDir}/auth.json`)} \"$XDG_DATA_HOME/opencode/auth.json\" 2>/dev/null || true; cp ${shQuote(`${hostOpencodeDataDir}/mcp-auth.json`)} \"$XDG_DATA_HOME/opencode/mcp-auth.json\" 2>/dev/null || true; fi`,
     `export OPENCODE_URL=${shQuote(`http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`)}`,
-    `export OPENCODE_CLIENT=openwork-orchestrator`,
+    `export OPENCODE_CLIENT=veslo-orchestrator`,
     `export OPENCODE_HOT_RELOAD=${shQuote(options.opencode.hotReload.enabled ? "1" : "0")}`,
     `export OPENCODE_HOT_RELOAD_DEBOUNCE_MS=${shQuote(String(options.opencode.hotReload.debounceMs))}`,
     `export OPENCODE_HOT_RELOAD_COOLDOWN_MS=${shQuote(String(options.opencode.hotReload.cooldownMs))}`,
-    `export OPENWORK=1`,
-    `export OPENWORK_RUN_ID=${shQuote(options.runId)}`,
-    `export OPENWORK_LOG_FORMAT=${shQuote(options.logFormat)}`,
-    `export OPENWORK_SANDBOX_ENABLED=1`,
-    `export OPENWORK_SANDBOX_BACKEND=${shQuote(options.backend)}`,
+    `export VESLO=1`,
+    `export VESLO_RUN_ID=${shQuote(options.runId)}`,
+    `export VESLO_LOG_FORMAT=${shQuote(options.logFormat)}`,
+    `export VESLO_SANDBOX_ENABLED=1`,
+    `export VESLO_SANDBOX_BACKEND=${shQuote(options.backend)}`,
     opencodeRouterEnv,
     opencodeAuthEnv,
     "opencode_pid=\"\"",
@@ -2966,20 +2966,20 @@ async function writeSandboxEntrypoint(options: {
     "trap cleanup INT TERM",
     `${shQuote(opencodeBin)} serve --hostname 127.0.0.1 --port ${shQuote(String(SANDBOX_INTERNAL_OPENCODE_PORT))} ${opencodeCors} &`,
     "opencode_pid=$!",
-    options.openwork.opencodeRouterEnabled ? `${shQuote(opencodeRouterBin)} serve ${shQuote(workspaceDir)} &` : "",
-    options.openwork.opencodeRouterEnabled ? "opencodeRouter_pid=$!" : "",
-    `exec ${shQuote(openworkBin)} --host 0.0.0.0 --port ${shQuote(String(SANDBOX_INTERNAL_OPENWORK_PORT))}` +
-      ` --token ${shQuote(options.openwork.token)} --host-token ${shQuote(options.openwork.hostToken)}` +
+    options.veslo.opencodeRouterEnabled ? `${shQuote(opencodeRouterBin)} serve ${shQuote(workspaceDir)} &` : "",
+    options.veslo.opencodeRouterEnabled ? "opencodeRouter_pid=$!" : "",
+    `exec ${shQuote(vesloBin)} --host 0.0.0.0 --port ${shQuote(String(SANDBOX_INTERNAL_VESLO_PORT))}` +
+      ` --token ${shQuote(options.veslo.token)} --host-token ${shQuote(options.veslo.hostToken)}` +
       ` --workspace ${shQuote(workspaceDir)}` +
-      ` --approval ${shQuote(options.openwork.approvalMode)}` +
-      ` --approval-timeout ${shQuote(String(options.openwork.approvalTimeoutMs))}` +
-      (options.openwork.readOnly ? " --read-only" : "") +
+      ` --approval ${shQuote(options.veslo.approvalMode)}` +
+      ` --approval-timeout ${shQuote(String(options.veslo.approvalTimeoutMs))}` +
+      (options.veslo.readOnly ? " --read-only" : "") +
       ` --opencode-base-url ${shQuote(`http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`)}` +
       ` --opencode-directory ${shQuote(workspaceDir)}` +
-      ` ${openworkAuthArgs}` +
-      ` --log-format ${shQuote(options.openwork.logFormat)}` +
-      (options.openwork.opencodeRouterEnabled ? ` --opencode-router-health-port ${shQuote(String(SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT))}` : "") +
-      (openworkCors ? ` ${openworkCors}` : ""),
+      ` ${vesloAuthArgs}` +
+      ` --log-format ${shQuote(options.veslo.logFormat)}` +
+      (options.veslo.opencodeRouterEnabled ? ` --veslo-code-router-health-port ${shQuote(String(SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT))}` : "") +
+      (vesloCors ? ` ${vesloCors}` : ""),
   ]
     .filter(Boolean)
     .join("\n");
@@ -2994,15 +2994,15 @@ async function startDockerSandbox(options: {
   persistDir: string;
   opencodeConfigDir: string;
   extraMounts: SandboxMount[];
-  sidecars: { opencode: string; openworkServer: string; opencodeRouter?: string | null };
-  ports: { openwork: number; opencodeRouterHealth?: number | null };
+  sidecars: { opencode: string; vesloServer: string; opencodeRouter?: string | null };
+  ports: { veslo: number; opencodeRouterHealth?: number | null };
   opencode: {
     corsOrigins: string[];
     username?: string;
     password?: string;
     hotReload: OpencodeHotReload;
   };
-  openwork: {
+  veslo: {
     token: string;
     hostToken: string;
     approvalMode: ApprovalMode;
@@ -3031,16 +3031,16 @@ async function startDockerSandbox(options: {
     opencodeConfigDirInContainer: "/opencode-config",
     backend: "docker",
     opencode: options.opencode,
-    openwork: {
-      token: options.openwork.token,
-      hostToken: options.openwork.hostToken,
-      approvalMode: options.openwork.approvalMode,
-      approvalTimeoutMs: options.openwork.approvalTimeoutMs,
-      readOnly: options.openwork.readOnly,
-      corsOrigins: options.openwork.corsOrigins,
-      opencodeUsername: options.openwork.opencodeUsername,
-      opencodePassword: options.openwork.opencodePassword,
-      logFormat: options.openwork.logFormat,
+    veslo: {
+      token: options.veslo.token,
+      hostToken: options.veslo.hostToken,
+      approvalMode: options.veslo.approvalMode,
+      approvalTimeoutMs: options.veslo.approvalTimeoutMs,
+      readOnly: options.veslo.readOnly,
+      corsOrigins: options.veslo.corsOrigins,
+      opencodeUsername: options.veslo.opencodeUsername,
+      opencodePassword: options.veslo.opencodePassword,
+      logFormat: options.veslo.logFormat,
       opencodeRouterEnabled: !!options.sidecars.opencodeRouter,
     },
     runId: options.runId,
@@ -3053,7 +3053,7 @@ async function startDockerSandbox(options: {
     "--name",
     options.containerName,
     "-p",
-    `${options.ports.openwork}:${SANDBOX_INTERNAL_OPENWORK_PORT}`,
+    `${options.ports.veslo}:${SANDBOX_INTERNAL_VESLO_PORT}`,
     "-v",
     `${options.workspace}:/workspace`,
     "-v",
@@ -3116,15 +3116,15 @@ async function startAppleContainerSandbox(options: {
   persistDir: string;
   opencodeConfigDir: string;
   extraMounts: SandboxMount[];
-  sidecars: { opencode: string; openworkServer: string; opencodeRouter?: string | null };
-  ports: { openwork: number; opencodeRouterHealth?: number | null };
+  sidecars: { opencode: string; vesloServer: string; opencodeRouter?: string | null };
+  ports: { veslo: number; opencodeRouterHealth?: number | null };
   opencode: {
     corsOrigins: string[];
     username?: string;
     password?: string;
     hotReload: OpencodeHotReload;
   };
-  openwork: {
+  veslo: {
     token: string;
     hostToken: string;
     approvalMode: ApprovalMode;
@@ -3155,16 +3155,16 @@ async function startAppleContainerSandbox(options: {
     opencodeConfigDirInContainer: "/opencode-config",
     backend: "container",
     opencode: options.opencode,
-    openwork: {
-      token: options.openwork.token,
-      hostToken: options.openwork.hostToken,
-      approvalMode: options.openwork.approvalMode,
-      approvalTimeoutMs: options.openwork.approvalTimeoutMs,
-      readOnly: options.openwork.readOnly,
-      corsOrigins: options.openwork.corsOrigins,
-      opencodeUsername: options.openwork.opencodeUsername,
-      opencodePassword: options.openwork.opencodePassword,
-      logFormat: options.openwork.logFormat,
+    veslo: {
+      token: options.veslo.token,
+      hostToken: options.veslo.hostToken,
+      approvalMode: options.veslo.approvalMode,
+      approvalTimeoutMs: options.veslo.approvalTimeoutMs,
+      readOnly: options.veslo.readOnly,
+      corsOrigins: options.veslo.corsOrigins,
+      opencodeUsername: options.veslo.opencodeUsername,
+      opencodePassword: options.veslo.opencodePassword,
+      logFormat: options.veslo.logFormat,
       opencodeRouterEnabled: !!options.sidecars.opencodeRouter,
     },
     runId: options.runId,
@@ -3177,7 +3177,7 @@ async function startAppleContainerSandbox(options: {
     "--name",
     options.containerName,
     "-p",
-    `${options.ports.openwork}:${SANDBOX_INTERNAL_OPENWORK_PORT}`,
+    `${options.ports.veslo}:${SANDBOX_INTERNAL_VESLO_PORT}`,
     "-v",
     `${options.workspace}:/workspace`,
     "-v",
@@ -3247,7 +3247,7 @@ async function verifyOpenCodeRouterVersion(binary: ResolvedBinary): Promise<stri
     return binary.expectedVersion;
   }
   const actual = await readCliVersion(binary.bin);
-  assertVersionMatch("opencode-router", binary.expectedVersion, actual, binary.bin);
+  assertVersionMatch("veslo-code-router", binary.expectedVersion, actual, binary.bin);
   return actual;
 }
 
@@ -3255,19 +3255,19 @@ async function verifyOpencodeVersion(binary: ResolvedBinary): Promise<string | u
   const actual = await readCliVersion(binary.bin);
   // When the binary was explicitly provided via --opencode-bin (source "external"),
   // a strict version check would break desktop app users whenever a new opencode
-  // release ships on GitHub before OpenWork updates its bundled binary. Log a
+  // release ships on GitHub before Veslo updates its bundled binary. Log a
   // warning instead of throwing so the caller can still proceed.
   if (binary.source === "external" && binary.expectedVersion && actual && binary.expectedVersion !== actual) {
     process.stderr.write(
-      `[openwork-orchestrator] Warning: opencode version mismatch (expected ${binary.expectedVersion}, got ${actual}). Proceeding with ${binary.bin}.\n`,
+      `[veslo-orchestrator] Warning: opencode version mismatch (expected ${binary.expectedVersion}, got ${actual}). Proceeding with ${binary.bin}.\n`,
     );
     return actual;
   }
-  assertVersionMatch("opencode", binary.expectedVersion, actual, binary.bin);
+  assertVersionMatch("veslo-code", binary.expectedVersion, actual, binary.bin);
   return actual;
 }
 
-async function verifyOpenworkServer(input: {
+async function verifyVesloServer(input: {
   baseUrl: string;
   token: string;
   hostToken: string;
@@ -3280,13 +3280,13 @@ async function verifyOpenworkServer(input: {
 }): Promise<string | undefined> {
   const health = await fetchJson(`${input.baseUrl}/health`);
   const actualVersion = typeof health?.version === "string" ? health.version : undefined;
-  assertVersionMatch("openwork-server", input.expectedVersion, actualVersion, `${input.baseUrl}/health`);
+  assertVersionMatch("veslo-server", input.expectedVersion, actualVersion, `${input.baseUrl}/health`);
 
   const headers = { Authorization: `Bearer ${input.token}` };
   const workspaces = await fetchJson(`${input.baseUrl}/workspaces`, { headers });
   const items = Array.isArray(workspaces?.items) ? (workspaces.items as Array<Record<string, unknown>>) : [];
   if (!items.length) {
-    throw new Error("OpenWork server returned no workspaces");
+    throw new Error("Veslo server returned no workspaces");
   }
 
   const expectedPath = normalizeWorkspacePath(input.expectedWorkspace);
@@ -3303,28 +3303,28 @@ async function verifyOpenworkServer(input: {
     | undefined;
 
   if (!matched) {
-    throw new Error(`OpenWork server workspace mismatch. Expected ${expectedPath}.`);
+    throw new Error(`Veslo server workspace mismatch. Expected ${expectedPath}.`);
   }
 
   const opencode = matched.opencode;
   if (input.expectedOpencodeBaseUrl && opencode?.baseUrl !== input.expectedOpencodeBaseUrl) {
     throw new Error(
-      `OpenWork server OpenCode base URL mismatch: expected ${input.expectedOpencodeBaseUrl}, got ${opencode?.baseUrl ?? "<missing>"}.`,
+      `Veslo server OpenCode base URL mismatch: expected ${input.expectedOpencodeBaseUrl}, got ${opencode?.baseUrl ?? "<missing>"}.`,
     );
   }
   if (input.expectedOpencodeDirectory && opencode?.directory !== input.expectedOpencodeDirectory) {
     throw new Error(
-      `OpenWork server OpenCode directory mismatch: expected ${input.expectedOpencodeDirectory}, got ${opencode?.directory ?? "<missing>"}.`,
+      `Veslo server OpenCode directory mismatch: expected ${input.expectedOpencodeDirectory}, got ${opencode?.directory ?? "<missing>"}.`,
     );
   }
   if (input.expectedOpencodeUsername && opencode?.username !== input.expectedOpencodeUsername) {
-    throw new Error("OpenWork server OpenCode username mismatch.");
+    throw new Error("Veslo server OpenCode username mismatch.");
   }
   if (input.expectedOpencodePassword && opencode?.password !== input.expectedOpencodePassword) {
-    throw new Error("OpenWork server OpenCode password mismatch.");
+    throw new Error("Veslo server OpenCode password mismatch.");
   }
 
-  const hostHeaders = { "X-OpenWork-Host-Token": input.hostToken };
+  const hostHeaders = { "X-Veslo-Host-Token": input.hostToken };
   await fetchJson(`${input.baseUrl}/approvals`, { headers: hostHeaders });
 
   return actualVersion;
@@ -3332,26 +3332,26 @@ async function verifyOpenworkServer(input: {
 
 async function runChecks(input: {
   opencodeClient: ReturnType<typeof createOpencodeClient>;
-  openworkUrl: string;
-  openworkToken: string;
+  vesloUrl: string;
+  vesloToken: string;
   hostToken: string;
   checkEvents: boolean;
 }) {
-  const baseUrl = input.openworkUrl.replace(/\/$/, "");
-  const headers = { Authorization: `Bearer ${input.openworkToken}` };
-  const hostHeaders = { "X-OpenWork-Host-Token": input.hostToken };
+  const baseUrl = input.vesloUrl.replace(/\/$/, "");
+  const headers = { Authorization: `Bearer ${input.vesloToken}` };
+  const hostHeaders = { "X-Veslo-Host-Token": input.hostToken };
   const workspaces = await fetchJson(`${baseUrl}/workspaces`, { headers });
   if (!workspaces?.items?.length) {
-    throw new Error("OpenWork server returned no workspaces");
+    throw new Error("Veslo server returned no workspaces");
   }
 
   const workspaceId = workspaces.items[0].id as string;
   await fetchJson(`${baseUrl}/workspace/${workspaceId}/config`, { headers });
 
   // Smoke test: mounted opencodeRouter proxy and auth behavior.
-  // - /w/:id/opencode-router/health is client-readable
-  // - other /w/:id/opencode-router/* requires host/owner auth
-  const owMountBase = `${baseUrl}/w/${encodeURIComponent(workspaceId)}/opencode-router`;
+  // - /w/:id/veslo-code-router/health is client-readable
+  // - other /w/:id/veslo-code-router/* requires host/owner auth
+  const owMountBase = `${baseUrl}/w/${encodeURIComponent(workspaceId)}/veslo-code-router`;
   const owHealthRes = await fetch(`${owMountBase}/health`, {
     headers,
     signal: AbortSignal.timeout(3000),
@@ -3384,7 +3384,7 @@ async function runChecks(input: {
     }
   }
 
-  const created = await input.opencodeClient.session.create({ title: "OpenWork headless check" });
+  const created = await input.opencodeClient.session.create({ title: "Veslo headless check" });
   const createdSession = unwrap(created);
   unwrap(await input.opencodeClient.session.messages({ sessionID: createdSession.id, limit: 10 }));
 
@@ -3405,7 +3405,7 @@ async function runChecks(input: {
       }
     })();
 
-    unwrap(await input.opencodeClient.session.create({ title: "OpenWork headless check events" }));
+    unwrap(await input.opencodeClient.session.create({ title: "Veslo headless check events" }));
     await new Promise((resolve) => setTimeout(resolve, 1200));
     controller.abort();
     await Promise.race([reader, new Promise((resolve) => setTimeout(resolve, 500))]);
@@ -3418,29 +3418,29 @@ async function runChecks(input: {
 
 /**
  * Lighter check suite for sandbox mode.  Uses only raw HTTP against the
- * openwork-server endpoints — no OpenCode SDK calls that rely on Bearer
+ * veslo-server endpoints — no OpenCode SDK calls that rely on Bearer
  * auth through the proxy (since the released server binary may predate our
  * token/proxy changes).
  */
 async function runSandboxChecks(input: {
-  openworkUrl: string;
-  openworkToken: string;
+  vesloUrl: string;
+  vesloToken: string;
   hostToken: string;
 }) {
-  const baseUrl = input.openworkUrl.replace(/\/$/, "");
-  const headers = { Authorization: `Bearer ${input.openworkToken}` };
-  const hostHeaders = { "X-OpenWork-Host-Token": input.hostToken };
+  const baseUrl = input.vesloUrl.replace(/\/$/, "");
+  const headers = { Authorization: `Bearer ${input.vesloToken}` };
+  const hostHeaders = { "X-Veslo-Host-Token": input.hostToken };
 
   // 1. Server health
   const health = await fetchJson(`${baseUrl}/health`);
   if (!health || typeof health !== "object") {
-    throw new Error("openwork-server /health returned invalid payload");
+    throw new Error("veslo-server /health returned invalid payload");
   }
 
   // 2. Workspaces list
   const workspaces = await fetchJson(`${baseUrl}/workspaces`, { headers });
   if (!workspaces?.items?.length) {
-    throw new Error("openwork-server returned no workspaces");
+    throw new Error("veslo-server returned no workspaces");
   }
   const workspaceId = workspaces.items[0].id as string;
 
@@ -3461,7 +3461,7 @@ async function runSandboxChecks(input: {
   }
 
   // 6. opencodeRouter proxy is reachable (if configured)
-  const owRes = await fetch(`${baseUrl}/opencode-router/health`, {
+  const owRes = await fetch(`${baseUrl}/veslo-code-router/health`, {
     headers,
     signal: AbortSignal.timeout(3000),
   });
@@ -3471,7 +3471,7 @@ async function runSandboxChecks(input: {
 
   // 7. Mounted opencodeRouter proxy + auth behavior (if configured)
   if (owRes.status !== 404) {
-    const owMountBase = `${baseUrl}/w/${encodeURIComponent(workspaceId)}/opencode-router`;
+    const owMountBase = `${baseUrl}/w/${encodeURIComponent(workspaceId)}/veslo-code-router`;
     const mountHealth = await fetch(`${owMountBase}/health`, {
       headers,
       signal: AbortSignal.timeout(3000),
@@ -3564,7 +3564,7 @@ function outputError(error: unknown, json: boolean): void {
   console.error(message);
 }
 
-function createVerboseLogger(enabled: boolean, logger?: Logger, component = "openwork-orchestrator") {
+function createVerboseLogger(enabled: boolean, logger?: Logger, component = "veslo-orchestrator") {
   return (message: string) => {
     if (!enabled) return;
     if (logger) {
@@ -3649,11 +3649,11 @@ function createLogger(options: {
   const output = options.output ?? "stdout";
   const colorEnabled = options.color ?? false;
   const componentColors: Record<string, string> = {
-    "openwork-orchestrator": ANSI.gray,
+    "veslo-orchestrator": ANSI.gray,
     opencode: ANSI.cyan,
-    "openwork-server": ANSI.green,
+    "veslo-server": ANSI.green,
     opencodeRouter: ANSI.magenta,
-    "openwork-orchestrator-router": ANSI.cyan,
+    "veslo-orchestrator-router": ANSI.cyan,
   };
   const levelColors: Record<LogLevel, string> = {
     debug: ANSI.gray,
@@ -3798,28 +3798,28 @@ async function spawnRouterDaemon(args: ParsedArgs, dataDir: string, host: string
     String(port),
   ];
 
-  const opencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.OPENWORK_OPENCODE_BIN;
-  const opencodeHost = readFlag(args.flags, "opencode-host") ?? process.env.OPENWORK_OPENCODE_HOST;
-  const opencodePort = readFlag(args.flags, "opencode-port") ?? process.env.OPENWORK_OPENCODE_PORT;
-  const opencodeWorkdir = readFlag(args.flags, "opencode-workdir") ?? process.env.OPENWORK_OPENCODE_WORKDIR;
+  const opencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.VESLO_OPENCODE_BIN;
+  const opencodeHost = readFlag(args.flags, "opencode-host") ?? process.env.VESLO_OPENCODE_HOST;
+  const opencodePort = readFlag(args.flags, "opencode-port") ?? process.env.VESLO_OPENCODE_PORT;
+  const opencodeWorkdir = readFlag(args.flags, "opencode-workdir") ?? process.env.VESLO_OPENCODE_WORKDIR;
   const opencodeHotReload =
     readFlag(args.flags, "opencode-hot-reload") ??
-    process.env.OPENWORK_OPENCODE_HOT_RELOAD;
+    process.env.VESLO_OPENCODE_HOT_RELOAD;
   const opencodeHotReloadDebounceMs =
     readFlag(args.flags, "opencode-hot-reload-debounce-ms") ??
-    process.env.OPENWORK_OPENCODE_HOT_RELOAD_DEBOUNCE_MS;
+    process.env.VESLO_OPENCODE_HOT_RELOAD_DEBOUNCE_MS;
   const opencodeHotReloadCooldownMs =
     readFlag(args.flags, "opencode-hot-reload-cooldown-ms") ??
-    process.env.OPENWORK_OPENCODE_HOT_RELOAD_COOLDOWN_MS;
-  const opencodeUsername = readFlag(args.flags, "opencode-username") ?? process.env.OPENWORK_OPENCODE_USERNAME;
-  const opencodePassword = readFlag(args.flags, "opencode-password") ?? process.env.OPENWORK_OPENCODE_PASSWORD;
-  const corsValue = readFlag(args.flags, "cors") ?? process.env.OPENWORK_OPENCODE_CORS;
-  const allowExternal = readBool(args.flags, "allow-external", false, "OPENWORK_ALLOW_EXTERNAL");
-  const sidecarSource = readFlag(args.flags, "sidecar-source") ?? process.env.OPENWORK_SIDECAR_SOURCE;
-  const opencodeSource = readFlag(args.flags, "opencode-source") ?? process.env.OPENWORK_OPENCODE_SOURCE;
-  const verbose = readBool(args.flags, "verbose", false, "OPENWORK_VERBOSE");
-  const logFormat = readFlag(args.flags, "log-format") ?? process.env.OPENWORK_LOG_FORMAT;
-  const runId = readFlag(args.flags, "run-id") ?? process.env.OPENWORK_RUN_ID;
+    process.env.VESLO_OPENCODE_HOT_RELOAD_COOLDOWN_MS;
+  const opencodeUsername = readFlag(args.flags, "opencode-username") ?? process.env.VESLO_OPENCODE_USERNAME;
+  const opencodePassword = readFlag(args.flags, "opencode-password") ?? process.env.VESLO_OPENCODE_PASSWORD;
+  const corsValue = readFlag(args.flags, "cors") ?? process.env.VESLO_OPENCODE_CORS;
+  const allowExternal = readBool(args.flags, "allow-external", false, "VESLO_ALLOW_EXTERNAL");
+  const sidecarSource = readFlag(args.flags, "sidecar-source") ?? process.env.VESLO_SIDECAR_SOURCE;
+  const opencodeSource = readFlag(args.flags, "opencode-source") ?? process.env.VESLO_OPENCODE_SOURCE;
+  const verbose = readBool(args.flags, "verbose", false, "VESLO_VERBOSE");
+  const logFormat = readFlag(args.flags, "log-format") ?? process.env.VESLO_LOG_FORMAT;
+  const runId = readFlag(args.flags, "run-id") ?? process.env.VESLO_RUN_ID;
 
   if (opencodeBin) commandArgs.push("--opencode-bin", opencodeBin);
   if (opencodeHost) commandArgs.push("--opencode-host", opencodeHost);
@@ -3868,7 +3868,7 @@ async function ensureRouterDaemon(args: ParsedArgs, autoStart = true): Promise<{
 
   const host = readFlag(args.flags, "daemon-host") ?? "127.0.0.1";
   const port = await resolvePort(
-    readNumber(args.flags, "daemon-port", undefined, "OPENWORK_DAEMON_PORT"),
+    readNumber(args.flags, "daemon-port", undefined, "VESLO_DAEMON_PORT"),
     "127.0.0.1",
   );
   const baseUrl = `http://${host}:${port}`;
@@ -4006,23 +4006,23 @@ async function runInstanceCommand(args: ParsedArgs) {
 
 async function runRouterDaemon(args: ParsedArgs) {
   const outputJson = readBool(args.flags, "json", false);
-  const verbose = readBool(args.flags, "verbose", false, "OPENWORK_VERBOSE");
-  const logFormat = readLogFormat(args.flags, "log-format", "pretty", "OPENWORK_LOG_FORMAT");
+  const verbose = readBool(args.flags, "verbose", false, "VESLO_VERBOSE");
+  const logFormat = readLogFormat(args.flags, "log-format", "pretty", "VESLO_LOG_FORMAT");
   const colorEnabled =
-    readBool(args.flags, "color", process.stdout.isTTY, "OPENWORK_COLOR") && !process.env.NO_COLOR;
-  const runId = readFlag(args.flags, "run-id") ?? process.env.OPENWORK_RUN_ID ?? randomUUID();
+    readBool(args.flags, "color", process.stdout.isTTY, "VESLO_COLOR") && !process.env.NO_COLOR;
+  const runId = readFlag(args.flags, "run-id") ?? process.env.VESLO_RUN_ID ?? randomUUID();
   const cliVersion = await resolveCliVersion();
   const logger = createLogger({
     format: logFormat,
     runId,
-    serviceName: "openwork-orchestrator",
+    serviceName: "veslo-orchestrator",
     serviceVersion: cliVersion,
     output: "stdout",
     color: colorEnabled,
   });
-  const logVerbose = createVerboseLogger(verbose && !outputJson, logger, "openwork-orchestrator");
-  const sidecarSourceInput = readBinarySource(args.flags, "sidecar-source", "auto", "OPENWORK_SIDECAR_SOURCE");
-  const opencodeSourceInput = readBinarySource(args.flags, "opencode-source", "auto", "OPENWORK_OPENCODE_SOURCE");
+  const logVerbose = createVerboseLogger(verbose && !outputJson, logger, "veslo-orchestrator");
+  const sidecarSourceInput = readBinarySource(args.flags, "sidecar-source", "auto", "VESLO_SIDECAR_SOURCE");
+  const opencodeSourceInput = readBinarySource(args.flags, "opencode-source", "auto", "VESLO_OPENCODE_SOURCE");
   const sidecarSource = sidecarSourceInput;
   const opencodeSource = opencodeSourceInput;
   const dataDir = resolveRouterDataDir(args.flags);
@@ -4031,27 +4031,27 @@ async function runRouterDaemon(args: ParsedArgs) {
 
   const host = readFlag(args.flags, "daemon-host") ?? "127.0.0.1";
   const port = await resolvePort(
-    readNumber(args.flags, "daemon-port", undefined, "OPENWORK_DAEMON_PORT"),
+    readNumber(args.flags, "daemon-port", undefined, "VESLO_DAEMON_PORT"),
     "127.0.0.1",
   );
 
-  const opencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.OPENWORK_OPENCODE_BIN;
+  const opencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.VESLO_OPENCODE_BIN;
   const opencodeHost =
-    readFlag(args.flags, "opencode-host") ?? process.env.OPENWORK_OPENCODE_HOST ?? "127.0.0.1";
+    readFlag(args.flags, "opencode-host") ?? process.env.VESLO_OPENCODE_HOST ?? "127.0.0.1";
   const opencodePassword =
     readFlag(args.flags, "opencode-password") ??
-    process.env.OPENWORK_OPENCODE_PASSWORD ??
+    process.env.VESLO_OPENCODE_PASSWORD ??
     process.env.OPENCODE_SERVER_PASSWORD;
   const opencodeUsername =
     readFlag(args.flags, "opencode-username") ??
-    process.env.OPENWORK_OPENCODE_USERNAME ??
+    process.env.VESLO_OPENCODE_USERNAME ??
     process.env.OPENCODE_SERVER_USERNAME ??
     DEFAULT_OPENCODE_USERNAME;
   const authHeaders = opencodePassword
     ? { Authorization: `Basic ${encodeBasicAuth(opencodeUsername, opencodePassword)}` }
     : undefined;
   const opencodePort = await resolvePort(
-    readNumber(args.flags, "opencode-port", state.opencode?.port, "OPENWORK_OPENCODE_PORT"),
+    readNumber(args.flags, "opencode-port", state.opencode?.port, "VESLO_OPENCODE_PORT"),
     "127.0.0.1",
     state.opencode?.port,
   );
@@ -4063,18 +4063,18 @@ async function runRouterDaemon(args: ParsedArgs) {
       cooldownMs: DEFAULT_OPENCODE_HOT_RELOAD_COOLDOWN_MS,
     },
     {
-      enabled: "OPENWORK_OPENCODE_HOT_RELOAD",
-      debounceMs: "OPENWORK_OPENCODE_HOT_RELOAD_DEBOUNCE_MS",
-      cooldownMs: "OPENWORK_OPENCODE_HOT_RELOAD_COOLDOWN_MS",
+      enabled: "VESLO_OPENCODE_HOT_RELOAD",
+      debounceMs: "VESLO_OPENCODE_HOT_RELOAD_DEBOUNCE_MS",
+      cooldownMs: "VESLO_OPENCODE_HOT_RELOAD_COOLDOWN_MS",
     },
   );
   const corsValue =
     readFlag(args.flags, "cors") ??
-    process.env.OPENWORK_OPENCODE_CORS ??
+    process.env.VESLO_OPENCODE_CORS ??
     "http://localhost:5173,tauri://localhost,http://tauri.localhost";
   const corsOrigins = parseList(corsValue);
   const opencodeWorkdirFlag =
-    readFlag(args.flags, "opencode-workdir") ?? process.env.OPENWORK_OPENCODE_WORKDIR;
+    readFlag(args.flags, "opencode-workdir") ?? process.env.VESLO_OPENCODE_WORKDIR;
   const activeWorkspace = state.workspaces.find((entry) => entry.id === state.activeId && entry.workspaceType === "local");
   const opencodeWorkdir = opencodeWorkdirFlag ?? activeWorkspace?.path ?? process.cwd();
   const resolvedWorkdir = await ensureWorkspace(opencodeWorkdir);
@@ -4083,11 +4083,11 @@ async function runRouterDaemon(args: ParsedArgs) {
   logger.info(
     "Daemon starting",
     { runId, logFormat, workdir: resolvedWorkdir, host, port },
-    "openwork-orchestrator",
+    "veslo-orchestrator",
   );
 
   const sidecar = resolveSidecarConfig(args.flags, cliVersion);
-  const allowExternal = readBool(args.flags, "allow-external", false, "OPENWORK_ALLOW_EXTERNAL");
+  const allowExternal = readBool(args.flags, "allow-external", false, "VESLO_ALLOW_EXTERNAL");
   const manifest = await readVersionManifest();
   logVerbose(`cli version: ${cliVersion}`);
   logVerbose(`sidecar target: ${sidecar.target ?? "unknown"}`);
@@ -4210,7 +4210,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           durationMs: Date.now() - startedAt,
           activeId: state.activeId,
         },
-        "openwork-orchestrator-router",
+        "veslo-orchestrator-router",
       );
     });
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -4404,7 +4404,7 @@ async function runRouterDaemon(args: ParsedArgs) {
   });
 
   const shutdown = async () => {
-    logger.info("Daemon shutting down", { host, port }, "openwork-orchestrator-router");
+    logger.info("Daemon shutting down", { host, port }, "veslo-orchestrator-router");
     try {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     } catch {
@@ -4436,7 +4436,7 @@ async function runRouterDaemon(args: ParsedArgs) {
       outputResult({ ok: true, daemon: state.daemon }, true);
     } else {
       if (logFormat === "json") {
-        logger.info("Daemon running", { host, port }, "openwork-orchestrator-router");
+        logger.info("Daemon running", { host, port }, "veslo-orchestrator-router");
       } else {
         console.log(`orchestrator daemon running on ${host}:${port}`);
       }
@@ -4448,23 +4448,23 @@ async function runRouterDaemon(args: ParsedArgs) {
   await new Promise(() => undefined);
 }
 
-function readOpenworkClientAuth(args: ParsedArgs): { openworkUrl: string; token: string } {
-  const openworkUrl =
-    readFlag(args.flags, "openwork-url") ??
-    process.env.OPENWORK_URL ??
-    process.env.OPENWORK_SERVER_URL ??
+function readVesloClientAuth(args: ParsedArgs): { vesloUrl: string; token: string } {
+  const vesloUrl =
+    readFlag(args.flags, "veslo-url") ??
+    process.env.VESLO_URL ??
+    process.env.VESLO_SERVER_URL ??
     "";
   const token =
     readFlag(args.flags, "token") ??
-    readFlag(args.flags, "openwork-token") ??
-    process.env.OPENWORK_TOKEN ??
+    readFlag(args.flags, "veslo-token") ??
+    process.env.VESLO_TOKEN ??
     "";
 
-  if (!openworkUrl || !token) {
-    throw new Error("openwork-url and token are required");
+  if (!vesloUrl || !token) {
+    throw new Error("veslo-url and token are required");
   }
 
-  return { openworkUrl, token };
+  return { vesloUrl, token };
 }
 
 function readSessionId(args: ParsedArgs, fallbackIndex: number): string {
@@ -4479,8 +4479,8 @@ function readSessionId(args: ParsedArgs, fallbackIndex: number): string {
 async function runFiles(args: ParsedArgs) {
   const outputJson = readBool(args.flags, "json", false);
   const subcommand = args.positionals[1] ?? "";
-  const { openworkUrl, token } = readOpenworkClientAuth(args);
-  const baseUrl = openworkUrl.replace(/\/$/, "");
+  const { vesloUrl, token } = readVesloClientAuth(args);
+  const baseUrl = vesloUrl.replace(/\/$/, "");
   const headers = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${token}`,
@@ -4686,24 +4686,24 @@ async function runApprovals(args: ParsedArgs) {
     throw new Error("approvals requires 'list' or 'reply'");
   }
 
-  const openworkUrl =
-    readFlag(args.flags, "openwork-url") ??
-    process.env.OPENWORK_URL ??
-    process.env.OPENWORK_SERVER_URL ??
+  const vesloUrl =
+    readFlag(args.flags, "veslo-url") ??
+    process.env.VESLO_URL ??
+    process.env.VESLO_SERVER_URL ??
     "";
-  const hostToken = readFlag(args.flags, "host-token") ?? process.env.OPENWORK_HOST_TOKEN ?? "";
+  const hostToken = readFlag(args.flags, "host-token") ?? process.env.VESLO_HOST_TOKEN ?? "";
 
-  if (!openworkUrl || !hostToken) {
-    throw new Error("openwork-url and host-token are required for approvals");
+  if (!vesloUrl || !hostToken) {
+    throw new Error("veslo-url and host-token are required for approvals");
   }
 
   const headers = {
     "Content-Type": "application/json",
-    "X-OpenWork-Host-Token": hostToken,
+    "X-Veslo-Host-Token": hostToken,
   };
 
   if (subcommand === "list") {
-    const response = await fetch(`${openworkUrl.replace(/\/$/, "")}/approvals`, { headers });
+    const response = await fetch(`${vesloUrl.replace(/\/$/, "")}/approvals`, { headers });
     if (!response.ok) {
       throw new Error(`Failed to list approvals: ${response.status}`);
     }
@@ -4724,7 +4724,7 @@ async function runApprovals(args: ParsedArgs) {
   }
 
   const payload = { reply: allow ? "allow" : "deny" };
-  const response = await fetch(`${openworkUrl.replace(/\/$/, "")}/approvals/${approvalId}`, {
+  const response = await fetch(`${vesloUrl.replace(/\/$/, "")}/approvals/${approvalId}`, {
     method: "POST",
     headers,
     body: JSON.stringify(payload),
@@ -4737,7 +4737,7 @@ async function runApprovals(args: ParsedArgs) {
 }
 
 async function runStatus(args: ParsedArgs) {
-  const openworkUrl = readFlag(args.flags, "openwork-url") ?? process.env.OPENWORK_URL ?? "";
+  const vesloUrl = readFlag(args.flags, "veslo-url") ?? process.env.VESLO_URL ?? "";
   const opencodeUrl = readFlag(args.flags, "opencode-url") ?? process.env.OPENCODE_URL ?? "";
   const username = readFlag(args.flags, "opencode-username") ?? process.env.OPENCODE_SERVER_USERNAME;
   const password = readFlag(args.flags, "opencode-password") ?? process.env.OPENCODE_SERVER_PASSWORD;
@@ -4745,12 +4745,12 @@ async function runStatus(args: ParsedArgs) {
 
   const status: Record<string, unknown> = {};
 
-  if (openworkUrl) {
+  if (vesloUrl) {
     try {
-      await waitForHealthy(openworkUrl, 5000, 400);
-      status.openwork = { ok: true, url: openworkUrl };
+      await waitForHealthy(vesloUrl, 5000, 400);
+      status.veslo = { ok: true, url: vesloUrl };
     } catch (error) {
-      status.openwork = { ok: false, url: openworkUrl, error: String(error) };
+      status.veslo = { ok: false, url: vesloUrl, error: String(error) };
     }
   }
 
@@ -4774,10 +4774,10 @@ async function runStatus(args: ParsedArgs) {
   if (outputJson) {
     console.log(JSON.stringify(status, null, 2));
   } else {
-    if (status.openwork) {
-      const openwork = status.openwork as { ok: boolean; url: string; error?: string };
-      console.log(`OpenWork server: ${openwork.ok ? "ok" : "error"} (${openwork.url})`);
-      if (openwork.error) console.log(`  ${openwork.error}`);
+    if (status.veslo) {
+      const vesloStatus = status.veslo as { ok: boolean; url: string; error?: string };
+      console.log(`Veslo server: ${vesloStatus.ok ? "ok" : "error"} (${vesloStatus.url})`);
+      if (vesloStatus.error) console.log(`  ${vesloStatus.error}`);
     }
     if (status.opencode) {
       const opencode = status.opencode as { ok: boolean; url: string; error?: string };
@@ -4791,15 +4791,15 @@ async function runStart(args: ParsedArgs) {
   const outputJson = readBool(args.flags, "json", false);
   const checkOnly = readBool(args.flags, "check", false);
   const checkEvents = readBool(args.flags, "check-events", false);
-  const verbose = readBool(args.flags, "verbose", false, "OPENWORK_VERBOSE");
-  const logFormat = readLogFormat(args.flags, "log-format", "pretty", "OPENWORK_LOG_FORMAT");
-  const detachRequested = readBool(args.flags, "detach", false, "OPENWORK_DETACH");
+  const verbose = readBool(args.flags, "verbose", false, "VESLO_VERBOSE");
+  const logFormat = readLogFormat(args.flags, "log-format", "pretty", "VESLO_LOG_FORMAT");
+  const detachRequested = readBool(args.flags, "detach", false, "VESLO_DETACH");
   const defaultTui = process.stdout.isTTY && !outputJson && !checkOnly && !checkEvents;
   const tuiRequested = readBool(args.flags, "tui", defaultTui);
   let useTui = tuiRequested && !detachRequested && !outputJson && !checkOnly && !checkEvents && logFormat === "pretty";
   const colorPreferred =
-    readBool(args.flags, "color", process.stdout.isTTY, "OPENWORK_COLOR") && !process.env.NO_COLOR;
-  const runId = readFlag(args.flags, "run-id") ?? process.env.OPENWORK_RUN_ID ?? randomUUID();
+    readBool(args.flags, "color", process.stdout.isTTY, "VESLO_COLOR") && !process.env.NO_COLOR;
+  const runId = readFlag(args.flags, "run-id") ?? process.env.VESLO_RUN_ID ?? randomUUID();
   const cliVersion = await resolveCliVersion();
   const compiledBinary = isCompiledBunBinary();
   let tui: TuiHandle | undefined;
@@ -4807,12 +4807,12 @@ async function runStart(args: ParsedArgs) {
   const baseLoggerOptions = {
     format: logFormat,
     runId,
-    serviceName: "openwork-orchestrator",
+    serviceName: "veslo-orchestrator",
     serviceVersion: cliVersion,
     onLog: (event: LogEvent) => {
       if (!tui) return;
-      const component = event.component ?? "openwork-orchestrator";
-      const tuiComponent = component === "opencode-router" ? "router" : component;
+      const component = event.component ?? "veslo-orchestrator";
+      const tuiComponent = component === "veslo-code-router" ? "router" : component;
       tui.pushLog({
         time: event.time,
         level: event.level,
@@ -4826,7 +4826,7 @@ async function runStart(args: ParsedArgs) {
     output: useTui ? "silent" : "stdout",
     color: useTui ? false : colorPreferred,
   });
-  let logVerbose = createVerboseLogger(verbose && !outputJson, logger, "openwork-orchestrator");
+  let logVerbose = createVerboseLogger(verbose && !outputJson, logger, "veslo-orchestrator");
   const switchToPlainOutput = (error: string) => {
     if (!useTui) return;
     useTui = false;
@@ -4839,31 +4839,31 @@ async function runStart(args: ParsedArgs) {
       output: "stdout",
       color: colorPreferred,
     });
-    logVerbose = createVerboseLogger(verbose && !outputJson, logger, "openwork-orchestrator");
+    logVerbose = createVerboseLogger(verbose && !outputJson, logger, "veslo-orchestrator");
     logger.warn(
-      "TUI failed to start; falling back to plain output. Use `openwork serve` for explicit non-TUI mode.",
+      "TUI failed to start; falling back to plain output. Use `veslo serve` for explicit non-TUI mode.",
       { error },
-      "openwork-orchestrator",
+      "veslo-orchestrator",
     );
   };
-  const sidecarSourceInput = readBinarySource(args.flags, "sidecar-source", "auto", "OPENWORK_SIDECAR_SOURCE");
-  const opencodeSourceInput = readBinarySource(args.flags, "opencode-source", "auto", "OPENWORK_OPENCODE_SOURCE");
+  const sidecarSourceInput = readBinarySource(args.flags, "sidecar-source", "auto", "VESLO_SIDECAR_SOURCE");
+  const opencodeSourceInput = readBinarySource(args.flags, "opencode-source", "auto", "VESLO_OPENCODE_SOURCE");
 
-  const workspace = readFlag(args.flags, "workspace") ?? process.env.OPENWORK_WORKSPACE ?? process.cwd();
+  const workspace = readFlag(args.flags, "workspace") ?? process.env.VESLO_WORKSPACE ?? process.cwd();
   const resolvedWorkspace = await ensureWorkspace(workspace);
-  logger.info("Run starting", { workspace: resolvedWorkspace, logFormat, runId }, "openwork-orchestrator");
+  logger.info("Run starting", { workspace: resolvedWorkspace, logFormat, runId }, "veslo-orchestrator");
 
-  const sandboxRequested = readSandboxMode(args.flags, "sandbox", "none", "OPENWORK_SANDBOX");
+  const sandboxRequested = readSandboxMode(args.flags, "sandbox", "none", "VESLO_SANDBOX");
   const sandboxMode = await resolveSandboxMode(sandboxRequested);
   const sandboxImage =
-    readFlag(args.flags, "sandbox-image") ?? process.env.OPENWORK_SANDBOX_IMAGE ?? "debian:bookworm-slim";
+    readFlag(args.flags, "sandbox-image") ?? process.env.VESLO_SANDBOX_IMAGE ?? "debian:bookworm-slim";
   const sandboxPersistOverride =
-    readFlag(args.flags, "sandbox-persist-dir") ?? process.env.OPENWORK_SANDBOX_PERSIST_DIR;
+    readFlag(args.flags, "sandbox-persist-dir") ?? process.env.VESLO_SANDBOX_PERSIST_DIR;
   const dataDir = resolveRouterDataDir(args.flags);
   const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkspace));
   await ensureOpencodeManagedTools(opencodeConfigDir);
   const opencodeRouterDataDir =
-    sandboxMode === "none" ? join(dataDir, "opencode-router", workspaceIdForLocal(resolvedWorkspace)) : null;
+    sandboxMode === "none" ? join(dataDir, "veslo-code-router", workspaceIdForLocal(resolvedWorkspace)) : null;
   if (opencodeRouterDataDir) {
     await mkdir(opencodeRouterDataDir, { recursive: true });
   }
@@ -4878,22 +4878,22 @@ async function runStart(args: ParsedArgs) {
 
   const sandboxMountValue =
     readFlag(args.flags, "sandbox-mount") ??
-    process.env.OPENWORK_SANDBOX_MOUNT;
+    process.env.VESLO_SANDBOX_MOUNT;
   const sandboxMountSpecs = parseList(sandboxMountValue);
   const sandboxExtraMounts =
     sandboxMode !== "none" && sandboxMountSpecs.length
       ? await resolveSandboxExtraMounts(sandboxMountSpecs, sandboxMode)
       : [];
 
-  const explicitOpencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.OPENWORK_OPENCODE_BIN;
-  const explicitOpenworkServerBin = readFlag(args.flags, "openwork-server-bin") ?? process.env.OPENWORK_SERVER_BIN;
-  const explicitOpenCodeRouterBin = readFlag(args.flags, "opencode-router-bin") ?? process.env.OPENCODE_ROUTER_BIN;
-  const opencodeBindHost = readFlag(args.flags, "opencode-host") ?? process.env.OPENWORK_OPENCODE_BIND_HOST ?? "0.0.0.0";
+  const explicitOpencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.VESLO_OPENCODE_BIN;
+  const explicitVesloServerBin = readFlag(args.flags, "veslo-server-bin") ?? process.env.VESLO_SERVER_BIN;
+  const explicitOpenCodeRouterBin = readFlag(args.flags, "veslo-code-router-bin") ?? process.env.OPENCODE_ROUTER_BIN;
+  const opencodeBindHost = readFlag(args.flags, "opencode-host") ?? process.env.VESLO_OPENCODE_BIND_HOST ?? "0.0.0.0";
   const opencodePort =
     sandboxMode !== "none"
       ? SANDBOX_INTERNAL_OPENCODE_PORT
       : await resolvePort(
-          readNumber(args.flags, "opencode-port", undefined, "OPENWORK_OPENCODE_PORT"),
+          readNumber(args.flags, "opencode-port", undefined, "VESLO_OPENCODE_PORT"),
           "127.0.0.1",
         );
   const opencodeHotReload = readOpencodeHotReload(
@@ -4904,49 +4904,49 @@ async function runStart(args: ParsedArgs) {
       cooldownMs: DEFAULT_OPENCODE_HOT_RELOAD_COOLDOWN_MS,
     },
     {
-      enabled: "OPENWORK_OPENCODE_HOT_RELOAD",
-      debounceMs: "OPENWORK_OPENCODE_HOT_RELOAD_DEBOUNCE_MS",
-      cooldownMs: "OPENWORK_OPENCODE_HOT_RELOAD_COOLDOWN_MS",
+      enabled: "VESLO_OPENCODE_HOT_RELOAD",
+      debounceMs: "VESLO_OPENCODE_HOT_RELOAD_DEBOUNCE_MS",
+      cooldownMs: "VESLO_OPENCODE_HOT_RELOAD_COOLDOWN_MS",
     },
   );
-  const opencodeAuth = readBool(args.flags, "opencode-auth", true, "OPENWORK_OPENCODE_AUTH");
+  const opencodeAuth = readBool(args.flags, "opencode-auth", true, "VESLO_OPENCODE_AUTH");
   const opencodeUsername = opencodeAuth
-    ? readFlag(args.flags, "opencode-username") ?? process.env.OPENWORK_OPENCODE_USERNAME ?? DEFAULT_OPENCODE_USERNAME
+    ? readFlag(args.flags, "opencode-username") ?? process.env.VESLO_OPENCODE_USERNAME ?? DEFAULT_OPENCODE_USERNAME
     : undefined;
   const opencodePassword = opencodeAuth
-    ? readFlag(args.flags, "opencode-password") ?? process.env.OPENWORK_OPENCODE_PASSWORD ?? randomUUID()
+    ? readFlag(args.flags, "opencode-password") ?? process.env.VESLO_OPENCODE_PASSWORD ?? randomUUID()
     : undefined;
 
-  const openworkHost = readFlag(args.flags, "openwork-host") ?? process.env.OPENWORK_HOST ?? "0.0.0.0";
-  const openworkPort = await resolvePort(
-    readNumber(args.flags, "openwork-port", undefined, "OPENWORK_PORT"),
+  const vesloHost = readFlag(args.flags, "veslo-host") ?? process.env.VESLO_HOST ?? "0.0.0.0";
+  const vesloPort = await resolvePort(
+    readNumber(args.flags, "veslo-port", undefined, "VESLO_PORT"),
     "127.0.0.1",
   );
   // Always choose a free opencodeRouter health port by default (avoid conflicts with
   // other local processes using 3005).
   const opencodeRouterHealthPort = await resolvePort(
-    readNumber(args.flags, "opencode-router-health-port", undefined, "OPENCODE_ROUTER_HEALTH_PORT"),
+    readNumber(args.flags, "veslo-code-router-health-port", undefined, "OPENCODE_ROUTER_HEALTH_PORT"),
     "127.0.0.1",
   );
-  const openworkToken = readFlag(args.flags, "openwork-token") ?? process.env.OPENWORK_TOKEN ?? randomUUID();
-  const openworkHostToken = readFlag(args.flags, "openwork-host-token") ?? process.env.OPENWORK_HOST_TOKEN ?? randomUUID();
+  const vesloToken = readFlag(args.flags, "veslo-token") ?? process.env.VESLO_TOKEN ?? randomUUID();
+  const vesloHostToken = readFlag(args.flags, "veslo-host-token") ?? process.env.VESLO_HOST_TOKEN ?? randomUUID();
   const approvalMode =
     (readFlag(args.flags, "approval") as ApprovalMode | undefined) ??
-    (process.env.OPENWORK_APPROVAL_MODE as ApprovalMode | undefined) ??
+    (process.env.VESLO_APPROVAL_MODE as ApprovalMode | undefined) ??
     "manual";
   const approvalTimeoutMs = readNumber(
     args.flags,
     "approval-timeout",
     DEFAULT_APPROVAL_TIMEOUT,
-    "OPENWORK_APPROVAL_TIMEOUT_MS",
+    "VESLO_APPROVAL_TIMEOUT_MS",
   ) as number;
-  const readOnly = readBool(args.flags, "read-only", false, "OPENWORK_READONLY");
-  const corsValue = readFlag(args.flags, "cors") ?? process.env.OPENWORK_CORS_ORIGINS ?? "*";
+  const readOnly = readBool(args.flags, "read-only", false, "VESLO_READONLY");
+  const corsValue = readFlag(args.flags, "cors") ?? process.env.VESLO_CORS_ORIGINS ?? "*";
   const corsOrigins = parseList(corsValue);
   const connectHost = readFlag(args.flags, "connect-host");
 
   const manifest = await readVersionManifest();
-  const allowExternal = readBool(args.flags, "allow-external", false, "OPENWORK_ALLOW_EXTERNAL");
+  const allowExternal = readBool(args.flags, "allow-external", false, "VESLO_ALLOW_EXTERNAL");
   const sidecarTarget = resolveSandboxSidecarTarget(sandboxMode);
   const sidecar = resolveSidecarConfigForTarget(args.flags, cliVersion, sidecarTarget);
 
@@ -4963,7 +4963,7 @@ async function runStart(args: ParsedArgs) {
     // custom *-bin paths are provided, treat the source as external so we don't
     // accidentally pick host (darwin) bundled binaries.
     if (sidecarSourceInput === "auto") {
-      sidecarSource = explicitOpenworkServerBin || explicitOpenCodeRouterBin ? "external" : "downloaded";
+      sidecarSource = explicitVesloServerBin || explicitOpenCodeRouterBin ? "external" : "downloaded";
     }
     if (opencodeSourceInput === "auto") {
       opencodeSource = explicitOpencodeBin ? "external" : "downloaded";
@@ -5016,15 +5016,15 @@ async function runStart(args: ParsedArgs) {
       }
     }
   }
-  const opencodeRouterEnabled = readBool(args.flags, "opencode-router", true);
+  const opencodeRouterEnabled = readBool(args.flags, "veslo-code-router", true);
   const opencodeRouterRequired = readBool(
     args.flags,
-    "opencode-router-required",
+    "veslo-code-router-required",
     false,
-    "OPENWORK_OPENCODE_ROUTER_REQUIRED",
+    "VESLO_OPENCODE_ROUTER_REQUIRED",
   );
-  const openworkServerBinary = await resolveOpenworkServerBin({
-    explicit: explicitOpenworkServerBin,
+  const vesloServerBinary = await resolveVesloServerBin({
+    explicit: explicitVesloServerBin,
     manifest,
     allowExternal,
     sidecar,
@@ -5043,32 +5043,32 @@ async function runStart(args: ParsedArgs) {
   if (sandboxMode !== "none") {
     // Ensure the binaries we stage into the container are actual files.
     await assertSandboxBinaryFile("opencode", opencodeBinary.bin);
-    await assertSandboxBinaryFile("openwork-server", openworkServerBinary.bin);
+    await assertSandboxBinaryFile("veslo-server", vesloServerBinary.bin);
     if (opencodeRouterBinary) {
-      await assertSandboxBinaryFile("opencode-router", opencodeRouterBinary.bin);
+      await assertSandboxBinaryFile("veslo-code-router", opencodeRouterBinary.bin);
     }
   }
   let opencodeRouterActualVersion: string | undefined;
   logVerbose(`opencode bin: ${opencodeBinary.bin} (${opencodeBinary.source})`);
-  logVerbose(`openwork-server bin: ${openworkServerBinary.bin} (${openworkServerBinary.source})`);
+  logVerbose(`veslo-server bin: ${vesloServerBinary.bin} (${vesloServerBinary.source})`);
   if (opencodeRouterBinary) {
     logVerbose(`opencodeRouter bin: ${opencodeRouterBinary.bin} (${opencodeRouterBinary.source})`);
   }
 
-  const openworkBaseUrl = `http://127.0.0.1:${openworkPort}`;
-  const openworkConnect = resolveConnectUrl(openworkPort, connectHost);
-  const openworkConnectUrl = openworkConnect.connectUrl ?? openworkBaseUrl;
+  const vesloBaseUrl = `http://127.0.0.1:${vesloPort}`;
+  const vesloConnect = resolveConnectUrl(vesloPort, connectHost);
+  const vesloConnectUrl = vesloConnect.connectUrl ?? vesloBaseUrl;
 
   const opencodeBaseUrl =
-    sandboxMode !== "none" ? `${openworkBaseUrl}/opencode` : `http://127.0.0.1:${opencodePort}`;
+    sandboxMode !== "none" ? `${vesloBaseUrl}/opencode` : `http://127.0.0.1:${opencodePort}`;
   const opencodeConnectUrl =
     sandboxMode !== "none"
-      ? `${openworkConnectUrl.replace(/\/$/, "")}/opencode`
+      ? `${vesloConnectUrl.replace(/\/$/, "")}/opencode`
       : (resolveConnectUrl(opencodePort, connectHost).connectUrl ?? opencodeBaseUrl);
 
   const attachCommand =
     sandboxMode !== "none"
-      ? `OpenCode is proxied via ${opencodeConnectUrl} (requires OpenWork token)`
+      ? `OpenCode is proxied via ${opencodeConnectUrl} (requires Veslo token)`
       : buildAttachCommand({
           url: opencodeConnectUrl,
           workspace: resolvedWorkspace,
@@ -5107,7 +5107,7 @@ async function runStart(args: ParsedArgs) {
     logger.info(
       "Shutting down",
       { children: children.map((handle) => handle.name) },
-      "openwork-orchestrator",
+      "veslo-orchestrator",
     );
     if (sandboxContainerName && sandboxStop) {
       await sandboxStop(sandboxContainerName);
@@ -5159,8 +5159,8 @@ async function runStart(args: ParsedArgs) {
             `Stop: ${sandboxStopCommand} ${sandboxContainerName}`,
           ]
         : []),
-      `OpenWork URL: ${openworkConnectUrl}`,
-      `OpenWork Token: ${openworkToken}`,
+      `Veslo URL: ${vesloConnectUrl}`,
+      `Veslo Token: ${vesloToken}`,
       `OpenCode URL: ${opencodeConnectUrl}`,
       `Attach: ${attachCommand}`,
     ].join("\n");
@@ -5184,8 +5184,8 @@ async function runStart(args: ParsedArgs) {
           .join(" ");
         if (
           text.includes("React is not defined") ||
-          text.includes("/$bunfs/root/openwork-orchestrator") ||
-          text.includes("/$bunfs/root/openwork")
+          text.includes("/$bunfs/root/veslo-orchestrator") ||
+          text.includes("/$bunfs/root/veslo")
         ) {
           switchToPlainOutput(text);
         }
@@ -5199,9 +5199,9 @@ async function runStart(args: ParsedArgs) {
         connect: {
           runId,
           workspace: resolvedWorkspace,
-          openworkUrl: openworkConnectUrl,
-          openworkToken,
-          hostToken: openworkHostToken,
+          vesloUrl: vesloConnectUrl,
+          vesloToken,
+          hostToken: vesloHostToken,
           opencodeUrl: opencodeConnectUrl,
           opencodePassword: sandboxMode !== "none" ? undefined : (opencodePassword ?? undefined),
           opencodeUsername: sandboxMode !== "none" ? undefined : (opencodeUsername ?? undefined),
@@ -5209,10 +5209,10 @@ async function runStart(args: ParsedArgs) {
         },
         services: [
           { name: "opencode", label: "opencode", status: "starting", port: opencodePort },
-          { name: "openwork-server", label: "openwork-server", status: "starting", port: openworkPort },
+          { name: "veslo-server", label: "veslo-server", status: "starting", port: vesloPort },
           {
             name: "router",
-            label: "opencode-router",
+            label: "veslo-code-router",
             status: opencodeRouterEnabled ? "starting" : "disabled",
             port: sandboxMode !== "none" ? undefined : opencodeRouterHealthPort,
           },
@@ -5224,22 +5224,22 @@ async function runStart(args: ParsedArgs) {
           return { command: attachCommand, ...result };
         },
         onCopySelection: async (text) => copyToClipboard(text),
-        onRouterHealth: async () => fetchOpenCodeRouterHealthViaOpenwork(openworkBaseUrl, openworkToken),
+        onRouterHealth: async () => fetchOpenCodeRouterHealthViaVeslo(vesloBaseUrl, vesloToken),
         onRouterTelegramIdentities: async () => {
-          const url = `${openworkBaseUrl.replace(/\/$/, "")}/opencode-router/identities/telegram`;
+          const url = `${vesloBaseUrl.replace(/\/$/, "")}/veslo-code-router/identities/telegram`;
           const result = await fetchJson(url, {
             headers: {
-              "X-OpenWork-Host-Token": openworkHostToken,
+              "X-Veslo-Host-Token": vesloHostToken,
             },
           });
           const items = Array.isArray(result?.items) ? result.items : [];
           return { items };
         },
         onRouterSlackIdentities: async () => {
-          const url = `${openworkBaseUrl.replace(/\/$/, "")}/opencode-router/identities/slack`;
+          const url = `${vesloBaseUrl.replace(/\/$/, "")}/veslo-code-router/identities/slack`;
           const result = await fetchJson(url, {
             headers: {
-              "X-OpenWork-Host-Token": openworkHostToken,
+              "X-Veslo-Host-Token": vesloHostToken,
             },
           });
           const items = Array.isArray(result?.items) ? result.items : [];
@@ -5247,12 +5247,12 @@ async function runStart(args: ParsedArgs) {
         },
         onRouterSetGroupsEnabled: async (enabled) => {
           try {
-            const url = `${openworkBaseUrl.replace(/\/$/, "")}/opencode-router/config/groups`;
+            const url = `${vesloBaseUrl.replace(/\/$/, "")}/veslo-code-router/config/groups`;
             await fetchJson(url, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                "X-OpenWork-Host-Token": openworkHostToken,
+                "X-Veslo-Host-Token": vesloHostToken,
               },
               body: JSON.stringify({ enabled }),
             });
@@ -5263,12 +5263,12 @@ async function runStart(args: ParsedArgs) {
         },
         onRouterSetTelegramToken: async (token) => {
           try {
-            const url = `${openworkBaseUrl.replace(/\/$/, "")}/opencode-router/identities/telegram`;
+            const url = `${vesloBaseUrl.replace(/\/$/, "")}/veslo-code-router/identities/telegram`;
             await fetchJson(url, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                "X-OpenWork-Host-Token": openworkHostToken,
+                "X-Veslo-Host-Token": vesloHostToken,
               },
               body: JSON.stringify({ id: "default", token, enabled: true }),
             });
@@ -5279,12 +5279,12 @@ async function runStart(args: ParsedArgs) {
         },
         onRouterSetSlackTokens: async (botToken, appToken) => {
           try {
-            const url = `${openworkBaseUrl.replace(/\/$/, "")}/opencode-router/identities/slack`;
+            const url = `${vesloBaseUrl.replace(/\/$/, "")}/veslo-code-router/identities/slack`;
             await fetchJson(url, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                "X-OpenWork-Host-Token": openworkHostToken,
+                "X-Veslo-Host-Token": vesloHostToken,
               },
               body: JSON.stringify({ id: "default", botToken, appToken, enabled: true }),
             });
@@ -5300,14 +5300,14 @@ async function runStart(args: ParsedArgs) {
     }
   }
 
-  const tuiServiceName = (name: string) => (name === "opencode-router" ? "router" : name);
+  const tuiServiceName = (name: string) => (name === "veslo-code-router" ? "router" : name);
 
   const handleExit = (name: string, code: number | null, signal: NodeJS.Signals | null) => {
     if (shuttingDown || detached) return;
     const reason = code !== null ? `code ${code}` : signal ? `signal ${signal}` : "unknown";
     const services =
       name === "sandbox"
-        ? ["opencode", "openwork-server", "router"]
+        ? ["opencode", "veslo-server", "router"]
         : [tuiServiceName(name)];
     for (const service of services) {
       tui?.updateService(service, { status: "stopped", message: reason });
@@ -5326,11 +5326,11 @@ async function runStart(args: ParsedArgs) {
   try {
     const opencodeActualVersion =
       sandboxMode !== "none" ? opencodeBinary.expectedVersion : await verifyOpencodeVersion(opencodeBinary);
-    let openworkActualVersion: string | undefined;
+    let vesloActualVersion: string | undefined;
     let opencodeClient: ReturnType<typeof createOpencodeClient>;
 
     if (sandboxMode !== "none") {
-      const containerName = `openwork-orchestrator-${runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 24)}`;
+      const containerName = `veslo-orchestrator-${runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 24)}`;
       sandboxContainerName = containerName;
 
       sandboxStop = sandboxMode === "container" ? stopAppleContainer : stopDockerContainer;
@@ -5347,13 +5347,13 @@ async function runStart(args: ParsedArgs) {
         extraMounts: sandboxExtraMounts,
         sidecars: {
           opencode: opencodeBinary.bin,
-          openworkServer: openworkServerBinary.bin,
+          vesloServer: vesloServerBinary.bin,
           opencodeRouter: opencodeRouterEnabled ? (opencodeRouterBinary?.bin ?? null) : null,
         },
         ports: {
-          openwork: openworkPort,
-          // In sandbox mode, opencodeRouter is only reachable via openwork-server
-          // proxy (/opencode-router/*). Do not publish a separate host port.
+          veslo: vesloPort,
+          // In sandbox mode, opencodeRouter is only reachable via veslo-server
+          // proxy (/veslo-code-router/*). Do not publish a separate host port.
           opencodeRouterHealth: null,
         },
         opencode: {
@@ -5362,9 +5362,9 @@ async function runStart(args: ParsedArgs) {
           password: opencodePassword,
           hotReload: opencodeHotReload,
         },
-        openwork: {
-          token: openworkToken,
-          hostToken: openworkHostToken,
+        veslo: {
+          token: vesloToken,
+          hostToken: vesloHostToken,
           approvalMode: approvalMode === "auto" ? "auto" : "manual",
           approvalTimeoutMs,
           readOnly,
@@ -5381,7 +5381,7 @@ async function runStart(args: ParsedArgs) {
 
       sandboxCleanup = sandboxChild.cleanup;
       tui?.updateService("opencode", { status: "running", port: SANDBOX_INTERNAL_OPENCODE_PORT });
-      tui?.updateService("openwork-server", { status: "running", port: openworkPort });
+      tui?.updateService("veslo-server", { status: "running", port: vesloPort });
       if (opencodeRouterEnabled) {
         tui?.updateService("router", { status: "running", port: undefined });
       }
@@ -5396,32 +5396,32 @@ async function runStart(args: ParsedArgs) {
         logger.info("Sandbox detached", { containerName }, "sandbox");
       }
 
-      logger.info("Waiting for health", { url: openworkBaseUrl }, "openwork-server");
-      await waitForHealthy(openworkBaseUrl);
-      logger.info("Healthy", { url: openworkBaseUrl }, "openwork-server");
-      tui?.updateService("openwork-server", { status: "healthy" });
+      logger.info("Waiting for health", { url: vesloBaseUrl }, "veslo-server");
+      await waitForHealthy(vesloBaseUrl);
+      logger.info("Healthy", { url: vesloBaseUrl }, "veslo-server");
+      tui?.updateService("veslo-server", { status: "healthy" });
 
       opencodeClient = createOpencodeClient({
-        baseUrl: `${openworkBaseUrl.replace(/\/$/, "")}/opencode`,
-        headers: { Authorization: `Bearer ${openworkToken}` },
+        baseUrl: `${vesloBaseUrl.replace(/\/$/, "")}/opencode`,
+        headers: { Authorization: `Bearer ${vesloToken}` },
       });
 
-      // In sandbox mode, the released openwork-server binary may not have our
+      // In sandbox mode, the released veslo-server binary may not have our
       // latest proxy/auth changes yet.  Instead of using the OpenCode SDK client
       // (which relies on the proxy handling Bearer tokens), do a direct health
-      // check against the openwork-server's own /opencode proxy path.  If the
+      // check against the veslo-server's own /opencode proxy path.  If the
       // server is healthy *and* is proxying to a healthy opencode, we're good.
-      logger.info("Waiting for health (proxy)", { url: `${openworkBaseUrl}/opencode` }, "opencode");
-      await waitForHealthyViaProxy(`${openworkBaseUrl.replace(/\/$/, "")}/opencode`, openworkToken);
-      logger.info("Healthy (proxy)", { url: `${openworkBaseUrl}/opencode` }, "opencode");
+      logger.info("Waiting for health (proxy)", { url: `${vesloBaseUrl}/opencode` }, "opencode");
+      await waitForHealthyViaProxy(`${vesloBaseUrl.replace(/\/$/, "")}/opencode`, vesloToken);
+      logger.info("Healthy (proxy)", { url: `${vesloBaseUrl}/opencode` }, "opencode");
       tui?.updateService("opencode", { status: "healthy" });
 
       try {
-        openworkActualVersion = await verifyOpenworkServer({
-          baseUrl: openworkBaseUrl,
-          token: openworkToken,
-          hostToken: openworkHostToken,
-          expectedVersion: openworkServerBinary.expectedVersion,
+        vesloActualVersion = await verifyVesloServer({
+          baseUrl: vesloBaseUrl,
+          token: vesloToken,
+          hostToken: vesloHostToken,
+          expectedVersion: vesloServerBinary.expectedVersion,
           expectedWorkspace: "/workspace",
           expectedOpencodeBaseUrl: opencodeInternalBaseUrl,
           expectedOpencodeDirectory: "/workspace",
@@ -5433,9 +5433,9 @@ async function runStart(args: ParsedArgs) {
         // expected version or lack capabilities we just added locally.  Log
         // the mismatch but don't abort — the health checks above already
         // proved the server is running and proxying correctly.
-        logger.warn("Sandbox server verification warning (non-fatal)", { error: String(verifyError) }, "openwork-server");
+        logger.warn("Sandbox server verification warning (non-fatal)", { error: String(verifyError) }, "veslo-server");
       }
-      logVerbose(`openwork-server version: ${openworkActualVersion ?? "unknown"}`);
+      logVerbose(`veslo-server version: ${vesloActualVersion ?? "unknown"}`);
     } else {
       const opencodeChild = await startOpencode({
         bin: opencodeBinary.bin,
@@ -5499,37 +5499,37 @@ async function runStart(args: ParsedArgs) {
             runId,
             logFormat,
           });
-          children.push({ name: "opencode-router", child: opencodeRouterChild });
+          children.push({ name: "veslo-code-router", child: opencodeRouterChild });
           tui?.updateService("router", {
             status: "running",
             pid: opencodeRouterChild.pid ?? undefined,
             port: opencodeRouterHealthPort,
           });
-          logger.info("Process spawned", { pid: opencodeRouterChild.pid ?? 0 }, "opencode-router");
+          logger.info("Process spawned", { pid: opencodeRouterChild.pid ?? 0 }, "veslo-code-router");
           opencodeRouterChild.on("exit", (code, signal) => {
             if (opencodeRouterRequired) {
-              handleExit("opencode-router", code, signal);
+              handleExit("veslo-code-router", code, signal);
               return;
             }
             const reason = code !== null ? `code ${code}` : signal ? `signal ${signal}` : "unknown";
             tui?.updateService("router", { status: "stopped", message: reason });
-            logger.warn("Process exited, continuing without opencodeRouter", { reason, code, signal }, "opencode-router");
+            logger.warn("Process exited, continuing without opencodeRouter", { reason, code, signal }, "veslo-code-router");
           });
-          opencodeRouterChild.on("error", (error) => handleSpawnError("opencode-router", error));
+          opencodeRouterChild.on("error", (error) => handleSpawnError("veslo-code-router", error));
 
           const healthBaseUrl = `http://127.0.0.1:${opencodeRouterHealthPort}`;
-          logger.info("Waiting for health", { url: healthBaseUrl }, "opencode-router");
+          logger.info("Waiting for health", { url: healthBaseUrl }, "veslo-code-router");
           const health = await waitForOpenCodeRouterHealthy(healthBaseUrl, 10_000, 400);
           tui?.setRouterHealth(health);
           tui?.updateService("router", { status: health.ok ? "healthy" : "running" });
-          logger.info("Healthy", { url: healthBaseUrl, ok: health.ok }, "opencode-router");
+          logger.info("Healthy", { url: healthBaseUrl, ok: health.ok }, "veslo-code-router");
           opencodeRouterReady = true;
         } catch (error) {
           if (opencodeRouterRequired) {
             throw error;
           }
           const message = error instanceof Error ? error.message : String(error);
-          logger.warn("OpenCodeRouter failed to start, continuing without it", { error: message }, "opencode-router");
+          logger.warn("OpenCodeRouter failed to start, continuing without it", { error: message }, "veslo-code-router");
           tui?.updateService("router", { status: "stopped", message });
           if (opencodeRouterChild) {
             try {
@@ -5543,13 +5543,13 @@ async function runStart(args: ParsedArgs) {
         }
       }
 
-      const openworkChild = await startOpenworkServer({
-        bin: openworkServerBinary.bin,
-        host: openworkHost,
-        port: openworkPort,
+      const vesloChild = await startVesloServer({
+        bin: vesloServerBinary.bin,
+        host: vesloHost,
+        port: vesloPort,
         workspace: resolvedWorkspace,
-        token: openworkToken,
-        hostToken: openworkHostToken,
+        token: vesloToken,
+        hostToken: vesloHostToken,
         approvalMode: approvalMode === "auto" ? "auto" : "manual",
         approvalTimeoutMs,
         readOnly,
@@ -5564,37 +5564,37 @@ async function runStart(args: ParsedArgs) {
         runId,
         logFormat,
       });
-      children.push({ name: "openwork-server", child: openworkChild });
-      tui?.updateService("openwork-server", {
+      children.push({ name: "veslo-server", child: vesloChild });
+      tui?.updateService("veslo-server", {
         status: "running",
-        pid: openworkChild.pid ?? undefined,
-        port: openworkPort,
+        pid: vesloChild.pid ?? undefined,
+        port: vesloPort,
       });
-      logger.info("Process spawned", { pid: openworkChild.pid ?? 0 }, "openwork-server");
-      openworkChild.on("exit", (code, signal) => handleExit("openwork-server", code, signal));
-      openworkChild.on("error", (error) => handleSpawnError("openwork-server", error));
+      logger.info("Process spawned", { pid: vesloChild.pid ?? 0 }, "veslo-server");
+      vesloChild.on("exit", (code, signal) => handleExit("veslo-server", code, signal));
+      vesloChild.on("error", (error) => handleSpawnError("veslo-server", error));
 
-      logger.info("Waiting for health", { url: openworkBaseUrl }, "openwork-server");
-      await waitForHealthy(openworkBaseUrl);
-      logger.info("Healthy", { url: openworkBaseUrl }, "openwork-server");
-      tui?.updateService("openwork-server", { status: "healthy" });
+      logger.info("Waiting for health", { url: vesloBaseUrl }, "veslo-server");
+      await waitForHealthy(vesloBaseUrl);
+      logger.info("Healthy", { url: vesloBaseUrl }, "veslo-server");
+      tui?.updateService("veslo-server", { status: "healthy" });
 
-      openworkActualVersion = await verifyOpenworkServer({
-        baseUrl: openworkBaseUrl,
-        token: openworkToken,
-        hostToken: openworkHostToken,
-        expectedVersion: openworkServerBinary.expectedVersion,
+      vesloActualVersion = await verifyVesloServer({
+        baseUrl: vesloBaseUrl,
+        token: vesloToken,
+        hostToken: vesloHostToken,
+        expectedVersion: vesloServerBinary.expectedVersion,
         expectedWorkspace: resolvedWorkspace,
         expectedOpencodeBaseUrl: opencodeConnectUrl,
         expectedOpencodeDirectory: resolvedWorkspace,
         expectedOpencodeUsername: opencodeUsername,
         expectedOpencodePassword: opencodePassword,
       });
-      logVerbose(`openwork-server version: ${openworkActualVersion ?? "unknown"}`);
+      logVerbose(`veslo-server version: ${vesloActualVersion ?? "unknown"}`);
 
       if (opencodeRouterReady && !opencodeRouterHealthInterval) {
         opencodeRouterHealthInterval = setInterval(() => {
-          fetchOpenCodeRouterHealthViaOpenwork(openworkBaseUrl, openworkToken)
+          fetchOpenCodeRouterHealthViaVeslo(vesloBaseUrl, vesloToken)
             .then((health) => {
               tui?.setRouterHealth(health);
               if (health.ok) {
@@ -5612,19 +5612,19 @@ async function runStart(args: ParsedArgs) {
         opencodeRouterActualVersion = opencodeRouterBinary?.expectedVersion;
         logVerbose(`opencodeRouter version: ${opencodeRouterActualVersion ?? "unknown"}`);
         try {
-          const url = `${openworkBaseUrl.replace(/\/$/, "")}/opencode-router/health`;
-          logger.info("Waiting for health", { url }, "opencode-router");
-          const health = await waitForOpenCodeRouterHealthyViaOpenwork(openworkBaseUrl, openworkToken);
+          const url = `${vesloBaseUrl.replace(/\/$/, "")}/veslo-code-router/health`;
+          logger.info("Waiting for health", { url }, "veslo-code-router");
+          const health = await waitForOpenCodeRouterHealthyViaVeslo(vesloBaseUrl, vesloToken);
           tui?.setRouterHealth(health);
           tui?.updateService("router", { status: health.ok ? "healthy" : "running" });
-          logger.info("Healthy", { url, ok: health.ok }, "opencode-router");
+          logger.info("Healthy", { url, ok: health.ok }, "veslo-code-router");
         } catch (error) {
-          logger.warn("OpenCodeRouter health check failed", { error: String(error) }, "opencode-router");
+          logger.warn("OpenCodeRouter health check failed", { error: String(error) }, "veslo-code-router");
           tui?.updateService("router", { status: "running", message: String(error) });
         }
         if (!opencodeRouterHealthInterval) {
           opencodeRouterHealthInterval = setInterval(() => {
-            fetchOpenCodeRouterHealthViaOpenwork(openworkBaseUrl, openworkToken)
+            fetchOpenCodeRouterHealthViaVeslo(vesloBaseUrl, vesloToken)
               .then((health) => {
                 tui?.setRouterHealth(health);
                 if (health.ok) {
@@ -5635,7 +5635,7 @@ async function runStart(args: ParsedArgs) {
           }, 15_000);
         }
       } else {
-        // In host mode, opencodeRouter is started before openwork-server so we can
+        // In host mode, opencodeRouter is started before veslo-server so we can
         // confirm health before wiring the proxy.
       }
     }
@@ -5658,14 +5658,14 @@ async function runStart(args: ParsedArgs) {
         hotReload: opencodeHotReload,
         version: opencodeActualVersion,
       },
-      openwork: {
-        baseUrl: openworkBaseUrl,
-        connectUrl: openworkConnectUrl,
-        host: openworkHost,
-        port: openworkPort,
-        token: openworkToken,
-        hostToken: openworkHostToken,
-        version: openworkActualVersion,
+      veslo: {
+        baseUrl: vesloBaseUrl,
+        connectUrl: vesloConnectUrl,
+        host: vesloHost,
+        port: vesloPort,
+        token: vesloToken,
+        hostToken: vesloHostToken,
+        version: vesloActualVersion,
       },
       opencodeRouter: {
         enabled: opencodeRouterEnabled,
@@ -5690,11 +5690,11 @@ async function runStart(args: ParsedArgs) {
             expectedVersion: opencodeBinary.expectedVersion,
             actualVersion: opencodeActualVersion,
           } as BinaryDiagnostics,
-          openworkServer: {
-            path: openworkServerBinary.bin,
-            source: openworkServerBinary.source,
-            expectedVersion: openworkServerBinary.expectedVersion,
-            actualVersion: openworkActualVersion,
+          vesloServer: {
+            path: vesloServerBinary.bin,
+            source: vesloServerBinary.source,
+            expectedVersion: vesloServerBinary.expectedVersion,
+            actualVersion: vesloActualVersion,
           } as BinaryDiagnostics,
           opencodeRouter: opencodeRouterBinary
             ? ({
@@ -5718,10 +5718,10 @@ async function runStart(args: ParsedArgs) {
         {
           workspace: safePayload.workspace,
           opencode: safePayload.opencode,
-          openwork: safePayload.openwork,
+          veslo: safePayload.veslo,
           opencodeRouter: safePayload.opencodeRouter,
         },
-        "openwork-orchestrator",
+        "veslo-orchestrator",
       );
     } else if (logFormat === "json") {
       logger.info(
@@ -5729,13 +5729,13 @@ async function runStart(args: ParsedArgs) {
         {
           workspace: safePayload.workspace,
           opencode: safePayload.opencode,
-          openwork: safePayload.openwork,
+          veslo: safePayload.veslo,
           opencodeRouter: safePayload.opencodeRouter,
         },
-        "openwork-orchestrator",
+        "veslo-orchestrator",
       );
     } else {
-      console.log("OpenWork orchestrator running");
+      console.log("Veslo orchestrator running");
       console.log(`Run ID: ${safePayload.runId}`);
       console.log(`Workspace: ${safePayload.workspace}`);
       console.log(`OpenCode: ${safePayload.opencode.baseUrl}`);
@@ -5743,8 +5743,8 @@ async function runStart(args: ParsedArgs) {
       if (safePayload.opencode.username) {
         console.log("OpenCode auth: configured");
       }
-      console.log(`OpenWork server: ${safePayload.openwork.baseUrl}`);
-      console.log(`OpenWork connect URL: ${safePayload.openwork.connectUrl}`);
+      console.log(`Veslo server: ${safePayload.veslo.baseUrl}`);
+      console.log(`Veslo connect URL: ${safePayload.veslo.connectUrl}`);
       console.log("Client token: [REDACTED]");
       console.log("Host token: [REDACTED]");
     }
@@ -5758,29 +5758,29 @@ async function runStart(args: ParsedArgs) {
         if (sandboxMode !== "none") {
           // In sandbox mode the released server binary may not support the
           // Bearer-through-proxy auth that the OpenCode SDK client expects.
-          // Run a lighter set of checks: openwork-server endpoints + proxy
+          // Run a lighter set of checks: veslo-server endpoints + proxy
           // health.  Full SDK checks (session create, SSE events) are deferred
           // until the modified server binary is released.
           await runSandboxChecks({
-            openworkUrl: openworkBaseUrl,
-            openworkToken,
-            hostToken: openworkHostToken,
+            vesloUrl: vesloBaseUrl,
+            vesloToken,
+            hostToken: vesloHostToken,
           });
         } else {
           await runChecks({
             opencodeClient,
-            openworkUrl: openworkBaseUrl,
-            openworkToken,
-            hostToken: openworkHostToken,
+            vesloUrl: vesloBaseUrl,
+            vesloToken,
+            hostToken: vesloHostToken,
             checkEvents,
           });
         }
-        logger.info("Checks ok", { checkEvents }, "openwork-orchestrator");
+        logger.info("Checks ok", { checkEvents }, "veslo-orchestrator");
         if (!outputJson && logFormat === "pretty") {
           console.log("Checks: ok");
         }
       } catch (error) {
-        logger.error("Checks failed", { error: String(error) }, "openwork-orchestrator");
+        logger.error("Checks failed", { error: String(error) }, "veslo-orchestrator");
         await shutdown();
         tui?.stop();
         process.exit(1);
@@ -5799,7 +5799,7 @@ async function runStart(args: ParsedArgs) {
     logger.error(
       "Run failed",
       { error: error instanceof Error ? error.message : String(error) },
-      "openwork-orchestrator",
+      "veslo-orchestrator",
     );
     process.exit(1);
   }

@@ -3,8 +3,8 @@
 const POSTHOG_KEY = process.env.POSTHOG_KEY || process.env.POSTHOG_API_KEY
 const POSTHOG_HOST = process.env.POSTHOG_HOST || "https://us.i.posthog.com"
 const POSTHOG_EVENT = process.env.POSTHOG_EVENT || "download"
-const POSTHOG_DISTINCT_ID = process.env.POSTHOG_DISTINCT_ID || "openwork-download"
-const GITHUB_REPO = process.env.GITHUB_REPO || "different-ai/openwork"
+const POSTHOG_DISTINCT_ID = process.env.POSTHOG_DISTINCT_ID || "veslo-download"
+const GITHUB_REPO = process.env.GITHUB_REPO || "neatech/veslo"
 const STATS_FILE = process.env.STATS_FILE || "STATS.md"
 
 async function sendToPostHog(event, properties) {
@@ -37,7 +37,7 @@ async function fetchReleases() {
   const perPage = 100
   const headers = {
     Accept: "application/vnd.github+json",
-    "User-Agent": "openwork-download-stats",
+    "User-Agent": "veslo-download-stats",
   }
   const token = process.env.GITHUB_TOKEN
 
