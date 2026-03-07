@@ -9,6 +9,7 @@ import VesloLogo from "../components/veslo-logo";
 import TextInput from "../components/text-input";
 import { isTauriRuntime, isWindowsPlatform } from "../utils/index";
 import { currentLocale, t } from "../../i18n";
+import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 
 export type OnboardingViewProps = {
   startupPreference: StartupPreference | null;
@@ -107,6 +108,13 @@ export default function OnboardingView(props: OnboardingViewProps) {
     return parts.join("\n\n");
   };
 
+  const showServerStep = () => {
+    if (CLOUD_ONLY_MODE) {
+      return props.onboardingStep !== "connecting";
+    }
+    return props.onboardingStep === "server";
+  };
+
   return (
     <Switch>
       <Match when={props.onboardingStep === "connecting"}>
@@ -151,7 +159,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
         </div>
       </Match>
 
-      <Match when={props.onboardingStep === "local"}>
+      <Match when={props.onboardingStep === "local" && !CLOUD_ONLY_MODE}>
         <div class="min-h-screen flex flex-col items-center justify-center bg-gray-1 text-gray-12 p-6 relative">
           <div class="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-gray-2 to-transparent opacity-20 pointer-events-none" />
 
@@ -491,7 +499,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
         </div>
       </Match>
 
-      <Match when={props.onboardingStep === "server"}>
+      <Match when={showServerStep()}>
         <div class="min-h-screen flex flex-col items-center justify-center bg-gray-1 text-gray-12 p-6 relative">
           <div class="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-gray-2 to-transparent opacity-20 pointer-events-none" />
 
@@ -584,7 +592,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
         </div>
       </Match>
 
-      <Match when={true}>
+      <Match when={!CLOUD_ONLY_MODE}>
         <div class="min-h-screen flex flex-col items-center justify-center bg-gray-1 text-gray-12 p-6 relative">
           <div class="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-gray-2 to-transparent opacity-20 pointer-events-none" />
 
