@@ -54,7 +54,7 @@ export type SidebarProps = {
 export default function SessionSidebar(props: SidebarProps) {
   const MAX_SESSIONS_PREVIEW = 8;
   const realTodos = createMemo(() => props.todos.filter((todo) => todo.content.trim()));
-  const WORKSPACE_COLLAPSE_KEY = "openwork.workspace-collapse.v1";
+  const WORKSPACE_COLLAPSE_KEY = "veslo.workspace-collapse.v1";
   const readWorkspaceCollapse = () => {
     if (typeof window === "undefined") return {} as Record<string, boolean>;
     try {
@@ -86,16 +86,16 @@ export default function SessionSidebar(props: SidebarProps) {
 
   const workspaceLabel = (workspace: WorkspaceInfo) =>
     workspace.displayName?.trim() ||
-    workspace.openworkWorkspaceName?.trim() ||
+    workspace.vesloWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
     "Worker";
 
   const workspacePathLabel = (workspace: WorkspaceInfo) => {
     if (workspace.workspaceType === "remote") {
-      if (workspace.remoteType === "openwork") {
+      if (workspace.remoteType === "veslo") {
         return (
-          workspace.openworkHostUrl?.trim() ||
+          workspace.vesloHostUrl?.trim() ||
           workspace.baseUrl?.trim() ||
           workspace.path?.trim() ||
           ""
@@ -108,7 +108,7 @@ export default function SessionSidebar(props: SidebarProps) {
 
   const workspaceDetailLabel = (workspace: WorkspaceInfo) => {
     if (workspace.workspaceType !== "remote") return "";
-    return workspace.openworkWorkspaceName?.trim() || workspace.directory?.trim() || "";
+    return workspace.vesloWorkspaceName?.trim() || workspace.directory?.trim() || "";
   };
 
   const toggleWorkspaceCollapse = (workspaceId: string) => {

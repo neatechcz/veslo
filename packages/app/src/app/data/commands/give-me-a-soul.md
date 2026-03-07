@@ -24,7 +24,7 @@ After I confirm, implement Soul Mode by doing ALL of the following in THIS works
 Collect context from:
 - `pwd` (workspace path)
 - existing `.opencode/soul.md` (if present)
-- `AGENTS.md` (and `_repos/openwork/AGENTS.md` if it exists)
+- `AGENTS.md` (and `_repos/veslo/AGENTS.md` if it exists)
 - OpenCode sqlite db via `sqlite3` for this workspace directory:
   - recent sessions
   - open todos
@@ -100,7 +100,7 @@ Use narrow permissions like:
   - `.opencode/soul.md`
   - `.opencode/soul/heartbeat.jsonl`
   - `AGENTS.md`
-  - `_repos/openwork/AGENTS.md`
+  - `_repos/veslo/AGENTS.md`
 - `edit` allow patterns:
   - `.opencode/soul.md`
 - `glob` allow patterns:
@@ -128,7 +128,7 @@ permission:
     ".opencode/soul.md": allow
     ".opencode/soul/heartbeat.jsonl": allow
     "AGENTS.md": allow
-    "_repos/openwork/AGENTS.md": allow
+    "_repos/veslo/AGENTS.md": allow
   edit:
     "*": deny
     ".opencode/soul.md": allow
@@ -187,7 +187,7 @@ Create FOUR workspace commands:
 
    Steps:
    1) Read `.opencode/soul.md`.
-   2) Read `AGENTS.md` (and `_repos/openwork/AGENTS.md` if present).
+   2) Read `AGENTS.md` (and `_repos/veslo/AGENTS.md` if present).
    3) Get workspace path via `pwd`.
    4) Query OpenCode sqlite db for this workspace directory (if available):
       - Recent sessions:

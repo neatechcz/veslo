@@ -86,9 +86,9 @@ export function isWindowsPlatform() {
   return /windows/i.test(platform) || /windows/i.test(ua);
 }
 
-const STARTUP_PREF_KEY = "openwork.startupPref";
-const LEGACY_PREF_KEY = "openwork.modePref";
-const LEGACY_PREF_KEY_ALT = "openwork_mode_pref";
+const STARTUP_PREF_KEY = "veslo.startupPref";
+const LEGACY_PREF_KEY = "veslo.modePref";
+const LEGACY_PREF_KEY_ALT = "veslo_mode_pref";
 
 export function readStartupPreference(): "local" | "server" | null {
   if (typeof window === "undefined") return null;
@@ -326,7 +326,7 @@ export function getWorkspaceTaskLoadErrorDisplay(workspace: WorkspaceInfo, error
   const normalized = raw.toLowerCase();
   const hasDockerHint = SANDBOX_DOCKER_OFFLINE_HINTS.some((hint) => normalized.includes(hint));
   const hasNetworkHint = SANDBOX_NETWORK_HINTS.some((hint) => normalized.includes(hint));
-  const host = `${workspace.baseUrl ?? ""} ${workspace.openworkHostUrl ?? ""}`.toLowerCase();
+  const host = `${workspace.baseUrl ?? ""} ${workspace.vesloHostUrl ?? ""}`.toLowerCase();
   const localHost = host.includes("localhost") || host.includes("127.0.0.1");
 
   if (!hasDockerHint && !(localHost && hasNetworkHint)) {
@@ -871,8 +871,8 @@ const ARTIFACT_OUTPUT_SKIP_TOOLS = new Set(["webfetch"]);
 
 // Patterns that indicate a path is a truncated system/absolute path rather than a workspace-relative path
 const TRUNCATED_SYSTEM_PATH_PATTERNS = [
-  /com\.[^/]+\.(openwork|opencode)/i, // macOS app bundle identifiers
-  /\.openwork\.dev\//i, // OpenWork dev paths
+  /com\.[^/]+\.(veslo|opencode)/i, // macOS app bundle identifiers
+  /\.veslo\.dev\//i, // Veslo dev paths
   /Application Support\//i, // macOS Application Support
   /AppData[/\\]/i, // Windows AppData
   /\.local\/share\//i, // Linux XDG data

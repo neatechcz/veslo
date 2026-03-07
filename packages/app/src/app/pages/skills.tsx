@@ -5,7 +5,7 @@ import type { HubSkillCard, SkillCard } from "../types";
 import Button from "../components/button";
 import { Edit2, FolderOpen, Link2, Loader2, Package, Plus, RefreshCw, Search, Sparkles, Trash2, Upload } from "lucide-solid";
 import { currentLocale, t } from "../../i18n";
-import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "../lib/publisher";
+import { DEFAULT_VESLO_PUBLISHER_BASE_URL, publishVesloBundleJson } from "../lib/publisher";
 
 type InstallResult = { ok: boolean; message: string };
 
@@ -18,7 +18,7 @@ type SkillBundleV1 = {
   trigger?: string;
 };
 
-const OPENWORK_DEFAULT_SKILL_NAMES = new Set([
+const VESLO_DEFAULT_SKILL_NAMES = new Set([
   "workspace-guide",
   "get-started",
   "skill-creator",
@@ -268,7 +268,7 @@ export default function SkillsView(props: SkillsViewProps) {
         trigger: target.trigger ?? undefined,
       };
 
-      const result = await publishOpenworkBundleJson({
+      const result = await publishVesloBundleJson({
         payload,
         bundleType: "skill",
         name: target.name,
@@ -336,7 +336,7 @@ export default function SkillsView(props: SkillsViewProps) {
         const name = typeof json.name === "string" ? json.name.trim() : "";
         const content = typeof json.content === "string" ? json.content : "";
         if (schemaVersion !== 1 || type !== "skill") {
-          throw new Error("This link is not an OpenWork skill bundle");
+          throw new Error("This link is not an Veslo skill bundle");
         }
         if (!name) throw new Error("Bundle is missing a skill name");
         if (!content) throw new Error("Bundle is missing skill content");
@@ -467,12 +467,12 @@ export default function SkillsView(props: SkillsViewProps) {
     () => !props.busy && (props.canInstallSkillCreator || props.canUseDesktopTools)
   );
 
-  const isOpenworkInjectedSkill = (skill: SkillCard) => {
+  const isVesloInjectedSkill = (skill: SkillCard) => {
     const normalizedName = skill.name.trim().toLowerCase();
     const normalizedPath = skill.path.replace(/\\/g, "/").toLowerCase();
     const inProjectSkillPath = normalizedPath.includes("/.opencode/skills/");
     if (!inProjectSkillPath) return false;
-    return OPENWORK_DEFAULT_SKILL_NAMES.has(normalizedName) || normalizedName.endsWith("-creator");
+    return VESLO_DEFAULT_SKILL_NAMES.has(normalizedName) || normalizedName.endsWith("-creator");
   };
 
   return (
@@ -639,9 +639,9 @@ export default function SkillsView(props: SkillsViewProps) {
                     <div class="min-w-0">
                       <div class="flex items-center gap-2 mb-0.5">
                         <h4 class="text-sm font-semibold text-dls-text truncate">{skill.name}</h4>
-                        <Show when={isOpenworkInjectedSkill(skill)}>
+                        <Show when={isVesloInjectedSkill(skill)}>
                           <span class="rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-dls-secondary">
-                            OpenWork
+                            Veslo
                           </span>
                         </Show>
                       </div>
@@ -751,7 +751,7 @@ export default function SkillsView(props: SkillsViewProps) {
                       <div class="flex items-center gap-2 mb-0.5">
                         <h4 class="text-sm font-semibold text-dls-text truncate">{skill.name}</h4>
                       </div>
-                      <Show when={skill.description} fallback={<p class="text-xs text-dls-secondary">From openwork-hub</p>}>
+                      <Show when={skill.description} fallback={<p class="text-xs text-dls-secondary">From veslo-hub</p>}>
                         <p class="text-xs text-dls-secondary line-clamp-2">{skill.description}</p>
                       </Show>
                       <div class="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-dls-secondary">
@@ -988,7 +988,7 @@ export default function SkillsView(props: SkillsViewProps) {
 
               <div class="rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
                 <div class="font-semibold text-dls-text">{shareTarget()?.name}</div>
-                <div class="mt-1 font-mono break-all">Publisher: {DEFAULT_OPENWORK_PUBLISHER_BASE_URL}</div>
+                <div class="mt-1 font-mono break-all">Publisher: {DEFAULT_VESLO_PUBLISHER_BASE_URL}</div>
               </div>
 
               <Show when={shareError()}>
@@ -1046,7 +1046,7 @@ export default function SkillsView(props: SkillsViewProps) {
                   type="url"
                   value={installLinkUrl()}
                   onInput={(e) => setInstallLinkUrl(e.currentTarget.value)}
-                  placeholder="https://share.openwork.software/b/..."
+                  placeholder="https://share.veslo.neatech.com/b/..."
                   class="w-full bg-dls-hover border border-dls-border rounded-lg px-3 py-2 text-xs font-mono text-dls-text focus:outline-none"
                   spellcheck={false}
                 />

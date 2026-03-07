@@ -6,7 +6,7 @@ import type {
   StartupPreference,
   OnboardingStep,
   WorkspaceDisplay,
-  WorkspaceOpenworkConfig,
+  WorkspaceVesloConfig,
   WorkspacePreset,
   WorkspaceConnectionState,
   EngineRuntime,
@@ -22,14 +22,14 @@ import {
 } from "../utils";
 import { unwrap } from "../lib/opencode";
 import {
-  buildOpenworkWorkspaceBaseUrl,
-  createOpenworkServerClient,
-  normalizeOpenworkServerUrl,
-  OpenworkServerError,
-  type OpenworkServerClient,
-  type OpenworkServerSettings,
-  type OpenworkWorkspaceInfo,
-} from "../lib/openwork-server";
+  buildVesloWorkspaceBaseUrl,
+  createVesloServerClient,
+  normalizeVesloServerUrl,
+  VesloServerError,
+  type VesloServerClient,
+  type VesloServerSettings,
+  type VesloWorkspaceInfo,
+} from "../lib/veslo-server";
 import { downloadDir, homeDir } from "@tauri-apps/api/path";
 import {
   engineDoctor,
@@ -52,8 +52,8 @@ import {
   workspaceExportConfig,
   workspaceForget,
   workspaceImportConfig,
-  workspaceOpenworkRead,
-  workspaceOpenworkWrite,
+  workspaceVesloRead,
+  workspaceVesloWrite,
   workspaceSetActive,
   workspaceUpdateDisplayName,
   workspaceUpdateRemote,
@@ -141,9 +141,9 @@ export function createWorkspaceStore(options: {
   setView: (value: any) => void;
   setTab: (value: any) => void;
   isWindowsPlatform: () => boolean;
-  openworkServerSettings: () => OpenworkServerSettings;
-  updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
-  openworkServerClient?: () => OpenworkServerClient | null;
+  vesloServerSettings: () => VesloServerSettings;
+  updateVesloServerSettings: (next: VesloServerSettings) => void;
+  vesloServerClient?: () => VesloServerClient | null;
   setOpencodeConnectStatus?: (status: OpencodeConnectStatus | null) => void;
   onEngineStable?: () => void;
   engineRuntime?: () => EngineRuntime;
@@ -305,7 +305,7 @@ export function createWorkspaceStore(options: {
   const [authorizedDirs, setAuthorizedDirs] = createSignal<string[]>([]);
   const [newAuthorizedDir, setNewAuthorizedDir] = createSignal("");
 
-  const [workspaceConfig, setWorkspaceConfig] = createSignal<WorkspaceOpenworkConfig | null>(null);
+  const [workspaceConfig, setWorkspaceConfig] = createSignal<WorkspaceVesloConfig | null>(null);
   const [workspaceConfigLoaded, setWorkspaceConfigLoaded] = createSignal(false);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = createSignal(false);
   const [createRemoteWorkspaceOpen, setCreateRemoteWorkspaceOpen] = createSignal(false);
@@ -332,25 +332,25 @@ export function createWorkspaceStore(options: {
         baseUrl: null,
         directory: null,
         displayName: null,
-        openworkHostUrl: null,
-        openworkWorkspaceId: null,
-        openworkWorkspaceName: null,
+        vesloHostUrl: null,
+        vesloWorkspaceId: null,
+        vesloWorkspaceName: null,
       };
     }
     const displayName =
       ws.displayName?.trim() ||
-      ws.openworkWorkspaceName?.trim() ||
+      ws.vesloWorkspaceName?.trim() ||
       ws.name ||
-      ws.openworkHostUrl ||
+      ws.vesloHostUrl ||
       ws.baseUrl ||
       ws.path ||
       "Worker";
     return { ...ws, name: displayName };
   });
   const normalizeRemoteType = (value?: WorkspaceInfo["remoteType"] | null) =>
-    value === "openwork" ? "openwork" : "opencode";
-  const isOpenworkRemote = (workspace: WorkspaceInfo | null) =>
-    Boolean(workspace && workspace.workspaceType === "remote" && normalizeRemoteType(workspace.remoteType) === "openwork");
+    value === "veslo" ? "veslo" : "opencode";
+  const isVesloRemote = (workspace: WorkspaceInfo | null) =>
+    Boolean(workspace && workspace.workspaceType === "remote" && normalizeRemoteType(workspace.remoteType) === "veslo");
   const activeWorkspacePath = createMemo(() => {
     const ws = activeWorkspaceInfo();
     if (!ws) return "";
@@ -405,13 +405,13 @@ export function createWorkspaceStore(options: {
     });
   });
 
-  const resolveOpenworkHost = async (input: {
+  const resolveVesloHost = async (input: {
     hostUrl: string;
     token?: string | null;
     workspaceId?: string | null;
     directoryHint?: string | null;
   }) => {
-    let normalizedHostUrl = normalizeOpenworkServerUrl(input.hostUrl) ?? "";
+    let normalizedHostUrl = normalizeVesloServerUrl(input.hostUrl) ?? "";
     if (!normalizedHostUrl) {
       return { kind: "fallback" as const };
     }
@@ -434,9 +434,9 @@ export function createWorkspaceStore(options: {
     }
 
     const requestedWorkspaceId = (input.workspaceId?.trim() || inferredWorkspaceId || "").trim();
-    const workspaceBaseUrl = buildOpenworkWorkspaceBaseUrl(normalizedHostUrl, requestedWorkspaceId) ?? normalizedHostUrl;
+    const workspaceBaseUrl = buildVesloWorkspaceBaseUrl(normalizedHostUrl, requestedWorkspaceId) ?? normalizedHostUrl;
 
-    const client = createOpenworkServerClient({ baseUrl: workspaceBaseUrl, token: input.token ?? undefined });
+    const client = createVesloServerClient({ baseUrl: workspaceBaseUrl, token: input.token ?? undefined });
 
     const trimmedToken = input.token?.trim() ?? "";
 
@@ -446,60 +446,60 @@ export function createWorkspaceStore(options: {
         return { kind: "fallback" as const };
       }
     } catch (error) {
-      if (error instanceof OpenworkServerError && (error.status === 401 || error.status === 403)) {
+      if (error instanceof VesloServerError && (error.status === 401 || error.status === 403)) {
         if (!trimmedToken) {
-          throw new Error("Access token required for OpenWork server.");
+          throw new Error("Access token required for Veslo server.");
         }
-        throw new Error("OpenWork server rejected the access token.");
+        throw new Error("Veslo server rejected the access token.");
       }
       return { kind: "fallback" as const };
     }
 
     if (!trimmedToken) {
-      throw new Error("Access token required for OpenWork server.");
+      throw new Error("Access token required for Veslo server.");
     }
 
     const response = await client.listWorkspaces();
     const items = Array.isArray(response.items) ? response.items : [];
     const hint = normalizeDirectoryPath(input.directoryHint ?? "");
-    const selectByHint = (entry: OpenworkWorkspaceInfo) => {
+    const selectByHint = (entry: VesloWorkspaceInfo) => {
       if (!hint) return false;
       const entryPath = normalizeDirectoryPath(
         (entry.opencode?.directory as string | undefined) ?? (entry.path as string | undefined) ?? "",
       );
       return Boolean(entryPath && entryPath === hint);
     };
-    const selectById = (entry: OpenworkWorkspaceInfo) => Boolean(requestedWorkspaceId && entry?.id === requestedWorkspaceId);
+    const selectById = (entry: VesloWorkspaceInfo) => Boolean(requestedWorkspaceId && entry?.id === requestedWorkspaceId);
 
     const workspaceById = requestedWorkspaceId
-      ? (items.find((item) => item?.id && selectById(item as any)) as OpenworkWorkspaceInfo | undefined)
+      ? (items.find((item) => item?.id && selectById(item as any)) as VesloWorkspaceInfo | undefined)
       : undefined;
     if (requestedWorkspaceId && !workspaceById) {
-      throw new Error("OpenWork worker not found on that host.");
+      throw new Error("Veslo worker not found on that host.");
     }
 
     const workspaceByHint = hint
-      ? (items.find((item) => item?.id && selectByHint(item as any)) as OpenworkWorkspaceInfo | undefined)
+      ? (items.find((item) => item?.id && selectByHint(item as any)) as VesloWorkspaceInfo | undefined)
       : undefined;
 
-    const workspace = (workspaceById ?? workspaceByHint ?? items[0]) as OpenworkWorkspaceInfo | undefined;
+    const workspace = (workspaceById ?? workspaceByHint ?? items[0]) as VesloWorkspaceInfo | undefined;
     if (!workspace?.id) {
-      throw new Error("OpenWork server did not return a worker.");
+      throw new Error("Veslo server did not return a worker.");
     }
     const opencodeUpstreamBaseUrl = workspace.opencode?.baseUrl?.trim() ?? workspace.baseUrl?.trim() ?? "";
     if (!opencodeUpstreamBaseUrl) {
-      throw new Error("OpenWork server did not provide an OpenCode URL.");
+      throw new Error("Veslo server did not provide an OpenCode URL.");
     }
 
     const workspaceScopedBaseUrl =
-      buildOpenworkWorkspaceBaseUrl(normalizedHostUrl, workspace.id) ?? workspaceBaseUrl;
+      buildVesloWorkspaceBaseUrl(normalizedHostUrl, workspace.id) ?? workspaceBaseUrl;
     const opencodeBaseUrl = `${workspaceScopedBaseUrl.replace(/\/+$/, "")}/opencode`;
     const opencodeAuth: OpencodeAuth | undefined = trimmedToken
-      ? { token: trimmedToken, mode: "openwork" }
+      ? { token: trimmedToken, mode: "veslo" }
       : undefined;
 
     return {
-      kind: "openwork" as const,
+      kind: "veslo" as const,
       hostUrl: normalizedHostUrl,
       workspace,
       opencodeBaseUrl,
@@ -508,7 +508,7 @@ export function createWorkspaceStore(options: {
     };
   };
 
-  const resolveEngineRuntime = () => options.engineRuntime?.() ?? "openwork-orchestrator";
+  const resolveEngineRuntime = () => options.engineRuntime?.() ?? "veslo-orchestrator";
 
   const resolveWorkspacePaths = () => {
     const active = activeWorkspacePath().trim();
@@ -525,8 +525,8 @@ export function createWorkspaceStore(options: {
     return resolved;
   };
 
-  const activateOpenworkHostWorkspace = async (workspacePath: string) => {
-    const client = options.openworkServerClient?.();
+  const activateVesloHostWorkspace = async (workspacePath: string) => {
+    const client = options.vesloServerClient?.();
     if (!client) return;
     const targetPath = normalizeDirectoryPath(workspacePath);
     if (!targetPath) return;
@@ -557,28 +557,28 @@ export function createWorkspaceStore(options: {
 
     const remoteType = normalizeRemoteType(workspace.remoteType);
 
-    if (remoteType === "openwork") {
+    if (remoteType === "veslo") {
       const hostUrl =
-        workspace.openworkHostUrl?.trim() || workspace.baseUrl?.trim() || workspace.path?.trim() || "";
+        workspace.vesloHostUrl?.trim() || workspace.baseUrl?.trim() || workspace.path?.trim() || "";
       if (!hostUrl) {
         updateWorkspaceConnectionState(id, {
           status: "error",
-          message: "OpenWork server URL is required.",
+          message: "Veslo server URL is required.",
         });
         return false;
       }
 
-      const token = workspace.openworkToken?.trim() || options.openworkServerSettings().token || undefined;
+      const token = workspace.vesloToken?.trim() || options.vesloServerSettings().token || undefined;
       try {
-        const resolved = await resolveOpenworkHost({
+        const resolved = await resolveVesloHost({
           hostUrl,
           token,
-          workspaceId: workspace.openworkWorkspaceId ?? null,
+          workspaceId: workspace.vesloWorkspaceId ?? null,
         });
-        if (resolved.kind !== "openwork") {
+        if (resolved.kind !== "veslo") {
           updateWorkspaceConnectionState(id, {
             status: "error",
-            message: "OpenWork server unavailable. Check the URL and token.",
+            message: "Veslo server unavailable. Check the URL and token.",
           });
           return false;
         }
@@ -745,27 +745,27 @@ export function createWorkspaceStore(options: {
       if (isRemote) {
         options.setStartupPreference("server");
 
-        if (remoteType === "openwork") {
-          const hostUrl = next.openworkHostUrl?.trim() ?? "";
+        if (remoteType === "veslo") {
+          const hostUrl = next.vesloHostUrl?.trim() ?? "";
           if (!hostUrl) {
-            options.setError("OpenWork server URL is required.");
+            options.setError("Veslo server URL is required.");
             updateWorkspaceConnectionState(id, {
               status: "error",
-              message: "OpenWork server URL is required.",
+              message: "Veslo server URL is required.",
             });
             return false;
           }
 
-          const workspaceToken = next.openworkToken?.trim() ?? "";
-          const fallbackToken = options.openworkServerSettings().token ?? "";
+          const workspaceToken = next.vesloToken?.trim() ?? "";
+          const fallbackToken = options.vesloServerSettings().token ?? "";
           const token = workspaceToken || fallbackToken;
 
-          const currentSettings = options.openworkServerSettings();
+          const currentSettings = options.vesloServerSettings();
           if (
             currentSettings.urlOverride?.trim() !== hostUrl ||
             (token && currentSettings.token?.trim() !== token)
           ) {
-            options.updateOpenworkServerSettings({
+            options.updateVesloServerSettings({
               ...currentSettings,
               urlOverride: hostUrl,
               token: token || currentSettings.token,
@@ -774,21 +774,21 @@ export function createWorkspaceStore(options: {
 
           let resolvedBaseUrl = baseUrl;
           let resolvedDirectory = next.directory?.trim() ?? "";
-          let workspaceInfo: OpenworkWorkspaceInfo | null = null;
+          let workspaceInfo: VesloWorkspaceInfo | null = null;
           let resolvedAuth: OpencodeAuth | undefined = undefined;
 
           try {
-            const resolved = await resolveOpenworkHost({
+            const resolved = await resolveVesloHost({
               hostUrl,
               token,
-              workspaceId: next.openworkWorkspaceId ?? null,
+              workspaceId: next.vesloWorkspaceId ?? null,
               directoryHint: next.directory ?? null,
             });
-            if (resolved.kind !== "openwork") {
-              options.setError("OpenWork server unavailable. Check the URL and token.");
+            if (resolved.kind !== "veslo") {
+              options.setError("Veslo server unavailable. Check the URL and token.");
               updateWorkspaceConnectionState(id, {
                 status: "error",
-                message: "OpenWork server unavailable. Check the URL and token.",
+                message: "Veslo server unavailable. Check the URL and token.",
               });
               return false;
             }
@@ -820,7 +820,7 @@ export function createWorkspaceStore(options: {
               workspaceId: next.id,
               workspaceType: next.workspaceType,
               targetRoot: resolvedDirectory ?? "",
-              reason: "workspace-switch-openwork",
+              reason: "workspace-switch-veslo",
             },
             resolvedAuth,
             { navigate: false },
@@ -838,13 +838,13 @@ export function createWorkspaceStore(options: {
             try {
               const ws = await workspaceUpdateRemote({
                 workspaceId: next.id,
-                remoteType: "openwork",
+                remoteType: "veslo",
                 baseUrl: resolvedBaseUrl,
                 directory: resolvedDirectory || null,
-                openworkHostUrl: hostUrl,
-                openworkToken: token ? token : null,
-                openworkWorkspaceId: workspaceInfo?.id ?? next.openworkWorkspaceId ?? null,
-                openworkWorkspaceName: workspaceInfo?.name ?? next.openworkWorkspaceName ?? null,
+                vesloHostUrl: hostUrl,
+                vesloToken: token ? token : null,
+                vesloWorkspaceId: workspaceInfo?.id ?? next.vesloWorkspaceId ?? null,
+                vesloWorkspaceName: workspaceInfo?.name ?? next.vesloWorkspaceName ?? null,
               });
               setWorkspaces(ws.workspaces);
               syncActiveWorkspaceId(ws.activeId);
@@ -852,7 +852,7 @@ export function createWorkspaceStore(options: {
               // ignore
             }
           } else {
-            // In web mode, we still need to persist the resolved OpenWork connection
+            // In web mode, we still need to persist the resolved Veslo connection
             // details onto the workspace entry so that the sidebar can list sessions
             // for multiple remotes at once (without relying on global server settings).
             const resolvedToken = token.trim();
@@ -861,13 +861,13 @@ export function createWorkspaceStore(options: {
                 if (ws.id !== next.id) return ws;
                 return {
                   ...ws,
-                  remoteType: "openwork",
+                  remoteType: "veslo",
                   baseUrl: resolvedBaseUrl.replace(/\/+$/, ""),
                   directory: resolvedDirectory || null,
-                  openworkHostUrl: hostUrl,
-                  openworkToken: resolvedToken || null,
-                  openworkWorkspaceId: workspaceInfo?.id ?? ws.openworkWorkspaceId ?? null,
-                  openworkWorkspaceName: workspaceInfo?.name ?? ws.openworkWorkspaceName ?? null,
+                  vesloHostUrl: hostUrl,
+                  vesloToken: resolvedToken || null,
+                  vesloWorkspaceId: workspaceInfo?.id ?? ws.vesloWorkspaceId ?? null,
+                  vesloWorkspaceName: workspaceInfo?.name ?? ws.vesloWorkspaceName ?? null,
                 };
               }),
             );
@@ -965,7 +965,7 @@ export function createWorkspaceStore(options: {
       } else {
         setWorkspaceConfigLoaded(false);
         try {
-          const cfg = await workspaceOpenworkRead({ workspacePath: next.path });
+          const cfg = await workspaceVesloRead({ workspacePath: next.path });
           setWorkspaceConfig(cfg);
           setWorkspaceConfigLoaded(true);
 
@@ -1031,14 +1031,14 @@ export function createWorkspaceStore(options: {
         existingEngineProjectDir: existingEngine?.projectDir ?? null,
       });
 
-      if (canReuseHost && runtime === "openwork-orchestrator") {
+      if (canReuseHost && runtime === "veslo-orchestrator") {
         try {
           const reuseStart = Date.now();
           await orchestratorWorkspaceActivate({
             workspacePath: next.path,
             name: next.displayName?.trim() || next.name?.trim() || null,
           });
-          await activateOpenworkHostWorkspace(next.path);
+          await activateVesloHostWorkspace(next.path);
 
           const nextInfo = await engineInfo();
           setEngine(nextInfo);
@@ -1091,12 +1091,12 @@ export function createWorkspaceStore(options: {
 
       try {
         const runtime = resolveEngineRuntime();
-        if (runtime === "openwork-orchestrator") {
+        if (runtime === "veslo-orchestrator") {
           await orchestratorWorkspaceActivate({
             workspacePath: next.path,
             name: next.displayName?.trim() || next.name?.trim() || null,
           });
-          await activateOpenworkHostWorkspace(next.path);
+          await activateVesloHostWorkspace(next.path);
 
           const newInfo = await engineInfo();
           setEngine(newInfo);
@@ -1483,8 +1483,8 @@ export function createWorkspaceStore(options: {
         { key: "docker", label: "Docker ready", status: "active", detail: null },
         { key: "workspace", label: "Prepare worker", status: "pending", detail: null },
         { key: "sandbox", label: "Start sandbox services", status: "pending", detail: null },
-        { key: "health", label: "Wait for OpenWork", status: "pending", detail: null },
-        { key: "connect", label: "Connect in OpenWork", status: "pending", detail: null },
+        { key: "health", label: "Wait for Veslo", status: "pending", detail: null },
+        { key: "connect", label: "Connect in Veslo", status: "pending", detail: null },
       ],
     });
 
@@ -1536,7 +1536,7 @@ export function createWorkspaceStore(options: {
       setSandboxStep("workspace", { status: "active", detail: name });
       pushSandboxCreateLog(`Worker: ${resolvedFolder}`);
 
-      // Ensure the workspace folder has baseline OpenWork/OpenCode files.
+      // Ensure the workspace folder has baseline Veslo/OpenCode files.
       const created = await workspaceCreate({ folderPath: resolvedFolder, name, preset });
       setWorkspaces(created.workspaces);
       syncActiveWorkspaceId(created.activeId);
@@ -1557,7 +1557,7 @@ export function createWorkspaceStore(options: {
       let stopListen: (() => void) | null = null;
       try {
         stopListen = await listen(
-          "openwork://sandbox-create-progress",
+          "veslo://sandbox-create-progress",
           (event: TauriEvent<{ runId?: string; stage?: string; message?: string; payload?: any }>) => {
             const payload = event.payload ?? {};
             if ((payload.runId ?? "").trim() !== runId) return;
@@ -1576,9 +1576,9 @@ export function createWorkspaceStore(options: {
             }
 
             if (stage === "docker.config") {
-              const selected = String(payload.payload?.openworkDockerBin ?? "").trim();
+              const selected = String(payload.payload?.vesloDockerBin ?? "").trim();
               if (selected) {
-                pushSandboxCreateLog(`OPENWORK_DOCKER_BIN=${selected}`);
+                pushSandboxCreateLog(`VESLO_DOCKER_BIN=${selected}`);
               }
               const candidates = Array.isArray(payload.payload?.candidates)
                 ? payload.payload.candidates.filter((item: unknown) => String(item ?? "").trim())
@@ -1596,7 +1596,7 @@ export function createWorkspaceStore(options: {
               }
             }
 
-            if (stage === "openwork.waiting") {
+            if (stage === "veslo.waiting") {
               const elapsedMs = Number(payload.payload?.elapsedMs ?? 0);
               const seconds = elapsedMs > 0 ? Math.max(1, Math.floor(elapsedMs / 1000)) : 0;
               setSandboxStep("health", { status: "active", detail: seconds ? `${seconds}s` : null });
@@ -1606,7 +1606,7 @@ export function createWorkspaceStore(options: {
               }
             }
 
-            if (stage === "openwork.healthy") {
+            if (stage === "veslo.healthy") {
               setSandboxStep("sandbox", { status: "done" });
               setSandboxStep("health", { status: "done", detail: null });
             }
@@ -1634,8 +1634,8 @@ export function createWorkspaceStore(options: {
         markOnboardingComplete();
 
         const ok = await createRemoteWorkspaceFlow({
-          openworkHostUrl: host.openworkUrl,
-          openworkToken: host.token,
+          vesloHostUrl: host.vesloUrl,
+          vesloToken: host.token,
           directory: resolvedFolder,
           displayName: name,
           sandboxBackend: host.sandboxBackend ?? "docker",
@@ -1681,8 +1681,8 @@ export function createWorkspaceStore(options: {
   }
 
   async function createRemoteWorkspaceFlow(input: {
-    openworkHostUrl?: string | null;
-    openworkToken?: string | null;
+    vesloHostUrl?: string | null;
+    vesloToken?: string | null;
     directory?: string | null;
     displayName?: string | null;
     manageBusy?: boolean;
@@ -1695,15 +1695,15 @@ export function createWorkspaceStore(options: {
   }) {
     if (createRemoteInFlight) {
       wsDebug("create-remote:dedupe", {
-        hostUrl: input.openworkHostUrl ?? null,
+        hostUrl: input.vesloHostUrl ?? null,
         directory: input.directory ?? null,
       });
       return createRemoteInFlight;
     }
 
     const run = (async () => {
-    const hostUrl = normalizeOpenworkServerUrl(input.openworkHostUrl ?? "") ?? "";
-    const token = input.openworkToken?.trim() ?? "";
+    const hostUrl = normalizeVesloServerUrl(input.vesloHostUrl ?? "") ?? "";
+    const token = input.vesloToken?.trim() ?? "";
     const directory = input.directory?.trim() ?? "";
     const displayName = input.displayName?.trim() || null;
 
@@ -1721,23 +1721,23 @@ export function createWorkspaceStore(options: {
 
     options.setStartupPreference("server");
 
-    let remoteType: "openwork" = "openwork";
+    let remoteType: "veslo" = "veslo";
     let resolvedBaseUrl = "";
     let resolvedDirectory = directory;
-    let openworkWorkspace: OpenworkWorkspaceInfo | null = null;
+    let vesloWorkspace: VesloWorkspaceInfo | null = null;
     let resolvedAuth: OpencodeAuth | undefined = undefined;
     let resolvedHostUrl = hostUrl;
 
-    options.updateOpenworkServerSettings({
-      ...options.openworkServerSettings(),
+    options.updateVesloServerSettings({
+      ...options.vesloServerSettings(),
       urlOverride: hostUrl,
       token: token || undefined,
     });
 
     try {
-      let resolved: Awaited<ReturnType<typeof resolveOpenworkHost>> | null = null;
+      let resolved: Awaited<ReturnType<typeof resolveVesloHost>> | null = null;
       try {
-        resolved = await resolveOpenworkHost({
+        resolved = await resolveVesloHost({
           hostUrl,
           token,
           directoryHint: directory || null,
@@ -1748,30 +1748,30 @@ export function createWorkspaceStore(options: {
         if (input.sandboxBackend !== "docker") {
           throw error;
         }
-        wsDebug("sandbox:openwork-resolve-fallback:error", {
+        wsDebug("sandbox:veslo-resolve-fallback:error", {
           hostUrl,
           message: error instanceof Error ? error.message : safeStringify(error),
         });
       }
 
-      if (resolved?.kind === "openwork") {
+      if (resolved?.kind === "veslo") {
         resolvedBaseUrl = resolved.opencodeBaseUrl;
         resolvedDirectory = resolved.directory || directory;
-        openworkWorkspace = resolved.workspace;
+        vesloWorkspace = resolved.workspace;
         resolvedHostUrl = resolved.hostUrl;
         resolvedAuth = resolved.auth;
       } else if (input.sandboxBackend === "docker") {
         resolvedHostUrl = hostUrl;
         resolvedBaseUrl = `${hostUrl.replace(/\/+$/, "")}/opencode`;
         resolvedDirectory = directory || resolvedDirectory;
-        resolvedAuth = token ? { token, mode: "openwork" } : undefined;
-        wsDebug("sandbox:openwork-resolve-fallback:host", {
+        resolvedAuth = token ? { token, mode: "veslo" } : undefined;
+        wsDebug("sandbox:veslo-resolve-fallback:host", {
           hostUrl: resolvedHostUrl,
           baseUrl: resolvedBaseUrl,
           directory: resolvedDirectory,
         });
       } else {
-        options.setError("OpenWork server unavailable. Check the URL and token.");
+        options.setError("Veslo server unavailable. Check the URL and token.");
         return false;
       }
     } catch (error) {
@@ -1816,10 +1816,10 @@ export function createWorkspaceStore(options: {
           directory: finalDirectory ? finalDirectory : null,
           displayName,
           remoteType,
-          openworkHostUrl: remoteType === "openwork" ? resolvedHostUrl : null,
-          openworkToken: remoteType === "openwork" ? (token || null) : null,
-          openworkWorkspaceId: remoteType === "openwork" ? openworkWorkspace?.id ?? null : null,
-          openworkWorkspaceName: remoteType === "openwork" ? openworkWorkspace?.name ?? null : null,
+          vesloHostUrl: remoteType === "veslo" ? resolvedHostUrl : null,
+          vesloToken: remoteType === "veslo" ? (token || null) : null,
+          vesloWorkspaceId: remoteType === "veslo" ? vesloWorkspace?.id ?? null : null,
+          vesloWorkspaceName: remoteType === "veslo" ? vesloWorkspace?.name ?? null : null,
           sandboxBackend: input.sandboxBackend ?? null,
           sandboxRunId: input.sandboxRunId ?? null,
           sandboxContainerName: input.sandboxContainerName ?? null,
@@ -1831,7 +1831,7 @@ export function createWorkspaceStore(options: {
         const workspaceId = `remote:${resolvedBaseUrl}:${finalDirectory}`;
         const nextWorkspace: WorkspaceInfo = {
           id: workspaceId,
-          name: displayName ?? openworkWorkspace?.name ?? resolvedHostUrl ?? resolvedBaseUrl,
+          name: displayName ?? vesloWorkspace?.name ?? resolvedHostUrl ?? resolvedBaseUrl,
           path: "",
           preset: "remote",
           workspaceType: "remote",
@@ -1839,10 +1839,10 @@ export function createWorkspaceStore(options: {
           baseUrl: resolvedBaseUrl,
           directory: finalDirectory || null,
           displayName,
-          openworkHostUrl: remoteType === "openwork" ? resolvedHostUrl : null,
-          openworkToken: remoteType === "openwork" ? (token || null) : null,
-          openworkWorkspaceId: remoteType === "openwork" ? openworkWorkspace?.id ?? null : null,
-          openworkWorkspaceName: remoteType === "openwork" ? openworkWorkspace?.name ?? null : null,
+          vesloHostUrl: remoteType === "veslo" ? resolvedHostUrl : null,
+          vesloToken: remoteType === "veslo" ? (token || null) : null,
+          vesloWorkspaceId: remoteType === "veslo" ? vesloWorkspace?.id ?? null : null,
+          vesloWorkspaceName: remoteType === "veslo" ? vesloWorkspace?.name ?? null : null,
           sandboxBackend: input.sandboxBackend ?? null,
           sandboxRunId: input.sandboxRunId ?? null,
           sandboxContainerName: input.sandboxContainerName ?? null,
@@ -1898,8 +1898,8 @@ export function createWorkspaceStore(options: {
   async function updateRemoteWorkspaceFlow(
     workspaceId: string,
     input: {
-      openworkHostUrl?: string | null;
-      openworkToken?: string | null;
+      vesloHostUrl?: string | null;
+      vesloToken?: string | null;
       directory?: string | null;
       displayName?: string | null;
     },
@@ -1910,19 +1910,19 @@ export function createWorkspaceStore(options: {
     if (!workspace || workspace.workspaceType !== "remote") return false;
 
     const remoteType = normalizeRemoteType(workspace.remoteType);
-    if (remoteType !== "openwork") {
-      options.setError("Only OpenWork remote workers can be edited.");
+    if (remoteType !== "veslo") {
+      options.setError("Only Veslo remote workers can be edited.");
       return false;
     }
 
     const hostUrl =
-      normalizeOpenworkServerUrl(
-        input.openworkHostUrl ?? workspace.openworkHostUrl ?? workspace.baseUrl ?? "",
+      normalizeVesloServerUrl(
+        input.vesloHostUrl ?? workspace.vesloHostUrl ?? workspace.baseUrl ?? "",
       ) ?? "";
     const token =
-      input.openworkToken?.trim() ??
-      workspace.openworkToken?.trim() ??
-      options.openworkServerSettings().token ??
+      input.vesloToken?.trim() ??
+      workspace.vesloToken?.trim() ??
+      options.vesloServerSettings().token ??
       "";
     const directory = input.directory?.trim() ?? "";
     const displayName = input.displayName?.trim() || null;
@@ -1937,30 +1937,30 @@ export function createWorkspaceStore(options: {
 
     let resolvedBaseUrl = "";
     let resolvedDirectory = directory;
-    let openworkWorkspace: OpenworkWorkspaceInfo | null = null;
+    let vesloWorkspace: VesloWorkspaceInfo | null = null;
     let resolvedAuth: OpencodeAuth | undefined = undefined;
     let resolvedHostUrl = hostUrl;
 
-    options.updateOpenworkServerSettings({
-      ...options.openworkServerSettings(),
+    options.updateVesloServerSettings({
+      ...options.vesloServerSettings(),
       urlOverride: hostUrl,
       token: token || undefined,
     });
 
     try {
-      const resolved = await resolveOpenworkHost({
+      const resolved = await resolveVesloHost({
         hostUrl,
         token,
-        workspaceId: workspace.openworkWorkspaceId ?? null,
+        workspaceId: workspace.vesloWorkspaceId ?? null,
         directoryHint: directory || null,
       });
-      if (resolved.kind !== "openwork") {
-        options.setError("OpenWork server unavailable. Check the URL and token.");
+      if (resolved.kind !== "veslo") {
+        options.setError("Veslo server unavailable. Check the URL and token.");
         return false;
       }
       resolvedBaseUrl = resolved.opencodeBaseUrl;
       resolvedDirectory = resolved.directory || directory;
-      openworkWorkspace = resolved.workspace;
+      vesloWorkspace = resolved.workspace;
       resolvedHostUrl = resolved.hostUrl;
       resolvedAuth = resolved.auth;
     } catch (error) {
@@ -2003,14 +2003,14 @@ export function createWorkspaceStore(options: {
       try {
         const ws = await workspaceUpdateRemote({
           workspaceId: id,
-          remoteType: "openwork",
+          remoteType: "veslo",
           baseUrl: resolvedBaseUrl,
           directory: finalDirectory ? finalDirectory : null,
           displayName,
-          openworkHostUrl: resolvedHostUrl,
-          openworkToken: token ? token : null,
-          openworkWorkspaceId: openworkWorkspace?.id ?? workspace.openworkWorkspaceId ?? null,
-          openworkWorkspaceName: openworkWorkspace?.name ?? workspace.openworkWorkspaceName ?? null,
+          vesloHostUrl: resolvedHostUrl,
+          vesloToken: token ? token : null,
+          vesloWorkspaceId: vesloWorkspace?.id ?? workspace.vesloWorkspaceId ?? null,
+          vesloWorkspaceName: vesloWorkspace?.name ?? workspace.vesloWorkspaceName ?? null,
         });
         setWorkspaces(ws.workspaces);
         syncActiveWorkspaceId(ws.activeId);
@@ -2023,14 +2023,14 @@ export function createWorkspaceStore(options: {
           item.id === id
             ? {
                 ...item,
-                remoteType: "openwork",
+                remoteType: "veslo",
                 baseUrl: resolvedBaseUrl,
                 directory: finalDirectory ? finalDirectory : null,
                 displayName,
-                openworkHostUrl: resolvedHostUrl,
-                openworkToken: token ? token : null,
-                openworkWorkspaceId: openworkWorkspace?.id ?? item.openworkWorkspaceId ?? null,
-                openworkWorkspaceName: openworkWorkspace?.name ?? item.openworkWorkspaceName ?? null,
+                vesloHostUrl: resolvedHostUrl,
+                vesloToken: token ? token : null,
+                vesloWorkspaceId: vesloWorkspace?.id ?? item.vesloWorkspaceId ?? null,
+                vesloWorkspaceName: vesloWorkspace?.name ?? item.vesloWorkspaceName ?? null,
               }
             : item,
         ),
@@ -2141,29 +2141,29 @@ export function createWorkspaceStore(options: {
         workspacePath,
         sandboxBackend: "docker",
         runId: workspace.sandboxRunId?.trim() || null,
-        openworkToken:
-          workspace.openworkToken?.trim() || options.openworkServerSettings().token?.trim() || null,
+        vesloToken:
+          workspace.vesloToken?.trim() || options.vesloServerSettings().token?.trim() || null,
       });
 
-      const resolved = await resolveOpenworkHost({
-        hostUrl: host.openworkUrl,
+      const resolved = await resolveVesloHost({
+        hostUrl: host.vesloUrl,
         token: host.token,
         directoryHint: workspacePath,
       });
 
-      if (resolved.kind !== "openwork") {
+      if (resolved.kind !== "veslo") {
         throw new Error("Worker is still warming up. Try again in a few seconds.");
       }
 
       const updated = await workspaceUpdateRemote({
         workspaceId: id,
-        remoteType: "openwork",
+        remoteType: "veslo",
         baseUrl: resolved.opencodeBaseUrl,
         directory: resolved.directory || workspacePath,
-        openworkHostUrl: resolved.hostUrl,
-        openworkToken: host.token,
-        openworkWorkspaceId: resolved.workspace.id,
-        openworkWorkspaceName: resolved.workspace.name ?? workspace.openworkWorkspaceName ?? null,
+        vesloHostUrl: resolved.hostUrl,
+        vesloToken: host.token,
+        vesloWorkspaceId: resolved.workspace.id,
+        vesloWorkspaceName: resolved.workspace.name ?? workspace.vesloWorkspaceName ?? null,
         sandboxBackend: host.sandboxBackend ?? "docker",
         sandboxRunId: host.sandboxRunId ?? workspace.sandboxRunId ?? null,
         sandboxContainerName: host.sandboxContainerName ?? workspace.sandboxContainerName ?? null,
@@ -2293,14 +2293,14 @@ export function createWorkspaceStore(options: {
         .replace(/^-+|-+$/g, "")
         .slice(0, 60);
       const dateStamp = new Date().toISOString().slice(0, 10);
-      const fileName = `openwork-${nameBase || "worker"}-${dateStamp}.openwork-workspace`;
+      const fileName = `veslo-${nameBase || "worker"}-${dateStamp}.veslo-workspace`;
       const downloads = await downloadDir().catch(() => null);
       const defaultPath = downloads ? `${downloads}/${fileName}` : fileName;
 
       const outputPath = await saveFile({
         title: "Export worker config",
         defaultPath,
-        filters: [{ name: "OpenWork Worker", extensions: ["openwork-workspace", "zip"] }],
+        filters: [{ name: "Veslo Worker", extensions: ["veslo-workspace", "zip"] }],
       });
 
       if (!outputPath) {
@@ -2332,7 +2332,7 @@ export function createWorkspaceStore(options: {
     try {
       const selection = await pickFile({
         title: "Import worker config",
-        filters: [{ name: "OpenWork Worker", extensions: ["openwork-workspace", "zip"] }],
+        filters: [{ name: "Veslo Worker", extensions: ["veslo-workspace", "zip"] }],
       });
       const filePath =
         typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
@@ -2508,7 +2508,7 @@ export function createWorkspaceStore(options: {
       if (!result.found) {
         options.setError(
           options.isWindowsPlatform()
-            ? "OpenCode CLI not found. Install OpenCode for Windows or bundle opencode.exe with OpenWork, then restart. If it is installed, ensure `opencode.exe` is on PATH (try `opencode --version` in PowerShell)."
+            ? "OpenCode CLI not found. Install OpenCode for Windows or bundle opencode.exe with Veslo, then restart. If it is installed, ensure `opencode.exe` is on PATH (try `opencode --version` in PowerShell)."
             : "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`, then retry.",
         );
         return false;
@@ -2677,7 +2677,7 @@ export function createWorkspaceStore(options: {
 
     try {
       const runtime = engine()?.runtime ?? resolveEngineRuntime();
-      if (runtime === "openwork-orchestrator") {
+      if (runtime === "veslo-orchestrator") {
         await orchestratorInstanceDispose(root);
         await orchestratorWorkspaceActivate({
           workspacePath: root,
@@ -2815,7 +2815,7 @@ export function createWorkspaceStore(options: {
   function markOnboardingComplete() {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem("openwork.onboardingComplete", "1");
+      window.localStorage.setItem("veslo.onboardingComplete", "1");
     } catch {
       // ignore
     }
@@ -2828,14 +2828,14 @@ export function createWorkspaceStore(options: {
     if (!root) return;
 
     const existing = workspaceConfig();
-    const cfg: WorkspaceOpenworkConfig = {
+    const cfg: WorkspaceVesloConfig = {
       version: existing?.version ?? 1,
       workspace: existing?.workspace ?? null,
       authorizedRoots: nextRoots,
       reload: existing?.reload ?? null,
     };
 
-    await workspaceOpenworkWrite({ workspacePath: root, config: cfg });
+    await workspaceVesloWrite({ workspacePath: root, config: cfg });
     setWorkspaceConfig(cfg);
   }
 
@@ -2846,7 +2846,7 @@ export function createWorkspaceStore(options: {
     if (!root) return;
 
     const existing = workspaceConfig();
-    const cfg: WorkspaceOpenworkConfig = {
+    const cfg: WorkspaceVesloConfig = {
       version: existing?.version ?? 1,
       workspace: existing?.workspace ?? null,
       authorizedRoots: Array.isArray(existing?.authorizedRoots) ? existing!.authorizedRoots : authorizedDirs(),
@@ -2856,7 +2856,7 @@ export function createWorkspaceStore(options: {
       },
     };
 
-    await workspaceOpenworkWrite({ workspacePath: root, config: cfg });
+    await workspaceVesloWrite({ workspacePath: root, config: cfg });
     setWorkspaceConfig(cfg);
   }
 
@@ -2924,7 +2924,7 @@ export function createWorkspaceStore(options: {
     const startupPref = readStartupPreference();
     const onboardingComplete = (() => {
       try {
-        return window.localStorage.getItem("openwork.onboardingComplete") === "1";
+        return window.localStorage.getItem("veslo.onboardingComplete") === "1";
       } catch {
         return false;
       }
@@ -2957,7 +2957,7 @@ export function createWorkspaceStore(options: {
         } else {
           setProjectDir(active.path);
           try {
-            const cfg = await workspaceOpenworkRead({ workspacePath: active.path });
+            const cfg = await workspaceVesloRead({ workspacePath: active.path });
             setWorkspaceConfig(cfg);
             setWorkspaceConfigLoaded(true);
             const roots = Array.isArray(cfg.authorizedRoots) ? cfg.authorizedRoots : [];
@@ -3075,10 +3075,10 @@ export function createWorkspaceStore(options: {
   async function onConnectClient() {
     options.setStartupPreference("server");
     options.setOnboardingStep("connecting");
-    const settings = options.openworkServerSettings();
+    const settings = options.vesloServerSettings();
     const ok = await createRemoteWorkspaceFlow({
-      openworkHostUrl: settings.urlOverride ?? null,
-      openworkToken: settings.token ?? null,
+      vesloHostUrl: settings.urlOverride ?? null,
+      vesloToken: settings.token ?? null,
       directory: options.clientDirectory().trim() ? options.clientDirectory().trim() : null,
       displayName: null,
     });

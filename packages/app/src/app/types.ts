@@ -131,7 +131,7 @@ export type View = "onboarding" | "dashboard" | "session" | "proto";
 
 export type StartupPreference = "local" | "server";
 
-export type EngineRuntime = "direct" | "openwork-orchestrator";
+export type EngineRuntime = "direct" | "veslo-orchestrator";
 
 export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
 
@@ -157,9 +157,9 @@ export type WorkspaceConnectionState = {
   checkedAt?: number | null;
 };
 
-export type ResetOpenworkMode = "onboarding" | "all";
+export type ResetVesloMode = "onboarding" | "all";
 
-export type WorkspaceOpenworkConfig = {
+export type WorkspaceVesloConfig = {
   version: number;
   workspace?: {
     name?: string | null;

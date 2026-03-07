@@ -74,7 +74,7 @@ import type {
   PluginScope,
   ReloadReason,
   ReloadTrigger,
-  ResetOpenworkMode,
+  ResetVesloMode,
   SettingsTab,
   SkillCard,
   SidebarSessionItem,
@@ -137,12 +137,12 @@ import {
   writeOpencodeConfig,
   schedulerDeleteJob,
   schedulerListJobs,
-  openworkServerInfo,
+  vesloServerInfo,
   orchestratorStatus,
   opencodeRouterInfo,
   setWindowDecorations,
   type OrchestratorStatus,
-  type OpenworkServerInfo,
+  type VesloServerInfo,
   type OpenCodeRouterInfo,
 } from "./lib/tauri";
 import {
@@ -155,31 +155,31 @@ import {
   readStoredFontZoom,
 } from "./lib/font-zoom";
 import {
-  parseOpenworkWorkspaceIdFromUrl,
-  readOpenworkBundleInviteFromSearch,
-  readOpenworkConnectInviteFromSearch,
-  stripOpenworkBundleInviteFromUrl,
-  stripOpenworkConnectInviteFromUrl,
-  createOpenworkServerClient,
-  hydrateOpenworkServerSettingsFromEnv,
-  normalizeOpenworkServerUrl,
-  readOpenworkServerSettings,
-  writeOpenworkServerSettings,
-  clearOpenworkServerSettings,
-  type OpenworkAuditEntry,
-  type OpenworkSoulHeartbeatEntry,
-  type OpenworkSoulStatus,
-  type OpenworkServerCapabilities,
-  type OpenworkServerDiagnostics,
-  type OpenworkServerStatus,
-  type OpenworkServerSettings,
-  type OpenworkWorkspaceExport,
-  OpenworkServerError,
-} from "./lib/openwork-server";
+  parseVesloWorkspaceIdFromUrl,
+  readVesloBundleInviteFromSearch,
+  readVesloConnectInviteFromSearch,
+  stripVesloBundleInviteFromUrl,
+  stripVesloConnectInviteFromUrl,
+  createVesloServerClient,
+  hydrateVesloServerSettingsFromEnv,
+  normalizeVesloServerUrl,
+  readVesloServerSettings,
+  writeVesloServerSettings,
+  clearVesloServerSettings,
+  type VesloAuditEntry,
+  type VesloSoulHeartbeatEntry,
+  type VesloSoulStatus,
+  type VesloServerCapabilities,
+  type VesloServerDiagnostics,
+  type VesloServerStatus,
+  type VesloServerSettings,
+  type VesloWorkspaceExport,
+  VesloServerError,
+} from "./lib/veslo-server";
 
 type RemoteWorkspaceDefaults = {
-  openworkHostUrl?: string | null;
-  openworkToken?: string | null;
+  vesloHostUrl?: string | null;
+  vesloToken?: string | null;
   directory?: string | null;
   displayName?: string | null;
 };
@@ -213,7 +213,7 @@ type SharedWorkspaceProfileBundleV1 = {
   type: "workspace-profile";
   name: string;
   description?: string;
-  workspace: OpenworkWorkspaceExport;
+  workspace: VesloWorkspaceExport;
 };
 
 type SharedBundleV1 =
@@ -313,7 +313,7 @@ function parseSharedBundle(value: unknown): SharedBundleV1 {
       type: "workspace-profile",
       name: name || "Shared workspace profile",
       description: typeof record.description === "string" ? record.description : undefined,
-      workspace: workspace as OpenworkWorkspaceExport,
+      workspace: workspace as VesloWorkspaceExport,
     };
   }
 
@@ -396,13 +396,13 @@ function buildImportPayloadFromBundle(bundle: SharedBundleV1): {
   const payload: Record<string, unknown> = {
     mode: {
       opencode: "merge",
-      openwork: "merge",
+      veslo: "merge",
       skills: "merge",
       commands: "merge",
     },
   };
   if (workspace.opencode && typeof workspace.opencode === "object") payload.opencode = workspace.opencode;
-  if (workspace.openwork && typeof workspace.openwork === "object") payload.openwork = workspace.openwork;
+  if (workspace.veslo && typeof workspace.veslo === "object") payload.veslo = workspace.veslo;
   if (Array.isArray(workspace.skills) && workspace.skills.length) payload.skills = workspace.skills;
   if (Array.isArray(workspace.commands) && workspace.commands.length) payload.commands = workspace.commands;
 
@@ -419,7 +419,7 @@ function parseSharedBundleDeepLink(rawUrl: string): SharedBundleDeepLink | null 
   }
 
   const protocol = url.protocol.toLowerCase();
-  if (protocol !== "openwork:" && protocol !== "https:" && protocol !== "http:") {
+  if (protocol !== "veslo:" && protocol !== "https:" && protocol !== "http:") {
     return null;
   }
 
@@ -495,7 +495,7 @@ function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefaults | n
   }
 
   const protocol = url.protocol.toLowerCase();
-  if (protocol !== "openwork:" && protocol !== "https:" && protocol !== "http:") {
+  if (protocol !== "veslo:" && protocol !== "https:" && protocol !== "http:") {
     return null;
   }
 
@@ -507,9 +507,9 @@ function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefaults | n
     return null;
   }
 
-  const hostUrlRaw = url.searchParams.get("openworkHostUrl") ?? url.searchParams.get("openworkUrl") ?? "";
-  const tokenRaw = url.searchParams.get("openworkToken") ?? url.searchParams.get("accessToken") ?? "";
-  const normalizedHostUrl = normalizeOpenworkServerUrl(hostUrlRaw);
+  const hostUrlRaw = url.searchParams.get("vesloHostUrl") ?? url.searchParams.get("vesloUrl") ?? "";
+  const tokenRaw = url.searchParams.get("vesloToken") ?? url.searchParams.get("accessToken") ?? "";
+  const normalizedHostUrl = normalizeVesloServerUrl(hostUrlRaw);
   const token = tokenRaw.trim();
   if (!normalizedHostUrl || !token) {
     return null;
@@ -520,8 +520,8 @@ function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefaults | n
   const displayName = workerName || (workerId ? `Worker ${workerId.slice(0, 8)}` : "");
 
   return {
-    openworkHostUrl: normalizedHostUrl,
-    openworkToken: token,
+    vesloHostUrl: normalizedHostUrl,
+    vesloToken: token,
     directory: null,
     displayName: displayName || null,
   };
@@ -537,9 +537,9 @@ function stripRemoteConnectQuery(rawUrl: string): string | null {
 
   let changed = false;
   for (const key of [
-    "openworkHostUrl",
-    "openworkUrl",
-    "openworkToken",
+    "vesloHostUrl",
+    "vesloUrl",
+    "vesloToken",
     "accessToken",
     "workerId",
     "workerName",
@@ -560,13 +560,13 @@ function stripRemoteConnectQuery(rawUrl: string): string | null {
 }
 
 export default function App() {
-  const envOpenworkWorkspaceId =
-    typeof import.meta.env?.VITE_OPENWORK_WORKSPACE_ID === "string"
-      ? import.meta.env.VITE_OPENWORK_WORKSPACE_ID.trim() || null
+  const envVesloWorkspaceId =
+    typeof import.meta.env?.VITE_VESLO_WORKSPACE_ID === "string"
+      ? import.meta.env.VITE_VESLO_WORKSPACE_ID.trim() || null
       : null;
 
   // Workspace switch tracing is noisy, so only emit in developer mode.
-  // (OpenWork already has a developer mode toggle in Settings.)
+  // (Veslo already has a developer mode toggle in Settings.)
   const wsDebugEnabled = () => developerMode();
 
   const wsDebug = (label: string, payload?: unknown) => {
@@ -666,42 +666,42 @@ export default function App() {
 
   const [engineCustomBinPath, setEngineCustomBinPath] = createSignal("");
 
-  const [engineRuntime, setEngineRuntime] = createSignal<EngineRuntime>("openwork-orchestrator");
+  const [engineRuntime, setEngineRuntime] = createSignal<EngineRuntime>("veslo-orchestrator");
 
   const [baseUrl, setBaseUrl] = createSignal("http://127.0.0.1:4096");
   const [clientDirectory, setClientDirectory] = createSignal("");
 
-  const [openworkServerSettings, setOpenworkServerSettings] = createSignal<OpenworkServerSettings>({});
-  const [openworkServerUrl, setOpenworkServerUrl] = createSignal("");
-  const [openworkServerStatus, setOpenworkServerStatus] = createSignal<OpenworkServerStatus>("disconnected");
-  const [openworkServerCapabilities, setOpenworkServerCapabilities] = createSignal<OpenworkServerCapabilities | null>(null);
-  const [openworkServerCheckedAt, setOpenworkServerCheckedAt] = createSignal<number | null>(null);
-  const [openworkServerWorkspaceId, setOpenworkServerWorkspaceId] = createSignal<string | null>(null);
-  const [openworkServerHostInfo, setOpenworkServerHostInfo] = createSignal<OpenworkServerInfo | null>(null);
-  const [openworkServerDiagnostics, setOpenworkServerDiagnostics] = createSignal<OpenworkServerDiagnostics | null>(null);
-  const [openworkReconnectBusy, setOpenworkReconnectBusy] = createSignal(false);
+  const [vesloServerSettings, setVesloServerSettings] = createSignal<VesloServerSettings>({});
+  const [vesloServerUrl, setVesloServerUrl] = createSignal("");
+  const [vesloServerStatus, setVesloServerStatus] = createSignal<VesloServerStatus>("disconnected");
+  const [vesloServerCapabilities, setVesloServerCapabilities] = createSignal<VesloServerCapabilities | null>(null);
+  const [vesloServerCheckedAt, setVesloServerCheckedAt] = createSignal<number | null>(null);
+  const [vesloServerWorkspaceId, setVesloServerWorkspaceId] = createSignal<string | null>(null);
+  const [vesloServerHostInfo, setVesloServerHostInfo] = createSignal<VesloServerInfo | null>(null);
+  const [vesloServerDiagnostics, setVesloServerDiagnostics] = createSignal<VesloServerDiagnostics | null>(null);
+  const [vesloReconnectBusy, setVesloReconnectBusy] = createSignal(false);
   const [opencodeRouterInfoState, setOpenCodeRouterInfoState] = createSignal<OpenCodeRouterInfo | null>(null);
   const [orchestratorStatusState, setOrchestratorStatusState] = createSignal<OrchestratorStatus | null>(null);
-  const [openworkAuditEntries, setOpenworkAuditEntries] = createSignal<OpenworkAuditEntry[]>([]);
-  const [openworkAuditStatus, setOpenworkAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
-  const [openworkAuditError, setOpenworkAuditError] = createSignal<string | null>(null);
+  const [vesloAuditEntries, setVesloAuditEntries] = createSignal<VesloAuditEntry[]>([]);
+  const [vesloAuditStatus, setVesloAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
+  const [vesloAuditError, setVesloAuditError] = createSignal<string | null>(null);
   const [devtoolsWorkspaceId, setDevtoolsWorkspaceId] = createSignal<string | null>(null);
 
-  const openworkServerBaseUrl = createMemo(() => {
+  const vesloServerBaseUrl = createMemo(() => {
     const pref = startupPreference();
-    const hostInfo = openworkServerHostInfo();
-    const settingsUrl = normalizeOpenworkServerUrl(openworkServerSettings().urlOverride ?? "") ?? "";
+    const hostInfo = vesloServerHostInfo();
+    const settingsUrl = normalizeVesloServerUrl(vesloServerSettings().urlOverride ?? "") ?? "";
 
     if (pref === "local") return hostInfo?.baseUrl ?? "";
     if (pref === "server") return settingsUrl;
     return hostInfo?.baseUrl ?? settingsUrl;
   });
 
-  const openworkServerAuth = createMemo(
+  const vesloServerAuth = createMemo(
     () => {
       const pref = startupPreference();
-      const hostInfo = openworkServerHostInfo();
-      const settingsToken = openworkServerSettings().token?.trim() ?? "";
+      const hostInfo = vesloServerHostInfo();
+      const settingsToken = vesloServerSettings().token?.trim() ?? "";
       const clientToken = hostInfo?.clientToken?.trim() ?? "";
       const hostToken = hostInfo?.hostToken?.trim() ?? "";
 
@@ -722,34 +722,34 @@ export default function App() {
     },
   );
 
-  const openworkServerClient = createMemo(() => {
-    const baseUrl = openworkServerBaseUrl().trim();
+  const vesloServerClient = createMemo(() => {
+    const baseUrl = vesloServerBaseUrl().trim();
     if (!baseUrl) return null;
-    const auth = openworkServerAuth();
-    return createOpenworkServerClient({ baseUrl, token: auth.token, hostToken: auth.hostToken });
+    const auth = vesloServerAuth();
+    return createVesloServerClient({ baseUrl, token: auth.token, hostToken: auth.hostToken });
   });
 
-  const devtoolsOpenworkClient = createMemo(() => openworkServerClient());
+  const devtoolsVesloClient = createMemo(() => vesloServerClient());
 
   createEffect(() => {
     if (typeof window === "undefined") return;
-    hydrateOpenworkServerSettingsFromEnv();
+    hydrateVesloServerSettingsFromEnv();
 
-    const stored = readOpenworkServerSettings();
-    const invite = readOpenworkConnectInviteFromSearch(window.location.search);
-    const bundleInvite = readOpenworkBundleInviteFromSearch(window.location.search);
+    const stored = readVesloServerSettings();
+    const invite = readVesloConnectInviteFromSearch(window.location.search);
+    const bundleInvite = readVesloBundleInviteFromSearch(window.location.search);
 
     if (!invite) {
-      setOpenworkServerSettings(stored);
+      setVesloServerSettings(stored);
     } else {
-      const merged: OpenworkServerSettings = {
+      const merged: VesloServerSettings = {
         ...stored,
         urlOverride: invite.url,
         token: invite.token ?? stored.token,
       };
 
-      const next = writeOpenworkServerSettings(merged);
-      setOpenworkServerSettings(next);
+      const next = writeVesloServerSettings(merged);
+      setVesloServerSettings(next);
 
       if (invite.startup === "server" && untrack(onboardingStep) === "welcome") {
         setStartupPreference("server");
@@ -768,8 +768,8 @@ export default function App() {
       setSharedBundleNoticeShown(false);
     }
 
-    const cleanedConnect = stripOpenworkConnectInviteFromUrl(window.location.href);
-    const cleaned = stripOpenworkBundleInviteFromUrl(cleanedConnect);
+    const cleanedConnect = stripVesloConnectInviteFromUrl(window.location.href);
+    const cleaned = stripVesloBundleInviteFromUrl(cleanedConnect);
     if (cleaned !== window.location.href) {
       window.history.replaceState(window.history.state ?? null, "", cleaned);
     }
@@ -795,7 +795,7 @@ export default function App() {
         const webview = getCurrentWebview();
         void applyWebviewZoom(webview, next)
           .then(() => {
-            document.documentElement.style.removeProperty("--openwork-font-size");
+            document.documentElement.style.removeProperty("--veslo-font-size");
           })
           .catch(() => {
             applyFontZoom(document.documentElement.style, next);
@@ -831,59 +831,59 @@ export default function App() {
 
   createEffect(() => {
     const pref = startupPreference();
-    const info = openworkServerHostInfo();
+    const info = vesloServerHostInfo();
     const hostUrl = info?.connectUrl ?? info?.lanUrl ?? info?.mdnsUrl ?? info?.baseUrl ?? "";
-    const settingsUrl = normalizeOpenworkServerUrl(openworkServerSettings().urlOverride ?? "") ?? "";
+    const settingsUrl = normalizeVesloServerUrl(vesloServerSettings().urlOverride ?? "") ?? "";
 
     if (pref === "local") {
-      setOpenworkServerUrl(hostUrl);
+      setVesloServerUrl(hostUrl);
       return;
     }
     if (pref === "server") {
-      setOpenworkServerUrl(settingsUrl);
+      setVesloServerUrl(settingsUrl);
       return;
     }
-    setOpenworkServerUrl(hostUrl || settingsUrl);
+    setVesloServerUrl(hostUrl || settingsUrl);
   });
 
-  const checkOpenworkServer = async (url: string, token?: string, hostToken?: string) => {
-    const client = createOpenworkServerClient({ baseUrl: url, token, hostToken });
+  const checkVesloServer = async (url: string, token?: string, hostToken?: string) => {
+    const client = createVesloServerClient({ baseUrl: url, token, hostToken });
     try {
       await client.health();
     } catch (error) {
-      if (error instanceof OpenworkServerError && (error.status === 401 || error.status === 403)) {
-        return { status: "limited" as OpenworkServerStatus, capabilities: null };
+      if (error instanceof VesloServerError && (error.status === 401 || error.status === 403)) {
+        return { status: "limited" as VesloServerStatus, capabilities: null };
       }
-      return { status: "disconnected" as OpenworkServerStatus, capabilities: null };
+      return { status: "disconnected" as VesloServerStatus, capabilities: null };
     }
 
     if (!token) {
-      return { status: "limited" as OpenworkServerStatus, capabilities: null };
+      return { status: "limited" as VesloServerStatus, capabilities: null };
     }
 
     try {
       const caps = await client.capabilities();
-      return { status: "connected" as OpenworkServerStatus, capabilities: caps };
+      return { status: "connected" as VesloServerStatus, capabilities: caps };
     } catch (error) {
-      if (error instanceof OpenworkServerError && (error.status === 401 || error.status === 403)) {
-        return { status: "limited" as OpenworkServerStatus, capabilities: null };
+      if (error instanceof VesloServerError && (error.status === 401 || error.status === 403)) {
+        return { status: "limited" as VesloServerStatus, capabilities: null };
       }
-      return { status: "disconnected" as OpenworkServerStatus, capabilities: null };
+      return { status: "disconnected" as VesloServerStatus, capabilities: null };
     }
   };
 
   createEffect(() => {
     if (typeof window === "undefined") return;
     if (!documentVisible()) return;
-    const url = openworkServerBaseUrl().trim();
-    const auth = openworkServerAuth();
+    const url = vesloServerBaseUrl().trim();
+    const auth = vesloServerAuth();
     const token = auth.token;
     const hostToken = auth.hostToken;
 
     if (!url) {
-      setOpenworkServerStatus("disconnected");
-      setOpenworkServerCapabilities(null);
-      setOpenworkServerCheckedAt(Date.now());
+      setVesloServerStatus("disconnected");
+      setVesloServerCapabilities(null);
+      setVesloServerCheckedAt(Date.now());
       return;
     }
 
@@ -901,10 +901,10 @@ export default function App() {
       if (busy) return;
       busy = true;
       try {
-        const result = await checkOpenworkServer(url, token, hostToken);
+        const result = await checkVesloServer(url, token, hostToken);
         if (!active) return;
-        setOpenworkServerStatus(result.status);
-        setOpenworkServerCapabilities(result.capabilities);
+        setVesloServerStatus(result.status);
+        setVesloServerCapabilities(result.capabilities);
         delayMs =
           result.status === "connected" || result.status === "limited"
             ? 10_000
@@ -913,7 +913,7 @@ export default function App() {
         delayMs = Math.min(delayMs * 2, 60_000);
       } finally {
         if (!active) return;
-        setOpenworkServerCheckedAt(Date.now());
+        setVesloServerCheckedAt(Date.now());
         busy = false;
         scheduleNext();
       }
@@ -933,10 +933,10 @@ export default function App() {
 
     const run = async () => {
       try {
-        const info = await openworkServerInfo();
-        if (active) setOpenworkServerHostInfo(info);
+        const info = await vesloServerInfo();
+        if (active) setVesloServerHostInfo(info);
       } catch {
-        if (active) setOpenworkServerHostInfo(null);
+        if (active) setVesloServerHostInfo(null);
       }
     };
 
@@ -952,13 +952,13 @@ export default function App() {
     if (typeof window === "undefined") return;
     if (!documentVisible()) return;
     if (!developerMode()) {
-      setOpenworkServerDiagnostics(null);
+      setVesloServerDiagnostics(null);
       return;
     }
 
-    const client = openworkServerClient();
-    if (!client || openworkServerStatus() === "disconnected") {
-      setOpenworkServerDiagnostics(null);
+    const client = vesloServerClient();
+    if (!client || vesloServerStatus() === "disconnected") {
+      setVesloServerDiagnostics(null);
       return;
     }
 
@@ -970,9 +970,9 @@ export default function App() {
       busy = true;
       try {
         const status = await client.status();
-        if (active) setOpenworkServerDiagnostics(status);
+        if (active) setVesloServerDiagnostics(status);
       } catch {
-        if (active) setOpenworkServerDiagnostics(null);
+        if (active) setVesloServerDiagnostics(null);
       } finally {
         busy = false;
       }
@@ -1089,7 +1089,7 @@ export default function App() {
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
     null
   );
-  const SESSION_BY_WORKSPACE_KEY = "openwork.workspace-last-session.v1";
+  const SESSION_BY_WORKSPACE_KEY = "veslo.workspace-last-session.v1";
   const readSessionByWorkspace = () => {
     if (typeof window === "undefined") return {} as Record<string, string>;
     try {
@@ -1669,7 +1669,7 @@ export default function App() {
   };
 
   // OpenCode keeps reverted messages in the log and uses `session.revert.messageID`
-  // as the visibility boundary. OpenWork mirrors that behavior by filtering the
+  // as the visibility boundary. Veslo mirrors that behavior by filtering the
   // displayed transcript.
   const visibleMessages = createMemo(() => {
     const list = messages();
@@ -2024,7 +2024,7 @@ export default function App() {
     const created = unwrap(
       await c.session.create({
         directory: directory || undefined,
-        title: `[OpenWork] Connection test · ${providerId}`,
+        title: `[Veslo] Connection test · ${providerId}`,
       }),
     );
     const sessionID = created.id;
@@ -2160,7 +2160,7 @@ export default function App() {
       messages,
       todos,
       exportedAt: new Date().toISOString(),
-      source: "openwork",
+      source: "veslo",
     };
 
     const baseName = session.title || session.slug || session.id;
@@ -2215,9 +2215,9 @@ export default function App() {
   const [scheduledJobsBusy, setScheduledJobsBusy] = createSignal(false);
   const [scheduledJobsUpdatedAt, setScheduledJobsUpdatedAt] = createSignal<number | null>(null);
   const [soulStatusByWorkspaceId, setSoulStatusByWorkspaceId] = createSignal<
-    Record<string, OpenworkSoulStatus | null>
+    Record<string, VesloSoulStatus | null>
   >({});
-  const [activeSoulHeartbeats, setActiveSoulHeartbeats] = createSignal<OpenworkSoulHeartbeatEntry[]>([]);
+  const [activeSoulHeartbeats, setActiveSoulHeartbeats] = createSignal<VesloSoulHeartbeatEntry[]>([]);
   const [soulStatusBusy, setSoulStatusBusy] = createSignal(false);
   const [soulHeartbeatsBusy, setSoulHeartbeatsBusy] = createSignal(false);
   const [soulError, setSoulError] = createSignal<string | null>(null);
@@ -2231,10 +2231,10 @@ export default function App() {
     projectDir: () => workspaceProjectDir(),
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
     workspaceType: () => workspaceStore.activeWorkspaceDisplay().workspaceType,
-    openworkServerClient,
-    openworkServerStatus,
-    openworkServerCapabilities,
-    openworkServerWorkspaceId,
+    vesloServerClient,
+    vesloServerStatus,
+    vesloServerCapabilities,
+    vesloServerWorkspaceId,
     setBusy,
     setBusyLabel,
     setBusyStartedAt,
@@ -2242,7 +2242,7 @@ export default function App() {
     onNotionSkillInstalled: () => {
       setNotionSkillInstalled(true);
       try {
-        window.localStorage.setItem("openwork.notionSkillInstalled", "1");
+        window.localStorage.setItem("veslo.notionSkillInstalled", "1");
       } catch {
         // ignore
       }
@@ -2485,9 +2485,9 @@ export default function App() {
     setView,
     setTab,
     isWindowsPlatform,
-    openworkServerSettings,
-    updateOpenworkServerSettings,
-    openworkServerClient,
+    vesloServerSettings,
+    updateVesloServerSettings,
+    vesloServerClient,
     onEngineStable: () => {},
     engineRuntime,
     developerMode,
@@ -2563,12 +2563,12 @@ export default function App() {
 
     const baseUrl = workspace.baseUrl?.trim() ?? "";
     const directory = workspace.directory?.trim() ?? "";
-    if (workspace.remoteType === "openwork") {
+    if (workspace.remoteType === "veslo") {
       // Sidebar session listing should be per-workspace and should not implicitly depend on
-      // global OpenWork server settings, otherwise switching between remotes can cause other
+      // global Veslo server settings, otherwise switching between remotes can cause other
       // workspace task lists to appear/disappear.
-      const token = workspace.openworkToken?.trim() ?? "";
-      const auth: OpencodeAuth | undefined = token ? { token, mode: "openwork" } : undefined;
+      const token = workspace.vesloToken?.trim() ?? "";
+      const auth: OpencodeAuth | undefined = token ? { token, mode: "veslo" } : undefined;
       return {
         baseUrl,
         directory,
@@ -2720,13 +2720,13 @@ export default function App() {
         const root = ws.workspaceType === "local" ? ws.path?.trim() ?? "" : ws.directory?.trim() ?? "";
         const base = ws.workspaceType === "local" ? "" : ws.baseUrl?.trim() ?? "";
         const remoteType = ws.workspaceType === "remote" ? (ws.remoteType ?? "") : "";
-        const token = ws.remoteType === "openwork" ? (ws.openworkToken?.trim() ?? "") : "";
+        const token = ws.remoteType === "veslo" ? (ws.vesloToken?.trim() ?? "") : "";
         return [ws.id, ws.workspaceType, remoteType, root, base, token].join("|");
       })
       .join(";");
 
     // Sidebar session refreshes should only be driven by the engine auth/baseUrl or the workspace
-    // definitions themselves. Global OpenWork server settings are intentionally excluded so that
+    // definitions themselves. Global Veslo server settings are intentionally excluded so that
     // connecting/activating a remote does not cause other workspace task lists to refresh (and
     // potentially disappear) due to auth fallback changes.
     if (engineKey === lastSidebarEngineKey && workspaceKey === lastSidebarWorkspaceKey) return;
@@ -2816,13 +2816,13 @@ export default function App() {
         continue;
       }
       const hostKey =
-        normalizeOpenworkServerUrl(workspace.openworkHostUrl?.trim() ?? "") ??
-        normalizeOpenworkServerUrl(workspace.baseUrl?.trim() ?? "") ??
+        normalizeVesloServerUrl(workspace.vesloHostUrl?.trim() ?? "") ??
+        normalizeVesloServerUrl(workspace.baseUrl?.trim() ?? "") ??
         "";
       const workspaceIdKey =
-        workspace.openworkWorkspaceId?.trim() ||
-        parseOpenworkWorkspaceIdFromUrl(workspace.openworkHostUrl ?? "") ||
-        parseOpenworkWorkspaceIdFromUrl(workspace.baseUrl ?? "") ||
+        workspace.vesloWorkspaceId?.trim() ||
+        parseVesloWorkspaceIdFromUrl(workspace.vesloHostUrl ?? "") ||
+        parseVesloWorkspaceIdFromUrl(workspace.baseUrl ?? "") ||
         "";
       const directoryKey = normalizeDirectoryPath(workspace.directory?.trim() ?? workspace.path?.trim() ?? "");
       const identityKey = workspaceIdKey ? `id:${workspaceIdKey}` : (directoryKey ? `dir:${directoryKey}` : "");
@@ -2886,22 +2886,22 @@ export default function App() {
 
   createEffect(() => {
     const active = workspaceStore.activeWorkspaceDisplay();
-    const client = openworkServerClient();
-    const openworkUrl = openworkServerUrl().trim();
+    const client = vesloServerClient();
+    const vesloUrl = vesloServerUrl().trim();
 
-    if (!client || openworkServerStatus() !== "connected") {
-      setOpenworkServerWorkspaceId(null);
+    if (!client || vesloServerStatus() !== "connected") {
+      setVesloServerWorkspaceId(null);
       return;
     }
 
-    if (active.workspaceType === "remote" && active.remoteType === "openwork") {
+    if (active.workspaceType === "remote" && active.remoteType === "veslo") {
       const inferredWorkspaceId =
-        parseOpenworkWorkspaceIdFromUrl(active.openworkHostUrl ?? "") ??
-        parseOpenworkWorkspaceIdFromUrl(active.baseUrl ?? "") ??
-        parseOpenworkWorkspaceIdFromUrl(openworkUrl);
-      const storedId = active.openworkWorkspaceId?.trim() || inferredWorkspaceId || envOpenworkWorkspaceId || null;
+        parseVesloWorkspaceIdFromUrl(active.vesloHostUrl ?? "") ??
+        parseVesloWorkspaceIdFromUrl(active.baseUrl ?? "") ??
+        parseVesloWorkspaceIdFromUrl(vesloUrl);
+      const storedId = active.vesloWorkspaceId?.trim() || inferredWorkspaceId || envVesloWorkspaceId || null;
       if (storedId) {
-        setOpenworkServerWorkspaceId(storedId);
+        setVesloServerWorkspaceId(storedId);
         return;
       }
 
@@ -2918,9 +2918,9 @@ export default function App() {
                 return Boolean(entryPath && entryPath === directoryHint);
               })
             : (response.activeId ? items.find((entry) => entry.id === response.activeId) : null) ?? items[0];
-          setOpenworkServerWorkspaceId(match?.id ?? response.activeId ?? null);
+          setVesloServerWorkspaceId(match?.id ?? response.activeId ?? null);
         } catch {
-          if (!cancelled) setOpenworkServerWorkspaceId(null);
+          if (!cancelled) setVesloServerWorkspaceId(null);
         }
       };
 
@@ -2934,7 +2934,7 @@ export default function App() {
     if (active.workspaceType === "local") {
       const root = normalizeDirectoryPath(workspaceStore.activeWorkspaceRoot().trim());
       if (!root) {
-        setOpenworkServerWorkspaceId(null);
+        setVesloServerWorkspaceId(null);
         return;
       }
 
@@ -2945,9 +2945,9 @@ export default function App() {
           if (cancelled) return;
           const items = Array.isArray(response.items) ? response.items : [];
           const match = items.find((entry) => normalizeDirectoryPath(entry.path) === root);
-          setOpenworkServerWorkspaceId(match?.id ?? response.activeId ?? null);
+          setVesloServerWorkspaceId(match?.id ?? response.activeId ?? null);
         } catch {
-          if (!cancelled) setOpenworkServerWorkspaceId(null);
+          if (!cancelled) setVesloServerWorkspaceId(null);
         }
       };
 
@@ -2958,17 +2958,17 @@ export default function App() {
       return;
     }
 
-    setOpenworkServerWorkspaceId(null);
+    setVesloServerWorkspaceId(null);
   });
 
   const resolveSharedBundleWorkerTarget = () => {
     const pref = startupPreference();
-    const hostInfo = openworkServerHostInfo();
-    const settings = openworkServerSettings();
+    const hostInfo = vesloServerHostInfo();
+    const settings = vesloServerSettings();
 
-    const localHostUrl = normalizeOpenworkServerUrl(hostInfo?.baseUrl ?? "") ?? "";
+    const localHostUrl = normalizeVesloServerUrl(hostInfo?.baseUrl ?? "") ?? "";
     const localToken = hostInfo?.clientToken?.trim() ?? "";
-    const serverHostUrl = normalizeOpenworkServerUrl(settings.urlOverride ?? "") ?? "";
+    const serverHostUrl = normalizeVesloServerUrl(settings.urlOverride ?? "") ?? "";
     const serverToken = settings.token?.trim() ?? "";
 
     if (pref === "server") {
@@ -3001,16 +3001,16 @@ export default function App() {
   const waitForSharedBundleImportTarget = async (timeoutMs = 20_000) => {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
-      const client = openworkServerClient();
-      const workspaceId = openworkServerWorkspaceId();
-      if (client && workspaceId && openworkServerStatus() === "connected") {
+      const client = vesloServerClient();
+      const workspaceId = vesloServerWorkspaceId();
+      if (client && workspaceId && vesloServerStatus() === "connected") {
         return { client, workspaceId };
       }
       await new Promise<void>((resolve) => {
         window.setTimeout(resolve, 200);
       });
     }
-    throw new Error("OpenWork worker is not ready yet.");
+    throw new Error("Veslo worker is not ready yet.");
   };
 
   const createWorkerForSharedBundle = async (request: SharedBundleDeepLink, bundle: SharedBundleV1) => {
@@ -3018,13 +3018,13 @@ export default function App() {
     const hostUrl = target.hostUrl.trim();
     const token = target.token.trim();
     if (!hostUrl || !token) {
-      throw new Error("Share link detected. Configure an OpenWork worker host and token, then open the link again.");
+      throw new Error("Share link detected. Configure an Veslo worker host and token, then open the link again.");
     }
 
     const label = (request.label?.trim() || bundle.name?.trim() || "Shared setup").slice(0, 80);
     const ok = await workspaceStore.createRemoteWorkspaceFlow({
-      openworkHostUrl: hostUrl,
-      openworkToken: token,
+      vesloHostUrl: hostUrl,
+      vesloToken: token,
       directory: null,
       displayName: label,
       manageBusy: false,
@@ -3047,13 +3047,13 @@ export default function App() {
     }
 
     if (request.intent === "import_current") {
-      const client = openworkServerClient();
-      const workspaceId = openworkServerWorkspaceId();
-      const connected = openworkServerStatus() === "connected";
+      const client = vesloServerClient();
+      const workspaceId = vesloServerWorkspaceId();
+      const connected = vesloServerStatus() === "connected";
       if (!client || !workspaceId || !connected) {
         if (!sharedBundleNoticeShown()) {
           setSharedBundleNoticeShown(true);
-          setError("Share link detected. Connect to a writable OpenWork worker to import this bundle.");
+          setError("Share link detected. Connect to a writable Veslo worker to import this bundle.");
         }
         return;
       }
@@ -3062,7 +3062,7 @@ export default function App() {
       if (!target.hostUrl.trim() || !target.token.trim()) {
         if (!sharedBundleNoticeShown()) {
           setSharedBundleNoticeShown(true);
-          setError("Share link detected. Configure an OpenWork host and token to create a new worker.");
+          setError("Share link detected. Configure an Veslo host and token to create a new worker.");
         }
         return;
       }
@@ -3090,7 +3090,7 @@ export default function App() {
         await refreshHubSkills({ force: true });
         setError(null);
         if (importedSkillsCount > 0) {
-          console.log(`[openwork] imported ${importedSkillsCount} skills from share bundle`);
+          console.log(`[veslo] imported ${importedSkillsCount} skills from share bundle`);
         }
       } catch (error) {
         if (!cancelled) {
@@ -3118,7 +3118,7 @@ export default function App() {
     }
     if (!documentVisible()) return;
 
-    const client = devtoolsOpenworkClient();
+    const client = devtoolsVesloClient();
     if (!client) {
       setDevtoolsWorkspaceId(null);
       return;
@@ -3150,19 +3150,19 @@ export default function App() {
 
   createEffect(() => {
     if (!developerMode()) {
-      setOpenworkAuditEntries([]);
-      setOpenworkAuditStatus("idle");
-      setOpenworkAuditError(null);
+      setVesloAuditEntries([]);
+      setVesloAuditStatus("idle");
+      setVesloAuditError(null);
       return;
     }
     if (!documentVisible()) return;
 
-    const client = devtoolsOpenworkClient();
+    const client = devtoolsVesloClient();
     const workspaceId = devtoolsWorkspaceId();
     if (!client || !workspaceId) {
-      setOpenworkAuditEntries([]);
-      setOpenworkAuditStatus("idle");
-      setOpenworkAuditError(null);
+      setVesloAuditEntries([]);
+      setVesloAuditStatus("idle");
+      setVesloAuditError(null);
       return;
     }
 
@@ -3172,18 +3172,18 @@ export default function App() {
     const run = async () => {
       if (busy) return;
       busy = true;
-      setOpenworkAuditStatus("loading");
-      setOpenworkAuditError(null);
+      setVesloAuditStatus("loading");
+      setVesloAuditError(null);
       try {
         const result = await client.listAudit(workspaceId, 50);
         if (!active) return;
-        setOpenworkAuditEntries(Array.isArray(result.items) ? result.items : []);
-        setOpenworkAuditStatus("idle");
+        setVesloAuditEntries(Array.isArray(result.items) ? result.items : []);
+        setVesloAuditStatus("idle");
       } catch (error) {
         if (!active) return;
-        setOpenworkAuditEntries([]);
-        setOpenworkAuditStatus("error");
-        setOpenworkAuditError(error instanceof Error ? error.message : "Failed to load audit log.");
+        setVesloAuditEntries([]);
+        setVesloAuditStatus("error");
+        setVesloAuditError(error instanceof Error ? error.message : "Failed to load audit log.");
       } finally {
         busy = false;
       }
@@ -3199,49 +3199,49 @@ export default function App() {
 
   createEffect(() => {
     const active = workspaceStore.activeWorkspaceDisplay();
-    if (active.workspaceType !== "remote" || active.remoteType !== "openwork") {
+    if (active.workspaceType !== "remote" || active.remoteType !== "veslo") {
       return;
     }
-    const hostUrl = active.openworkHostUrl?.trim() ?? "";
+    const hostUrl = active.vesloHostUrl?.trim() ?? "";
     if (!hostUrl) return;
-    const token = active.openworkToken?.trim() ?? "";
-    const settings = openworkServerSettings();
+    const token = active.vesloToken?.trim() ?? "";
+    const settings = vesloServerSettings();
     if (settings.urlOverride?.trim() === hostUrl && (!token || settings.token?.trim() === token)) {
       return;
     }
-    updateOpenworkServerSettings({
+    updateVesloServerSettings({
       ...settings,
       urlOverride: hostUrl,
       token: token || settings.token,
     });
   });
 
-  const openworkServerReady = createMemo(() => openworkServerStatus() === "connected");
-  const openworkServerWorkspaceReady = createMemo(() => Boolean(openworkServerWorkspaceId()));
-  const resolvedOpenworkCapabilities = createMemo(() => openworkServerCapabilities());
-  const openworkServerCanWriteSkills = createMemo(
+  const vesloServerReady = createMemo(() => vesloServerStatus() === "connected");
+  const vesloServerWorkspaceReady = createMemo(() => Boolean(vesloServerWorkspaceId()));
+  const resolvedVesloCapabilities = createMemo(() => vesloServerCapabilities());
+  const vesloServerCanWriteSkills = createMemo(
     () =>
-      openworkServerReady() &&
-      openworkServerWorkspaceReady() &&
-      (resolvedOpenworkCapabilities()?.skills?.write ?? false),
+      vesloServerReady() &&
+      vesloServerWorkspaceReady() &&
+      (resolvedVesloCapabilities()?.skills?.write ?? false),
   );
-  const openworkServerCanWritePlugins = createMemo(
+  const vesloServerCanWritePlugins = createMemo(
     () =>
-      openworkServerReady() &&
-      openworkServerWorkspaceReady() &&
-      (resolvedOpenworkCapabilities()?.plugins?.write ?? false),
+      vesloServerReady() &&
+      vesloServerWorkspaceReady() &&
+      (resolvedVesloCapabilities()?.plugins?.write ?? false),
   );
-  const devtoolsCapabilities = createMemo(() => openworkServerCapabilities());
-  const resolvedDevtoolsWorkspaceId = createMemo(() => devtoolsWorkspaceId() ?? openworkServerWorkspaceId());
+  const devtoolsCapabilities = createMemo(() => vesloServerCapabilities());
+  const resolvedDevtoolsWorkspaceId = createMemo(() => devtoolsWorkspaceId() ?? vesloServerWorkspaceId());
 
-  function updateOpenworkServerSettings(next: OpenworkServerSettings) {
-    const stored = writeOpenworkServerSettings(next);
-    setOpenworkServerSettings(stored);
+  function updateVesloServerSettings(next: VesloServerSettings) {
+    const stored = writeVesloServerSettings(next);
+    setVesloServerSettings(stored);
   }
 
-  const resetOpenworkServerSettings = () => {
-    clearOpenworkServerSettings();
-    setOpenworkServerSettings({});
+  const resetVesloServerSettings = () => {
+    clearVesloServerSettings();
+    setVesloServerSettings({});
   };
 
   const [editRemoteWorkspaceOpen, setEditRemoteWorkspaceOpen] = createSignal(false);
@@ -3305,8 +3305,8 @@ export default function App() {
     const workspace = workspaceStore.workspaces().find((item) => item.id === workspaceId) ?? null;
     if (!workspace || workspace.workspaceType !== "remote") return null;
     return {
-      openworkHostUrl: workspace.openworkHostUrl ?? workspace.baseUrl ?? "",
-      openworkToken: workspace.openworkToken ?? openworkServerSettings().token ?? "",
+      vesloHostUrl: workspace.vesloHostUrl ?? workspace.baseUrl ?? "",
+      vesloToken: workspace.vesloToken ?? vesloServerSettings().token ?? "",
       directory: workspace.directory ?? "",
       displayName: workspace.displayName ?? "",
     };
@@ -3318,7 +3318,7 @@ export default function App() {
     setRenameWorkspaceId(workspaceId);
     setRenameWorkspaceName(
       workspace.displayName?.trim() ||
-        workspace.openworkWorkspaceName?.trim() ||
+        workspace.vesloWorkspaceName?.trim() ||
         workspace.name?.trim() ||
         ""
     );
@@ -3355,27 +3355,27 @@ export default function App() {
     }
   };
 
-  const testOpenworkServerConnection = async (next: OpenworkServerSettings) => {
-    const derived = normalizeOpenworkServerUrl(next.urlOverride ?? "");
+  const testVesloServerConnection = async (next: VesloServerSettings) => {
+    const derived = normalizeVesloServerUrl(next.urlOverride ?? "");
     if (!derived) {
-      setOpenworkServerStatus("disconnected");
-      setOpenworkServerCapabilities(null);
-      setOpenworkServerCheckedAt(Date.now());
+      setVesloServerStatus("disconnected");
+      setVesloServerCapabilities(null);
+      setVesloServerCheckedAt(Date.now());
       return false;
     }
-    const result = await checkOpenworkServer(derived, next.token, openworkServerAuth().hostToken);
-    setOpenworkServerStatus(result.status);
-    setOpenworkServerCapabilities(result.capabilities);
-    setOpenworkServerCheckedAt(Date.now());
+    const result = await checkVesloServer(derived, next.token, vesloServerAuth().hostToken);
+    setVesloServerStatus(result.status);
+    setVesloServerCapabilities(result.capabilities);
+    setVesloServerCheckedAt(Date.now());
     const ok = result.status === "connected" || result.status === "limited";
     if (ok && !isTauriRuntime()) {
       const active = workspaceStore.activeWorkspaceDisplay();
-      const shouldAttach = !client() || active.workspaceType !== "remote" || active.remoteType !== "openwork";
+      const shouldAttach = !client() || active.workspaceType !== "remote" || active.remoteType !== "veslo";
       if (shouldAttach) {
         await workspaceStore
           .createRemoteWorkspaceFlow({
-            openworkHostUrl: derived,
-            openworkToken: next.token ?? null,
+            vesloHostUrl: derived,
+            vesloToken: next.token ?? null,
           })
           .catch(() => undefined);
       }
@@ -3383,46 +3383,46 @@ export default function App() {
     return ok;
   };
 
-  const reconnectOpenworkServer = async () => {
-    if (openworkReconnectBusy()) return false;
-    setOpenworkReconnectBusy(true);
+  const reconnectVesloServer = async () => {
+    if (vesloReconnectBusy()) return false;
+    setVesloReconnectBusy(true);
     try {
-      let hostInfo = openworkServerHostInfo();
+      let hostInfo = vesloServerHostInfo();
       if (isTauriRuntime()) {
         try {
-          hostInfo = await openworkServerInfo();
-          setOpenworkServerHostInfo(hostInfo);
+          hostInfo = await vesloServerInfo();
+          setVesloServerHostInfo(hostInfo);
         } catch {
           hostInfo = null;
-          setOpenworkServerHostInfo(null);
+          setVesloServerHostInfo(null);
         }
       }
 
       // Repair stale local token state by syncing settings token from the live host.
       if (hostInfo?.clientToken?.trim() && startupPreference() !== "server") {
         const liveToken = hostInfo.clientToken.trim();
-        const settings = openworkServerSettings();
+        const settings = vesloServerSettings();
         if ((settings.token?.trim() ?? "") !== liveToken) {
-          updateOpenworkServerSettings({ ...settings, token: liveToken });
+          updateVesloServerSettings({ ...settings, token: liveToken });
         }
       }
 
-      const url = openworkServerBaseUrl().trim();
-      const auth = openworkServerAuth();
+      const url = vesloServerBaseUrl().trim();
+      const auth = vesloServerAuth();
       if (!url) {
-        setOpenworkServerStatus("disconnected");
-        setOpenworkServerCapabilities(null);
-        setOpenworkServerCheckedAt(Date.now());
+        setVesloServerStatus("disconnected");
+        setVesloServerCapabilities(null);
+        setVesloServerCheckedAt(Date.now());
         return false;
       }
 
-      const result = await checkOpenworkServer(url, auth.token, auth.hostToken);
-      setOpenworkServerStatus(result.status);
-      setOpenworkServerCapabilities(result.capabilities);
-      setOpenworkServerCheckedAt(Date.now());
+      const result = await checkVesloServer(url, auth.token, auth.hostToken);
+      setVesloServerStatus(result.status);
+      setVesloServerCapabilities(result.capabilities);
+      setVesloServerCheckedAt(Date.now());
       return result.status === "connected" || result.status === "limited";
     } finally {
-      setOpenworkReconnectBusy(false);
+      setVesloReconnectBusy(false);
     }
   };
 
@@ -3443,7 +3443,7 @@ export default function App() {
 
   const openWorkspaceConnectionSettings = (workspaceId: string) => {
     const workspace = workspaceStore.workspaces().find((item) => item.id === workspaceId) ?? null;
-    if (workspace?.workspaceType === "remote" && workspace.remoteType === "openwork") {
+    if (workspace?.workspaceType === "remote" && workspace.remoteType === "veslo") {
       setEditRemoteWorkspaceId(workspace.id);
       setEditRemoteWorkspaceError(null);
       setEditRemoteWorkspaceOpen(true);
@@ -3465,7 +3465,7 @@ export default function App() {
   const canReloadWorkspace = createMemo(() => {
     if (canReloadLocalEngine()) return true;
     if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "remote") return false;
-    return openworkServerStatus() === "connected" && Boolean(openworkServerClient() && openworkServerWorkspaceId());
+    return vesloServerStatus() === "connected" && Boolean(vesloServerClient() && vesloServerWorkspaceId());
   });
 
   const reloadWorkspaceEngineFromUi = async () => {
@@ -3477,9 +3477,9 @@ export default function App() {
       return false;
     }
 
-    const client = openworkServerClient();
-    const workspaceId = openworkServerWorkspaceId();
-    if (!client || !workspaceId || openworkServerStatus() !== "connected") {
+    const client = vesloServerClient();
+    const workspaceId = vesloServerWorkspaceId();
+    if (!client || !workspaceId || vesloServerStatus() !== "connected") {
       setError("Connect to this worker before applying runtime changes.");
       return false;
     }
@@ -3528,7 +3528,7 @@ export default function App() {
     repairOpencodeCache,
     dockerCleanupBusy,
     dockerCleanupResult,
-    cleanupOpenworkDockerContainers,
+    cleanupVesloDockerContainers,
     updateAutoCheck,
     setUpdateAutoCheck,
     updateAutoDownload,
@@ -3581,7 +3581,7 @@ export default function App() {
       setThemeMode("system");
       setEngineSource(isTauriRuntime() ? "sidecar" : "path");
       setEngineCustomBinPath("");
-      setEngineRuntime("openwork-orchestrator");
+      setEngineRuntime("veslo-orchestrator");
       setDefaultModel(DEFAULT_MODEL);
       setLegacyDefaultModel(DEFAULT_MODEL);
       setDefaultModelExplicit(false);
@@ -3598,8 +3598,8 @@ export default function App() {
       setStartupPreference(null);
       setRememberStartupChoice(false);
 
-      clearOpenworkServerSettings();
-      setOpenworkServerSettings(readOpenworkServerSettings());
+      clearVesloServerSettings();
+      setVesloServerSettings(readVesloServerSettings());
 
       setNotionStatus("disconnected");
       setNotionStatusDetail(null);
@@ -3607,7 +3607,7 @@ export default function App() {
       setNotionSkillInstalled(false);
       setTryNotionPromptVisible(false);
 
-      return { ok: true, message: "Reset app config defaults. Restart OpenWork if any stale settings remain." };
+      return { ok: true, message: "Reset app config defaults. Restart Veslo if any stale settings remain." };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to reset app config defaults.";
       return { ok: false, message };
@@ -3668,7 +3668,7 @@ export default function App() {
   };
 
   onMount(() => {
-    // OpenCode hot reload drives freshness now; OpenWork no longer listens for
+    // OpenCode hot reload drives freshness now; Veslo no longer listens for
     // legacy reload-required events.
   });
 
@@ -3685,12 +3685,12 @@ export default function App() {
   } = workspaceStore;
 
   // Scheduler helpers - must be defined after workspaceStore
-  const resolveOpenworkScheduler = () => {
+  const resolveVesloScheduler = () => {
     const isRemoteWorkspace = workspaceStore.activeWorkspaceDisplay().workspaceType === "remote";
     if (!isRemoteWorkspace) return null;
-    const client = openworkServerClient();
-    const workspaceId = openworkServerWorkspaceId();
-    if (openworkServerStatus() !== "connected" || !client || !workspaceId) return null;
+    const client = vesloServerClient();
+    const workspaceId = vesloServerWorkspaceId();
+    if (vesloServerStatus() !== "connected" || !client || !workspaceId) return null;
     return { client, workspaceId };
   };
 
@@ -3700,9 +3700,9 @@ export default function App() {
 
   const scheduledJobsSourceReady = createMemo(() => {
     if (scheduledJobsSource() !== "remote") return true;
-    const client = openworkServerClient();
-    const workspaceId = openworkServerWorkspaceId();
-    return openworkServerStatus() === "connected" && Boolean(client && workspaceId);
+    const client = vesloServerClient();
+    const workspaceId = vesloServerWorkspaceId();
+    return vesloServerStatus() === "connected" && Boolean(client && workspaceId);
   });
 
   const schedulerPluginInstalled = createMemo(() => isPluginInstalledByName("opencode-scheduler"));
@@ -3711,15 +3711,15 @@ export default function App() {
     if (scheduledJobsBusy() && !options?.force) return;
 
     if (scheduledJobsSource() === "remote") {
-      const scheduler = resolveOpenworkScheduler();
+      const scheduler = resolveVesloScheduler();
       if (!scheduler) {
         setScheduledJobs([]);
         const status =
-          openworkServerStatus() === "disconnected"
-            ? "OpenWork server unavailable. Connect to sync scheduled tasks."
-            : openworkServerStatus() === "limited"
-              ? "OpenWork server needs a token to load scheduled tasks."
-              : "OpenWork server not ready.";
+          vesloServerStatus() === "disconnected"
+            ? "Veslo server unavailable. Connect to sync scheduled tasks."
+            : vesloServerStatus() === "limited"
+              ? "Veslo server needs a token to load scheduled tasks."
+              : "Veslo server not ready.";
         setScheduledJobsStatus(status);
         return;
       }
@@ -3779,9 +3779,9 @@ export default function App() {
 
   const deleteScheduledJob = async (name: string) => {
     if (scheduledJobsSource() === "remote") {
-      const scheduler = resolveOpenworkScheduler();
+      const scheduler = resolveVesloScheduler();
       if (!scheduler) {
-        throw new Error("OpenWork server unavailable. Connect to sync scheduled tasks.");
+        throw new Error("Veslo server unavailable. Connect to sync scheduled tasks.");
       }
       const response = await scheduler.client.deleteScheduledJob(scheduler.workspaceId, name);
       setScheduledJobs((current) => current.filter((entry) => entry.slug !== response.job.slug));
@@ -3801,8 +3801,8 @@ export default function App() {
   };
 
   const resolveSoulWorkspaceMap = async () => {
-    const client = openworkServerClient();
-    if (!client || openworkServerStatus() !== "connected") {
+    const client = vesloServerClient();
+    if (!client || vesloServerStatus() !== "connected") {
       return {} as Record<string, string>;
     }
 
@@ -3828,14 +3828,14 @@ export default function App() {
         continue;
       }
 
-      if (workspace.remoteType !== "openwork") {
+      if (workspace.remoteType !== "veslo") {
         continue;
       }
 
       const explicitId =
-        workspace.openworkWorkspaceId?.trim() ||
-        parseOpenworkWorkspaceIdFromUrl(workspace.openworkHostUrl ?? "") ||
-        parseOpenworkWorkspaceIdFromUrl(workspace.baseUrl ?? "");
+        workspace.vesloWorkspaceId?.trim() ||
+        parseVesloWorkspaceIdFromUrl(workspace.vesloHostUrl ?? "") ||
+        parseVesloWorkspaceIdFromUrl(workspace.baseUrl ?? "");
       if (explicitId) {
         map[workspace.id] = explicitId;
         continue;
@@ -3860,8 +3860,8 @@ export default function App() {
   const refreshSoulData = async (options?: { force?: boolean }) => {
     if (soulStatusBusy() && !options?.force) return;
 
-    const client = openworkServerClient();
-    if (!client || openworkServerStatus() !== "connected") {
+    const client = vesloServerClient();
+    if (!client || vesloServerStatus() !== "connected") {
       setSoulStatusByWorkspaceId({});
       setActiveSoulHeartbeats([]);
       setSoulHeartbeatsBusy(false);
@@ -3875,16 +3875,16 @@ export default function App() {
       const workspaceMap = await resolveSoulWorkspaceMap();
       const workspaceIds = Object.entries(workspaceMap);
 
-      const nextStatusByWorkspace: Record<string, OpenworkSoulStatus | null> = {};
+      const nextStatusByWorkspace: Record<string, VesloSoulStatus | null> = {};
       for (const workspace of workspaceStore.workspaces()) {
         nextStatusByWorkspace[workspace.id] = null;
       }
 
       let hadStatusError = false;
       await Promise.all(
-        workspaceIds.map(async ([workspaceId, openworkId]) => {
+        workspaceIds.map(async ([workspaceId, vesloId]) => {
           try {
-            const status = await client.getSoulStatus(openworkId);
+            const status = await client.getSoulStatus(vesloId);
             nextStatusByWorkspace[workspaceId] = status;
           } catch {
             hadStatusError = true;
@@ -3895,8 +3895,8 @@ export default function App() {
       setSoulStatusByWorkspaceId(nextStatusByWorkspace);
 
       const activeWorkspaceId = workspaceStore.activeWorkspaceId();
-      const activeOpenworkId = workspaceMap[activeWorkspaceId];
-      if (!activeOpenworkId) {
+      const activeVesloId = workspaceMap[activeWorkspaceId];
+      if (!activeVesloId) {
         setActiveSoulHeartbeats([]);
         setSoulHeartbeatsBusy(false);
         if (hadStatusError) {
@@ -3907,7 +3907,7 @@ export default function App() {
 
       setSoulHeartbeatsBusy(true);
       try {
-        const response = await client.listSoulHeartbeats(activeOpenworkId, 30);
+        const response = await client.listSoulHeartbeats(activeVesloId, 30);
         setActiveSoulHeartbeats(Array.isArray(response.items) ? response.items : []);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to load soul heartbeats.";
@@ -3939,8 +3939,8 @@ export default function App() {
 
   let lastSoulRefreshKey = "";
   createEffect(() => {
-    const status = openworkServerStatus();
-    const hasClient = Boolean(openworkServerClient());
+    const status = vesloServerStatus();
+    const hasClient = Boolean(vesloServerClient());
     const activeWorkspaceId = workspaceStore.activeWorkspaceId();
     const workspacesKey = workspaceStore
       .workspaces()
@@ -3948,7 +3948,7 @@ export default function App() {
         const root = workspace.workspaceType === "local"
           ? workspace.path?.trim() ?? ""
           : workspace.directory?.trim() ?? workspace.path?.trim() ?? "";
-        return [workspace.id, workspace.workspaceType, workspace.remoteType ?? "", root, workspace.openworkWorkspaceId ?? ""].join("|");
+        return [workspace.id, workspace.workspaceType, workspace.remoteType ?? "", root, workspace.vesloWorkspaceId ?? ""].join("|");
       })
       .join(";");
     const key = [status, hasClient ? "1" : "0", activeWorkspaceId, workspacesKey].join("::");
@@ -4034,9 +4034,9 @@ export default function App() {
     if (isTauriRuntime()) return;
     if (autoConnectAttempted()) return;
     if (client()) return;
-    if (openworkServerStatus() !== "connected") return;
+    if (vesloServerStatus() !== "connected") return;
 
-    const settings = openworkServerSettings();
+    const settings = vesloServerSettings();
     if (!settings.urlOverride || !settings.token) return;
 
     setAutoConnectAttempted(true);
@@ -4203,7 +4203,7 @@ export default function App() {
 
     if (typeof window !== "undefined" && currentView() === "session") {
       requestAnimationFrame(() => {
-        window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
+        window.dispatchEvent(new CustomEvent("veslo:focusPrompt"));
       });
     }
   }
@@ -4221,16 +4221,16 @@ export default function App() {
       return;
     }
 
-    const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = openworkServerWorkspaceId();
-    const openworkCapabilities = resolvedOpenworkCapabilities();
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.mcp?.write;
+    const vesloClient = vesloServerClient();
+    const vesloWorkspaceId = vesloServerWorkspaceId();
+    const vesloCapabilities = resolvedVesloCapabilities();
+    const canUseVesloServer =
+      vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.mcp?.write;
 
-    if (!canUseOpenworkServer && !isTauriRuntime()) {
+    if (!canUseVesloServer && !isTauriRuntime()) {
       setNotionError("Notion connections require the desktop app.");
       return;
     }
@@ -4244,8 +4244,8 @@ export default function App() {
     setNotionSkillInstalled(false);
 
     try {
-      if (canUseOpenworkServer) {
-        await openworkClient.addMcp(openworkWorkspaceId, {
+      if (canUseVesloServer) {
+        await vesloClient.addMcp(vesloWorkspaceId, {
           name: "notion",
           config: {
             type: "remote",
@@ -4281,9 +4281,9 @@ export default function App() {
       await refreshMcpServers();
       setNotionStatusDetail(t("mcp.connecting", currentLocale()));
       try {
-        window.localStorage.setItem("openwork.notionStatus", "connecting");
-        window.localStorage.setItem("openwork.notionStatusDetail", t("mcp.connecting", currentLocale()));
-        window.localStorage.setItem("openwork.notionSkillInstalled", "0");
+        window.localStorage.setItem("veslo.notionStatus", "connecting");
+        window.localStorage.setItem("veslo.notionStatusDetail", t("mcp.connecting", currentLocale()));
+        window.localStorage.setItem("veslo.notionSkillInstalled", "0");
       } catch {
         // ignore
       }
@@ -4299,18 +4299,18 @@ export default function App() {
     const projectDir = workspaceProjectDir().trim();
     const isRemoteWorkspace = workspaceStore.activeWorkspaceDisplay().workspaceType === "remote";
     const isLocalWorkspace = !isRemoteWorkspace;
-    const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = openworkServerWorkspaceId();
-    const openworkCapabilities = resolvedOpenworkCapabilities();
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.mcp?.read;
+    const vesloClient = vesloServerClient();
+    const vesloWorkspaceId = vesloServerWorkspaceId();
+    const vesloCapabilities = resolvedVesloCapabilities();
+    const canUseVesloServer =
+      vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.mcp?.read;
 
     if (isRemoteWorkspace) {
-      if (!canUseOpenworkServer) {
-        setMcpStatus("OpenWork server unavailable. MCP config is read-only.");
+      if (!canUseVesloServer) {
+        setMcpStatus("Veslo server unavailable. MCP config is read-only.");
         setMcpServers([]);
         setMcpStatuses({});
         return;
@@ -4318,7 +4318,7 @@ export default function App() {
 
       try {
         setMcpStatus(null);
-        const response = await openworkClient.listMcp(openworkWorkspaceId);
+        const response = await vesloClient.listMcp(vesloWorkspaceId);
         const next = response.items.map((entry) => ({
           name: entry.name,
           config: entry.config as McpServerEntry["config"],
@@ -4349,10 +4349,10 @@ export default function App() {
       return;
     }
 
-    if (isLocalWorkspace && canUseOpenworkServer) {
+    if (isLocalWorkspace && canUseVesloServer) {
       try {
         setMcpStatus(null);
-        const response = await openworkClient.listMcp(openworkWorkspaceId);
+        const response = await vesloClient.listMcp(vesloWorkspaceId);
         const next = response.items.map((entry) => ({
           name: entry.name,
           config: entry.config as McpServerEntry["config"],
@@ -4435,7 +4435,7 @@ export default function App() {
     const startedAt = perfNow();
     const isRemoteWorkspace =
       workspaceStore.activeWorkspaceDisplay().workspaceType === "remote" ||
-      (!isTauriRuntime() && openworkServerStatus() === "connected");
+      (!isTauriRuntime() && vesloServerStatus() === "connected");
     const projectDir = workspaceProjectDir().trim();
     const entryType = entry.type ?? "remote";
 
@@ -4446,36 +4446,36 @@ export default function App() {
       projectDir: projectDir || null,
     });
 
-    const openworkClient = openworkServerClient();
-    let openworkWorkspaceId = openworkServerWorkspaceId();
-    const openworkCapabilities = resolvedOpenworkCapabilities();
-    if (!openworkWorkspaceId && openworkClient && openworkServerStatus() === "connected") {
+    const vesloClient = vesloServerClient();
+    let vesloWorkspaceId = vesloServerWorkspaceId();
+    const vesloCapabilities = resolvedVesloCapabilities();
+    if (!vesloWorkspaceId && vesloClient && vesloServerStatus() === "connected") {
       try {
-        const response = await openworkClient.listWorkspaces();
+        const response = await vesloClient.listWorkspaces();
         const match = response.items?.[0];
         if (match?.id) {
-          openworkWorkspaceId = match.id;
-          setOpenworkServerWorkspaceId(match.id);
+          vesloWorkspaceId = match.id;
+          setVesloServerWorkspaceId(match.id);
         }
       } catch {
         // ignore
       }
     }
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.mcp?.write;
+    const canUseVesloServer =
+      vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.mcp?.write;
 
-    if (isRemoteWorkspace && !canUseOpenworkServer) {
-      setMcpStatus("OpenWork server unavailable. MCP config is read-only.");
+    if (isRemoteWorkspace && !canUseVesloServer) {
+      setMcpStatus("Veslo server unavailable. MCP config is read-only.");
       finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
-        reason: "openwork-server-unavailable",
+        reason: "veslo-server-unavailable",
       });
       return;
     }
 
-    if (!canUseOpenworkServer && !isTauriRuntime()) {
+    if (!canUseVesloServer && !isTauriRuntime()) {
       setMcpStatus(t("mcp.desktop_required", currentLocale()));
       finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "desktop-required",
@@ -4493,11 +4493,11 @@ export default function App() {
 
     let activeClient = client();
     if (!activeClient) {
-      const openworkBaseUrl = openworkServerBaseUrl().trim();
-      const auth = openworkServerAuth();
-      if (openworkBaseUrl && auth.token) {
-        const opencodeUrl = `${openworkBaseUrl.replace(/\/+$/, "")}/opencode`;
-        activeClient = createClient(opencodeUrl, undefined, { token: auth.token, mode: "openwork" });
+      const vesloBaseUrl = vesloServerBaseUrl().trim();
+      const auth = vesloServerAuth();
+      if (vesloBaseUrl && auth.token) {
+        const opencodeUrl = `${vesloBaseUrl.replace(/\/+$/, "")}/opencode`;
+        activeClient = createClient(opencodeUrl, undefined, { token: auth.token, mode: "veslo" });
         setClient(activeClient);
       }
     }
@@ -4559,8 +4559,8 @@ export default function App() {
         mcpEntryConfig["command"] = entry.command;
       }
 
-      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-        await openworkClient.addMcp(openworkWorkspaceId, {
+      if (canUseVesloServer && vesloClient && vesloWorkspaceId) {
+        await vesloClient.addMcp(vesloWorkspaceId, {
           name: slug,
           config: mcpEntryConfig,
         });
@@ -4650,47 +4650,47 @@ export default function App() {
   async function logoutMcpAuth(name: string) {
     const isRemoteWorkspace =
       workspaceStore.activeWorkspaceDisplay().workspaceType === "remote" ||
-      (!isTauriRuntime() && openworkServerStatus() === "connected");
+      (!isTauriRuntime() && vesloServerStatus() === "connected");
     const projectDir = workspaceProjectDir().trim();
 
-    const openworkClient = openworkServerClient();
-    let openworkWorkspaceId = openworkServerWorkspaceId();
-    const openworkCapabilities = resolvedOpenworkCapabilities();
-    if (!openworkWorkspaceId && openworkClient && openworkServerStatus() === "connected") {
+    const vesloClient = vesloServerClient();
+    let vesloWorkspaceId = vesloServerWorkspaceId();
+    const vesloCapabilities = resolvedVesloCapabilities();
+    if (!vesloWorkspaceId && vesloClient && vesloServerStatus() === "connected") {
       try {
-        const response = await openworkClient.listWorkspaces();
+        const response = await vesloClient.listWorkspaces();
         const match = response.items?.[0];
         if (match?.id) {
-          openworkWorkspaceId = match.id;
-          setOpenworkServerWorkspaceId(match.id);
+          vesloWorkspaceId = match.id;
+          setVesloServerWorkspaceId(match.id);
         }
       } catch {
         // ignore
       }
     }
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.mcp?.write;
+    const canUseVesloServer =
+      vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.mcp?.write;
 
-    if (isRemoteWorkspace && !canUseOpenworkServer) {
-      setMcpStatus("OpenWork server unavailable. MCP auth is read-only.");
+    if (isRemoteWorkspace && !canUseVesloServer) {
+      setMcpStatus("Veslo server unavailable. MCP auth is read-only.");
       return;
     }
 
-    if (!canUseOpenworkServer && !isTauriRuntime()) {
+    if (!canUseVesloServer && !isTauriRuntime()) {
       setMcpStatus(t("mcp.desktop_required", currentLocale()));
       return;
     }
 
     let activeClient = client();
     if (!activeClient) {
-      const openworkBaseUrl = openworkServerBaseUrl().trim();
-      const auth = openworkServerAuth();
-      if (openworkBaseUrl && auth.token) {
-        const opencodeUrl = `${openworkBaseUrl.replace(/\/+$/, "")}/opencode`;
-        activeClient = createClient(opencodeUrl, undefined, { token: auth.token, mode: "openwork" });
+      const vesloBaseUrl = vesloServerBaseUrl().trim();
+      const auth = vesloServerAuth();
+      if (vesloBaseUrl && auth.token) {
+        const opencodeUrl = `${vesloBaseUrl.replace(/\/+$/, "")}/opencode`;
+        activeClient = createClient(opencodeUrl, undefined, { token: auth.token, mode: "veslo" });
         setClient(activeClient);
       }
     }
@@ -4722,8 +4722,8 @@ export default function App() {
     setMcpStatus(null);
 
     try {
-      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-        await openworkClient.logoutMcpAuth(openworkWorkspaceId, safeName);
+      if (canUseVesloServer && vesloClient && vesloWorkspaceId) {
+        await vesloClient.logoutMcpAuth(vesloWorkspaceId, safeName);
       } else {
         try {
           await activeClient.mcp.disconnect({ directory: resolvedProjectDir, name: safeName });
@@ -4751,16 +4751,16 @@ export default function App() {
     try {
       setMcpStatus(null);
 
-      const openworkClient = openworkServerClient();
-      const openworkWorkspaceId = openworkServerWorkspaceId();
-      const canUseOpenworkServer =
-        openworkServerStatus() === "connected" &&
-        openworkClient &&
-        openworkWorkspaceId &&
-        resolvedOpenworkCapabilities()?.mcp?.write;
+      const vesloClient = vesloServerClient();
+      const vesloWorkspaceId = vesloServerWorkspaceId();
+      const canUseVesloServer =
+        vesloServerStatus() === "connected" &&
+        vesloClient &&
+        vesloWorkspaceId &&
+        resolvedVesloCapabilities()?.mcp?.write;
 
-      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-        await openworkClient.removeMcp(openworkWorkspaceId, name);
+      if (canUseVesloServer && vesloClient && vesloWorkspaceId) {
+        await vesloClient.removeMcp(vesloWorkspaceId, name);
       } else {
         const projectDir = workspaceProjectDir().trim();
         if (!projectDir) {
@@ -4789,7 +4789,7 @@ export default function App() {
     const perfEnabled = developerMode();
     const startedAt = perfNow();
     const runId = (() => {
-      const key = "__openwork_create_session_run__";
+      const key = "__veslo_create_session_run__";
       const w = window as typeof window & { [key]?: number };
       w[key] = (w[key] ?? 0) + 1;
       return w[key];
@@ -4982,24 +4982,24 @@ export default function App() {
         // always stale after a relaunch. The correct baseUrl is provided by engine_info().
         // Web mode still needs the cached value since it connects to a fixed server URL.
         if (!isTauriRuntime()) {
-          const storedBaseUrl = window.localStorage.getItem("openwork.baseUrl");
+          const storedBaseUrl = window.localStorage.getItem("veslo.baseUrl");
           if (storedBaseUrl) {
             setBaseUrl(storedBaseUrl);
           }
         }
 
         const storedClientDir = window.localStorage.getItem(
-          "openwork.clientDirectory"
+          "veslo.clientDirectory"
         );
         if (storedClientDir) {
           setClientDirectory(storedClientDir);
         }
 
         const storedEngineSource = window.localStorage.getItem(
-          "openwork.engineSource"
+          "veslo.engineSource"
         );
         const storedEngineCustomBinPath = window.localStorage.getItem(
-          "openwork.engineCustomBinPath"
+          "veslo.engineCustomBinPath"
         );
         if (storedEngineCustomBinPath) {
           setEngineCustomBinPath(storedEngineCustomBinPath);
@@ -5017,9 +5017,9 @@ export default function App() {
         }
 
         const storedEngineRuntime = window.localStorage.getItem(
-          "openwork.engineRuntime"
+          "veslo.engineRuntime"
         );
-        if (storedEngineRuntime === "direct" || storedEngineRuntime === "openwork-orchestrator") {
+        if (storedEngineRuntime === "direct" || storedEngineRuntime === "veslo-orchestrator") {
           setEngineRuntime(storedEngineRuntime);
         }
 
@@ -5086,14 +5086,14 @@ export default function App() {
         }
 
         const storedUpdateAutoCheck = window.localStorage.getItem(
-          "openwork.updateAutoCheck"
+          "veslo.updateAutoCheck"
         );
         if (storedUpdateAutoCheck === "0" || storedUpdateAutoCheck === "1") {
           setUpdateAutoCheck(storedUpdateAutoCheck === "1");
         }
 
         const storedUpdateAutoDownload = window.localStorage.getItem(
-          "openwork.updateAutoDownload"
+          "veslo.updateAutoDownload"
         );
         if (storedUpdateAutoDownload === "0" || storedUpdateAutoDownload === "1") {
           const enabled = storedUpdateAutoDownload === "1";
@@ -5104,7 +5104,7 @@ export default function App() {
         }
 
         const storedUpdateCheckedAt = window.localStorage.getItem(
-          "openwork.updateLastCheckedAt"
+          "veslo.updateLastCheckedAt"
         );
         if (storedUpdateCheckedAt) {
           const parsed = Number(storedUpdateCheckedAt);
@@ -5113,7 +5113,7 @@ export default function App() {
           }
         }
 
-        const storedNotionStatus = window.localStorage.getItem("openwork.notionStatus");
+        const storedNotionStatus = window.localStorage.getItem("veslo.notionStatus");
         if (
           storedNotionStatus === "disconnected" ||
           storedNotionStatus === "connected" ||
@@ -5123,7 +5123,7 @@ export default function App() {
           setNotionStatus(storedNotionStatus);
         }
 
-        const storedNotionDetail = window.localStorage.getItem("openwork.notionStatusDetail");
+        const storedNotionDetail = window.localStorage.getItem("veslo.notionStatusDetail");
         if (storedNotionDetail) {
           setNotionStatusDetail(storedNotionDetail);
         } else if (storedNotionStatus === "connecting") {
@@ -5132,7 +5132,7 @@ export default function App() {
 
         await refreshMcpServers();
 
-        const storedNotionSkillInstalled = window.localStorage.getItem("openwork.notionSkillInstalled");
+        const storedNotionSkillInstalled = window.localStorage.getItem("veslo.notionSkillInstalled");
         if (storedNotionSkillInstalled === "1") {
           setNotionSkillInstalled(true);
         }
@@ -5245,14 +5245,14 @@ export default function App() {
     const workspaceType = workspaceStore.activeWorkspaceDisplay().workspaceType;
     const workspaceRoot = workspaceStore.activeWorkspacePath().trim();
     const activeClient = client();
-    const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = openworkServerWorkspaceId();
-    const openworkCapabilities = resolvedOpenworkCapabilities();
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.read;
+    const vesloClient = vesloServerClient();
+    const vesloWorkspaceId = vesloServerWorkspaceId();
+    const vesloCapabilities = resolvedVesloCapabilities();
+    const canUseVesloServer =
+      vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.config?.read;
 
     let cancelled = false;
 
@@ -5261,9 +5261,9 @@ export default function App() {
       let configFileContent: string | null = null;
 
       if (workspaceType === "local" && workspaceRoot) {
-        if (canUseOpenworkServer) {
+        if (canUseVesloServer) {
           try {
-            const config = await openworkClient.getConfig(openworkWorkspaceId);
+            const config = await vesloClient.getConfig(vesloWorkspaceId);
             const model = typeof config.opencode?.model === "string" ? config.opencode.model : null;
             configDefault = parseModelRef(model);
           } catch {
@@ -5325,24 +5325,24 @@ export default function App() {
     const root = workspaceStore.activeWorkspacePath().trim();
     if (!root) return;
     const nextModel = defaultModel();
-    const openworkClient = openworkServerClient();
-    const openworkWorkspaceId = openworkServerWorkspaceId();
-    const openworkCapabilities = resolvedOpenworkCapabilities();
-    const canUseOpenworkServer =
-      openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.write;
+    const vesloClient = vesloServerClient();
+    const vesloWorkspaceId = vesloServerWorkspaceId();
+    const vesloCapabilities = resolvedVesloCapabilities();
+    const canUseVesloServer =
+      vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.config?.write;
     let cancelled = false;
 
     const writeConfig = async () => {
       try {
-        if (canUseOpenworkServer) {
-          const config = await openworkClient.getConfig(openworkWorkspaceId);
+        if (canUseVesloServer) {
+          const config = await vesloClient.getConfig(vesloWorkspaceId);
           const currentModel = typeof config.opencode?.model === "string" ? parseModelRef(config.opencode.model) : null;
           if (currentModel && modelEquals(currentModel, nextModel)) return;
 
-          await openworkClient.patchConfig(openworkWorkspaceId, {
+          await vesloClient.patchConfig(vesloWorkspaceId, {
             opencode: { model: formatModelRef(nextModel) },
           });
           markReloadRequired("config", {
@@ -5387,7 +5387,7 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem("openwork.baseUrl", baseUrl());
+      window.localStorage.setItem("veslo.baseUrl", baseUrl());
     } catch {
       // ignore
     }
@@ -5397,7 +5397,7 @@ export default function App() {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem(
-        "openwork.clientDirectory",
+        "veslo.clientDirectory",
         clientDirectory()
       );
     } catch {
@@ -5409,7 +5409,7 @@ export default function App() {
     if (typeof window === "undefined") return;
     // Legacy key: keep for backwards compatibility.
     try {
-      window.localStorage.setItem("openwork.projectDir", workspaceProjectDir());
+      window.localStorage.setItem("veslo.projectDir", workspaceProjectDir());
     } catch {
       // ignore
     }
@@ -5418,7 +5418,7 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem("openwork.engineSource", engineSource());
+      window.localStorage.setItem("veslo.engineSource", engineSource());
     } catch {
       // ignore
     }
@@ -5429,9 +5429,9 @@ export default function App() {
     try {
       const value = engineCustomBinPath().trim();
       if (value) {
-        window.localStorage.setItem("openwork.engineCustomBinPath", value);
+        window.localStorage.setItem("veslo.engineCustomBinPath", value);
       } else {
-        window.localStorage.removeItem("openwork.engineCustomBinPath");
+        window.localStorage.removeItem("veslo.engineCustomBinPath");
       }
     } catch {
       // ignore
@@ -5441,7 +5441,7 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem("openwork.engineRuntime", engineRuntime());
+      window.localStorage.setItem("veslo.engineRuntime", engineRuntime());
     } catch {
       // ignore
     }
@@ -5463,7 +5463,7 @@ export default function App() {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem(
-        "openwork.updateAutoCheck",
+        "veslo.updateAutoCheck",
         updateAutoCheck() ? "1" : "0"
       );
     } catch {
@@ -5475,7 +5475,7 @@ export default function App() {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem(
-        "openwork.updateAutoDownload",
+        "veslo.updateAutoDownload",
         updateAutoDownload() ? "1" : "0"
       );
     } catch {
@@ -5541,7 +5541,7 @@ export default function App() {
     if (state.state === "idle" && state.lastCheckedAt) {
       try {
         window.localStorage.setItem(
-          "openwork.updateLastCheckedAt",
+          "veslo.updateLastCheckedAt",
           String(state.lastCheckedAt)
         );
       } catch {
@@ -5598,18 +5598,18 @@ export default function App() {
       return fallbackVersion || null;
     }
 
-    const openworkVersion =
+    const vesloVersion =
       appVersion()?.trim() ||
-      openworkServerDiagnostics()?.version?.trim() ||
+      vesloServerDiagnostics()?.version?.trim() ||
       "";
-    if (!openworkVersion) {
+    if (!vesloVersion) {
       return fallbackVersion || null;
     }
 
-    const normalizedVersion = openworkVersion.startsWith("v")
-      ? openworkVersion
-      : `v${openworkVersion}`;
-    return `OpenWork ${normalizedVersion}`;
+    const normalizedVersion = vesloVersion.startsWith("v")
+      ? vesloVersion
+      : `v${vesloVersion}`;
+    return `Veslo ${normalizedVersion}`;
   });
 
   const headerStatus = createMemo(() => {
@@ -5692,8 +5692,8 @@ export default function App() {
     rememberStartupChoice: rememberStartupChoice(),
     busy: busy(),
     clientDirectory: clientDirectory(),
-    openworkHostUrl: openworkServerSettings().urlOverride ?? "",
-    openworkToken: openworkServerSettings().token ?? "",
+    vesloHostUrl: vesloServerSettings().urlOverride ?? "",
+    vesloToken: vesloServerSettings().token ?? "",
     newAuthorizedDir: newAuthorizedDir(),
     authorizedDirs: workspaceStore.authorizedDirs(),
     activeWorkspacePath: workspaceStore.activeWorkspacePath(),
@@ -5718,14 +5718,14 @@ export default function App() {
     migrationRepairResult: workspaceStore.migrationRepairResult(),
     isWindows: isWindowsPlatform(),
     onClientDirectoryChange: setClientDirectory,
-    onOpenworkHostUrlChange: (value: string) =>
-      updateOpenworkServerSettings({
-        ...openworkServerSettings(),
+    onVesloHostUrlChange: (value: string) =>
+      updateVesloServerSettings({
+        ...vesloServerSettings(),
         urlOverride: value,
       }),
-    onOpenworkTokenChange: (value: string) =>
-      updateOpenworkServerSettings({
-        ...openworkServerSettings(),
+    onVesloTokenChange: (value: string) =>
+      updateVesloServerSettings({
+        ...vesloServerSettings(),
         token: value,
       }),
     onSelectStartup: workspaceStore.onSelectStartup,
@@ -5765,32 +5765,32 @@ export default function App() {
   const dashboardProps = () => {
     const workspaceType = activeWorkspaceDisplay().workspaceType;
     const isRemoteWorkspace = workspaceType === "remote";
-    const openworkStatus = openworkServerStatus();
+    const vesloStatus = vesloServerStatus();
     const canUseDesktopTools = isTauriRuntime() && !isRemoteWorkspace;
     const canInstallSkillCreator = isRemoteWorkspace
-      ? openworkServerCanWriteSkills()
+      ? vesloServerCanWriteSkills()
       : isTauriRuntime();
     const canEditPlugins = isRemoteWorkspace
-      ? openworkServerCanWritePlugins()
+      ? vesloServerCanWritePlugins()
       : isTauriRuntime();
     const canUseGlobalPluginScope = !isRemoteWorkspace && isTauriRuntime();
     const skillsAccessHint = isRemoteWorkspace
-      ? openworkStatus === "disconnected"
-        ? "OpenWork server unavailable. Add the server URL/token in Advanced to manage skills."
-        : openworkStatus === "limited"
-          ? "OpenWork server needs a host token to install/update skills. Add it in Advanced and reconnect."
-          : openworkServerCanWriteSkills()
+      ? vesloStatus === "disconnected"
+        ? "Veslo server unavailable. Add the server URL/token in Advanced to manage skills."
+        : vesloStatus === "limited"
+          ? "Veslo server needs a host token to install/update skills. Add it in Advanced and reconnect."
+          : vesloServerCanWriteSkills()
             ? null
-            : "OpenWork server is read-only for skills. Add a host token in Advanced to enable installs."
+            : "Veslo server is read-only for skills. Add a host token in Advanced to enable installs."
       : null;
     const pluginsAccessHint = isRemoteWorkspace
-      ? openworkStatus === "disconnected"
-        ? "OpenWork server unavailable. Plugins are read-only."
-        : openworkStatus === "limited"
-          ? "OpenWork server needs a token to edit plugins."
-          : openworkServerCanWritePlugins()
+      ? vesloStatus === "disconnected"
+        ? "Veslo server unavailable. Plugins are read-only."
+        : vesloStatus === "limited"
+          ? "Veslo server needs a token to edit plugins."
+          : vesloServerCanWritePlugins()
             ? null
-            : "OpenWork server is read-only for plugins."
+            : "Veslo server is read-only for plugins."
       : null;
 
     return {
@@ -5821,27 +5821,27 @@ export default function App() {
       newTaskDisabled: newTaskDisabled(),
       headerStatus: headerStatus(),
       error: error(),
-      openworkServerStatus: openworkStatus,
-      openworkServerUrl: openworkServerUrl(),
-      openworkServerClient: openworkServerClient(),
-      openworkReconnectBusy: openworkReconnectBusy(),
-      reconnectOpenworkServer,
-      openworkServerSettings: openworkServerSettings(),
-      openworkServerHostInfo: openworkServerHostInfo(),
-      openworkServerCapabilities: devtoolsCapabilities(),
-      openworkServerDiagnostics: openworkServerDiagnostics(),
-      openworkServerWorkspaceId: resolvedDevtoolsWorkspaceId(),
-      openworkAuditEntries: openworkAuditEntries(),
-      openworkAuditStatus: openworkAuditStatus(),
-      openworkAuditError: openworkAuditError(),
+      vesloServerStatus: vesloStatus,
+      vesloServerUrl: vesloServerUrl(),
+      vesloServerClient: vesloServerClient(),
+      vesloReconnectBusy: vesloReconnectBusy(),
+      reconnectVesloServer,
+      vesloServerSettings: vesloServerSettings(),
+      vesloServerHostInfo: vesloServerHostInfo(),
+      vesloServerCapabilities: devtoolsCapabilities(),
+      vesloServerDiagnostics: vesloServerDiagnostics(),
+      vesloServerWorkspaceId: resolvedDevtoolsWorkspaceId(),
+      vesloAuditEntries: vesloAuditEntries(),
+      vesloAuditStatus: vesloAuditStatus(),
+      vesloAuditError: vesloAuditError(),
       opencodeConnectStatus: opencodeConnectStatus(),
       engineInfo: workspaceStore.engine(),
       orchestratorStatus: orchestratorStatusState(),
       opencodeRouterInfo: opencodeRouterInfoState(),
       engineDoctorVersion: workspaceStore.engineDoctorResult()?.version ?? null,
-      updateOpenworkServerSettings,
-      resetOpenworkServerSettings,
-      testOpenworkServerConnection,
+      updateVesloServerSettings,
+      resetVesloServerSettings,
+      testVesloServerConnection,
       canReloadWorkspace: canReloadWorkspace(),
       reloadWorkspaceEngine: reloadWorkspaceEngineAndResume,
       reloadBusy: reloadBusy(),
@@ -5995,7 +5995,7 @@ export default function App() {
       repairOpencodeCache,
       cacheRepairBusy: cacheRepairBusy(),
       cacheRepairResult: cacheRepairResult(),
-      cleanupOpenworkDockerContainers,
+      cleanupVesloDockerContainers,
       dockerCleanupBusy: dockerCleanupBusy(),
       dockerCleanupResult: dockerCleanupResult(),
       resetAppConfigDefaults,
@@ -6069,12 +6069,12 @@ export default function App() {
     exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
     exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
     clientConnected: Boolean(client()),
-    openworkServerStatus: openworkServerStatus(),
+    vesloServerStatus: vesloServerStatus(),
     startupPreference: startupPreference(),
-    openworkServerClient: openworkServerClient(),
-    openworkServerSettings: openworkServerSettings(),
-    openworkServerHostInfo: openworkServerHostInfo(),
-    openworkServerWorkspaceId: openworkServerWorkspaceId(),
+    vesloServerClient: vesloServerClient(),
+    vesloServerSettings: vesloServerSettings(),
+    vesloServerHostInfo: vesloServerHostInfo(),
+    vesloServerWorkspaceId: vesloServerWorkspaceId(),
     engineInfo: workspaceStore.engine(),
     stopHost,
     headerStatus: headerStatus(),
@@ -6165,7 +6165,7 @@ export default function App() {
       setTryNotionPromptVisible(false);
       setNotionSkillInstalled(true);
       try {
-        window.localStorage.setItem("openwork.notionSkillInstalled", "1");
+        window.localStorage.setItem("veslo.notionSkillInstalled", "1");
       } catch {
         // ignore
       }

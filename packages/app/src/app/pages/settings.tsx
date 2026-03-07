@@ -6,17 +6,17 @@ import Button from "../components/button";
 import { CircleAlert, Copy, Download, FolderOpen, HardDrive, MessageCircle, PlugZap, RefreshCcw, Smartphone, X, Zap } from "lucide-solid";
 import type { OpencodeConnectStatus, ProviderListItem, SettingsTab, StartupPreference } from "../types";
 import type {
-  OpenworkAuditEntry,
-  OpenworkServerCapabilities,
-  OpenworkServerDiagnostics,
-  OpenworkServerSettings,
-  OpenworkServerStatus,
-} from "../lib/openwork-server";
+  VesloAuditEntry,
+  VesloServerCapabilities,
+  VesloServerDiagnostics,
+  VesloServerSettings,
+  VesloServerStatus,
+} from "../lib/veslo-server";
 import type {
   EngineInfo,
   OrchestratorBinaryInfo,
   OrchestratorStatus,
-  OpenworkServerInfo,
+  VesloServerInfo,
   AppBuildInfo,
   OpenCodeRouterInfo,
   SandboxDebugProbeResult,
@@ -26,7 +26,7 @@ import {
   engineRestart,
   opencodeRouterRestart,
   opencodeRouterStop,
-  openworkServerRestart,
+  vesloServerRestart,
   pickFile,
   sandboxDebugProbe,
 } from "../lib/tauri";
@@ -43,18 +43,18 @@ export type SettingsViewProps = {
   providerConnectedIds: string[];
   providerAuthBusy: boolean;
   openProviderAuthModal: () => Promise<void>;
-  openworkServerStatus: OpenworkServerStatus;
-  openworkServerUrl: string;
-  openworkReconnectBusy: boolean;
-  reconnectOpenworkServer: () => Promise<boolean>;
-  openworkServerHostInfo: OpenworkServerInfo | null;
-  openworkServerCapabilities: OpenworkServerCapabilities | null;
-  openworkServerDiagnostics: OpenworkServerDiagnostics | null;
-  openworkServerWorkspaceId: string | null;
+  vesloServerStatus: VesloServerStatus;
+  vesloServerUrl: string;
+  vesloReconnectBusy: boolean;
+  reconnectVesloServer: () => Promise<boolean>;
+  vesloServerHostInfo: VesloServerInfo | null;
+  vesloServerCapabilities: VesloServerCapabilities | null;
+  vesloServerDiagnostics: VesloServerDiagnostics | null;
+  vesloServerWorkspaceId: string | null;
   activeWorkspaceRoot: string;
-  openworkAuditEntries: OpenworkAuditEntry[];
-  openworkAuditStatus: "idle" | "loading" | "error";
-  openworkAuditError: string | null;
+  vesloAuditEntries: VesloAuditEntry[];
+  vesloAuditStatus: "idle" | "loading" | "error";
+  vesloAuditError: string | null;
   opencodeConnectStatus: OpencodeConnectStatus | null;
   engineInfo: EngineInfo | null;
   orchestratorStatus: OrchestratorStatus | null;
@@ -67,8 +67,8 @@ export type SettingsViewProps = {
   setEngineSource: (value: "path" | "sidecar" | "custom") => void;
   engineCustomBinPath: string;
   setEngineCustomBinPath: (value: string) => void;
-  engineRuntime: "direct" | "openwork-orchestrator";
-  setEngineRuntime: (value: "direct" | "openwork-orchestrator") => void;
+  engineRuntime: "direct" | "veslo-orchestrator";
+  setEngineRuntime: (value: "direct" | "veslo-orchestrator") => void;
   isWindows: boolean;
   defaultModelLabel: string;
   defaultModelRef: string;
@@ -122,7 +122,7 @@ export type SettingsViewProps = {
   repairOpencodeCache: () => void;
   cacheRepairBusy: boolean;
   cacheRepairResult: string | null;
-  cleanupOpenworkDockerContainers: () => void;
+  cleanupVesloDockerContainers: () => void;
   dockerCleanupBusy: boolean;
   dockerCleanupResult: string | null;
   resetAppConfigDefaults: () => Promise<{ ok: boolean; message: string }>;
@@ -139,11 +139,11 @@ export type SettingsViewProps = {
 // Messaging identities + routing are managed in the Identities tab.
 export function OpenCodeRouterSettings(_props: {
   busy: boolean;
-  openworkServerStatus: OpenworkServerStatus;
-  openworkServerUrl: string;
-  openworkServerSettings: OpenworkServerSettings;
-  openworkServerWorkspaceId: string | null;
-  openworkServerHostInfo: OpenworkServerInfo | null;
+  vesloServerStatus: VesloServerStatus;
+  vesloServerUrl: string;
+  vesloServerSettings: VesloServerSettings;
+  vesloServerWorkspaceId: string | null;
+  vesloServerHostInfo: VesloServerInfo | null;
   developerMode: boolean;
 }) {
   return (
@@ -329,11 +329,11 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const [providerConnectError, setProviderConnectError] = createSignal<string | null>(null);
-  const [openworkReconnectStatus, setOpenworkReconnectStatus] = createSignal<string | null>(null);
-  const [openworkReconnectError, setOpenworkReconnectError] = createSignal<string | null>(null);
-  const [openworkRestartBusy, setOpenworkRestartBusy] = createSignal(false);
-  const [openworkRestartStatus, setOpenworkRestartStatus] = createSignal<string | null>(null);
-  const [openworkRestartError, setOpenworkRestartError] = createSignal<string | null>(null);
+  const [vesloReconnectStatus, setVesloReconnectStatus] = createSignal<string | null>(null);
+  const [vesloReconnectError, setVesloReconnectError] = createSignal<string | null>(null);
+  const [vesloRestartBusy, setVesloRestartBusy] = createSignal(false);
+  const [vesloRestartStatus, setVesloRestartStatus] = createSignal<string | null>(null);
+  const [vesloRestartError, setVesloRestartError] = createSignal<string | null>(null);
   const providerConnectedCount = createMemo(() => (props.providerConnectedIds ?? []).length);
   const providerAvailableCount = createMemo(() => (props.providers ?? []).length);
   const connectedProviderNames = createMemo(() => {
@@ -380,46 +380,46 @@ export default function SettingsView(props: SettingsViewProps) {
     }
   };
 
-  const handleReconnectOpenworkServer = async () => {
-    if (props.busy || props.openworkReconnectBusy) return;
-    if (!props.openworkServerUrl.trim()) return;
-    setOpenworkReconnectStatus(null);
-    setOpenworkReconnectError(null);
+  const handleReconnectVesloServer = async () => {
+    if (props.busy || props.vesloReconnectBusy) return;
+    if (!props.vesloServerUrl.trim()) return;
+    setVesloReconnectStatus(null);
+    setVesloReconnectError(null);
     try {
-      const ok = await props.reconnectOpenworkServer();
+      const ok = await props.reconnectVesloServer();
       if (!ok) {
-        setOpenworkReconnectError("Reconnect failed. Check server URL/token and try again.");
+        setVesloReconnectError("Reconnect failed. Check server URL/token and try again.");
         return;
       }
-      setOpenworkReconnectStatus("Reconnected to OpenWork server.");
+      setVesloReconnectStatus("Reconnected to Veslo server.");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setOpenworkReconnectError(message || "Failed to reconnect OpenWork server.");
+      setVesloReconnectError(message || "Failed to reconnect Veslo server.");
     }
   };
 
   const handleRestartLocalServer = async () => {
-    if (props.busy || openworkRestartBusy()) return;
-    setOpenworkRestartStatus(null);
-    setOpenworkRestartError(null);
-    setOpenworkRestartBusy(true);
+    if (props.busy || vesloRestartBusy()) return;
+    setVesloRestartStatus(null);
+    setVesloRestartError(null);
+    setVesloRestartBusy(true);
     try {
       const ok = await props.restartLocalServer();
       if (!ok) {
-        setOpenworkRestartError("Restart failed. Check logs and try again.");
+        setVesloRestartError("Restart failed. Check logs and try again.");
         return;
       }
-      setOpenworkRestartStatus("Restarted local server.");
+      setVesloRestartStatus("Restarted local server.");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setOpenworkRestartError(message || "Failed to restart local server.");
+      setVesloRestartError(message || "Failed to restart local server.");
     } finally {
-      setOpenworkRestartBusy(false);
+      setVesloRestartBusy(false);
     }
   };
 
-  const openworkStatusLabel = createMemo(() => {
-    switch (props.openworkServerStatus) {
+  const vesloStatusLabel = createMemo(() => {
+    switch (props.vesloServerStatus) {
       case "connected":
         return "Connected";
       case "limited":
@@ -429,8 +429,8 @@ export default function SettingsView(props: SettingsViewProps) {
     }
   });
 
-  const openworkStatusStyle = createMemo(() => {
-    switch (props.openworkServerStatus) {
+  const vesloStatusStyle = createMemo(() => {
+    switch (props.vesloServerStatus) {
       case "connected":
         return "bg-green-7/10 text-green-11 border-green-7/20";
       case "limited":
@@ -488,8 +488,8 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const [opencodeRouterRestarting, setOpenCodeRouterRestarting] = createSignal(false);
   const [opencodeRouterRestartError, setOpenCodeRouterRestartError] = createSignal<string | null>(null);
-  const [openworkServerRestarting, setOpenworkServerRestarting] = createSignal(false);
-  const [openworkServerRestartError, setOpenworkServerRestartError] = createSignal<string | null>(null);
+  const [vesloServerRestarting, setVesloServerRestarting] = createSignal(false);
+  const [vesloServerRestartError, setVesloServerRestartError] = createSignal<string | null>(null);
   const [opencodeRestarting, setOpencodeRestarting] = createSignal(false);
   const [opencodeRestartError, setOpencodeRestartError] = createSignal<string | null>(null);
 
@@ -532,17 +532,17 @@ export default function SettingsView(props: SettingsViewProps) {
     }
   };
 
-  const handleOpenworkServerRestart = async () => {
-    if (openworkServerRestarting() || !isTauriRuntime()) return;
-    setOpenworkServerRestarting(true);
-    setOpenworkServerRestartError(null);
+  const handleVesloServerRestart = async () => {
+    if (vesloServerRestarting() || !isTauriRuntime()) return;
+    setVesloServerRestarting(true);
+    setVesloServerRestartError(null);
     try {
-      await openworkServerRestart();
-      await props.reconnectOpenworkServer();
+      await vesloServerRestart();
+      await props.reconnectVesloServer();
     } catch (e) {
-      setOpenworkServerRestartError(e instanceof Error ? e.message : String(e));
+      setVesloServerRestartError(e instanceof Error ? e.message : String(e));
     } finally {
-      setOpenworkServerRestarting(false);
+      setVesloServerRestarting(false);
     }
   };
 
@@ -552,7 +552,7 @@ export default function SettingsView(props: SettingsViewProps) {
     setOpencodeRestartError(null);
     try {
       await engineRestart();
-      await props.reconnectOpenworkServer();
+      await props.reconnectVesloServer();
     } catch (e) {
       setOpencodeRestartError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -572,17 +572,17 @@ export default function SettingsView(props: SettingsViewProps) {
       : "bg-gray-4/60 text-gray-11 border-gray-7/50";
   });
 
-  const openworkAuditStatusLabel = createMemo(() => {
-    if (!props.openworkServerWorkspaceId) return "Unavailable";
-    if (props.openworkAuditStatus === "loading") return "Loading";
-    if (props.openworkAuditStatus === "error") return "Error";
+  const vesloAuditStatusLabel = createMemo(() => {
+    if (!props.vesloServerWorkspaceId) return "Unavailable";
+    if (props.vesloAuditStatus === "loading") return "Loading";
+    if (props.vesloAuditStatus === "error") return "Error";
     return "Ready";
   });
 
-  const openworkAuditStatusStyle = createMemo(() => {
-    if (!props.openworkServerWorkspaceId) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
-    if (props.openworkAuditStatus === "loading") return "bg-amber-7/10 text-amber-11 border-amber-7/20";
-    if (props.openworkAuditStatus === "error") return "bg-red-7/10 text-red-11 border-red-7/20";
+  const vesloAuditStatusStyle = createMemo(() => {
+    if (!props.vesloServerWorkspaceId) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
+    if (props.vesloAuditStatus === "loading") return "bg-amber-7/10 text-amber-11 border-amber-7/20";
+    if (props.vesloAuditStatus === "error") return "bg-red-7/10 text-red-11 border-red-7/20";
     return "bg-green-7/10 text-green-11 border-green-7/20";
   });
 
@@ -624,7 +624,7 @@ export default function SettingsView(props: SettingsViewProps) {
     }
   });
 
-  const formatActor = (entry: OpenworkAuditEntry) => {
+  const formatActor = (entry: VesloAuditEntry) => {
     const actor = entry.actor;
     if (!actor) return "unknown";
     if (actor.type === "host") return "host";
@@ -651,14 +651,14 @@ export default function SettingsView(props: SettingsViewProps) {
     return props.engineInfo?.lastStderr?.trim() || "No stderr captured yet.";
   };
 
-  const openworkStdout = () => {
-    if (!props.openworkServerHostInfo) return "Logs are available on the host.";
-    return props.openworkServerHostInfo.lastStdout?.trim() || "No stdout captured yet.";
+  const vesloStdout = () => {
+    if (!props.vesloServerHostInfo) return "Logs are available on the host.";
+    return props.vesloServerHostInfo.lastStdout?.trim() || "No stdout captured yet.";
   };
 
-  const openworkStderr = () => {
-    if (!props.openworkServerHostInfo) return "Logs are available on the host.";
-    return props.openworkServerHostInfo.lastStderr?.trim() || "No stderr captured yet.";
+  const vesloStderr = () => {
+    if (!props.vesloServerHostInfo) return "Logs are available on the host.";
+    return props.vesloServerHostInfo.lastStderr?.trim() || "No stderr captured yet.";
   };
 
   const opencodeRouterStdout = () => {
@@ -702,7 +702,7 @@ export default function SettingsView(props: SettingsViewProps) {
     if (binary) return formatOrchestratorBinary(binary);
     return props.engineDoctorVersion ?? "—";
   };
-  const openworkServerVersionLabel = () => props.openworkServerDiagnostics?.version ?? "—";
+  const vesloServerVersionLabel = () => props.vesloServerDiagnostics?.version ?? "—";
   const opencodeRouterVersionLabel = () => props.opencodeRouterInfo?.version ?? "—";
   const orchestratorVersionLabel = () => props.orchestratorStatus?.cliVersion ?? "—";
 
@@ -747,7 +747,7 @@ export default function SettingsView(props: SettingsViewProps) {
     if (!root) return "";
     const normalized = root.replace(/[\\/]+$/, "");
     const separator = props.isWindows ? "\\" : "/";
-    return `${normalized}${separator}.opencode${separator}openwork.json`;
+    return `${normalized}${separator}.opencode${separator}veslo.json`;
   });
 
   const runtimeDebugReport = createMemo(() => ({
@@ -762,7 +762,7 @@ export default function SettingsView(props: SettingsViewProps) {
     versions: {
       orchestrator: orchestratorVersionLabel(),
       opencode: opencodeVersionLabel(),
-      openworkServer: openworkServerVersionLabel(),
+      vesloServer: vesloServerVersionLabel(),
       opencodeRouter: opencodeRouterVersionLabel(),
     },
     services: {
@@ -779,12 +779,12 @@ export default function SettingsView(props: SettingsViewProps) {
         activeWorkspace: props.orchestratorStatus?.activeId ?? null,
         sidecar: orchestratorSidecarSummary(),
       },
-      openworkServer: {
-        status: openworkStatusLabel(),
-        baseUrl: (props.openworkServerHostInfo?.baseUrl ?? props.openworkServerUrl) || null,
-        pid: props.openworkServerHostInfo?.pid ?? null,
-        stdout: openworkStdout(),
-        stderr: openworkStderr(),
+      vesloServer: {
+        status: vesloStatusLabel(),
+        baseUrl: (props.vesloServerHostInfo?.baseUrl ?? props.vesloServerUrl) || null,
+        pid: props.vesloServerHostInfo?.pid ?? null,
+        stdout: vesloStdout(),
+        stderr: vesloStderr(),
       },
       opencodeRouter: {
         status: opencodeRouterStatusLabel(),
@@ -794,8 +794,8 @@ export default function SettingsView(props: SettingsViewProps) {
         stderr: opencodeRouterStderr(),
       },
     },
-    diagnostics: props.openworkServerDiagnostics,
-    capabilities: props.openworkServerCapabilities,
+    diagnostics: props.vesloServerDiagnostics,
+    capabilities: props.vesloServerCapabilities,
     pendingPermissions: props.pendingPermissions,
     recentEvents: props.events,
     workspaceDebugEvents: props.workspaceDebugEvents,
@@ -829,7 +829,7 @@ export default function SettingsView(props: SettingsViewProps) {
       const url = window.URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `openwork-debug-report-${stamp}.json`;
+      anchor.download = `veslo-debug-report-${stamp}.json`;
       anchor.click();
       window.URL.revokeObjectURL(url);
       setDebugReportStatus("Exported runtime report JSON.");
@@ -1160,21 +1160,21 @@ export default function SettingsView(props: SettingsViewProps) {
                 <button
                   type="button"
                   class={compactOutlineActionClass}
-                  onClick={handleReconnectOpenworkServer}
-                  disabled={props.busy || props.openworkReconnectBusy || !props.openworkServerUrl.trim()}
+                  onClick={handleReconnectVesloServer}
+                  disabled={props.busy || props.vesloReconnectBusy || !props.vesloServerUrl.trim()}
                 >
-                  <RefreshCcw size={14} class={`text-dls-secondary ${props.openworkReconnectBusy ? "animate-spin" : ""}`} />
-                  {props.openworkReconnectBusy ? "Reconnecting..." : "Reconnect server"}
+                  <RefreshCcw size={14} class={`text-dls-secondary ${props.vesloReconnectBusy ? "animate-spin" : ""}`} />
+                  {props.vesloReconnectBusy ? "Reconnecting..." : "Reconnect server"}
                 </button>
                 <Show when={isLocalEngineRunning()}>
                   <button
                     type="button"
                     class={compactOutlineActionClass}
                     onClick={handleRestartLocalServer}
-                    disabled={props.busy || openworkRestartBusy()}
+                    disabled={props.busy || vesloRestartBusy()}
                   >
-                    <RefreshCcw size={14} class={`text-dls-secondary ${openworkRestartBusy() ? "animate-spin" : ""}`} />
-                    {openworkRestartBusy() ? "Restarting..." : "Restart local server"}
+                    <RefreshCcw size={14} class={`text-dls-secondary ${vesloRestartBusy() ? "animate-spin" : ""}`} />
+                    {vesloRestartBusy() ? "Restarting..." : "Restart local server"}
                   </button>
                 </Show>
                 <Show when={isLocalEngineRunning()}>
@@ -1188,7 +1188,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     Stop local server
                   </button>
                 </Show>
-                <Show when={!isLocalEngineRunning() && props.openworkServerStatus === "connected"}>
+                <Show when={!isLocalEngineRunning() && props.vesloServerStatus === "connected"}>
                   <button
                     type="button"
                     class={compactOutlineActionClass}
@@ -1199,16 +1199,16 @@ export default function SettingsView(props: SettingsViewProps) {
                   </button>
                 </Show>
               </div>
-              <Show when={openworkReconnectStatus()}>
+              <Show when={vesloReconnectStatus()}>
                 {(value) => <div class="text-xs text-gray-10">{value()}</div>}
               </Show>
-              <Show when={openworkReconnectError()}>
+              <Show when={vesloReconnectError()}>
                 {(value) => <div class="text-xs text-red-11">{value()}</div>}
               </Show>
-              <Show when={openworkRestartStatus()}>
+              <Show when={vesloRestartStatus()}>
                 {(value) => <div class="text-xs text-gray-10">{value()}</div>}
               </Show>
-              <Show when={openworkRestartError()}>
+              <Show when={vesloRestartError()}>
                 {(value) => <div class="text-xs text-red-11">{value()}</div>}
               </Show>
             </div>
@@ -1256,7 +1256,7 @@ export default function SettingsView(props: SettingsViewProps) {
               <div class="flex items-start justify-between gap-4">
                 <div>
                   <div class="text-sm font-medium text-gray-12">Updates</div>
-                  <div class="text-xs text-gray-10">Keep OpenWork up to date.</div>
+                  <div class="text-xs text-gray-10">Keep Veslo up to date.</div>
                 </div>
                 <div class="text-xs text-gray-7 font-mono">{props.appVersion ? `v${props.appVersion}` : ""}</div>
               </div>
@@ -1271,7 +1271,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6">
                           <div class="space-y-0.5">
                             <div class="text-sm text-gray-12">Background checks</div>
-                            <div class="text-xs text-gray-7">OpenWork always checks on launch. Also checks once per day (quiet).</div>
+                            <div class="text-xs text-gray-7">Veslo always checks on launch. Also checks once per day (quiet).</div>
                           </div>
                           <button
                             class={`min-w-[70px] px-4 py-1.5 rounded-full text-xs font-medium border shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-colors ${
@@ -1447,7 +1447,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div>Commit: {appCommitLabel()}</div>
                     <div>Orchestrator: {orchestratorVersionLabel()}</div>
                     <div>OpenCode: {opencodeVersionLabel()}</div>
-                    <div>OpenWork server: {openworkServerVersionLabel()}</div>
+                    <div>Veslo server: {vesloServerVersionLabel()}</div>
                     <div>OpenCodeRouter: {opencodeRouterVersionLabel()}</div>
                   </div>
                   <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto bg-gray-1 border border-gray-6 rounded-lg p-3">
@@ -1503,7 +1503,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
                   <div class="text-sm font-medium text-gray-12">Workspace config</div>
-                  <div class="text-xs text-gray-10">Reveal or reset `.opencode/openwork.json` defaults for this app workspace.</div>
+                  <div class="text-xs text-gray-10">Reveal or reset `.opencode/veslo.json` defaults for this app workspace.</div>
                   <div class="text-[11px] text-gray-7 font-mono break-all">{workspaceConfigPath() || "No active local workspace."}</div>
                   <div class="flex flex-wrap items-center gap-2">
                     <Button
@@ -1554,9 +1554,9 @@ export default function SettingsView(props: SettingsViewProps) {
 
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                   <div class="min-w-0">
-                    <div class="text-sm text-gray-12">OpenWork Docker containers</div>
+                    <div class="text-sm text-gray-12">Veslo Docker containers</div>
                     <div class="text-xs text-gray-7">
-                      Force-remove Docker containers launched by OpenWork (sandbox + local dev stacks).
+                      Force-remove Docker containers launched by Veslo (sandbox + local dev stacks).
                     </div>
                     <Show when={props.dockerCleanupResult}>
                       <div class="text-xs text-gray-11 mt-2">{props.dockerCleanupResult}</div>
@@ -1565,7 +1565,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   <Button
                     variant="danger"
                     class="text-xs h-8 py-0 px-3 shrink-0"
-                    onClick={props.cleanupOpenworkDockerContainers}
+                    onClick={props.cleanupVesloDockerContainers}
                     disabled={props.dockerCleanupBusy || props.anyActiveRuns || !isTauriRuntime()}
                     title={
                       !isTauriRuntime()
@@ -1694,7 +1694,7 @@ export default function SettingsView(props: SettingsViewProps) {
                           </Button>
                         </div>
                         <div class="text-[11px] text-gray-7">
-                          Use this to point OpenWork at a local OpenCode build (e.g. your fork). Applies next time the engine starts or reloads.
+                          Use this to point Veslo at a local OpenCode build (e.g. your fork). Applies next time the engine starts or reloads.
                         </div>
                       </div>
                     </Show>
@@ -1711,11 +1711,11 @@ export default function SettingsView(props: SettingsViewProps) {
                             Direct (OpenCode)
                           </Button>
                           <Button
-                            variant={props.engineRuntime === "openwork-orchestrator" ? "secondary" : "outline"}
-                            onClick={() => props.setEngineRuntime("openwork-orchestrator")}
+                            variant={props.engineRuntime === "veslo-orchestrator" ? "secondary" : "outline"}
+                            onClick={() => props.setEngineRuntime("veslo-orchestrator")}
                             disabled={props.busy}
                           >
-                            OpenWork Orchestrator
+                            Veslo Orchestrator
                           </Button>
                         </div>
                         <div class="text-[11px] text-gray-7">Applies the next time the engine starts or reloads.</div>
@@ -1733,7 +1733,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                     <div class="min-w-0">
                       <div class="text-sm text-gray-12">Reset onboarding</div>
-                      <div class="text-xs text-gray-7">Clears OpenWork preferences and restarts the app.</div>
+                      <div class="text-xs text-gray-7">Clears Veslo preferences and restarts the app.</div>
                     </div>
                     <Button
                       variant="outline"
@@ -1749,7 +1749,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                     <div class="min-w-0">
                       <div class="text-sm text-gray-12">Reset app data</div>
-                      <div class="text-xs text-gray-7">More aggressive. Clears OpenWork cache + app data.</div>
+                      <div class="text-xs text-gray-7">More aggressive. Clears Veslo cache + app data.</div>
                     </div>
                     <Button
                       variant="danger"
@@ -1782,11 +1782,11 @@ export default function SettingsView(props: SettingsViewProps) {
                       <Button
                         variant="secondary"
                         onClick={handleRestartLocalServer}
-                        disabled={props.busy || openworkRestartBusy() || !isTauriRuntime()}
+                        disabled={props.busy || vesloRestartBusy() || !isTauriRuntime()}
                         class="text-xs px-3 py-1.5 justify-center"
                       >
-                        <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${openworkRestartBusy() ? "animate-spin" : ""}`} />
-                        {openworkRestartBusy() ? "Restarting..." : "Restart orchestrator"}
+                        <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${vesloRestartBusy() ? "animate-spin" : ""}`} />
+                        {vesloRestartBusy() ? "Restarting..." : "Restart orchestrator"}
                       </Button>
                       <Button
                         variant="secondary"
@@ -1799,12 +1799,12 @@ export default function SettingsView(props: SettingsViewProps) {
                       </Button>
                       <Button
                         variant="secondary"
-                        onClick={handleOpenworkServerRestart}
-                        disabled={openworkServerRestarting() || !isTauriRuntime()}
+                        onClick={handleVesloServerRestart}
+                        disabled={vesloServerRestarting() || !isTauriRuntime()}
                         class="text-xs px-3 py-1.5 justify-center"
                       >
-                        <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${openworkServerRestarting() ? "animate-spin" : ""}`} />
-                        {openworkServerRestarting() ? "Restarting..." : "Restart OpenWork server"}
+                        <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${vesloServerRestarting() ? "animate-spin" : ""}`} />
+                        {vesloServerRestarting() ? "Restarting..." : "Restart Veslo server"}
                       </Button>
                       <Button
                         variant="secondary"
@@ -1816,12 +1816,12 @@ export default function SettingsView(props: SettingsViewProps) {
                         {opencodeRouterRestarting() ? "Restarting..." : "Restart OpenCodeRouter"}
                       </Button>
                     </div>
-                    <Show when={openworkRestartStatus()}>
-                      <div class="text-xs text-green-11 bg-green-3/50 border border-green-6 rounded-lg p-2">{openworkRestartStatus()}</div>
+                    <Show when={vesloRestartStatus()}>
+                      <div class="text-xs text-green-11 bg-green-3/50 border border-green-6 rounded-lg p-2">{vesloRestartStatus()}</div>
                     </Show>
-                    <Show when={openworkRestartError() || opencodeRestartError() || openworkServerRestartError() || opencodeRouterRestartError()}>
+                    <Show when={vesloRestartError() || opencodeRestartError() || vesloServerRestartError() || opencodeRouterRestartError()}>
                       <div class="text-xs text-red-11 bg-red-3/50 border border-red-6 rounded-lg p-2">
-                        {openworkRestartError() || opencodeRestartError() || openworkServerRestartError() || opencodeRouterRestartError()}
+                        {vesloRestartError() || opencodeRestartError() || vesloServerRestartError() || opencodeRouterRestartError()}
                       </div>
                     </Show>
                   </div>
@@ -1838,7 +1838,7 @@ export default function SettingsView(props: SettingsViewProps) {
                           <div class="text-[11px] text-gray-7 font-mono truncate">Orchestrator: {orchestratorVersionLabel()}</div>
                           <div class="text-[11px] text-gray-7 font-mono truncate">OpenCode: {opencodeVersionLabel()}</div>
                           <div class="text-[11px] text-gray-7 font-mono truncate">
-                            OpenWork server: {openworkServerVersionLabel()}
+                            Veslo server: {vesloServerVersionLabel()}
                           </div>
                           <div class="text-[11px] text-gray-7 font-mono truncate">OpenCodeRouter: {opencodeRouterVersionLabel()}</div>
                         </div>
@@ -1982,30 +1982,30 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                       <div class="flex items-center justify-between gap-3">
                         <div>
-                          <div class="text-sm font-medium text-gray-12">OpenWork server</div>
+                          <div class="text-sm font-medium text-gray-12">Veslo server</div>
                           <div class="text-xs text-gray-10">Config and approvals sidecar.</div>
                         </div>
-                        <div class={`text-xs px-2 py-1 rounded-full border ${openworkStatusStyle()}`}>
-                          {openworkStatusLabel()}
+                        <div class={`text-xs px-2 py-1 rounded-full border ${vesloStatusStyle()}`}>
+                          {vesloStatusLabel()}
                         </div>
                       </div>
                       <div class="space-y-1">
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {(props.openworkServerHostInfo?.baseUrl ?? props.openworkServerUrl) || "Base URL unavailable"}
+                          {(props.vesloServerHostInfo?.baseUrl ?? props.vesloServerUrl) || "Base URL unavailable"}
                         </div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate">PID: {props.openworkServerHostInfo?.pid ?? "—"}</div>
+                        <div class="text-[11px] text-gray-7 font-mono truncate">PID: {props.vesloServerHostInfo?.pid ?? "—"}</div>
                       </div>
                       <div class="grid gap-2">
                         <div>
                           <div class="text-[11px] text-gray-9 mb-1">Last stdout</div>
                           <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
-                            {openworkStdout()}
+                            {vesloStdout()}
                           </pre>
                         </div>
                         <div>
                           <div class="text-[11px] text-gray-9 mb-1">Last stderr</div>
                           <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
-                            {openworkStderr()}
+                            {vesloStderr()}
                           </pre>
                         </div>
                       </div>
@@ -2078,13 +2078,13 @@ export default function SettingsView(props: SettingsViewProps) {
 
                   <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                     <div class="flex items-center justify-between gap-3">
-                      <div class="text-sm font-medium text-gray-12">OpenWork server diagnostics</div>
+                      <div class="text-sm font-medium text-gray-12">Veslo server diagnostics</div>
                       <div class="text-[11px] text-gray-8 font-mono truncate">
-                        {props.openworkServerDiagnostics?.version ?? "—"}
+                        {props.vesloServerDiagnostics?.version ?? "—"}
                       </div>
                     </div>
                     <Show
-                      when={props.openworkServerDiagnostics}
+                      when={props.vesloServerDiagnostics}
                       fallback={<div class="text-xs text-gray-9">Diagnostics unavailable.</div>}
                     >
                       {(diag) => (
@@ -2106,13 +2106,13 @@ export default function SettingsView(props: SettingsViewProps) {
 
                   <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                     <div class="flex items-center justify-between gap-3">
-                      <div class="text-sm font-medium text-gray-12">OpenWork server capabilities</div>
+                      <div class="text-sm font-medium text-gray-12">Veslo server capabilities</div>
                       <div class="text-[11px] text-gray-8 font-mono truncate">
-                        {props.openworkServerWorkspaceId ? `Worker ${props.openworkServerWorkspaceId}` : "Worker unresolved"}
+                        {props.vesloServerWorkspaceId ? `Worker ${props.vesloServerWorkspaceId}` : "Worker unresolved"}
                       </div>
                     </div>
                     <Show
-                      when={props.openworkServerCapabilities}
+                      when={props.vesloServerCapabilities}
                       fallback={<div class="text-xs text-gray-9">Capabilities unavailable. Connect with a client token.</div>}
                     >
                       {(caps) => (
@@ -2186,19 +2186,19 @@ export default function SettingsView(props: SettingsViewProps) {
                   <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                     <div class="flex items-center justify-between gap-3">
                       <div class="text-sm font-medium text-gray-12">Audit log</div>
-                      <div class={`text-xs px-2 py-1 rounded-full border ${openworkAuditStatusStyle()}`}>
-                        {openworkAuditStatusLabel()}
+                      <div class={`text-xs px-2 py-1 rounded-full border ${vesloAuditStatusStyle()}`}>
+                        {vesloAuditStatusLabel()}
                       </div>
                     </div>
-                    <Show when={props.openworkAuditError}>
-                      <div class="text-xs text-red-11">{props.openworkAuditError}</div>
+                    <Show when={props.vesloAuditError}>
+                      <div class="text-xs text-red-11">{props.vesloAuditError}</div>
                     </Show>
                     <Show
-                      when={props.openworkAuditEntries.length > 0}
+                      when={props.vesloAuditEntries.length > 0}
                       fallback={<div class="text-xs text-gray-9">No audit entries yet.</div>}
                     >
                       <div class="divide-y divide-gray-6/50">
-                        <For each={props.openworkAuditEntries}>
+                        <For each={props.vesloAuditEntries}>
                           {(entry) => (
                             <div class="flex items-start justify-between gap-4 py-2">
                               <div class="min-w-0">

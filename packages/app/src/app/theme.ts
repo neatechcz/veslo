@@ -1,6 +1,6 @@
 export type ThemeMode = "light" | "dark" | "system";
 
-const THEME_PREF_KEY = "openwork.themePref";
+const THEME_PREF_KEY = "veslo.themePref";
 
 const mediaQuery = "(prefers-color-scheme: dark)";
 

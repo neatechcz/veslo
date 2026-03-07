@@ -1,36 +1,36 @@
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 import { Download, RefreshCw, UploadCloud } from "lucide-solid";
 
-import type { OpenworkInboxItem, OpenworkServerClient } from "../../lib/openwork-server";
+import type { VesloInboxItem, VesloServerClient } from "../../lib/veslo-server";
 import { formatBytes, formatRelativeTime } from "../../utils";
 
 export type InboxPanelProps = {
   id?: string;
-  client: OpenworkServerClient | null;
+  client: VesloServerClient | null;
   workspaceId: string | null;
   onToast?: (message: string) => void;
   maxPreview?: number;
 };
 
-const INBOX_PREFIX = ".opencode/openwork/inbox/";
+const INBOX_PREFIX = ".opencode/veslo/inbox/";
 
-function safeName(item: OpenworkInboxItem): string {
+function safeName(item: VesloInboxItem): string {
   return String(item.name ?? item.path ?? "file").trim() || "file";
 }
 
-function safeRelPath(item: OpenworkInboxItem): string {
+function safeRelPath(item: VesloInboxItem): string {
   const raw = String(item.path ?? item.name ?? "").trim();
   if (!raw) return "";
   return raw.replace(/^\/+/, "");
 }
 
-function toInboxWorkspacePath(item: OpenworkInboxItem): string {
+function toInboxWorkspacePath(item: VesloInboxItem): string {
   const rel = safeRelPath(item);
   return rel ? `${INBOX_PREFIX}${rel}` : INBOX_PREFIX;
 }
 
 export default function InboxPanel(props: InboxPanelProps) {
-  const [items, setItems] = createSignal<OpenworkInboxItem[]>([]);
+  const [items, setItems] = createSignal<VesloInboxItem[]>([]);
   const [loading, setLoading] = createSignal(false);
   const [uploading, setUploading] = createSignal(false);
   const [dragOver, setDragOver] = createSignal(false);
@@ -104,7 +104,7 @@ export default function InboxPanel(props: InboxPanelProps) {
     }
   };
 
-  const copyPath = async (item: OpenworkInboxItem) => {
+  const copyPath = async (item: VesloInboxItem) => {
     const path = toInboxWorkspacePath(item);
     try {
       await navigator.clipboard.writeText(path);
@@ -114,7 +114,7 @@ export default function InboxPanel(props: InboxPanelProps) {
     }
   };
 
-  const downloadItem = async (item: OpenworkInboxItem) => {
+  const downloadItem = async (item: VesloInboxItem) => {
     const client = props.client;
     const workspaceId = (props.workspaceId ?? "").trim();
     if (!client || !workspaceId) {

@@ -1,6 +1,6 @@
 import { Show, createMemo } from "solid-js";
 import { t, currentLocale } from "../../i18n";
-import OpenWorkLogo from "./openwork-logo";
+import VesloLogo from "./veslo-logo";
 
 import type { WorkspaceInfo } from "../lib/tauri";
 
@@ -13,12 +13,12 @@ export default function WorkspaceSwitchOverlay(props: {
 
   const workspaceName = createMemo(() => {
     if (!props.workspace) return "";
-    if (props.workspace.workspaceType === "remote" && props.workspace.remoteType === "openwork") {
+    if (props.workspace.workspaceType === "remote" && props.workspace.remoteType === "veslo") {
       return (
-        props.workspace.openworkWorkspaceName?.trim() ||
+        props.workspace.vesloWorkspaceName?.trim() ||
         props.workspace.displayName?.trim() ||
         props.workspace.name?.trim() ||
-        props.workspace.openworkHostUrl?.trim() ||
+        props.workspace.vesloHostUrl?.trim() ||
         props.workspace.baseUrl?.trim() ||
         props.workspace.path?.trim() ||
         ""
@@ -49,8 +49,8 @@ export default function WorkspaceSwitchOverlay(props: {
   const metaPrimary = createMemo(() => {
     if (!props.workspace) return "";
     if (props.workspace.workspaceType === "remote") {
-      if (props.workspace.remoteType === "openwork") {
-        return props.workspace.openworkHostUrl?.trim() ?? props.workspace.baseUrl?.trim() ?? "";
+      if (props.workspace.remoteType === "veslo") {
+        return props.workspace.vesloHostUrl?.trim() ?? props.workspace.baseUrl?.trim() ?? "";
       }
       return props.workspace.baseUrl?.trim() ?? "";
     }
@@ -61,7 +61,7 @@ export default function WorkspaceSwitchOverlay(props: {
     if (!props.workspace || props.workspace.workspaceType !== "remote") return "";
     return (
       props.workspace.directory?.trim() ||
-      props.workspace.openworkWorkspaceName?.trim() ||
+      props.workspace.vesloWorkspaceName?.trim() ||
       ""
     );
   });
@@ -87,7 +87,7 @@ export default function WorkspaceSwitchOverlay(props: {
                       <div class="relative">
 
               <div class="relative h-24 w-24 flex items-center justify-center">
-                <OpenWorkLogo size={44} class="drop-shadow-sm" />
+                <VesloLogo size={44} class="drop-shadow-sm" />
               </div>
             </div>
 
@@ -99,8 +99,8 @@ export default function WorkspaceSwitchOverlay(props: {
                     {translate("dashboard.remote")}
                   </span>
                   <span class="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-3 text-gray-10">
-                    {props.workspace?.remoteType === "openwork"
-                      ? translate("dashboard.remote_connection_openwork")
+                    {props.workspace?.remoteType === "veslo"
+                      ? translate("dashboard.remote_connection_veslo")
                       : translate("dashboard.remote_connection_direct")}
                   </span>
                 </Show>

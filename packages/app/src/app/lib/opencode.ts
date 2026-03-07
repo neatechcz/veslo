@@ -11,7 +11,7 @@ export type OpencodeAuth = {
   username?: string;
   password?: string;
   token?: string;
-  mode?: "basic" | "openwork";
+  mode?: "basic" | "veslo";
 };
 
 const DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS = 10_000;
@@ -65,7 +65,7 @@ const encodeBasicAuth = (auth?: OpencodeAuth) => {
 };
 
 const resolveAuthHeader = (auth?: OpencodeAuth) => {
-  if (auth?.mode === "openwork" && auth.token) {
+  if (auth?.mode === "veslo" && auth.token) {
     return `Bearer ${auth.token}`;
   }
   const encoded = encodeBasicAuth(auth);

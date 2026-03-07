@@ -36,7 +36,7 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
 
   const readStoredList = () => {
     try {
-      const raw = window.localStorage.getItem("openwork.server.list");
+      const raw = window.localStorage.getItem("veslo.server.list");
       const parsed = raw ? (JSON.parse(raw) as unknown) : [];
       return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string") : [];
     } catch {
@@ -46,7 +46,7 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
 
   const readStoredActive = () => {
     try {
-      const stored = window.localStorage.getItem("openwork.server.active");
+      const stored = window.localStorage.getItem("veslo.server.active");
       return typeof stored === "string" ? stored : "";
     } catch {
       return "";
@@ -59,14 +59,14 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
 
     const fallback = normalizeServerUrl(props.defaultUrl) ?? "";
 
-    // In production web builds served by OpenWork (Docker "remote" mode), OpenCode
+    // In production web builds served by Veslo (Docker "remote" mode), OpenCode
     // traffic should go through the server proxy (usually same-origin `/opencode`).
     // Do not reuse any persisted localhost targets.
     const forceProxy =
       !isTauriRuntime() &&
       (import.meta.env.PROD ||
-        (typeof import.meta.env?.VITE_OPENWORK_URL === "string" &&
-          import.meta.env.VITE_OPENWORK_URL.trim().length > 0));
+        (typeof import.meta.env?.VITE_VESLO_URL === "string" &&
+          import.meta.env.VITE_VESLO_URL.trim().length > 0));
     if (forceProxy && fallback) {
       setList([fallback]);
       setActiveRaw(fallback);
@@ -90,8 +90,8 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
     if (typeof window === "undefined") return;
 
     try {
-      window.localStorage.setItem("openwork.server.list", JSON.stringify(list()));
-      window.localStorage.setItem("openwork.server.active", active());
+      window.localStorage.setItem("veslo.server.list", JSON.stringify(list()));
+      window.localStorage.setItem("veslo.server.active", active());
     } catch {
       // ignore
     }
@@ -99,9 +99,9 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
 
   const activeUrl = createMemo(() => active());
 
-  const readOpenworkToken = () => {
+  const readVesloToken = () => {
     try {
-      return (window.localStorage.getItem("openwork.server.token") ?? "").trim();
+      return (window.localStorage.getItem("veslo.server.token") ?? "").trim();
     } catch {
       return "";
     }
@@ -109,7 +109,7 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
 
   const checkHealth = async (url: string) => {
     if (!url) return false;
-    const token = readOpenworkToken();
+    const token = readVesloToken();
     const headers = token && url.includes("/opencode") ? { Authorization: `Bearer ${token}` } : undefined;
     const client = createOpencodeClient({
       baseUrl: url,

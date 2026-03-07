@@ -1,56 +1,56 @@
 /**
- * OpenWork server connection state.
+ * Veslo server connection state.
  *
- * Encapsulates all signals, effects, and helpers related to the OpenWork
+ * Encapsulates all signals, effects, and helpers related to the Veslo
  * server lifecycle: connection status, capabilities polling, host info,
  * diagnostics, audit entries, and the server client instance.
  */
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
 import {
-  createOpenworkServerClient,
-  hydrateOpenworkServerSettingsFromEnv,
-  normalizeOpenworkServerUrl,
-  readOpenworkServerSettings,
-  OpenworkServerError,
-  type OpenworkAuditEntry,
-  type OpenworkServerCapabilities,
-  type OpenworkServerClient,
-  type OpenworkServerDiagnostics,
-  type OpenworkServerSettings,
-  type OpenworkServerStatus,
-} from "../lib/openwork-server";
+  createVesloServerClient,
+  hydrateVesloServerSettingsFromEnv,
+  normalizeVesloServerUrl,
+  readVesloServerSettings,
+  VesloServerError,
+  type VesloAuditEntry,
+  type VesloServerCapabilities,
+  type VesloServerClient,
+  type VesloServerDiagnostics,
+  type VesloServerSettings,
+  type VesloServerStatus,
+} from "../lib/veslo-server";
 import {
-  openworkServerInfo,
+  vesloServerInfo,
   orchestratorStatus,
   opencodeRouterInfo,
   type OrchestratorStatus,
-  type OpenworkServerInfo,
+  type VesloServerInfo,
   type OpenCodeRouterInfo,
 } from "../lib/tauri";
 import { isTauriRuntime } from "../utils";
 import type { StartupPreference } from "../types";
 
-export type OpenworkServerStore = ReturnType<typeof createOpenworkServerStore>;
+export type VesloServerStore = ReturnType<typeof createVesloServerStore>;
 
-export function createOpenworkServerStore(options: {
+export function createVesloServerStore(options: {
   startupPreference: () => StartupPreference | null;
   developerMode: () => boolean;
   documentVisible: () => boolean;
   refreshEngine?: () => Promise<void>;
 }) {
-  const [settings, setSettings] = createSignal<OpenworkServerSettings>({});
+  const [settings, setSettings] = createSignal<VesloServerSettings>({});
   const [url, setUrl] = createSignal("");
-  const [status, setStatus] = createSignal<OpenworkServerStatus>("disconnected");
-  const [capabilities, setCapabilities] = createSignal<OpenworkServerCapabilities | null>(null);
+  const [status, setStatus] = createSignal<VesloServerStatus>("disconnected");
+  const [capabilities, setCapabilities] = createSignal<VesloServerCapabilities | null>(null);
   const [checkedAt, setCheckedAt] = createSignal<number | null>(null);
   const [workspaceId, setWorkspaceId] = createSignal<string | null>(null);
-  const [hostInfo, setHostInfo] = createSignal<OpenworkServerInfo | null>(null);
-  const [diagnostics, setDiagnostics] = createSignal<OpenworkServerDiagnostics | null>(null);
+  const [hostInfo, setHostInfo] = createSignal<VesloServerInfo | null>(null);
+  const [diagnostics, setDiagnostics] = createSignal<VesloServerDiagnostics | null>(null);
   const [reconnectBusy, setReconnectBusy] = createSignal(false);
   const [routerInfo, setRouterInfo] = createSignal<OpenCodeRouterInfo | null>(null);
   const [orchStatus, setOrchStatus] = createSignal<OrchestratorStatus | null>(null);
-  const [auditEntries, setAuditEntries] = createSignal<OpenworkAuditEntry[]>([]);
+  const [auditEntries, setAuditEntries] = createSignal<VesloAuditEntry[]>([]);
   const [auditStatus, setAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
   const [auditError, setAuditError] = createSignal<string | null>(null);
   const [devtoolsWorkspaceId, setDevtoolsWorkspaceId] = createSignal<string | null>(null);
@@ -60,7 +60,7 @@ export function createOpenworkServerStore(options: {
   const baseUrl = createMemo(() => {
     const pref = options.startupPreference();
     const info = hostInfo();
-    const settingsUrl = normalizeOpenworkServerUrl(settings().urlOverride ?? "") ?? "";
+    const settingsUrl = normalizeVesloServerUrl(settings().urlOverride ?? "") ?? "";
 
     if (pref === "local") return info?.baseUrl ?? "";
     if (pref === "server") return settingsUrl;
@@ -90,7 +90,7 @@ export function createOpenworkServerStore(options: {
     const base = baseUrl().trim();
     if (!base) return null;
     const a = auth();
-    return createOpenworkServerClient({ baseUrl: base, token: a.token, hostToken: a.hostToken });
+    return createVesloServerClient({ baseUrl: base, token: a.token, hostToken: a.hostToken });
   });
 
   const devtoolsClient = createMemo(() => client());
@@ -100,8 +100,8 @@ export function createOpenworkServerStore(options: {
   // Hydrate settings from env/localStorage on mount
   createEffect(() => {
     if (typeof window === "undefined") return;
-    hydrateOpenworkServerSettingsFromEnv();
-    setSettings(readOpenworkServerSettings());
+    hydrateVesloServerSettingsFromEnv();
+    setSettings(readVesloServerSettings());
   });
 
   // Derive URL from preference + host info
@@ -109,7 +109,7 @@ export function createOpenworkServerStore(options: {
     const pref = options.startupPreference();
     const info = hostInfo();
     const hostUrl = info?.connectUrl ?? info?.lanUrl ?? info?.mdnsUrl ?? info?.baseUrl ?? "";
-    const settingsUrl = normalizeOpenworkServerUrl(settings().urlOverride ?? "") ?? "";
+    const settingsUrl = normalizeVesloServerUrl(settings().urlOverride ?? "") ?? "";
 
     if (pref === "local") {
       setUrl(hostUrl);
@@ -185,7 +185,7 @@ export function createOpenworkServerStore(options: {
 
     const run = async () => {
       try {
-        const info = await openworkServerInfo();
+        const info = await vesloServerInfo();
         if (active) setHostInfo(info);
       } catch {
         if (active) setHostInfo(null);
@@ -366,12 +366,12 @@ async function checkServer(
   url: string,
   token?: string,
   hostToken?: string,
-): Promise<{ status: OpenworkServerStatus; capabilities: OpenworkServerCapabilities | null }> {
-  const c = createOpenworkServerClient({ baseUrl: url, token, hostToken });
+): Promise<{ status: VesloServerStatus; capabilities: VesloServerCapabilities | null }> {
+  const c = createVesloServerClient({ baseUrl: url, token, hostToken });
   try {
     await c.health();
   } catch (error) {
-    if (error instanceof OpenworkServerError && (error.status === 401 || error.status === 403)) {
+    if (error instanceof VesloServerError && (error.status === 401 || error.status === 403)) {
       return { status: "limited", capabilities: null };
     }
     return { status: "disconnected", capabilities: null };
@@ -385,7 +385,7 @@ async function checkServer(
     const caps = await c.capabilities();
     return { status: "connected", capabilities: caps };
   } catch (error) {
-    if (error instanceof OpenworkServerError && (error.status === 401 || error.status === 403)) {
+    if (error instanceof VesloServerError && (error.status === 401 || error.status === 403)) {
       return { status: "limited", capabilities: null };
     }
     return { status: "disconnected", capabilities: null };

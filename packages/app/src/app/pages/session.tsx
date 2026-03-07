@@ -27,7 +27,7 @@ import {
   readObsidianMirrorFile,
   writeObsidianMirrorFile,
   type EngineInfo,
-  type OpenworkServerInfo,
+  type VesloServerInfo,
   type WorkspaceInfo,
 } from "../lib/tauri";
 
@@ -62,21 +62,21 @@ import ProviderAuthModal, { type ProviderOAuthStartResult } from "../components/
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import StatusBar from "../components/status-bar";
 import {
-  buildOpenworkConnectInviteUrl,
-  buildOpenworkWorkspaceBaseUrl,
-  createOpenworkServerClient,
-  OpenworkServerError,
-  parseOpenworkWorkspaceIdFromUrl,
-} from "../lib/openwork-server";
+  buildVesloConnectInviteUrl,
+  buildVesloWorkspaceBaseUrl,
+  createVesloServerClient,
+  VesloServerError,
+  parseVesloWorkspaceIdFromUrl,
+} from "../lib/veslo-server";
 import type {
-  OpenworkFileSession,
-  OpenworkServerClient,
-  OpenworkServerSettings,
-  OpenworkServerStatus,
-  OpenworkSoulStatus,
-  OpenworkWorkspaceExport,
-} from "../lib/openwork-server";
-import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "../lib/publisher";
+  VesloFileSession,
+  VesloServerClient,
+  VesloServerSettings,
+  VesloServerStatus,
+  VesloSoulStatus,
+  VesloWorkspaceExport,
+} from "../lib/veslo-server";
+import { DEFAULT_VESLO_PUBLISHER_BASE_URL, publishVesloBundleJson } from "../lib/publisher";
 import { join } from "@tauri-apps/api/path";
 import {
   isUserVisiblePart,
@@ -117,7 +117,7 @@ export type SessionViewProps = {
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
-  soulStatusByWorkspaceId: Record<string, OpenworkSoulStatus | null>;
+  soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
   openCreateWorkspace: () => void;
   openCreateRemoteWorkspace: () => void;
   importWorkspaceConfig: () => void;
@@ -125,12 +125,12 @@ export type SessionViewProps = {
   exportWorkspaceConfig: (workspaceId?: string) => void;
   exportWorkspaceBusy: boolean;
   clientConnected: boolean;
-  openworkServerStatus: OpenworkServerStatus;
+  vesloServerStatus: VesloServerStatus;
   startupPreference: StartupPreference | null;
-  openworkServerClient: OpenworkServerClient | null;
-  openworkServerSettings: OpenworkServerSettings;
-  openworkServerHostInfo: OpenworkServerInfo | null;
-  openworkServerWorkspaceId: string | null;
+  vesloServerClient: VesloServerClient | null;
+  vesloServerSettings: VesloServerSettings;
+  vesloServerHostInfo: VesloServerInfo | null;
+  vesloServerWorkspaceId: string | null;
   engineInfo: EngineInfo | null;
   stopHost: () => void;
   headerStatus: string;
@@ -242,7 +242,7 @@ type WorkspaceProfileBundleV1 = {
   type: "workspace-profile";
   name: string;
   description: string;
-  workspace: OpenworkWorkspaceExport;
+  workspace: VesloWorkspaceExport;
 };
 
 type SkillsSetBundleV1 = {
@@ -370,7 +370,7 @@ export default function SessionView(props: SessionViewProps) {
   const agentLabel = createMemo(() => props.selectedSessionAgent ?? "Default agent");
   const workspaceLabel = (workspace: WorkspaceInfo) =>
     workspace.displayName?.trim() ||
-    workspace.openworkWorkspaceName?.trim() ||
+    workspace.vesloWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
     "Worker";
@@ -811,14 +811,14 @@ export default function SessionView(props: SessionViewProps) {
 
     pushCandidate(await join(root, normalized));
 
-    if (normalized.startsWith(".opencode/openwork/outbox/")) {
+    if (normalized.startsWith(".opencode/veslo/outbox/")) {
       return candidates;
     }
 
-    if (normalized.startsWith("openwork/outbox/")) {
-      const suffix = normalized.slice("openwork/outbox/".length);
+    if (normalized.startsWith("veslo/outbox/")) {
+      const suffix = normalized.slice("veslo/outbox/".length);
       if (suffix) {
-        pushCandidate(await join(root, ".opencode", "openwork", "outbox", suffix));
+        pushCandidate(await join(root, ".opencode", "veslo", "outbox", suffix));
       }
       return candidates;
     }
@@ -826,13 +826,13 @@ export default function SessionView(props: SessionViewProps) {
     if (normalized.startsWith("outbox/")) {
       const suffix = normalized.slice("outbox/".length);
       if (suffix) {
-        pushCandidate(await join(root, ".opencode", "openwork", "outbox", suffix));
+        pushCandidate(await join(root, ".opencode", "veslo", "outbox", suffix));
       }
       return candidates;
     }
 
     if (!normalized.startsWith(".opencode/")) {
-      pushCandidate(await join(root, ".opencode", "openwork", "outbox", normalized));
+      pushCandidate(await join(root, ".opencode", "veslo", "outbox", normalized));
     }
 
     return candidates;
@@ -908,12 +908,12 @@ export default function SessionView(props: SessionViewProps) {
     syncingLocal: boolean;
   };
 
-  type RemoteFileSyncSession = OpenworkFileSession & { cursor: number };
+  type RemoteFileSyncSession = VesloFileSession & { cursor: number };
 
   const remoteMirrorTrackedFiles = new Map<string, RemoteMirrorTrackedFile>();
   const [remoteFileSyncSession, setRemoteFileSyncSession] = createSignal<RemoteFileSyncSession | null>(null);
   const remoteMirrorWorkspaceKey = createMemo(
-    () => props.openworkServerWorkspaceId?.trim() || props.activeWorkspaceDisplay.id?.trim() || "remote-worker",
+    () => props.vesloServerWorkspaceId?.trim() || props.activeWorkspaceDisplay.id?.trim() || "remote-worker",
   );
   let remoteMirrorSyncTimer: number | undefined;
   let remoteMirrorSyncInFlight = false;
@@ -965,7 +965,7 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const closeRemoteFileSyncSession = async (session: RemoteFileSyncSession | null) => {
-    const client = props.openworkServerClient;
+    const client = props.vesloServerClient;
     if (!client || !session) return;
     try {
       await client.closeFileSession(session.id);
@@ -1024,10 +1024,10 @@ export default function SessionView(props: SessionViewProps) {
   const toRemoteArtifactCandidates = (file: string) => {
     const target = toWorkerRelativeArtifactPath(file);
     if (!target) return [] as string[];
-    const outboxPath = `.opencode/openwork/outbox/${target}`.replace(/\/+/g, "/");
+    const outboxPath = `.opencode/veslo/outbox/${target}`.replace(/\/+/g, "/");
     if (
-      target.startsWith(".opencode/openwork/outbox/") ||
-      target.startsWith("./.opencode/openwork/outbox/") ||
+      target.startsWith(".opencode/veslo/outbox/") ||
+      target.startsWith("./.opencode/veslo/outbox/") ||
       outboxPath === target
     ) {
       return [target];
@@ -1036,10 +1036,10 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const ensureRemoteFileSyncSession = async (): Promise<RemoteFileSyncSession> => {
-    const client = props.openworkServerClient;
-    const workspaceId = props.openworkServerWorkspaceId?.trim() ?? "";
+    const client = props.vesloServerClient;
+    const workspaceId = props.vesloServerWorkspaceId?.trim() ?? "";
     if (!client || !workspaceId) {
-      throw new Error("Connect to OpenWork server to sync remote files.");
+      throw new Error("Connect to Veslo server to sync remote files.");
     }
 
     const existing = remoteFileSyncSession();
@@ -1057,7 +1057,7 @@ export default function SessionView(props: SessionViewProps) {
         setRemoteFileSyncSession(next);
         return next;
       } catch (error) {
-        if (!(error instanceof OpenworkServerError) || error.code !== "file_session_not_found") {
+        if (!(error instanceof VesloServerError) || error.code !== "file_session_not_found") {
           throw error;
         }
       }
@@ -1081,8 +1081,8 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const refreshTrackedRemoteMirrorFile = async (session: RemoteFileSyncSession, path: string) => {
-    const client = props.openworkServerClient;
-    if (!client) throw new Error("OpenWork server client unavailable");
+    const client = props.vesloServerClient;
+    if (!client) throw new Error("Veslo server client unavailable");
 
     const result = await client.readFileBatch(session.id, [path]);
     const item = result.items[0];
@@ -1113,7 +1113,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const createConflictPath = (path: string) => {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const marker = `.openwork-conflict-${stamp}`;
+    const marker = `.veslo-conflict-${stamp}`;
     const dot = path.lastIndexOf(".");
     if (dot <= 0) {
       return `${path}${marker}`;
@@ -1128,7 +1128,7 @@ export default function SessionView(props: SessionViewProps) {
       return;
     }
 
-    const client = props.openworkServerClient;
+    const client = props.vesloServerClient;
     if (!client) {
       stopRemoteMirrorSyncLoop();
       return;
@@ -1238,9 +1238,9 @@ export default function SessionView(props: SessionViewProps) {
 
   const mirrorRemoteArtifactForObsidian = async (file: string) => {
     const session = await ensureRemoteFileSyncSession();
-    const client = props.openworkServerClient;
+    const client = props.vesloServerClient;
     if (!client) {
-      throw new Error("Connect to OpenWork server to sync remote files.");
+      throw new Error("Connect to Veslo server to sync remote files.");
     }
 
     const candidates = toRemoteArtifactCandidates(file);
@@ -1286,8 +1286,8 @@ export default function SessionView(props: SessionViewProps) {
         [
           isTauriRuntime(),
           props.activeWorkspaceDisplay.workspaceType,
-          props.openworkServerWorkspaceId?.trim() ?? "",
-          Boolean(props.openworkServerClient),
+          props.vesloServerWorkspaceId?.trim() ?? "",
+          Boolean(props.vesloServerClient),
         ] as const,
       ([desktopRuntime, workspaceType, workspaceId, hasClient], previous) => {
         const previousWorkspaceId = previous?.[2] ?? "";
@@ -1422,14 +1422,14 @@ export default function SessionView(props: SessionViewProps) {
   let initialAnchorGuardTimer: ReturnType<typeof setTimeout> | undefined;
   const attachmentsEnabled = createMemo(() => {
     if (props.activeWorkspaceDisplay.workspaceType !== "remote") return true;
-    return props.openworkServerStatus === "connected";
+    return props.vesloServerStatus === "connected";
   });
   const attachmentsDisabledReason = createMemo(() => {
     if (attachmentsEnabled()) return null;
-    if (props.openworkServerStatus === "limited") {
+    if (props.vesloServerStatus === "limited") {
       return "Add a server token to attach files.";
     }
-    return "Connect to OpenWork server to attach files.";
+    return "Connect to Veslo server to attach files.";
   });
 
   const scrollToLatest = (behavior: ScrollBehavior = "auto") => {
@@ -2580,9 +2580,9 @@ export default function SessionView(props: SessionViewProps) {
     const ws = shareWorkspace();
     if (!ws) return "";
     if (ws.workspaceType === "remote") {
-      if (ws.remoteType === "openwork") {
-        const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
-        const mounted = buildOpenworkWorkspaceBaseUrl(hostUrl, ws.openworkWorkspaceId);
+      if (ws.remoteType === "veslo") {
+        const hostUrl = ws.vesloHostUrl?.trim() || ws.baseUrl?.trim() || "";
+        const mounted = buildVesloWorkspaceBaseUrl(hostUrl, ws.vesloWorkspaceId);
         return mounted || hostUrl;
       }
       return ws.baseUrl?.trim() || "";
@@ -2590,7 +2590,7 @@ export default function SessionView(props: SessionViewProps) {
     return ws.path?.trim() || "";
   });
 
-  const [shareLocalOpenworkWorkspaceId, setShareLocalOpenworkWorkspaceId] = createSignal<string | null>(null);
+  const [shareLocalVesloWorkspaceId, setShareLocalVesloWorkspaceId] = createSignal<string | null>(null);
   const [shareWorkspaceProfileBusy, setShareWorkspaceProfileBusy] = createSignal(false);
   const [shareWorkspaceProfileUrl, setShareWorkspaceProfileUrl] = createSignal<string | null>(null);
   const [shareWorkspaceProfileError, setShareWorkspaceProfileError] = createSignal<string | null>(null);
@@ -2611,29 +2611,29 @@ export default function SessionView(props: SessionViewProps) {
 
   createEffect(() => {
     const ws = shareWorkspace();
-    const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
-    const token = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
+    const baseUrl = props.vesloServerHostInfo?.baseUrl?.trim() ?? "";
+    const token = props.vesloServerHostInfo?.clientToken?.trim() ?? "";
     const workspacePath = ws?.workspaceType === "local" ? ws.path?.trim() ?? "" : "";
 
     if (!ws || ws.workspaceType !== "local" || !workspacePath || !baseUrl || !token) {
-      setShareLocalOpenworkWorkspaceId(null);
+      setShareLocalVesloWorkspaceId(null);
       return;
     }
 
     let cancelled = false;
-    setShareLocalOpenworkWorkspaceId(null);
+    setShareLocalVesloWorkspaceId(null);
 
     void (async () => {
       try {
-        const client = createOpenworkServerClient({ baseUrl, token });
+        const client = createVesloServerClient({ baseUrl, token });
         const response = await client.listWorkspaces();
         if (cancelled) return;
         const items = Array.isArray(response.items) ? response.items : [];
         const targetPath = normalizeDirectoryPath(workspacePath);
         const match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
-        setShareLocalOpenworkWorkspaceId(match?.id ?? null);
+        setShareLocalVesloWorkspaceId(match?.id ?? null);
       } catch {
-        if (!cancelled) setShareLocalOpenworkWorkspaceId(null);
+        if (!cancelled) setShareLocalVesloWorkspaceId(null);
       }
     })();
 
@@ -2656,30 +2656,30 @@ export default function SessionView(props: SessionViewProps) {
 
     if (ws.workspaceType !== "remote") {
       const hostUrl =
-        props.openworkServerHostInfo?.connectUrl?.trim() ||
-        props.openworkServerHostInfo?.lanUrl?.trim() ||
-        props.openworkServerHostInfo?.mdnsUrl?.trim() ||
-        props.openworkServerHostInfo?.baseUrl?.trim() ||
+        props.vesloServerHostInfo?.connectUrl?.trim() ||
+        props.vesloServerHostInfo?.lanUrl?.trim() ||
+        props.vesloServerHostInfo?.mdnsUrl?.trim() ||
+        props.vesloServerHostInfo?.baseUrl?.trim() ||
         "";
-      const mountedUrl = shareLocalOpenworkWorkspaceId()
-        ? buildOpenworkWorkspaceBaseUrl(hostUrl, shareLocalOpenworkWorkspaceId())
+      const mountedUrl = shareLocalVesloWorkspaceId()
+        ? buildVesloWorkspaceBaseUrl(hostUrl, shareLocalVesloWorkspaceId())
         : null;
       const url = mountedUrl || hostUrl;
-      const token = props.openworkServerHostInfo?.clientToken?.trim() || "";
-      const inviteUrl = buildOpenworkConnectInviteUrl({
+      const token = props.vesloServerHostInfo?.clientToken?.trim() || "";
+      const inviteUrl = buildVesloConnectInviteUrl({
         workspaceUrl: url,
         token,
       });
       return [
         {
-          label: "OpenWork invite link",
+          label: "Veslo invite link",
           value: inviteUrl,
           secret: true,
           placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
           hint: "One link that prefills worker URL and token.",
         },
         {
-          label: "OpenWork worker URL",
+          label: "Veslo worker URL",
           value: url,
           placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
           hint: mountedUrl
@@ -2700,26 +2700,26 @@ export default function SessionView(props: SessionViewProps) {
       ];
     }
 
-    if (ws.remoteType === "openwork") {
-      const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
-      const url = buildOpenworkWorkspaceBaseUrl(hostUrl, ws.openworkWorkspaceId) || hostUrl;
+    if (ws.remoteType === "veslo") {
+      const hostUrl = ws.vesloHostUrl?.trim() || ws.baseUrl?.trim() || "";
+      const url = buildVesloWorkspaceBaseUrl(hostUrl, ws.vesloWorkspaceId) || hostUrl;
       const token =
-        ws.openworkToken?.trim() ||
-        props.openworkServerSettings.token?.trim() ||
+        ws.vesloToken?.trim() ||
+        props.vesloServerSettings.token?.trim() ||
         "";
-      const inviteUrl = buildOpenworkConnectInviteUrl({
+      const inviteUrl = buildVesloConnectInviteUrl({
         workspaceUrl: url,
         token,
       });
       return [
         {
-          label: "OpenWork invite link",
+          label: "Veslo invite link",
           value: inviteUrl,
           secret: true,
           hint: "One link that prefills worker URL and token.",
         },
         {
-          label: "OpenWork worker URL",
+          label: "Veslo worker URL",
           value: url,
         },
         {
@@ -2759,26 +2759,26 @@ export default function SessionView(props: SessionViewProps) {
   const shareServiceDisabledReason = createMemo(() => {
     const ws = shareWorkspace();
     if (!ws) return "Select a worker first.";
-    if (ws.workspaceType === "remote" && ws.remoteType !== "openwork") {
-      return "Share service links are available for OpenWork workers.";
+    if (ws.workspaceType === "remote" && ws.remoteType !== "veslo") {
+      return "Share service links are available for Veslo workers.";
     }
     if (ws.workspaceType !== "remote") {
-      const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
-      const token = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
+      const baseUrl = props.vesloServerHostInfo?.baseUrl?.trim() ?? "";
+      const token = props.vesloServerHostInfo?.clientToken?.trim() ?? "";
       if (!baseUrl || !token) {
-        return "Local OpenWork host is not ready yet.";
+        return "Local Veslo host is not ready yet.";
       }
     } else {
-      const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
-      const token = ws.openworkToken?.trim() || props.openworkServerSettings.token?.trim() || "";
-      if (!hostUrl) return "Missing OpenWork host URL.";
-      if (!token) return "Missing OpenWork token.";
+      const hostUrl = ws.vesloHostUrl?.trim() || ws.baseUrl?.trim() || "";
+      const token = ws.vesloToken?.trim() || props.vesloServerSettings.token?.trim() || "";
+      if (!hostUrl) return "Missing Veslo host URL.";
+      if (!token) return "Missing Veslo token.";
     }
     return null;
   });
 
   const resolveShareExportContext = async (): Promise<{
-    client: OpenworkServerClient;
+    client: VesloServerClient;
     workspaceId: string;
     workspace: WorkspaceInfo;
   }> => {
@@ -2788,45 +2788,45 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     if (ws.workspaceType !== "remote") {
-      const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
-      const token = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
+      const baseUrl = props.vesloServerHostInfo?.baseUrl?.trim() ?? "";
+      const token = props.vesloServerHostInfo?.clientToken?.trim() ?? "";
       if (!baseUrl || !token) {
-        throw new Error("Local OpenWork host is not ready yet.");
+        throw new Error("Local Veslo host is not ready yet.");
       }
-      const client = createOpenworkServerClient({ baseUrl, token });
+      const client = createVesloServerClient({ baseUrl, token });
 
-      let workspaceId = shareLocalOpenworkWorkspaceId()?.trim() ?? "";
+      let workspaceId = shareLocalVesloWorkspaceId()?.trim() ?? "";
       if (!workspaceId) {
         const response = await client.listWorkspaces();
         const items = Array.isArray(response.items) ? response.items : [];
         const targetPath = normalizeDirectoryPath(ws.path?.trim() ?? "");
         const match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
         workspaceId = (match?.id ?? "").trim();
-        setShareLocalOpenworkWorkspaceId(workspaceId || null);
+        setShareLocalVesloWorkspaceId(workspaceId || null);
       }
 
       if (!workspaceId) {
-        throw new Error("Could not resolve this worker on the local OpenWork host.");
+        throw new Error("Could not resolve this worker on the local Veslo host.");
       }
 
       return { client, workspaceId, workspace: ws };
     }
 
-    if (ws.remoteType !== "openwork") {
-      throw new Error("Share service links are available for OpenWork workers.");
+    if (ws.remoteType !== "veslo") {
+      throw new Error("Share service links are available for Veslo workers.");
     }
 
-    const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
-    const token = ws.openworkToken?.trim() || props.openworkServerSettings.token?.trim() || "";
+    const hostUrl = ws.vesloHostUrl?.trim() || ws.baseUrl?.trim() || "";
+    const token = ws.vesloToken?.trim() || props.vesloServerSettings.token?.trim() || "";
     if (!hostUrl || !token) {
-      throw new Error("OpenWork host URL and token are required.");
+      throw new Error("Veslo host URL and token are required.");
     }
 
-    const client = createOpenworkServerClient({ baseUrl: hostUrl, token });
+    const client = createVesloServerClient({ baseUrl: hostUrl, token });
     let workspaceId =
-      ws.openworkWorkspaceId?.trim() ||
-      parseOpenworkWorkspaceIdFromUrl(ws.openworkHostUrl ?? "") ||
-      parseOpenworkWorkspaceIdFromUrl(ws.baseUrl ?? "") ||
+      ws.vesloWorkspaceId?.trim() ||
+      parseVesloWorkspaceIdFromUrl(ws.vesloHostUrl ?? "") ||
+      parseVesloWorkspaceIdFromUrl(ws.baseUrl ?? "") ||
       "";
 
     if (!workspaceId) {
@@ -2846,7 +2846,7 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     if (!workspaceId) {
-      throw new Error("Could not resolve this worker on the OpenWork host.");
+      throw new Error("Could not resolve this worker on the Veslo host.");
     }
 
     return { client, workspaceId, workspace: ws };
@@ -2865,11 +2865,11 @@ export default function SessionView(props: SessionViewProps) {
         schemaVersion: 1,
         type: "workspace-profile",
         name: `${workspaceLabel(workspace)} profile`,
-        description: "Full OpenWork workspace profile with config, MCP setup, commands, and skills.",
+        description: "Full Veslo workspace profile with config, MCP setup, commands, and skills.",
         workspace: exported,
       };
 
-      const result = await publishOpenworkBundleJson({
+      const result = await publishVesloBundleJson({
         payload,
         bundleType: "workspace-profile",
         name: payload.name,
@@ -2906,7 +2906,7 @@ export default function SessionView(props: SessionViewProps) {
         schemaVersion: 1,
         type: "skills-set",
         name: `${workspaceLabel(workspace)} skills`,
-        description: "Complete skills set from an OpenWork workspace.",
+        description: "Complete skills set from an Veslo workspace.",
         skills: skills.map((skill) => ({
           name: skill.name,
           description: skill.description,
@@ -2919,7 +2919,7 @@ export default function SessionView(props: SessionViewProps) {
         },
       };
 
-      const result = await publishOpenworkBundleJson({
+      const result = await publishVesloBundleJson({
         payload,
         bundleType: "skills-set",
         name: payload.name,
@@ -3020,11 +3020,11 @@ export default function SessionView(props: SessionViewProps) {
     options?: { notify?: boolean },
   ): Promise<Array<{ name: string; path: string }>> => {
     const notify = options?.notify ?? true;
-    const client = props.openworkServerClient;
-    const workspaceId = props.openworkServerWorkspaceId?.trim() ?? "";
+    const client = props.vesloServerClient;
+    const workspaceId = props.vesloServerWorkspaceId?.trim() ?? "";
     if (!client || !workspaceId) {
       if (notify) {
-        setToastMessage("Connect to the OpenWork server to upload inbox files.");
+        setToastMessage("Connect to the Veslo server to upload inbox files.");
       }
       return [];
     }
@@ -3673,7 +3673,7 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
                 <h3 class="text-2xl font-semibold text-gray-12">Set up your first worker</h3>
                 <p class="mt-2 text-sm text-gray-10">
-                  OpenWork needs a local or remote worker before you can start a session.
+                  Veslo needs a local or remote worker before you can start a session.
                 </p>
                 <div class="mt-6 grid gap-3 sm:grid-cols-2">
                   <button
@@ -3714,7 +3714,7 @@ export default function SessionView(props: SessionViewProps) {
                 >
                   <div class="text-sm font-semibold text-dls-text">Automate your browser</div>
                   <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
-                    Set up browser actions and run reliable web tasks from OpenWork.
+                    Set up browser actions and run reliable web tasks from Veslo.
                   </div>
                 </button>
                 <button
@@ -3931,7 +3931,7 @@ export default function SessionView(props: SessionViewProps) {
 
         <StatusBar
           clientConnected={props.clientConnected}
-          openworkServerStatus={props.openworkServerStatus}
+          vesloServerStatus={props.vesloServerStatus}
           startupPreference={props.startupPreference}
           developerMode={props.developerMode}
           onOpenSettings={() => openSettings("general")}
@@ -4036,8 +4036,8 @@ export default function SessionView(props: SessionViewProps) {
 
           <InboxPanel
             id="sidebar-inbox"
-            client={props.openworkServerClient}
-            workspaceId={props.openworkServerWorkspaceId}
+            client={props.vesloServerClient}
+            workspaceId={props.vesloServerWorkspaceId}
             onToast={(message) => setToastMessage(message)}
           />
 
@@ -4193,7 +4193,7 @@ export default function SessionView(props: SessionViewProps) {
         workspaceDetail={shareWorkspaceDetail()}
         fields={shareFields()}
         note={shareNote()}
-        publisherBaseUrl={DEFAULT_OPENWORK_PUBLISHER_BASE_URL}
+        publisherBaseUrl={DEFAULT_VESLO_PUBLISHER_BASE_URL}
         onShareWorkspaceProfile={publishWorkspaceProfileLink}
         shareWorkspaceProfileBusy={shareWorkspaceProfileBusy()}
         shareWorkspaceProfileUrl={shareWorkspaceProfileUrl()}

@@ -11,16 +11,16 @@ import type {
   PluginScope,
   ReloadReason,
   ReloadTrigger,
-  ResetOpenworkMode,
+  ResetVesloMode,
   UpdateHandle,
 } from "./types";
 import { addOpencodeCacheHint, isTauriRuntime, safeStringify } from "./utils";
 import { mapConfigProvidersToList } from "./utils/providers";
 import { createUpdaterState } from "./context/updater";
 import {
-  resetOpenworkState,
+  resetVesloState,
   resetOpencodeCache,
-  sandboxCleanupOpenworkContainers,
+  sandboxCleanupVesloContainers,
 } from "./lib/tauri";
 import { unwrap, waitForHealthy } from "./lib/opencode";
 
@@ -101,7 +101,7 @@ export function createSystemState(options: {
   } = updater;
 
   const [resetModalOpen, setResetModalOpen] = createSignal(false);
-  const [resetModalMode, setResetModalMode] = createSignal<ResetOpenworkMode>("onboarding");
+  const [resetModalMode, setResetModalMode] = createSignal<ResetVesloMode>("onboarding");
   const [resetModalText, setResetModalText] = createSignal("");
   const [resetModalBusy, setResetModalBusy] = createSignal(false);
 
@@ -112,24 +112,24 @@ export function createSystemState(options: {
     return options.sessions().some((s) => statuses[s.id] === "running" || statuses[s.id] === "retry");
   });
 
-  function clearOpenworkLocalStorage() {
+  function clearVesloLocalStorage() {
     if (typeof window === "undefined") return;
 
     try {
       const keys = Object.keys(window.localStorage);
       for (const key of keys) {
-        if (key.startsWith("openwork.")) {
+        if (key.startsWith("veslo.")) {
           window.localStorage.removeItem(key);
         }
       }
       // Legacy compatibility key
-      window.localStorage.removeItem("openwork_mode_pref");
+      window.localStorage.removeItem("veslo_mode_pref");
     } catch {
       // ignore
     }
   }
 
-  function openResetModal(mode: ResetOpenworkMode) {
+  function openResetModal(mode: ResetVesloMode) {
     if (anyActiveRuns()) {
       options.setError("Stop active runs before resetting.");
       return;
@@ -156,10 +156,10 @@ export function createSystemState(options: {
 
     try {
       if (isTauriRuntime()) {
-        await resetOpenworkState(resetModalMode());
+        await resetVesloState(resetModalMode());
       }
 
-      clearOpenworkLocalStorage();
+      clearVesloLocalStorage();
 
       if (isTauriRuntime()) {
         await relaunch();
@@ -207,7 +207,7 @@ export function createSystemState(options: {
     if (!reasons.length) {
       return {
         title: "Reload required",
-        body: "OpenWork detected changes that require reloading the OpenCode instance.",
+        body: "Veslo detected changes that require reloading the OpenCode instance.",
       };
     }
 
@@ -255,7 +255,7 @@ export function createSystemState(options: {
 
     return {
       title: "Reload required",
-      body: "OpenWork detected OpenCode configuration changes. Reload the engine to apply them.",
+      body: "Veslo detected OpenCode configuration changes. Reload the engine to apply them.",
     };
   });
 
@@ -348,13 +348,13 @@ export function createSystemState(options: {
         }
 
         try {
-          window.localStorage.setItem("openwork.notionStatus", nextStatus);
+          window.localStorage.setItem("veslo.notionStatus", nextStatus);
           if (nextStatus === "connected") {
             const detail = options.notion.statusDetail();
             if (detail) {
-              window.localStorage.setItem("openwork.notionStatusDetail", detail);
+              window.localStorage.setItem("veslo.notionStatusDetail", detail);
             } else {
-              window.localStorage.removeItem("openwork.notionStatusDetail");
+              window.localStorage.removeItem("veslo.notionStatusDetail");
             }
           }
         } catch {
@@ -409,7 +409,7 @@ export function createSystemState(options: {
     }
   }
 
-  async function cleanupOpenworkDockerContainers() {
+  async function cleanupVesloDockerContainers() {
     if (!isTauriRuntime()) {
       setDockerCleanupResult("Docker cleanup requires the desktop app.");
       return;
@@ -422,9 +422,9 @@ export function createSystemState(options: {
     options.setError(null);
 
     try {
-      const result = await sandboxCleanupOpenworkContainers();
+      const result = await sandboxCleanupVesloContainers();
       if (!result.candidates.length) {
-        setDockerCleanupResult("No OpenWork Docker containers found.");
+        setDockerCleanupResult("No Veslo Docker containers found.");
         return;
       }
 
@@ -437,7 +437,7 @@ export function createSystemState(options: {
         return;
       }
 
-      setDockerCleanupResult(`Removed ${removedCount} OpenWork Docker container(s).`);
+      setDockerCleanupResult(`Removed ${removedCount} Veslo Docker container(s).`);
     } catch (e) {
       setDockerCleanupResult(e instanceof Error ? e.message : safeStringify(e));
     } finally {
@@ -607,7 +607,7 @@ export function createSystemState(options: {
     repairOpencodeCache,
     dockerCleanupBusy,
     dockerCleanupResult,
-    cleanupOpenworkDockerContainers,
+    cleanupVesloDockerContainers,
     updateAutoCheck,
     setUpdateAutoCheck,
     updateAutoDownload,

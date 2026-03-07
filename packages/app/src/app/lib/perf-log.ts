@@ -8,10 +8,10 @@ export type PerfLogRecord = {
 };
 
 type PerfRoot = typeof globalThis & {
-  __openworkPerfSeq?: number;
-  __openworkPerfLogs?: PerfLogRecord[];
-  __openworkPerfConsoleAt?: Record<string, number>;
-  __openworkPerfConsoleSuppressed?: Record<string, number>;
+  __vesloPerfSeq?: number;
+  __vesloPerfLogs?: PerfLogRecord[];
+  __vesloPerfConsoleAt?: Record<string, number>;
+  __vesloPerfConsoleSuppressed?: Record<string, number>;
 };
 
 const PERF_LOG_LIMIT = 500;
@@ -47,8 +47,8 @@ export const recordPerfLog = (
   if (!enabled) return;
 
   const root = globalThis as PerfRoot;
-  const id = (root.__openworkPerfSeq ?? 0) + 1;
-  root.__openworkPerfSeq = id;
+  const id = (root.__vesloPerfSeq ?? 0) + 1;
+  root.__vesloPerfSeq = id;
 
   const entry: PerfLogRecord = {
     id,
@@ -59,19 +59,19 @@ export const recordPerfLog = (
     payload,
   };
 
-  const logs = root.__openworkPerfLogs ?? [];
+  const logs = root.__vesloPerfLogs ?? [];
   logs.push(entry);
   if (logs.length > PERF_LOG_LIMIT) {
     logs.splice(0, logs.length - PERF_LOG_LIMIT);
   }
-  root.__openworkPerfLogs = logs;
+  root.__vesloPerfLogs = logs;
 
   try {
     const key = `${scope}:${event}`;
     const now = Date.now();
-    const lastByKey = root.__openworkPerfConsoleAt ?? (root.__openworkPerfConsoleAt = {});
+    const lastByKey = root.__vesloPerfConsoleAt ?? (root.__vesloPerfConsoleAt = {});
     const suppressedByKey =
-      root.__openworkPerfConsoleSuppressed ?? (root.__openworkPerfConsoleSuppressed = {});
+      root.__vesloPerfConsoleSuppressed ?? (root.__vesloPerfConsoleSuppressed = {});
     if (HOT_EVENT_KEYS.has(key)) {
       const last = lastByKey[key] ?? 0;
       if (now - last < HOT_EVENT_MIN_INTERVAL_MS) {
@@ -108,7 +108,7 @@ export const recordPerfLog = (
 
 export const readPerfLogs = (limit = 120) => {
   const root = globalThis as PerfRoot;
-  const logs = root.__openworkPerfLogs ?? [];
+  const logs = root.__vesloPerfLogs ?? [];
   if (limit <= 0) return [];
   if (logs.length <= limit) return logs.slice();
   return logs.slice(logs.length - limit);
@@ -116,8 +116,8 @@ export const readPerfLogs = (limit = 120) => {
 
 export const clearPerfLogs = () => {
   const root = globalThis as PerfRoot;
-  root.__openworkPerfLogs = [];
-  root.__openworkPerfSeq = 0;
+  root.__vesloPerfLogs = [];
+  root.__vesloPerfSeq = 0;
 };
 
 export const finishPerf = (

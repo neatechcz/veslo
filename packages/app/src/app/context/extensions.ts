@@ -26,10 +26,10 @@ import {
   type OpencodeConfigFile,
 } from "../lib/tauri";
 import type {
-  OpenworkServerCapabilities,
-  OpenworkServerClient,
-  OpenworkServerStatus,
-} from "../lib/openwork-server";
+  VesloServerCapabilities,
+  VesloServerClient,
+  VesloServerStatus,
+} from "../lib/veslo-server";
 
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
 
@@ -38,10 +38,10 @@ export function createExtensionsStore(options: {
   projectDir: () => string;
   activeWorkspaceRoot: () => string;
   workspaceType: () => "local" | "remote";
-  openworkServerClient: () => OpenworkServerClient | null;
-  openworkServerStatus: () => OpenworkServerStatus;
-  openworkServerCapabilities: () => OpenworkServerCapabilities | null;
-  openworkServerWorkspaceId: () => string | null;
+  vesloServerClient: () => VesloServerClient | null;
+  vesloServerStatus: () => VesloServerStatus;
+  vesloServerCapabilities: () => VesloServerCapabilities | null;
+  vesloServerWorkspaceId: () => string | null;
   setBusy: (value: boolean) => void;
   setBusyLabel: (value: string | null) => void;
   setBusyStartedAt: (value: number | null) => void;
@@ -85,13 +85,13 @@ export function createExtensionsStore(options: {
 
   async function refreshHubSkills(optionsOverride?: { force?: boolean }) {
     const root = options.activeWorkspaceRoot().trim();
-    const openworkClient = options.openworkServerClient();
-    const openworkCapabilities = options.openworkServerCapabilities();
-    const canUseOpenworkServer =
-      options.openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkCapabilities?.hub?.skills?.read &&
-      typeof (openworkClient as any).listHubSkills === "function";
+    const vesloClient = options.vesloServerClient();
+    const vesloCapabilities = options.vesloServerCapabilities();
+    const canUseVesloServer =
+      options.vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloCapabilities?.hub?.skills?.read &&
+      typeof (vesloClient as any).listHubSkills === "function";
 
     if (root !== hubSkillsRoot) {
       hubSkillsLoaded = false;
@@ -106,8 +106,8 @@ export function createExtensionsStore(options: {
     try {
       setHubSkillsStatus(null);
 
-      if (canUseOpenworkServer) {
-        const response = await (openworkClient as any).listHubSkills();
+      if (canUseVesloServer) {
+        const response = await (vesloClient as any).listHubSkills();
         if (refreshHubSkillsAborted) return;
         const next: HubSkillCard[] = Array.isArray(response?.items)
           ? response.items.map((entry: any) => ({
@@ -125,7 +125,7 @@ export function createExtensionsStore(options: {
       }
 
       // Browser fallback: fetch directly from GitHub (public catalog).
-      const listingRes = await fetch("https://api.github.com/repos/different-ai/openwork-hub/contents/skills?ref=main", {
+      const listingRes = await fetch("https://api.github.com/repos/neatech/veslo-hub/contents/skills?ref=main", {
         headers: { Accept: "application/vnd.github+json" },
       });
       if (!listingRes.ok) {
@@ -140,7 +140,7 @@ export function createExtensionsStore(options: {
 
       const next: HubSkillCard[] = dirs.map((dirName) => ({
         name: dirName,
-        source: { owner: "different-ai", repo: "openwork-hub", ref: "main", path: `skills/${dirName}` },
+        source: { owner: "neatech", repo: "veslo-hub", ref: "main", path: `skills/${dirName}` },
       }));
 
       if (refreshHubSkillsAborted) return;
@@ -163,21 +163,21 @@ export function createExtensionsStore(options: {
     if (!trimmed) return { ok: false, message: "Skill name is required." };
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
-    const openworkClient = options.openworkServerClient();
-    const openworkWorkspaceId = options.openworkServerWorkspaceId();
-    const openworkCapabilities = options.openworkServerCapabilities();
-    const canUseOpenworkServer =
-      options.openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.hub?.skills?.install &&
-      typeof (openworkClient as any).installHubSkill === "function";
+    const vesloClient = options.vesloServerClient();
+    const vesloWorkspaceId = options.vesloServerWorkspaceId();
+    const vesloCapabilities = options.vesloServerCapabilities();
+    const canUseVesloServer =
+      options.vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.hub?.skills?.install &&
+      typeof (vesloClient as any).installHubSkill === "function";
 
-    if (!canUseOpenworkServer) {
+    if (!canUseVesloServer) {
       if (isRemoteWorkspace) {
-        return { ok: false, message: "OpenWork server unavailable. Connect to install skills." };
+        return { ok: false, message: "Veslo server unavailable. Connect to install skills." };
       }
-      return { ok: false, message: "Hub install requires OpenWork server." };
+      return { ok: false, message: "Hub install requires Veslo server." };
     }
 
     options.setBusy(true);
@@ -185,7 +185,7 @@ export function createExtensionsStore(options: {
     setSkillsStatus(null);
 
     try {
-      const result = await (openworkClient as any).installHubSkill(openworkWorkspaceId, trimmed);
+      const result = await (vesloClient as any).installHubSkill(vesloWorkspaceId, trimmed);
       await refreshSkills({ force: true });
       await refreshHubSkills({ force: true });
       if (!result?.ok) {
@@ -212,14 +212,14 @@ export function createExtensionsStore(options: {
     const root = options.activeWorkspaceRoot().trim();
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkClient = options.openworkServerClient();
-    const openworkWorkspaceId = options.openworkServerWorkspaceId();
-    const openworkCapabilities = options.openworkServerCapabilities();
-    const canUseOpenworkServer =
-      options.openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.skills?.read;
+    const vesloClient = options.vesloServerClient();
+    const vesloWorkspaceId = options.vesloServerWorkspaceId();
+    const vesloCapabilities = options.vesloServerCapabilities();
+    const canUseVesloServer =
+      options.vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.skills?.read;
 
     if (!root) {
       setSkills([]);
@@ -227,8 +227,8 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    // Prefer OpenWork server when available
-    if (canUseOpenworkServer) {
+    // Prefer Veslo server when available
+    if (canUseVesloServer) {
       if (root !== skillsRoot) {
         skillsLoaded = false;
       }
@@ -246,7 +246,7 @@ export function createExtensionsStore(options: {
 
       try {
         setSkillsStatus(null);
-        const response = await openworkClient.listSkills(openworkWorkspaceId, {
+        const response = await vesloClient.listSkills(vesloWorkspaceId, {
           includeGlobal: isLocalWorkspace,
         });
         if (refreshSkillsAborted) return;
@@ -327,7 +327,7 @@ export function createExtensionsStore(options: {
     const c = options.client();
     if (!c) {
       setSkills([]);
-      setSkillsStatus("OpenWork server unavailable. Connect to load skills.");
+      setSkillsStatus("Veslo server unavailable. Connect to load skills.");
       return;
     }
 
@@ -397,14 +397,14 @@ export function createExtensionsStore(options: {
   async function refreshPlugins(scopeOverride?: PluginScope) {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkClient = options.openworkServerClient();
-    const openworkWorkspaceId = options.openworkServerWorkspaceId();
-    const openworkCapabilities = options.openworkServerCapabilities();
-    const canUseOpenworkServer =
-      options.openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.plugins?.read;
+    const vesloClient = options.vesloServerClient();
+    const vesloWorkspaceId = options.vesloServerWorkspaceId();
+    const vesloCapabilities = options.vesloServerCapabilities();
+    const canUseVesloServer =
+      options.vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.plugins?.read;
 
     // Skip if already in flight
     if (refreshPluginsInFlight) {
@@ -426,9 +426,9 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (scope === "project" && canUseOpenworkServer) {
+    if (scope === "project" && canUseVesloServer) {
       setPluginConfig(null);
-      setPluginConfigPath(`opencode.json (${isRemoteWorkspace ? "remote" : "openwork"} server)`);
+      setPluginConfigPath(`opencode.json (${isRemoteWorkspace ? "remote" : "veslo"} server)`);
 
       try {
         setPluginStatus(null);
@@ -436,7 +436,7 @@ export function createExtensionsStore(options: {
 
         if (refreshPluginsAborted) return;
 
-        const result = await openworkClient.listPlugins(openworkWorkspaceId, { includeGlobal: false });
+        const result = await vesloClient.listPlugins(vesloWorkspaceId, { includeGlobal: false });
         if (refreshPluginsAborted) return;
 
         const configItems = result.items.filter((item) => item.source === "config" && item.scope === "project");
@@ -469,10 +469,10 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (!isLocalWorkspace && !canUseOpenworkServer) {
-      setPluginStatus("OpenWork server unavailable. Connect to manage plugins.");
+    if (!isLocalWorkspace && !canUseVesloServer) {
+      setPluginStatus("Veslo server unavailable. Connect to manage plugins.");
       setPluginList([]);
-      setSidebarPluginStatus("Connect an OpenWork server to load plugins.");
+      setSidebarPluginStatus("Connect an Veslo server to load plugins.");
       setSidebarPluginList([]);
       refreshPluginsInFlight = false;
       return;
@@ -537,14 +537,14 @@ export function createExtensionsStore(options: {
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkClient = options.openworkServerClient();
-    const openworkWorkspaceId = options.openworkServerWorkspaceId();
-    const openworkCapabilities = options.openworkServerCapabilities();
-    const canUseOpenworkServer =
-      options.openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.plugins?.write;
+    const vesloClient = options.vesloServerClient();
+    const vesloWorkspaceId = options.vesloServerWorkspaceId();
+    const vesloCapabilities = options.vesloServerCapabilities();
+    const canUseVesloServer =
+      options.vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.plugins?.write;
 
     if (!pluginName) {
       if (isManualInput) {
@@ -558,10 +558,10 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (pluginScope() === "project" && canUseOpenworkServer) {
+    if (pluginScope() === "project" && canUseVesloServer) {
       try {
         setPluginStatus(null);
-        await openworkClient.addPlugin(openworkWorkspaceId, pluginName);
+        await vesloClient.addPlugin(vesloWorkspaceId, pluginName);
         if (isManualInput) {
           setPluginInput("");
         }
@@ -577,8 +577,8 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (!isLocalWorkspace && !canUseOpenworkServer) {
-      setPluginStatus("OpenWork server unavailable. Connect to manage plugins.");
+    if (!isLocalWorkspace && !canUseVesloServer) {
+      setPluginStatus("Veslo server unavailable. Connect to manage plugins.");
       return;
     }
 
@@ -641,24 +641,24 @@ export function createExtensionsStore(options: {
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkClient = options.openworkServerClient();
-    const openworkWorkspaceId = options.openworkServerWorkspaceId();
-    const openworkCapabilities = options.openworkServerCapabilities();
-    const canUseOpenworkServer =
-      options.openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.plugins?.write;
+    const vesloClient = options.vesloServerClient();
+    const vesloWorkspaceId = options.vesloServerWorkspaceId();
+    const vesloCapabilities = options.vesloServerCapabilities();
+    const canUseVesloServer =
+      options.vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.plugins?.write;
 
     if (pluginScope() !== "project" && !isLocalWorkspace) {
       setPluginStatus("Global plugins are only available for local workers.");
       return;
     }
 
-    if (pluginScope() === "project" && canUseOpenworkServer) {
+    if (pluginScope() === "project" && canUseVesloServer) {
       try {
         setPluginStatus(null);
-        await openworkClient.removePlugin(openworkWorkspaceId, name);
+        await vesloClient.removePlugin(vesloWorkspaceId, name);
         await refreshPlugins("project");
       } catch (e) {
         setPluginStatus(e instanceof Error ? e.message : "Failed to remove plugin.");
@@ -671,8 +671,8 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (!isLocalWorkspace && !canUseOpenworkServer) {
-      setPluginStatus("OpenWork server unavailable. Connect to manage plugins.");
+    if (!isLocalWorkspace && !canUseVesloServer) {
+      setPluginStatus("Veslo server unavailable. Connect to manage plugins.");
       return;
     }
 
@@ -769,23 +769,23 @@ export function createExtensionsStore(options: {
   async function installSkillCreator(): Promise<{ ok: boolean; message: string }> {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkClient = options.openworkServerClient();
-    const openworkWorkspaceId = options.openworkServerWorkspaceId();
-    const openworkCapabilities = options.openworkServerCapabilities();
-    const canUseOpenworkServer =
-      options.openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.skills?.write;
+    const vesloClient = options.vesloServerClient();
+    const vesloWorkspaceId = options.vesloServerWorkspaceId();
+    const vesloCapabilities = options.vesloServerCapabilities();
+    const canUseVesloServer =
+      options.vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.skills?.write;
 
-    // Use OpenWork server when available
-    if (canUseOpenworkServer) {
+    // Use Veslo server when available
+    if (canUseVesloServer) {
       options.setBusy(true);
       options.setError(null);
       setSkillsStatus(translate("skills.installing_skill_creator"));
 
       try {
-        await openworkClient.upsertSkill(openworkWorkspaceId, {
+        await vesloClient.upsertSkill(vesloWorkspaceId, {
           name: "skill-creator",
           content: skillCreatorTemplate,
         });
@@ -808,7 +808,7 @@ export function createExtensionsStore(options: {
 
     // Remote workspace without server
     if (isRemoteWorkspace) {
-      const message = "OpenWork server unavailable. Connect to install skills.";
+      const message = "Veslo server unavailable. Connect to install skills.";
       setSkillsStatus(message);
       return { ok: false, message };
     }
@@ -964,21 +964,21 @@ export function createExtensionsStore(options: {
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkClient = options.openworkServerClient();
-    const openworkWorkspaceId = options.openworkServerWorkspaceId();
-    const openworkCapabilities = options.openworkServerCapabilities();
-    const canUseOpenworkServer =
-      options.openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.skills?.read &&
-      typeof (openworkClient as any).getSkill === "function";
+    const vesloClient = options.vesloServerClient();
+    const vesloWorkspaceId = options.vesloServerWorkspaceId();
+    const vesloCapabilities = options.vesloServerCapabilities();
+    const canUseVesloServer =
+      options.vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.skills?.read &&
+      typeof (vesloClient as any).getSkill === "function";
 
-    if (canUseOpenworkServer) {
+    if (canUseVesloServer) {
       try {
         setSkillsStatus(null);
-        const result = await (openworkClient as OpenworkServerClient & { getSkill: any }).getSkill(
-          openworkWorkspaceId,
+        const result = await (vesloClient as VesloServerClient & { getSkill: any }).getSkill(
+          vesloWorkspaceId,
           trimmed,
           { includeGlobal: isLocalWorkspace },
         );
@@ -994,7 +994,7 @@ export function createExtensionsStore(options: {
     }
 
     if (isRemoteWorkspace) {
-      setSkillsStatus("OpenWork server unavailable. Connect to view skills.");
+      setSkillsStatus("Veslo server unavailable. Connect to view skills.");
       return null;
     }
 
@@ -1030,21 +1030,21 @@ export function createExtensionsStore(options: {
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkClient = options.openworkServerClient();
-    const openworkWorkspaceId = options.openworkServerWorkspaceId();
-    const openworkCapabilities = options.openworkServerCapabilities();
-    const canUseOpenworkServer =
-      options.openworkServerStatus() === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.skills?.write;
+    const vesloClient = options.vesloServerClient();
+    const vesloWorkspaceId = options.vesloServerWorkspaceId();
+    const vesloCapabilities = options.vesloServerCapabilities();
+    const canUseVesloServer =
+      options.vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.skills?.write;
 
-    if (canUseOpenworkServer) {
+    if (canUseVesloServer) {
       options.setBusy(true);
       options.setError(null);
       setSkillsStatus(null);
       try {
-        await openworkClient.upsertSkill(openworkWorkspaceId, {
+        await vesloClient.upsertSkill(vesloWorkspaceId, {
           name: trimmed,
           content: input.content,
           description: input.description,
@@ -1062,7 +1062,7 @@ export function createExtensionsStore(options: {
     }
 
     if (isRemoteWorkspace) {
-      setSkillsStatus("OpenWork server unavailable. Connect to edit skills.");
+      setSkillsStatus("Veslo server unavailable. Connect to edit skills.");
       return;
     }
 

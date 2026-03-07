@@ -5,7 +5,7 @@ import { validateMcpServerName } from "../mcp";
 
 export type EngineInfo = {
   running: boolean;
-  runtime: "direct" | "openwork-orchestrator";
+  runtime: "direct" | "veslo-orchestrator";
   baseUrl: string | null;
   projectDir: string | null;
   hostname: string | null;
@@ -17,7 +17,7 @@ export type EngineInfo = {
   lastStderr: string | null;
 };
 
-export type OpenworkServerInfo = {
+export type VesloServerInfo = {
   running: boolean;
   host: string | null;
   port: number | null;
@@ -110,14 +110,14 @@ export type WorkspaceInfo = {
   path: string;
   preset: string;
   workspaceType: "local" | "remote";
-  remoteType?: "openwork" | "opencode" | null;
+  remoteType?: "veslo" | "opencode" | null;
   baseUrl?: string | null;
   directory?: string | null;
   displayName?: string | null;
-  openworkHostUrl?: string | null;
-  openworkToken?: string | null;
-  openworkWorkspaceId?: string | null;
-  openworkWorkspaceName?: string | null;
+  vesloHostUrl?: string | null;
+  vesloToken?: string | null;
+  vesloWorkspaceId?: string | null;
+  vesloWorkspaceName?: string | null;
 
   // Sandbox lifecycle metadata (desktop-managed)
   sandboxBackend?: "docker" | null;
@@ -140,7 +140,7 @@ export async function engineStart(
   projectDir: string,
   options?: {
     preferSidecar?: boolean;
-    runtime?: "direct" | "openwork-orchestrator";
+    runtime?: "direct" | "veslo-orchestrator";
     workspacePaths?: string[];
     opencodeBinPath?: string | null;
   },
@@ -178,11 +178,11 @@ export async function workspaceCreateRemote(input: {
   baseUrl: string;
   directory?: string | null;
   displayName?: string | null;
-  remoteType?: "openwork" | "opencode" | null;
-  openworkHostUrl?: string | null;
-  openworkToken?: string | null;
-  openworkWorkspaceId?: string | null;
-  openworkWorkspaceName?: string | null;
+  remoteType?: "veslo" | "opencode" | null;
+  vesloHostUrl?: string | null;
+  vesloToken?: string | null;
+  vesloWorkspaceId?: string | null;
+  vesloWorkspaceName?: string | null;
 
   // Sandbox lifecycle metadata (desktop-managed)
   sandboxBackend?: "docker" | null;
@@ -194,10 +194,10 @@ export async function workspaceCreateRemote(input: {
     directory: input.directory ?? null,
     displayName: input.displayName ?? null,
     remoteType: input.remoteType ?? null,
-    openworkHostUrl: input.openworkHostUrl ?? null,
-    openworkToken: input.openworkToken ?? null,
-    openworkWorkspaceId: input.openworkWorkspaceId ?? null,
-    openworkWorkspaceName: input.openworkWorkspaceName ?? null,
+    vesloHostUrl: input.vesloHostUrl ?? null,
+    vesloToken: input.vesloToken ?? null,
+    vesloWorkspaceId: input.vesloWorkspaceId ?? null,
+    vesloWorkspaceName: input.vesloWorkspaceName ?? null,
     sandboxBackend: input.sandboxBackend ?? null,
     sandboxRunId: input.sandboxRunId ?? null,
     sandboxContainerName: input.sandboxContainerName ?? null,
@@ -209,11 +209,11 @@ export async function workspaceUpdateRemote(input: {
   baseUrl?: string | null;
   directory?: string | null;
   displayName?: string | null;
-  remoteType?: "openwork" | "opencode" | null;
-  openworkHostUrl?: string | null;
-  openworkToken?: string | null;
-  openworkWorkspaceId?: string | null;
-  openworkWorkspaceName?: string | null;
+  remoteType?: "veslo" | "opencode" | null;
+  vesloHostUrl?: string | null;
+  vesloToken?: string | null;
+  vesloWorkspaceId?: string | null;
+  vesloWorkspaceName?: string | null;
 
   // Sandbox lifecycle metadata (desktop-managed)
   sandboxBackend?: "docker" | null;
@@ -226,10 +226,10 @@ export async function workspaceUpdateRemote(input: {
     directory: input.directory ?? null,
     displayName: input.displayName ?? null,
     remoteType: input.remoteType ?? null,
-    openworkHostUrl: input.openworkHostUrl ?? null,
-    openworkToken: input.openworkToken ?? null,
-    openworkWorkspaceId: input.openworkWorkspaceId ?? null,
-    openworkWorkspaceName: input.openworkWorkspaceName ?? null,
+    vesloHostUrl: input.vesloHostUrl ?? null,
+    vesloToken: input.vesloToken ?? null,
+    vesloWorkspaceId: input.vesloWorkspaceId ?? null,
+    vesloWorkspaceName: input.vesloWorkspaceName ?? null,
     sandboxBackend: input.sandboxBackend ?? null,
     sandboxRunId: input.sandboxRunId ?? null,
     sandboxContainerName: input.sandboxContainerName ?? null,
@@ -291,7 +291,7 @@ export type OpencodeCommandDraft = {
   subtask?: boolean;
 };
 
-export type WorkspaceOpenworkConfig = {
+export type WorkspaceVesloConfig = {
   version: number;
   workspace?: {
     name?: string | null;
@@ -305,19 +305,19 @@ export type WorkspaceOpenworkConfig = {
   } | null;
 };
 
-export async function workspaceOpenworkRead(input: {
+export async function workspaceVesloRead(input: {
   workspacePath: string;
-}): Promise<WorkspaceOpenworkConfig> {
-  return invoke<WorkspaceOpenworkConfig>("workspace_openwork_read", {
+}): Promise<WorkspaceVesloConfig> {
+  return invoke<WorkspaceVesloConfig>("workspace_veslo_read", {
     workspacePath: input.workspacePath,
   });
 }
 
-export async function workspaceOpenworkWrite(input: {
+export async function workspaceVesloWrite(input: {
   workspacePath: string;
-  config: WorkspaceOpenworkConfig;
+  config: WorkspaceVesloConfig;
 }): Promise<ExecResult> {
-  return invoke<ExecResult>("workspace_openwork_write", {
+  return invoke<ExecResult>("workspace_veslo_write", {
     workspacePath: input.workspacePath,
     config: input.config,
   });
@@ -394,7 +394,7 @@ export async function appBuildInfo(): Promise<AppBuildInfo> {
 }
 
 export type OrchestratorDetachedHost = {
-  openworkUrl: string;
+  vesloUrl: string;
   token: string;
   hostToken: string;
   port: number;
@@ -407,15 +407,15 @@ export async function orchestratorStartDetached(input: {
   workspacePath: string;
   sandboxBackend?: "none" | "docker" | null;
   runId?: string | null;
-  openworkToken?: string | null;
-  openworkHostToken?: string | null;
+  vesloToken?: string | null;
+  vesloHostToken?: string | null;
 }): Promise<OrchestratorDetachedHost> {
   return invoke<OrchestratorDetachedHost>("orchestrator_start_detached", {
     workspacePath: input.workspacePath,
     sandboxBackend: input.sandboxBackend ?? null,
     runId: input.runId ?? null,
-    openworkToken: input.openworkToken ?? null,
-    openworkHostToken: input.openworkHostToken ?? null,
+    vesloToken: input.vesloToken ?? null,
+    vesloHostToken: input.vesloHostToken ?? null,
   });
 }
 
@@ -451,14 +451,14 @@ export async function sandboxStop(containerName: string): Promise<ExecResult> {
   return invoke<ExecResult>("sandbox_stop", { containerName });
 }
 
-export type OpenworkDockerCleanupResult = {
+export type VesloDockerCleanupResult = {
   candidates: string[];
   removed: string[];
   errors: string[];
 };
 
-export async function sandboxCleanupOpenworkContainers(): Promise<OpenworkDockerCleanupResult> {
-  return invoke<OpenworkDockerCleanupResult>("sandbox_cleanup_openwork_containers");
+export async function sandboxCleanupVesloContainers(): Promise<VesloDockerCleanupResult> {
+  return invoke<VesloDockerCleanupResult>("sandbox_cleanup_veslo_containers");
 }
 
 export type SandboxDebugProbeResult = {
@@ -497,12 +497,12 @@ export async function sandboxDebugProbe(): Promise<SandboxDebugProbeResult> {
   return invoke<SandboxDebugProbeResult>("sandbox_debug_probe");
 }
 
-export async function openworkServerInfo(): Promise<OpenworkServerInfo> {
-  return invoke<OpenworkServerInfo>("openwork_server_info");
+export async function vesloServerInfo(): Promise<VesloServerInfo> {
+  return invoke<VesloServerInfo>("veslo_server_info");
 }
 
-export async function openworkServerRestart(): Promise<OpenworkServerInfo> {
-  return invoke<OpenworkServerInfo>("openwork_server_restart");
+export async function vesloServerRestart(): Promise<VesloServerInfo> {
+  return invoke<VesloServerInfo>("veslo_server_restart");
 }
 
 export async function engineInfo(): Promise<EngineInfo> {
@@ -701,8 +701,8 @@ export async function writeOpencodeConfig(
   return invoke<ExecResult>("write_opencode_config", { scope, projectDir, content });
 }
 
-export async function resetOpenworkState(mode: "onboarding" | "all"): Promise<void> {
-  return invoke<void>("reset_openwork_state", { mode });
+export async function resetVesloState(mode: "onboarding" | "all"): Promise<void> {
+  return invoke<void>("reset_veslo_state", { mode });
 }
 
 export type CacheResetResult = {

@@ -186,7 +186,7 @@ export function createSessionStore(options: {
   const agentNamePattern = /[\\/]\.opencode[\\/](?:agent|agents)[\\/]+([^\\/]+)/i;
   const opencodeConfigPattern = /(?:^|[\\/])opencode\.jsonc?\b/i;
   const opencodePathPattern = /(?:^|[\\/])\.opencode[\\/]/i;
-  const openworkConfigPattern = /[\\/]\.opencode[\\/]openwork\.json\b/i;
+  const vesloConfigPattern = /[\\/]\.opencode[\\/]veslo\.json\b/i;
   const mutatingTools = new Set(["write", "edit", "apply_patch"]);
 
   const extractSearchText = (value: unknown) => {
@@ -199,7 +199,7 @@ export function createSessionStore(options: {
   const detectReloadReason = (value: unknown): ReloadReason | null => {
     const text = extractSearchText(value);
     if (!text) return null;
-    if (openworkConfigPattern.test(text)) return null;
+    if (vesloConfigPattern.test(text)) return null;
     if (skillPathPattern.test(text)) return "skills";
     if (commandPathPattern.test(text)) return "commands";
     if (agentPathPattern.test(text)) return "agents";
@@ -209,7 +209,7 @@ export function createSessionStore(options: {
   };
 
   const detectReloadTriggerFromText = (text: string): ReloadTrigger | null => {
-    if (openworkConfigPattern.test(text)) {
+    if (vesloConfigPattern.test(text)) {
       return null;
     }
     if (skillPathPattern.test(text)) {
@@ -362,7 +362,7 @@ export function createSessionStore(options: {
     const name = typeof record.tool === "string" ? record.tool : "";
     const lower = name.toLowerCase();
     if (lower.includes("browser") || lower.includes("chrome") || lower.includes("devtools")) {
-      return "OpenWork browser automation isn't set up yet. Go to Plugins and ensure the browser plugin/extension is installed and connected, then retry.";
+      return "Veslo browser automation isn't set up yet. Go to Plugins and ensure the browser plugin/extension is installed and connected, then retry.";
     }
     return "Try again, or switch to an agent/prompt that only uses available tools in this worker.";
   };

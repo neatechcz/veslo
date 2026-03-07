@@ -1,12 +1,12 @@
 import type { ModelRef, SuggestedPlugin } from "./types";
 
-export const MODEL_PREF_KEY = "openwork.defaultModel";
-export const SESSION_MODEL_PREF_KEY = "openwork.sessionModels";
-export const THINKING_PREF_KEY = "openwork.showThinking";
-export const VARIANT_PREF_KEY = "openwork.modelVariant";
-export const LANGUAGE_PREF_KEY = "openwork.language";
-export const HIDE_TITLEBAR_PREF_KEY = "openwork.hideTitlebar";
-export const AUTO_COMPACT_CONTEXT_PREF_KEY = "openwork.autoCompactContext";
+export const MODEL_PREF_KEY = "veslo.defaultModel";
+export const SESSION_MODEL_PREF_KEY = "veslo.sessionModels";
+export const THINKING_PREF_KEY = "veslo.showThinking";
+export const VARIANT_PREF_KEY = "veslo.modelVariant";
+export const LANGUAGE_PREF_KEY = "veslo.language";
+export const HIDE_TITLEBAR_PREF_KEY = "veslo.hideTitlebar";
+export const AUTO_COMPACT_CONTEXT_PREF_KEY = "veslo.autoCompactContext";
 
 export const DEFAULT_MODEL: ModelRef = {
   providerID: "opencode",

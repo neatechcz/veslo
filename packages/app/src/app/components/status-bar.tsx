@@ -8,7 +8,7 @@ import {
 } from "solid-js";
 import { Cpu, MessageCircle, Server, Settings } from "lucide-solid";
 
-import type { OpenworkServerStatus } from "../lib/openwork-server";
+import type { VesloServerStatus } from "../lib/veslo-server";
 import type { OpenCodeRouterStatus } from "../lib/tauri";
 import type { McpStatusMap, StartupPreference } from "../types";
 import { getOpenCodeRouterStatus } from "../lib/tauri";
@@ -17,7 +17,7 @@ import Button from "./button";
 
 type StatusBarProps = {
   clientConnected: boolean;
-  openworkServerStatus: OpenworkServerStatus;
+  vesloServerStatus: VesloServerStatus;
   startupPreference: StartupPreference | null;
   developerMode: boolean;
   onOpenSettings: () => void;
@@ -63,8 +63,8 @@ export default function StatusBar(props: StatusBarProps) {
     label: props.clientConnected ? "Connected" : "Not connected",
   }));
 
-  const openworkStatusMeta = createMemo(() => {
-    switch (props.openworkServerStatus) {
+  const vesloStatusMeta = createMemo(() => {
+    switch (props.vesloServerStatus) {
       case "connected":
         return { dot: "bg-green-9", text: "text-green-11", label: "Connected" };
       case "limited":
@@ -80,7 +80,7 @@ export default function StatusBar(props: StatusBarProps) {
 
   const unifiedStatusMeta = createMemo(() => {
     const allGreen =
-      props.clientConnected && props.openworkServerStatus === "connected";
+      props.clientConnected && props.vesloServerStatus === "connected";
     return allGreen
       ? { dot: "bg-green-9", text: "text-green-11", label: "Ready" }
       : { dot: "bg-red-9", text: "text-red-11", label: "Unavailable" };
@@ -296,14 +296,14 @@ export default function StatusBar(props: StatusBarProps) {
                 </div>
                 <div class="flex items-center gap-2">
                   <span
-                    class={`w-2 h-2 rounded-full ${openworkStatusMeta().dot}`}
+                    class={`w-2 h-2 rounded-full ${vesloStatusMeta().dot}`}
                   />
                   <Server class="w-3.5 h-3.5 text-gray-11" />
                   <span class="text-xs text-gray-12 font-medium">
                     {props.startupPreference === "server" ? "Remote Server" : "Local Server"}
                   </span>
-                  <span class={`ml-auto text-xs ${openworkStatusMeta().text}`}>
-                    {openworkStatusMeta().label}
+                  <span class={`ml-auto text-xs ${vesloStatusMeta().text}`}>
+                    {vesloStatusMeta().label}
                   </span>
                 </div>
               </div>

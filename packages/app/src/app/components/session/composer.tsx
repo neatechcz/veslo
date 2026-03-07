@@ -125,10 +125,10 @@ const parseClipboardLinks = (clipboard: DataTransfer) => {
 const inboxPathToLink = (path: string) => {
   const normalized = path.trim().replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/^\/+/, "");
   if (!normalized) return "";
-  if (normalized.startsWith(".opencode/openwork/inbox/")) {
+  if (normalized.startsWith(".opencode/veslo/inbox/")) {
     return normalized;
   }
-  return `.opencode/openwork/inbox/${normalized}`;
+  return `.opencode/veslo/inbox/${normalized}`;
 };
 
 const formatLinks = (links: Array<{ name: string; target: string }>) =>
@@ -1523,8 +1523,8 @@ export default function Composer(props: ComposerProps) {
     const handler = () => {
       editorRef?.focus();
     };
-    window.addEventListener("openwork:focusPrompt", handler);
-    onCleanup(() => window.removeEventListener("openwork:focusPrompt", handler));
+    window.addEventListener("veslo:focusPrompt", handler);
+    onCleanup(() => window.removeEventListener("veslo:focusPrompt", handler));
   });
 
   onCleanup(() => {
@@ -1731,7 +1731,7 @@ export default function Composer(props: ComposerProps) {
                   <div class="relative">
                     <Show when={!hasDraftContent()}>
                       <div class="absolute left-0 top-0 text-gray-9 text-[15px] leading-relaxed pointer-events-none">
-                        Ask OpenWork...
+                        Ask Veslo...
                       </div>
                     </Show>
                     <div

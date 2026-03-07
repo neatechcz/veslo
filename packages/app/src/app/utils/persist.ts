@@ -15,7 +15,7 @@ type PersistTarget = {
 };
 
 const LEGACY_STORAGE = "default.dat";
-const GLOBAL_STORAGE = "openwork.global.dat";
+const GLOBAL_STORAGE = "veslo.global.dat";
 
 function snapshot(value: unknown) {
   return JSON.parse(JSON.stringify(value)) as unknown;
@@ -71,7 +71,7 @@ function checksum(input: string) {
 function workspaceStorage(dir: string) {
   const head = dir.slice(0, 12) || "workspace";
   const sum = checksum(dir);
-  return `openwork.workspace.${head}.${sum}.dat`;
+  return `veslo.workspace.${head}.${sum}.dat`;
 }
 
 function localStorageWithPrefix(prefix: string): SyncStorage {

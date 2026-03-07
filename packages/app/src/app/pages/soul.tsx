@@ -1,15 +1,15 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { Activity, CheckCircle2, Circle, HeartPulse, RefreshCw, Sparkles } from "lucide-solid";
 
-import type { OpenworkSoulHeartbeatEntry, OpenworkSoulStatus } from "../lib/openwork-server";
+import type { VesloSoulHeartbeatEntry, VesloSoulStatus } from "../lib/veslo-server";
 import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
 import { formatRelativeTime, parseTemplateFrontmatter } from "../utils";
 
 type SoulViewProps = {
   workspaceName: string;
   workspaceRoot: string;
-  status: OpenworkSoulStatus | null;
-  heartbeats: OpenworkSoulHeartbeatEntry[];
+  status: VesloSoulStatus | null;
+  heartbeats: VesloSoulHeartbeatEntry[];
   loading: boolean;
   loadingHeartbeats: boolean;
   error: string | null;

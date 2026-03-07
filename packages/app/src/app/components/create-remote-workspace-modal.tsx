@@ -10,14 +10,14 @@ export default function CreateRemoteWorkspaceModal(props: {
   open: boolean;
   onClose: () => void;
   onConfirm: (input: {
-    openworkHostUrl?: string | null;
-    openworkToken?: string | null;
+    vesloHostUrl?: string | null;
+    vesloToken?: string | null;
     directory?: string | null;
     displayName?: string | null;
   }) => void;
   initialValues?: {
-    openworkHostUrl?: string | null;
-    openworkToken?: string | null;
+    vesloHostUrl?: string | null;
+    vesloToken?: string | null;
     directory?: string | null;
     displayName?: string | null;
   };
@@ -32,9 +32,9 @@ export default function CreateRemoteWorkspaceModal(props: {
   let inputRef: HTMLInputElement | undefined;
   const translate = (key: string) => t(key, currentLocale());
 
-  const [openworkHostUrl, setOpenworkHostUrl] = createSignal("");
-  const [openworkToken, setOpenworkToken] = createSignal("");
-  const [openworkTokenVisible, setOpenworkTokenVisible] = createSignal(false);
+  const [vesloHostUrl, setVesloHostUrl] = createSignal("");
+  const [vesloToken, setVesloToken] = createSignal("");
+  const [vesloTokenVisible, setVesloTokenVisible] = createSignal(false);
   const [directory, setDirectory] = createSignal("");
   const [displayName, setDisplayName] = createSignal("");
 
@@ -47,7 +47,7 @@ export default function CreateRemoteWorkspaceModal(props: {
 
   const canSubmit = createMemo(() => {
     if (submitting()) return false;
-    return openworkHostUrl().trim().length > 0;
+    return vesloHostUrl().trim().length > 0;
   });
 
   createEffect(() => {
@@ -59,9 +59,9 @@ export default function CreateRemoteWorkspaceModal(props: {
   createEffect(() => {
     if (!props.open) return;
     const defaults = props.initialValues ?? {};
-    setOpenworkHostUrl(defaults.openworkHostUrl?.trim() ?? "");
-    setOpenworkToken(defaults.openworkToken?.trim() ?? "");
-    setOpenworkTokenVisible(false);
+    setVesloHostUrl(defaults.vesloHostUrl?.trim() ?? "");
+    setVesloToken(defaults.vesloToken?.trim() ?? "");
+    setVesloTokenVisible(false);
     setDirectory(defaults.directory?.trim() ?? "");
     setDisplayName(defaults.displayName?.trim() ?? "");
   });
@@ -98,35 +98,35 @@ export default function CreateRemoteWorkspaceModal(props: {
         <div class="space-y-4">
           <TextInput
             ref={inputRef}
-            label={translate("dashboard.openwork_host_label")}
-            placeholder={translate("dashboard.openwork_host_placeholder")}
-            value={openworkHostUrl()}
-            onInput={(event) => setOpenworkHostUrl(event.currentTarget.value)}
-            hint={translate("dashboard.openwork_host_hint")}
+            label={translate("dashboard.veslo_host_label")}
+            placeholder={translate("dashboard.veslo_host_placeholder")}
+            value={vesloHostUrl()}
+            onInput={(event) => setVesloHostUrl(event.currentTarget.value)}
+            hint={translate("dashboard.veslo_host_hint")}
             disabled={submitting()}
           />
 
           <label class="block">
-            <div class="mb-1 text-xs font-medium text-gray-11">{translate("dashboard.openwork_host_token_label")}</div>
+            <div class="mb-1 text-xs font-medium text-gray-11">{translate("dashboard.veslo_host_token_label")}</div>
             <div class="flex items-center gap-2">
               <input
-                type={openworkTokenVisible() ? "text" : "password"}
-                value={openworkToken()}
-                onInput={(event) => setOpenworkToken(event.currentTarget.value)}
-                placeholder={translate("dashboard.openwork_host_token_placeholder")}
+                type={vesloTokenVisible() ? "text" : "password"}
+                value={vesloToken()}
+                onInput={(event) => setVesloToken(event.currentTarget.value)}
+                placeholder={translate("dashboard.veslo_host_token_placeholder")}
                 disabled={submitting()}
                 class="w-full rounded-xl bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
               />
               <Button
                 variant="outline"
                 class="text-xs h-9 px-3 shrink-0"
-                onClick={() => setOpenworkTokenVisible((prev) => !prev)}
+                onClick={() => setVesloTokenVisible((prev) => !prev)}
                 disabled={submitting()}
               >
-                {openworkTokenVisible() ? translate("common.hide") : translate("common.show")}
+                {vesloTokenVisible() ? translate("common.hide") : translate("common.show")}
               </Button>
             </div>
-            <div class="mt-1 text-xs text-gray-10">{translate("dashboard.openwork_host_token_hint")}</div>
+            <div class="mt-1 text-xs text-gray-10">{translate("dashboard.veslo_host_token_hint")}</div>
           </label>
 
           <TextInput
@@ -162,14 +162,14 @@ export default function CreateRemoteWorkspaceModal(props: {
           <Button
             onClick={() =>
               props.onConfirm({
-                openworkHostUrl: openworkHostUrl().trim(),
-                openworkToken: openworkToken().trim(),
+                vesloHostUrl: vesloHostUrl().trim(),
+                vesloToken: vesloToken().trim(),
                 directory: directory().trim() ? directory().trim() : null,
                 displayName: displayName().trim() ? displayName().trim() : null,
               })
             }
             disabled={!canSubmit()}
-            title={!openworkHostUrl().trim() ? translate("dashboard.remote_base_url_required") : undefined}
+            title={!vesloHostUrl().trim() ? translate("dashboard.remote_base_url_required") : undefined}
           >
             {confirmLabel()}
           </Button>

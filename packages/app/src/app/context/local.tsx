@@ -27,7 +27,7 @@ const LocalContext = createContext<LocalContextValue | undefined>(undefined);
 
 export function LocalProvider(props: ParentProps) {
   const [ui, setUi, , uiReady] = persisted(
-    Persist.global("local.ui", ["openwork.ui"]),
+    Persist.global("local.ui", ["veslo.ui"]),
     createStore<LocalUIState>({
       view: "onboarding",
       tab: "scheduled",
@@ -35,7 +35,7 @@ export function LocalProvider(props: ParentProps) {
   );
 
   const [prefs, setPrefs, , prefsReady] = persisted(
-    Persist.global("local.preferences", ["openwork.preferences"]),
+    Persist.global("local.preferences", ["veslo.preferences"]),
     createStore<LocalPreferences>({
       showThinking: false,
       modelVariant: null,

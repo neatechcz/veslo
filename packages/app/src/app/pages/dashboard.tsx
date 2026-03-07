@@ -24,24 +24,24 @@ import {
   normalizeDirectoryPath,
 } from "../utils";
 import {
-  buildOpenworkConnectInviteUrl,
-  buildOpenworkWorkspaceBaseUrl,
-  createOpenworkServerClient,
-  parseOpenworkWorkspaceIdFromUrl,
-} from "../lib/openwork-server";
+  buildVesloConnectInviteUrl,
+  buildVesloWorkspaceBaseUrl,
+  createVesloServerClient,
+  parseVesloWorkspaceIdFromUrl,
+} from "../lib/veslo-server";
 import type {
-  OpenworkAuditEntry,
-  OpenworkSoulHeartbeatEntry,
-  OpenworkSoulStatus,
-  OpenworkServerClient,
-  OpenworkServerCapabilities,
-  OpenworkServerDiagnostics,
-  OpenworkWorkspaceExport,
-  OpenworkServerSettings,
-  OpenworkServerStatus,
-} from "../lib/openwork-server";
-import type { EngineInfo, OrchestratorStatus, OpenworkServerInfo, OpenCodeRouterInfo, WorkspaceInfo } from "../lib/tauri";
-import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "../lib/publisher";
+  VesloAuditEntry,
+  VesloSoulHeartbeatEntry,
+  VesloSoulStatus,
+  VesloServerClient,
+  VesloServerCapabilities,
+  VesloServerDiagnostics,
+  VesloWorkspaceExport,
+  VesloServerSettings,
+  VesloServerStatus,
+} from "../lib/veslo-server";
+import type { EngineInfo, OrchestratorStatus, VesloServerInfo, OpenCodeRouterInfo, WorkspaceInfo } from "../lib/tauri";
+import { DEFAULT_VESLO_PUBLISHER_BASE_URL, publishVesloBundleJson } from "../lib/publisher";
 
 import Button from "../components/button";
 import ExtensionsView from "./extensions";
@@ -100,27 +100,27 @@ export type DashboardViewProps = {
   newTaskDisabled: boolean;
   headerStatus: string;
   error: string | null;
-  openworkServerStatus: OpenworkServerStatus;
-  openworkServerUrl: string;
-  openworkServerClient: OpenworkServerClient | null;
-  openworkReconnectBusy: boolean;
-  reconnectOpenworkServer: () => Promise<boolean>;
-  openworkServerSettings: OpenworkServerSettings;
-  openworkServerHostInfo: OpenworkServerInfo | null;
-  openworkServerCapabilities: OpenworkServerCapabilities | null;
-  openworkServerDiagnostics: OpenworkServerDiagnostics | null;
-  openworkServerWorkspaceId: string | null;
-  openworkAuditEntries: OpenworkAuditEntry[];
-  openworkAuditStatus: "idle" | "loading" | "error";
-  openworkAuditError: string | null;
+  vesloServerStatus: VesloServerStatus;
+  vesloServerUrl: string;
+  vesloServerClient: VesloServerClient | null;
+  vesloReconnectBusy: boolean;
+  reconnectVesloServer: () => Promise<boolean>;
+  vesloServerSettings: VesloServerSettings;
+  vesloServerHostInfo: VesloServerInfo | null;
+  vesloServerCapabilities: VesloServerCapabilities | null;
+  vesloServerDiagnostics: VesloServerDiagnostics | null;
+  vesloServerWorkspaceId: string | null;
+  vesloAuditEntries: VesloAuditEntry[];
+  vesloAuditStatus: "idle" | "loading" | "error";
+  vesloAuditError: string | null;
   opencodeConnectStatus: OpencodeConnectStatus | null;
   engineInfo: EngineInfo | null;
   engineDoctorVersion: string | null;
   orchestratorStatus: OrchestratorStatus | null;
   opencodeRouterInfo: OpenCodeRouterInfo | null;
-  updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
-  resetOpenworkServerSettings: () => void;
-  testOpenworkServerConnection: (next: OpenworkServerSettings) => Promise<boolean>;
+  updateVesloServerSettings: (next: VesloServerSettings) => void;
+  resetVesloServerSettings: () => void;
+  testVesloServerConnection: (next: VesloServerSettings) => Promise<boolean>;
   canReloadWorkspace: boolean;
   reloadWorkspaceEngine: () => Promise<void>;
   reloadBusy: boolean;
@@ -159,9 +159,9 @@ export type DashboardViewProps = {
   scheduledJobsUpdatedAt: number | null;
   refreshScheduledJobs: (options?: { force?: boolean }) => void;
   deleteScheduledJob: (name: string) => Promise<void> | void;
-  soulStatusByWorkspaceId: Record<string, OpenworkSoulStatus | null>;
-  activeSoulStatus: OpenworkSoulStatus | null;
-  activeSoulHeartbeats: OpenworkSoulHeartbeatEntry[];
+  soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
+  activeSoulStatus: VesloSoulStatus | null;
+  activeSoulHeartbeats: VesloSoulHeartbeatEntry[];
   soulStatusBusy: boolean;
   soulHeartbeatsBusy: boolean;
   soulError: string | null;
@@ -274,8 +274,8 @@ export type DashboardViewProps = {
   setEngineSource: (value: "path" | "sidecar" | "custom") => void;
   engineCustomBinPath: string;
   setEngineCustomBinPath: (value: string) => void;
-  engineRuntime: "direct" | "openwork-orchestrator";
-  setEngineRuntime: (value: "direct" | "openwork-orchestrator") => void;
+  engineRuntime: "direct" | "veslo-orchestrator";
+  setEngineRuntime: (value: "direct" | "veslo-orchestrator") => void;
   isWindows: boolean;
   toggleDeveloperMode: () => void;
   developerMode: boolean;
@@ -298,7 +298,7 @@ export type DashboardViewProps = {
   repairOpencodeCache: () => void;
   cacheRepairBusy: boolean;
   cacheRepairResult: string | null;
-  cleanupOpenworkDockerContainers: () => void;
+  cleanupVesloDockerContainers: () => void;
   dockerCleanupBusy: boolean;
   dockerCleanupResult: string | null;
   resetAppConfigDefaults: () => Promise<{ ok: boolean; message: string }>;
@@ -321,7 +321,7 @@ type WorkspaceProfileBundleV1 = {
   type: "workspace-profile";
   name: string;
   description: string;
-  workspace: OpenworkWorkspaceExport;
+  workspace: VesloWorkspaceExport;
 };
 
 type SkillsSetBundleV1 = {
@@ -362,7 +362,7 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const workspaceLabel = (workspace: WorkspaceInfo) =>
     workspace.displayName?.trim() ||
-    workspace.openworkWorkspaceName?.trim() ||
+    workspace.vesloWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
     "Worker";
@@ -590,9 +590,9 @@ export default function DashboardView(props: DashboardViewProps) {
     const ws = shareWorkspace();
     if (!ws) return "";
     if (ws.workspaceType === "remote") {
-      if (ws.remoteType === "openwork") {
-        const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
-        const mounted = buildOpenworkWorkspaceBaseUrl(hostUrl, ws.openworkWorkspaceId);
+      if (ws.remoteType === "veslo") {
+        const hostUrl = ws.vesloHostUrl?.trim() || ws.baseUrl?.trim() || "";
+        const mounted = buildVesloWorkspaceBaseUrl(hostUrl, ws.vesloWorkspaceId);
         return mounted || hostUrl;
       }
       return ws.baseUrl?.trim() || "";
@@ -600,7 +600,7 @@ export default function DashboardView(props: DashboardViewProps) {
     return ws.path?.trim() || "";
   });
 
-  const [shareLocalOpenworkWorkspaceId, setShareLocalOpenworkWorkspaceId] = createSignal<string | null>(null);
+  const [shareLocalVesloWorkspaceId, setShareLocalVesloWorkspaceId] = createSignal<string | null>(null);
   const [shareWorkspaceProfileBusy, setShareWorkspaceProfileBusy] = createSignal(false);
   const [shareWorkspaceProfileUrl, setShareWorkspaceProfileUrl] = createSignal<string | null>(null);
   const [shareWorkspaceProfileError, setShareWorkspaceProfileError] = createSignal<string | null>(null);
@@ -621,29 +621,29 @@ export default function DashboardView(props: DashboardViewProps) {
 
   createEffect(() => {
     const ws = shareWorkspace();
-    const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
-    const token = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
+    const baseUrl = props.vesloServerHostInfo?.baseUrl?.trim() ?? "";
+    const token = props.vesloServerHostInfo?.clientToken?.trim() ?? "";
     const workspacePath = ws?.workspaceType === "local" ? ws.path?.trim() ?? "" : "";
 
     if (!ws || ws.workspaceType !== "local" || !workspacePath || !baseUrl || !token) {
-      setShareLocalOpenworkWorkspaceId(null);
+      setShareLocalVesloWorkspaceId(null);
       return;
     }
 
     let cancelled = false;
-    setShareLocalOpenworkWorkspaceId(null);
+    setShareLocalVesloWorkspaceId(null);
 
     void (async () => {
       try {
-        const client = createOpenworkServerClient({ baseUrl, token });
+        const client = createVesloServerClient({ baseUrl, token });
         const response = await client.listWorkspaces();
         if (cancelled) return;
         const items = Array.isArray(response.items) ? response.items : [];
         const targetPath = normalizeDirectoryPath(workspacePath);
         const match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
-        setShareLocalOpenworkWorkspaceId(match?.id ?? null);
+        setShareLocalVesloWorkspaceId(match?.id ?? null);
       } catch {
-        if (!cancelled) setShareLocalOpenworkWorkspaceId(null);
+        if (!cancelled) setShareLocalVesloWorkspaceId(null);
       }
     })();
 
@@ -666,30 +666,30 @@ export default function DashboardView(props: DashboardViewProps) {
 
     if (ws.workspaceType !== "remote") {
       const hostUrl =
-        props.openworkServerHostInfo?.connectUrl?.trim() ||
-        props.openworkServerHostInfo?.lanUrl?.trim() ||
-        props.openworkServerHostInfo?.mdnsUrl?.trim() ||
-        props.openworkServerHostInfo?.baseUrl?.trim() ||
+        props.vesloServerHostInfo?.connectUrl?.trim() ||
+        props.vesloServerHostInfo?.lanUrl?.trim() ||
+        props.vesloServerHostInfo?.mdnsUrl?.trim() ||
+        props.vesloServerHostInfo?.baseUrl?.trim() ||
         "";
-      const mountedUrl = shareLocalOpenworkWorkspaceId()
-        ? buildOpenworkWorkspaceBaseUrl(hostUrl, shareLocalOpenworkWorkspaceId())
+      const mountedUrl = shareLocalVesloWorkspaceId()
+        ? buildVesloWorkspaceBaseUrl(hostUrl, shareLocalVesloWorkspaceId())
         : null;
       const url = mountedUrl || hostUrl;
-      const token = props.openworkServerHostInfo?.clientToken?.trim() || "";
-      const inviteUrl = buildOpenworkConnectInviteUrl({
+      const token = props.vesloServerHostInfo?.clientToken?.trim() || "";
+      const inviteUrl = buildVesloConnectInviteUrl({
         workspaceUrl: url,
         token,
       });
       return [
         {
-          label: "OpenWork invite link",
+          label: "Veslo invite link",
           value: inviteUrl,
           secret: true,
           placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
           hint: "One link that prefills worker URL and token.",
         },
         {
-          label: "OpenWork worker URL",
+          label: "Veslo worker URL",
           value: url,
           placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
           hint: mountedUrl
@@ -710,26 +710,26 @@ export default function DashboardView(props: DashboardViewProps) {
       ];
     }
 
-    if (ws.remoteType === "openwork") {
-      const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
-      const url = buildOpenworkWorkspaceBaseUrl(hostUrl, ws.openworkWorkspaceId) || hostUrl;
+    if (ws.remoteType === "veslo") {
+      const hostUrl = ws.vesloHostUrl?.trim() || ws.baseUrl?.trim() || "";
+      const url = buildVesloWorkspaceBaseUrl(hostUrl, ws.vesloWorkspaceId) || hostUrl;
       const token =
-        ws.openworkToken?.trim() ||
-        props.openworkServerSettings.token?.trim() ||
+        ws.vesloToken?.trim() ||
+        props.vesloServerSettings.token?.trim() ||
         "";
-      const inviteUrl = buildOpenworkConnectInviteUrl({
+      const inviteUrl = buildVesloConnectInviteUrl({
         workspaceUrl: url,
         token,
       });
       return [
         {
-          label: "OpenWork invite link",
+          label: "Veslo invite link",
           value: inviteUrl,
           secret: true,
           hint: "One link that prefills worker URL and token.",
         },
         {
-          label: "OpenWork worker URL",
+          label: "Veslo worker URL",
           value: url,
         },
         {
@@ -769,26 +769,26 @@ export default function DashboardView(props: DashboardViewProps) {
   const shareServiceDisabledReason = createMemo(() => {
     const ws = shareWorkspace();
     if (!ws) return "Select a worker first.";
-    if (ws.workspaceType === "remote" && ws.remoteType !== "openwork") {
-      return "Share service links are available for OpenWork workers.";
+    if (ws.workspaceType === "remote" && ws.remoteType !== "veslo") {
+      return "Share service links are available for Veslo workers.";
     }
     if (ws.workspaceType !== "remote") {
-      const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
-      const token = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
+      const baseUrl = props.vesloServerHostInfo?.baseUrl?.trim() ?? "";
+      const token = props.vesloServerHostInfo?.clientToken?.trim() ?? "";
       if (!baseUrl || !token) {
-        return "Local OpenWork host is not ready yet.";
+        return "Local Veslo host is not ready yet.";
       }
     } else {
-      const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
-      const token = ws.openworkToken?.trim() || props.openworkServerSettings.token?.trim() || "";
-      if (!hostUrl) return "Missing OpenWork host URL.";
-      if (!token) return "Missing OpenWork token.";
+      const hostUrl = ws.vesloHostUrl?.trim() || ws.baseUrl?.trim() || "";
+      const token = ws.vesloToken?.trim() || props.vesloServerSettings.token?.trim() || "";
+      if (!hostUrl) return "Missing Veslo host URL.";
+      if (!token) return "Missing Veslo token.";
     }
     return null;
   });
 
   const resolveShareExportContext = async (): Promise<{
-    client: OpenworkServerClient;
+    client: VesloServerClient;
     workspaceId: string;
     workspace: WorkspaceInfo;
   }> => {
@@ -798,45 +798,45 @@ export default function DashboardView(props: DashboardViewProps) {
     }
 
     if (ws.workspaceType !== "remote") {
-      const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
-      const token = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
+      const baseUrl = props.vesloServerHostInfo?.baseUrl?.trim() ?? "";
+      const token = props.vesloServerHostInfo?.clientToken?.trim() ?? "";
       if (!baseUrl || !token) {
-        throw new Error("Local OpenWork host is not ready yet.");
+        throw new Error("Local Veslo host is not ready yet.");
       }
-      const client = createOpenworkServerClient({ baseUrl, token });
+      const client = createVesloServerClient({ baseUrl, token });
 
-      let workspaceId = shareLocalOpenworkWorkspaceId()?.trim() ?? "";
+      let workspaceId = shareLocalVesloWorkspaceId()?.trim() ?? "";
       if (!workspaceId) {
         const response = await client.listWorkspaces();
         const items = Array.isArray(response.items) ? response.items : [];
         const targetPath = normalizeDirectoryPath(ws.path?.trim() ?? "");
         const match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
         workspaceId = (match?.id ?? "").trim();
-        setShareLocalOpenworkWorkspaceId(workspaceId || null);
+        setShareLocalVesloWorkspaceId(workspaceId || null);
       }
 
       if (!workspaceId) {
-        throw new Error("Could not resolve this worker on the local OpenWork host.");
+        throw new Error("Could not resolve this worker on the local Veslo host.");
       }
 
       return { client, workspaceId, workspace: ws };
     }
 
-    if (ws.remoteType !== "openwork") {
-      throw new Error("Share service links are available for OpenWork workers.");
+    if (ws.remoteType !== "veslo") {
+      throw new Error("Share service links are available for Veslo workers.");
     }
 
-    const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
-    const token = ws.openworkToken?.trim() || props.openworkServerSettings.token?.trim() || "";
+    const hostUrl = ws.vesloHostUrl?.trim() || ws.baseUrl?.trim() || "";
+    const token = ws.vesloToken?.trim() || props.vesloServerSettings.token?.trim() || "";
     if (!hostUrl || !token) {
-      throw new Error("OpenWork host URL and token are required.");
+      throw new Error("Veslo host URL and token are required.");
     }
 
-    const client = createOpenworkServerClient({ baseUrl: hostUrl, token });
+    const client = createVesloServerClient({ baseUrl: hostUrl, token });
     let workspaceId =
-      ws.openworkWorkspaceId?.trim() ||
-      parseOpenworkWorkspaceIdFromUrl(ws.openworkHostUrl ?? "") ||
-      parseOpenworkWorkspaceIdFromUrl(ws.baseUrl ?? "") ||
+      ws.vesloWorkspaceId?.trim() ||
+      parseVesloWorkspaceIdFromUrl(ws.vesloHostUrl ?? "") ||
+      parseVesloWorkspaceIdFromUrl(ws.baseUrl ?? "") ||
       "";
 
     if (!workspaceId) {
@@ -856,7 +856,7 @@ export default function DashboardView(props: DashboardViewProps) {
     }
 
     if (!workspaceId) {
-      throw new Error("Could not resolve this worker on the OpenWork host.");
+      throw new Error("Could not resolve this worker on the Veslo host.");
     }
 
     return { client, workspaceId, workspace: ws };
@@ -875,11 +875,11 @@ export default function DashboardView(props: DashboardViewProps) {
         schemaVersion: 1,
         type: "workspace-profile",
         name: `${workspaceLabel(workspace)} profile`,
-        description: "Full OpenWork workspace profile with config, MCP setup, commands, and skills.",
+        description: "Full Veslo workspace profile with config, MCP setup, commands, and skills.",
         workspace: exported,
       };
 
-      const result = await publishOpenworkBundleJson({
+      const result = await publishVesloBundleJson({
         payload,
         bundleType: "workspace-profile",
         name: payload.name,
@@ -916,7 +916,7 @@ export default function DashboardView(props: DashboardViewProps) {
         schemaVersion: 1,
         type: "skills-set",
         name: `${workspaceLabel(workspace)} skills`,
-        description: "Complete skills set from an OpenWork workspace.",
+        description: "Complete skills set from an Veslo workspace.",
         skills: skills.map((skill) => ({
           name: skill.name,
           description: skill.description,
@@ -929,7 +929,7 @@ export default function DashboardView(props: DashboardViewProps) {
         },
       };
 
-      const result = await publishOpenworkBundleJson({
+      const result = await publishVesloBundleJson({
         payload,
         bundleType: "skills-set",
         name: payload.name,
@@ -1269,12 +1269,12 @@ export default function DashboardView(props: DashboardViewProps) {
             <Match when={props.tab === "identities"}>
               <IdentitiesView
                 busy={props.busy}
-                openworkServerStatus={props.openworkServerStatus}
-                openworkServerUrl={props.openworkServerUrl}
-                openworkServerClient={props.openworkServerClient}
-                openworkReconnectBusy={props.openworkReconnectBusy}
-                reconnectOpenworkServer={props.reconnectOpenworkServer}
-                openworkServerWorkspaceId={props.openworkServerWorkspaceId}
+                vesloServerStatus={props.vesloServerStatus}
+                vesloServerUrl={props.vesloServerUrl}
+                vesloServerClient={props.vesloServerClient}
+                vesloReconnectBusy={props.vesloReconnectBusy}
+                reconnectVesloServer={props.reconnectVesloServer}
+                vesloServerWorkspaceId={props.vesloServerWorkspaceId}
                 activeWorkspaceRoot={props.activeWorkspaceRoot}
                 developerMode={props.developerMode}
               />
@@ -1285,14 +1285,14 @@ export default function DashboardView(props: DashboardViewProps) {
                 busy={props.busy}
                 clientConnected={props.clientConnected}
                 anyActiveRuns={props.anyActiveRuns}
-                openworkServerStatus={props.openworkServerStatus}
-                openworkServerUrl={props.openworkServerUrl}
-                openworkServerSettings={props.openworkServerSettings}
-                openworkServerHostInfo={props.openworkServerHostInfo}
-                openworkServerWorkspaceId={props.openworkServerWorkspaceId}
-                updateOpenworkServerSettings={props.updateOpenworkServerSettings}
-                resetOpenworkServerSettings={props.resetOpenworkServerSettings}
-                testOpenworkServerConnection={props.testOpenworkServerConnection}
+                vesloServerStatus={props.vesloServerStatus}
+                vesloServerUrl={props.vesloServerUrl}
+                vesloServerSettings={props.vesloServerSettings}
+                vesloServerHostInfo={props.vesloServerHostInfo}
+                vesloServerWorkspaceId={props.vesloServerWorkspaceId}
+                updateVesloServerSettings={props.updateVesloServerSettings}
+                resetVesloServerSettings={props.resetVesloServerSettings}
+                testVesloServerConnection={props.testVesloServerConnection}
                 canReloadWorkspace={props.canReloadWorkspace}
                 reloadWorkspaceEngine={props.reloadWorkspaceEngine}
                 reloadBusy={props.reloadBusy}
@@ -1318,18 +1318,18 @@ export default function DashboardView(props: DashboardViewProps) {
                   providerConnectedIds={props.providerConnectedIds}
                   providerAuthBusy={props.providerAuthBusy}
                   openProviderAuthModal={props.openProviderAuthModal}
-                  openworkServerStatus={props.openworkServerStatus}
-                  openworkServerUrl={props.openworkServerUrl}
-                  openworkReconnectBusy={props.openworkReconnectBusy}
-                  reconnectOpenworkServer={props.reconnectOpenworkServer}
-                  openworkServerHostInfo={props.openworkServerHostInfo}
-                  openworkServerCapabilities={props.openworkServerCapabilities}
-                  openworkServerDiagnostics={props.openworkServerDiagnostics}
-                  openworkServerWorkspaceId={props.openworkServerWorkspaceId}
+                  vesloServerStatus={props.vesloServerStatus}
+                  vesloServerUrl={props.vesloServerUrl}
+                  vesloReconnectBusy={props.vesloReconnectBusy}
+                  reconnectVesloServer={props.reconnectVesloServer}
+                  vesloServerHostInfo={props.vesloServerHostInfo}
+                  vesloServerCapabilities={props.vesloServerCapabilities}
+                  vesloServerDiagnostics={props.vesloServerDiagnostics}
+                  vesloServerWorkspaceId={props.vesloServerWorkspaceId}
                   activeWorkspaceRoot={props.activeWorkspaceRoot}
-                  openworkAuditEntries={props.openworkAuditEntries}
-                  openworkAuditStatus={props.openworkAuditStatus}
-                  openworkAuditError={props.openworkAuditError}
+                  vesloAuditEntries={props.vesloAuditEntries}
+                  vesloAuditStatus={props.vesloAuditStatus}
+                  vesloAuditError={props.vesloAuditError}
                   opencodeConnectStatus={props.opencodeConnectStatus}
                   engineInfo={props.engineInfo}
                   orchestratorStatus={props.orchestratorStatus}
@@ -1389,7 +1389,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   repairOpencodeCache={props.repairOpencodeCache}
                   cacheRepairBusy={props.cacheRepairBusy}
                   cacheRepairResult={props.cacheRepairResult}
-                  cleanupOpenworkDockerContainers={props.cleanupOpenworkDockerContainers}
+                  cleanupVesloDockerContainers={props.cleanupVesloDockerContainers}
                   dockerCleanupBusy={props.dockerCleanupBusy}
                   dockerCleanupResult={props.dockerCleanupResult}
                   resetAppConfigDefaults={props.resetAppConfigDefaults}
@@ -1459,7 +1459,7 @@ export default function DashboardView(props: DashboardViewProps) {
           workspaceDetail={shareWorkspaceDetail()}
           fields={shareFields()}
           note={shareNote()}
-          publisherBaseUrl={DEFAULT_OPENWORK_PUBLISHER_BASE_URL}
+          publisherBaseUrl={DEFAULT_VESLO_PUBLISHER_BASE_URL}
           onShareWorkspaceProfile={publishWorkspaceProfileLink}
           shareWorkspaceProfileBusy={shareWorkspaceProfileBusy()}
           shareWorkspaceProfileUrl={shareWorkspaceProfileUrl()}
@@ -1486,7 +1486,7 @@ export default function DashboardView(props: DashboardViewProps) {
 
         <StatusBar
           clientConnected={props.clientConnected}
-          openworkServerStatus={props.openworkServerStatus}
+          vesloServerStatus={props.vesloServerStatus}
           startupPreference={props.startupPreference}
           developerMode={props.developerMode}
           onOpenSettings={() => openSettings("general")}

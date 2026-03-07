@@ -5,7 +5,7 @@ import { CheckCircle2, ChevronDown, Circle, Globe } from "lucide-solid";
 
 import Button from "../components/button";
 import OnboardingWorkspaceSelector from "../components/onboarding-workspace-selector";
-import OpenWorkLogo from "../components/openwork-logo";
+import VesloLogo from "../components/veslo-logo";
 import TextInput from "../components/text-input";
 import { isTauriRuntime, isWindowsPlatform } from "../utils/index";
 import { currentLocale, t } from "../../i18n";
@@ -16,8 +16,8 @@ export type OnboardingViewProps = {
   rememberStartupChoice: boolean;
   busy: boolean;
   clientDirectory: string;
-  openworkHostUrl: string;
-  openworkToken: string;
+  vesloHostUrl: string;
+  vesloToken: string;
   newAuthorizedDir: string;
   authorizedDirs: string[];
   activeWorkspacePath: string;
@@ -42,8 +42,8 @@ export type OnboardingViewProps = {
   developerMode: boolean;
   isWindows: boolean;
   onClientDirectoryChange: (value: string) => void;
-  onOpenworkHostUrlChange: (value: string) => void;
-  onOpenworkTokenChange: (value: string) => void;
+  onVesloHostUrlChange: (value: string) => void;
+  onVesloTokenChange: (value: string) => void;
   onSelectStartup: (mode: StartupPreference) => void;
   onRememberStartupToggle: () => void;
   onStartHost: () => void;
@@ -70,7 +70,7 @@ export type OnboardingViewProps = {
 export default function OnboardingView(props: OnboardingViewProps) {
   // Translation helper that uses current language from i18n
   const translate = (key: string) => t(key, currentLocale());
-  const [openworkTokenVisible, setOpenworkTokenVisible] = createSignal(false);
+  const [vesloTokenVisible, setVesloTokenVisible] = createSignal(false);
   const [connectingFallbackVisible, setConnectingFallbackVisible] = createSignal(false);
 
   createEffect(() => {
@@ -114,7 +114,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
           <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-gray-2 via-gray-1 to-gray-1 opacity-50" />
           <div class="z-10 flex flex-col items-center gap-6">
             <div class="relative">
-              <OpenWorkLogo size={40} />
+              <VesloLogo size={40} />
             </div>
             <div class="text-center">
               <h2 class="text-xl font-medium mb-2">
@@ -158,7 +158,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
           <div class="max-w-lg w-full z-10 space-y-6">
               <div class="text-center space-y-2">
                 <div class="">
-                  <OpenWorkLogo size={48} />
+                  <VesloLogo size={48} />
                 </div>
               <h2 class="text-2xl font-bold tracking-tight">
                 {props.workspaces.length <= 1 ? translate("onboarding.create_first_workspace") : translate("onboarding.create_workspace")}
@@ -209,7 +209,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
               </div>
 
               <OnboardingWorkspaceSelector
-                defaultPath="~/OpenWork/Worker"
+                defaultPath="~/Veslo/Worker"
                 onConfirm={props.onCreateWorkspace}
                 onPickFolder={props.onPickWorkspaceFolder}
               />
@@ -516,33 +516,33 @@ export default function OnboardingView(props: OnboardingViewProps) {
 
               <div class="space-y-4">
                 <TextInput
-                  label={translate("dashboard.openwork_host_label")}
-                  placeholder={translate("dashboard.openwork_host_placeholder")}
-                  value={props.openworkHostUrl}
-                  onInput={(e) => props.onOpenworkHostUrlChange(e.currentTarget.value)}
-                  hint={translate("dashboard.openwork_host_hint")}
+                  label={translate("dashboard.veslo_host_label")}
+                  placeholder={translate("dashboard.veslo_host_placeholder")}
+                  value={props.vesloHostUrl}
+                  onInput={(e) => props.onVesloHostUrlChange(e.currentTarget.value)}
+                  hint={translate("dashboard.veslo_host_hint")}
                 />
                 <label class="block">
-                  <div class="mb-1 text-xs font-medium text-gray-11">{translate("dashboard.openwork_host_token_label")}</div>
+                  <div class="mb-1 text-xs font-medium text-gray-11">{translate("dashboard.veslo_host_token_label")}</div>
                   <div class="flex items-center gap-2">
                     <input
-                      type={openworkTokenVisible() ? "text" : "password"}
-                      value={props.openworkToken}
-                      onInput={(e) => props.onOpenworkTokenChange(e.currentTarget.value)}
-                      placeholder={translate("dashboard.openwork_host_token_placeholder")}
+                      type={vesloTokenVisible() ? "text" : "password"}
+                      value={props.vesloToken}
+                      onInput={(e) => props.onVesloTokenChange(e.currentTarget.value)}
+                      placeholder={translate("dashboard.veslo_host_token_placeholder")}
                       disabled={props.busy}
                       class="w-full rounded-xl bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
                     />
                     <Button
                       variant="outline"
                       class="text-xs h-9 px-3 shrink-0"
-                      onClick={() => setOpenworkTokenVisible((prev) => !prev)}
+                      onClick={() => setVesloTokenVisible((prev) => !prev)}
                       disabled={props.busy}
                     >
-                      {openworkTokenVisible() ? translate("common.hide") : translate("common.show")}
+                      {vesloTokenVisible() ? translate("common.hide") : translate("common.show")}
                     </Button>
                   </div>
-                  <div class="mt-1 text-xs text-gray-10">{translate("dashboard.openwork_host_token_hint")}</div>
+                  <div class="mt-1 text-xs text-gray-10">{translate("dashboard.veslo_host_token_hint")}</div>
                 </label>
                 <TextInput
                   label={translate("dashboard.remote_directory_label")}
@@ -555,7 +555,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
 
               <Button
                 onClick={props.onConnectClient}
-                disabled={props.busy || !props.openworkHostUrl.trim()}
+                disabled={props.busy || !props.vesloHostUrl.trim()}
                 class="w-full py-3 text-base"
               >
                 {translate("onboarding.remote_workspace_action")}
@@ -592,9 +592,9 @@ export default function OnboardingView(props: OnboardingViewProps) {
             <div class="text-center space-y-4">
               <div class="flex items-center justify-center gap-3 mb-6">
                 <div class="">
-                  <OpenWorkLogo size={48} />
+                  <VesloLogo size={48} />
                 </div>
-                <h1 class="text-3xl font-bold tracking-tight text-gray-12">OpenWork</h1>
+                <h1 class="text-3xl font-bold tracking-tight text-gray-12">Veslo</h1>
               </div>
               <h2 class="text-xl text-gray-11">{translate("onboarding.welcome_title")}</h2>
             </div>

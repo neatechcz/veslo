@@ -2,8 +2,8 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 import type { ScheduledJob } from "./tauri";
 
-export type OpenworkServerCapabilities = {
-  skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
+export type VesloServerCapabilities = {
+  skills: { read: boolean; write: boolean; source: "veslo" | "opencode" };
   hub?: {
     skills?: {
       read: boolean;
@@ -33,9 +33,9 @@ export type OpenworkServerCapabilities = {
   };
 };
 
-export type OpenworkServerStatus = "connected" | "disconnected" | "limited";
+export type VesloServerStatus = "connected" | "disconnected" | "limited";
 
-export type OpenworkServerDiagnostics = {
+export type VesloServerDiagnostics = {
   ok: boolean;
   version: string;
   uptimeMs: number;
@@ -44,19 +44,19 @@ export type OpenworkServerDiagnostics = {
   corsOrigins: string[];
   workspaceCount: number;
   activeWorkspaceId: string | null;
-  workspace: OpenworkWorkspaceInfo | null;
+  workspace: VesloWorkspaceInfo | null;
   authorizedRoots: string[];
   server: { host: string; port: number; configPath?: string | null };
   tokenSource: { client: string; host: string };
 };
 
-export type OpenworkServerSettings = {
+export type VesloServerSettings = {
   urlOverride?: string;
   portOverride?: number;
   token?: string;
 };
 
-export type OpenworkWorkspaceInfo = {
+export type VesloWorkspaceInfo = {
   id: string;
   name: string;
   path: string;
@@ -71,19 +71,19 @@ export type OpenworkWorkspaceInfo = {
   };
 };
 
-export type OpenworkWorkspaceList = {
-  items: OpenworkWorkspaceInfo[];
+export type VesloWorkspaceList = {
+  items: VesloWorkspaceInfo[];
   activeId?: string | null;
 };
 
-export type OpenworkPluginItem = {
+export type VesloPluginItem = {
   spec: string;
   source: "config" | "dir.project" | "dir.global";
   scope: "project" | "global";
   path?: string;
 };
 
-export type OpenworkSkillItem = {
+export type VesloSkillItem = {
   name: string;
   path: string;
   description: string;
@@ -91,12 +91,12 @@ export type OpenworkSkillItem = {
   trigger?: string;
 };
 
-export type OpenworkSkillContent = {
-  item: OpenworkSkillItem;
+export type VesloSkillContent = {
+  item: VesloSkillItem;
   content: string;
 };
 
-export type OpenworkHubSkillItem = {
+export type VesloHubSkillItem = {
   name: string;
   description: string;
   trigger?: string;
@@ -108,14 +108,14 @@ export type OpenworkHubSkillItem = {
   };
 };
 
-export type OpenworkWorkspaceFileContent = {
+export type VesloWorkspaceFileContent = {
   path: string;
   content: string;
   bytes: number;
   updatedAt: number;
 };
 
-export type OpenworkWorkspaceFileWriteResult = {
+export type VesloWorkspaceFileWriteResult = {
   ok: boolean;
   path: string;
   bytes: number;
@@ -123,7 +123,7 @@ export type OpenworkWorkspaceFileWriteResult = {
   revision?: string;
 };
 
-export type OpenworkFileSession = {
+export type VesloFileSession = {
   id: string;
   workspaceId: string;
   createdAt: number;
@@ -132,7 +132,7 @@ export type OpenworkFileSession = {
   canWrite: boolean;
 };
 
-export type OpenworkFileCatalogEntry = {
+export type VesloFileCatalogEntry = {
   path: string;
   kind: "file" | "dir";
   size: number;
@@ -140,7 +140,7 @@ export type OpenworkFileCatalogEntry = {
   revision: string;
 };
 
-export type OpenworkFileSessionEvent = {
+export type VesloFileSessionEvent = {
   id: string;
   seq: number;
   workspaceId: string;
@@ -151,7 +151,7 @@ export type OpenworkFileSessionEvent = {
   timestamp: number;
 };
 
-export type OpenworkFileReadBatchResult = {
+export type VesloFileReadBatchResult = {
   items: Array<
     | {
         ok: true;
@@ -173,7 +173,7 @@ export type OpenworkFileReadBatchResult = {
   >;
 };
 
-export type OpenworkFileWriteBatchResult = {
+export type VesloFileWriteBatchResult = {
   items: Array<
     | {
         ok: true;
@@ -197,12 +197,12 @@ export type OpenworkFileWriteBatchResult = {
   cursor: number;
 };
 
-export type OpenworkFileOpsBatchResult = {
+export type VesloFileOpsBatchResult = {
   items: Array<Record<string, unknown>>;
   cursor: number;
 };
 
-export type OpenworkCommandItem = {
+export type VesloCommandItem = {
   name: string;
   description?: string;
   template: string;
@@ -212,14 +212,14 @@ export type OpenworkCommandItem = {
   scope: "workspace" | "global";
 };
 
-export type OpenworkMcpItem = {
+export type VesloMcpItem = {
   name: string;
   config: Record<string, unknown>;
   source: "config.project" | "config.global" | "config.remote";
   disabledByTools?: boolean;
 };
 
-export type OpenworkOpenCodeRouterTelegramResult = {
+export type VesloOpenCodeRouterTelegramResult = {
   ok: boolean;
   persisted?: boolean;
   applied?: boolean;
@@ -234,7 +234,7 @@ export type OpenworkOpenCodeRouterTelegramResult = {
   };
 };
 
-export type OpenworkOpenCodeRouterSlackResult = {
+export type VesloOpenCodeRouterSlackResult = {
   ok: boolean;
   persisted?: boolean;
   applied?: boolean;
@@ -249,20 +249,20 @@ export type OpenworkOpenCodeRouterSlackResult = {
   };
 };
 
-export type OpenworkOpenCodeRouterTelegramBotInfo = {
+export type VesloOpenCodeRouterTelegramBotInfo = {
   id: number;
   username?: string;
   name?: string;
 };
 
-export type OpenworkOpenCodeRouterTelegramInfo = {
+export type VesloOpenCodeRouterTelegramInfo = {
   ok: boolean;
   configured: boolean;
   enabled: boolean;
-  bot: OpenworkOpenCodeRouterTelegramBotInfo | null;
+  bot: VesloOpenCodeRouterTelegramBotInfo | null;
 };
 
-export type OpenworkOpenCodeRouterTelegramEnabledResult = {
+export type VesloOpenCodeRouterTelegramEnabledResult = {
   ok: boolean;
   persisted?: boolean;
   enabled: boolean;
@@ -271,7 +271,7 @@ export type OpenworkOpenCodeRouterTelegramEnabledResult = {
   applyStatus?: number;
 };
 
-export type OpenworkOpenCodeRouterHealthSnapshot = {
+export type VesloOpenCodeRouterHealthSnapshot = {
   ok: boolean;
   opencode: {
     url: string;
@@ -302,7 +302,7 @@ export type OpenworkOpenCodeRouterHealthSnapshot = {
   };
 };
 
-export type OpenworkOpenCodeRouterBindingItem = {
+export type VesloOpenCodeRouterBindingItem = {
   channel: string;
   identityId: string;
   peerId: string;
@@ -310,16 +310,16 @@ export type OpenworkOpenCodeRouterBindingItem = {
   updatedAt?: number;
 };
 
-export type OpenworkOpenCodeRouterBindingsResult = {
+export type VesloOpenCodeRouterBindingsResult = {
   ok: boolean;
-  items: OpenworkOpenCodeRouterBindingItem[];
+  items: VesloOpenCodeRouterBindingItem[];
 };
 
-export type OpenworkOpenCodeRouterBindingUpdateResult = {
+export type VesloOpenCodeRouterBindingUpdateResult = {
   ok: boolean;
 };
 
-export type OpenworkOpenCodeRouterSendResult = {
+export type VesloOpenCodeRouterSendResult = {
   ok: boolean;
   channel: string;
   identityId?: string;
@@ -331,7 +331,7 @@ export type OpenworkOpenCodeRouterSendResult = {
   reason?: string;
 };
 
-export type OpenworkOpenCodeRouterIdentityItem = {
+export type VesloOpenCodeRouterIdentityItem = {
   id: string;
   enabled: boolean;
   running: boolean;
@@ -339,17 +339,17 @@ export type OpenworkOpenCodeRouterIdentityItem = {
   pairingRequired?: boolean;
 };
 
-export type OpenworkOpenCodeRouterTelegramIdentitiesResult = {
+export type VesloOpenCodeRouterTelegramIdentitiesResult = {
   ok: boolean;
-  items: OpenworkOpenCodeRouterIdentityItem[];
+  items: VesloOpenCodeRouterIdentityItem[];
 };
 
-export type OpenworkOpenCodeRouterSlackIdentitiesResult = {
+export type VesloOpenCodeRouterSlackIdentitiesResult = {
   ok: boolean;
-  items: OpenworkOpenCodeRouterIdentityItem[];
+  items: VesloOpenCodeRouterIdentityItem[];
 };
 
-export type OpenworkOpenCodeRouterTelegramIdentityUpsertResult = {
+export type VesloOpenCodeRouterTelegramIdentityUpsertResult = {
   ok: boolean;
   persisted?: boolean;
   applied?: boolean;
@@ -364,11 +364,11 @@ export type OpenworkOpenCodeRouterTelegramIdentityUpsertResult = {
     applied?: boolean;
     starting?: boolean;
     error?: string;
-    bot?: OpenworkOpenCodeRouterTelegramBotInfo | null;
+    bot?: VesloOpenCodeRouterTelegramBotInfo | null;
   };
 };
 
-export type OpenworkOpenCodeRouterSlackIdentityUpsertResult = {
+export type VesloOpenCodeRouterSlackIdentityUpsertResult = {
   ok: boolean;
   persisted?: boolean;
   applied?: boolean;
@@ -383,7 +383,7 @@ export type OpenworkOpenCodeRouterSlackIdentityUpsertResult = {
   };
 };
 
-export type OpenworkOpenCodeRouterTelegramIdentityDeleteResult = {
+export type VesloOpenCodeRouterTelegramIdentityDeleteResult = {
   ok: boolean;
   persisted?: boolean;
   deleted?: boolean;
@@ -396,7 +396,7 @@ export type OpenworkOpenCodeRouterTelegramIdentityDeleteResult = {
   };
 };
 
-export type OpenworkOpenCodeRouterSlackIdentityDeleteResult = {
+export type VesloOpenCodeRouterSlackIdentityDeleteResult = {
   ok: boolean;
   persisted?: boolean;
   deleted?: boolean;
@@ -409,16 +409,16 @@ export type OpenworkOpenCodeRouterSlackIdentityDeleteResult = {
   };
 };
 
-export type OpenworkWorkspaceExport = {
+export type VesloWorkspaceExport = {
   workspaceId: string;
   exportedAt: number;
   opencode?: Record<string, unknown>;
-  openwork?: Record<string, unknown>;
+  veslo?: Record<string, unknown>;
   skills?: Array<{ name: string; description?: string; trigger?: string; content: string }>;
   commands?: Array<{ name: string; description?: string; template?: string }>;
 };
 
-export type OpenworkArtifactItem = {
+export type VesloArtifactItem = {
   id: string;
   name?: string;
   path?: string;
@@ -428,11 +428,11 @@ export type OpenworkArtifactItem = {
   mime?: string;
 };
 
-export type OpenworkArtifactList = {
-  items: OpenworkArtifactItem[];
+export type VesloArtifactList = {
+  items: VesloArtifactItem[];
 };
 
-export type OpenworkInboxItem = {
+export type VesloInboxItem = {
   id: string;
   name?: string;
   path?: string;
@@ -440,17 +440,17 @@ export type OpenworkInboxItem = {
   updatedAt?: number;
 };
 
-export type OpenworkInboxList = {
-  items: OpenworkInboxItem[];
+export type VesloInboxList = {
+  items: VesloInboxItem[];
 };
 
-export type OpenworkInboxUploadResult = {
+export type VesloInboxUploadResult = {
   ok: boolean;
   path: string;
   bytes: number;
 };
 
-export type OpenworkSoulHeartbeatEntry = {
+export type VesloSoulHeartbeatEntry = {
   id: string;
   ts: string | null;
   workspace: string | null;
@@ -459,7 +459,7 @@ export type OpenworkSoulHeartbeatEntry = {
   nextAction: string | null;
 };
 
-export type OpenworkSoulStatus = {
+export type VesloSoulStatus = {
   enabled: boolean;
   state: "off" | "healthy" | "stale" | "error";
   memoryEnabled: boolean;
@@ -490,53 +490,53 @@ type RawJsonResponse<T> = {
   json: T | null;
 };
 
-export type OpenworkActor = {
+export type VesloActor = {
   type: "remote" | "host";
   clientId?: string;
   tokenHash?: string;
 };
 
-export type OpenworkAuditEntry = {
+export type VesloAuditEntry = {
   id: string;
   workspaceId: string;
-  actor: OpenworkActor;
+  actor: VesloActor;
   action: string;
   target: string;
   summary: string;
   timestamp: number;
 };
 
-export type OpenworkReloadTrigger = {
+export type VesloReloadTrigger = {
   type: "skill" | "plugin" | "config" | "mcp" | "agent" | "command";
   name?: string;
   action?: "added" | "removed" | "updated";
   path?: string;
 };
 
-export type OpenworkReloadEvent = {
+export type VesloReloadEvent = {
   id: string;
   seq: number;
   workspaceId: string;
   reason: "plugins" | "skills" | "mcp" | "config" | "agents" | "commands";
-  trigger?: OpenworkReloadTrigger;
+  trigger?: VesloReloadTrigger;
   timestamp: number;
 };
 
-export const DEFAULT_OPENWORK_SERVER_PORT = 8787;
+export const DEFAULT_VESLO_SERVER_PORT = 8787;
 
-const STORAGE_URL_OVERRIDE = "openwork.server.urlOverride";
-const STORAGE_PORT_OVERRIDE = "openwork.server.port";
-const STORAGE_TOKEN = "openwork.server.token";
+const STORAGE_URL_OVERRIDE = "veslo.server.urlOverride";
+const STORAGE_PORT_OVERRIDE = "veslo.server.port";
+const STORAGE_TOKEN = "veslo.server.token";
 
-export function normalizeOpenworkServerUrl(input: string) {
+export function normalizeVesloServerUrl(input: string) {
   const trimmed = input.trim();
   if (!trimmed) return null;
   const withProtocol = /^https?:\/\//.test(trimmed) ? trimmed : `http://${trimmed}`;
   return withProtocol.replace(/\/+$/, "");
 }
 
-export function parseOpenworkWorkspaceIdFromUrl(input: string) {
-  const normalized = normalizeOpenworkServerUrl(input) ?? "";
+export function parseVesloWorkspaceIdFromUrl(input: string) {
+  const normalized = normalizeVesloServerUrl(input) ?? "";
   if (!normalized) return null;
 
   try {
@@ -557,8 +557,8 @@ export function parseOpenworkWorkspaceIdFromUrl(input: string) {
   }
 }
 
-export function buildOpenworkWorkspaceBaseUrl(hostUrl: string, workspaceId?: string | null) {
-  const normalized = normalizeOpenworkServerUrl(hostUrl) ?? "";
+export function buildVesloWorkspaceBaseUrl(hostUrl: string, workspaceId?: string | null) {
+  const normalized = normalizeVesloServerUrl(hostUrl) ?? "";
   if (!normalized) return null;
 
   try {
@@ -584,34 +584,34 @@ export function buildOpenworkWorkspaceBaseUrl(hostUrl: string, workspaceId?: str
   }
 }
 
-export const DEFAULT_OPENWORK_CONNECT_APP_URL = "https://app.openwork.software";
+export const DEFAULT_VESLO_CONNECT_APP_URL = "https://app.veslo.neatech.com";
 
-const OPENWORK_INVITE_PARAM_URL = "ow_url";
-const OPENWORK_INVITE_PARAM_TOKEN = "ow_token";
-const OPENWORK_INVITE_PARAM_STARTUP = "ow_startup";
-const OPENWORK_INVITE_PARAM_BUNDLE = "ow_bundle";
-const OPENWORK_INVITE_PARAM_BUNDLE_INTENT = "ow_intent";
-const OPENWORK_INVITE_PARAM_BUNDLE_SOURCE = "ow_source";
-const OPENWORK_INVITE_PARAM_BUNDLE_ORG = "ow_org";
-const OPENWORK_INVITE_PARAM_BUNDLE_LABEL = "ow_label";
+const VESLO_INVITE_PARAM_URL = "ow_url";
+const VESLO_INVITE_PARAM_TOKEN = "ow_token";
+const VESLO_INVITE_PARAM_STARTUP = "ow_startup";
+const VESLO_INVITE_PARAM_BUNDLE = "ow_bundle";
+const VESLO_INVITE_PARAM_BUNDLE_INTENT = "ow_intent";
+const VESLO_INVITE_PARAM_BUNDLE_SOURCE = "ow_source";
+const VESLO_INVITE_PARAM_BUNDLE_ORG = "ow_org";
+const VESLO_INVITE_PARAM_BUNDLE_LABEL = "ow_label";
 
-export type OpenworkConnectInvite = {
+export type VesloConnectInvite = {
   url: string;
   token?: string;
   startup?: "server";
 };
 
-export type OpenworkBundleInviteIntent = "new_worker" | "import_current";
+export type VesloBundleInviteIntent = "new_worker" | "import_current";
 
-export type OpenworkBundleInvite = {
+export type VesloBundleInvite = {
   bundleUrl: string;
-  intent: OpenworkBundleInviteIntent;
+  intent: VesloBundleInviteIntent;
   source?: string;
   orgId?: string;
   label?: string;
 };
 
-function normalizeOpenworkBundleInviteIntent(value: string | null | undefined): OpenworkBundleInviteIntent {
+function normalizeVesloBundleInviteIntent(value: string | null | undefined): VesloBundleInviteIntent {
   const normalized = (value ?? "").trim().toLowerCase();
   if (normalized === "new_worker" || normalized === "new-worker" || normalized === "newworker") {
     return "new_worker";
@@ -619,69 +619,69 @@ function normalizeOpenworkBundleInviteIntent(value: string | null | undefined): 
   return "import_current";
 }
 
-export function buildOpenworkConnectInviteUrl(input: {
+export function buildVesloConnectInviteUrl(input: {
   workspaceUrl: string;
   token?: string | null;
   appUrl?: string | null;
   startup?: "server";
 }) {
-  const workspaceUrl = normalizeOpenworkServerUrl(input.workspaceUrl ?? "") ?? "";
+  const workspaceUrl = normalizeVesloServerUrl(input.workspaceUrl ?? "") ?? "";
   if (!workspaceUrl) return "";
 
-  const base = normalizeOpenworkServerUrl(input.appUrl ?? "") ?? DEFAULT_OPENWORK_CONNECT_APP_URL;
+  const base = normalizeVesloServerUrl(input.appUrl ?? "") ?? DEFAULT_VESLO_CONNECT_APP_URL;
 
   try {
     const url = new URL(base);
     const search = new URLSearchParams(url.search);
-    search.set(OPENWORK_INVITE_PARAM_URL, workspaceUrl);
+    search.set(VESLO_INVITE_PARAM_URL, workspaceUrl);
 
     const token = input.token?.trim() ?? "";
     if (token) {
-      search.set(OPENWORK_INVITE_PARAM_TOKEN, token);
+      search.set(VESLO_INVITE_PARAM_TOKEN, token);
     }
 
     const startup = input.startup ?? "server";
-    search.set(OPENWORK_INVITE_PARAM_STARTUP, startup);
+    search.set(VESLO_INVITE_PARAM_STARTUP, startup);
 
     url.search = search.toString();
     return url.toString();
   } catch {
     const search = new URLSearchParams();
-    search.set(OPENWORK_INVITE_PARAM_URL, workspaceUrl);
+    search.set(VESLO_INVITE_PARAM_URL, workspaceUrl);
     const token = input.token?.trim() ?? "";
     if (token) {
-      search.set(OPENWORK_INVITE_PARAM_TOKEN, token);
+      search.set(VESLO_INVITE_PARAM_TOKEN, token);
     }
-    search.set(OPENWORK_INVITE_PARAM_STARTUP, input.startup ?? "server");
-    return `${DEFAULT_OPENWORK_CONNECT_APP_URL}?${search.toString()}`;
+    search.set(VESLO_INVITE_PARAM_STARTUP, input.startup ?? "server");
+    return `${DEFAULT_VESLO_CONNECT_APP_URL}?${search.toString()}`;
   }
 }
 
-export function readOpenworkConnectInviteFromSearch(input: string | URLSearchParams) {
+export function readVesloConnectInviteFromSearch(input: string | URLSearchParams) {
   const search =
     typeof input === "string"
       ? new URLSearchParams(input.startsWith("?") ? input.slice(1) : input)
       : input;
 
-  const rawUrl = search.get(OPENWORK_INVITE_PARAM_URL)?.trim() ?? "";
-  const url = normalizeOpenworkServerUrl(rawUrl);
+  const rawUrl = search.get(VESLO_INVITE_PARAM_URL)?.trim() ?? "";
+  const url = normalizeVesloServerUrl(rawUrl);
   if (!url) return null;
 
-  const token = search.get(OPENWORK_INVITE_PARAM_TOKEN)?.trim() ?? "";
-  const startupRaw = search.get(OPENWORK_INVITE_PARAM_STARTUP)?.trim() ?? "";
+  const token = search.get(VESLO_INVITE_PARAM_TOKEN)?.trim() ?? "";
+  const startupRaw = search.get(VESLO_INVITE_PARAM_STARTUP)?.trim() ?? "";
   const startup = startupRaw === "server" ? "server" : undefined;
 
   return {
     url,
     token: token || undefined,
     startup,
-  } satisfies OpenworkConnectInvite;
+  } satisfies VesloConnectInvite;
 }
 
-export function buildOpenworkBundleInviteUrl(input: {
+export function buildVesloBundleInviteUrl(input: {
   bundleUrl: string;
   appUrl?: string | null;
-  intent?: OpenworkBundleInviteIntent;
+  intent?: VesloBundleInviteIntent;
   source?: string | null;
   orgId?: string | null;
   label?: string | null;
@@ -696,64 +696,64 @@ export function buildOpenworkBundleInviteUrl(input: {
     return "";
   }
 
-  const base = normalizeOpenworkServerUrl(input.appUrl ?? "") ?? DEFAULT_OPENWORK_CONNECT_APP_URL;
+  const base = normalizeVesloServerUrl(input.appUrl ?? "") ?? DEFAULT_VESLO_CONNECT_APP_URL;
 
   try {
     const url = new URL(base);
     const search = new URLSearchParams(url.search);
-    const intent = normalizeOpenworkBundleInviteIntent(input.intent);
-    search.set(OPENWORK_INVITE_PARAM_BUNDLE, bundleUrl);
-    search.set(OPENWORK_INVITE_PARAM_BUNDLE_INTENT, intent);
+    const intent = normalizeVesloBundleInviteIntent(input.intent);
+    search.set(VESLO_INVITE_PARAM_BUNDLE, bundleUrl);
+    search.set(VESLO_INVITE_PARAM_BUNDLE_INTENT, intent);
 
     const source = input.source?.trim() ?? "";
     if (source) {
-      search.set(OPENWORK_INVITE_PARAM_BUNDLE_SOURCE, source);
+      search.set(VESLO_INVITE_PARAM_BUNDLE_SOURCE, source);
     }
 
     const orgId = input.orgId?.trim() ?? "";
     if (orgId) {
-      search.set(OPENWORK_INVITE_PARAM_BUNDLE_ORG, orgId);
+      search.set(VESLO_INVITE_PARAM_BUNDLE_ORG, orgId);
     }
 
     const label = input.label?.trim() ?? "";
     if (label) {
-      search.set(OPENWORK_INVITE_PARAM_BUNDLE_LABEL, label);
+      search.set(VESLO_INVITE_PARAM_BUNDLE_LABEL, label);
     }
 
     url.search = search.toString();
     return url.toString();
   } catch {
     const search = new URLSearchParams();
-    const intent = normalizeOpenworkBundleInviteIntent(input.intent);
-    search.set(OPENWORK_INVITE_PARAM_BUNDLE, bundleUrl);
-    search.set(OPENWORK_INVITE_PARAM_BUNDLE_INTENT, intent);
+    const intent = normalizeVesloBundleInviteIntent(input.intent);
+    search.set(VESLO_INVITE_PARAM_BUNDLE, bundleUrl);
+    search.set(VESLO_INVITE_PARAM_BUNDLE_INTENT, intent);
 
     const source = input.source?.trim() ?? "";
     if (source) {
-      search.set(OPENWORK_INVITE_PARAM_BUNDLE_SOURCE, source);
+      search.set(VESLO_INVITE_PARAM_BUNDLE_SOURCE, source);
     }
 
     const orgId = input.orgId?.trim() ?? "";
     if (orgId) {
-      search.set(OPENWORK_INVITE_PARAM_BUNDLE_ORG, orgId);
+      search.set(VESLO_INVITE_PARAM_BUNDLE_ORG, orgId);
     }
 
     const label = input.label?.trim() ?? "";
     if (label) {
-      search.set(OPENWORK_INVITE_PARAM_BUNDLE_LABEL, label);
+      search.set(VESLO_INVITE_PARAM_BUNDLE_LABEL, label);
     }
 
-    return `${DEFAULT_OPENWORK_CONNECT_APP_URL}?${search.toString()}`;
+    return `${DEFAULT_VESLO_CONNECT_APP_URL}?${search.toString()}`;
   }
 }
 
-export function readOpenworkBundleInviteFromSearch(input: string | URLSearchParams) {
+export function readVesloBundleInviteFromSearch(input: string | URLSearchParams) {
   const search =
     typeof input === "string"
       ? new URLSearchParams(input.startsWith("?") ? input.slice(1) : input)
       : input;
 
-  const rawBundleUrl = search.get(OPENWORK_INVITE_PARAM_BUNDLE)?.trim() ?? "";
+  const rawBundleUrl = search.get(VESLO_INVITE_PARAM_BUNDLE)?.trim() ?? "";
   if (!rawBundleUrl) return null;
 
   let bundleUrl: string;
@@ -767,10 +767,10 @@ export function readOpenworkBundleInviteFromSearch(input: string | URLSearchPara
     return null;
   }
 
-  const intent = normalizeOpenworkBundleInviteIntent(search.get(OPENWORK_INVITE_PARAM_BUNDLE_INTENT));
-  const source = search.get(OPENWORK_INVITE_PARAM_BUNDLE_SOURCE)?.trim() ?? "";
-  const orgId = search.get(OPENWORK_INVITE_PARAM_BUNDLE_ORG)?.trim() ?? "";
-  const label = search.get(OPENWORK_INVITE_PARAM_BUNDLE_LABEL)?.trim() ?? "";
+  const intent = normalizeVesloBundleInviteIntent(search.get(VESLO_INVITE_PARAM_BUNDLE_INTENT));
+  const source = search.get(VESLO_INVITE_PARAM_BUNDLE_SOURCE)?.trim() ?? "";
+  const orgId = search.get(VESLO_INVITE_PARAM_BUNDLE_ORG)?.trim() ?? "";
+  const label = search.get(VESLO_INVITE_PARAM_BUNDLE_LABEL)?.trim() ?? "";
 
   return {
     bundleUrl,
@@ -778,39 +778,39 @@ export function readOpenworkBundleInviteFromSearch(input: string | URLSearchPara
     source: source || undefined,
     orgId: orgId || undefined,
     label: label || undefined,
-  } satisfies OpenworkBundleInvite;
+  } satisfies VesloBundleInvite;
 }
 
-export function stripOpenworkConnectInviteFromUrl(input: string) {
+export function stripVesloConnectInviteFromUrl(input: string) {
   try {
     const url = new URL(input);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_URL);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_TOKEN);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_STARTUP);
+    url.searchParams.delete(VESLO_INVITE_PARAM_URL);
+    url.searchParams.delete(VESLO_INVITE_PARAM_TOKEN);
+    url.searchParams.delete(VESLO_INVITE_PARAM_STARTUP);
     return url.toString();
   } catch {
     return input;
   }
 }
 
-export function stripOpenworkBundleInviteFromUrl(input: string) {
+export function stripVesloBundleInviteFromUrl(input: string) {
   try {
     const url = new URL(input);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_BUNDLE);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_BUNDLE_INTENT);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_BUNDLE_SOURCE);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_BUNDLE_ORG);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_BUNDLE_LABEL);
+    url.searchParams.delete(VESLO_INVITE_PARAM_BUNDLE);
+    url.searchParams.delete(VESLO_INVITE_PARAM_BUNDLE_INTENT);
+    url.searchParams.delete(VESLO_INVITE_PARAM_BUNDLE_SOURCE);
+    url.searchParams.delete(VESLO_INVITE_PARAM_BUNDLE_ORG);
+    url.searchParams.delete(VESLO_INVITE_PARAM_BUNDLE_LABEL);
     return url.toString();
   } catch {
     return input;
   }
 }
 
-export function readOpenworkServerSettings(): OpenworkServerSettings {
+export function readVesloServerSettings(): VesloServerSettings {
   if (typeof window === "undefined") return {};
   try {
-    const urlOverride = normalizeOpenworkServerUrl(
+    const urlOverride = normalizeVesloServerUrl(
       window.localStorage.getItem(STORAGE_URL_OVERRIDE) ?? "",
     );
     const portRaw = window.localStorage.getItem(STORAGE_PORT_OVERRIDE) ?? "";
@@ -826,10 +826,10 @@ export function readOpenworkServerSettings(): OpenworkServerSettings {
   }
 }
 
-export function writeOpenworkServerSettings(next: OpenworkServerSettings): OpenworkServerSettings {
+export function writeVesloServerSettings(next: VesloServerSettings): VesloServerSettings {
   if (typeof window === "undefined") return next;
   try {
-    const urlOverride = normalizeOpenworkServerUrl(next.urlOverride ?? "");
+    const urlOverride = normalizeVesloServerUrl(next.urlOverride ?? "");
     const portOverride = typeof next.portOverride === "number" ? next.portOverride : undefined;
     const token = next.token?.trim() || undefined;
 
@@ -851,34 +851,34 @@ export function writeOpenworkServerSettings(next: OpenworkServerSettings): Openw
       window.localStorage.removeItem(STORAGE_TOKEN);
     }
 
-    return readOpenworkServerSettings();
+    return readVesloServerSettings();
   } catch {
     return next;
   }
 }
 
-export function hydrateOpenworkServerSettingsFromEnv() {
+export function hydrateVesloServerSettingsFromEnv() {
   if (typeof window === "undefined") return;
 
-  const envUrl = typeof import.meta.env?.VITE_OPENWORK_URL === "string"
-    ? import.meta.env.VITE_OPENWORK_URL.trim()
+  const envUrl = typeof import.meta.env?.VITE_VESLO_URL === "string"
+    ? import.meta.env.VITE_VESLO_URL.trim()
     : "";
-  const envPort = typeof import.meta.env?.VITE_OPENWORK_PORT === "string"
-    ? import.meta.env.VITE_OPENWORK_PORT.trim()
+  const envPort = typeof import.meta.env?.VITE_VESLO_PORT === "string"
+    ? import.meta.env.VITE_VESLO_PORT.trim()
     : "";
-  const envToken = typeof import.meta.env?.VITE_OPENWORK_TOKEN === "string"
-    ? import.meta.env.VITE_OPENWORK_TOKEN.trim()
+  const envToken = typeof import.meta.env?.VITE_VESLO_TOKEN === "string"
+    ? import.meta.env.VITE_VESLO_TOKEN.trim()
     : "";
 
   if (!envUrl && !envPort && !envToken) return;
 
   try {
-    const current = readOpenworkServerSettings();
-    const next: OpenworkServerSettings = { ...current };
+    const current = readVesloServerSettings();
+    const next: VesloServerSettings = { ...current };
     let changed = false;
 
     if (!current.urlOverride && envUrl) {
-      next.urlOverride = normalizeOpenworkServerUrl(envUrl) ?? undefined;
+      next.urlOverride = normalizeVesloServerUrl(envUrl) ?? undefined;
       changed = true;
     }
 
@@ -896,14 +896,14 @@ export function hydrateOpenworkServerSettingsFromEnv() {
     }
 
     if (changed) {
-      writeOpenworkServerSettings(next);
+      writeVesloServerSettings(next);
     }
   } catch {
     // ignore
   }
 }
 
-export function clearOpenworkServerSettings() {
+export function clearVesloServerSettings() {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.removeItem(STORAGE_URL_OVERRIDE);
@@ -914,20 +914,20 @@ export function clearOpenworkServerSettings() {
   }
 }
 
-export function deriveOpenworkServerUrl(
+export function deriveVesloServerUrl(
   opencodeBaseUrl: string,
-  settings?: OpenworkServerSettings,
+  settings?: VesloServerSettings,
 ) {
   const override = settings?.urlOverride?.trim();
   if (override) {
-    return normalizeOpenworkServerUrl(override);
+    return normalizeVesloServerUrl(override);
   }
 
   const base = opencodeBaseUrl.trim();
   if (!base) return null;
   try {
     const url = new URL(base);
-    const port = settings?.portOverride ?? DEFAULT_OPENWORK_SERVER_PORT;
+    const port = settings?.portOverride ?? DEFAULT_VESLO_SERVER_PORT;
     url.port = String(port);
     url.pathname = "";
     url.search = "";
@@ -938,7 +938,7 @@ export function deriveOpenworkServerUrl(
   }
 }
 
-export class OpenworkServerError extends Error {
+export class VesloServerError extends Error {
   status: number;
   code: string;
   details?: unknown;
@@ -961,7 +961,7 @@ function buildHeaders(
     headers.Authorization = `Bearer ${token}`;
   }
   if (hostToken) {
-    headers["X-OpenWork-Host-Token"] = hostToken;
+    headers["X-Veslo-Host-Token"] = hostToken;
   }
   if (extra) {
     Object.assign(headers, extra);
@@ -975,7 +975,7 @@ function buildAuthHeaders(token?: string, hostToken?: string, extra?: Record<str
     headers.Authorization = `Bearer ${token}`;
   }
   if (hostToken) {
-    headers["X-OpenWork-Host-Token"] = hostToken;
+    headers["X-Veslo-Host-Token"] = hostToken;
   }
   if (extra) {
     Object.assign(headers, extra);
@@ -986,7 +986,7 @@ function buildAuthHeaders(token?: string, hostToken?: string, extra?: Record<str
 // Use Tauri's fetch when running in the desktop app to avoid CORS issues
 const resolveFetch = () => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
 
-const DEFAULT_OPENWORK_SERVER_TIMEOUT_MS = 10_000;
+const DEFAULT_VESLO_SERVER_TIMEOUT_MS = 10_000;
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -1044,7 +1044,7 @@ async function requestJson<T>(
       headers: buildHeaders(options.token, options.hostToken),
       body: options.body ? JSON.stringify(options.body) : undefined,
     },
-    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+    options.timeoutMs ?? DEFAULT_VESLO_SERVER_TIMEOUT_MS,
   );
 
   const text = await response.text();
@@ -1053,7 +1053,7 @@ async function requestJson<T>(
   if (!response.ok) {
     const code = typeof json?.code === "string" ? json.code : "request_failed";
     const message = typeof json?.message === "string" ? json.message : response.statusText;
-    throw new OpenworkServerError(response.status, code, message, json?.details);
+    throw new VesloServerError(response.status, code, message, json?.details);
   }
 
   return json as T;
@@ -1074,7 +1074,7 @@ async function requestJsonRaw<T>(
       headers: buildHeaders(options.token, options.hostToken),
       body: options.body ? JSON.stringify(options.body) : undefined,
     },
-    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+    options.timeoutMs ?? DEFAULT_VESLO_SERVER_TIMEOUT_MS,
   );
 
   const text = await response.text();
@@ -1103,7 +1103,7 @@ async function requestMultipartRaw(
       headers: buildAuthHeaders(options.token, options.hostToken),
       body: options.body,
     },
-    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+    options.timeoutMs ?? DEFAULT_VESLO_SERVER_TIMEOUT_MS,
   );
   const text = await response.text();
   return { ok: response.ok, status: response.status, text };
@@ -1123,7 +1123,7 @@ async function requestBinary(
       method: options.method ?? "GET",
       headers: buildAuthHeaders(options.token, options.hostToken),
     },
-    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+    options.timeoutMs ?? DEFAULT_VESLO_SERVER_TIMEOUT_MS,
   );
 
   if (!response.ok) {
@@ -1136,7 +1136,7 @@ async function requestBinary(
     }
     const code = typeof json?.code === "string" ? json.code : "request_failed";
     const message = typeof json?.message === "string" ? json.message : response.statusText;
-    throw new OpenworkServerError(response.status, code, message, json?.details);
+    throw new VesloServerError(response.status, code, message, json?.details);
   }
 
   const contentType = response.headers.get("content-type");
@@ -1148,7 +1148,7 @@ async function requestBinary(
   return { data, contentType, filename };
 }
 
-export function createOpenworkServerClient(options: { baseUrl: string; token?: string; hostToken?: string }) {
+export function createVesloServerClient(options: { baseUrl: string; token?: string; hostToken?: string }) {
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
   const token = options.token;
   const hostToken = options.hostToken;
@@ -1173,31 +1173,31 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     token,
     health: () =>
       requestJson<{ ok: boolean; version: string; uptimeMs: number }>(baseUrl, "/health", { token, hostToken, timeoutMs: timeouts.health }),
-    status: () => requestJson<OpenworkServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
-    capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
+    status: () => requestJson<VesloServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
+    capabilities: () => requestJson<VesloServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
     opencodeRouterHealth: () =>
-      requestJsonRaw<OpenworkOpenCodeRouterHealthSnapshot>(baseUrl, "/opencode-router/health", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
+      requestJsonRaw<VesloOpenCodeRouterHealthSnapshot>(baseUrl, "/veslo-code-router/health", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
     opencodeRouterBindings: (filters?: { channel?: string; identityId?: string }) => {
       const search = new URLSearchParams();
       if (filters?.channel?.trim()) search.set("channel", filters.channel.trim());
       if (filters?.identityId?.trim()) search.set("identityId", filters.identityId.trim());
       const suffix = search.toString();
-      const path = suffix ? `/opencode-router/bindings?${suffix}` : "/opencode-router/bindings";
-      return requestJsonRaw<OpenworkOpenCodeRouterBindingsResult>(baseUrl, path, { token, hostToken, timeoutMs: timeouts.opencodeRouter });
+      const path = suffix ? `/veslo-code-router/bindings?${suffix}` : "/veslo-code-router/bindings";
+      return requestJsonRaw<VesloOpenCodeRouterBindingsResult>(baseUrl, path, { token, hostToken, timeoutMs: timeouts.opencodeRouter });
     },
     opencodeRouterTelegramIdentities: () =>
-      requestJsonRaw<OpenworkOpenCodeRouterTelegramIdentitiesResult>(baseUrl, "/opencode-router/identities/telegram", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
+      requestJsonRaw<VesloOpenCodeRouterTelegramIdentitiesResult>(baseUrl, "/veslo-code-router/identities/telegram", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
     opencodeRouterSlackIdentities: () =>
-      requestJsonRaw<OpenworkOpenCodeRouterSlackIdentitiesResult>(baseUrl, "/opencode-router/identities/slack", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
-    listWorkspaces: () => requestJson<OpenworkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
+      requestJsonRaw<VesloOpenCodeRouterSlackIdentitiesResult>(baseUrl, "/veslo-code-router/identities/slack", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
+    listWorkspaces: () => requestJson<VesloWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
     activateWorkspace: (workspaceId: string) =>
-      requestJson<{ activeId: string; workspace: OpenworkWorkspaceInfo }>(
+      requestJson<{ activeId: string; workspace: VesloWorkspaceInfo }>(
         baseUrl,
         `/workspaces/${encodeURIComponent(workspaceId)}/activate`,
         { token, hostToken, method: "POST", timeoutMs: timeouts.activateWorkspace },
       ),
     deleteWorkspace: (workspaceId: string) =>
-      requestJson<{ ok: boolean; deleted: boolean; persisted: boolean; activeId: string | null; items: OpenworkWorkspaceInfo[] }>(
+      requestJson<{ ok: boolean; deleted: boolean; persisted: boolean; activeId: string | null; items: VesloWorkspaceInfo[] }>(
         baseUrl,
         `/workspaces/${encodeURIComponent(workspaceId)}`,
         { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteWorkspace },
@@ -1209,7 +1209,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteSession },
       ),
     exportWorkspace: (workspaceId: string) =>
-      requestJson<OpenworkWorkspaceExport>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/export`, {
+      requestJson<VesloWorkspaceExport>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/export`, {
         token,
         hostToken,
         timeoutMs: timeouts.workspaceExport,
@@ -1223,7 +1223,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         timeoutMs: timeouts.workspaceImport,
       }),
     getConfig: (workspaceId: string) =>
-      requestJson<{ opencode: Record<string, unknown>; openwork: Record<string, unknown>; updatedAt?: number | null }>(
+      requestJson<{ opencode: Record<string, unknown>; veslo: Record<string, unknown>; updatedAt?: number | null }>(
         baseUrl,
         `/workspace/${workspaceId}/config`,
         { token, hostToken, timeoutMs: timeouts.config },
@@ -1233,9 +1233,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       tokenValue: string,
       healthPort?: number | null,
     ) =>
-      requestJson<OpenworkOpenCodeRouterTelegramResult>(
+      requestJson<VesloOpenCodeRouterTelegramResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/telegram-token`,
+        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/telegram-token`,
         {
           token,
           hostToken,
@@ -1250,9 +1250,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       appToken: string,
       healthPort?: number | null,
     ) =>
-      requestJson<OpenworkOpenCodeRouterSlackResult>(
+      requestJson<VesloOpenCodeRouterSlackResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/slack-tokens`,
+        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/slack-tokens`,
         {
           token,
           hostToken,
@@ -1262,16 +1262,16 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         },
       ),
     getOpenCodeRouterTelegram: (workspaceId: string) =>
-      requestJson<OpenworkOpenCodeRouterTelegramInfo>(
+      requestJson<VesloOpenCodeRouterTelegramInfo>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/telegram`,
+        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/telegram`,
         { token, hostToken, timeoutMs: timeouts.opencodeRouter },
       ),
     getOpenCodeRouterTelegramIdentities: (workspaceId: string, options?: { healthPort?: number | null }) => {
       const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJson<OpenworkOpenCodeRouterTelegramIdentitiesResult>(
+      return requestJson<VesloOpenCodeRouterTelegramIdentitiesResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram${query}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/identities/telegram${query}`,
         { token, hostToken, timeoutMs: timeouts.opencodeRouter },
       );
     },
@@ -1280,9 +1280,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       input: { id?: string; token: string; enabled?: boolean; access?: "public" | "private"; pairingCode?: string },
       options?: { healthPort?: number | null },
     ) =>
-      requestJson<OpenworkOpenCodeRouterTelegramIdentityUpsertResult>(
+      requestJson<VesloOpenCodeRouterTelegramIdentityUpsertResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram`,
+        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/identities/telegram`,
         {
           token,
           hostToken,
@@ -1299,17 +1299,17 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       ),
     deleteOpenCodeRouterTelegramIdentity: (workspaceId: string, identityId: string, options?: { healthPort?: number | null }) => {
       const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJson<OpenworkOpenCodeRouterTelegramIdentityDeleteResult>(
+      return requestJson<VesloOpenCodeRouterTelegramIdentityDeleteResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram/${encodeURIComponent(identityId)}${query}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/identities/telegram/${encodeURIComponent(identityId)}${query}`,
         { token, hostToken, method: "DELETE" },
       );
     },
     getOpenCodeRouterSlackIdentities: (workspaceId: string, options?: { healthPort?: number | null }) => {
       const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJson<OpenworkOpenCodeRouterSlackIdentitiesResult>(
+      return requestJson<VesloOpenCodeRouterSlackIdentitiesResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack${query}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/identities/slack${query}`,
         { token, hostToken },
       );
     },
@@ -1318,9 +1318,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       input: { id?: string; botToken: string; appToken: string; enabled?: boolean },
       options?: { healthPort?: number | null },
     ) =>
-      requestJson<OpenworkOpenCodeRouterSlackIdentityUpsertResult>(
+      requestJson<VesloOpenCodeRouterSlackIdentityUpsertResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack`,
+        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/identities/slack`,
         {
           token,
           hostToken,
@@ -1336,9 +1336,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       ),
     deleteOpenCodeRouterSlackIdentity: (workspaceId: string, identityId: string, options?: { healthPort?: number | null }) => {
       const query = typeof options?.healthPort === "number" ? `?healthPort=${encodeURIComponent(String(options.healthPort))}` : "";
-      return requestJson<OpenworkOpenCodeRouterSlackIdentityDeleteResult>(
+      return requestJson<VesloOpenCodeRouterSlackIdentityDeleteResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack/${encodeURIComponent(identityId)}${query}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/identities/slack/${encodeURIComponent(identityId)}${query}`,
         { token, hostToken, method: "DELETE" },
       );
     },
@@ -1351,9 +1351,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       if (filters?.identityId?.trim()) search.set("identityId", filters.identityId.trim());
       if (typeof filters?.healthPort === "number") search.set("healthPort", String(filters.healthPort));
       const suffix = search.toString();
-      return requestJson<OpenworkOpenCodeRouterBindingsResult>(
+      return requestJson<VesloOpenCodeRouterBindingsResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/bindings${suffix ? `?${suffix}` : ""}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/bindings${suffix ? `?${suffix}` : ""}`,
         { token, hostToken },
       );
     },
@@ -1362,9 +1362,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       input: { channel: string; identityId?: string; peerId: string; directory?: string },
       options?: { healthPort?: number | null },
     ) =>
-      requestJson<OpenworkOpenCodeRouterBindingUpdateResult>(
+      requestJson<VesloOpenCodeRouterBindingUpdateResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/bindings`,
+        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/bindings`,
         {
           token,
           hostToken,
@@ -1400,24 +1400,24 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         healthPort: options?.healthPort ?? null,
       };
 
-      const primaryPath = `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/send`;
-      const mountedWorkspaceId = parseOpenworkWorkspaceIdFromUrl(baseUrl);
+      const primaryPath = `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/send`;
+      const mountedWorkspaceId = parseVesloWorkspaceIdFromUrl(baseUrl);
       const fallbackPath =
         mountedWorkspaceId && mountedWorkspaceId === workspaceId
-          ? `/opencode-router/send`
-          : `/w/${encodeURIComponent(workspaceId)}/opencode-router/send`;
+          ? `/veslo-code-router/send`
+          : `/w/${encodeURIComponent(workspaceId)}/veslo-code-router/send`;
 
-      return requestJson<OpenworkOpenCodeRouterSendResult>(baseUrl, primaryPath, {
+      return requestJson<VesloOpenCodeRouterSendResult>(baseUrl, primaryPath, {
         token,
         hostToken,
         method: "POST",
         body: payload,
         timeoutMs: timeouts.opencodeRouter,
       }).catch(async (error) => {
-        if (!(error instanceof OpenworkServerError) || error.status !== 404) {
+        if (!(error instanceof VesloServerError) || error.status !== 404) {
           throw error;
         }
-        return requestJson<OpenworkOpenCodeRouterSendResult>(baseUrl, fallbackPath, {
+        return requestJson<VesloOpenCodeRouterSendResult>(baseUrl, fallbackPath, {
           token,
           hostToken,
           method: "POST",
@@ -1431,9 +1431,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       enabled: boolean,
       options?: { clearToken?: boolean; healthPort?: number | null },
     ) =>
-      requestJson<OpenworkOpenCodeRouterTelegramEnabledResult>(
+      requestJson<VesloOpenCodeRouterTelegramEnabledResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/telegram-enabled`,
+        `/workspace/${encodeURIComponent(workspaceId)}/veslo-code-router/telegram-enabled`,
         {
           token,
           hostToken,
@@ -1441,7 +1441,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           body: { enabled, clearToken: options?.clearToken ?? false, healthPort: options?.healthPort ?? null },
         },
       ),
-    patchConfig: (workspaceId: string, payload: { opencode?: Record<string, unknown>; openwork?: Record<string, unknown> }) =>
+    patchConfig: (workspaceId: string, payload: { opencode?: Record<string, unknown>; veslo?: Record<string, unknown> }) =>
       requestJson<{ updatedAt?: number | null }>(baseUrl, `/workspace/${workspaceId}/config`, {
         token,
         hostToken,
@@ -1450,7 +1450,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       }),
     listReloadEvents: (workspaceId: string, options?: { since?: number }) => {
       const query = typeof options?.since === "number" ? `?since=${options.since}` : "";
-      return requestJson<{ items: OpenworkReloadEvent[]; cursor?: number }>(
+      return requestJson<{ items: VesloReloadEvent[]; cursor?: number }>(
         baseUrl,
         `/workspace/${workspaceId}/events${query}`,
         { token, hostToken },
@@ -1464,34 +1464,34 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       }),
     listPlugins: (workspaceId: string, options?: { includeGlobal?: boolean }) => {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
-      return requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
+      return requestJson<{ items: VesloPluginItem[]; loadOrder: string[] }>(
         baseUrl,
         `/workspace/${workspaceId}/plugins${query}`,
         { token, hostToken },
       );
     },
     addPlugin: (workspaceId: string, spec: string) =>
-      requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
+      requestJson<{ items: VesloPluginItem[]; loadOrder: string[] }>(
         baseUrl,
         `/workspace/${workspaceId}/plugins`,
         { token, hostToken, method: "POST", body: { spec } },
       ),
     removePlugin: (workspaceId: string, name: string) =>
-      requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
+      requestJson<{ items: VesloPluginItem[]; loadOrder: string[] }>(
         baseUrl,
         `/workspace/${workspaceId}/plugins/${encodeURIComponent(name)}`,
         { token, hostToken, method: "DELETE" },
       ),
     listSkills: (workspaceId: string, options?: { includeGlobal?: boolean }) => {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
-      return requestJson<{ items: OpenworkSkillItem[] }>(
+      return requestJson<{ items: VesloSkillItem[] }>(
         baseUrl,
         `/workspace/${workspaceId}/skills${query}`,
         { token, hostToken },
       );
     },
     listHubSkills: () =>
-      requestJson<{ items: OpenworkHubSkillItem[] }>(baseUrl, `/hub/skills`, {
+      requestJson<{ items: VesloHubSkillItem[] }>(baseUrl, `/hub/skills`, {
         token,
         hostToken,
       }),
@@ -1515,30 +1515,30 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       ),
     getSkill: (workspaceId: string, name: string, options?: { includeGlobal?: boolean }) => {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
-      return requestJson<OpenworkSkillContent>(
+      return requestJson<VesloSkillContent>(
         baseUrl,
         `/workspace/${workspaceId}/skills/${encodeURIComponent(name)}${query}`,
         { token, hostToken },
       );
     },
     upsertSkill: (workspaceId: string, payload: { name: string; content: string; description?: string }) =>
-      requestJson<OpenworkSkillItem>(baseUrl, `/workspace/${workspaceId}/skills`, {
+      requestJson<VesloSkillItem>(baseUrl, `/workspace/${workspaceId}/skills`, {
         token,
         hostToken,
         method: "POST",
         body: payload,
       }),
     listMcp: (workspaceId: string) =>
-      requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, { token, hostToken }),
+      requestJson<{ items: VesloMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, { token, hostToken }),
     addMcp: (workspaceId: string, payload: { name: string; config: Record<string, unknown> }) =>
-      requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, {
+      requestJson<{ items: VesloMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, {
         token,
         hostToken,
         method: "POST",
         body: payload,
       }),
     removeMcp: (workspaceId: string, name: string) =>
-      requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}`, {
+      requestJson<{ items: VesloMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}`, {
         token,
         hostToken,
         method: "DELETE",
@@ -1552,13 +1552,13 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       }),
 
     listCommands: (workspaceId: string, scope: "workspace" | "global" = "workspace") =>
-      requestJson<{ items: OpenworkCommandItem[] }>(
+      requestJson<{ items: VesloCommandItem[] }>(
         baseUrl,
         `/workspace/${workspaceId}/commands?scope=${scope}`,
         { token, hostToken },
       ),
     listAudit: (workspaceId: string, limit = 50) =>
-      requestJson<{ items: OpenworkAuditEntry[] }>(
+      requestJson<{ items: VesloAuditEntry[] }>(
         baseUrl,
         `/workspace/${workspaceId}/audit?limit=${limit}`,
         { token, hostToken },
@@ -1567,7 +1567,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       workspaceId: string,
       payload: { name: string; description?: string; template: string; agent?: string; model?: string | null; subtask?: boolean },
     ) =>
-      requestJson<{ items: OpenworkCommandItem[] }>(baseUrl, `/workspace/${workspaceId}/commands`, {
+      requestJson<{ items: VesloCommandItem[] }>(baseUrl, `/workspace/${workspaceId}/commands`, {
         token,
         hostToken,
         method: "POST",
@@ -1590,12 +1590,12 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         },
       ),
     getSoulStatus: (workspaceId: string) =>
-      requestJson<OpenworkSoulStatus>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/soul/status`, {
+      requestJson<VesloSoulStatus>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/soul/status`, {
         token,
         hostToken,
       }),
     listSoulHeartbeats: (workspaceId: string, limit = 20) =>
-      requestJson<{ items: OpenworkSoulHeartbeatEntry[]; total: number; path: string }>(
+      requestJson<{ items: VesloSoulHeartbeatEntry[]; total: number; path: string }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/soul/heartbeats?limit=${encodeURIComponent(String(limit))}`,
         { token, hostToken },
@@ -1629,19 +1629,19 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         } catch {
           // ignore
         }
-        throw new OpenworkServerError(result.status, "request_failed", message || "Inbox upload failed");
+        throw new VesloServerError(result.status, "request_failed", message || "Inbox upload failed");
       }
 
       const body = result.text.trim();
       if (body) {
         try {
-          const parsed = JSON.parse(body) as Partial<OpenworkInboxUploadResult>;
+          const parsed = JSON.parse(body) as Partial<VesloInboxUploadResult>;
           if (typeof parsed.path === "string" && parsed.path.trim()) {
             return {
               ok: parsed.ok ?? true,
               path: parsed.path.trim(),
               bytes: typeof parsed.bytes === "number" ? parsed.bytes : file.size,
-            } satisfies OpenworkInboxUploadResult;
+            } satisfies VesloInboxUploadResult;
           }
         } catch {
           // ignore invalid JSON and fall back
@@ -1652,11 +1652,11 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         ok: true,
         path: options?.path?.trim() || file.name,
         bytes: file.size,
-      } satisfies OpenworkInboxUploadResult;
+      } satisfies VesloInboxUploadResult;
     },
 
     listInbox: (workspaceId: string) =>
-      requestJson<OpenworkInboxList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/inbox`, {
+      requestJson<VesloInboxList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/inbox`, {
         token,
         hostToken,
       }),
@@ -1669,7 +1669,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       ),
 
     createFileSession: (workspaceId: string, options?: { ttlSeconds?: number; write?: boolean }) =>
-      requestJson<{ session: OpenworkFileSession }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/files/sessions`, {
+      requestJson<{ session: VesloFileSession }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/files/sessions`, {
         token,
         hostToken,
         method: "POST",
@@ -1680,7 +1680,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       }),
 
     renewFileSession: (sessionId: string, options?: { ttlSeconds?: number }) =>
-      requestJson<{ session: OpenworkFileSession }>(baseUrl, `/files/sessions/${encodeURIComponent(sessionId)}/renew`, {
+      requestJson<{ session: VesloFileSession }>(baseUrl, `/files/sessions/${encodeURIComponent(sessionId)}/renew`, {
         token,
         hostToken,
         method: "POST",
@@ -1714,7 +1714,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         total: number;
         truncated: boolean;
         nextAfter?: string;
-        items: OpenworkFileCatalogEntry[];
+        items: VesloFileCatalogEntry[];
       }>(
         baseUrl,
         `/files/sessions/${encodeURIComponent(sessionId)}/catalog/snapshot${query ? `?${query}` : ""}`,
@@ -1724,7 +1724,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
     listFileSessionEvents: (sessionId: string, options?: { since?: number }) => {
       const query = typeof options?.since === "number" ? `?since=${encodeURIComponent(String(options.since))}` : "";
-      return requestJson<{ items: OpenworkFileSessionEvent[]; cursor: number }>(
+      return requestJson<{ items: VesloFileSessionEvent[]; cursor: number }>(
         baseUrl,
         `/files/sessions/${encodeURIComponent(sessionId)}/catalog/events${query}`,
         { token, hostToken },
@@ -1732,7 +1732,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     },
 
     readFileBatch: (sessionId: string, paths: string[]) =>
-      requestJson<OpenworkFileReadBatchResult>(baseUrl, `/files/sessions/${encodeURIComponent(sessionId)}/read-batch`, {
+      requestJson<VesloFileReadBatchResult>(baseUrl, `/files/sessions/${encodeURIComponent(sessionId)}/read-batch`, {
         token,
         hostToken,
         method: "POST",
@@ -1743,7 +1743,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       sessionId: string,
       writes: Array<{ path: string; contentBase64: string; ifMatchRevision?: string; force?: boolean }>,
     ) =>
-      requestJson<OpenworkFileWriteBatchResult>(baseUrl, `/files/sessions/${encodeURIComponent(sessionId)}/write-batch`, {
+      requestJson<VesloFileWriteBatchResult>(baseUrl, `/files/sessions/${encodeURIComponent(sessionId)}/write-batch`, {
         token,
         hostToken,
         method: "POST",
@@ -1758,7 +1758,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         | { type: "rename"; from: string; to: string }
       >,
     ) =>
-      requestJson<OpenworkFileOpsBatchResult>(baseUrl, `/files/sessions/${encodeURIComponent(sessionId)}/ops`, {
+      requestJson<VesloFileOpsBatchResult>(baseUrl, `/files/sessions/${encodeURIComponent(sessionId)}/ops`, {
         token,
         hostToken,
         method: "POST",
@@ -1766,7 +1766,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       }),
 
     readWorkspaceFile: (workspaceId: string, path: string) =>
-      requestJson<OpenworkWorkspaceFileContent>(
+      requestJson<VesloWorkspaceFileContent>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/files/content?path=${encodeURIComponent(path)}`,
         { token, hostToken },
@@ -1776,7 +1776,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       workspaceId: string,
       payload: { path: string; content: string; baseUpdatedAt?: number | null; force?: boolean },
     ) =>
-      requestJson<OpenworkWorkspaceFileWriteResult>(
+      requestJson<VesloWorkspaceFileWriteResult>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/files/content`,
         {
@@ -1788,7 +1788,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       ),
 
     listArtifacts: (workspaceId: string) =>
-      requestJson<OpenworkArtifactList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/artifacts`, {
+      requestJson<VesloArtifactList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/artifacts`, {
         token,
         hostToken,
       }),
@@ -1802,4 +1802,4 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
   };
 }
 
-export type OpenworkServerClient = ReturnType<typeof createOpenworkServerClient>;
+export type VesloServerClient = ReturnType<typeof createVesloServerClient>;

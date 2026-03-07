@@ -11,32 +11,32 @@ import {
 
 import Button from "../components/button";
 import {
-  buildOpenworkWorkspaceBaseUrl,
-  OpenworkServerError,
-  parseOpenworkWorkspaceIdFromUrl,
-} from "../lib/openwork-server";
+  buildVesloWorkspaceBaseUrl,
+  VesloServerError,
+  parseVesloWorkspaceIdFromUrl,
+} from "../lib/veslo-server";
 import type {
-  OpenworkServerClient,
-  OpenworkOpenCodeRouterHealthSnapshot,
-  OpenworkOpenCodeRouterIdentityItem,
-  OpenworkOpenCodeRouterSendResult,
-  OpenworkServerStatus,
-  OpenworkWorkspaceFileContent,
-} from "../lib/openwork-server";
+  VesloServerClient,
+  VesloOpenCodeRouterHealthSnapshot,
+  VesloOpenCodeRouterIdentityItem,
+  VesloOpenCodeRouterSendResult,
+  VesloServerStatus,
+  VesloWorkspaceFileContent,
+} from "../lib/veslo-server";
 
 export type IdentitiesViewProps = {
   busy: boolean;
-  openworkServerStatus: OpenworkServerStatus;
-  openworkServerUrl: string;
-  openworkServerClient: OpenworkServerClient | null;
-  openworkReconnectBusy: boolean;
-  reconnectOpenworkServer: () => Promise<boolean>;
-  openworkServerWorkspaceId: string | null;
+  vesloServerStatus: VesloServerStatus;
+  vesloServerUrl: string;
+  vesloServerClient: VesloServerClient | null;
+  vesloReconnectBusy: boolean;
+  reconnectVesloServer: () => Promise<boolean>;
+  vesloServerWorkspaceId: string | null;
   activeWorkspaceRoot: string;
   developerMode: boolean;
 };
 
-const OPENCODE_ROUTER_AGENT_FILE_PATH = ".opencode/agents/opencode-router.md";
+const OPENCODE_ROUTER_AGENT_FILE_PATH = ".opencode/agents/veslo-code-router.md";
 const OPENCODE_ROUTER_AGENT_FILE_TEMPLATE = `# OpenCodeRouter Messaging Agent
 
 Use this file to define how the assistant responds in Slack/Telegram for this workspace.
@@ -51,13 +51,13 @@ Examples:
 `;
 
 function formatRequestError(error: unknown): string {
-  if (error instanceof OpenworkServerError) {
+  if (error instanceof VesloServerError) {
     return `${error.message} (${error.status})`;
   }
   return error instanceof Error ? error.message : String(error);
 }
 
-function isOpenCodeRouterSnapshot(value: unknown): value is OpenworkOpenCodeRouterHealthSnapshot {
+function isOpenCodeRouterSnapshot(value: unknown): value is VesloOpenCodeRouterHealthSnapshot {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   return (
@@ -68,7 +68,7 @@ function isOpenCodeRouterSnapshot(value: unknown): value is OpenworkOpenCodeRout
   );
 }
 
-function isOpenCodeRouterIdentities(value: unknown): value is { ok: boolean; items: OpenworkOpenCodeRouterIdentityItem[] } {
+function isOpenCodeRouterIdentities(value: unknown): value is { ok: boolean; items: VesloOpenCodeRouterIdentityItem[] } {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   return typeof record.ok === "boolean" && Array.isArray(record.items);
@@ -130,13 +130,13 @@ function StatusPill(props: { label: string; value: string; ok: boolean }) {
 export default function IdentitiesView(props: IdentitiesViewProps) {
   const [refreshing, setRefreshing] = createSignal(false);
 
-  const [health, setHealth] = createSignal<OpenworkOpenCodeRouterHealthSnapshot | null>(null);
+  const [health, setHealth] = createSignal<VesloOpenCodeRouterHealthSnapshot | null>(null);
   const [healthError, setHealthError] = createSignal<string | null>(null);
 
-  const [telegramIdentities, setTelegramIdentities] = createSignal<OpenworkOpenCodeRouterIdentityItem[]>([]);
+  const [telegramIdentities, setTelegramIdentities] = createSignal<VesloOpenCodeRouterIdentityItem[]>([]);
   const [telegramIdentitiesError, setTelegramIdentitiesError] = createSignal<string | null>(null);
 
-  const [slackIdentities, setSlackIdentities] = createSignal<OpenworkOpenCodeRouterIdentityItem[]>([]);
+  const [slackIdentities, setSlackIdentities] = createSignal<VesloOpenCodeRouterIdentityItem[]>([]);
   const [slackIdentitiesError, setSlackIdentitiesError] = createSignal<string | null>(null);
 
   const [telegramToken, setTelegramToken] = createSignal("");
@@ -174,26 +174,26 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
   const [sendBusy, setSendBusy] = createSignal(false);
   const [sendStatus, setSendStatus] = createSignal<string | null>(null);
   const [sendError, setSendError] = createSignal<string | null>(null);
-  const [sendResult, setSendResult] = createSignal<OpenworkOpenCodeRouterSendResult | null>(null);
+  const [sendResult, setSendResult] = createSignal<VesloOpenCodeRouterSendResult | null>(null);
 
   const [reconnectStatus, setReconnectStatus] = createSignal<string | null>(null);
   const [reconnectError, setReconnectError] = createSignal<string | null>(null);
 
   const workspaceId = createMemo(() => {
-    const explicitId = props.openworkServerWorkspaceId?.trim() ?? "";
+    const explicitId = props.vesloServerWorkspaceId?.trim() ?? "";
     if (explicitId) return explicitId;
-    return parseOpenworkWorkspaceIdFromUrl(props.openworkServerUrl) ?? "";
+    return parseVesloWorkspaceIdFromUrl(props.vesloServerUrl) ?? "";
   });
 
-  const scopedOpenworkBaseUrl = createMemo(() => {
-    const baseUrl = props.openworkServerUrl.trim();
+  const scopedVesloBaseUrl = createMemo(() => {
+    const baseUrl = props.vesloServerUrl.trim();
     if (!baseUrl) return "";
-    return buildOpenworkWorkspaceBaseUrl(baseUrl, workspaceId()) ?? baseUrl;
+    return buildVesloWorkspaceBaseUrl(baseUrl, workspaceId()) ?? baseUrl;
   });
 
-  const openworkServerClient = createMemo(() => props.openworkServerClient);
+  const vesloServerClient = createMemo(() => props.vesloServerClient);
 
-  const serverReady = createMemo(() => props.openworkServerStatus === "connected" && Boolean(openworkServerClient()));
+  const serverReady = createMemo(() => props.vesloServerStatus === "connected" && Boolean(vesloServerClient()));
   const scopedWorkspaceReady = createMemo(() => Boolean(workspaceId()));
   const defaultRoutingDirectory = createMemo(() => props.activeWorkspaceRoot.trim() || "Not set");
 
@@ -283,20 +283,20 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       setAgentError("Worker scope unavailable.");
       return;
     }
-    const client = openworkServerClient();
+    const client = vesloServerClient();
     if (!client) return;
 
     setAgentLoading(true);
     setAgentError(null);
     try {
-      const result = (await client.readWorkspaceFile(id, OPENCODE_ROUTER_AGENT_FILE_PATH)) as OpenworkWorkspaceFileContent;
+      const result = (await client.readWorkspaceFile(id, OPENCODE_ROUTER_AGENT_FILE_PATH)) as VesloWorkspaceFileContent;
       const nextContent = result.content ?? "";
       setAgentExists(true);
       setAgentContent(nextContent);
       setAgentDraft(nextContent);
       setAgentBaseUpdatedAt(typeof result.updatedAt === "number" ? result.updatedAt : null);
     } catch (error) {
-      if (error instanceof OpenworkServerError && error.status === 404) {
+      if (error instanceof VesloServerError && error.status === 404) {
         setAgentExists(false);
         setAgentContent("");
         setAgentDraft("");
@@ -314,7 +314,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     if (!serverReady()) return;
     const id = workspaceId();
     if (!id) return;
-    const client = openworkServerClient();
+    const client = vesloServerClient();
     if (!client) return;
 
     setAgentSaving(true);
@@ -342,7 +342,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     if (!serverReady()) return;
     const id = workspaceId();
     if (!id) return;
-    const client = openworkServerClient();
+    const client = vesloServerClient();
     if (!client) return;
 
     setAgentSaving(true);
@@ -359,7 +359,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       setAgentBaseUpdatedAt(typeof result.updatedAt === "number" ? result.updatedAt : null);
       setAgentStatus("Saved messaging behavior.");
     } catch (error) {
-      if (error instanceof OpenworkServerError && error.status === 409) {
+      if (error instanceof VesloServerError && error.status === 409) {
         setAgentError("File changed remotely. Reload and save again.");
       } else {
         setAgentError(formatRequestError(error));
@@ -374,7 +374,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     if (!serverReady()) return;
     const id = workspaceId();
     if (!id) return;
-    const client = openworkServerClient();
+    const client = vesloServerClient();
     if (!client) return;
     const text = sendText().trim();
     if (!text) return;
@@ -404,7 +404,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
   const refreshAll = async (options?: { force?: boolean }) => {
     if (refreshing() && !options?.force) return;
     if (!serverReady()) return;
-    const client = openworkServerClient();
+    const client = vesloServerClient();
     if (!client) return;
     const id = workspaceId();
 
@@ -488,13 +488,13 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
   };
 
   const repairAndReconnect = async () => {
-    if (props.openworkReconnectBusy) return;
+    if (props.vesloReconnectBusy) return;
     setReconnectStatus(null);
     setReconnectError(null);
 
-    const ok = await props.reconnectOpenworkServer();
+    const ok = await props.reconnectVesloServer();
     if (!ok) {
-      setReconnectError("Reconnect failed. Check OpenWork URL/token and try again.");
+      setReconnectError("Reconnect failed. Check Veslo URL/token and try again.");
       return;
     }
 
@@ -508,7 +508,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     if (!serverReady()) return;
     const id = workspaceId();
     if (!id) return;
-    const client = openworkServerClient();
+    const client = vesloServerClient();
     if (!client) return;
 
     const token = telegramToken().trim();
@@ -563,7 +563,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     if (!serverReady()) return;
     const id = workspaceId();
     if (!id) return;
-    const client = openworkServerClient();
+    const client = vesloServerClient();
     if (!client) return;
     if (!identityId.trim()) return;
 
@@ -606,7 +606,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     if (!serverReady()) return;
     const id = workspaceId();
     if (!id) return;
-    const client = openworkServerClient();
+    const client = vesloServerClient();
     if (!client) return;
 
     const botToken = slackBotToken().trim();
@@ -641,7 +641,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     if (!serverReady()) return;
     const id = workspaceId();
     if (!id) return;
-    const client = openworkServerClient();
+    const client = vesloServerClient();
     if (!client) return;
     if (!identityId.trim()) return;
 
@@ -667,7 +667,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
   };
 
   createEffect(() => {
-    const baseUrl = scopedOpenworkBaseUrl().trim();
+    const baseUrl = scopedVesloBaseUrl().trim();
     const id = workspaceId();
     const nextKey = `${baseUrl}|${id}`;
     if (nextKey === lastResetKey) return;
@@ -713,9 +713,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
               variant="outline"
               class="h-8 px-3 text-xs"
               onClick={() => void repairAndReconnect()}
-              disabled={props.busy || props.openworkReconnectBusy}
+              disabled={props.busy || props.vesloReconnectBusy}
             >
-              <RefreshCcw size={14} class={props.openworkReconnectBusy ? "animate-spin" : ""} />
+              <RefreshCcw size={14} class={props.vesloReconnectBusy ? "animate-spin" : ""} />
               <span class="ml-1.5">Repair & reconnect</span>
             </Button>
             <Button
@@ -734,7 +734,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           your worker will automatically read and respond to messages.
         </p>
         <div class="mt-1.5 text-[11px] text-gray-8 font-mono break-all">
-          Workspace scope: {scopedOpenworkBaseUrl().trim() || props.openworkServerUrl.trim() || "Not set"}
+          Workspace scope: {scopedVesloBaseUrl().trim() || props.vesloServerUrl.trim() || "Not set"}
         </div>
         <Show when={reconnectStatus()}>
           {(value) => <div class="mt-1 text-[11px] text-gray-9">{value()}</div>}
@@ -747,9 +747,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       {/* ---- Not connected to server ---- */}
       <Show when={!serverReady()}>
         <div class="rounded-xl border border-gray-4 bg-gray-1 p-5">
-          <div class="text-sm font-semibold text-gray-12">Connect to an OpenWork server</div>
+          <div class="text-sm font-semibold text-gray-12">Connect to an Veslo server</div>
           <div class="mt-1 text-xs text-gray-10">
-            Identities are available when you are connected to an OpenWork host (<code class="text-[11px] font-mono bg-gray-3 px-1 py-0.5 rounded">openwork</code>).
+            Identities are available when you are connected to an Veslo host (<code class="text-[11px] font-mono bg-gray-3 px-1 py-0.5 rounded">veslo</code>).
           </div>
         </div>
       </Show>

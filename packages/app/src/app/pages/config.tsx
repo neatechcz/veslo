@@ -8,24 +8,24 @@ import TextInput from "../components/text-input";
 
 import { RefreshCcw } from "lucide-solid";
 
-import { buildOpenworkWorkspaceBaseUrl, parseOpenworkWorkspaceIdFromUrl } from "../lib/openwork-server";
-import type { OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
-import type { OpenworkServerInfo } from "../lib/tauri";
+import { buildVesloWorkspaceBaseUrl, parseVesloWorkspaceIdFromUrl } from "../lib/veslo-server";
+import type { VesloServerSettings, VesloServerStatus } from "../lib/veslo-server";
+import type { VesloServerInfo } from "../lib/tauri";
 
 export type ConfigViewProps = {
   busy: boolean;
   clientConnected: boolean;
   anyActiveRuns: boolean;
 
-  openworkServerStatus: OpenworkServerStatus;
-  openworkServerUrl: string;
-  openworkServerSettings: OpenworkServerSettings;
-  openworkServerHostInfo: OpenworkServerInfo | null;
-  openworkServerWorkspaceId: string | null;
+  vesloServerStatus: VesloServerStatus;
+  vesloServerUrl: string;
+  vesloServerSettings: VesloServerSettings;
+  vesloServerHostInfo: VesloServerInfo | null;
+  vesloServerWorkspaceId: string | null;
 
-  updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
-  resetOpenworkServerSettings: () => void;
-  testOpenworkServerConnection: (next: OpenworkServerSettings) => Promise<boolean>;
+  updateVesloServerSettings: (next: VesloServerSettings) => void;
+  resetVesloServerSettings: () => void;
+  testVesloServerConnection: (next: VesloServerSettings) => Promise<boolean>;
 
   canReloadWorkspace: boolean;
   reloadWorkspaceEngine: () => Promise<void>;
@@ -42,30 +42,30 @@ export type ConfigViewProps = {
 };
 
 export default function ConfigView(props: ConfigViewProps) {
-  const [openworkUrl, setOpenworkUrl] = createSignal("");
-  const [openworkToken, setOpenworkToken] = createSignal("");
-  const [openworkTokenVisible, setOpenworkTokenVisible] = createSignal(false);
-  const [openworkTestState, setOpenworkTestState] = createSignal<"idle" | "testing" | "success" | "error">("idle");
-  const [openworkTestMessage, setOpenworkTestMessage] = createSignal<string | null>(null);
+  const [vesloUrl, setVesloUrl] = createSignal("");
+  const [vesloToken, setVesloToken] = createSignal("");
+  const [vesloTokenVisible, setVesloTokenVisible] = createSignal(false);
+  const [vesloTestState, setVesloTestState] = createSignal<"idle" | "testing" | "success" | "error">("idle");
+  const [vesloTestMessage, setVesloTestMessage] = createSignal<string | null>(null);
   const [clientTokenVisible, setClientTokenVisible] = createSignal(false);
   const [hostTokenVisible, setHostTokenVisible] = createSignal(false);
   const [copyingField, setCopyingField] = createSignal<string | null>(null);
   let copyTimeout: number | undefined;
 
   createEffect(() => {
-    setOpenworkUrl(props.openworkServerSettings.urlOverride ?? "");
-    setOpenworkToken(props.openworkServerSettings.token ?? "");
+    setVesloUrl(props.vesloServerSettings.urlOverride ?? "");
+    setVesloToken(props.vesloServerSettings.token ?? "");
   });
 
   createEffect(() => {
-    openworkUrl();
-    openworkToken();
-    setOpenworkTestState("idle");
-    setOpenworkTestMessage(null);
+    vesloUrl();
+    vesloToken();
+    setVesloTestState("idle");
+    setVesloTestMessage(null);
   });
 
-  const openworkStatusLabel = createMemo(() => {
-    switch (props.openworkServerStatus) {
+  const vesloStatusLabel = createMemo(() => {
+    switch (props.vesloServerStatus) {
       case "connected":
         return "Connected";
       case "limited":
@@ -75,8 +75,8 @@ export default function ConfigView(props: ConfigViewProps) {
     }
   });
 
-  const openworkStatusStyle = createMemo(() => {
-    switch (props.openworkServerStatus) {
+  const vesloStatusStyle = createMemo(() => {
+    switch (props.vesloServerStatus) {
       case "connected":
         return "bg-green-7/10 text-green-11 border-green-7/20";
       case "limited":
@@ -89,7 +89,7 @@ export default function ConfigView(props: ConfigViewProps) {
   const reloadAvailabilityReason = createMemo(() => {
     if (!props.clientConnected) return "Connect to this worker to reload.";
     if (!props.canReloadWorkspace) {
-      return "Reloading is only available for local workers or connected OpenWork servers.";
+      return "Reloading is only available for local workers or connected Veslo servers.";
     }
     return null;
   });
@@ -98,31 +98,31 @@ export default function ConfigView(props: ConfigViewProps) {
   const reloadButtonTone = createMemo(() => (props.anyActiveRuns ? "danger" : "secondary"));
   const reloadButtonDisabled = createMemo(() => props.reloadBusy || Boolean(reloadAvailabilityReason()));
 
-  const buildOpenworkSettings = () => ({
-    ...props.openworkServerSettings,
-    urlOverride: openworkUrl().trim() || undefined,
-    token: openworkToken().trim() || undefined,
+  const buildVesloSettings = () => ({
+    ...props.vesloServerSettings,
+    urlOverride: vesloUrl().trim() || undefined,
+    token: vesloToken().trim() || undefined,
   });
 
-  const hasOpenworkChanges = createMemo(() => {
-    const currentUrl = props.openworkServerSettings.urlOverride ?? "";
-    const currentToken = props.openworkServerSettings.token ?? "";
-    return openworkUrl().trim() !== currentUrl || openworkToken().trim() !== currentToken;
+  const hasVesloChanges = createMemo(() => {
+    const currentUrl = props.vesloServerSettings.urlOverride ?? "";
+    const currentToken = props.vesloServerSettings.token ?? "";
+    return vesloUrl().trim() !== currentUrl || vesloToken().trim() !== currentToken;
   });
 
   const resolvedWorkspaceId = createMemo(() => {
-    const explicitId = props.openworkServerWorkspaceId?.trim() ?? "";
+    const explicitId = props.vesloServerWorkspaceId?.trim() ?? "";
     if (explicitId) return explicitId;
-    return parseOpenworkWorkspaceIdFromUrl(openworkUrl()) ?? "";
+    return parseVesloWorkspaceIdFromUrl(vesloUrl()) ?? "";
   });
 
   const resolvedWorkspaceUrl = createMemo(() => {
-    const baseUrl = openworkUrl().trim();
+    const baseUrl = vesloUrl().trim();
     if (!baseUrl) return "";
-    return buildOpenworkWorkspaceBaseUrl(baseUrl, resolvedWorkspaceId()) ?? baseUrl;
+    return buildVesloWorkspaceBaseUrl(baseUrl, resolvedWorkspaceId()) ?? baseUrl;
   });
 
-  const hostInfo = createMemo(() => props.openworkServerHostInfo);
+  const hostInfo = createMemo(() => props.vesloServerHostInfo);
   const hostStatusLabel = createMemo(() => {
     if (!hostInfo()?.running) return "Offline";
     return "Available";
@@ -138,8 +138,8 @@ export default function ConfigView(props: ConfigViewProps) {
   const hostConnectUrlUsesMdns = createMemo(() => hostConnectUrl().includes(".local"));
 
   const diagnosticsBundle = createMemo(() => {
-    const urlOverride = props.openworkServerSettings.urlOverride?.trim() ?? "";
-    const token = props.openworkServerSettings.token?.trim() ?? "";
+    const urlOverride = props.vesloServerSettings.urlOverride?.trim() ?? "";
+    const token = props.vesloServerSettings.token?.trim() ?? "";
     const host = hostInfo();
     const perfLogs = props.developerMode ? readPerfLogs(80) : [];
     return {
@@ -149,13 +149,13 @@ export default function ConfigView(props: ConfigViewProps) {
         developerMode: props.developerMode,
       },
       workspace: {
-        openworkServerWorkspaceId: props.openworkServerWorkspaceId ?? null,
+        vesloServerWorkspaceId: props.vesloServerWorkspaceId ?? null,
         clientConnected: props.clientConnected,
         anyActiveRuns: props.anyActiveRuns,
       },
-      openworkServer: {
-        status: props.openworkServerStatus,
-        url: props.openworkServerUrl,
+      vesloServer: {
+        status: props.vesloServerStatus,
+        url: props.vesloServerUrl,
         settings: {
           urlOverride: urlOverride || null,
           tokenPresent: Boolean(token),
@@ -219,9 +219,9 @@ export default function ConfigView(props: ConfigViewProps) {
         <div class="text-xs text-gray-10">
           These settings affect the active workspace (sharing, reload, bots). Global app behavior lives in Settings.
         </div>
-        <Show when={props.openworkServerWorkspaceId}>
+        <Show when={props.vesloServerWorkspaceId}>
           <div class="text-[11px] text-gray-7 font-mono truncate">
-            Workspace: {props.openworkServerWorkspaceId}
+            Workspace: {props.vesloServerWorkspaceId}
           </div>
         </Show>
       </div>
@@ -324,7 +324,7 @@ export default function ConfigView(props: ConfigViewProps) {
         <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
           <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <div class="text-sm font-medium text-gray-12">OpenWork server sharing</div>
+              <div class="text-sm font-medium text-gray-12">Veslo server sharing</div>
               <div class="text-xs text-gray-10">
                 Share these details with a trusted device. Keep the server on the same network for the fastest setup.
               </div>
@@ -337,7 +337,7 @@ export default function ConfigView(props: ConfigViewProps) {
           <div class="grid gap-3">
             <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
               <div class="min-w-0">
-                <div class="text-xs font-medium text-gray-11">OpenWork Server URL</div>
+                <div class="text-xs font-medium text-gray-11">Veslo Server URL</div>
                 <div class="text-xs text-gray-7 font-mono truncate">{hostConnectUrl() || "Starting server…"}</div>
                 <Show when={hostConnectUrl()}>
                   <div class="text-[11px] text-gray-8 mt-1">
@@ -431,21 +431,21 @@ export default function ConfigView(props: ConfigViewProps) {
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
         <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
-            <div class="text-sm font-medium text-gray-12">OpenWork server</div>
+            <div class="text-sm font-medium text-gray-12">Veslo server</div>
             <div class="text-xs text-gray-10">
-              Connect to an OpenWork server. Use the URL and access token from your server admin.
+              Connect to an Veslo server. Use the URL and access token from your server admin.
             </div>
           </div>
-          <div class={`text-xs px-2 py-1 rounded-full border ${openworkStatusStyle()}`}>{openworkStatusLabel()}</div>
+          <div class={`text-xs px-2 py-1 rounded-full border ${vesloStatusStyle()}`}>{vesloStatusLabel()}</div>
         </div>
 
         <div class="grid gap-3">
           <TextInput
-            label="OpenWork server URL"
-            value={openworkUrl()}
-            onInput={(event) => setOpenworkUrl(event.currentTarget.value)}
+            label="Veslo server URL"
+            value={vesloUrl()}
+            onInput={(event) => setVesloUrl(event.currentTarget.value)}
             placeholder="http://127.0.0.1:8787"
-            hint="Use the URL shared by your OpenWork server."
+            hint="Use the URL shared by your Veslo server."
             disabled={props.busy}
           />
 
@@ -453,9 +453,9 @@ export default function ConfigView(props: ConfigViewProps) {
             <div class="mb-1 text-xs font-medium text-gray-11">Access token</div>
             <div class="flex items-center gap-2">
               <input
-                type={openworkTokenVisible() ? "text" : "password"}
-                value={openworkToken()}
-                onInput={(event) => setOpenworkToken(event.currentTarget.value)}
+                type={vesloTokenVisible() ? "text" : "password"}
+                value={vesloToken()}
+                onInput={(event) => setVesloToken(event.currentTarget.value)}
                 placeholder="Paste your token"
                 disabled={props.busy}
                 class="w-full rounded-xl bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
@@ -463,10 +463,10 @@ export default function ConfigView(props: ConfigViewProps) {
               <Button
                 variant="outline"
                 class="text-xs h-9 px-3 shrink-0"
-                onClick={() => setOpenworkTokenVisible((prev) => !prev)}
+                onClick={() => setVesloTokenVisible((prev) => !prev)}
                 disabled={props.busy}
               >
-                {openworkTokenVisible() ? "Hide" : "Show"}
+                {vesloTokenVisible() ? "Hide" : "Show"}
               </Button>
             </div>
             <div class="mt-1 text-xs text-gray-10">Optional. Paste the access token to authenticate.</div>
@@ -482,57 +482,57 @@ export default function ConfigView(props: ConfigViewProps) {
           <Button
             variant="secondary"
             onClick={async () => {
-              if (openworkTestState() === "testing") return;
-              const next = buildOpenworkSettings();
-              props.updateOpenworkServerSettings(next);
-              setOpenworkTestState("testing");
-              setOpenworkTestMessage(null);
+              if (vesloTestState() === "testing") return;
+              const next = buildVesloSettings();
+              props.updateVesloServerSettings(next);
+              setVesloTestState("testing");
+              setVesloTestMessage(null);
               try {
-                const ok = await props.testOpenworkServerConnection(next);
-                setOpenworkTestState(ok ? "success" : "error");
-                setOpenworkTestMessage(
+                const ok = await props.testVesloServerConnection(next);
+                setVesloTestState(ok ? "success" : "error");
+                setVesloTestMessage(
                   ok ? "Connection successful." : "Connection failed. Check the host URL and token.",
                 );
               } catch (error) {
                 const message = error instanceof Error ? error.message : "Connection failed.";
-                setOpenworkTestState("error");
-                setOpenworkTestMessage(message);
+                setVesloTestState("error");
+                setVesloTestMessage(message);
               }
             }}
-            disabled={props.busy || openworkTestState() === "testing"}
+            disabled={props.busy || vesloTestState() === "testing"}
           >
-            {openworkTestState() === "testing" ? "Testing..." : "Test connection"}
+            {vesloTestState() === "testing" ? "Testing..." : "Test connection"}
           </Button>
           <Button
             variant="outline"
-            onClick={() => props.updateOpenworkServerSettings(buildOpenworkSettings())}
-            disabled={props.busy || !hasOpenworkChanges()}
+            onClick={() => props.updateVesloServerSettings(buildVesloSettings())}
+            disabled={props.busy || !hasVesloChanges()}
           >
             Save
           </Button>
-          <Button variant="ghost" onClick={props.resetOpenworkServerSettings} disabled={props.busy}>
+          <Button variant="ghost" onClick={props.resetVesloServerSettings} disabled={props.busy}>
             Reset
           </Button>
         </div>
 
-        <Show when={openworkTestState() !== "idle"}>
+        <Show when={vesloTestState() !== "idle"}>
           <div
             class={`text-xs ${
-              openworkTestState() === "success"
+              vesloTestState() === "success"
                 ? "text-green-11"
-                : openworkTestState() === "error"
+                : vesloTestState() === "error"
                   ? "text-red-11"
                   : "text-gray-9"
             }`}
             role="status"
             aria-live="polite"
           >
-            {openworkTestState() === "testing" ? "Testing connection..." : openworkTestMessage() ?? "Connection status updated."}
+            {vesloTestState() === "testing" ? "Testing connection..." : vesloTestMessage() ?? "Connection status updated."}
           </div>
         </Show>
 
-        <Show when={openworkStatusLabel() !== "Connected"}>
-          <div class="text-xs text-gray-9">OpenWork server connection needed to sync skills, plugins, and commands.</div>
+        <Show when={vesloStatusLabel() !== "Connected"}>
+          <div class="text-xs text-gray-9">Veslo server connection needed to sync skills, plugins, and commands.</div>
         </Show>
       </div>
 
