@@ -838,7 +838,7 @@ export default function SettingsView(props: SettingsViewProps) {
     if (!isTauriRuntime() || revealConfigBusy()) return;
     const path = workspaceConfigPath();
     if (!path) {
-      setConfigActionStatus("Select a local workspace before revealing config.");
+      setConfigActionStatus("Select an active worker before revealing config.");
       return;
     }
     setRevealConfigBusy(true);
@@ -1497,35 +1497,37 @@ export default function SettingsView(props: SettingsViewProps) {
                   </div>
                 </div>
 
-                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
-                  <div class="text-sm font-medium text-gray-12">Workspace config</div>
-                  <div class="text-xs text-gray-10">Reveal or reset `.opencode/veslo.json` defaults for this app workspace.</div>
-                  <div class="text-[11px] text-gray-7 font-mono break-all">{workspaceConfigPath() || "No active local workspace."}</div>
-                  <div class="flex flex-wrap items-center gap-2">
-                    <Button
-                      variant="outline"
-                      class="text-xs h-8 py-0 px-3"
-                      onClick={revealWorkspaceConfig}
-                      disabled={!isTauriRuntime() || revealConfigBusy() || !workspaceConfigPath()}
-                      title={!isTauriRuntime() ? "Reveal config requires the desktop app" : ""}
-                    >
-                      <FolderOpen size={13} class="mr-1.5" />
-                      {revealConfigBusy() ? "Opening..." : "Reveal config"}
-                    </Button>
-                    <Button
-                      variant="danger"
-                      class="text-xs h-8 py-0 px-3"
-                      onClick={resetAppConfigDefaults}
-                      disabled={resetConfigBusy() || props.anyActiveRuns}
-                      title={props.anyActiveRuns ? "Stop active runs before resetting config" : ""}
-                    >
-                      {resetConfigBusy() ? "Resetting..." : "Reset config defaults"}
-                    </Button>
+                <Show when={!CLOUD_ONLY_MODE}>
+                  <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+                    <div class="text-sm font-medium text-gray-12">Workspace config</div>
+                    <div class="text-xs text-gray-10">Reveal or reset `.opencode/veslo.json` defaults for this app workspace.</div>
+                    <div class="text-[11px] text-gray-7 font-mono break-all">{workspaceConfigPath() || "No active worker."}</div>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <Button
+                        variant="outline"
+                        class="text-xs h-8 py-0 px-3"
+                        onClick={revealWorkspaceConfig}
+                        disabled={!isTauriRuntime() || revealConfigBusy() || !workspaceConfigPath()}
+                        title={!isTauriRuntime() ? "Reveal config requires the desktop app" : ""}
+                      >
+                        <FolderOpen size={13} class="mr-1.5" />
+                        {revealConfigBusy() ? "Opening..." : "Reveal config"}
+                      </Button>
+                      <Button
+                        variant="danger"
+                        class="text-xs h-8 py-0 px-3"
+                        onClick={resetAppConfigDefaults}
+                        disabled={resetConfigBusy() || props.anyActiveRuns}
+                        title={props.anyActiveRuns ? "Stop active runs before resetting config" : ""}
+                      >
+                        {resetConfigBusy() ? "Resetting..." : "Reset config defaults"}
+                      </Button>
+                    </div>
+                    <Show when={configActionStatus()}>
+                      {(status) => <div class="text-xs text-gray-10">{status()}</div>}
+                    </Show>
                   </div>
-                  <Show when={configActionStatus()}>
-                    {(status) => <div class="text-xs text-gray-10">{status()}</div>}
-                  </Show>
-                </div>
+                </Show>
 
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                   <div class="min-w-0">

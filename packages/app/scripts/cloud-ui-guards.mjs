@@ -12,6 +12,16 @@ assert.equal(
   false,
   "settings must not branch on local startup preference",
 );
+assert.equal(
+  settingsSource.includes("Select a local workspace before revealing config."),
+  false,
+  "settings must not prompt for local workspace selection",
+);
+assert.equal(
+  settingsSource.includes("No active local workspace."),
+  false,
+  "settings must not display local workspace placeholders",
+);
 
 const statusBarSource = readFileSync(
   new URL("../src/app/components/status-bar.tsx", import.meta.url),
@@ -23,4 +33,4 @@ assert.equal(
   "status bar must not display local server label",
 );
 
-console.log(JSON.stringify({ ok: true, checks: 3 }));
+console.log(JSON.stringify({ ok: true, checks: 5 }));
