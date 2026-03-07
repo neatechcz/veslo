@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Steeper 25° tilt, standard hatchet -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-25, 256, 256)">
+    <rect x="222" y="32" width="68" height="18" rx="9" fill="#F8F8F8"/>
+    <rect x="244" y="32" width="24" height="280" rx="12" fill="#F8F8F8"/>
+    <path d="M256 290 C218 294, 155 320, 150 382 C146 420, 168 455, 204 464 L308 464 C344 455, 366 420, 362 382 C357 320, 294 294, 256 290Z" fill="#F8F8F8"/>
+  </g>
+</svg>

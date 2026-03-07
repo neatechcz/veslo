@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Wide, rounder blade — like a table tennis paddle -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <rect x="234" y="38" width="44" height="130" rx="22" fill="#2D2D2D"/>
+  <ellipse cx="256" cy="320" rx="140" ry="155" fill="#00C4E8"/>
+</svg>

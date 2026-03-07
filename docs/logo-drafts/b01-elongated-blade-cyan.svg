@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Taller, more elongated blade — elegant proportions -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <rect x="236" y="40" width="40" height="100" rx="20" fill="#2D2D2D"/>
+  <path d="M256 115 C210 125, 165 210, 165 330 C165 410, 200 465, 256 465 C312 465, 347 410, 347 330 C347 210, 302 125, 256 115Z" fill="#00C4E8"/>
+</svg>

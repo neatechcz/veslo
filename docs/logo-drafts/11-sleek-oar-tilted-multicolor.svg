@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Sleek tilted oar with Neatech multicolor accents at joints -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <g transform="translate(256,256) rotate(-30) translate(-256,-256)">
+    <!-- Shaft -->
+    <rect x="228" y="40" width="56" height="270" rx="28" fill="#2D2D2D"/>
+    <!-- Blade -->
+    <path d="M256 274 C212 280, 176 326, 176 385 C176 426, 206 454, 256 454 C306 454, 336 426, 336 385 C336 326, 300 280, 256 274Z" fill="#2D2D2D"/>
+    <!-- Cyan accent at junction -->
+    <rect x="234" y="272" width="44" height="24" rx="4" fill="#00C4E8"/>
+    <!-- Pink accent at grip -->
+    <rect x="238" y="36" width="36" height="14" rx="4" fill="#E84C9A"/>
+    <!-- Purple accent on blade spine -->
+    <rect x="244" y="340" width="24" height="24" rx="4" fill="#9B3FA4"/>
+  </g>
+</svg>

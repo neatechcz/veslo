@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Abstract oar blade only — bold, iconic, just the blade with a hint of shaft -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <!-- Short shaft stub at top -->
+  <rect x="232" y="60" width="48" height="120" rx="24" fill="#2D2D2D"/>
+  <!-- Large blade shape -->
+  <path d="M256 150 C196 160, 140 230, 140 320 C140 390, 180 440, 256 440 C332 440, 372 390, 372 320 C372 230, 316 160, 256 150Z" fill="#00C4E8"/>
+  <!-- Spine line on blade -->
+  <rect x="248" y="160" width="16" height="260" rx="8" fill="#2D2D2D" opacity="0.15"/>
+</svg>

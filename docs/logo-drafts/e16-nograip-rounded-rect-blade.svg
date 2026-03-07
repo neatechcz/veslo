@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- No grip, rounded rectangle blade (very geometric) -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <rect x="244" y="32" width="24" height="270" rx="12" fill="#F8F8F8"/>
+    <rect x="172" y="282" width="168" height="190" rx="32" fill="#F8F8F8"/>
+  </g>
+</svg>

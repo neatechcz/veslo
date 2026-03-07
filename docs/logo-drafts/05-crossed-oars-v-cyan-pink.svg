@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Two crossed oars forming a "V": cyan + pink blades -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <!-- Left oar -->
+  <g transform="translate(256,240) rotate(-20) translate(-256,-240)">
+    <!-- Shaft -->
+    <rect x="232" y="30" width="40" height="280" rx="20" fill="#2D2D2D"/>
+    <!-- Blade -->
+    <path d="M252 275 C224 280, 198 315, 200 355 C201 378, 220 392, 252 392 C284 392, 303 378, 304 355 C306 315, 280 280, 252 275Z" fill="#00C4E8"/>
+  </g>
+  <!-- Right oar -->
+  <g transform="translate(256,240) rotate(20) translate(-256,-240)">
+    <!-- Shaft -->
+    <rect x="232" y="30" width="40" height="280" rx="20" fill="#2D2D2D"/>
+    <!-- Blade -->
+    <path d="M252 275 C224 280, 198 315, 200 355 C201 378, 220 392, 252 392 C284 392, 303 378, 304 355 C306 315, 280 280, 252 275Z" fill="#E84C9A"/>
+  </g>
+</svg>

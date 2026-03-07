@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- No T-grip — just shaft flowing into hatchet, ultra clean -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <rect x="244" y="28" width="24" height="292" rx="12" fill="#F8F8F8"/>
+    <path d="M256 296 C218 300, 155 324, 150 386 C146 424, 168 458, 204 466 L308 466 C344 458, 366 424, 362 386 C357 324, 294 300, 256 296Z" fill="#F8F8F8"/>
+  </g>
+</svg>

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Negative space: bolder shaft, wider blade, unmistakable oar -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <!-- Handle knob -->
+  <rect x="222" y="32" width="68" height="24" rx="12" fill="#F8F8F8"/>
+  <!-- Thick shaft -->
+  <rect x="240" y="32" width="32" height="250" rx="16" fill="#F8F8F8"/>
+  <!-- Wide blade -->
+  <path d="M256 260 C210 266, 142 305, 138 385 C135 435, 170 472, 220 478 L292 478 C342 472, 377 435, 374 385 C370 305, 302 266, 256 260Z" fill="#F8F8F8"/>
+</svg>

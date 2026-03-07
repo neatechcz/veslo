@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- No grip, purple→cyan gradient bg, white oar -->
+  <defs>
+    <linearGradient id="gbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#9B3FA4"/>
+      <stop offset="100%" stop-color="#00C4E8"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#gbg)" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <rect x="244" y="32" width="24" height="280" rx="12" fill="#F8F8F8"/>
+    <path d="M256 290 C222 294, 162 318, 156 380 C152 418, 170 452, 204 460 L308 460 C342 452, 360 418, 356 380 C350 318, 290 294, 256 290Z" fill="#F8F8F8"/>
+  </g>
+</svg>

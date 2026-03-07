@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Cyan bg, white shaft, slightly different white tone blade -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <!-- T-grip -->
+  <rect x="222" y="34" width="68" height="18" rx="9" fill="#FFFFFF"/>
+  <!-- Shaft -->
+  <rect x="244" y="34" width="24" height="268" rx="12" fill="#FFFFFF"/>
+  <!-- Blade in slightly warm white -->
+  <path d="M256 282 C210 288, 150 322, 147 392 C145 436, 178 468, 224 474 L288 474 C334 468, 367 436, 365 392 C362 322, 302 288, 256 282Z" fill="#F0EDE8"/>
+</svg>

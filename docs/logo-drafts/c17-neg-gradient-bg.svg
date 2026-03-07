@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Gradient background (purple→cyan), white oar -->
+  <defs>
+    <linearGradient id="bggrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#9B3FA4"/>
+      <stop offset="100%" stop-color="#00C4E8"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bggrad)" rx="24"/>
+  <!-- T-grip -->
+  <rect x="222" y="34" width="68" height="18" rx="9" fill="#F8F8F8"/>
+  <!-- Shaft -->
+  <rect x="244" y="34" width="24" height="268" rx="12" fill="#F8F8F8"/>
+  <!-- Blade -->
+  <path d="M256 282 C210 288, 150 322, 147 392 C145 436, 178 468, 224 474 L288 474 C334 468, 367 436, 365 392 C362 322, 302 288, 256 282Z" fill="#F8F8F8"/>
+</svg>

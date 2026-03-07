@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Negative space: tilted hatchet oar for dynamism -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <!-- T-grip -->
+    <rect x="220" y="28" width="72" height="18" rx="9" fill="#F8F8F8"/>
+    <!-- Long shaft -->
+    <rect x="244" y="28" width="24" height="290" rx="12" fill="#F8F8F8"/>
+    <!-- Hatchet blade -->
+    <path d="M256 296 C222 300, 162 322, 156 378 C152 416, 168 450, 200 460 L312 460 C344 450, 360 416, 356 378 C350 322, 290 300, 256 296Z" fill="#F8F8F8"/>
+  </g>
+</svg>

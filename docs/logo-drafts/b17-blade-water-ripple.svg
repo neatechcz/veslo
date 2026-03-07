@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Blade with water ripple lines at base -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <rect x="232" y="40" width="48" height="115" rx="24" fill="#2D2D2D"/>
+  <path d="M256 130 C196 140, 140 220, 140 320 C140 390, 185 440, 256 440 C327 440, 372 390, 372 320 C372 220, 316 140, 256 130Z" fill="#00C4E8"/>
+  <!-- Water ripples -->
+  <path d="M130 460 Q175 445, 220 460 Q256 475, 292 460 Q337 445, 382 460" fill="none" stroke="#00C4E8" stroke-width="5" stroke-linecap="round" opacity="0.6"/>
+  <path d="M155 478 Q195 465, 235 478 Q256 486, 277 478 Q317 465, 357 478" fill="none" stroke="#00C4E8" stroke-width="4" stroke-linecap="round" opacity="0.35"/>
+</svg>

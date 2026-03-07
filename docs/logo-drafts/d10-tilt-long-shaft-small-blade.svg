@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Long shaft, compact blade — elegant proportions -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <rect x="224" y="26" width="64" height="16" rx="8" fill="#F8F8F8"/>
+    <rect x="246" y="26" width="20" height="320" rx="10" fill="#F8F8F8"/>
+    <path d="M256 328 C228 332, 182 352, 178 400 C175 432, 196 458, 226 464 L286 464 C316 458, 337 432, 334 400 C330 352, 284 332, 256 328Z" fill="#F8F8F8"/>
+  </g>
+</svg>

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Negative space: rounded hatchet — softer version of sharp hatchet -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <!-- Handle -->
+  <rect x="224" y="32" width="64" height="18" rx="9" fill="#F8F8F8"/>
+  <!-- Shaft -->
+  <rect x="244" y="32" width="24" height="265" rx="12" fill="#F8F8F8"/>
+  <!-- Rounded hatchet — wider than tall, pillowy -->
+  <rect x="148" y="290" width="216" height="168" rx="60" fill="#F8F8F8"/>
+</svg>

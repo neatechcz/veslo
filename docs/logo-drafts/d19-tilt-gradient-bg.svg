@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Tilted hatchet on purple→cyan gradient bg -->
+  <defs>
+    <linearGradient id="tbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#9B3FA4"/>
+      <stop offset="100%" stop-color="#00C4E8"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#tbg)" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <rect x="222" y="30" width="68" height="18" rx="9" fill="#F8F8F8"/>
+    <rect x="244" y="30" width="24" height="280" rx="12" fill="#F8F8F8"/>
+    <path d="M256 288 C218 292, 155 318, 150 382 C146 422, 168 456, 204 464 L308 464 C344 456, 366 422, 362 382 C357 318, 294 292, 256 288Z" fill="#F8F8F8"/>
+  </g>
+</svg>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- No grip, tall elegant proportions, thin shaft, compact blade -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-12, 256, 256)">
+    <rect x="248" y="24" width="16" height="310" rx="8" fill="#F8F8F8"/>
+    <path d="M256 314 C234 318, 186 338, 182 392 C179 426, 196 456, 222 464 L290 464 C316 456, 333 426, 330 392 C326 338, 278 318, 256 314Z" fill="#F8F8F8"/>
+  </g>
+</svg>

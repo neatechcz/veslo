@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Negative space: SUP/canoe paddle — teardrop blade, clearly a paddle -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <!-- T-grip -->
+  <rect x="218" y="28" width="76" height="22" rx="11" fill="#F8F8F8"/>
+  <!-- Shaft -->
+  <rect x="244" y="28" width="24" height="220" rx="12" fill="#F8F8F8"/>
+  <!-- Teardrop blade — widens gradually from shaft -->
+  <path d="M256 232 C244 234, 232 242, 220 258 C195 292, 172 340, 170 385 C168 430, 196 468, 256 470 C316 468, 344 430, 342 385 C340 340, 317 292, 292 258 C280 242, 268 234, 256 232Z" fill="#F8F8F8"/>
+</svg>

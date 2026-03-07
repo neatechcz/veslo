@@ -3,7 +3,7 @@ import { SiteNav } from "../../components/site-nav";
 import { getGithubData } from "../../lib/github";
 
 export const metadata = {
-  title: "Veslo - Download",
+  title: "Veslo by Neatech - Download",
   description:
     "Download Veslo desktop for macOS, Windows, and Linux. Includes AUR install instructions and direct package downloads.",
 };

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Minimal vertical oar: charcoal shaft, cyan blade -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <!-- Shaft -->
+  <rect x="232" y="60" width="48" height="300" rx="24" fill="#2D2D2D"/>
+  <!-- Blade -->
+  <path d="M256 320 C220 320, 190 360, 190 410 C190 440, 210 460, 256 460 C302 460, 322 440, 322 410 C322 360, 292 320, 256 320Z" fill="#00C4E8"/>
+  <!-- Grip -->
+  <rect x="240" y="50" width="32" height="12" rx="6" fill="#2D2D2D"/>
+</svg>

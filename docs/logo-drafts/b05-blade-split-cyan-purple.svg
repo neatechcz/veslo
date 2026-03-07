@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Blade split vertically: left cyan, right purple -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <rect x="232" y="48" width="48" height="120" rx="24" fill="#2D2D2D"/>
+  <defs>
+    <clipPath id="leftHalf"><rect x="0" y="0" width="256" height="512"/></clipPath>
+    <clipPath id="rightHalf"><rect x="256" y="0" width="256" height="512"/></clipPath>
+  </defs>
+  <path d="M256 140 C196 150, 140 230, 140 330 C140 400, 185 455, 256 455 C327 455, 372 400, 372 330 C372 230, 316 150, 256 140Z" fill="#00C4E8" clip-path="url(#leftHalf)"/>
+  <path d="M256 140 C196 150, 140 230, 140 330 C140 400, 185 455, 256 455 C327 455, 372 400, 372 330 C372 230, 316 150, 256 140Z" fill="#9B3FA4" clip-path="url(#rightHalf)"/>
+</svg>

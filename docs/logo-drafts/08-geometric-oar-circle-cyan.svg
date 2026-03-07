@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Oar in a circle frame — app icon style -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <!-- Circle frame -->
+  <circle cx="256" cy="256" r="220" fill="none" stroke="#2D2D2D" stroke-width="6"/>
+  <!-- Angled oar inside circle -->
+  <g transform="translate(256,256) rotate(-35) translate(-256,-256)">
+    <!-- Shaft -->
+    <rect x="236" y="70" width="40" height="260" rx="20" fill="#2D2D2D"/>
+    <!-- Blade -->
+    <path d="M256 295 C228 298, 204 328, 206 362 C207 382, 224 395, 256 395 C288 395, 305 382, 306 362 C308 328, 284 298, 256 295Z" fill="#00C4E8"/>
+    <!-- Grip -->
+    <circle cx="256" cy="72" r="8" fill="#2D2D2D"/>
+  </g>
+</svg>

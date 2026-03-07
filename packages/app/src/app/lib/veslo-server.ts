@@ -586,14 +586,23 @@ export function buildVesloWorkspaceBaseUrl(hostUrl: string, workspaceId?: string
 
 export const DEFAULT_VESLO_CONNECT_APP_URL = "https://app.veslo.neatech.com";
 
-const VESLO_INVITE_PARAM_URL = "ow_url";
-const VESLO_INVITE_PARAM_TOKEN = "ow_token";
-const VESLO_INVITE_PARAM_STARTUP = "ow_startup";
-const VESLO_INVITE_PARAM_BUNDLE = "ow_bundle";
-const VESLO_INVITE_PARAM_BUNDLE_INTENT = "ow_intent";
-const VESLO_INVITE_PARAM_BUNDLE_SOURCE = "ow_source";
-const VESLO_INVITE_PARAM_BUNDLE_ORG = "ow_org";
-const VESLO_INVITE_PARAM_BUNDLE_LABEL = "ow_label";
+const VESLO_INVITE_PARAM_URL = "veslo_url";
+const VESLO_INVITE_PARAM_TOKEN = "veslo_token";
+const VESLO_INVITE_PARAM_STARTUP = "veslo_startup";
+const VESLO_INVITE_PARAM_BUNDLE = "veslo_bundle";
+const VESLO_INVITE_PARAM_BUNDLE_INTENT = "veslo_intent";
+const VESLO_INVITE_PARAM_BUNDLE_SOURCE = "veslo_source";
+const VESLO_INVITE_PARAM_BUNDLE_ORG = "veslo_org";
+const VESLO_INVITE_PARAM_BUNDLE_LABEL = "veslo_label";
+
+const LEGACY_INVITE_PARAM_URL = "ow_url";
+const LEGACY_INVITE_PARAM_TOKEN = "ow_token";
+const LEGACY_INVITE_PARAM_STARTUP = "ow_startup";
+const LEGACY_INVITE_PARAM_BUNDLE = "ow_bundle";
+const LEGACY_INVITE_PARAM_BUNDLE_INTENT = "ow_intent";
+const LEGACY_INVITE_PARAM_BUNDLE_SOURCE = "ow_source";
+const LEGACY_INVITE_PARAM_BUNDLE_ORG = "ow_org";
+const LEGACY_INVITE_PARAM_BUNDLE_LABEL = "ow_label";
 
 export type VesloConnectInvite = {
   url: string;
@@ -663,12 +672,24 @@ export function readVesloConnectInviteFromSearch(input: string | URLSearchParams
       ? new URLSearchParams(input.startsWith("?") ? input.slice(1) : input)
       : input;
 
-  const rawUrl = search.get(VESLO_INVITE_PARAM_URL)?.trim() ?? "";
+  const rawUrl = (
+    search.get(VESLO_INVITE_PARAM_URL) ??
+    search.get(LEGACY_INVITE_PARAM_URL) ??
+    ""
+  ).trim();
   const url = normalizeVesloServerUrl(rawUrl);
   if (!url) return null;
 
-  const token = search.get(VESLO_INVITE_PARAM_TOKEN)?.trim() ?? "";
-  const startupRaw = search.get(VESLO_INVITE_PARAM_STARTUP)?.trim() ?? "";
+  const token = (
+    search.get(VESLO_INVITE_PARAM_TOKEN) ??
+    search.get(LEGACY_INVITE_PARAM_TOKEN) ??
+    ""
+  ).trim();
+  const startupRaw = (
+    search.get(VESLO_INVITE_PARAM_STARTUP) ??
+    search.get(LEGACY_INVITE_PARAM_STARTUP) ??
+    ""
+  ).trim();
   const startup = startupRaw === "server" ? "server" : undefined;
 
   return {
@@ -753,7 +774,11 @@ export function readVesloBundleInviteFromSearch(input: string | URLSearchParams)
       ? new URLSearchParams(input.startsWith("?") ? input.slice(1) : input)
       : input;
 
-  const rawBundleUrl = search.get(VESLO_INVITE_PARAM_BUNDLE)?.trim() ?? "";
+  const rawBundleUrl = (
+    search.get(VESLO_INVITE_PARAM_BUNDLE) ??
+    search.get(LEGACY_INVITE_PARAM_BUNDLE) ??
+    ""
+  ).trim();
   if (!rawBundleUrl) return null;
 
   let bundleUrl: string;
@@ -767,10 +792,25 @@ export function readVesloBundleInviteFromSearch(input: string | URLSearchParams)
     return null;
   }
 
-  const intent = normalizeVesloBundleInviteIntent(search.get(VESLO_INVITE_PARAM_BUNDLE_INTENT));
-  const source = search.get(VESLO_INVITE_PARAM_BUNDLE_SOURCE)?.trim() ?? "";
-  const orgId = search.get(VESLO_INVITE_PARAM_BUNDLE_ORG)?.trim() ?? "";
-  const label = search.get(VESLO_INVITE_PARAM_BUNDLE_LABEL)?.trim() ?? "";
+  const intent = normalizeVesloBundleInviteIntent(
+    search.get(VESLO_INVITE_PARAM_BUNDLE_INTENT) ??
+      search.get(LEGACY_INVITE_PARAM_BUNDLE_INTENT),
+  );
+  const source = (
+    search.get(VESLO_INVITE_PARAM_BUNDLE_SOURCE) ??
+    search.get(LEGACY_INVITE_PARAM_BUNDLE_SOURCE) ??
+    ""
+  ).trim();
+  const orgId = (
+    search.get(VESLO_INVITE_PARAM_BUNDLE_ORG) ??
+    search.get(LEGACY_INVITE_PARAM_BUNDLE_ORG) ??
+    ""
+  ).trim();
+  const label = (
+    search.get(VESLO_INVITE_PARAM_BUNDLE_LABEL) ??
+    search.get(LEGACY_INVITE_PARAM_BUNDLE_LABEL) ??
+    ""
+  ).trim();
 
   return {
     bundleUrl,
@@ -787,6 +827,9 @@ export function stripVesloConnectInviteFromUrl(input: string) {
     url.searchParams.delete(VESLO_INVITE_PARAM_URL);
     url.searchParams.delete(VESLO_INVITE_PARAM_TOKEN);
     url.searchParams.delete(VESLO_INVITE_PARAM_STARTUP);
+    url.searchParams.delete(LEGACY_INVITE_PARAM_URL);
+    url.searchParams.delete(LEGACY_INVITE_PARAM_TOKEN);
+    url.searchParams.delete(LEGACY_INVITE_PARAM_STARTUP);
     return url.toString();
   } catch {
     return input;
@@ -801,6 +844,11 @@ export function stripVesloBundleInviteFromUrl(input: string) {
     url.searchParams.delete(VESLO_INVITE_PARAM_BUNDLE_SOURCE);
     url.searchParams.delete(VESLO_INVITE_PARAM_BUNDLE_ORG);
     url.searchParams.delete(VESLO_INVITE_PARAM_BUNDLE_LABEL);
+    url.searchParams.delete(LEGACY_INVITE_PARAM_BUNDLE);
+    url.searchParams.delete(LEGACY_INVITE_PARAM_BUNDLE_INTENT);
+    url.searchParams.delete(LEGACY_INVITE_PARAM_BUNDLE_SOURCE);
+    url.searchParams.delete(LEGACY_INVITE_PARAM_BUNDLE_ORG);
+    url.searchParams.delete(LEGACY_INVITE_PARAM_BUNDLE_LABEL);
     return url.toString();
   } catch {
     return input;

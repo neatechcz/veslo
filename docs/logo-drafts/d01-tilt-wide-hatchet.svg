@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Wider hatchet blade, 15° tilt -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <rect x="222" y="30" width="68" height="18" rx="9" fill="#F8F8F8"/>
+    <rect x="244" y="30" width="24" height="280" rx="12" fill="#F8F8F8"/>
+    <path d="M256 288 C210 292, 130 318, 124 385 C120 428, 148 462, 196 470 L316 470 C364 462, 392 428, 388 385 C382 318, 302 292, 256 288Z" fill="#F8F8F8"/>
+  </g>
+</svg>

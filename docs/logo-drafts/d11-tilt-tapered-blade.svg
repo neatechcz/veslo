@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Tapered blade — wider at bottom, narrower at top -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <rect x="222" y="30" width="68" height="18" rx="9" fill="#F8F8F8"/>
+    <rect x="244" y="30" width="24" height="278" rx="12" fill="#F8F8F8"/>
+    <path d="M240 290 L180 460 C175 472, 185 478, 196 478 L316 478 C327 478, 337 472, 332 460 L272 290 Z" fill="#F8F8F8"/>
+  </g>
+</svg>

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Negative space: sharp-edged hatchet blade (modern racing oar) -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <!-- Handle -->
+  <rect x="222" y="30" width="68" height="18" rx="9" fill="#F8F8F8"/>
+  <!-- Shaft -->
+  <rect x="244" y="30" width="24" height="275" rx="12" fill="#F8F8F8"/>
+  <!-- Sharp hatchet blade — nearly rectangular with rounded corners -->
+  <rect x="152" y="300" width="208" height="170" rx="28" fill="#F8F8F8"/>
+</svg>

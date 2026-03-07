@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Asymmetric blade like a real rowing oar — offset center -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <rect x="220" y="42" width="44" height="120" rx="22" fill="#2D2D2D"/>
+  <path d="M242 135 C190 145, 140 220, 140 320 C140 400, 175 455, 235 460 C295 465, 350 420, 360 340 C370 260, 300 145, 242 135Z" fill="#00C4E8"/>
+</svg>

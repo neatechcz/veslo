@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Dark charcoal bg, cyan oar cutout -->
+  <rect width="512" height="512" fill="#2D2D2D" rx="24"/>
+  <!-- T-grip -->
+  <rect x="220" y="32" width="72" height="18" rx="9" fill="#00C4E8"/>
+  <!-- Shaft -->
+  <rect x="244" y="32" width="24" height="275" rx="12" fill="#00C4E8"/>
+  <!-- Hatchet blade -->
+  <path d="M256 285 C216 290, 155 315, 150 380 C147 422, 170 458, 208 466 L304 466 C342 458, 365 422, 362 380 C357 315, 296 290, 256 285Z" fill="#00C4E8"/>
+</svg>

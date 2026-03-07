@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Tilted with very rectangular/boxy hatchet blade -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <rect x="222" y="30" width="68" height="18" rx="9" fill="#F8F8F8"/>
+    <rect x="244" y="30" width="24" height="275" rx="12" fill="#F8F8F8"/>
+    <rect x="152" y="295" width="208" height="165" rx="22" fill="#F8F8F8"/>
+  </g>
+</svg>

@@ -82,12 +82,23 @@ const platform: Platform = {
 };
 
 render(
-  () => (
-    <PlatformProvider value={platform}>
-      <RouterComponent root={AppEntry}>
-        <Route path="*all" component={() => null} />
-      </RouterComponent>
-    </PlatformProvider>
-  ),
+  () => {
+    // Dismiss the splash screen once the app shell has mounted.
+    queueMicrotask(() => {
+      const splash = document.getElementById("splash");
+      if (splash) {
+        splash.classList.add("splash-hidden");
+        splash.addEventListener("transitionend", () => splash.remove(), { once: true });
+      }
+    });
+
+    return (
+      <PlatformProvider value={platform}>
+        <RouterComponent root={AppEntry}>
+          <Route path="*all" component={() => null} />
+        </RouterComponent>
+      </PlatformProvider>
+    );
+  },
   root,
 );

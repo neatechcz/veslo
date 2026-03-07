@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Blade with concave sides — hourglass-ish, narrows in middle -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <rect x="222" y="30" width="68" height="18" rx="9" fill="#F8F8F8"/>
+    <rect x="244" y="30" width="24" height="275" rx="12" fill="#F8F8F8"/>
+    <path d="M168 296 L344 296 C330 340, 312 360, 310 380 C312 400, 330 430, 344 468 L168 468 C182 430, 200 400, 202 380 C200 360, 182 340, 168 296Z" fill="#F8F8F8"/>
+  </g>
+</svg>

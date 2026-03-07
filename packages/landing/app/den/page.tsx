@@ -4,7 +4,7 @@ import { OpenCodeLogo } from "../../components/opencode-logo";
 import { getGithubData } from "../../lib/github";
 
 export const metadata = {
-  title: "Veslo — Den",
+  title: "Veslo by Neatech — Den",
   description:
     "Hosted sandboxed workers for your team, available in desktop, Slack, and Telegram.",
 };

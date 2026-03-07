@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Chunky thick version — bold presence -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <rect x="214" y="28" width="84" height="24" rx="12" fill="#F8F8F8"/>
+    <rect x="236" y="28" width="40" height="275" rx="20" fill="#F8F8F8"/>
+    <path d="M256 280 C206 286, 128 316, 122 390 C118 436, 152 472, 202 480 L310 480 C360 472, 394 436, 390 390 C384 316, 306 286, 256 280Z" fill="#F8F8F8"/>
+  </g>
+</svg>

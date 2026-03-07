@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Negative space: shaft with visible collar/button where it meets blade -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <!-- T-grip -->
+  <rect x="222" y="34" width="68" height="18" rx="9" fill="#F8F8F8"/>
+  <!-- Shaft -->
+  <rect x="244" y="34" width="24" height="260" rx="12" fill="#F8F8F8"/>
+  <!-- Collar ring -->
+  <rect x="236" y="280" width="40" height="14" rx="7" fill="#F8F8F8"/>
+  <!-- Blade below collar -->
+  <path d="M256 290 C208 296, 150 330, 148 400 C146 442, 180 472, 224 476 L288 476 C332 472, 366 442, 364 400 C362 330, 304 296, 256 290Z" fill="#F8F8F8"/>
+</svg>

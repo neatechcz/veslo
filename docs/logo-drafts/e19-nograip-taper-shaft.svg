@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- No grip, shaft tapers wider toward blade -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <path d="M250 32 L262 32 C266 32, 268 36, 268 40 L274 290 L238 290 L244 40 C244 36, 246 32, 250 32Z" fill="#F8F8F8"/>
+    <path d="M256 268 C222 274, 162 300, 156 368 C152 410, 170 446, 204 456 L308 456 C342 446, 360 410, 356 368 C350 300, 290 274, 256 268Z" fill="#F8F8F8"/>
+  </g>
+</svg>

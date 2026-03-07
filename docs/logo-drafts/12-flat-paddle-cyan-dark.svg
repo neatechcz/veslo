@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Flat modern paddle — dark bg, cyan blade, very minimal -->
+  <rect width="512" height="512" fill="#2D2D2D" rx="24"/>
+  <!-- Shaft -->
+  <rect x="236" y="56" width="40" height="260" rx="20" fill="#F8F8F8"/>
+  <!-- Blade -->
+  <path d="M256 282 C216 288, 180 330, 180 388 C180 425, 208 450, 256 450 C304 450, 332 425, 332 388 C332 330, 296 288, 256 282Z" fill="#00C4E8"/>
+</svg>

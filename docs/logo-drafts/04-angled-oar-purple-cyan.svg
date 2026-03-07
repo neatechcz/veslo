@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Angled oar: charcoal shaft, purple-to-cyan gradient blade -->
+  <rect width="512" height="512" fill="#F8F8F8" rx="24"/>
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#9B3FA4"/>
+      <stop offset="100%" stop-color="#00C4E8"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(256,256) rotate(-40) translate(-256,-256)">
+    <!-- Shaft -->
+    <rect x="232" y="50" width="48" height="310" rx="24" fill="#2D2D2D"/>
+    <!-- Blade with gradient -->
+    <path d="M256 320 C216 325, 182 370, 185 420 C187 450, 212 468, 256 468 C300 468, 325 450, 327 420 C330 370, 296 325, 256 320Z" fill="url(#g1)"/>
+    <!-- Grip nub -->
+    <circle cx="256" cy="52" r="10" fill="#2D2D2D"/>
+  </g>
+</svg>

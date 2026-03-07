@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- No grip, narrow elongated blade -->
+  <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+  <g transform="rotate(-15, 256, 256)">
+    <rect x="246" y="32" width="20" height="270" rx="10" fill="#F8F8F8"/>
+    <path d="M256 280 C236 284, 192 306, 188 370 C185 410, 200 448, 224 458 L288 458 C312 448, 327 410, 324 370 C320 306, 276 284, 256 280Z" fill="#F8F8F8"/>
+  </g>
+</svg>
