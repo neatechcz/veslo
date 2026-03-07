@@ -1,25 +1,27 @@
 import { createSignal, createRoot } from "solid-js";
 import en from "./locales/en";
+import cs from "./locales/cs";
 import zh from "./locales/zh";
 import { LANGUAGE_PREF_KEY } from "../app/constants";
 
 /**
- * Supported languages - only en and zh for initial PR
+ * Supported runtime languages. Chinese remains available for compatibility.
  */
-export type Language = "en" | "zh";
+export type Language = "en" | "zh" | "cs";
 export type Locale = Language;
 
 /**
  * All supported languages - single source of truth
  */
-export const LANGUAGES: Language[] = ["en", "zh"];
+export const LANGUAGES: Language[] = ["en", "zh", "cs"];
 
 /**
- * Language options for UI - single source of truth
+ * Language options shown in the UI.
+ * Chinese remains supported for existing persisted preferences, but hidden here.
  */
 export const LANGUAGE_OPTIONS = [
   { value: "en" as Language, label: "English", nativeName: "English" },
-  { value: "zh" as Language, label: "简体中文", nativeName: "简体中文" },
+  { value: "cs" as Language, label: "Czech", nativeName: "Čeština" },
 ] as const;
 
 /**
@@ -27,6 +29,7 @@ export const LANGUAGE_OPTIONS = [
  */
 const TRANSLATIONS: Record<Language, Record<string, string>> = {
   en,
+  cs,
   zh,
 };
 
