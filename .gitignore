@@ -8,6 +8,7 @@ tmp/
 
 # Local git worktrees
 _worktrees/
+.worktrees/
 
 # Tauri/Rust
 packages/desktop/src-tauri/target/
