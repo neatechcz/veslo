@@ -1,17 +1,17 @@
-pkgname=openwork
+pkgname=veslo
 pkgver=0.11.134
 pkgrel=1 # pkgrel should change when PKGBUILD does. Standard is to change back to 1 next time. Any interger is valid.
 pkgdesc="An Open source alternative to Claude Cowork"
 arch=('x86_64' 'aarch64')
-url="https://github.com/different-ai/openwork"
+url="https://github.com/neatech/veslo"
 license=('MIT')
 depends=('gtk3' 'glib2' 'libayatana-appindicator' 'libsoup3' 'webkit2gtk-4.1' 'openssl' 'dbus' 'librsvg')
 
 # Architecture-specific sources and checksums
-source_x86_64=("${pkgname}-${pkgver}.deb::${url}/releases/download/v${pkgver}/openwork-desktop-linux-amd64.deb")
+source_x86_64=("${pkgname}-${pkgver}.deb::${url}/releases/download/v${pkgver}/veslo-desktop-linux-amd64.deb")
 sha256sums_x86_64=('3649cdfda1abd271491f078ed9ff0f2c62c7fbc72d52e1ad1abaa16db7670c9c')
 
-source_aarch64=("${pkgname}-${pkgver}.deb::${url}/releases/download/v${pkgver}/openwork-desktop-linux-arm64.deb")
+source_aarch64=("${pkgname}-${pkgver}.deb::${url}/releases/download/v${pkgver}/veslo-desktop-linux-arm64.deb")
 sha256sums_aarch64=('e5d130b2c5a2684ee63ea9ba63f587d347c32a1ab4cec8486bb5f3ba1b9cdfe5')
 
 # Makes sure makepkg doesn't extract the .deb since it will break
@@ -27,11 +27,11 @@ package() {
 }
 
 # .deb Internal Structure Reference:
-# └── openwork-desktop-linux-amd64.deb
+# └── veslo-desktop-linux-amd64.deb
 #     ├── debian-binary
 #     ├── control.tar.zst
 #     └── data.tar.zst (Extracted to $pkgdir)
-#         ├── opt/openwork/ (App files)
+#         ├── opt/veslo/ (App files)
 #         └── usr/bin/
 #             ├── opencode (Terminal agent)
-#             └── openwork (GUI launcher)
+#             └── veslo (GUI launcher)

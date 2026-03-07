@@ -34,7 +34,7 @@ export default async function Home() {
             </h1>
             <p className="mb-10 max-w-4xl text-xl font-medium leading-relaxed text-gray-900/80">
               Whether you&apos;re using Claude Code, Codex, OpenCode, or your own
-              stack, OpenWork turns it into a shareable desktop app your
+              stack, Veslo turns it into a shareable desktop app your
               non-technical coworkers can use.
             </p>
           </div>
@@ -108,7 +108,7 @@ export default async function Home() {
           <section id="install">
             <h2 className="mb-6 text-2xl font-bold md:text-3xl">Getting started</h2>
             <p className="mb-8 text-base text-gray-700">
-              The OpenWork app is available on macOS, Windows, and Linux.
+              The Veslo app is available on macOS, Windows, and Linux.
             </p>
 
             <div className="space-y-12">
@@ -116,7 +116,7 @@ export default async function Home() {
                 <div className="step-circle shrink-0">1</div>
                 <div className="space-y-4">
                   <h3 className="text-base font-bold">
-                    Download and install the OpenWork app
+                    Download and install the Veslo app
                   </h3>
                   <p className="text-[15px] text-gray-700">
                     Stable release for macOS. Windows and Linux builds are
@@ -253,7 +253,7 @@ export default async function Home() {
           <hr />
 
           <section id="capabilities" className="py-12">
-            <h2 className="mb-10 text-2xl font-bold md:text-3xl">Work with the OpenWork app</h2>
+            <h2 className="mb-10 text-2xl font-bold md:text-3xl">Work with the Veslo app</h2>
 
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3">
               <div className="feature-card border-sky-100 bg-white/90 ring-1 ring-sky-100/60">
@@ -294,7 +294,7 @@ export default async function Home() {
                 </span>
                 <h4 className="mb-2 text-[15px] font-bold">Slack-native agents</h4>
                 <p className="text-[15px] leading-relaxed text-gray-700">
-                  Bring OpenWork into Slack threads. Mention the agent, watch
+                  Bring Veslo into Slack threads. Mention the agent, watch
                   progress stream in real time, and keep the whole team in the
                   loop.
                 </p>
@@ -309,7 +309,7 @@ export default async function Home() {
               Automate your entire company, safely
             </h2>
             <p className="mb-8 text-base leading-relaxed text-gray-700">
-              OpenWork Cloud runs your automations so you don&apos;t have to
+              Veslo Cloud runs your automations so you don&apos;t have to
               manage infrastructure. Give every team secure access to the
               workflows they need, with clear controls and zero ops overhead.
             </p>
@@ -381,10 +381,10 @@ export default async function Home() {
             <div className="space-y-12">
               <div>
                 <h4 className="mb-2 text-[15px] font-bold">
-                  What&apos;s the difference between OpenWork and regular chat?
+                  What&apos;s the difference between Veslo and regular chat?
                 </h4>
                 <p className="text-[15px] leading-relaxed text-gray-700">
-                  Regular chat gives you text answers. OpenWork can perform
+                  Regular chat gives you text answers. Veslo can perform
                   actions like creating files, editing folders, and running
                   browser commands on your local machine, after you approve
                   them.
@@ -393,7 +393,7 @@ export default async function Home() {
               <div>
                 <h4 className="mb-2 text-[15px] font-bold">Is it free?</h4>
                 <p className="text-[15px] leading-relaxed text-gray-700">
-                  Yes. OpenWork is open source. You can download and use it for
+                  Yes. Veslo is open source. You can download and use it for
                   free using free models on your machine. You only pay for API
                   usage if you choose to connect paid cloud models.
                 </p>
@@ -411,7 +411,7 @@ export default async function Home() {
               <div>
                 <h4 className="mb-2 text-[15px] font-bold">Is it safe?</h4>
                 <p className="text-[15px] leading-relaxed text-gray-700">
-                  OpenWork runs locally. It cannot access files or run commands
+                  Veslo runs locally. It cannot access files or run commands
                   without your permission. You see a clear plan before any
                   action is taken.
                 </p>
@@ -422,7 +422,7 @@ export default async function Home() {
                 </h4>
                 <p className="text-[15px] leading-relaxed text-gray-700">
                   Yes. Once it is running somewhere, you can keep requests
-                  flowing from Slack, Telegram, or WhatsApp and let OpenWork
+                  flowing from Slack, Telegram, or WhatsApp and let Veslo
                   carry them out.
                 </p>
               </div>
@@ -434,7 +434,7 @@ export default async function Home() {
           <section id="compatibility" className="py-12">
             <h2 className="mb-3 text-2xl font-bold md:text-3xl">Compatibility</h2>
             <p className="mb-8 text-base leading-relaxed text-gray-700">
-              OpenWork connects to your existing setup so you can ship team-ready
+              Veslo connects to your existing setup so you can ship team-ready
               workflows without rebuilding from scratch.
             </p>
 

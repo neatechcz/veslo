@@ -1,8 +1,8 @@
-pkgbase = openwork
+pkgbase = veslo
 	pkgdesc = An Open source alternative to Claude Cowork
 	pkgver = 0.11.134
 	pkgrel = 1
-	url = https://github.com/different-ai/openwork
+	url = https://github.com/neatech/veslo
 	arch = x86_64
 	arch = aarch64
 	license = MIT
@@ -14,10 +14,10 @@ pkgbase = openwork
 	depends = openssl
 	depends = dbus
 	depends = librsvg
-	noextract = openwork-0.11.134.deb
-	source_x86_64 = openwork-0.11.134.deb::https://github.com/different-ai/openwork/releases/download/v0.11.134/openwork-desktop-linux-amd64.deb
+	noextract = veslo-0.11.134.deb
+	source_x86_64 = veslo-0.11.134.deb::https://github.com/neatech/veslo/releases/download/v0.11.134/veslo-desktop-linux-amd64.deb
 	sha256sums_x86_64 = 3649cdfda1abd271491f078ed9ff0f2c62c7fbc72d52e1ad1abaa16db7670c9c
-	source_aarch64 = openwork-0.11.134.deb::https://github.com/different-ai/openwork/releases/download/v0.11.134/openwork-desktop-linux-arm64.deb
+	source_aarch64 = veslo-0.11.134.deb::https://github.com/neatech/veslo/releases/download/v0.11.134/veslo-desktop-linux-arm64.deb
 	sha256sums_aarch64 = e5d130b2c5a2684ee63ea9ba63f587d347c32a1ab4cec8486bb5f3ba1b9cdfe5
 
-pkgname = openwork
+pkgname = veslo

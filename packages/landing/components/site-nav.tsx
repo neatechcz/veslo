@@ -16,11 +16,11 @@ export function SiteNav(props: Props) {
         <div className="flex items-center gap-6">
           <Link href="/" className="inline-flex items-center gap-2 text-lg font-bold tracking-tight">
             <img
-              src="/openwork-logo.svg"
-              alt="OpenWork"
+              src="/veslo-logo.svg"
+              alt="Veslo"
               className="h-7 w-7 rounded-sm"
             />
-            <span>OpenWork</span>
+            <span>Veslo</span>
           </Link>
           <div className="hidden items-center gap-6 text-[15px] text-gray-700 md:flex">
             <Link href="/#install" className="transition hover:text-black">
@@ -54,11 +54,11 @@ export function SiteNav(props: Props) {
             Book a call
           </a>
           <a
-            href="https://github.com/different-ai/openwork"
+            href="https://github.com/neatech/veslo"
             className="flex items-center gap-1 text-gray-700 transition hover:text-black"
             rel="noreferrer"
             target="_blank"
-            aria-label="OpenWork GitHub stars"
+            aria-label="Veslo GitHub stars"
           >
             <svg
               className="h-4 w-4"

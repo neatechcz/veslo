@@ -32,23 +32,23 @@ jobs:
 
           short_sha=$(echo "$GITHUB_SHA" | cut -c1-7)
           tag="v${short_sha}-dev"
-          name="OpenWork ${tag}"
+          name="Veslo ${tag}"
           body="Automated prerelease from ${GITHUB_REF_NAME} (${GITHUB_SHA})."
 
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
           echo "RELEASE_NAME=$name" >> "$GITHUB_ENV"
           {
-            echo "RELEASE_BODY<<__OPENWORK_RELEASE_BODY_EOF__"
+            echo "RELEASE_BODY<<__VESLO_RELEASE_BODY_EOF__"
             echo "$body"
-            echo "__OPENWORK_RELEASE_BODY_EOF__"
+            echo "__VESLO_RELEASE_BODY_EOF__"
           } >> "$GITHUB_ENV"
 
           echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
           echo "release_name=$name" >> "$GITHUB_OUTPUT"
           {
-            echo "release_body<<__OPENWORK_RELEASE_BODY_EOF__"
+            echo "release_body<<__VESLO_RELEASE_BODY_EOF__"
             echo "$body"
-            echo "__OPENWORK_RELEASE_BODY_EOF__"
+            echo "__VESLO_RELEASE_BODY_EOF__"
           } >> "$GITHUB_OUTPUT"
 
       - name: Create prerelease
@@ -174,7 +174,7 @@ jobs:
             const headers = {
               'Accept': 'application/vnd.github+json',
               'X-GitHub-Api-Version': '2022-11-28',
-              'User-Agent': 'openwork-ci',
+              'User-Agent': 'veslo-ci',
             };
             if (token) headers.Authorization = `Bearer ${token}`;
 
@@ -196,7 +196,7 @@ jobs:
             }
 
             const web = await fetch(`https://github.com/${repo}/releases/latest`, {
-              headers: { 'User-Agent': 'openwork-ci' },
+              headers: { 'User-Agent': 'veslo-ci' },
               redirect: 'follow',
             });
             const url = (web && web.url) ? String(web.url) : '';

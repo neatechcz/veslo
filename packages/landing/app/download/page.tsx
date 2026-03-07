@@ -3,9 +3,9 @@ import { SiteNav } from "../../components/site-nav";
 import { getGithubData } from "../../lib/github";
 
 export const metadata = {
-  title: "OpenWork - Download",
+  title: "Veslo - Download",
   description:
-    "Download OpenWork desktop for macOS, Windows, and Linux. Includes AUR install instructions and direct package downloads.",
+    "Download Veslo desktop for macOS, Windows, and Linux. Includes AUR install instructions and direct package downloads.",
 };
 
 export default async function Download() {
@@ -21,13 +21,13 @@ export default async function Download() {
         <div className="content-max-width px-6">
           <div className="animate-fade-up">
             <div className="mb-3 text-[12px] font-bold uppercase tracking-wider text-gray-500">
-              OpenWork desktop
+              Veslo desktop
             </div>
             <h1 className="mb-4 text-4xl font-bold tracking-tight md:text-5xl">
-              Download OpenWork
+              Download Veslo
             </h1>
             <p className="mb-4 max-w-3xl text-[17px] leading-relaxed text-gray-700">
-              Install OpenWork on macOS, Windows, or Linux. Pick the package that
+              Install Veslo on macOS, Windows, or Linux. Pick the package that
               matches your distro and architecture.
             </p>
             <p className="mb-10 text-[14px] text-gray-600">
@@ -107,7 +107,7 @@ export default async function Download() {
           <section id="windows" className="py-6">
             <h2 className="mb-2 text-2xl font-bold md:text-3xl">Windows</h2>
             <p className="mb-6 text-[15px] text-gray-700">
-              OpenWork for Windows is available as an x64 MSI installer.
+              Veslo for Windows is available as an x64 MSI installer.
             </p>
             <a
               href={github.installers.windows.x64}
@@ -132,13 +132,13 @@ export default async function Download() {
               <div className="feature-card border-emerald-100 bg-white/90 ring-1 ring-emerald-100/60">
                 <h3 className="mb-2 text-[16px] font-semibold text-gray-900">Arch Linux (AUR)</h3>
                 <p className="mb-4 text-[14px] text-gray-600">
-                  Install and keep OpenWork updated via the Arch User Repository.
+                  Install and keep Veslo updated via the Arch User Repository.
                 </p>
                 <pre className="mono overflow-x-auto rounded-lg bg-gray-950 px-4 py-3 text-[13px] text-gray-100">
-                  <code>yay -S openwork</code>
+                  <code>yay -S veslo</code>
                 </pre>
                 <p className="mt-3 text-[13px] text-gray-600">
-                  Prefer paru? <span className="mono">paru -S openwork</span>
+                  Prefer paru? <span className="mono">paru -S veslo</span>
                 </p>
                 <a
                   href={github.installers.linux.aur}

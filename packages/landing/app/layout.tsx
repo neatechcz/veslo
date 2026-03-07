@@ -15,11 +15,11 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata = {
-  title: "OpenWork — Local-first, open-source Cowork alternative",
+  title: "Veslo — Local-first, open-source Cowork alternative",
   description:
-    "OpenWork is the open-source Cowork alternative powered by OpenCode—run local-first workflows with any model, and extend with skills.",
+    "Veslo is the open-source Cowork alternative powered by OpenCode—run local-first workflows with any model, and extend with skills.",
   icons: {
-    icon: "/openwork-logo.svg",
+    icon: "/veslo-logo.svg",
   },
 };
 

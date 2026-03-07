@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const LOOPS_CONTACTS_CREATE_URL = "https://app.loops.so/api/v1/contacts/create";
-const SIGNUP_SOURCE = "openwork-den-web";
+const SIGNUP_SOURCE = "veslo-den-web";
 
 type SignupPayload = {
   email?: unknown;

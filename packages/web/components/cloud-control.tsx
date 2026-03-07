@@ -130,13 +130,13 @@ function getAuthInfoForMode(mode: AuthMode): string {
     : "Sign in to launch and manage cloud workers.";
 }
 
-const LAST_WORKER_STORAGE_KEY = "openwork:web:last-worker";
-const PENDING_GITHUB_SIGNUP_STORAGE_KEY = "openwork:web:pending-github-signup";
-const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
+const LAST_WORKER_STORAGE_KEY = "veslo:web:last-worker";
+const PENDING_GITHUB_SIGNUP_STORAGE_KEY = "veslo:web:pending-github-signup";
+const AUTH_TOKEN_STORAGE_KEY = "veslo:web:auth-token";
 const WORKER_STATUS_POLL_MS = 5000;
-const DEFAULT_AUTH_NAME = "OpenWork User";
+const DEFAULT_AUTH_NAME = "Veslo User";
 const OPENWORK_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL ?? "").trim();
-const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL ?? "https://app.openwork.software").trim();
+const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL ?? "https://app.veslo.neatech.com").trim();
 
 function getEmailDomain(email: string): string {
   const atIndex = email.lastIndexOf("@");
@@ -206,9 +206,9 @@ async function trackDenSignupInLoops(payload: DenSignupTrackPayload) {
 
 function getGithubCallbackUrl(): string {
   try {
-    return new URL("/", OPENWORK_AUTH_CALLBACK_BASE_URL || "https://app.openwork.software").toString();
+    return new URL("/", OPENWORK_AUTH_CALLBACK_BASE_URL || "https://app.veslo.neatech.com").toString();
   } catch {
-    return "https://app.openwork.software/";
+    return "https://app.veslo.neatech.com/";
   }
 }
 
@@ -669,7 +669,7 @@ function buildOpenworkDeepLink(
   const params = new URLSearchParams({
     openworkHostUrl: openworkUrl,
     openworkToken: accessToken,
-    source: "openwork-web"
+    source: "veslo-web"
   });
 
   if (workerId) {
@@ -680,7 +680,7 @@ function buildOpenworkDeepLink(
     params.set("workerName", workerName);
   }
 
-  return `openwork://connect-remote?${params.toString()}`;
+  return `veslo://connect-remote?${params.toString()}`;
 }
 
 function buildOpenworkAppConnectUrl(
@@ -713,7 +713,7 @@ function buildOpenworkAppConnectUrl(
 
   connectUrl.searchParams.set("openworkHostUrl", openworkUrl);
   connectUrl.searchParams.set("openworkToken", accessToken);
-  connectUrl.searchParams.set("source", "openwork-web");
+  connectUrl.searchParams.set("source", "veslo-web");
 
   if (workerId) {
     connectUrl.searchParams.set("workerId", workerId);
@@ -2466,7 +2466,7 @@ export function CloudControlPanel() {
                                 }}
                                 disabled={!openworkDeepLink || selectedStatusMeta.bucket !== "ready"}
                               >
-                                {openworkDeepLink ? "Open in OpenWork" : "Preparing connection..."}
+                                {openworkDeepLink ? "Open in Veslo" : "Preparing connection..."}
                               </button>
 
                               {openworkAppConnectUrl ? (
@@ -2491,8 +2491,8 @@ export function CloudControlPanel() {
                             <p className="text-sm text-slate-600">
                               {openworkDeepLink
                                 ? openworkAppConnectUrl
-                                  ? "You are all set. Open in OpenWork or Open in App to start working."
-                                  : "You are all set. Open in OpenWork to start working."
+                                  ? "You are all set. Open in Veslo or Open in App to start working."
+                                  : "You are all set. Open in Veslo to start working."
                                 : "We are still preparing your connection. The button will unlock when ready."}
                             </p>
                           </div>
@@ -2557,7 +2557,7 @@ export function CloudControlPanel() {
                                   {openAccordion === "connect" ? (
                                     <div className="space-y-3 px-4 pb-4">
                                       <CredentialRow
-                                        label="OpenWork worker URL"
+                                        label="Veslo worker URL"
                                         value={openworkConnectUrl}
                                         placeholder="URL appears once ready"
                                         canCopy={Boolean(openworkConnectUrl)}

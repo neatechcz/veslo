@@ -38,7 +38,7 @@ const versions = {
     orchestrator: orchestratorPkg.opencodeVersion ?? null,
   },
   opencodeRouterVersionPinned: desktopPkg.opencodeRouterVersion ?? null,
-  orchestratorOpenworkServerRange: orchestratorPkg.dependencies?.["openwork-server"] ?? null,
+  orchestratorVesloServerRange: orchestratorPkg.dependencies?.["veslo-server"] ?? null,
 };
 
 const checks = [];
@@ -57,9 +57,9 @@ const versionChecks = [
   ["desktop", versions.desktop],
   ["tauri", versions.tauri],
   ["cargo", versions.cargo],
-  ["openwork-orchestrator", versions.orchestrator],
-  ["openwork-server", versions.server],
-  ["opencode-router", versions.opencodeRouter],
+  ["veslo-orchestrator", versions.orchestrator],
+  ["veslo-server", versions.server],
+  ["veslo-code-router", versions.opencodeRouter],
 ];
 for (const [label, value] of versionChecks) {
   addCheck(
@@ -75,17 +75,17 @@ addCheck(
   `${versions.app ?? "?"} vs ${versions.desktop ?? "?"}`,
 );
 addCheck(
-  "App/openwork-orchestrator versions match",
+  "App/veslo-orchestrator versions match",
   versions.app && versions.orchestrator && versions.app === versions.orchestrator,
   `${versions.app ?? "?"} vs ${versions.orchestrator ?? "?"}`,
 );
 addCheck(
-  "App/openwork-server versions match",
+  "App/veslo-server versions match",
   versions.app && versions.server && versions.app === versions.server,
   `${versions.app ?? "?"} vs ${versions.server ?? "?"}`,
 );
 addCheck(
-  "App/opencode-router versions match",
+  "App/veslo-code-router versions match",
   versions.app && versions.opencodeRouter && versions.app === versions.opencodeRouter,
   `${versions.app ?? "?"} vs ${versions.opencodeRouter ?? "?"}`,
 );
@@ -118,17 +118,17 @@ if (versions.opencode.desktop || versions.opencode.orchestrator) {
   );
 }
 
-const openworkServerRange = versions.orchestratorOpenworkServerRange ?? "";
-const openworkServerPinned = calverPattern.test(openworkServerRange);
-if (!openworkServerRange) {
-  addWarning("openwork-orchestrator is missing an openwork-server dependency.");
-} else if (!openworkServerPinned) {
-  addWarning(`openwork-orchestrator openwork-server dependency is not pinned (${openworkServerRange}).`);
+const vesloServerRange = versions.orchestratorVesloServerRange ?? "";
+const vesloServerPinned = calverPattern.test(vesloServerRange);
+if (!vesloServerRange) {
+  addWarning("veslo-orchestrator is missing a veslo-server dependency.");
+} else if (!vesloServerPinned) {
+  addWarning(`veslo-orchestrator veslo-server dependency is not pinned (${vesloServerRange}).`);
 } else {
   addCheck(
-    "Openwork-server dependency matches server version",
-    versions.server && openworkServerRange === versions.server,
-    `${openworkServerRange} vs ${versions.server ?? "?"}`,
+    "Veslo-server dependency matches server version",
+    versions.server && vesloServerRange === versions.server,
+    `${vesloServerRange} vs ${versions.server ?? "?"}`,
   );
 }
 
@@ -138,34 +138,34 @@ const sidecarManifestPath = resolve(
   "orchestrator",
   "dist",
   "sidecars",
-  "openwork-orchestrator-sidecars.json",
+  "veslo-orchestrator-sidecars.json",
 );
 if (existsSync(sidecarManifestPath)) {
   const manifest = readJson(sidecarManifestPath);
   addCheck(
-    "Sidecar manifest version matches openwork-orchestrator",
+    "Sidecar manifest version matches veslo-orchestrator",
     versions.orchestrator && manifest.version === versions.orchestrator,
     `${manifest.version ?? "?"} vs ${versions.orchestrator ?? "?"}`,
   );
-  const serverEntry = manifest.entries?.["openwork-server"]?.version;
-  const routerEntry = manifest.entries?.["opencode-router"]?.version;
+  const serverEntry = manifest.entries?.["veslo-server"]?.version;
+  const routerEntry = manifest.entries?.["veslo-code-router"]?.version;
   if (serverEntry) {
     addCheck(
-      "Sidecar manifest openwork-server version matches",
+      "Sidecar manifest veslo-server version matches",
       versions.server && serverEntry === versions.server,
       `${serverEntry ?? "?"} vs ${versions.server ?? "?"}`,
     );
   }
   if (routerEntry) {
     addCheck(
-      "Sidecar manifest opencode-router version matches",
+      "Sidecar manifest veslo-code-router version matches",
       versions.opencodeRouter && routerEntry === versions.opencodeRouter,
       `${routerEntry ?? "?"} vs ${versions.opencodeRouter ?? "?"}`,
     );
   }
 } else {
   addWarning(
-    "Sidecar manifest missing (run pnpm --filter openwork-orchestrator build:sidecars).",
+    "Sidecar manifest missing (run pnpm --filter veslo-orchestrator build:sidecars).",
   );
 }
 

@@ -16,7 +16,7 @@ function setCors(res) {
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type,Accept,X-OpenWork-Bundle-Type,X-OpenWork-Schema-Version,X-OpenWork-Name",
+    "Content-Type,Accept,X-Veslo-Bundle-Type,X-Veslo-Schema-Version,X-Veslo-Name",
   );
 }
 
@@ -41,7 +41,7 @@ export default async function handler(req, res) {
   }
 
   const maxBytes = Number.parseInt(getEnv("MAX_BYTES", "5242880"), 10);
-  const baseUrl = normalizeBaseUrl(getEnv("PUBLIC_BASE_URL", "https://share.openwork.software"));
+  const baseUrl = normalizeBaseUrl(getEnv("PUBLIC_BASE_URL", "https://share.veslo.neatech.com"));
 
   const contentType = String(req.headers["content-type"] ?? "").toLowerCase();
   if (!contentType.includes("application/json")) {

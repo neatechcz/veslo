@@ -11,7 +11,7 @@ on:
         required: false
         type: string
       release_name:
-        description: "Release title (defaults to OpenWork <tag>)"
+        description: "Release title (defaults to Veslo <tag>)"
         required: false
         type: string
       release_body:
@@ -39,12 +39,12 @@ on:
         type: boolean
         default: true
       publish_sidecars:
-        description: "Build + upload openwork-orchestrator sidecar release assets"
+        description: "Build + upload veslo-orchestrator sidecar release assets"
         required: false
         type: boolean
         default: true
       publish_npm:
-        description: "Publish openwork-orchestrator/openwork-server/opencode-router to npm if versions changed"
+        description: "Publish veslo-orchestrator/veslo-server/veslo-code-router to npm if versions changed"
         required: false
         type: boolean
         default: true
@@ -112,7 +112,7 @@ jobs:
           if [ -n "$RELEASE_NAME_INPUT" ]; then
             RELEASE_NAME="$RELEASE_NAME_INPUT"
           else
-            RELEASE_NAME="OpenWork $TAG"
+            RELEASE_NAME="Veslo $TAG"
           fi
 
           RELEASE_BODY_INPUT="${INPUT_RELEASE_BODY:-}"
@@ -165,9 +165,9 @@ jobs:
           echo "publish_sidecars=$publish_sidecars" >> "$GITHUB_OUTPUT"
           echo "publish_npm=$publish_npm" >> "$GITHUB_OUTPUT"
           {
-            echo "release_body<<__OPENWORK_RELEASE_BODY_EOF__"
+            echo "release_body<<__VESLO_RELEASE_BODY_EOF__"
             printf '%s\n' "$RELEASE_BODY"
-            echo "__OPENWORK_RELEASE_BODY_EOF__"
+            echo "__VESLO_RELEASE_BODY_EOF__"
           } >> "$GITHUB_OUTPUT"
 
       - name: Create release if missing
@@ -363,7 +363,7 @@ jobs:
             const headers = {
               'Accept': 'application/vnd.github+json',
               'X-GitHub-Api-Version': '2022-11-28',
-              'User-Agent': 'openwork-ci',
+              'User-Agent': 'veslo-ci',
             };
             if (token) headers.Authorization = `Bearer ${token}`;
 
@@ -385,7 +385,7 @@ jobs:
             }
 
             const web = await fetch(`https://github.com/${repo}/releases/latest`, {
-              headers: { 'User-Agent': 'openwork-ci' },
+              headers: { 'User-Agent': 'veslo-ci' },
               redirect: 'follow',
             });
             const url = (web && web.url) ? String(web.url) : '';
@@ -534,7 +534,7 @@ jobs:
           retryAttempts: 3
           uploadUpdaterJson: false
           updaterJsonPreferNsis: true
-          releaseAssetNamePattern: openwork-desktop-[platform]-[arch][ext]
+          releaseAssetNamePattern: veslo-desktop-[platform]-[arch][ext]
 
       - name: Build + upload
         if: matrix.os_type != 'macos' || env.MACOS_NOTARIZE != 'true'
@@ -563,7 +563,7 @@ jobs:
           retryAttempts: 3
           uploadUpdaterJson: false
           updaterJsonPreferNsis: true
-          releaseAssetNamePattern: openwork-desktop-[platform]-[arch][ext]
+          releaseAssetNamePattern: veslo-desktop-[platform]-[arch][ext]
 
       - name: Verify versions.json bundled (macOS)
         if: success() && matrix.os_type == 'macos'
@@ -586,18 +586,18 @@ jobs:
               ;;
           esac
 
-          tmp_dir="$RUNNER_TEMP/openwork-bundle-verify"
+          tmp_dir="$RUNNER_TEMP/veslo-bundle-verify"
           rm -rf "$tmp_dir"
           mkdir -p "$tmp_dir"
 
           gh release download "${RELEASE_TAG}" \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern "openwork-desktop-darwin-${asset_arch}.app.tar.gz" \
+            --pattern "veslo-desktop-darwin-${asset_arch}.app.tar.gz" \
             --dir "$tmp_dir"
 
-          tar -xzf "$tmp_dir/openwork-desktop-darwin-${asset_arch}.app.tar.gz" -C "$tmp_dir"
+          tar -xzf "$tmp_dir/veslo-desktop-darwin-${asset_arch}.app.tar.gz" -C "$tmp_dir"
 
-          app_path="$tmp_dir/OpenWork.app"
+          app_path="$tmp_dir/Veslo.app"
           manifest_path="$app_path/Contents/MacOS/versions.json"
 
           if [ ! -f "$manifest_path" ]; then
@@ -642,7 +642,7 @@ jobs:
             --clobber
 
   release-orchestrator-sidecars:
-    name: Build + Upload openwork-orchestrator Sidecars
+    name: Build + Upload veslo-orchestrator Sidecars
     needs: [resolve-release, verify-release]
     if: needs.resolve-release.outputs.publish_sidecars == 'true'
     runs-on: ubuntu-latest
@@ -700,14 +700,14 @@ jobs:
           epoch=$(git show -s --format=%ct "${RELEASE_TAG}")
           echo "epoch=$epoch" >> "$GITHUB_OUTPUT"
 
-      - name: Check openwork-orchestrator release
+      - name: Check veslo-orchestrator release
         id: orchestrator-release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="openwork-orchestrator-v${{ steps.sidecar-versions.outputs.orchestrator }}"
+          tag="veslo-orchestrator-v${{ steps.sidecar-versions.outputs.orchestrator }}"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
@@ -717,24 +717,24 @@ jobs:
       - name: Build sidecar artifacts
         env:
           SOURCE_DATE_EPOCH: ${{ steps.source-date.outputs.epoch }}
-        run: pnpm --filter openwork-orchestrator build:sidecars
+        run: pnpm --filter veslo-orchestrator build:sidecars
 
       - name: Release review (strict)
         env:
           SOURCE_DATE_EPOCH: ${{ steps.source-date.outputs.epoch }}
         run: node scripts/release/review.mjs --strict
 
-      - name: Create openwork-orchestrator release
+      - name: Create veslo-orchestrator release
         if: steps.orchestrator-release.outputs.exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${{ steps.sidecar-versions.outputs.orchestrator }}"
-          tag="openwork-orchestrator-v${version}"
-          notes="Sidecar bundle for openwork-orchestrator v${version}.\n\nopenwork-server: ${{ steps.sidecar-versions.outputs.server }}\nopencodeRouter: ${{ steps.sidecar-versions.outputs.opencodeRouter }}"
+          tag="veslo-orchestrator-v${version}"
+          notes="Sidecar bundle for veslo-orchestrator v${version}.\n\nveslo-server: ${{ steps.sidecar-versions.outputs.server }}\nveslo-code-router: ${{ steps.sidecar-versions.outputs.opencodeRouter }}"
           gh release create "$tag" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "openwork-orchestrator v${version}" \
+            --title "veslo-orchestrator v${version}" \
             --notes "$notes" \
             --latest=false
 
@@ -742,7 +742,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="openwork-orchestrator-v${{ steps.sidecar-versions.outputs.orchestrator }}"
+          tag="veslo-orchestrator-v${{ steps.sidecar-versions.outputs.orchestrator }}"
           gh release upload "$tag" packages/orchestrator/dist/sidecars/* --repo "$GITHUB_REPOSITORY" --clobber
 
   publish-npm:
@@ -813,9 +813,9 @@ jobs:
           set -euo pipefail
           # npm view exits non-zero for packages that don't exist yet (404).
           # Treat missing packages as "not published" so release can publish them.
-          orchestrator_current="$(npm view openwork-orchestrator version 2>/dev/null || true)"
-          server_current="$(npm view openwork-server version 2>/dev/null || true)"
-          opencodeRouter_current="$(npm view opencode-router version 2>/dev/null || true)"
+          orchestrator_current="$(npm view veslo-orchestrator version 2>/dev/null || true)"
+          server_current="$(npm view veslo-server version 2>/dev/null || true)"
+          opencodeRouter_current="$(npm view veslo-code-router version 2>/dev/null || true)"
 
           if [ "$orchestrator_current" = "$ORCHESTRATOR_VERSION" ]; then
             echo "publish_orchestrator=false" >> "$GITHUB_OUTPUT"
@@ -864,27 +864,27 @@ jobs:
           npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
           echo "enabled=true" >> "$GITHUB_OUTPUT"
 
-      - name: Publish openwork-server
+      - name: Publish veslo-server
         if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_server == 'true'
-        run: pnpm --filter openwork-server publish --access public --no-git-checks
+        run: pnpm --filter veslo-server publish --access public --no-git-checks
 
-      - name: Publish opencode-router
+      - name: Publish veslo-code-router
         if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_opencodeRouter == 'true'
-        run: pnpm --filter opencode-router publish --access public --no-git-checks
+        run: pnpm --filter veslo-code-router publish --access public --no-git-checks
 
-      - name: Publish openwork-orchestrator
+      - name: Publish veslo-orchestrator
         if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_orchestrator == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ORCHESTRATOR_VERSION: ${{ steps.package-versions.outputs.orchestrator }}
         run: |
           set -euo pipefail
-          tag="openwork-orchestrator-v${ORCHESTRATOR_VERSION}"
+          tag="veslo-orchestrator-v${ORCHESTRATOR_VERSION}"
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "openwork-orchestrator sidecar release $tag not found. Publish sidecars before openwork-orchestrator." >&2
+            echo "veslo-orchestrator sidecar release $tag not found. Publish sidecars before veslo-orchestrator." >&2
             exit 1
           fi
-          pnpm --filter openwork-orchestrator build:bin:all
+          pnpm --filter veslo-orchestrator build:bin:all
           node packages/orchestrator/scripts/publish-npm.mjs
 
   aur-publish:
@@ -922,7 +922,7 @@ jobs:
 
           version="${RELEASE_TAG#v}"
           git add packaging/aur/PKGBUILD packaging/aur/.SRCINFO
-          git -c user.name="OpenWork Release Bot" \
+          git -c user.name="Veslo Release Bot" \
               -c user.email="release-bot@users.noreply.github.com" \
               commit -m "chore(aur): update PKGBUILD for ${version}"
           git push origin HEAD:dev
@@ -930,7 +930,7 @@ jobs:
       - name: Publish to AUR
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          AUR_REPO: ${{ vars.AUR_REPO || 'openwork' }}
+          AUR_REPO: ${{ vars.AUR_REPO || 'veslo' }}
           AUR_SKIP_UPDATE: "1"
         run: |
           set -euo pipefail

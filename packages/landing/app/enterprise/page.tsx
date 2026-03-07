@@ -5,7 +5,7 @@ import { OpenCodeLogo } from "../../components/opencode-logo";
 import { getGithubData } from "../../lib/github";
 
 export const metadata = {
-  title: "OpenWork — Enterprise",
+  title: "Veslo — Enterprise",
   description: "Secure hosting for safe, permissioned AI employees."
 };
 
@@ -31,7 +31,7 @@ export default async function Enterprise() {
           <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
             <div className="space-y-4 text-[15px] leading-relaxed text-gray-700">
               <p>
-                OpenWork runs local-first. We help you deploy it in a way that matches your security posture,
+                Veslo runs local-first. We help you deploy it in a way that matches your security posture,
                 with clear permissions and reliable guardrails.
               </p>
               <p>

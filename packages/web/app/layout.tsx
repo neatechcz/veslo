@@ -17,9 +17,9 @@ const ibmPlexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "OpenWork Cloud",
+  title: "Veslo Cloud",
   description:
-    "Launch OpenWork cloud workers, handle Polar paywall flows, and operate Den from app.openwork.software."
+    "Launch Veslo cloud workers, handle Polar paywall flows, and operate Den from app.veslo.neatech.com."
 };
 
 const posthogKey =

@@ -3,8 +3,8 @@ import { SiteNav } from "../../components/site-nav";
 import { getGithubData } from "../../lib/github";
 
 export const metadata = {
-  title: "OpenWork - Starter Success",
-  description: "Thanks for pre-ordering OpenWork Team Starter.",
+  title: "Veslo - Starter Success",
+  description: "Thanks for pre-ordering Veslo Team Starter.",
 };
 
 export default async function StarterSuccessPage() {
@@ -15,7 +15,7 @@ export default async function StarterSuccessPage() {
     try {
       const url = new URL(calBase);
       url.searchParams.set("source", "starter-success");
-      url.searchParams.set("notes", "Paid customer: OpenWork Team Starter (12 months). Priority onboarding requested.");
+      url.searchParams.set("notes", "Paid customer: Veslo Team Starter (12 months). Priority onboarding requested.");
       url.searchParams.set("description", "Paid customer - Team Starter (12 months). Please prioritize onboarding.");
       return url.toString();
     } catch {
@@ -39,7 +39,7 @@ export default async function StarterSuccessPage() {
             </h1>
 
             <p className="max-w-2xl text-[16px] leading-relaxed text-gray-700">
-              You&apos;re on track for getting access to OpenWork Hosted in 7 days.
+              You&apos;re on track for getting access to Veslo Hosted in 7 days.
             </p>
           </section>
 
@@ -66,7 +66,7 @@ export default async function StarterSuccessPage() {
           </section>
 
           <div className="mt-10 rounded-xl border border-gray-100 bg-white p-5 text-[13px] text-gray-500">
-            OpenWork stays open source, runs in any environment, and works with
+            Veslo stays open source, runs in any environment, and works with
             any model.
           </div>
 

@@ -26,13 +26,13 @@ const nextConfig = {
         permanent: false,
       },
       {
-        source: "/openwork",
-        destination: "/docs/openwork",
+        source: "/veslo",
+        destination: "/docs/veslo",
         permanent: false,
       },
       {
-        source: "/opencode-router",
-        destination: "/docs/opencode-router",
+        source: "/veslo-code-router",
+        destination: "/docs/veslo-code-router",
         permanent: false,
       },
       {
@@ -41,8 +41,8 @@ const nextConfig = {
         permanent: false,
       },
       {
-        source: "/create-openwork-instance",
-        destination: "/docs/create-openwork-instance",
+        source: "/create-veslo-instance",
+        destination: "/docs/create-veslo-instance",
         permanent: false,
       },
       {

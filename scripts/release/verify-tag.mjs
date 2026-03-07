@@ -51,9 +51,9 @@ const check = (label, actual) => {
 
 check("app", appVersion);
 check("desktop", desktopVersion);
-check("openwork-orchestrator", orchestratorVersion);
-check("openwork-server", serverVersion);
-check("opencode-router", opencodeRouterVersion);
+check("veslo-orchestrator", orchestratorVersion);
+check("veslo-server", serverVersion);
+check("veslo-code-router", opencodeRouterVersion);
 check("tauri", tauriVersion);
 check("cargo", cargoVersion);
 
@@ -65,4 +65,4 @@ if (mismatches.length) {
   process.exit(1);
 }
 
-console.log(`Release tag ${tag} matches app/desktop/openwork-orchestrator versions.`);
+console.log(`Release tag ${tag} matches app/desktop/veslo-orchestrator versions.`);

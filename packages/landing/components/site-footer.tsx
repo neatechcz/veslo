@@ -14,7 +14,7 @@ export function SiteFooter() {
           Privacy
         </Link>
       </div>
-      <span>© 2026 OpenWork Project.</span>
+      <span>© 2026 Veslo Project.</span>
     </footer>
   );
 }

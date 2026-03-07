@@ -51,7 +51,7 @@ export default async function handler(req, res) {
   if (serveJson) {
     res.setHeader("Content-Type", blob.contentType || response.headers.get("content-type") || "application/json");
     if (wantsDownload(req)) {
-      res.setHeader("Content-Disposition", `attachment; filename="openwork-bundle-${id}.json"`);
+      res.setHeader("Content-Disposition", `attachment; filename="veslo-bundle-${id}.json"`);
     }
     res.status(200).send(rawBuffer);
     return;

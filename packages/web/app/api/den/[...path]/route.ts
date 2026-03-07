@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 
-const DEFAULT_API_BASE = "https://api.openwork.software";
-const DEFAULT_AUTH_ORIGIN = "https://den-control-plane-openwork.onrender.com";
+const DEFAULT_API_BASE = "https://api.veslo.neatech.com";
+const DEFAULT_AUTH_ORIGIN = "https://den-control-plane-veslo.onrender.com";
 const apiBase = (process.env.DEN_API_BASE ?? DEFAULT_API_BASE).replace(/\/+$/, "");
 const authOrigin = (process.env.DEN_AUTH_ORIGIN ?? DEFAULT_AUTH_ORIGIN).replace(/\/+$/, "");
 

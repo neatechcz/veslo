@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { buildBundleUrls, renderBundlePage, wantsDownload, wantsJsonResponse } from "./render-bundle-page.js";
 
-function makeReq({ accept = "", query = {}, host = "share.openwork.software" } = {}) {
+function makeReq({ accept = "", query = {}, host = "share.veslo.neatech.com" } = {}) {
   return {
     query,
     headers: {
@@ -52,18 +52,18 @@ test("renderBundlePage includes machine-readable metadata and escaped json scrip
   const html = renderBundlePage({
     id: "01TEST",
     rawJson,
-    req: makeReq({ accept: "text/html", host: "share.openwork.software" }),
+    req: makeReq({ accept: "text/html", host: "share.veslo.neatech.com" }),
   });
 
-  assert.match(html, /data-openwork-share="true"/);
-  assert.match(html, /data-openwork-bundle-type="skill"/);
-  assert.match(html, /meta name="openwork:bundle-id" content="01TEST"/);
+  assert.match(html, /data-veslo-share="true"/);
+  assert.match(html, /data-veslo-bundle-type="skill"/);
+  assert.match(html, /meta name="veslo:bundle-id" content="01TEST"/);
   assert.match(html, /\?format=json/);
-  assert.match(html, /openwork:\/\/import-bundle\?/);
-  assert.match(html, /ow_bundle=https%3A%2F%2Fshare\.openwork\.software%2Fb%2F01TEST/);
+  assert.match(html, /veslo:\/\/import-bundle\?/);
+  assert.match(html, /ow_bundle=https%3A%2F%2Fshare\.veslo\.neatech\.com%2Fb%2F01TEST/);
   assert.match(html, /ow_intent=new_worker/);
   assert.match(html, /ow_source=share_service/);
-  assert.match(html, /id="openwork-bundle-json" type="application\/json"/);
+  assert.match(html, /id="veslo-bundle-json" type="application\/json"/);
   assert.match(html, /demo \\u003c\/script\\u003e skill/);
 });
 
@@ -74,7 +74,7 @@ test("renderBundlePage shows workspace profile metadata", () => {
     name: "Team Workspace",
     workspace: {
       opencode: { model: "gpt-5.3" },
-      openwork: { reload: { auto: true } },
+      veslo: { reload: { auto: true } },
       skills: [{ name: "workspace-guide", content: "..." }, { name: "skill-creator", content: "..." }],
       commands: [{ name: "standup", template: "..." }],
     },
@@ -83,7 +83,7 @@ test("renderBundlePage shows workspace profile metadata", () => {
   const html = renderBundlePage({
     id: "01WORKSPACE",
     rawJson,
-    req: makeReq({ accept: "text/html", host: "share.openwork.software" }),
+    req: makeReq({ accept: "text/html", host: "share.veslo.neatech.com" }),
   });
 
   assert.match(html, /<dt>Skills<\/dt><dd>2<\/dd>/);
