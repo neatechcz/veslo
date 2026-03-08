@@ -19,3 +19,9 @@ declare module "./cloud-policy.impl.js" {
     workspaceId?: string;
   };
 }
+
+declare module "./runtime-policy.impl.js" {
+  export const APP_RUNTIME_MODE: "local_sync" | "cloud_only" | "hybrid";
+  export function isLocalExecutionOnly(): boolean;
+  export function isRemoteUiEnabled(): boolean;
+}
