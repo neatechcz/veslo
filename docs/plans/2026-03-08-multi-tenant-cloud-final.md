@@ -1,5 +1,7 @@
-# Multi-Tenant Cloud Final Spec (MVP)
+# Multi-Tenant Cloud Final Spec
 Date: 2026-03-08
+
+Superseded for implementation by `docs/plans/2026-03-08-multi-tenant-cloud-mvp.md`.
 
 ## Objective
 Define a strict MVP for a real multi-tenant Veslo cloud model:
@@ -159,4 +161,3 @@ These are the minimum backend/service functions needed to ship V1 multi-tenancy.
 | Phase 3 | Billing ownership | org subscription model + self-serve + invoiced approvals + trial override |
 | Phase 4 | Project UX and permissions | workers->projects UI rename, member project creation, owner/admin controls |
 | Phase 5 | Hardening | audit coverage, permission tests, tenant isolation tests |
-

@@ -57,6 +57,21 @@ type AuthUser = {
   name: string | null;
 };
 
+type OrganizationSummary = {
+  id: string;
+  name: string;
+  slug: string;
+  role: "owner" | "member";
+  ownerUserId: string;
+};
+
+type OrganizationDirectory = {
+  organizations: OrganizationSummary[];
+  activeOrgId: string | null;
+  defaultOrgId: string | null;
+  platformAdmin: boolean;
+};
+
 type WorkerLaunch = {
   workerId: string;
   workerName: string;
@@ -133,6 +148,7 @@ function getAuthInfoForMode(mode: AuthMode): string {
 const LAST_WORKER_STORAGE_KEY = "veslo:web:last-worker";
 const PENDING_GITHUB_SIGNUP_STORAGE_KEY = "veslo:web:pending-github-signup";
 const AUTH_TOKEN_STORAGE_KEY = "veslo:web:auth-token";
+const SELECTED_ORG_STORAGE_KEY = "veslo:web:selected-org-id";
 const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "Veslo User";
 const VESLO_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_VESLO_APP_CONNECT_URL ?? "").trim();
@@ -330,6 +346,68 @@ function getUser(payload: unknown): AuthUser | null {
     email: user.email,
     name: typeof user.name === "string" ? user.name : null
   };
+}
+
+function parseOrganizationSummary(value: unknown): OrganizationSummary | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  if (
+    typeof value.id !== "string" ||
+    typeof value.name !== "string" ||
+    typeof value.slug !== "string" ||
+    typeof value.ownerUserId !== "string"
+  ) {
+    return null;
+  }
+
+  if (value.role !== "owner" && value.role !== "member") {
+    return null;
+  }
+
+  return {
+    id: value.id,
+    name: value.name,
+    slug: value.slug,
+    role: value.role,
+    ownerUserId: value.ownerUserId
+  };
+}
+
+function getOrganizationDirectory(payload: unknown): OrganizationDirectory | null {
+  if (!isRecord(payload) || !Array.isArray(payload.organizations)) {
+    return null;
+  }
+
+  const organizations = payload.organizations
+    .map((entry) => parseOrganizationSummary(entry))
+    .filter((entry): entry is OrganizationSummary => entry !== null);
+
+  return {
+    organizations,
+    activeOrgId: typeof payload.activeOrgId === "string" ? payload.activeOrgId : null,
+    defaultOrgId: typeof payload.defaultOrgId === "string" ? payload.defaultOrgId : null,
+    platformAdmin: payload.platformAdmin === true
+  };
+}
+
+function buildDenHeaders(
+  authToken: string | null,
+  options: { orgId?: string | null; includeOrg?: boolean } = {}
+): Headers {
+  const headers = new Headers();
+  if (authToken) {
+    headers.set("Authorization", `Bearer ${authToken}`);
+  }
+
+  const includeOrg = options.includeOrg !== false;
+  const orgId = options.orgId?.trim() ?? "";
+  if (includeOrg && orgId) {
+    headers.set("x-veslo-org-id", orgId);
+  }
+
+  return headers;
 }
 
 function getToken(payload: unknown): string | null {
@@ -926,6 +1004,17 @@ export function CloudControlPanel() {
 
     return token;
   });
+  const [organizations, setOrganizations] = useState<OrganizationSummary[]>([]);
+  const [selectedOrgId, setSelectedOrgId] = useState<string>(() => {
+    if (typeof window === "undefined") {
+      return "";
+    }
+
+    return window.localStorage.getItem(SELECTED_ORG_STORAGE_KEY) ?? "";
+  });
+  const [orgsBusy, setOrgsBusy] = useState(false);
+  const [orgsError, setOrgsError] = useState<string | null>(null);
+  const [platformAdmin, setPlatformAdmin] = useState(false);
 
   const [workerName, setWorkerName] = useState("Founder Ops Pilot");
   const [worker, setWorker] = useState<WorkerLaunch | null>(null);
@@ -1004,6 +1093,7 @@ export function CloudControlPanel() {
   const effectiveCheckoutUrl = checkoutUrl ?? billingSummary?.checkoutUrl ?? null;
   const billingSubscription = billingSummary?.subscription ?? null;
   const billingPrice = billingSummary?.price ?? null;
+  const selectedOrganization = organizations.find((entry) => entry.id === selectedOrgId) ?? organizations[0] ?? null;
 
   function appendEvent(level: EventLevel, label: string, detail: string) {
     setEvents((current) => {
@@ -1074,6 +1164,60 @@ export function CloudControlPanel() {
     };
   }
 
+  async function refreshOrganizations() {
+    if (!user) {
+      setOrganizations([]);
+      setSelectedOrgId("");
+      setOrgsError(null);
+      setPlatformAdmin(false);
+      return;
+    }
+
+    setOrgsBusy(true);
+    setOrgsError(null);
+
+    try {
+      const { response, payload } = await requestJson("/v1/orgs", {
+        method: "GET",
+        headers: buildDenHeaders(authToken, { orgId: selectedOrgId || null })
+      });
+
+      if (!response.ok) {
+        const message = getErrorMessage(payload, `Failed to load organizations (${response.status}).`);
+        setOrgsError(message);
+        return;
+      }
+
+      const directory = getOrganizationDirectory(payload);
+      if (!directory) {
+        setOrgsError("Organization response was missing details.");
+        return;
+      }
+
+      setOrganizations(directory.organizations);
+      setPlatformAdmin(directory.platformAdmin);
+
+      const availableIds = new Set(directory.organizations.map((entry) => entry.id));
+      const storedOrgId =
+        typeof window !== "undefined" ? (window.localStorage.getItem(SELECTED_ORG_STORAGE_KEY) ?? "").trim() : "";
+
+      const nextOrgId =
+        (selectedOrgId && availableIds.has(selectedOrgId) ? selectedOrgId : "") ||
+        (storedOrgId && availableIds.has(storedOrgId) ? storedOrgId : "") ||
+        (directory.activeOrgId && availableIds.has(directory.activeOrgId) ? directory.activeOrgId : "") ||
+        (directory.defaultOrgId && availableIds.has(directory.defaultOrgId) ? directory.defaultOrgId : "") ||
+        directory.organizations[0]?.id ||
+        "";
+
+      setSelectedOrgId(nextOrgId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown network error";
+      setOrgsError(message);
+    } finally {
+      setOrgsBusy(false);
+    }
+  }
+
   async function refreshWorkers(options: { keepSelection?: boolean } = {}) {
     if (!user) {
       setWorkers([]);
@@ -1087,7 +1231,7 @@ export function CloudControlPanel() {
     try {
       const { response, payload } = await requestJson("/v1/workers?limit=20", {
         method: "GET",
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
+        headers: buildDenHeaders(authToken, { orgId: selectedOrgId || null })
       });
 
       if (!response.ok) {
@@ -1147,7 +1291,7 @@ export function CloudControlPanel() {
       const query = includeCheckout ? "?includeCheckout=1" : "";
       const { response, payload } = await requestJson(`/v1/workers/billing${query}`, {
         method: "GET",
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
+        headers: buildDenHeaders(authToken, { includeOrg: false })
       }, 12000);
 
       if (!response.ok) {
@@ -1210,7 +1354,7 @@ export function CloudControlPanel() {
     try {
       const { response, payload } = await requestJson("/v1/workers/billing/subscription", {
         method: "POST",
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+        headers: buildDenHeaders(authToken, { includeOrg: false }),
         body: JSON.stringify({ cancelAtPeriodEnd })
       }, 12000);
 
@@ -1259,11 +1403,7 @@ export function CloudControlPanel() {
   }
 
   async function refreshSession(quiet = false) {
-    const headers = new Headers();
-    if (authToken) {
-      headers.set("Authorization", `Bearer ${authToken}`);
-    }
-
+    const headers = buildDenHeaders(authToken, { includeOrg: false });
     const { response, payload } = await requestJson("/v1/me", { method: "GET", headers }, 12000);
 
     if (!response.ok) {
@@ -1303,8 +1443,34 @@ export function CloudControlPanel() {
   }, [authToken]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (selectedOrgId) {
+      window.localStorage.setItem(SELECTED_ORG_STORAGE_KEY, selectedOrgId);
+    } else {
+      window.localStorage.removeItem(SELECTED_ORG_STORAGE_KEY);
+    }
+  }, [selectedOrgId]);
+
+  useEffect(() => {
     void refreshSession(true);
   }, [authToken]);
+
+  useEffect(() => {
+    if (!user) {
+      setOrganizations([]);
+      setSelectedOrgId("");
+      setOrgsError(null);
+      setPlatformAdmin(false);
+      setWorkers([]);
+      setWorkersError(null);
+      return;
+    }
+
+    void refreshOrganizations();
+  }, [user?.id, authToken]);
 
   useEffect(() => {
     if (!user) {
@@ -1313,8 +1479,20 @@ export function CloudControlPanel() {
       return;
     }
 
+    if (orgsBusy) {
+      return;
+    }
+
+    if (organizations.length === 0) {
+      return;
+    }
+
+    if (organizations.length > 1 && !selectedOrgId) {
+      return;
+    }
+
     void refreshWorkers();
-  }, [user?.id, authToken]);
+  }, [user?.id, authToken, selectedOrgId, organizations.length, orgsBusy]);
 
   useEffect(() => {
     if (!user) {
@@ -1701,7 +1879,7 @@ export function CloudControlPanel() {
     try {
       await requestJson("/api/auth/sign-out", {
         method: "POST",
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+        headers: buildDenHeaders(authToken, { includeOrg: false }),
         body: JSON.stringify({})
       });
     } catch {
@@ -1712,6 +1890,10 @@ export function CloudControlPanel() {
 
     setUser(null);
     setAuthToken(null);
+    setOrganizations([]);
+    setSelectedOrgId("");
+    setOrgsError(null);
+    setPlatformAdmin(false);
     setWorker(null);
     setWorkers([]);
     setWorkerLookupId("");
@@ -1744,6 +1926,7 @@ export function CloudControlPanel() {
 
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(LAST_WORKER_STORAGE_KEY);
+      window.localStorage.removeItem(SELECTED_ORG_STORAGE_KEY);
       window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
     }
   }
@@ -1768,7 +1951,7 @@ export function CloudControlPanel() {
         "/v1/workers",
         {
           method: "POST",
-          headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+          headers: buildDenHeaders(authToken, { orgId: selectedOrgId || null }),
           body: JSON.stringify({
             name: workerName.trim() || "Cloud Worker",
             destination: "cloud"
@@ -1900,7 +2083,7 @@ export function CloudControlPanel() {
     try {
       const { response, payload } = await requestJson(`/v1/workers/${encodeURIComponent(id)}`, {
         method: "GET",
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
+        headers: buildDenHeaders(authToken, { orgId: selectedOrgId || null })
       });
 
       if (!response.ok) {
@@ -2000,7 +2183,7 @@ export function CloudControlPanel() {
     try {
       const { response, payload } = await requestJson(`/v1/workers/${encodeURIComponent(id)}/tokens`, {
         method: "POST",
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+        headers: buildDenHeaders(authToken, { orgId: selectedOrgId || null }),
         body: JSON.stringify({})
       });
 
@@ -2080,7 +2263,7 @@ export function CloudControlPanel() {
     try {
       const { response, payload } = await requestJson(`/v1/workers/${encodeURIComponent(workerId)}`, {
         method: "DELETE",
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
+        headers: buildDenHeaders(authToken, { orgId: selectedOrgId || null })
       });
 
       if (response.status !== 204 && !response.ok) {
@@ -2227,6 +2410,48 @@ export function CloudControlPanel() {
               >
                 {authBusy ? "Signing out..." : "Log out"}
               </button>
+            </div>
+
+            <div className="rounded-[18px] border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Organization</p>
+                  <p className="mt-1 text-sm font-medium text-slate-900">
+                    {selectedOrganization?.name ?? (orgsBusy ? "Loading organizations..." : "No organization selected")}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {platformAdmin ? "Platform admin" : selectedOrganization ? `Role: ${selectedOrganization.role}` : "Select an organization to scope workers."}
+                  </p>
+                </div>
+
+                <div className="flex min-w-0 flex-col gap-2 lg:w-[320px]">
+                  <label className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Active organization</label>
+                  <select
+                    className="rounded-[12px] border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#1B29FF] focus:ring-2 focus:ring-[#1B29FF]/15 disabled:cursor-not-allowed disabled:opacity-60"
+                    value={selectedOrgId}
+                    onChange={(event) => {
+                      const nextOrgId = event.currentTarget.value;
+                      setSelectedOrgId(nextOrgId);
+                      setWorker(null);
+                      setWorkerLookupId("");
+                      setTokenFetchedForWorkerId(null);
+                      setLaunchError(null);
+                      setWorkersError(null);
+                    }}
+                    disabled={orgsBusy || organizations.length === 0}
+                  >
+                    {organizations.length === 0 ? (
+                      <option value="">{orgsBusy ? "Loading organizations..." : "No organizations available"}</option>
+                    ) : null}
+                    {organizations.map((organization) => (
+                      <option key={organization.id} value={organization.id}>
+                        {organization.name} ({organization.role})
+                      </option>
+                    ))}
+                  </select>
+                  {orgsError ? <p className="text-xs text-rose-600">{orgsError}</p> : null}
+                </div>
+              </div>
             </div>
 
             {shellView === "workers" ? (
