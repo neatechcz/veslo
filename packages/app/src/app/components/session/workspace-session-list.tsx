@@ -15,6 +15,7 @@ type Props = {
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
   importingWorkspaceConfig: boolean;
+  showRemoteActions?: boolean;
   soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
   onActivateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
@@ -500,7 +501,7 @@ export default function WorkspaceSessionList(props: Props) {
           type="button"
           class="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-[13px] font-medium text-gray-11 border border-gray-6 bg-gray-1 hover:bg-gray-2 shadow-sm transition-colors"
           onClick={() => {
-            if (props.onQuickAddWorker) {
+            if (props.showRemoteActions !== false && props.onQuickAddWorker) {
               props.onQuickAddWorker();
               return;
             }
@@ -524,17 +525,19 @@ export default function WorkspaceSessionList(props: Props) {
               <Plus size={12} />
               New worker
             </button>
-            <button
-              type="button"
-              class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:text-gray-12 hover:bg-gray-3 transition-colors"
-              onClick={() => {
-                props.onOpenCreateRemoteWorkspace();
-                setAddWorkspaceMenuOpen(false);
-              }}
-            >
-              <Plus size={12} />
-              Connect remote
-            </button>
+            <Show when={props.showRemoteActions !== false}>
+              <button
+                type="button"
+                class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:text-gray-12 hover:bg-gray-3 transition-colors"
+                onClick={() => {
+                  props.onOpenCreateRemoteWorkspace();
+                  setAddWorkspaceMenuOpen(false);
+                }}
+              >
+                <Plus size={12} />
+                Connect remote
+              </button>
+            </Show>
             <button
               type="button"
               class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"

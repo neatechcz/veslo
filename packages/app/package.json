@@ -24,6 +24,7 @@
     "test:cloud-policy": "node scripts/cloud-policy.mjs",
     "test:runtime-policy": "node scripts/runtime-policy.mjs",
     "test:local-workspace-mode": "node scripts/local-workspace-mode.mjs",
+    "test:local-ui-guards": "node scripts/local-ui-guards.mjs",
     "test:cloud-onboarding": "node scripts/cloud-onboarding.mjs",
     "test:cloud-ui-guards": "node scripts/cloud-ui-guards.mjs",
     "test:browser-entry": "node scripts/browser-entry.mjs",
