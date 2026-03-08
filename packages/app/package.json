@@ -22,6 +22,7 @@
     "test:local-file-path": "node scripts/local-file-path.mjs",
     "test:i18n": "node scripts/i18n-parity.mjs",
     "test:cloud-policy": "node scripts/cloud-policy.mjs",
+    "test:runtime-policy": "node scripts/runtime-policy.mjs",
     "test:cloud-onboarding": "node scripts/cloud-onboarding.mjs",
     "test:cloud-ui-guards": "node scripts/cloud-ui-guards.mjs",
     "test:browser-entry": "node scripts/browser-entry.mjs",
