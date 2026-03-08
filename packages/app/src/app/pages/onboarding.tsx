@@ -8,12 +8,13 @@ import OnboardingWorkspaceSelector from "../components/onboarding-workspace-sele
 import VesloLogo from "../components/veslo-logo";
 import TextInput from "../components/text-input";
 import { isTauriRuntime, isWindowsPlatform } from "../utils/index";
-import { currentLocale, t } from "../../i18n";
+import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 
 export type OnboardingViewProps = {
   startupPreference: StartupPreference | null;
   onboardingStep: OnboardingStep;
+  language: Language;
   rememberStartupChoice: boolean;
   busy: boolean;
   clientDirectory: string;
@@ -47,6 +48,8 @@ export type OnboardingViewProps = {
   onVesloHostUrlChange: (value: string) => void;
   onVesloTokenChange: (value: string) => void;
   onSelectStartup: (mode: StartupPreference) => void;
+  onSetLanguage: (language: Language) => void;
+  onConfirmLanguage: () => void | Promise<void>;
   onRememberStartupToggle: () => void;
   onStartHost: () => void;
   onRepairMigration: () => void;
@@ -74,6 +77,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
   const translate = (key: string) => t(key, currentLocale());
   const [vesloTokenVisible, setVesloTokenVisible] = createSignal(false);
   const [connectingFallbackVisible, setConnectingFallbackVisible] = createSignal(false);
+  const [languageConfirming, setLanguageConfirming] = createSignal(false);
 
   createEffect(() => {
     if (typeof window === "undefined") return;
@@ -120,6 +124,16 @@ export default function OnboardingView(props: OnboardingViewProps) {
     return props.onboardingStep === "server";
   };
 
+  const handleLanguageConfirm = async () => {
+    if (languageConfirming()) return;
+    setLanguageConfirming(true);
+    try {
+      await props.onConfirmLanguage();
+    } finally {
+      setLanguageConfirming(false);
+    }
+  };
+
   return (
     <Switch>
       <Match when={props.onboardingStep === "connecting"}>
@@ -160,6 +174,51 @@ export default function OnboardingView(props: OnboardingViewProps) {
               </Show>
 
             </div>
+          </div>
+        </div>
+      </Match>
+
+      <Match when={props.onboardingStep === "language"}>
+        <div class="min-h-screen flex flex-col items-center justify-center bg-gray-1 text-gray-12 p-6 relative">
+          <div class="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-gray-2 to-transparent opacity-20 pointer-events-none" />
+
+          <div class="max-w-lg w-full z-10 space-y-8">
+            <div class="text-center space-y-3">
+              <div class="flex items-center justify-center">
+                <VesloLogo size={48} />
+              </div>
+              <h2 class="text-2xl font-bold tracking-tight">{translate("onboarding.language_title")}</h2>
+              <p class="text-gray-11 text-sm leading-relaxed">{translate("onboarding.language_description")}</p>
+            </div>
+
+            <div class="space-y-3">
+              <For each={LANGUAGE_OPTIONS}>
+                {(option) => (
+                  <button
+                    onClick={() => props.onSetLanguage(option.value)}
+                    class={`w-full rounded-2xl border px-4 py-3 text-left transition-colors ${
+                      props.language === option.value
+                        ? "border-gray-7 bg-gray-3/50 text-gray-12"
+                        : "border-gray-6 bg-gray-2/40 text-gray-11 hover:bg-gray-3/40"
+                    }`}
+                    disabled={props.busy || languageConfirming()}
+                  >
+                    <div class="text-base font-medium">{option.nativeName}</div>
+                    <Show when={option.label !== option.nativeName}>
+                      <div class="text-xs text-gray-9 mt-1">{option.label}</div>
+                    </Show>
+                  </button>
+                )}
+              </For>
+            </div>
+
+            <Button
+              class="w-full py-3 text-base"
+              onClick={() => void handleLanguageConfirm()}
+              disabled={props.busy || languageConfirming()}
+            >
+              {translate("onboarding.language_continue")}
+            </Button>
           </div>
         </div>
       </Match>
