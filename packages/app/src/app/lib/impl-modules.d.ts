@@ -5,6 +5,12 @@ declare module "./local-file-path.impl.js" {
 declare module "./cloud-policy.impl.js" {
   export const CLOUD_ONLY_MODE: boolean;
 
+  export type VesloServerSettingsLike = {
+    urlOverride?: string;
+    portOverride?: number;
+    token?: string;
+  };
+
   export function filterRemoteWorkspaces<T extends { workspaceType?: string | null }>(
     workspaces: T[],
   ): T[];
@@ -18,4 +24,10 @@ declare module "./cloud-policy.impl.js" {
     token?: string;
     workspaceId?: string;
   };
+
+  export function mergeVesloServerSettingsWithEnv(
+    current: VesloServerSettingsLike,
+    env: Record<string, string | undefined>,
+    options?: { cloudOnlyMode?: boolean },
+  ): { next: VesloServerSettingsLike; changed: boolean };
 }

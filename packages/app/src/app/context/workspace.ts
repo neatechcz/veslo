@@ -447,6 +447,35 @@ export function createWorkspaceStore(options: {
     const client = createVesloServerClient({ baseUrl: workspaceBaseUrl, token: input.token ?? undefined });
 
     const trimmedToken = input.token?.trim() ?? "";
+    const fallbackDirectory = input.directoryHint?.trim() ?? "";
+    const tokenlessFallback = () => ({
+      kind: "veslo" as const,
+      hostUrl: normalizedHostUrl,
+      workspace: requestedWorkspaceId
+        ? ({
+            id: requestedWorkspaceId,
+            name: requestedWorkspaceId,
+            path: fallbackDirectory,
+            workspaceType: "remote",
+          } as VesloWorkspaceInfo)
+        : null,
+      opencodeBaseUrl: `${workspaceBaseUrl.replace(/\/+$/, "")}/opencode`,
+      directory: fallbackDirectory,
+      auth: undefined as OpencodeAuth | undefined,
+    });
+
+    const canReachDirectOpencode = async () => {
+      try {
+        const directClient = createClient(
+          `${workspaceBaseUrl.replace(/\/+$/, "")}/opencode`,
+          fallbackDirectory || undefined,
+        );
+        await waitForHealthy(directClient, { timeoutMs: 6_000 });
+        return true;
+      } catch {
+        return false;
+      }
+    };
 
     try {
       const health = await client.health();
@@ -456,18 +485,29 @@ export function createWorkspaceStore(options: {
     } catch (error) {
       if (error instanceof VesloServerError && (error.status === 401 || error.status === 403)) {
         if (!trimmedToken) {
+          if (await canReachDirectOpencode()) {
+            return tokenlessFallback();
+          }
           throw new Error("Access token required for Veslo server.");
         }
         throw new Error("Veslo server rejected the access token.");
       }
       return { kind: "fallback" as const };
     }
-
-    if (!trimmedToken) {
-      throw new Error("Access token required for Veslo server.");
+    let response: Awaited<ReturnType<typeof client.listWorkspaces>>;
+    try {
+      response = await client.listWorkspaces();
+    } catch (error) {
+      if (!trimmedToken) {
+        if (await canReachDirectOpencode()) {
+          return tokenlessFallback();
+        }
+        if (error instanceof VesloServerError && (error.status === 401 || error.status === 403)) {
+          throw new Error("Access token required for Veslo server.");
+        }
+      }
+      throw error;
     }
-
-    const response = await client.listWorkspaces();
     const items = Array.isArray(response.items) ? response.items : [];
     const hint = normalizeDirectoryPath(input.directoryHint ?? "");
     const selectByHint = (entry: VesloWorkspaceInfo) => {
@@ -2193,8 +2233,8 @@ export function createWorkspaceStore(options: {
         directory: resolved.directory || workspacePath,
         vesloHostUrl: resolved.hostUrl,
         vesloToken: host.token,
-        vesloWorkspaceId: resolved.workspace.id,
-        vesloWorkspaceName: resolved.workspace.name ?? workspace.vesloWorkspaceName ?? null,
+        vesloWorkspaceId: resolved.workspace?.id ?? workspace.vesloWorkspaceId ?? null,
+        vesloWorkspaceName: resolved.workspace?.name ?? workspace.vesloWorkspaceName ?? null,
         sandboxBackend: host.sandboxBackend ?? "docker",
         sandboxRunId: host.sandboxRunId ?? workspace.sandboxRunId ?? null,
         sandboxContainerName: host.sandboxContainerName ?? workspace.sandboxContainerName ?? null,
@@ -3038,15 +3078,58 @@ export function createWorkspaceStore(options: {
 
     if (CLOUD_ONLY_MODE) {
       options.setStartupPreference("server");
-      const activeRemoteWorkspace = activeWorkspaceInfo();
-      if (activeRemoteWorkspace?.workspaceType === "remote") {
+      const settings = options.vesloServerSettings();
+      const cloudHostUrl = normalizeVesloServerUrl(settings.urlOverride ?? "") ?? "";
+      const cloudToken = settings.token?.trim() ?? "";
+      const cloudDirectory = options.clientDirectory().trim() ? options.clientDirectory().trim() : null;
+      const normalizedCloudHost = normalizeVesloServerUrl(cloudHostUrl) ?? "";
+
+      const activeRemoteWorkspace = activeWorkspaceInfo()?.workspaceType === "remote"
+        ? activeWorkspaceInfo()
+        : null;
+      const cloudMatchedRemoteWorkspace = normalizedCloudHost
+        ? workspaces().find((workspace) => {
+            if (workspace.workspaceType !== "remote") return false;
+            const workspaceHost = normalizeVesloServerUrl(
+              workspace.vesloHostUrl ?? workspace.baseUrl ?? workspace.path ?? "",
+            );
+            return Boolean(workspaceHost && workspaceHost === normalizedCloudHost);
+          }) ?? null
+        : null;
+      const preferredRemoteWorkspace = cloudMatchedRemoteWorkspace ?? activeRemoteWorkspace;
+
+      if (preferredRemoteWorkspace?.workspaceType === "remote") {
         options.setOnboardingStep("connecting");
-        const ok = await activateWorkspace(activeRemoteWorkspace.id);
-        if (!ok) {
-          options.setOnboardingStep("server");
+        const ok = await activateWorkspace(preferredRemoteWorkspace.id);
+        if (ok) {
+          return;
         }
-        return;
+
+        if (isTauriRuntime()) {
+          try {
+            const ws = await workspaceForget(preferredRemoteWorkspace.id);
+            setWorkspaces(ws.workspaces);
+            syncActiveWorkspaceId(ws.activeId);
+            clearWorkspaceConnectionState(preferredRemoteWorkspace.id);
+          } catch {
+            // ignore
+          }
+        }
       }
+
+      if (cloudHostUrl) {
+        options.setOnboardingStep("connecting");
+        const ok = await createRemoteWorkspaceFlow({
+          vesloHostUrl: cloudHostUrl,
+          vesloToken: cloudToken || null,
+          directory: cloudDirectory,
+          displayName: null,
+        });
+        if (ok) {
+          return;
+        }
+      }
+
       options.setOnboardingStep("server");
       return;
     }

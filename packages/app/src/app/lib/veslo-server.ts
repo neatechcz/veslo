@@ -1,7 +1,7 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 import type { ScheduledJob } from "./tauri";
-import { resolveVesloCloudEnvironment } from "./cloud-policy";
+import { mergeVesloServerSettingsWithEnv } from "./cloud-policy";
 
 export type VesloServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "veslo" | "opencode" };
@@ -909,41 +909,15 @@ export function writeVesloServerSettings(next: VesloServerSettings): VesloServer
 export function hydrateVesloServerSettingsFromEnv() {
   if (typeof window === "undefined") return;
 
-  const envPort =
-    typeof import.meta.env?.VITE_VESLO_PORT === "string"
-      ? import.meta.env.VITE_VESLO_PORT.trim()
-      : "";
-  const resolvedEnv = resolveVesloCloudEnvironment(import.meta.env as Record<string, string | undefined>);
-  const envUrl = resolvedEnv.vesloUrl;
-  const envToken = resolvedEnv.token ?? "";
-
-  if (!envUrl && !envPort && !envToken) return;
-
   try {
     const current = readVesloServerSettings();
-    const next: VesloServerSettings = { ...current };
-    let changed = false;
-
-    if (!current.urlOverride && envUrl) {
-      next.urlOverride = normalizeVesloServerUrl(envUrl) ?? undefined;
-      changed = true;
-    }
-
-    if (!current.portOverride && envPort) {
-      const parsed = Number(envPort);
-      if (Number.isFinite(parsed) && parsed > 0) {
-        next.portOverride = parsed;
-        changed = true;
-      }
-    }
-
-    if (!current.token && envToken) {
-      next.token = envToken;
-      changed = true;
-    }
+    const { next, changed } = mergeVesloServerSettingsWithEnv(
+      current,
+      import.meta.env as Record<string, string | undefined>,
+    );
 
     if (changed) {
-      writeVesloServerSettings(next);
+      writeVesloServerSettings(next as VesloServerSettings);
     }
   } catch {
     // ignore

@@ -87,6 +87,7 @@ import {
 } from "../utils";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
+import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 
 import browserSetupTemplate from "../data/commands/browser-setup.md?raw";
 import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
@@ -3673,21 +3674,29 @@ export default function SessionView(props: SessionViewProps) {
                 <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-gray-6 bg-gray-1 text-gray-11">
                   <HardDrive size={24} />
                 </div>
-                <h3 class="text-2xl font-semibold text-gray-12">Set up your first worker</h3>
+                <h3 class="text-2xl font-semibold text-gray-12">Connect your worker</h3>
                 <p class="mt-2 text-sm text-gray-10">
-                  Veslo needs a local or remote worker before you can start a session.
+                  {CLOUD_ONLY_MODE
+                    ? "Veslo needs a remote worker before you can start a session."
+                    : "Veslo needs a worker before you can start a session."}
                 </p>
-                <div class="mt-6 grid gap-3 sm:grid-cols-2">
+                <div class={`mt-6 grid gap-3 ${CLOUD_ONLY_MODE ? "" : "sm:grid-cols-2"}`}>
+                  <Show when={!CLOUD_ONLY_MODE}>
+                    <button
+                      type="button"
+                      class="rounded-2xl border border-gray-7 bg-gray-12 px-4 py-3 text-sm font-semibold text-gray-1 transition-colors hover:bg-gray-11"
+                      onClick={props.openCreateWorkspace}
+                    >
+                      Create worker on this device
+                    </button>
+                  </Show>
                   <button
                     type="button"
-                    class="rounded-2xl border border-gray-7 bg-gray-12 px-4 py-3 text-sm font-semibold text-gray-1 transition-colors hover:bg-gray-11"
-                    onClick={props.openCreateWorkspace}
-                  >
-                    Create local worker
-                  </button>
-                  <button
-                    type="button"
-                    class="rounded-2xl border border-gray-7 bg-gray-1 px-4 py-3 text-sm font-semibold text-gray-12 transition-colors hover:bg-gray-3"
+                    class={`rounded-2xl border border-gray-7 px-4 py-3 text-sm font-semibold transition-colors ${
+                      CLOUD_ONLY_MODE
+                        ? "bg-gray-12 text-gray-1 hover:bg-gray-11"
+                        : "bg-gray-1 text-gray-12 hover:bg-gray-3"
+                    }`}
                     onClick={props.openCreateRemoteWorkspace}
                   >
                     Connect remote worker

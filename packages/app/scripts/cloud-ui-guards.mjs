@@ -33,4 +33,26 @@ assert.equal(
   "status bar must not display local server label",
 );
 
-console.log(JSON.stringify({ ok: true, checks: 5 }));
+const sessionSource = readFileSync(new URL("../src/app/pages/session.tsx", import.meta.url), "utf8");
+assert.equal(
+  sessionSource.includes("Veslo needs a local or remote worker before you can start a session."),
+  false,
+  "session empty state must not mention local workers",
+);
+assert.equal(
+  sessionSource.includes("Create local worker"),
+  false,
+  "session empty state must not offer local worker creation",
+);
+assert.equal(
+  sessionSource.includes("Set up your first worker"),
+  false,
+  "session empty state title must not imply local setup",
+);
+assert.equal(
+  sessionSource.includes("CLOUD_ONLY_MODE"),
+  true,
+  "session empty state must gate cloud-only behavior",
+);
+
+console.log(JSON.stringify({ ok: true, checks: 9 }));

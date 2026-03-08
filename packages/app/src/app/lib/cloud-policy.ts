@@ -1,6 +1,7 @@
 import {
   CLOUD_ONLY_MODE as cloudOnlyModeImpl,
   filterRemoteWorkspaces as filterRemoteWorkspacesImpl,
+  mergeVesloServerSettingsWithEnv as mergeVesloServerSettingsWithEnvImpl,
   resolveVesloCloudEnvironment as resolveVesloCloudEnvironmentImpl,
 } from "./cloud-policy.impl.js";
 
@@ -10,6 +11,12 @@ export type VesloCloudEnvironment = {
   loginUrl: string;
   token?: string;
   workspaceId?: string;
+};
+
+export type VesloServerSettingsLike = {
+  urlOverride?: string;
+  portOverride?: number;
+  token?: string;
 };
 
 export const CLOUD_ONLY_MODE: boolean = cloudOnlyModeImpl;
@@ -25,3 +32,13 @@ export const filterRemoteWorkspaces = <
 export const resolveVesloCloudEnvironment = (
   env: Record<string, string | undefined>,
 ): VesloCloudEnvironment => resolveVesloCloudEnvironmentImpl(env) as VesloCloudEnvironment;
+
+export const mergeVesloServerSettingsWithEnv = (
+  current: VesloServerSettingsLike,
+  env: Record<string, string | undefined>,
+  options?: { cloudOnlyMode?: boolean },
+): { next: VesloServerSettingsLike; changed: boolean } =>
+  mergeVesloServerSettingsWithEnvImpl(current, env, options) as {
+    next: VesloServerSettingsLike;
+    changed: boolean;
+  };

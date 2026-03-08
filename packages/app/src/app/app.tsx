@@ -176,6 +176,7 @@ import {
   type VesloWorkspaceExport,
   VesloServerError,
 } from "./lib/veslo-server";
+import { CLOUD_ONLY_MODE, resolveVesloCloudEnvironment } from "./lib/cloud-policy";
 
 type RemoteWorkspaceDefaults = {
   vesloHostUrl?: string | null;
@@ -585,9 +586,7 @@ function stripRemoteConnectQuery(rawUrl: string): string | null {
 
 export default function App() {
   const envVesloWorkspaceId =
-    typeof import.meta.env?.VITE_VESLO_WORKSPACE_ID === "string"
-      ? import.meta.env.VITE_VESLO_WORKSPACE_ID.trim() || null
-      : null;
+    resolveVesloCloudEnvironment(import.meta.env as Record<string, string | undefined>).workspaceId ?? null;
 
   // Workspace switch tracing is noisy, so only emit in developer mode.
   // (Veslo already has a developer mode toggle in Settings.)
@@ -3323,7 +3322,7 @@ export default function App() {
     setDeepLinkRemoteWorkspaceDefaults(null);
   });
 
-  const quickAddWorkerEnabled = createMemo(() => !isTauriRuntime());
+  const quickAddWorkerEnabled = createMemo(() => CLOUD_ONLY_MODE || !isTauriRuntime());
 
   const openCreateRemoteWorkspace = () => {
     if (!quickAddWorkerEnabled()) {
@@ -3341,7 +3340,8 @@ export default function App() {
       displayName: null,
     };
 
-    if (!hostUrl || !token) {
+    const requiresToken = !CLOUD_ONLY_MODE;
+    if (!hostUrl || (requiresToken && !token)) {
       setDeepLinkRemoteWorkspaceDefaults(defaults);
       workspaceStore.setCreateRemoteWorkspaceOpen(true);
       return;
@@ -5015,6 +5015,29 @@ export default function App() {
 
 
   onMount(async () => {
+    if (typeof window !== "undefined" && CLOUD_ONLY_MODE) {
+      const invite = readVesloConnectInviteFromSearch(window.location.search);
+      if (!invite) {
+        clearStartupPreference();
+        setRememberStartupChoice(false);
+        try {
+          for (const key of [
+            "veslo.baseUrl",
+            "veslo.clientDirectory",
+            "veslo.projectDir",
+            "veslo.onboardingComplete",
+          ]) {
+            window.localStorage.removeItem(key);
+          }
+        } catch {
+          // ignore
+        }
+        clearVesloServerSettings();
+        hydrateVesloServerSettingsFromEnv();
+        setVesloServerSettings(readVesloServerSettings());
+      }
+    }
+
     const startupPref = readStartupPreference();
     if (startupPref) {
       setRememberStartupChoice(true);
@@ -5920,7 +5943,13 @@ export default function App() {
       activateWorkspace: workspaceStore.activateWorkspace,
       testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
       recoverWorkspace: workspaceStore.recoverWorkspace,
-      openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
+      openCreateWorkspace: () => {
+        if (CLOUD_ONLY_MODE) {
+          openCreateRemoteWorkspace();
+          return;
+        }
+        workspaceStore.setCreateWorkspaceOpen(true);
+      },
       openCreateRemoteWorkspace,
       quickAddWorker: quickAddWorkerEnabled(),
       importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
@@ -6124,7 +6153,13 @@ export default function App() {
     recoverWorkspace: workspaceStore.recoverWorkspace,
     editWorkspaceConnection: openWorkspaceConnectionSettings,
     forgetWorkspace: workspaceStore.forgetWorkspace,
-    openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
+    openCreateWorkspace: () => {
+      if (CLOUD_ONLY_MODE) {
+        openCreateRemoteWorkspace();
+        return;
+      }
+      workspaceStore.setCreateWorkspaceOpen(true);
+    },
     openCreateRemoteWorkspace,
     quickAddWorker: quickAddWorkerEnabled(),
     importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
