@@ -120,6 +120,7 @@ export type SessionViewProps = {
   soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
   openCreateWorkspace: () => void;
   openCreateRemoteWorkspace: () => void;
+  showRemoteActions?: boolean;
   quickAddWorker: boolean;
   importWorkspaceConfig: () => void;
   importingWorkspaceConfig: boolean;
@@ -3405,6 +3406,7 @@ export default function SessionView(props: SessionViewProps) {
             workspaceConnectionStateById={props.workspaceConnectionStateById}
             newTaskDisabled={props.newTaskDisabled}
             importingWorkspaceConfig={props.importingWorkspaceConfig}
+            showRemoteActions={props.showRemoteActions}
             soulStatusByWorkspaceId={props.soulStatusByWorkspaceId}
             onActivateWorkspace={props.activateWorkspace}
             onOpenSession={openSessionFromList}
@@ -3420,7 +3422,11 @@ export default function SessionView(props: SessionViewProps) {
             onOpenCreateWorkspace={props.openCreateWorkspace}
             onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
             onImportWorkspaceConfig={props.importWorkspaceConfig}
-            onQuickAddWorker={props.quickAddWorker ? props.openCreateRemoteWorkspace : undefined}
+            onQuickAddWorker={
+              props.quickAddWorker && props.showRemoteActions !== false
+                ? props.openCreateRemoteWorkspace
+                : undefined
+            }
           />
         </div>
 
@@ -3685,13 +3691,15 @@ export default function SessionView(props: SessionViewProps) {
                   >
                     Create local worker
                   </button>
-                  <button
-                    type="button"
-                    class="rounded-2xl border border-gray-7 bg-gray-1 px-4 py-3 text-sm font-semibold text-gray-12 transition-colors hover:bg-gray-3"
-                    onClick={props.openCreateRemoteWorkspace}
-                  >
-                    Connect remote worker
-                  </button>
+                  <Show when={props.showRemoteActions !== false}>
+                    <button
+                      type="button"
+                      class="rounded-2xl border border-gray-7 bg-gray-1 px-4 py-3 text-sm font-semibold text-gray-12 transition-colors hover:bg-gray-3"
+                      onClick={props.openCreateRemoteWorkspace}
+                    >
+                      Connect remote worker
+                    </button>
+                  </Show>
                 </div>
               </div>
             </Show>

@@ -42,6 +42,7 @@ export type OnboardingViewProps = {
   migrationRepairResult: { ok: boolean; message: string } | null;
   developerMode: boolean;
   isWindows: boolean;
+  showRemoteActions?: boolean;
   onClientDirectoryChange: (value: string) => void;
   onVesloHostUrlChange: (value: string) => void;
   onVesloTokenChange: (value: string) => void;
@@ -87,6 +88,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
 
   const engineDoctorAvailable = () =>
     props.engineDoctorFound === true && props.engineDoctorSupportsServe === true;
+  const remoteActionsEnabled = () => props.showRemoteActions !== false;
 
   const engineStatusLabel = () => {
     if (props.engineDoctorFound == null || props.engineDoctorSupportsServe == null) {
@@ -109,6 +111,9 @@ export default function OnboardingView(props: OnboardingViewProps) {
   };
 
   const showServerStep = () => {
+    if (!remoteActionsEnabled()) {
+      return false;
+    }
     if (CLOUD_ONLY_MODE) {
       return props.onboardingStep !== "connecting";
     }
@@ -592,7 +597,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
         </div>
       </Match>
 
-      <Match when={!CLOUD_ONLY_MODE}>
+      <Match when={!CLOUD_ONLY_MODE && remoteActionsEnabled()}>
         <div class="min-h-screen flex flex-col items-center justify-center bg-gray-1 text-gray-12 p-6 relative">
           <div class="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-gray-2 to-transparent opacity-20 pointer-events-none" />
 
@@ -646,22 +651,24 @@ export default function OnboardingView(props: OnboardingViewProps) {
                 </div>
               </Show>
 
-              <button
-                onClick={() => props.onSelectStartup("server")}
-                class="group w-full relative bg-gray-2 hover:bg-gray-4 border border-gray-6 hover:border-gray-7 p-6 md:p-8 rounded-3xl text-left transition-all duration-300 hover:shadow-2xl hover:shadow-gray-12/10 hover:-translate-y-0.5 flex items-start gap-6"
-              >
-                <div class="shrink-0 w-14 h-14 rounded-2xl bg-gradient-to-br from-gray-7/20 to-gray-5/10 flex items-center justify-center border border-gray-6 group-hover:border-gray-7 transition-colors">
-                  <Globe size={18} class="text-gray-11" />
-                </div>
-                <div>
-                  <h3 class="text-xl font-medium text-gray-12 mb-2">
-                    {translate("onboarding.remote_workspace_card_title")}
-                  </h3>
-                  <p class="text-gray-10 text-sm leading-relaxed mb-4">
-                    {translate("onboarding.remote_workspace_card_description")}
-                  </p>
-                </div>
-              </button>
+              <Show when={remoteActionsEnabled()}>
+                <button
+                  onClick={() => props.onSelectStartup("server")}
+                  class="group w-full relative bg-gray-2 hover:bg-gray-4 border border-gray-6 hover:border-gray-7 p-6 md:p-8 rounded-3xl text-left transition-all duration-300 hover:shadow-2xl hover:shadow-gray-12/10 hover:-translate-y-0.5 flex items-start gap-6"
+                >
+                  <div class="shrink-0 w-14 h-14 rounded-2xl bg-gradient-to-br from-gray-7/20 to-gray-5/10 flex items-center justify-center border border-gray-6 group-hover:border-gray-7 transition-colors">
+                    <Globe size={18} class="text-gray-11" />
+                  </div>
+                  <div>
+                    <h3 class="text-xl font-medium text-gray-12 mb-2">
+                      {translate("onboarding.remote_workspace_card_title")}
+                    </h3>
+                    <p class="text-gray-10 text-sm leading-relaxed mb-4">
+                      {translate("onboarding.remote_workspace_card_description")}
+                    </p>
+                  </div>
+                </button>
+              </Show>
 
               <div class="flex items-center gap-2 px-2 py-1">
                 <button

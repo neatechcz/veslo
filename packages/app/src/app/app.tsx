@@ -176,6 +176,7 @@ import {
   type VesloWorkspaceExport,
   VesloServerError,
 } from "./lib/veslo-server";
+import { isRemoteUiEnabled } from "./lib/runtime-policy";
 
 type RemoteWorkspaceDefaults = {
   vesloHostUrl?: string | null;
@@ -3323,7 +3324,8 @@ export default function App() {
     setDeepLinkRemoteWorkspaceDefaults(null);
   });
 
-  const quickAddWorkerEnabled = createMemo(() => !isTauriRuntime());
+  const showRemoteActions = createMemo(() => isRemoteUiEnabled());
+  const quickAddWorkerEnabled = createMemo(() => showRemoteActions() && !isTauriRuntime());
 
   const openCreateRemoteWorkspace = () => {
     if (!quickAddWorkerEnabled()) {
@@ -5778,6 +5780,7 @@ export default function App() {
     migrationRepairBusy: workspaceStore.migrationRepairBusy(),
     migrationRepairResult: workspaceStore.migrationRepairResult(),
     isWindows: isWindowsPlatform(),
+    showRemoteActions: showRemoteActions(),
     onClientDirectoryChange: setClientDirectory,
     onVesloHostUrlChange: (value: string) =>
       updateVesloServerSettings({
@@ -6126,6 +6129,7 @@ export default function App() {
     forgetWorkspace: workspaceStore.forgetWorkspace,
     openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
     openCreateRemoteWorkspace,
+    showRemoteActions: showRemoteActions(),
     quickAddWorker: quickAddWorkerEnabled(),
     importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
     importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
