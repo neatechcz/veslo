@@ -38,6 +38,7 @@ export type SidebarProps = {
   onCreateRemoteWorkspace: () => void;
   onImportWorkspace: () => void;
   importingWorkspaceConfig?: boolean;
+  showRemoteActions?: boolean;
   onEditWorkspace: (workspaceId: string) => void;
   onTestWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
@@ -572,17 +573,19 @@ export default function SessionSidebar(props: SidebarProps) {
                     <Plus size={12} />
                     New worker
                   </button>
-                  <button
-                    type="button"
-                    class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:bg-gray-2 transition-colors"
-                    onClick={() => {
-                      props.onCreateRemoteWorkspace();
-                      setAddWorkspaceMenuOpen(false);
-                    }}
-                  >
-                    <Plus size={12} />
-                    Connect remote
-                  </button>
+                  <Show when={props.showRemoteActions !== false}>
+                    <button
+                      type="button"
+                      class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:bg-gray-2 transition-colors"
+                      onClick={() => {
+                        props.onCreateRemoteWorkspace();
+                        setAddWorkspaceMenuOpen(false);
+                      }}
+                    >
+                      <Plus size={12} />
+                      Connect remote
+                    </button>
+                  </Show>
                   <button
                     type="button"
                     class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:bg-gray-2 transition-colors disabled:opacity-60"
