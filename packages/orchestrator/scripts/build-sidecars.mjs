@@ -28,11 +28,11 @@ if (!serverVersion) {
 }
 
 const routerPkg = JSON.parse(
-  readFileSync(resolve(repoRoot, "packages", "veslo-code-router", "package.json"), "utf8"),
+  readFileSync(resolve(repoRoot, "packages", "opencode-router", "package.json"), "utf8"),
 );
 const routerVersion = String(routerPkg.version ?? "").trim();
 if (!routerVersion) {
-  throw new Error("veslo-code-router version missing in packages/veslo-code-router/package.json");
+  throw new Error("veslo-code-router version missing in packages/opencode-router/package.json");
 }
 
 const run = (command, args, cwd) => {
@@ -59,7 +59,7 @@ const sha256File = (path) => {
 };
 
 const serverDir = resolve(repoRoot, "packages", "server", "dist", "bin");
-const routerDir = resolve(repoRoot, "packages", "veslo-code-router", "dist", "bin");
+const routerDir = resolve(repoRoot, "packages", "opencode-router", "dist", "bin");
 
 mkdirSync(outdir, { recursive: true });
 

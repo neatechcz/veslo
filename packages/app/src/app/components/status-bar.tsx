@@ -300,7 +300,7 @@ export default function StatusBar(props: StatusBarProps) {
                   />
                   <Server class="w-3.5 h-3.5 text-gray-11" />
                   <span class="text-xs text-gray-12 font-medium">
-                    {props.startupPreference === "server" ? "Remote Server" : "Local Server"}
+                    Cloud Server
                   </span>
                   <span class={`ml-auto text-xs ${vesloStatusMeta().text}`}>
                     {vesloStatusMeta().label}

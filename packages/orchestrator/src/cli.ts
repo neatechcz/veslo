@@ -1409,7 +1409,7 @@ async function resolveOpenCodeRouterRepoDir(): Promise<string | null> {
   const envPath = process.env.OPENCODE_ROUTER_DIR?.trim();
   const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
   const repoRoot = resolve(root, "..", "..");
-  const candidates = [envPath, resolve(repoRoot, "packages", "veslo-code-router")].filter(Boolean) as string[];
+  const candidates = [envPath, resolve(repoRoot, "packages", "opencode-router")].filter(Boolean) as string[];
 
   for (const candidate of candidates) {
     const pkgPath = join(candidate, "package.json");
@@ -1435,7 +1435,7 @@ async function resolveExpectedVersion(
     }
     if (name === "veslo-code-router") {
       const repoDir = await resolveOpenCodeRouterRepoDir();
-      const localPath = repoDir ? join(repoDir, "package.json") : join(root, "..", "veslo-code-router", "package.json");
+      const localPath = repoDir ? join(repoDir, "package.json") : join(root, "..", "opencode-router", "package.json");
       const localVersion = await readPackageVersion(localPath);
       if (localVersion) return localVersion;
     }

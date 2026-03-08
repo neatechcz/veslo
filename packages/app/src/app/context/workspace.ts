@@ -66,6 +66,7 @@ import { waitForHealthy, createClient, type OpencodeAuth } from "../lib/opencode
 import type { OpencodeConnectStatus, ProviderListItem } from "../types";
 import { t, currentLocale } from "../../i18n";
 import { mapConfigProvidersToList } from "../utils/providers";
+import { CLOUD_ONLY_MODE, filterRemoteWorkspaces } from "../lib/cloud-policy";
 
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
 
@@ -149,6 +150,13 @@ export function createWorkspaceStore(options: {
   engineRuntime?: () => EngineRuntime;
   developerMode: () => boolean;
 }) {
+  const cloudOnlyMessage = (code: string, detail: string) => `${code}: ${detail}`;
+  const blockLocalAction = (code: string, detail: string) => {
+    const message = cloudOnlyMessage(code, detail);
+    options.setError(message);
+    wsDebug("cloud-only:block", { code, detail });
+    return false;
+  };
 
   const wsDebugEnabled = () => options.developerMode();
 
@@ -551,6 +559,13 @@ export function createWorkspaceStore(options: {
     updateWorkspaceConnectionState(id, { status: "connecting", message: null });
 
     if (workspace.workspaceType !== "remote") {
+      if (CLOUD_ONLY_MODE) {
+        updateWorkspaceConnectionState(id, {
+          status: "error",
+          message: cloudOnlyMessage("cloud_only_local_workspace_filtered", "Local workers are disabled."),
+        });
+        return false;
+      }
       updateWorkspaceConnectionState(id, { status: "connected", message: null });
       return true;
     }
@@ -717,6 +732,13 @@ export function createWorkspaceStore(options: {
     const next = workspaces().find((w) => w.id === id) ?? null;
     if (!next) return false;
     const isRemote = next.workspaceType === "remote";
+    if (CLOUD_ONLY_MODE && !isRemote) {
+      updateWorkspaceConnectionState(id, {
+        status: "error",
+        message: cloudOnlyMessage("cloud_only_local_workspace_filtered", "Local workers are disabled."),
+      });
+      return blockLocalAction("cloud_only_local_workspace_filtered", "Local workers are disabled.");
+    }
     console.log("[workspace] activate", { id: next.id, type: next.workspaceType });
     const activateStart = Date.now();
     wsDebug("activate:start", {
@@ -1396,6 +1418,11 @@ export function createWorkspaceStore(options: {
   }
 
   async function createWorkspaceFlow(preset: WorkspacePreset, folder: string | null) {
+    if (CLOUD_ONLY_MODE) {
+      blockLocalAction("cloud_only_local_disabled", "Local workspace creation is disabled.");
+      return;
+    }
+
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
       return;
@@ -1453,6 +1480,10 @@ export function createWorkspaceStore(options: {
     folder: string | null,
     input?: { onReady?: () => Promise<void> | void },
   ): Promise<boolean> {
+    if (CLOUD_ONLY_MODE) {
+      return blockLocalAction("cloud_only_local_disabled", "Local sandbox provisioning is disabled.");
+    }
+
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
       return false;
@@ -2376,6 +2407,7 @@ export function createWorkspaceStore(options: {
   }
 
   function canRepairOpencodeMigration() {
+    if (CLOUD_ONLY_MODE) return false;
     if (!isTauriRuntime()) return false;
     const workspace = activeWorkspaceInfo();
     if (!workspace || workspace.workspaceType !== "local") return false;
@@ -2383,6 +2415,13 @@ export function createWorkspaceStore(options: {
   }
 
   async function repairOpencodeMigration(optionsOverride?: { navigate?: boolean }) {
+    if (CLOUD_ONLY_MODE) {
+      const message = cloudOnlyMessage("cloud_only_local_disabled", "Local migration repair is disabled.");
+      setMigrationRepairResult({ ok: false, message });
+      options.setError(message);
+      return false;
+    }
+
     if (!isTauriRuntime()) {
       const message = t("app.migration.desktop_required", currentLocale());
       setMigrationRepairResult({ ok: false, message });
@@ -2470,6 +2509,13 @@ export function createWorkspaceStore(options: {
   }
 
   async function onRepairOpencodeMigration() {
+    if (CLOUD_ONLY_MODE) {
+      options.setStartupPreference("server");
+      options.setOnboardingStep("server");
+      blockLocalAction("cloud_only_local_disabled", "Local migration repair is disabled.");
+      return;
+    }
+
     options.setStartupPreference("local");
     options.setOnboardingStep("connecting");
     const ok = await repairOpencodeMigration({ navigate: true });
@@ -2479,6 +2525,10 @@ export function createWorkspaceStore(options: {
   }
 
   async function startHost(optionsOverride?: { workspacePath?: string; navigate?: boolean }) {
+    if (CLOUD_ONLY_MODE) {
+      return blockLocalAction("cloud_only_host_mode_removed", "Local host mode has been removed.");
+    }
+
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
       return false;
@@ -2654,6 +2704,10 @@ export function createWorkspaceStore(options: {
   }
 
   async function reloadWorkspaceEngine() {
+    if (CLOUD_ONLY_MODE) {
+      return blockLocalAction("cloud_only_local_disabled", "Reload is only available for remote workers.");
+    }
+
     if (!isTauriRuntime()) {
       options.setError("Reloading the engine requires the desktop app.");
       return false;
@@ -2933,8 +2987,13 @@ export function createWorkspaceStore(options: {
     if (isTauriRuntime()) {
       try {
         const ws = await workspaceBootstrap();
-        setWorkspaces(ws.workspaces);
-        syncActiveWorkspaceId(ws.activeId);
+        const nextWorkspaces = CLOUD_ONLY_MODE ? filterRemoteWorkspaces(ws.workspaces) : ws.workspaces;
+        setWorkspaces(nextWorkspaces);
+        const nextActiveId =
+          nextWorkspaces.find((item) => item.id === ws.activeId)?.id ??
+          nextWorkspaces[0]?.id ??
+          "";
+        syncActiveWorkspaceId(nextActiveId);
       } catch {
         // ignore
       }
@@ -2975,6 +3034,21 @@ export function createWorkspaceStore(options: {
     const info = engine();
     if (info?.baseUrl) {
       options.setBaseUrl(info.baseUrl);
+    }
+
+    if (CLOUD_ONLY_MODE) {
+      options.setStartupPreference("server");
+      const activeRemoteWorkspace = activeWorkspaceInfo();
+      if (activeRemoteWorkspace?.workspaceType === "remote") {
+        options.setOnboardingStep("connecting");
+        const ok = await activateWorkspace(activeRemoteWorkspace.id);
+        if (!ok) {
+          options.setOnboardingStep("server");
+        }
+        return;
+      }
+      options.setOnboardingStep("server");
+      return;
     }
 
     const activeWorkspace = activeWorkspaceInfo();
@@ -3036,6 +3110,13 @@ export function createWorkspaceStore(options: {
   }
 
   function onSelectStartup(nextPref: StartupPreference) {
+    if (CLOUD_ONLY_MODE && nextPref === "local") {
+      options.setStartupPreference("server");
+      options.setOnboardingStep("server");
+      blockLocalAction("cloud_only_host_mode_removed", "Local host mode has been removed.");
+      return;
+    }
+
     if (options.rememberStartupChoice()) {
       writeStartupPreference(nextPref);
     }
@@ -3049,6 +3130,13 @@ export function createWorkspaceStore(options: {
   }
 
   async function onStartHost() {
+    if (CLOUD_ONLY_MODE) {
+      options.setStartupPreference("server");
+      options.setOnboardingStep("server");
+      blockLocalAction("cloud_only_host_mode_removed", "Local host mode has been removed.");
+      return;
+    }
+
     options.setStartupPreference("local");
     options.setOnboardingStep("connecting");
     const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
@@ -3058,6 +3146,13 @@ export function createWorkspaceStore(options: {
   }
 
   async function onAttachHost() {
+    if (CLOUD_ONLY_MODE) {
+      options.setStartupPreference("server");
+      options.setOnboardingStep("server");
+      blockLocalAction("cloud_only_host_mode_removed", "Local host mode has been removed.");
+      return;
+    }
+
     options.setStartupPreference("local");
     options.setOnboardingStep("connecting");
     const ok = await connectToServer(
@@ -3094,7 +3189,9 @@ export function createWorkspaceStore(options: {
     try {
       if (next) {
         const current = options.startupPreference();
-        if (current === "local" || current === "server") {
+        if (CLOUD_ONLY_MODE) {
+          writeStartupPreference("server");
+        } else if (current === "local" || current === "server") {
           writeStartupPreference(current);
         }
       } else {

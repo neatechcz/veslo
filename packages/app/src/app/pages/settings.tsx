@@ -3,7 +3,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onMou
 import { formatBytes, formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
 
 import Button from "../components/button";
-import { CircleAlert, Copy, Download, FolderOpen, HardDrive, MessageCircle, PlugZap, RefreshCcw, Smartphone, X, Zap } from "lucide-solid";
+import { CircleAlert, Copy, Download, FolderOpen, MessageCircle, PlugZap, RefreshCcw, Smartphone, X, Zap } from "lucide-solid";
 import type { OpencodeConnectStatus, ProviderListItem, SettingsTab, StartupPreference } from "../types";
 import type {
   VesloAuditEntry,
@@ -31,6 +31,7 @@ import {
   sandboxDebugProbe,
 } from "../lib/tauri";
 import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
+import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 
 export type SettingsViewProps = {
   startupPreference: StartupPreference | null;
@@ -587,12 +588,7 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const isLocalEngineRunning = createMemo(() => Boolean(props.engineInfo?.running));
-  const isLocalPreference = createMemo(() => props.startupPreference === "local");
-  const startupLabel = createMemo(() => {
-    if (props.startupPreference === "local") return "Start local server";
-    if (props.startupPreference === "server") return "Connect to server";
-    return "Not set";
-  });
+  const startupLabel = createMemo(() => "Connect to cloud server");
 
   const tabLabel = (tab: SettingsTab) => {
     switch (tab) {
@@ -842,7 +838,7 @@ export default function SettingsView(props: SettingsViewProps) {
     if (!isTauriRuntime() || revealConfigBusy()) return;
     const path = workspaceConfigPath();
     if (!path) {
-      setConfigActionStatus("Select a local workspace before revealing config.");
+      setConfigActionStatus("Select an active worker before revealing config.");
       return;
     }
     setRevealConfigBusy(true);
@@ -1501,35 +1497,37 @@ export default function SettingsView(props: SettingsViewProps) {
                   </div>
                 </div>
 
-                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
-                  <div class="text-sm font-medium text-gray-12">Workspace config</div>
-                  <div class="text-xs text-gray-10">Reveal or reset `.opencode/veslo.json` defaults for this app workspace.</div>
-                  <div class="text-[11px] text-gray-7 font-mono break-all">{workspaceConfigPath() || "No active local workspace."}</div>
-                  <div class="flex flex-wrap items-center gap-2">
-                    <Button
-                      variant="outline"
-                      class="text-xs h-8 py-0 px-3"
-                      onClick={revealWorkspaceConfig}
-                      disabled={!isTauriRuntime() || revealConfigBusy() || !workspaceConfigPath()}
-                      title={!isTauriRuntime() ? "Reveal config requires the desktop app" : ""}
-                    >
-                      <FolderOpen size={13} class="mr-1.5" />
-                      {revealConfigBusy() ? "Opening..." : "Reveal config"}
-                    </Button>
-                    <Button
-                      variant="danger"
-                      class="text-xs h-8 py-0 px-3"
-                      onClick={resetAppConfigDefaults}
-                      disabled={resetConfigBusy() || props.anyActiveRuns}
-                      title={props.anyActiveRuns ? "Stop active runs before resetting config" : ""}
-                    >
-                      {resetConfigBusy() ? "Resetting..." : "Reset config defaults"}
-                    </Button>
+                <Show when={!CLOUD_ONLY_MODE}>
+                  <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+                    <div class="text-sm font-medium text-gray-12">Workspace config</div>
+                    <div class="text-xs text-gray-10">Reveal or reset `.opencode/veslo.json` defaults for this app workspace.</div>
+                    <div class="text-[11px] text-gray-7 font-mono break-all">{workspaceConfigPath() || "No active worker."}</div>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <Button
+                        variant="outline"
+                        class="text-xs h-8 py-0 px-3"
+                        onClick={revealWorkspaceConfig}
+                        disabled={!isTauriRuntime() || revealConfigBusy() || !workspaceConfigPath()}
+                        title={!isTauriRuntime() ? "Reveal config requires the desktop app" : ""}
+                      >
+                        <FolderOpen size={13} class="mr-1.5" />
+                        {revealConfigBusy() ? "Opening..." : "Reveal config"}
+                      </Button>
+                      <Button
+                        variant="danger"
+                        class="text-xs h-8 py-0 px-3"
+                        onClick={resetAppConfigDefaults}
+                        disabled={resetConfigBusy() || props.anyActiveRuns}
+                        title={props.anyActiveRuns ? "Stop active runs before resetting config" : ""}
+                      >
+                        {resetConfigBusy() ? "Resetting..." : "Reset config defaults"}
+                      </Button>
+                    </div>
+                    <Show when={configActionStatus()}>
+                      {(status) => <div class="text-xs text-gray-10">{status()}</div>}
+                    </Show>
                   </div>
-                  <Show when={configActionStatus()}>
-                    {(status) => <div class="text-xs text-gray-10">{status()}</div>}
-                  </Show>
-                </div>
+                </Show>
 
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                   <div class="min-w-0">
@@ -1584,54 +1582,32 @@ export default function SettingsView(props: SettingsViewProps) {
 
                   <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6">
                     <div class="flex items-center gap-3">
-                      <div
-                        class={`p-2 rounded-lg ${
-                          isLocalPreference() ? "bg-indigo-7/10 text-indigo-11" : "bg-green-7/10 text-green-11"
-                        }`}
-                      >
-                        <Show when={isLocalPreference()} fallback={<Smartphone size={18} />}>
-                          <HardDrive size={18} />
-                        </Show>
+                      <div class="p-2 rounded-lg bg-green-7/10 text-green-11">
+                        <Smartphone size={18} />
                       </div>
                       <span class="text-sm font-medium text-gray-12">{startupLabel()}</span>
                     </div>
                     <Button
                       variant="outline"
                       class="text-xs h-8 py-0 px-3"
-                      onClick={props.stopHost}
+                      onClick={props.reconnectVesloServer}
                       disabled={props.busy}
                     >
-                      Switch
+                      Reconnect
                     </Button>
                   </div>
 
-                  <Button
-                    variant="secondary"
-                    class="w-full justify-between group"
-                    onClick={props.onResetStartupPreference}
-                  >
-                    <span>Reset startup preference</span>
-                    <RefreshCcw size={14} class="opacity-80 group-hover:rotate-180 transition-transform" />
-                  </Button>
-
                   <p class="text-xs text-gray-7">
-                    This clears your saved preference and shows the connection choice on next launch.
+                    This build is cloud-only. Local host mode is disabled.
                   </p>
                 </div>
 
-                <Show when={isTauriRuntime() && (isLocalPreference() || props.developerMode)}>
+                <Show when={isTauriRuntime() && props.developerMode && !CLOUD_ONLY_MODE}>
                   <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
                     <div>
                       <div class="text-sm font-medium text-gray-12">Engine</div>
                       <div class="text-xs text-gray-10">Choose how OpenCode runs locally.</div>
                     </div>
-
-                    <Show when={!isLocalPreference()}>
-                      <div class="text-[11px] text-amber-11 bg-amber-3/40 border border-amber-7/40 rounded-lg px-3 py-2">
-                        Startup preference is currently remote. Engine settings are saved now and apply the next time you
-                        run locally.
-                      </div>
-                    </Show>
 
                     <div class="space-y-3">
                       <div class="text-xs text-gray-10">Engine source</div>

@@ -6,10 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::types::{
     ExecResult, RemoteType, WorkspaceInfo, WorkspaceList, WorkspaceVesloConfig, WorkspaceType,
 };
-use crate::workspace::files::ensure_workspace_files;
 use crate::workspace::state::{
-    ensure_starter_workspace, load_workspace_state, save_workspace_state, stable_workspace_id,
-    stable_workspace_id_for_veslo, stable_workspace_id_for_remote,
+    load_workspace_state, sanitize_cloud_only_state, save_workspace_state, stable_workspace_id,
+    stable_workspace_id_for_remote, stable_workspace_id_for_veslo,
 };
 use crate::workspace::watch::{update_workspace_watch, WorkspaceWatchState};
 use serde::Serialize;
@@ -25,21 +24,7 @@ pub fn workspace_bootstrap(
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] bootstrap");
     let mut state = load_workspace_state(&app)?;
-
-    let starter = ensure_starter_workspace(&app)?;
-    ensure_workspace_files(&starter.path, &starter.preset)?;
-
-    if !state.workspaces.iter().any(|w| w.id == starter.id) {
-        state.workspaces.push(starter.clone());
-    }
-
-    if state.active_id.trim().is_empty() {
-        state.active_id = starter.id.clone();
-    }
-
-    if !state.workspaces.iter().any(|w| w.id == state.active_id) {
-        state.active_id = starter.id.clone();
-    }
+    sanitize_cloud_only_state(&mut state);
 
     save_workspace_state(&app, &state)?;
     let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
@@ -78,13 +63,7 @@ pub fn workspace_forget(
             .map(|entry| entry.id.clone())
             .unwrap_or_else(|| "".to_string());
     }
-
-    if state.workspaces.is_empty() {
-        let starter = ensure_starter_workspace(&app)?;
-        ensure_workspace_files(&starter.path, &starter.preset)?;
-        state.active_id = starter.id.clone();
-        state.workspaces.push(starter);
-    }
+    sanitize_cloud_only_state(&mut state);
 
     save_workspace_state(&app, &state)?;
     let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
@@ -164,68 +143,13 @@ pub fn workspace_update_display_name(
 
 #[tauri::command]
 pub fn workspace_create(
-    app: tauri::AppHandle,
-    folder_path: String,
-    name: String,
-    preset: String,
-    watch_state: State<WorkspaceWatchState>,
+    _app: tauri::AppHandle,
+    _folder_path: String,
+    _name: String,
+    _preset: String,
+    _watch_state: State<WorkspaceWatchState>,
 ) -> Result<WorkspaceList, String> {
-    println!("[workspace] create local request");
-    let folder = folder_path.trim().to_string();
-    if folder.is_empty() {
-        return Err("folderPath is required".to_string());
-    }
-
-    let workspace_name = name.trim().to_string();
-    if workspace_name.is_empty() {
-        return Err("name is required".to_string());
-    }
-
-    let preset = preset.trim().to_string();
-    let preset = if preset.is_empty() {
-        "starter".to_string()
-    } else {
-        preset
-    };
-
-    fs::create_dir_all(&folder).map_err(|e| format!("Failed to create workspace folder: {e}"))?;
-
-    let id = stable_workspace_id(&folder);
-
-    ensure_workspace_files(&folder, &preset)?;
-
-    let mut state = load_workspace_state(&app)?;
-
-    state.workspaces.retain(|w| w.id != id);
-    state.workspaces.push(WorkspaceInfo {
-        id: id.clone(),
-        name: workspace_name,
-        path: folder,
-        preset,
-        workspace_type: WorkspaceType::Local,
-        remote_type: None,
-        base_url: None,
-        directory: None,
-        display_name: None,
-        veslo_host_url: None,
-        veslo_token: None,
-        veslo_workspace_id: None,
-        veslo_workspace_name: None,
-        sandbox_backend: None,
-        sandbox_run_id: None,
-        sandbox_container_name: None,
-    });
-
-    state.active_id = id.clone();
-    save_workspace_state(&app, &state)?;
-    let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
-    update_workspace_watch(&app, watch_state, active_workspace)?;
-    println!("[workspace] create local complete: {id}");
-
-    Ok(WorkspaceList {
-        active_id: state.active_id,
-        workspaces: state.workspaces,
-    })
+    Err("cloud_only_local_disabled: Local workspace creation is disabled".to_string())
 }
 
 #[tauri::command]
