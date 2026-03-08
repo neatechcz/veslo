@@ -85,7 +85,13 @@ pnpm db:migrate
 - `GET /health`
 - `GET /` demo web app (sign-up + auth + worker launch)
 - `GET /v1/me`
+- `GET /v1/orgs`
+- `GET /v1/orgs/:orgId/members`
+- `POST /v1/orgs/:orgId/members`
+- `PATCH /v1/orgs/:orgId/members/:memberId`
+- `DELETE /v1/orgs/:orgId/members/:memberId`
 - `GET /v1/workers` (list recent workers for signed-in user/org)
+  - For multi-org users, send `x-veslo-org-id` to select the active org.
 - `POST /v1/workers`
   - Cloud launches return `202` quickly with worker `status=provisioning` and continue provisioning asynchronously.
   - Returns `402 payment_required` with Polar checkout URL when paywall is enabled and entitlement is missing.

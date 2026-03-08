@@ -21,6 +21,7 @@ const timestamps = {
 }
 
 export const OrgRole = ["owner", "member"] as const
+export const PlatformRole = ["platform_admin"] as const
 export const WorkerDestination = ["local", "cloud"] as const
 export const WorkerStatus = ["provisioning", "healthy", "failed", "stopped"] as const
 export const TokenScope = ["client", "host"] as const
@@ -125,6 +126,19 @@ export const OrgMembershipTable = mysqlTable(
     created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [index("org_membership_org_id").on(table.org_id), index("org_membership_user_id").on(table.user_id)],
+)
+
+export const PlatformRoleTable = mysqlTable(
+  "platform_role",
+  {
+    id: id().primaryKey(),
+    user_id: varchar("user_id", { length: 64 }).notNull(),
+    role: mysqlEnum("role", PlatformRole).notNull(),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("platform_role_user_id").on(table.user_id),
+  ],
 )
 
 export const WorkerTable = mysqlTable(
