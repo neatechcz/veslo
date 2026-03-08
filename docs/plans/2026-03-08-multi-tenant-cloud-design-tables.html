@@ -1,0 +1,790 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Veslo Multi-Tenant Cloud Design Tables</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --card: #ffffff;
+      --text: #111827;
+      --muted: #4b5563;
+      --line: #d1d5db;
+      --head: #e5edf8;
+      --accent: #1f6feb;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", Roboto, Arial, sans-serif;
+      line-height: 1.5;
+    }
+
+    .container {
+      max-width: 1320px;
+      margin: 24px auto 64px;
+      padding: 0 16px;
+    }
+
+    h1, h2 {
+      margin: 0 0 12px;
+      line-height: 1.2;
+    }
+
+    h1 {
+      font-size: 28px;
+      color: #0f172a;
+    }
+
+    h2 {
+      margin-top: 28px;
+      font-size: 20px;
+      color: #0f172a;
+    }
+
+    p {
+      margin: 0 0 8px;
+      color: var(--muted);
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px 14px 10px;
+      margin-top: 16px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      margin-top: 10px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 980px;
+      background: #fff;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+      font-size: 14px;
+    }
+
+    th {
+      background: var(--head);
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    code {
+      background: #eef2ff;
+      border: 1px solid #c7d2fe;
+      border-radius: 4px;
+      padding: 1px 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      color: #3730a3;
+    }
+
+    .badge {
+      display: inline-block;
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      color: #1d4ed8;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .latest-chip {
+      display: inline-block;
+      border: 1px solid #10b981;
+      background: #ecfdf5;
+      color: #065f46;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-left: 8px;
+    }
+
+    .latest-row td {
+      background: #ecfdf5;
+    }
+
+    .latest-section {
+      border-color: #10b981;
+      box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.2), 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+
+    .latest-note {
+      border-color: #10b981;
+      background: #ecfdf5;
+    }
+
+    .footer {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Veslo Multi-Tenant Cloud Design Tables</h1>
+    <p><span class="badge">Design Draft</span> Organization-first, real multi-tenant model with owner-managed billing, admin-governed global sharing, and project-first UI semantics.<span class="latest-chip">Latest revision</span></p>
+    <section class="card latest-note">
+      <p><span class="strong">Change Marking Legend:</span> green rows and green-bordered sections are changes from the latest revision only.</p>
+    </section>
+
+    <section class="card">
+      <h2>1. Core Multi-Tenant Operating Model</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Area</th>
+              <th>Design Decision</th>
+              <th>Platform Admin</th>
+              <th>Org Owner</th>
+              <th>Org Member</th>
+              <th>DB/API Impact</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Org auto-creation</td>
+              <td>When no org is mapped to the user's email domain, user creates a new org and becomes owner.</td>
+              <td>Can override or merge orgs.</td>
+              <td>Auto-assigned owner on create.</td>
+              <td>N/A</td>
+              <td><code>org</code>, <code>org_domain</code>, signup hook.</td>
+            </tr>
+            <tr>
+              <td>Public email domains</td>
+              <td>Public domains default to personal org creation. Public-domain list is advisory, not a hard dependency.</td>
+              <td>Maintains baseline list, but logic must still work if list is incomplete.</td>
+              <td>N/A</td>
+              <td>N/A</td>
+              <td><code>public_email_domain</code> optional hint table only.</td>
+            </tr>
+            <tr>
+              <td>Existing domain behavior</td>
+              <td>If org exists for domain, user sees: <code>Create new org</code> or <code>Join existing org</code> unless owner has locked domain joining.</td>
+              <td>Can override in support flows.</td>
+              <td>Can lock domain to join-only mode.</td>
+              <td>Choose create/join based on org policy.</td>
+              <td><code>org_domain.allow_new_org_on_match</code>, pre-login decision API.</td>
+            </tr>
+            <tr>
+              <td>Domain ownership</td>
+              <td>Org domains can be DNS-verified; verified domain unlocks trusted join paths.</td>
+              <td>Can force-verify/revoke.</td>
+              <td>Add/verify domains.</td>
+              <td>View only.</td>
+              <td><code>org_domain(status, verified_at, token)</code>.</td>
+            </tr>
+            <tr>
+              <td>Multi-owner support</td>
+              <td>Any org can have multiple owners.</td>
+              <td>Override promote/demote.</td>
+              <td>Promote/demote owners and members.</td>
+              <td>No.</td>
+              <td><code>org_membership(role)</code>.</td>
+            </tr>
+            <tr>
+              <td>Join policy</td>
+              <td>Per-org policy: <code>invite_only</code>, <code>domain_request</code>, <code>domain_auto_join</code>; owner can require approval even for domain joins.</td>
+              <td>Can enforce global floor/ceiling policy.</td>
+              <td>Configure policy.</td>
+              <td>Request or auto-join based on policy.</td>
+              <td><code>org.join_policy</code>, invite/join APIs.</td>
+            </tr>
+            <tr>
+              <td>Active org context</td>
+              <td>User may belong to multiple orgs; each request requires explicit <code>active_org_id</code>.</td>
+              <td>Can support/impersonate with audit.</td>
+              <td>Switch among own orgs.</td>
+              <td>Switch among own orgs.</td>
+              <td>Session claim + org guard middleware.</td>
+            </tr>
+            <tr>
+              <td>Tenant isolation</td>
+              <td>Every tenant table row must carry <code>org_id</code>; all queries filter by it.</td>
+              <td>Audit and emergency override only.</td>
+              <td>Within own org only.</td>
+              <td>Within own org only.</td>
+              <td>Mandatory <code>org_id</code> + policy tests.</td>
+            </tr>
+            <tr>
+              <td>Platform settings visibility</td>
+              <td>Platform settings are hidden from org owners and members.</td>
+              <td>Full control.</td>
+              <td>No visibility.</td>
+              <td>No visibility.</td>
+              <td><code>platform_settings</code>, admin-only APIs.</td>
+            </tr>
+            <tr>
+              <td>Org model preferences</td>
+              <td>Each org can choose preferred provider/model profile (future-safe for Gemini/OpenAI/etc.).</td>
+              <td>Can define platform-level allowed provider catalog.</td>
+              <td>Can configure org model defaults within allowed catalog.</td>
+              <td>Can use defaults; no policy changes.</td>
+              <td><code>org_settings.model_profile</code>, policy checks at runtime.</td>
+            </tr>
+            <tr class="latest-row">
+              <td>Project management permissions (UI)</td>
+              <td>UI uses "Projects" as the user-facing name. Backend can keep <code>worker</code> short-term as a compatibility layer.</td>
+              <td>Emergency controls only: suspend project/org, temporary policy override, and ownership recovery; every action requires reason + audit.</td>
+              <td>Define org project policies and manage all org projects.</td>
+              <td>Create projects and manage projects they own or are explicitly assigned to.</td>
+              <td><code>worker.org_id</code> isolation + <code>project</code> label alias + admin emergency-action audit schema.</td>
+            </tr>
+            <tr>
+              <td>Billing ownership</td>
+              <td>Exactly one subscription per org, managed by owners.</td>
+              <td>Can approve invoice mode and override status.</td>
+              <td>Primary billing controllers.</td>
+              <td>No billing permissions.</td>
+              <td><code>org_subscription</code> (1:1 with <code>org</code>).</td>
+            </tr>
+            <tr>
+              <td>Billing modes</td>
+              <td><code>self_serve</code> (Polar/Stripe) or <code>admin_invoiced</code> (manual invoice, admin-approved).</td>
+              <td>Approves and manages invoice mode.</td>
+              <td>Requests/selects mode.</td>
+              <td>No.</td>
+              <td><code>org_billing_request</code>, <code>org.billing_mode</code>.</td>
+            </tr>
+            <tr>
+              <td>Admin trial control</td>
+              <td>Admin can set or extend trial duration to any date/time per org.</td>
+              <td>Set, extend, or clear trial end date.</td>
+              <td>Can request extension.</td>
+              <td>No.</td>
+              <td><code>org_subscription.trial_ends_at</code>, admin billing API.</td>
+            </tr>
+            <tr>
+              <td>Global MCP catalog</td>
+              <td>Admin publishes MCPs globally.</td>
+              <td>Publish/retire.</td>
+              <td>Consume; propose via workflow.</td>
+              <td>Consume.</td>
+              <td><code>artifact(scope=global, kind=mcp)</code>.</td>
+            </tr>
+            <tr>
+              <td>Global skills & automations</td>
+              <td>Admin publishes to all orgs/users after approval.</td>
+              <td>Publish/retire.</td>
+              <td>Consume; submit candidates.</td>
+              <td>Consume.</td>
+              <td><code>artifact(scope=global)</code> + approvals.</td>
+            </tr>
+            <tr>
+              <td>Artifact defaults</td>
+              <td>Default artifact scope is private-to-user or private-to-org. Sharing is a separate UI action layered on top.</td>
+              <td>Can enforce policy constraints.</td>
+              <td>Can publish org-wide when policy allows.</td>
+              <td>Create private artifacts by default.</td>
+              <td><code>artifact.scope_default</code> + explicit publish actions.</td>
+            </tr>
+            <tr>
+              <td>Org-level sharing</td>
+              <td>Owners publish org-scoped MCP/skills/automations to all members.</td>
+              <td>Moderation override.</td>
+              <td>Approve and publish.</td>
+              <td>Submit for review.</td>
+              <td><code>artifact(scope=org)</code>, approval transitions.</td>
+            </tr>
+            <tr>
+              <td>Member contributions</td>
+              <td>Members create skills/MCP/automations in private scope, then submit to owners for org sharing.</td>
+              <td>Escalation review only.</td>
+              <td>Approve/reject.</td>
+              <td>Create/submit.</td>
+              <td><code>artifact_submission</code>.</td>
+            </tr>
+            <tr>
+              <td>Org-to-global promotion</td>
+              <td>Owner submits org artifact for global catalog; admin approves/rejects before platform-wide rollout.</td>
+              <td>Final gate.</td>
+              <td>Submit and track status.</td>
+              <td>No direct global publish.</td>
+              <td><code>artifact_release(state machine)</code>.</td>
+            </tr>
+            <tr>
+              <td>Auditability</td>
+              <td>All role, billing, sharing, and approval events are immutable and auditable.</td>
+              <td>Full visibility.</td>
+              <td>Org-visible logs.</td>
+              <td>Limited self-scoped visibility.</td>
+              <td><code>audit_event(org_id, actor, action, payload)</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card latest-section">
+      <h2>1A. Project Governance and Admin Emergency Controls <span class="latest-chip">Clarified</span></h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Control Area</th>
+              <th>Org Member</th>
+              <th>Org Owner</th>
+              <th>Platform Admin (Emergency Only)</th>
+              <th>Implementation Rule</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="latest-row">
+              <td>Create project</td>
+              <td>Allowed by default.</td>
+              <td>Allowed.</td>
+              <td>Not needed.</td>
+              <td>Project is stored as org-scoped backend <code>worker</code> entity.</td>
+            </tr>
+            <tr class="latest-row">
+              <td>Edit/rename project</td>
+              <td>Own/assigned projects only.</td>
+              <td>Any project in org.</td>
+              <td>Only for break-glass support.</td>
+              <td>Ownership and assignment checks enforced per request.</td>
+            </tr>
+            <tr class="latest-row">
+              <td>Archive/delete project</td>
+              <td>Own projects only (or owner policy limit).</td>
+              <td>Any project in org.</td>
+              <td>Force archive/delete when needed for abuse/recovery.</td>
+              <td>Soft-delete preferred; hard-delete requires extra confirmation path.</td>
+            </tr>
+            <tr class="latest-row">
+              <td>Suspend project execution</td>
+              <td>No.</td>
+              <td>Allowed within org policy.</td>
+              <td>Allowed globally.</td>
+              <td>Suspended project becomes read-only for execution APIs.</td>
+            </tr>
+            <tr class="latest-row">
+              <td>Suspend organization</td>
+              <td>No.</td>
+              <td>No.</td>
+              <td>Allowed (billing/compliance/security incidents).</td>
+              <td>Blocks project creation and execution across org.</td>
+            </tr>
+            <tr class="latest-row">
+              <td>Policy override</td>
+              <td>No.</td>
+              <td>Standard policy only.</td>
+              <td>Temporary override only.</td>
+              <td>Override must include <code>reason</code>, <code>scope</code>, <code>expires_at</code>, and audit trail.</td>
+            </tr>
+            <tr class="latest-row">
+              <td>Ownership recovery</td>
+              <td>No.</td>
+              <td>Can reassign inside org.</td>
+              <td>Can force transfer when org is locked out.</td>
+              <td>Always audited as privileged operation.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2. Domain Login Decision Matrix</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Condition at Login</th>
+              <th>User Choices</th>
+              <th>Owner Policy Influence</th>
+              <th>Outcome</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>No org mapped to domain</td>
+              <td>Create new org</td>
+              <td>N/A</td>
+              <td>Org created, user becomes owner.</td>
+            </tr>
+            <tr>
+              <td>Org exists for domain, creation allowed</td>
+              <td>Create new org or request join existing</td>
+              <td>Owner can keep creation allowed.</td>
+              <td>User picks either path.</td>
+            </tr>
+            <tr>
+              <td>Org exists for domain, creation locked</td>
+              <td>Join existing only</td>
+              <td>Owner sets domain to join-only.</td>
+              <td>User cannot create another org for that domain.</td>
+            </tr>
+            <tr>
+              <td>Join request submitted</td>
+              <td>Wait for approval</td>
+              <td>Owner approval required when policy says so.</td>
+              <td>Membership becomes active after owner approval.</td>
+            </tr>
+            <tr>
+              <td>Domain auto-join enabled</td>
+              <td>Join immediately</td>
+              <td>Owner can disable auto-join anytime.</td>
+              <td>User becomes member without manual approval.</td>
+            </tr>
+            <tr>
+              <td>Public domain user (<code>gmail</code>, etc.)</td>
+              <td>Create personal org by default; join via invite/request</td>
+              <td>Owner invite/join policy still applies.</td>
+              <td>No blind domain-based auto-grouping.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. Billing State Model (Org-Level)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Billing State</th>
+              <th>Entry Trigger</th>
+              <th>Who Can Change</th>
+              <th>System Effect</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>trialing</code></td>
+              <td>New org trial or admin custom trial assignment.</td>
+              <td>Admin / Owner (request)</td>
+              <td>Trial entitlements active.</td>
+            </tr>
+            <tr>
+              <td><code>active_self_serve</code></td>
+              <td>Successful Stripe/Polar checkout.</td>
+              <td>Owner / Admin</td>
+              <td>Full paid access.</td>
+            </tr>
+            <tr>
+              <td><code>admin_invoiced_pending</code></td>
+              <td>Owner requests invoice mode.</td>
+              <td>Admin</td>
+              <td>Pending approval; restricted as configured.</td>
+            </tr>
+            <tr>
+              <td><code>active_admin_invoiced</code></td>
+              <td>Admin approves invoiced billing.</td>
+              <td>Admin (Owner visible)</td>
+              <td>Full access without in-app card requirement.</td>
+            </tr>
+            <tr>
+              <td><code>past_due</code></td>
+              <td>Invoice overdue or card charge failed.</td>
+              <td>Owner / Admin</td>
+              <td>Grace period + warnings.</td>
+            </tr>
+            <tr>
+              <td><code>suspended</code></td>
+              <td>Past due exceeds grace or admin suspension.</td>
+              <td>Admin</td>
+              <td>Cloud project creation blocked; restricted runtime.</td>
+            </tr>
+            <tr>
+              <td><code>canceled</code></td>
+              <td>Owner/admin cancellation.</td>
+              <td>Owner / Admin</td>
+              <td>Access ends at period end.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>4. Settings Responsibility Model</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Settings Scope</th>
+              <th>Examples</th>
+              <th>Visible To</th>
+              <th>Editable By</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="strong">Platform settings</span></td>
+              <td>Global model provider credentials, global infra connectors, global policy defaults.</td>
+              <td>Platform admins only.</td>
+              <td>Platform admins only.</td>
+              <td>Hidden from owners/members by design.</td>
+            </tr>
+            <tr>
+              <td><span class="strong">Org settings</span></td>
+              <td>Join policy, domain lock, approval policy, org model preference profile.</td>
+              <td>Owners (+ optional read-only members).</td>
+              <td>Owners.</td>
+              <td>Future-ready for per-company model choices (Gemini/OpenAI/etc.).</td>
+            </tr>
+            <tr>
+              <td><span class="strong">Project settings</span></td>
+              <td>Per-project defaults, runtime knobs, project-level skills/automations.</td>
+              <td>Project collaborators in org.</td>
+              <td>Creator + permitted collaborators.</td>
+              <td>UI term is <code>Project</code>; backend may keep <code>worker</code> temporarily.</td>
+            </tr>
+            <tr>
+              <td><span class="strong">User settings</span></td>
+              <td>Personal drafts, private skills, preferences.</td>
+              <td>User only.</td>
+              <td>User.</td>
+              <td>Private by default unless explicitly shared.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>5. Artifact Sharing Workflow (Overlay Feature)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Workflow State</th>
+              <th>Created By</th>
+              <th>Required Next Approval</th>
+              <th>Visibility</th>
+              <th>Meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>private_user</code></td>
+              <td>Member / Owner</td>
+              <td>None</td>
+              <td>Creator only</td>
+              <td>Default personal artifact.</td>
+            </tr>
+            <tr>
+              <td><code>private_org</code></td>
+              <td>Owner or org-authorized creator</td>
+              <td>None</td>
+              <td>Owner team only</td>
+              <td>Default org-scoped artifact before publication.</td>
+            </tr>
+            <tr>
+              <td><code>submitted_to_org</code></td>
+              <td>Member / Owner</td>
+              <td>Org Owner approval</td>
+              <td>Owners + submitter</td>
+              <td>Member contribution awaiting org sharing decision.</td>
+            </tr>
+            <tr>
+              <td><code>org_published</code></td>
+              <td>Org Owner</td>
+              <td>Optional admin approval for global promotion</td>
+              <td>All members in org</td>
+              <td>Shared inside organization.</td>
+            </tr>
+            <tr>
+              <td><code>submitted_to_global</code></td>
+              <td>Org Owner</td>
+              <td>Platform Admin approval</td>
+              <td>Admin + source org owners</td>
+              <td>Org-to-global promotion request.</td>
+            </tr>
+            <tr>
+              <td><code>global_published</code></td>
+              <td>Platform Admin</td>
+              <td>None</td>
+              <td>All orgs and users</td>
+              <td>Global catalog distribution.</td>
+            </tr>
+            <tr>
+              <td><code>rejected</code></td>
+              <td>Owner / Admin</td>
+              <td>Resubmission by member/owner</td>
+              <td>Submitter + approvers</td>
+              <td>Needs revision before republish.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>6. Data Model Sketch</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Table</th>
+              <th>Purpose</th>
+              <th>Critical Keys / Constraints</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>platform_role</code></td>
+              <td>Global admin roles.</td>
+              <td><code>user_id</code> unique per role grant.</td>
+            </tr>
+            <tr>
+              <td><code>org</code> (extend)</td>
+              <td>Tenant root and policy config.</td>
+              <td><code>id</code>, <code>slug</code> unique, <code>join_policy</code>, <code>billing_mode</code>, <code>allow_new_org_on_domain_match</code>.</td>
+            </tr>
+            <tr>
+              <td><code>org_domain</code></td>
+              <td>Email domain to org mapping + verification state.</td>
+              <td><code>domain</code> indexed (not always unique), <code>org_id</code> foreign key, <code>allow_join</code>, <code>require_owner_approval</code>.</td>
+            </tr>
+            <tr>
+              <td><code>org_membership</code> (extend)</td>
+              <td>Membership and role assignment.</td>
+              <td>Unique <code>(org_id, user_id)</code>.</td>
+            </tr>
+            <tr>
+              <td><code>org_invite</code></td>
+              <td>Invite-only onboarding flow.</td>
+              <td><code>token</code> unique, <code>expires_at</code>.</td>
+            </tr>
+            <tr>
+              <td><code>org_join_request</code></td>
+              <td>Owner-managed domain join requests.</td>
+              <td>Unique open request per <code>(org_id, user_id)</code>.</td>
+            </tr>
+            <tr>
+              <td><code>org_subscription</code></td>
+              <td>Single subscription record per org.</td>
+              <td>Unique <code>org_id</code>, provider ids indexed, <code>trial_ends_at</code> admin-settable.</td>
+            </tr>
+            <tr>
+              <td><code>org_billing_request</code></td>
+              <td>Invoice approval workflow.</td>
+              <td><code>org_id</code>, <code>status</code>, <code>approved_by_admin_id</code>.</td>
+            </tr>
+            <tr>
+              <td><code>org_settings</code></td>
+              <td>Organization-configurable behavior and model preferences.</td>
+              <td><code>org_id</code> unique, model/provider profile fields, policy toggles.</td>
+            </tr>
+            <tr>
+              <td><code>platform_settings</code></td>
+              <td>Global infrastructure and provider credentials.</td>
+              <td>Admin-only table; no org read access.</td>
+            </tr>
+            <tr>
+              <td><code>artifact</code></td>
+              <td>Unified item for skill/MCP/automation.</td>
+              <td><code>kind</code>, <code>scope</code> (<code>private_user</code>/<code>private_org</code>/<code>org</code>/<code>global</code>), <code>org_id</code> nullable for global.</td>
+            </tr>
+            <tr>
+              <td><code>artifact_release</code></td>
+              <td>Approval state transitions.</td>
+              <td><code>artifact_id</code>, <code>state</code>, immutable transition log.</td>
+            </tr>
+            <tr>
+              <td><code>artifact_distribution</code></td>
+              <td>Rollout targeting and enable flags.</td>
+              <td><code>artifact_id</code>, target <code>all_orgs</code> or specific <code>org_id</code>.</td>
+            </tr>
+            <tr>
+              <td><code>audit_event</code> (existing/extend)</td>
+              <td>Security, billing, sharing auditability.</td>
+              <td>Indexed <code>org_id</code>, actor, action, timestamp.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>7. Phased Implementation Plan (Parts)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Phase</th>
+              <th>Goal</th>
+              <th>Minimum Deliverables</th>
+              <th>Out of Scope (for that phase)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Phase 1: Tenant & Role Foundation</td>
+              <td>Separate platform admin from org roles and enforce org context.</td>
+              <td>Admin role table, active-org context in session/API, org-guard middleware, query hardening by <code>org_id</code>.</td>
+              <td>Global catalog publishing UI.</td>
+            </tr>
+            <tr>
+              <td>Phase 2: Domain Join/Create Flows</td>
+              <td>Implement domain-based decision matrix and owner-controlled join policy.</td>
+              <td>Domain decision endpoint, create-vs-join UI flow, join request + owner approval flow, domain lock controls.</td>
+              <td>Advanced DNS verification automation.</td>
+            </tr>
+            <tr>
+              <td>Phase 3: Org Billing Control</td>
+              <td>Move billing to org-level ownership with admin invoice path.</td>
+              <td><code>org_subscription</code>, invoice approval workflow, admin custom trial duration control, owner billing screens.</td>
+              <td>Complex finance reporting.</td>
+            </tr>
+            <tr>
+              <td>Phase 4: Project UI Migration</td>
+              <td>Rename "Workers" to "Projects" in UI and allow creation by all org users.</td>
+              <td>UI copy migration, permissions update for member project creation, backward-compatible backend naming.</td>
+              <td>Backend entity rename from <code>worker</code> to <code>project</code>.</td>
+            </tr>
+            <tr>
+              <td>Phase 5: Artifact Sharing Overlay</td>
+              <td>Add contribution, org publish, and global promotion flow.</td>
+              <td>Private defaults, owner approval path, admin global approval gate, audit trail for publish actions.</td>
+              <td>Marketplace/revenue features.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="footer">
+        Source context: current cloud control plane under <code>services/den</code>, with existing org/worker baseline and extension points for true multi-org tenant operations.
+      </p>
+    </section>
+  </div>
+</body>
+</html>

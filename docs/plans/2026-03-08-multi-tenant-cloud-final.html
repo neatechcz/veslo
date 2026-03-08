@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Veslo Multi-Tenant Cloud - Final MVP Spec</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --card: #ffffff;
+      --text: #111827;
+      --muted: #4b5563;
+      --line: #d1d5db;
+      --head: #e8eef9;
+      --accent: #1f6feb;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", Roboto, Arial, sans-serif;
+      line-height: 1.45;
+    }
+
+    .container {
+      max-width: 1380px;
+      margin: 20px auto 56px;
+      padding: 0 16px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 30px;
+      color: #0f172a;
+    }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 20px;
+      color: #0f172a;
+    }
+
+    p {
+      margin: 0 0 10px;
+      color: var(--muted);
+    }
+
+    .badge {
+      display: inline-block;
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      color: #1d4ed8;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 600;
+      vertical-align: middle;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px;
+      margin-top: 14px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      margin-top: 10px;
+      background: #fff;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 980px;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 9px 10px;
+      vertical-align: top;
+      text-align: left;
+      font-size: 14px;
+    }
+
+    th {
+      background: var(--head);
+      font-weight: 600;
+      color: #0f172a;
+    }
+
+    code {
+      background: #eef2ff;
+      border: 1px solid #c7d2fe;
+      border-radius: 4px;
+      padding: 1px 4px;
+      font-size: 12px;
+      color: #3730a3;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .footer {
+      margin-top: 16px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Veslo Multi-Tenant Cloud Final Spec</h1>
+    <p>
+      <span class="badge">Final Draft</span>
+      MVP-first design for true multi-tenancy with organization ownership, platform admin role separation, and strict org isolation.
+    </p>
+
+    <section class="card">
+      <h2>1. Core Decisions</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Area</th>
+              <th>Final Decision</th>
+              <th>MVP Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Tenant model</td>
+              <td>All business entities are organization-scoped via <code>org_id</code>; requests require active org context.</td>
+              <td>In MVP</td>
+            </tr>
+            <tr>
+              <td>Roles</td>
+              <td><code>platform_admin</code> (global), <code>org_owner</code>, <code>org_member</code>.</td>
+              <td>In MVP</td>
+            </tr>
+            <tr>
+              <td>Workers naming</td>
+              <td>UI label changes from <span class="strong">Workers</span> to <span class="strong">Projects</span>; backend can keep <code>worker</code> entity initially.</td>
+              <td>In MVP</td>
+            </tr>
+            <tr>
+              <td>Project creation</td>
+              <td>Any org user can create projects in MVP.</td>
+              <td>In MVP</td>
+            </tr>
+            <tr>
+              <td>Admin authority</td>
+              <td>Admin has stronger rights than owners, but used for exceptional interventions (security/compliance/recovery), not day-to-day operations.</td>
+              <td>In MVP</td>
+            </tr>
+            <tr>
+              <td>Private member-only projects</td>
+              <td>Do not block future support for owner-inaccessible private projects; not implemented in first version.</td>
+              <td>Post-MVP</td>
+            </tr>
+            <tr>
+              <td>AI project audits</td>
+              <td>Future AI guardrails may warn/stop projects based on company policy; not part of first version.</td>
+              <td>Post-MVP</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2. Domain Login and Organization Creation</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Login Condition</th>
+              <th>User Options</th>
+              <th>Owner Policy Influence</th>
+              <th>Outcome</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>No organization exists for domain</td>
+              <td>Create new organization</td>
+              <td>N/A</td>
+              <td>User becomes first owner.</td>
+            </tr>
+            <tr>
+              <td>Organization exists for domain</td>
+              <td>Create new org or join existing org</td>
+              <td>Owner can lock domain behavior</td>
+              <td>Default open choice unless locked.</td>
+            </tr>
+            <tr>
+              <td>Domain is locked by owner for join-only</td>
+              <td>Join existing only</td>
+              <td>Owner-defined domain lock</td>
+              <td>New org creation disabled for matching domain.</td>
+            </tr>
+            <tr>
+              <td>Join requires approval</td>
+              <td>Submit join request</td>
+              <td>Owner approval workflow</td>
+              <td>User becomes member after approval.</td>
+            </tr>
+            <tr>
+              <td>Public domains (gmail/outlook/etc.)</td>
+              <td>Create personal org by default or join via invite/request</td>
+              <td>Public-domain list is advisory only</td>
+              <td>No dependency on keeping a perfect public-domain list.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. Access and Control Matrix</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Capability</th>
+              <th>Org Member</th>
+              <th>Org Owner</th>
+              <th>Platform Admin</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Create project</td>
+              <td>Yes</td>
+              <td>Yes</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td>Manage project access/policy</td>
+              <td>Own or assigned projects only</td>
+              <td>Any project in org</td>
+              <td>Global authority</td>
+            </tr>
+            <tr>
+              <td>Stop project (normal operation)</td>
+              <td>Own/assigned projects</td>
+              <td>Any org project</td>
+              <td>Yes, but intended for exceptional interventions</td>
+            </tr>
+            <tr>
+              <td>Suspend organization execution</td>
+              <td>No</td>
+              <td>No</td>
+              <td>Yes (security/compliance/billing incidents)</td>
+            </tr>
+            <tr>
+              <td>Manage org members and roles</td>
+              <td>No</td>
+              <td>Yes</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td>View/edit platform settings</td>
+              <td>No</td>
+              <td>No</td>
+              <td>Yes only</td>
+            </tr>
+            <tr>
+              <td>View/edit org settings</td>
+              <td>Read/use only (configurable)</td>
+              <td>Yes</td>
+              <td>Yes</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="footer">Admin interventions must always create audited records with <code>reason</code>, <code>actor</code>, <code>scope</code>, and <code>timestamp</code>.</p>
+    </section>
+
+    <section class="card">
+      <h2>4. Settings Boundaries</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Settings Scope</th>
+              <th>Examples</th>
+              <th>Visibility</th>
+              <th>Edit Rights</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Platform settings</td>
+              <td>Global model provider credentials, global model catalog, platform connectors.</td>
+              <td>Platform admins only</td>
+              <td>Platform admins only</td>
+            </tr>
+            <tr>
+              <td>Organization settings</td>
+              <td>Join policy, domain lock, approval requirements, org model preference profile.</td>
+              <td>Owners (optional member read-only)</td>
+              <td>Owners</td>
+            </tr>
+            <tr>
+              <td>Project settings</td>
+              <td>Project defaults, runtime knobs, project-level assets.</td>
+              <td>Project collaborators</td>
+              <td>Creator/assigned collaborators + owner</td>
+            </tr>
+            <tr>
+              <td>User settings</td>
+              <td>Personal preferences and private artifacts.</td>
+              <td>User only</td>
+              <td>User only</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>5. Billing Model (Organization-Owned)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Billing Rule</th>
+              <th>Decision</th>
+              <th>MVP Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Subscription cardinality</td>
+              <td>Exactly one subscription per organization.</td>
+              <td>In MVP</td>
+            </tr>
+            <tr>
+              <td>Billing responsibility</td>
+              <td>Organization owners manage billing.</td>
+              <td>In MVP</td>
+            </tr>
+            <tr>
+              <td>Self-serve mode</td>
+              <td>Owner pays through Polar/Stripe checkout.</td>
+              <td>In MVP</td>
+            </tr>
+            <tr>
+              <td>Admin invoiced mode</td>
+              <td>Owner requests; admin approves; invoice handled outside in-app card flow.</td>
+              <td>In MVP</td>
+            </tr>
+            <tr>
+              <td>Trial control</td>
+              <td>Admin can set or extend trial duration to any date/time.</td>
+              <td>In MVP</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>6. Artifact Sharing Semantics</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Concept</th>
+              <th>Final Meaning</th>
+              <th>MVP Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Default artifact scope</td>
+              <td>Everything starts private (user-private or org-private).</td>
+              <td>In MVP</td>
+            </tr>
+            <tr>
+              <td>Sharing model</td>
+              <td>Sharing is an explicit overlay action in UI, not default state.</td>
+              <td>In MVP</td>
+            </tr>
+            <tr>
+              <td>Member contribution</td>
+              <td>Member creates skill/MCP/automation and submits to owner for org sharing approval.</td>
+              <td>Post-MVP (can stub workflow in MVP)</td>
+            </tr>
+            <tr>
+              <td>Org-to-global promotion</td>
+              <td>Owner proposes org artifact to global catalog; admin approves before global rollout.</td>
+              <td>Post-MVP</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>7. Data Model (MVP vs Later)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Table</th>
+              <th>Purpose</th>
+              <th>Scope</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>platform_role</code></td>
+              <td>Global admin grants.</td>
+              <td>MVP</td>
+            </tr>
+            <tr>
+              <td><code>org</code></td>
+              <td>Organization root + policy flags.</td>
+              <td>MVP</td>
+            </tr>
+            <tr>
+              <td><code>org_domain</code></td>
+              <td>Domain mapping and join/create policy.</td>
+              <td>MVP</td>
+            </tr>
+            <tr>
+              <td><code>org_membership</code></td>
+              <td>Owner/member roles per org.</td>
+              <td>MVP</td>
+            </tr>
+            <tr>
+              <td><code>org_join_request</code></td>
+              <td>Owner-approval join flow.</td>
+              <td>MVP</td>
+            </tr>
+            <tr>
+              <td><code>org_settings</code></td>
+              <td>Org-level settings, including model preference profile.</td>
+              <td>MVP</td>
+            </tr>
+            <tr>
+              <td><code>org_subscription</code></td>
+              <td>Single org subscription + trial end field.</td>
+              <td>MVP</td>
+            </tr>
+            <tr>
+              <td><code>org_billing_request</code></td>
+              <td>Invoiced billing request/approval lifecycle.</td>
+              <td>MVP</td>
+            </tr>
+            <tr>
+              <td><code>audit_event</code></td>
+              <td>Immutable log for role, billing, membership, and admin interventions.</td>
+              <td>MVP</td>
+            </tr>
+            <tr>
+              <td><code>artifact</code>, <code>artifact_release</code>, <code>artifact_distribution</code></td>
+              <td>Contribution and global sharing workflows.</td>
+              <td>Post-MVP</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>8. MVP Function Inventory (Required Now)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Function</th>
+              <th>Purpose</th>
+              <th>Why Required for V1 Multi-Tenancy</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>resolveUserOrganizations(userId)</code></td><td>List org memberships for current user.</td><td>Needed for org switch and auth scope.</td></tr>
+            <tr><td><code>setActiveOrganization(sessionId, orgId)</code></td><td>Bind session/request context to one org.</td><td>Prevents cross-tenant ambiguity.</td></tr>
+            <tr><td><code>requireOrgContext(request)</code></td><td>Reject requests missing valid org context.</td><td>Core isolation guard.</td></tr>
+            <tr><td><code>requireOrgRole(orgId, userId, role)</code></td><td>Enforce owner/member/admin permissions.</td><td>Role separation baseline.</td></tr>
+            <tr><td><code>parseEmailDomain(email)</code></td><td>Extract normalized domain from login email.</td><td>Domain onboarding logic entry point.</td></tr>
+            <tr><td><code>findOrganizationsByDomain(domain)</code></td><td>Find existing organizations for domain.</td><td>Supports join/create decision.</td></tr>
+            <tr><td><code>getDomainOnboardingOptions(userId, domain)</code></td><td>Return allowed actions: create, join, request.</td><td>Implements domain policy behavior.</td></tr>
+            <tr><td><code>createOrganization(input, ownerUserId)</code></td><td>Create org and initial owner membership.</td><td>Primary tenant creation path.</td></tr>
+            <tr><td><code>setOrganizationDomainPolicy(orgId, ownerId, policy)</code></td><td>Owner sets join-only / approval requirements.</td><td>Required domain governance rule.</td></tr>
+            <tr><td><code>requestOrganizationJoin(orgId, userId)</code></td><td>Submit membership request.</td><td>Approval-based joining.</td></tr>
+            <tr><td><code>approveOrganizationJoin(orgId, ownerId, requestId)</code></td><td>Owner accepts join request.</td><td>Owner-controlled membership.</td></tr>
+            <tr><td><code>inviteOrganizationMember(orgId, ownerId, email, role)</code></td><td>Owner invites member/owner.</td><td>Controlled org growth.</td></tr>
+            <tr><td><code>updateOrganizationMemberRole(orgId, ownerId, memberId, role)</code></td><td>Promote/demote members and owners.</td><td>Multi-owner operation.</td></tr>
+            <tr><td><code>createProject(orgId, actorId, payload)</code></td><td>Create project (backend worker).</td><td>Any-user project creation requirement.</td></tr>
+            <tr><td><code>listProjects(orgId, actorId)</code></td><td>List visible projects in active org.</td><td>Tenant-scoped project UX.</td></tr>
+            <tr><td><code>updateProject(projectId, actorId, payload)</code></td><td>Edit project metadata/settings.</td><td>Core collaboration flow.</td></tr>
+            <tr><td><code>stopProject(projectId, actorId, reason)</code></td><td>Stop project execution.</td><td>Owner primary control + audited admin fallback.</td></tr>
+            <tr><td><code>adminSuspendOrganization(orgId, adminId, reason)</code></td><td>Exceptional org-level execution suspension.</td><td>Admin stronger-than-owner safety control.</td></tr>
+            <tr><td><code>getOrganizationBilling(orgId, actorId)</code></td><td>Read org billing state.</td><td>Owner billing operations.</td></tr>
+            <tr><td><code>startOrganizationCheckout(orgId, ownerId)</code></td><td>Start self-serve checkout.</td><td>Single-subscription activation path.</td></tr>
+            <tr><td><code>requestInvoicedBilling(orgId, ownerId)</code></td><td>Owner asks for admin invoiced mode.</td><td>Required invoicing path.</td></tr>
+            <tr><td><code>approveInvoicedBilling(orgId, adminId)</code></td><td>Admin activates invoiced billing.</td><td>Admin billing approval rule.</td></tr>
+            <tr><td><code>setOrganizationTrialEnd(orgId, adminId, trialEndsAt)</code></td><td>Admin sets/extends trial duration.</td><td>Explicit requirement from product direction.</td></tr>
+            <tr><td><code>getOrganizationSettings(orgId, actorId)</code></td><td>Read org settings including model preferences.</td><td>Org-level control surface.</td></tr>
+            <tr><td><code>updateOrganizationSettings(orgId, ownerId, patch)</code></td><td>Owner updates org settings.</td><td>Company-specific defaults.</td></tr>
+            <tr><td><code>getPlatformSettings(adminId)</code></td><td>Read platform settings.</td><td>Admin-only visibility boundary.</td></tr>
+            <tr><td><code>updatePlatformSettings(adminId, patch)</code></td><td>Edit platform settings.</td><td>Admin-only global control.</td></tr>
+            <tr><td><code>recordAuditEvent(input)</code></td><td>Persist immutable security/audit events.</td><td>Traceability for privileged actions.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>9. Strict MVP Cut (Removed for Now)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Deferred Capability</th>
+              <th>Reason Deferred</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Global artifact catalog publication workflow</td><td>Not required to prove tenant isolation and org/admin separation.</td></tr>
+            <tr><td>Member-to-owner artifact contribution workflow UI</td><td>Can ship after core tenant/billing foundation.</td></tr>
+            <tr><td>Org-to-global promotion approval pipeline</td><td>Depends on global artifact catalog capabilities.</td></tr>
+            <tr><td>Automated DNS domain verification</td><td>Manual/domain policy baseline is enough for MVP.</td></tr>
+            <tr><td>AI project policy audits and auto-stop</td><td>Future governance layer, not core multi-tenancy.</td></tr>
+            <tr><td>Owner-inaccessible private member projects</td><td>Future privacy model; keep data model extensible but skip V1.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="footer">
+        Companion implementation document: <code>docs/plans/2026-03-08-multi-tenant-cloud-final.md</code>.
+      </p>
+    </section>
+  </div>
+</body>
+</html>
