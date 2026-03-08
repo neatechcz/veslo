@@ -6288,6 +6288,11 @@ export default function App() {
     const rawPath = location.pathname.trim();
     const path = rawPath.toLowerCase();
 
+    if (onboardingStep() === "language" && !path.startsWith("/onboarding")) {
+      navigate("/onboarding", { replace: true });
+      return;
+    }
+
     if (path === "" || path === "/") {
       navigate(initialRoute(), { replace: true });
       return;
@@ -6356,6 +6361,9 @@ export default function App() {
     }
 
     if (path.startsWith("/onboarding")) {
+      if (onboardingStep() === "language") {
+        return;
+      }
       navigate("/session", { replace: true });
       return;
     }

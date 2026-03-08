@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 const source = readFileSync(new URL("../src/app/pages/onboarding.tsx", import.meta.url), "utf8");
 const workspaceSource = readFileSync(new URL("../src/app/context/workspace.ts", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../src/app/app.tsx", import.meta.url), "utf8");
 
 assert.equal(
   source.includes("if (CLOUD_ONLY_MODE)"),
@@ -34,5 +35,15 @@ assert.equal(
   true,
   "language onboarding gate must check persisted language preference key",
 );
+assert.equal(
+  appSource.includes('if (onboardingStep() === "language" && !path.startsWith("/onboarding"))'),
+  true,
+  "router must enter onboarding route when language step is active",
+);
+assert.equal(
+  appSource.includes('if (path.startsWith("/onboarding")) {\n      if (onboardingStep() === "language") {\n        return;\n      }'),
+  true,
+  "router must not redirect away from onboarding while language step is active",
+);
 
-console.log(JSON.stringify({ ok: true, checks: 6 }));
+console.log(JSON.stringify({ ok: true, checks: 8 }));
