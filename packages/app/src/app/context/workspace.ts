@@ -66,7 +66,7 @@ import { waitForHealthy, createClient, type OpencodeAuth } from "../lib/opencode
 import type { OpencodeConnectStatus, ProviderListItem } from "../types";
 import { t, currentLocale } from "../../i18n";
 import { mapConfigProvidersToList } from "../utils/providers";
-import { CLOUD_ONLY_MODE, filterRemoteWorkspaces } from "../lib/cloud-policy";
+import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
 
@@ -2987,7 +2987,7 @@ export function createWorkspaceStore(options: {
     if (isTauriRuntime()) {
       try {
         const ws = await workspaceBootstrap();
-        const nextWorkspaces = CLOUD_ONLY_MODE ? filterRemoteWorkspaces(ws.workspaces) : ws.workspaces;
+        const nextWorkspaces = ws.workspaces;
         setWorkspaces(nextWorkspaces);
         const nextActiveId =
           nextWorkspaces.find((item) => item.id === ws.activeId)?.id ??
