@@ -54,6 +54,7 @@ import {
   AUTO_COMPACT_CONTEXT_PREF_KEY,
   DEFAULT_MODEL,
   HIDE_TITLEBAR_PREF_KEY,
+  LANGUAGE_PREF_KEY,
   MCP_QUICK_CONNECT,
   MODEL_PREF_KEY,
   SESSION_MODEL_PREF_KEY,
@@ -107,7 +108,7 @@ import {
   normalizeDirectoryQueryPath,
   normalizeDirectoryPath,
 } from "./utils";
-import { currentLocale, setLocale, t, type Language } from "../i18n";
+import { currentLocale, isLanguage, setLocale, t, type Language } from "../i18n";
 import {
   isWindowsPlatform,
   lastUserModelFromMessages,
@@ -679,8 +680,17 @@ export default function App() {
   };
 
   const [startupPreference, setStartupPreference] = createSignal<StartupPreference | null>(null);
+  const initialOnboardingStep = (): OnboardingStep => {
+    if (typeof window === "undefined") return "welcome";
+    try {
+      const stored = window.localStorage.getItem(LANGUAGE_PREF_KEY);
+      return isLanguage(stored) ? "welcome" : "language";
+    } catch {
+      return "welcome";
+    }
+  };
   const [onboardingStep, setOnboardingStep] =
-    createSignal<OnboardingStep>("welcome");
+    createSignal<OnboardingStep>(initialOnboardingStep());
   const [rememberStartupChoice, setRememberStartupChoice] = createSignal(false);
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
 
@@ -775,9 +785,11 @@ export default function App() {
       const next = writeVesloServerSettings(merged);
       setVesloServerSettings(next);
 
-      if (invite.startup === "server" && untrack(onboardingStep) === "welcome") {
+      if (invite.startup === "server") {
         setStartupPreference("server");
-        setOnboardingStep("server");
+        if (untrack(onboardingStep) !== "language") {
+          setOnboardingStep("server");
+        }
       }
     }
 
@@ -5750,6 +5762,7 @@ export default function App() {
   const onboardingProps = () => ({
     startupPreference: startupPreference(),
     onboardingStep: onboardingStep(),
+    language: currentLocale(),
     rememberStartupChoice: rememberStartupChoice(),
     busy: busy(),
     clientDirectory: clientDirectory(),
@@ -5790,6 +5803,11 @@ export default function App() {
         token: value,
       }),
     onSelectStartup: workspaceStore.onSelectStartup,
+    onSetLanguage: setLocale,
+    onConfirmLanguage: async () => {
+      setLocale(currentLocale());
+      await workspaceStore.onConfirmLanguage();
+    },
     onRememberStartupToggle: workspaceStore.onRememberStartupToggle,
     onStartHost: workspaceStore.onStartHost,
     onRepairMigration: workspaceStore.onRepairOpencodeMigration,
