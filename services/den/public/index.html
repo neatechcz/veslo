@@ -5,39 +5,108 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Den Control Plane</title>
     <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
       body {
-        font-family: Arial, sans-serif;
-        margin: 24px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         background: #f8fafc;
         color: #0f172a;
       }
 
-      h1 {
-        margin-top: 0;
+      /* ---- Desktop onboarding (sign-in) view ---- */
+      .onboard-container {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
       }
+      .onboard-card {
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 32px;
+        width: 100%;
+        max-width: 380px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      }
+      .onboard-card h1 {
+        font-size: 22px;
+        margin-bottom: 4px;
+      }
+      .onboard-card .subtitle {
+        color: #64748b;
+        font-size: 14px;
+        margin-bottom: 20px;
+      }
+      .field { margin-bottom: 14px; }
+      .field label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      .field input {
+        width: 100%;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 14px;
+        outline: none;
+      }
+      .field input:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.15); }
+      .btn-primary {
+        width: 100%;
+        border: 0;
+        border-radius: 8px;
+        padding: 10px;
+        background: #1d4ed8;
+        color: #fff;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        margin-bottom: 10px;
+      }
+      .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+      .btn-primary:hover:not(:disabled) { background: #1e40af; }
+      .toggle-row {
+        text-align: center;
+        font-size: 13px;
+        color: #64748b;
+        margin-top: 12px;
+      }
+      .toggle-row button {
+        background: none;
+        border: none;
+        color: #2563eb;
+        font-size: 13px;
+        cursor: pointer;
+        text-decoration: underline;
+      }
+      .error-text { color: #dc2626; font-size: 13px; margin-top: 8px; }
+      .success-card {
+        text-align: center;
+        padding: 48px 32px;
+      }
+      .success-card h1 { font-size: 20px; margin-bottom: 8px; }
+      .success-card p { color: #64748b; font-size: 14px; }
+      .hidden { display: none; }
 
+      /* ---- Demo view (original) ---- */
+      .demo-container { margin: 24px; }
+      .demo-container h1 { margin-top: 0; }
       .grid {
         display: grid;
         gap: 12px;
         grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
       }
-
       .card {
         background: #fff;
         border: 1px solid #cbd5e1;
         border-radius: 8px;
         padding: 16px;
       }
-
-      label {
-        display: block;
-        margin-top: 8px;
-        font-size: 13px;
-        font-weight: 600;
-      }
-
-      input,
-      select {
+      .card label { display: block; margin-top: 8px; font-size: 13px; font-weight: 600; }
+      .card input, .card select {
         width: 100%;
         box-sizing: border-box;
         margin-top: 4px;
@@ -45,8 +114,7 @@
         border-radius: 6px;
         padding: 8px;
       }
-
-      button {
+      .card button {
         margin-top: 10px;
         border: 0;
         border-radius: 6px;
@@ -55,7 +123,6 @@
         color: #fff;
         cursor: pointer;
       }
-
       pre {
         white-space: pre-wrap;
         word-break: break-word;
@@ -65,184 +132,314 @@
         padding: 10px;
         min-height: 90px;
       }
-
-      .muted {
-        color: #475569;
-        font-size: 13px;
-      }
+      .muted { color: #475569; font-size: 13px; }
     </style>
   </head>
   <body>
-    <h1>Den Control Plane Demo</h1>
-    <p class="muted">Sign up, verify auth, and launch a cloud worker end-to-end.</p>
 
-    <div class="grid">
-      <section class="card">
-        <h2>1) Sign up</h2>
-        <label>
-          Name
-          <input id="signup-name" value="Den Demo" />
-        </label>
-        <label>
-          Email
-          <input id="signup-email" placeholder="demo@example.com" />
-        </label>
-        <label>
-          Password
-          <input id="signup-password" type="password" value="TestPass123!" />
-        </label>
-        <button id="signup-button" type="button">Create account</button>
-      </section>
+    <!-- ============ Desktop Onboarding View ============ -->
+    <div id="onboard-view" class="onboard-container hidden">
+      <!-- Auth form -->
+      <div id="onboard-form" class="onboard-card">
+        <h1 id="onboard-title">Welcome back</h1>
+        <p id="onboard-subtitle" class="subtitle">Sign in to continue to Openwork.</p>
 
-      <section class="card">
-        <h2>2) Verify auth/session</h2>
-        <button id="me-button" type="button">GET /v1/me (cookie session)</button>
-        <button id="me-bearer-button" type="button">GET /v1/me (Bearer token)</button>
-        <p class="muted">Bearer token comes from sign-up/sign-in response.</p>
-      </section>
+        <form id="auth-form">
+          <div id="name-field" class="field hidden">
+            <label for="auth-name">Name</label>
+            <input id="auth-name" type="text" autocomplete="name" />
+          </div>
+          <div class="field">
+            <label for="auth-email">Email</label>
+            <input id="auth-email" type="email" autocomplete="email" required />
+          </div>
+          <div class="field">
+            <label for="auth-password">Password</label>
+            <input id="auth-password" type="password" required />
+          </div>
+          <button id="auth-submit" class="btn-primary" type="submit">Sign in</button>
+        </form>
 
-      <section class="card">
-        <h2>3) Launch worker</h2>
-        <label>
-          Name
-          <input id="worker-name" value="web-flow-worker" />
-        </label>
-        <label>
-          Destination
-          <select id="worker-destination">
-            <option value="cloud" selected>cloud</option>
-            <option value="local">local</option>
-          </select>
-        </label>
-        <label>
-          Workspace path (required for local)
-          <input id="worker-workspace-path" value="/tmp/workspace" />
-        </label>
-        <button id="worker-button" type="button">POST /v1/workers</button>
+        <div id="auth-error" class="error-text hidden"></div>
+
+        <div class="toggle-row">
+          <span id="toggle-prompt">Need an account?</span>
+          <button id="toggle-mode" type="button">Create account</button>
+        </div>
+      </div>
+
+      <!-- Success -->
+      <div id="onboard-success" class="onboard-card success-card hidden">
+        <h1>Signed in!</h1>
+        <p>Returning to the app…</p>
+      </div>
+
+      <!-- Busy -->
+      <div id="onboard-busy" class="onboard-card success-card hidden">
+        <h1>Connecting…</h1>
+        <p>Setting up your session.</p>
+      </div>
+    </div>
+
+    <!-- ============ Demo View (original) ============ -->
+    <div id="demo-view" class="demo-container hidden">
+      <h1>Den Control Plane Demo</h1>
+      <p class="muted">Sign up, verify auth, and launch a cloud worker end-to-end.</p>
+
+      <div class="grid">
+        <section class="card">
+          <h2>1) Sign up</h2>
+          <label>Name <input id="signup-name" value="Den Demo" /></label>
+          <label>Email <input id="signup-email" placeholder="demo@example.com" /></label>
+          <label>Password <input id="signup-password" type="password" value="TestPass123!" /></label>
+          <button id="signup-button" type="button">Create account</button>
+        </section>
+
+        <section class="card">
+          <h2>2) Verify auth/session</h2>
+          <button id="me-button" type="button">GET /v1/me (cookie session)</button>
+          <button id="me-bearer-button" type="button">GET /v1/me (Bearer token)</button>
+          <p class="muted">Bearer token comes from sign-up/sign-in response.</p>
+        </section>
+
+        <section class="card">
+          <h2>3) Launch worker</h2>
+          <label>Name <input id="worker-name" value="web-flow-worker" /></label>
+          <label>Destination
+            <select id="worker-destination">
+              <option value="cloud" selected>cloud</option>
+              <option value="local">local</option>
+            </select>
+          </label>
+          <label>Workspace path (required for local) <input id="worker-workspace-path" value="/tmp/workspace" /></label>
+          <button id="worker-button" type="button">POST /v1/workers</button>
+        </section>
+      </div>
+
+      <section class="card" style="margin-top: 12px">
+        <h2>Output</h2>
+        <pre id="output">ready</pre>
       </section>
     </div>
 
-    <section class="card" style="margin-top: 12px">
-      <h2>Output</h2>
-      <pre id="output">ready</pre>
-    </section>
-
     <script>
-      const output = document.getElementById("output")
-      let bearerToken = ""
+      const isDesktopOnboarding = new URLSearchParams(window.location.search).get("desktopOnboarding") === "1";
 
-      const print = (value) => {
-        output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2)
+      if (isDesktopOnboarding) {
+        document.getElementById("onboard-view").classList.remove("hidden");
+        initOnboarding();
+      } else {
+        document.getElementById("demo-view").classList.remove("hidden");
+        initDemo();
       }
 
-      const redact = (value) => {
-        const clone = typeof value === "string" ? value : JSON.parse(JSON.stringify(value))
-        if (typeof clone === "string") {
-          return clone
+      /* ======== Desktop Onboarding ======== */
+      function initOnboarding() {
+        let mode = "sign-in"; // default to sign-in for returning users
+        let bearerToken = "";
+
+        const form = document.getElementById("auth-form");
+        const title = document.getElementById("onboard-title");
+        const subtitle = document.getElementById("onboard-subtitle");
+        const nameField = document.getElementById("name-field");
+        const emailInput = document.getElementById("auth-email");
+        const passwordInput = document.getElementById("auth-password");
+        const submitBtn = document.getElementById("auth-submit");
+        const errorEl = document.getElementById("auth-error");
+        const togglePrompt = document.getElementById("toggle-prompt");
+        const toggleBtn = document.getElementById("toggle-mode");
+
+        const formCard = document.getElementById("onboard-form");
+        const successCard = document.getElementById("onboard-success");
+        const busyCard = document.getElementById("onboard-busy");
+
+        function updateUI() {
+          if (mode === "sign-up") {
+            title.textContent = "Get started";
+            subtitle.textContent = "Create an account to use Openwork.";
+            nameField.classList.remove("hidden");
+            passwordInput.autocomplete = "new-password";
+            submitBtn.textContent = "Create account";
+            togglePrompt.textContent = "Already have an account?";
+            toggleBtn.textContent = "Sign in";
+          } else {
+            title.textContent = "Welcome back";
+            subtitle.textContent = "Sign in to continue to Openwork.";
+            nameField.classList.add("hidden");
+            passwordInput.autocomplete = "current-password";
+            submitBtn.textContent = "Sign in";
+            togglePrompt.textContent = "Need an account?";
+            toggleBtn.textContent = "Create account";
+          }
+          errorEl.classList.add("hidden");
         }
 
-        if (clone?.body?.token) {
-          clone.body.token = "REDACTED_SESSION_TOKEN"
-        }
-        if (clone?.body?.session?.token) {
-          clone.body.session.token = "REDACTED_SESSION_TOKEN"
-        }
-        if (clone?.body?.session?.id) {
-          clone.body.session.id = "REDACTED_SESSION_ID"
-        }
-        if (clone?.body?.session?.ipAddress) {
-          clone.body.session.ipAddress = "REDACTED_IP"
-        }
-        if (clone?.body?.tokens?.host) {
-          clone.body.tokens.host = "REDACTED_HOST_TOKEN"
-        }
-        if (clone?.body?.tokens?.client) {
-          clone.body.tokens.client = "REDACTED_CLIENT_TOKEN"
-        }
-        return clone
-      }
+        toggleBtn.addEventListener("click", () => {
+          mode = mode === "sign-in" ? "sign-up" : "sign-in";
+          updateUI();
+        });
 
-      const request = async (path, options = {}) => {
-        const response = await fetch(path, {
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            ...(options.headers || {}),
-          },
-          ...options,
-        })
+        function showError(msg) {
+          errorEl.textContent = msg;
+          errorEl.classList.remove("hidden");
+        }
 
-        let body = null
-        const text = await response.text()
-        if (text) {
+        form.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          errorEl.classList.add("hidden");
+          submitBtn.disabled = true;
+          submitBtn.textContent = "Working…";
+
           try {
-            body = JSON.parse(text)
-          } catch {
-            body = text
+            const endpoint = mode === "sign-up"
+              ? "/api/auth/sign-up/email"
+              : "/api/auth/sign-in/email";
+
+            const body = { email: emailInput.value, password: passwordInput.value };
+            if (mode === "sign-up") {
+              body.name = document.getElementById("auth-name").value || "Openwork User";
+            }
+
+            const res = await fetch(endpoint, {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+
+            const data = await res.json().catch(() => null);
+
+            if (!res.ok) {
+              const msg = data?.message || data?.error || `Request failed (${res.status})`;
+              showError(msg);
+              updateUI();
+              return;
+            }
+
+            bearerToken = data?.token || "";
+            // Auth succeeded — now do the handoff
+            await doHandoff();
+          } catch (err) {
+            showError(err.message || "Network error");
+            updateUI();
+          } finally {
+            submitBtn.disabled = false;
+          }
+        });
+
+        async function doHandoff() {
+          formCard.classList.add("hidden");
+          busyCard.classList.remove("hidden");
+
+          try {
+            const headers = { "Content-Type": "application/json" };
+            if (bearerToken) {
+              headers["Authorization"] = "Bearer " + bearerToken;
+            }
+
+            const res = await fetch("/v1/desktop-auth/handoff", {
+              method: "POST",
+              credentials: "include",
+              headers,
+            });
+
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data?.code) {
+              busyCard.classList.add("hidden");
+              formCard.classList.remove("hidden");
+              showError(data?.error || "Handoff failed");
+              updateUI();
+              return;
+            }
+
+            // Success — redirect to deep link
+            busyCard.classList.add("hidden");
+            successCard.classList.remove("hidden");
+            window.location.href = "veslo://auth-complete?code=" + encodeURIComponent(data.code);
+          } catch (err) {
+            busyCard.classList.add("hidden");
+            formCard.classList.remove("hidden");
+            showError(err.message || "Network error during handoff");
+            updateUI();
           }
         }
 
-        return { status: response.status, body }
+        updateUI();
+        emailInput.focus();
       }
 
-      document.getElementById("signup-button").addEventListener("click", async () => {
-        const emailInput = document.getElementById("signup-email")
-        if (!emailInput.value) {
-          emailInput.value = `den-web-${Date.now()}@example.com`
-        }
+      /* ======== Original Demo ======== */
+      function initDemo() {
+        const output = document.getElementById("output");
+        let bearerToken = "";
 
-        const result = await request("/api/auth/sign-up/email", {
-          method: "POST",
-          body: JSON.stringify({
-            name: document.getElementById("signup-name").value,
-            email: emailInput.value,
-            password: document.getElementById("signup-password").value,
-          }),
-        })
+        const print = (value) => {
+          output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+        };
 
-        bearerToken = result.body?.token || ""
-        print(redact({ step: "signup", ...result, bearerTokenPresent: Boolean(bearerToken) }))
-      })
+        const redact = (value) => {
+          const clone = typeof value === "string" ? value : JSON.parse(JSON.stringify(value));
+          if (typeof clone === "string") return clone;
+          if (clone?.body?.token) clone.body.token = "REDACTED";
+          if (clone?.body?.session?.token) clone.body.session.token = "REDACTED";
+          if (clone?.body?.session?.id) clone.body.session.id = "REDACTED";
+          if (clone?.body?.session?.ipAddress) clone.body.session.ipAddress = "REDACTED";
+          if (clone?.body?.tokens?.host) clone.body.tokens.host = "REDACTED";
+          if (clone?.body?.tokens?.client) clone.body.tokens.client = "REDACTED";
+          return clone;
+        };
 
-      document.getElementById("me-button").addEventListener("click", async () => {
-        const result = await request("/v1/me", { method: "GET", headers: {} })
-        print(redact({ step: "me-cookie", ...result }))
-      })
+        const request = async (path, options = {}) => {
+          const response = await fetch(path, {
+            credentials: "include",
+            headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+            ...options,
+          });
+          let body = null;
+          const text = await response.text();
+          if (text) { try { body = JSON.parse(text); } catch { body = text; } }
+          return { status: response.status, body };
+        };
 
-      document.getElementById("me-bearer-button").addEventListener("click", async () => {
-        if (!bearerToken) {
-          print({ error: "missing_bearer_token", hint: "Sign up first to capture token." })
-          return
-        }
+        document.getElementById("signup-button").addEventListener("click", async () => {
+          const emailInput = document.getElementById("signup-email");
+          if (!emailInput.value) emailInput.value = `den-web-${Date.now()}@example.com`;
+          const result = await request("/api/auth/sign-up/email", {
+            method: "POST",
+            body: JSON.stringify({
+              name: document.getElementById("signup-name").value,
+              email: emailInput.value,
+              password: document.getElementById("signup-password").value,
+            }),
+          });
+          bearerToken = result.body?.token || "";
+          print(redact({ step: "signup", ...result, bearerTokenPresent: Boolean(bearerToken) }));
+        });
 
-        const result = await request("/v1/me", {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${bearerToken}`,
-          },
-        })
-        print(redact({ step: "me-bearer", ...result }))
-      })
+        document.getElementById("me-button").addEventListener("click", async () => {
+          const result = await request("/v1/me", { method: "GET", headers: {} });
+          print(redact({ step: "me-cookie", ...result }));
+        });
 
-      document.getElementById("worker-button").addEventListener("click", async () => {
-        const destination = document.getElementById("worker-destination").value
-        const payload = {
-          name: document.getElementById("worker-name").value,
-          destination,
-          workspacePath: document.getElementById("worker-workspace-path").value || undefined,
-          imageVersion: "den-worker-v1",
-        }
+        document.getElementById("me-bearer-button").addEventListener("click", async () => {
+          if (!bearerToken) { print({ error: "missing_bearer_token", hint: "Sign up first." }); return; }
+          const result = await request("/v1/me", { method: "GET", headers: { Authorization: `Bearer ${bearerToken}` } });
+          print(redact({ step: "me-bearer", ...result }));
+        });
 
-        if (destination !== "local") {
-          delete payload.workspacePath
-        }
-
-        const result = await request("/v1/workers", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        })
-        print(redact({ step: "create-worker", payload, ...result }))
-      })
+        document.getElementById("worker-button").addEventListener("click", async () => {
+          const destination = document.getElementById("worker-destination").value;
+          const payload = {
+            name: document.getElementById("worker-name").value,
+            destination,
+            workspacePath: document.getElementById("worker-workspace-path").value || undefined,
+            imageVersion: "den-worker-v1",
+          };
+          if (destination !== "local") delete payload.workspacePath;
+          const result = await request("/v1/workers", { method: "POST", body: JSON.stringify(payload) });
+          print(redact({ step: "create-worker", payload, ...result }));
+        });
+      }
     </script>
   </body>
 </html>
