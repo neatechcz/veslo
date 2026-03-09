@@ -35,6 +35,53 @@ app.get("/health", (_, res) => {
   res.json({ ok: true })
 })
 
+app.get("/v1/debug/tables", asyncRoute(async (_req, res) => {
+  const results: Record<string, unknown> = {}
+  try {
+    const [tables] = await db.execute(sql`SHOW TABLES`)
+    results.tables = tables
+
+    const [accountCols] = await db.execute(sql`SHOW COLUMNS FROM \`account\``)
+    results.accountColumns = accountCols
+
+    const [userCols] = await db.execute(sql`SHOW COLUMNS FROM \`user\``)
+    results.userColumns = userCols
+
+    const [orgCols] = await db.execute(sql`SHOW COLUMNS FROM \`org\``)
+    results.orgColumns = orgCols
+
+    const [orgMemCols] = await db.execute(sql`SHOW COLUMNS FROM \`org_membership\``)
+    results.orgMembershipColumns = orgMemCols
+
+    // Test: try what sign-up does step by step
+    const testResults: string[] = []
+    try {
+      await db.execute(sql`SELECT * FROM \`user\` WHERE \`email\` = 'debug-probe@test' LIMIT 1`)
+      testResults.push("user SELECT: OK")
+    } catch (e: any) { testResults.push(`user SELECT: FAIL - ${e.message}`) }
+
+    try {
+      await db.execute(sql`SELECT \`user_id\` FROM \`account\` LIMIT 0`)
+      testResults.push("account user_id: OK")
+    } catch (e: any) { testResults.push(`account user_id: FAIL - ${e.message}`) }
+
+    try {
+      await db.execute(sql`SELECT \`user_id\` FROM \`session\` LIMIT 0`)
+      testResults.push("session user_id: OK")
+    } catch (e: any) { testResults.push(`session user_id: FAIL - ${e.message}`) }
+
+    try {
+      await db.execute(sql`SELECT \`user_id\`, \`org_id\` FROM \`org_membership\` LIMIT 0`)
+      testResults.push("org_membership: OK")
+    } catch (e: any) { testResults.push(`org_membership: FAIL - ${e.message}`) }
+
+    results.testResults = testResults
+  } catch (e: any) {
+    results.error = e.message
+  }
+  res.json(results)
+}))
+
 app.get("/v1/me", asyncRoute(async (req, res) => {
   const session = await auth.api.getSession({
     headers: fromNodeHeaders(req.headers),
