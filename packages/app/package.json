@@ -27,6 +27,7 @@
     "test:local-ui-guards": "node scripts/local-ui-guards.mjs",
     "test:cloud-onboarding": "node scripts/cloud-onboarding.mjs",
     "test:cloud-ui-guards": "node scripts/cloud-ui-guards.mjs",
+    "test:sidebar-flat": "node scripts/sidebar-flat-sessions.mjs",
     "test:browser-entry": "node scripts/browser-entry.mjs",
     "test:e2e": "pnpm test:local-file-path && node scripts/e2e.mjs && node scripts/session-switch.mjs && node scripts/fs-engine.mjs && node scripts/browser-entry.mjs",
     "bump:calver": "node scripts/bump-version.mjs calver",
