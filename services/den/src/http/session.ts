@@ -8,6 +8,7 @@ export type SessionContext = {
     email: string | null
     name: string | null
   }
+  sessionToken: string | null
 }
 
 export async function requireSession(req: express.Request, res: express.Response): Promise<SessionContext | null> {
@@ -26,5 +27,6 @@ export async function requireSession(req: express.Request, res: express.Response
       email: typeof session.user.email === "string" ? session.user.email : null,
       name: typeof session.user.name === "string" ? session.user.name : null,
     },
+    sessionToken: typeof session.session?.token === "string" ? session.session.token : null,
   }
 }
