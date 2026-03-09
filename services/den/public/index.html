@@ -311,8 +311,8 @@
 
             if (!res.ok) {
               const msg = data?.message || data?.error || `Request failed (${res.status})`;
-              showError(msg);
               updateUI();
+              showError(msg);
               return;
             }
 
@@ -320,8 +320,8 @@
             // Auth succeeded — now do the handoff
             await doHandoff();
           } catch (err) {
-            showError(err.message || "Network error");
             updateUI();
+            showError(err.message || "Network error");
           } finally {
             submitBtn.disabled = false;
           }
