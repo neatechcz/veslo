@@ -154,6 +154,7 @@ export default {
   "session.try_notion_prompt": "立即尝试：在 Notion 中设置我的 CRM",
   "session.insert_prompt": "插入提示",
   "session.placeholder": "向 Veslo 提问...",
+  "session.composer_disclaimer": "AI 可能会出错。请自行判断并核实关键信息。",
   "session.run": "运行",
   "session.permission_required": "需要权限",
   "session.permission_description": "OpenCode 正在请求权限以继续。",

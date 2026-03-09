@@ -154,6 +154,7 @@ export default {
   "session.try_notion_prompt": "Try it now: set up my CRM in Notion",
   "session.insert_prompt": "Insert prompt",
   "session.placeholder": "Ask Veslo...",
+  "session.composer_disclaimer": "AI can be wrong. Use your judgment and verify critical info.",
   "session.run": "Run",
   "session.permission_required": "Permission Required",
   "session.permission_description": "OpenCode is requesting permission to continue.",

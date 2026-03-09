@@ -21,6 +21,7 @@
     "test:fs-engine": "node scripts/fs-engine.mjs",
     "test:local-file-path": "node scripts/local-file-path.mjs",
     "test:i18n": "node scripts/i18n-parity.mjs",
+    "test:composer-disclaimer": "node scripts/composer-disclaimer.mjs",
     "test:cloud-policy": "node scripts/cloud-policy.mjs",
     "test:runtime-policy": "node scripts/runtime-policy.mjs",
     "test:local-workspace-mode": "node scripts/local-workspace-mode.mjs",

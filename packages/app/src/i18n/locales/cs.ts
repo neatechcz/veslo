@@ -154,6 +154,7 @@ export default {
   "session.try_notion_prompt": "Zkuste to teď: nastav mi CRM v Notion",
   "session.insert_prompt": "Vložit prompt",
   "session.placeholder": "Zeptejte se Veslo...",
+  "session.composer_disclaimer": "AI se může mýlit. Použijte vlastní úsudek a ověřte si informace.",
   "session.run": "Spustit",
   "session.permission_required": "Vyžadováno oprávnění",
   "session.permission_description": "OpenCode žádá o oprávnění k pokračování.",
