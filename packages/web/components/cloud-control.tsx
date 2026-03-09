@@ -151,6 +151,7 @@ const AUTH_TOKEN_STORAGE_KEY = "veslo:web:auth-token";
 const SELECTED_ORG_STORAGE_KEY = "veslo:web:selected-org-id";
 const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "Veslo User";
+const DESKTOP_ONBOARDING_PARAM = "desktopOnboarding";
 const VESLO_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_VESLO_APP_CONNECT_URL ?? "").trim();
 const VESLO_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_VESLO_AUTH_CALLBACK_URL ?? "https://app.veslo.neatech.com").trim();
 
@@ -1043,6 +1044,10 @@ export function CloudControlPanel() {
   const [showLaunchForm, setShowLaunchForm] = useState(false);
   const [openAccordion, setOpenAccordion] = useState<"connect" | "actions" | "advanced" | null>(null);
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  const [desktopOnboarding, setDesktopOnboarding] = useState(false);
+  const [handoffBusy, setHandoffBusy] = useState(false);
+  const [handoffDone, setHandoffDone] = useState(false);
+  const [handoffError, setHandoffError] = useState<string | null>(null);
 
   const selectedWorker = workers.find((item) => item.workerId === workerLookupId) ?? null;
   const activeWorker: WorkerLaunch | null =
@@ -1565,6 +1570,67 @@ export function CloudControlPanel() {
     const nextUrl = nextQuery ? `${window.location.pathname}?${nextQuery}` : window.location.pathname;
     window.history.replaceState({}, "", nextUrl);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get(DESKTOP_ONBOARDING_PARAM) === "1") {
+      setDesktopOnboarding(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!desktopOnboarding || !user || handoffBusy || handoffDone) {
+      return;
+    }
+
+    if (orgsBusy) {
+      return;
+    }
+
+    if (organizations.length === 0) {
+      return;
+    }
+
+    const orgId = selectedOrgId || organizations[0]?.id;
+    if (!orgId) {
+      return;
+    }
+
+    setHandoffBusy(true);
+    setHandoffError(null);
+
+    const headers = buildDenHeaders(authToken, { orgId });
+    requestJson("/v1/desktop-auth/handoff", {
+      method: "POST",
+      headers,
+    }).then(({ response, payload }) => {
+      setHandoffBusy(false);
+
+      if (!response.ok) {
+        const errorMessage =
+          isRecord(payload) && typeof payload.error === "string"
+            ? payload.error
+            : "Handoff request failed.";
+        setHandoffError(errorMessage);
+        return;
+      }
+
+      if (!isRecord(payload) || typeof payload.code !== "string") {
+        setHandoffError("Invalid handoff response.");
+        return;
+      }
+
+      setHandoffDone(true);
+      window.location.href = `veslo://auth-complete?code=${encodeURIComponent(payload.code)}`;
+    }).catch(() => {
+      setHandoffBusy(false);
+      setHandoffError("Network error during handoff.");
+    });
+  }, [desktopOnboarding, user?.id, authToken, orgsBusy, organizations.length, selectedOrgId, handoffBusy, handoffDone]);
 
   useEffect(() => {
     if (!paymentReturned || !user) {
@@ -2298,6 +2364,61 @@ export function CloudControlPanel() {
     } finally {
       setDeleteBusyWorkerId(null);
     }
+  }
+
+  if (desktopOnboarding && handoffDone) {
+    return (
+      <section className="ow-card">
+        <div className="ow-card-body">
+          <div className="ow-stack" style={{ textAlign: "center", padding: "3rem 1rem" }}>
+            <h1 className="ow-title">Signed in successfully</h1>
+            <p className="ow-subtitle">
+              Returning to Openwork desktop app&hellip;
+            </p>
+            <p className="ow-subtitle" style={{ fontSize: "0.8rem", marginTop: "1rem" }}>
+              If the app did not open, <a href={`veslo://auth-complete?code=retry`} style={{ color: "#1B29FF" }}>click here to retry</a>.
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (desktopOnboarding && handoffBusy) {
+    return (
+      <section className="ow-card">
+        <div className="ow-card-body">
+          <div className="ow-stack" style={{ textAlign: "center", padding: "3rem 1rem" }}>
+            <h1 className="ow-title">Connecting to desktop app&hellip;</h1>
+            <p className="ow-subtitle">Please wait while we prepare your handoff code.</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (desktopOnboarding && handoffError) {
+    return (
+      <section className="ow-card">
+        <div className="ow-card-body">
+          <div className="ow-stack" style={{ textAlign: "center", padding: "3rem 1rem" }}>
+            <h1 className="ow-title">Handoff failed</h1>
+            <p className="ow-subtitle" style={{ color: "#dc2626" }}>{handoffError}</p>
+            <button
+              type="button"
+              className="ow-btn ow-btn-primary"
+              onClick={() => {
+                setHandoffError(null);
+                setHandoffDone(false);
+                setHandoffBusy(false);
+              }}
+            >
+              Try again
+            </button>
+          </div>
+        </div>
+      </section>
+    );
   }
 
   return (

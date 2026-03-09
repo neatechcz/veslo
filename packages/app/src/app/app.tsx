@@ -108,6 +108,12 @@ import {
   normalizeDirectoryQueryPath,
   normalizeDirectoryPath,
 } from "./utils";
+import {
+  parseAuthCompleteDeepLink,
+  exchangeHandoffCode,
+  writeDenAuth,
+  getDenApiBase,
+} from "./lib/den-auth";
 import { currentLocale, isLanguage, setLocale, t, type Language } from "../i18n";
 import {
   isWindowsPlatform,
@@ -3384,6 +3390,35 @@ export default function App() {
     return true;
   };
 
+  const [authCompleteExchangeBusy, setAuthCompleteExchangeBusy] = createSignal(false);
+
+  const queueAuthCompleteDeepLink = (rawUrl: string): boolean => {
+    const code = parseAuthCompleteDeepLink(rawUrl);
+    if (!code) {
+      return false;
+    }
+
+    if (authCompleteExchangeBusy()) {
+      return true;
+    }
+
+    setAuthCompleteExchangeBusy(true);
+    exchangeHandoffCode(code).then((result) => {
+      setAuthCompleteExchangeBusy(false);
+      if (result.ok) {
+        writeDenAuth(result.state);
+        setOnboardingStep("local");
+        setView("onboarding");
+      } else {
+        console.error("[den-auth] exchange failed:", result.error);
+        setOnboardingStep("auth");
+        setView("onboarding");
+      }
+    });
+
+    return true;
+  };
+
   createEffect(() => {
     const pending = pendingRemoteConnectDeepLink();
     if (!pending || booting()) {
@@ -5444,7 +5479,7 @@ export default function App() {
             return;
           }
           for (const url of urls) {
-            if (queueRemoteConnectDeepLink(url) || queueSharedBundleDeepLink(url)) {
+            if (queueAuthCompleteDeepLink(url) || queueRemoteConnectDeepLink(url) || queueSharedBundleDeepLink(url)) {
               break;
             }
           }
@@ -5465,6 +5500,7 @@ export default function App() {
     if (!isTauriRuntime()) {
       const currentUrl = typeof window === "undefined" ? "" : window.location.href;
       if (currentUrl) {
+        queueAuthCompleteDeepLink(currentUrl);
         queueRemoteConnectDeepLink(currentUrl);
         queueSharedBundleDeepLink(currentUrl);
         const remoteStripped = stripRemoteConnectQuery(currentUrl) ?? currentUrl;
@@ -6045,6 +6081,16 @@ export default function App() {
     },
     themeMode: themeMode(),
     setThemeMode,
+    onSignInWithBrowser: async () => {
+      const url = `${getDenApiBase()}/?desktopOnboarding=1`;
+      if (isTauriRuntime()) {
+        const { openUrl } = await import("@tauri-apps/plugin-opener");
+        await openUrl(url);
+      } else {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+    },
+    authExchangeBusy: authCompleteExchangeBusy(),
   });
 
   const dashboardProps = () => {

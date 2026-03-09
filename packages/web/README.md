@@ -35,6 +35,14 @@ Frontend for `app.veslo.neatech.com`.
   - default: `https://us.i.posthog.com`
 - `LOOPS_API_KEY` (server-only): Loops API key for signup contact capture.
 
+## Desktop onboarding mode
+
+When the web app is opened with the `?desktopOnboarding=1` query parameter (typically launched by the desktop app), it enters a special flow:
+
+1. The user signs in / signs up as usual.
+2. Once authenticated and an organization is resolved, the web app calls `POST /v1/desktop-auth/handoff` to obtain a one-time code.
+3. The browser redirects to `veslo://auth-complete?code=<code>`, handing control back to the desktop app which exchanges the code for credentials via `POST /v1/desktop-auth/exchange`.
+
 ## Deploy on Vercel
 
 Recommended project settings:

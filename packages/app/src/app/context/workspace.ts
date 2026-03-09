@@ -22,6 +22,7 @@ import {
 } from "../utils";
 import { LANGUAGE_PREF_KEY } from "../constants";
 import { unwrap } from "../lib/opencode";
+import { readDenAuth, clearDenAuth, validateDenAuth } from "../lib/den-auth";
 import {
   buildVesloWorkspaceBaseUrl,
   createVesloServerClient,
@@ -3218,6 +3219,20 @@ export function createWorkspaceStore(options: {
 
     if (!hasPersistedLanguagePreference()) {
       options.setOnboardingStep("language");
+      return;
+    }
+
+    // Check Den desktop auth before proceeding
+    const denAuth = readDenAuth();
+    if (!denAuth) {
+      options.setOnboardingStep("auth");
+      return;
+    }
+    // Validate stored auth with Den server
+    const authValid = await validateDenAuth(denAuth);
+    if (!authValid) {
+      clearDenAuth();
+      options.setOnboardingStep("auth");
       return;
     }
 

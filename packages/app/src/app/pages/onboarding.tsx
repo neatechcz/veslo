@@ -70,6 +70,8 @@ export type OnboardingViewProps = {
   onOpenSettings: () => void;
   themeMode: "light" | "dark" | "system";
   setThemeMode: (value: "light" | "dark" | "system") => void;
+  onSignInWithBrowser: () => void;
+  authExchangeBusy: boolean;
 };
 
 export default function OnboardingView(props: OnboardingViewProps) {
@@ -219,6 +221,48 @@ export default function OnboardingView(props: OnboardingViewProps) {
             >
               {translate("onboarding.language_continue")}
             </Button>
+          </div>
+        </div>
+      </Match>
+
+      <Match when={props.onboardingStep === "auth"}>
+        <div class="min-h-screen flex flex-col items-center justify-center bg-gray-1 text-gray-12 p-6 relative">
+          <div class="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-gray-2 to-transparent opacity-20 pointer-events-none" />
+
+          <div class="max-w-lg w-full z-10 space-y-8">
+            <div class="text-center space-y-3">
+              <div class="flex items-center justify-center">
+                <VesloLogo size={48} />
+              </div>
+              <h2 class="text-2xl font-bold tracking-tight">Sign in to Openwork</h2>
+              <p class="text-gray-11 text-sm leading-relaxed">Sign in with your account to get started.</p>
+            </div>
+
+            <div class="space-y-4">
+              <Button
+                class="w-full py-3 text-base"
+                onClick={() => props.onSignInWithBrowser()}
+                disabled={props.authExchangeBusy}
+              >
+                {props.authExchangeBusy ? "Waiting for sign in..." : "Sign in with Browser"}
+              </Button>
+
+              <Show when={props.authExchangeBusy}>
+                <Button
+                  variant="secondary"
+                  class="w-full"
+                  onClick={() => props.onSignInWithBrowser()}
+                >
+                  I already signed in
+                </Button>
+              </Show>
+            </div>
+
+            <Show when={props.error}>
+              <div class="rounded-2xl bg-red-1/40 px-5 py-4 text-sm text-red-12 border border-red-7/20">
+                {props.error}
+              </div>
+            </Show>
           </div>
         </div>
       </Match>

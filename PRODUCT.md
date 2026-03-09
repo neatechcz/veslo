@@ -120,6 +120,15 @@ use the design from ./design.ts that is your core reference for building the ent
 - User starts their first session immediately in a Veslo-managed private workspace, or chooses `Open project/folder` to work in an existing local folder.
 - Execution runs locally. Account, organization, and chat state sync to the cloud.
 
+#### Desktop auth handoff
+
+When signing in from the desktop app, authentication is delegated to the browser:
+
+1. The desktop app opens the web app with `?desktopOnboarding=1`.
+2. The user authenticates in the browser and selects an organization.
+3. The web app calls Den to create a one-time handoff code and redirects to `veslo://auth-complete?code=...`.
+4. The desktop app receives the deep link, exchanges the code for a bearer token and user/org info, and completes sign-in locally.
+
 ### Cross-device Continuation
 
 - Veslo syncs account state, organization state, and chat/session history across signed-in devices.

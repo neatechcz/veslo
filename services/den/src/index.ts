@@ -7,6 +7,7 @@ import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 import { auth } from "./auth.js"
 import { env } from "./env.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
+import { desktopAuthRouter } from "./http/desktop-auth.js"
 import { orgsRouter } from "./http/orgs.js"
 import { workersRouter } from "./http/workers.js"
 
@@ -43,6 +44,7 @@ app.get("/v1/me", asyncRoute(async (req, res) => {
   res.json(session)
 }))
 
+app.use("/v1/desktop-auth", desktopAuthRouter)
 app.use("/v1/orgs", orgsRouter)
 app.use("/v1/workers", workersRouter)
 app.use(errorMiddleware)

@@ -101,6 +101,11 @@ pnpm db:migrate
 - `POST /v1/workers/:id/tokens`
 - `DELETE /v1/workers/:id`
   - Deletes worker records and attempts to suspend the backing cloud service when destination is `cloud`.
+- `POST /v1/desktop-auth/handoff`
+  - Requires an authenticated browser session (Better Auth cookie). Returns a single-use, short-lived one-time code that the desktop app can exchange for credentials.
+  - Respects `x-veslo-org-id` header to select the active organization.
+- `POST /v1/desktop-auth/exchange`
+  - Accepts `{ "code": "<one-time-code>" }` in the request body (no session cookie required). Returns `{ token, user, org }` with the user's identity and selected organization. The code is consumed on first use and cannot be replayed.
 
 ## CI deployment (dev == prod)
 
