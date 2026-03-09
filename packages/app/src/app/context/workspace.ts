@@ -31,7 +31,7 @@ import {
   type VesloServerSettings,
   type VesloWorkspaceInfo,
 } from "../lib/veslo-server";
-import { downloadDir, homeDir } from "@tauri-apps/api/path";
+import { appDataDir, downloadDir, homeDir } from "@tauri-apps/api/path";
 import {
   engineDoctor,
   engineInfo,
@@ -306,6 +306,7 @@ export function createWorkspaceStore(options: {
   const [projectDir, setProjectDir] = createSignal("");
   const [workspaces, setWorkspaces] = createSignal<WorkspaceInfo[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = createSignal<string>("starter");
+  const [privateWorkspaceRoot, setPrivateWorkspaceRoot] = createSignal("");
 
   const syncActiveWorkspaceId = (id: string) => {
     setActiveWorkspaceId(id);
@@ -367,6 +368,20 @@ export function createWorkspaceStore(options: {
     return ws.path ?? "";
   });
   const activeWorkspaceRoot = createMemo(() => activeWorkspacePath().trim());
+
+  const buildPrivateWorkspaceRoot = async () => {
+    const cached = privateWorkspaceRoot().trim();
+    if (cached) return cached;
+    if (!isTauriRuntime()) return "";
+    const base = (await appDataDir()).replace(/[\\/]+$/, "");
+    const next = `${base}/private-workspaces`;
+    setPrivateWorkspaceRoot(next);
+    return next;
+  };
+
+  if (isTauriRuntime()) {
+    void buildPrivateWorkspaceRoot().catch(() => undefined);
+  }
 
   const updateWorkspaceConnectionState = (
     workspaceId: string,
@@ -1458,20 +1473,29 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function createWorkspaceFlow(preset: WorkspacePreset, folder: string | null) {
+  async function createLocalWorkspace(
+    preset: WorkspacePreset,
+    folder: string | null,
+    flowOptions?: {
+      markOnboardingComplete?: boolean;
+      navigateToDashboard?: boolean;
+      closeModal?: boolean;
+      workspaceName?: string | null;
+    },
+  ) {
     if (CLOUD_ONLY_MODE) {
       blockLocalAction("cloud_only_local_disabled", "Local workspace creation is disabled.");
-      return;
+      return null;
     }
 
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
-      return;
+      return null;
     }
 
     if (!folder) {
       options.setError(t("app.error.choose_folder", currentLocale()));
-      return;
+      return null;
     }
 
     options.setBusy(true);
@@ -1485,10 +1509,14 @@ export function createWorkspaceStore(options: {
       const resolvedFolder = await resolveWorkspacePath(folder);
       if (!resolvedFolder) {
         options.setError(t("app.error.choose_folder", currentLocale()));
-        return;
+        return null;
       }
 
-      const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Worker";
+      const explicitName = flowOptions?.workspaceName?.trim() ?? "";
+      const name =
+        explicitName ||
+        resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ||
+        "Workspace";
       const ws = await workspaceCreate({ folderPath: resolvedFolder, name, preset });
       setWorkspaces(ws.workspaces);
       syncActiveWorkspaceId(ws.activeId);
@@ -1497,23 +1525,118 @@ export function createWorkspaceStore(options: {
       }
 
       const active = ws.workspaces.find((w) => w.id === ws.activeId) ?? null;
-        if (active) {
-          setProjectDir(active.path);
-          setAuthorizedDirs([active.path]);
-        }
+      if (active) {
+        setProjectDir(active.path);
+        setAuthorizedDirs([active.path]);
+      }
 
-      setCreateWorkspaceOpen(false);
-      options.setTab("scheduled");
-      options.setView("dashboard");
-      markOnboardingComplete();
+      if (flowOptions?.closeModal !== false) {
+        setCreateWorkspaceOpen(false);
+      }
+      if (flowOptions?.navigateToDashboard !== false) {
+        options.setTab("scheduled");
+        options.setView("dashboard");
+      }
+      if (flowOptions?.markOnboardingComplete !== false) {
+        markOnboardingComplete();
+      }
+      return active;
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       options.setError(addOpencodeCacheHint(message));
+      return null;
     } finally {
       options.setBusy(false);
       options.setBusyLabel(null);
       options.setBusyStartedAt(null);
     }
+  }
+
+  async function createWorkspaceFlow(preset: WorkspacePreset, folder: string | null) {
+    await createLocalWorkspace(preset, folder, {
+      markOnboardingComplete: true,
+      navigateToDashboard: true,
+      closeModal: true,
+    });
+  }
+
+  async function createScratchWorkspace() {
+    if (CLOUD_ONLY_MODE) {
+      blockLocalAction("cloud_only_local_disabled", "Local workspace creation is disabled.");
+      return null;
+    }
+    if (!isTauriRuntime()) {
+      options.setError(t("app.error.tauri_required", currentLocale()));
+      return null;
+    }
+
+    const root = await buildPrivateWorkspaceRoot();
+    if (!root) {
+      options.setError("Failed to resolve private workspace root.");
+      return null;
+    }
+
+    const name = "Private workspace";
+    const runId = makeRunId().replace(/[^a-z0-9-]+/gi, "").slice(0, 24) || `${Date.now()}`;
+    const folder = `${root}/${Date.now()}-${runId}`;
+    return await createLocalWorkspace("starter", folder, {
+      markOnboardingComplete: true,
+      navigateToDashboard: false,
+      closeModal: false,
+      workspaceName: name,
+    });
+  }
+
+  const findLocalWorkspaceByPath = (folder: string) => {
+    const normalized = normalizeDirectoryPath(folder);
+    if (!normalized) return null;
+    return workspaces().find(
+      (workspace) =>
+        workspace.workspaceType === "local" &&
+        normalizeDirectoryPath(workspace.path?.trim() ?? "") === normalized,
+    ) ?? null;
+  };
+
+  async function ensureWorkspaceForFolder(folder: string) {
+    const resolvedFolder = await resolveWorkspacePath(folder);
+    if (!resolvedFolder) {
+      options.setError(t("app.error.choose_folder", currentLocale()));
+      return null;
+    }
+
+    const existing = findLocalWorkspaceByPath(resolvedFolder);
+    if (existing) return existing;
+
+    return await createLocalWorkspace("starter", resolvedFolder, {
+      markOnboardingComplete: true,
+      navigateToDashboard: false,
+      closeModal: false,
+    });
+  }
+
+  const isPrivateWorkspacePath = (folder: string | null | undefined) => {
+    const root = normalizeDirectoryPath(privateWorkspaceRoot());
+    const value = normalizeDirectoryPath(folder ?? "");
+    if (!root || !value) return false;
+    return value === root || value.startsWith(`${root}/`);
+  };
+
+  async function ensureLocalWorkspaceActive(workspaceId: string) {
+    const id = workspaceId.trim();
+    if (!id) return false;
+    const activated = await activateWorkspace(id);
+    if (activated === false) return false;
+    if (options.client()) return true;
+
+    const workspace = workspaces().find((entry) => entry.id === id) ?? null;
+    if (!workspace || workspace.workspaceType !== "local") {
+      options.setError("Local workspace is not available.");
+      return false;
+    }
+
+    const started = await startHost({ workspacePath: workspace.path, navigate: false });
+    if (!started) return false;
+    return Boolean(options.client());
   }
 
   async function createSandboxFlow(
@@ -3354,10 +3477,13 @@ export function createWorkspaceStore(options: {
     testWorkspaceConnection,
     connectToServer,
     createWorkspaceFlow,
+    createScratchWorkspace,
     createSandboxFlow,
     createRemoteWorkspaceFlow,
     updateRemoteWorkspaceFlow,
     updateWorkspaceDisplayName,
+    ensureLocalWorkspaceActive,
+    ensureWorkspaceForFolder,
     forgetWorkspace,
     recoverWorkspace,
     stopSandbox,
@@ -3390,5 +3516,6 @@ export function createWorkspaceStore(options: {
     clearSandboxCreateProgress,
     workspaceDebugEvents,
     clearWorkspaceDebugEvents,
+    isPrivateWorkspacePath,
   };
 }

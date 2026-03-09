@@ -7,7 +7,7 @@ Veslo should optimize for the simplest possible BFU flow:
 - `New session` always opens a new chat immediately.
 - The user should not need to choose a folder before chatting.
 - Every new session should run in its own persistent Veslo-managed local workspace folder.
-- `Open project/folder` should be a separate explicit action for working in a real user-selected folder.
+- A real folder can be chosen later from inside the session.
 - Remote/cloud execution support remains in the platform, but it is not exposed in the current end-user UI.
 
 This design supersedes the earlier folder-first `New session` design in [`docs/plans/2026-03-09-new-session-directory-flow-design.md`](/Users/vaclavsoukup/AI%20agent%20projects/Openwork/docs/plans/2026-03-09-new-session-directory-flow-design.md).
@@ -31,8 +31,8 @@ This design supersedes the earlier folder-first `New session` design in [`docs/p
 User-facing concepts:
 
 - `Session`: a chat/task run.
-- `Project/folder`: an explicit user-selected filesystem location.
 - `Private workspace`: a Veslo-managed local workspace created automatically for a new session.
+- `Folder`: an optional real user-selected filesystem location the session can be switched to later.
 
 Internal/runtime concepts:
 
@@ -55,26 +55,31 @@ Important rule:
 
 - `New session` must create a fresh private workspace even if another real project/folder is currently open.
 
-### Open project/folder
+### Choose folder (in-session)
 
-`Open project/folder` is the explicit filesystem action.
+`Choose folder` is a secondary in-session action that is available only while the session is still backed by a private workspace.
 
 Behavior:
 
 1. Open the native system folder picker.
-2. If the folder is not yet known to Veslo:
-   - bootstrap it as a local workspace/project
-   - ensure local metadata/config exists
-   - start the local runtime
-   - create and open a new session immediately
-3. If the folder is already known:
-   - activate it
-   - create and open a new session immediately
-4. If the folder is known but missing required metadata:
-   - repair/bootstrap metadata
-   - then create and open a new session
+2. Compare the private workspace contents against the chosen target folder.
+3. If no filename conflicts exist:
+   - copy the current private workspace contents into the chosen folder
+   - switch the session/workspace backing path to that folder
+   - continue the same session in that real folder
+4. If filename conflicts exist:
+   - ask the user whether Veslo should replace the conflicting files
+   - alternatively allow `Choose another folder`
+   - alternatively allow `Cancel`
+5. After a successful switch:
+   - hide or disable `Choose folder` for that session
+   - treat the chosen real folder as the permanent backing workspace for that session
+6. Keep the old private workspace as a hidden backup for now.
 
-Both top-level actions always end with a new chat opening.
+Implementation note:
+
+- OpenCode does not rewrite the stored `session.directory` when a session starts operating in a new folder.
+- Veslo should therefore persist a local session-to-workspace override for migrated sessions so the sidebar, routing, and restart behavior continue to treat the same session as belonging to the chosen folder.
 
 ## Scratch Workspace Model
 
@@ -86,6 +91,7 @@ Properties:
 - fully persistent across app restarts and crashes
 - visible in sidebar/history until the user deletes them
 - safe for generated files without polluting other projects
+- retained as hidden backup after a successful folder switch
 
 Illustrative storage shape:
 
@@ -109,6 +115,7 @@ Reasons:
 Rejected alternatives:
 
 - Always ask for a folder on `New session`: too much friction for BFUs.
+- Top-level `Open project/folder`: adds a second creation path the user does not need to think about.
 - Reuse the current project on `New session`: too stateful and surprising for casual chat usage.
 - Shared global scratch workspace: mixes unrelated files from different chats.
 
@@ -117,8 +124,8 @@ Rejected alternatives:
 User-facing copy should be updated to:
 
 - primary CTA: `New session`
-- secondary filesystem action: `Open project/folder`
 - scratch workspace label: `Private workspace` or equivalent
+- in-session secondary action for private-workspace sessions: `Choose folder`
 
 Avoid default copy that says:
 
@@ -130,15 +137,19 @@ Avoid default copy that says:
 Suggested empty state:
 
 - title: `Start a new session`
-- body: `Begin in a private workspace, or open an existing project folder.`
+- body: `Begin in a private workspace. You can choose a folder later if you need one.`
 
 ## Error Handling
 
 - If scratch workspace creation fails: show a clear error like `Couldn't start a new session`.
 - If local engine startup fails: do not silently no-op.
 - If session creation fails after workspace creation: keep the workspace and show a retryable error.
-- If `Open project/folder` picker is cancelled: no-op, no error.
-- If opening a real folder requires repair/bootstrap: complete that automatically before session creation.
+- If `Choose folder` picker is cancelled: no-op, no error.
+- If copying into a chosen folder finds conflicts: show a simple all-or-nothing conflict dialog with:
+  - `Replace conflicting files`
+  - `Choose another folder`
+  - `Cancel`
+- Do not require per-file merge UI.
 
 ## Documentation Changes Required
 
@@ -147,7 +158,7 @@ The repo documentation is currently inconsistent and must be aligned:
 - [`AGENTS.md`](/Users/vaclavsoukup/AI%20agent%20projects/Openwork/AGENTS.md) already reflects local-first execution.
 - [`PRODUCT.md`](/Users/vaclavsoukup/AI%20agent%20projects/Openwork/PRODUCT.md) must be updated to describe:
   - `New session`
-  - `Open project/folder`
+  - `Choose folder` later inside the session
   - local-first end-user UX
   - remote support retained in platform but hidden in current UI
 - [`ARCHITECTURE.md`](/Users/vaclavsoukup/AI%20agent%20projects/Openwork/ARCHITECTURE.md) must be updated to describe:
@@ -162,9 +173,12 @@ Required verification after implementation:
 - `New session` creates a new isolated scratch workspace and opens a session
 - repeated `New session` calls create distinct scratch workspaces
 - scratch workspaces persist across app restart
-- `Open project/folder` bootstraps unknown folders and opens a new session
-- `Open project/folder` on known folders still opens a new session immediately
 - local engine startup is guaranteed before session creation
+- private-workspace sessions show `Choose folder`
+- real-folder-backed sessions do not show `Choose folder`
+- choosing a folder copies files and switches the current session to the chosen folder
+- conflict cases show overwrite/choose another/cancel options
+- successful folder switch keeps the old private workspace as hidden backup
 - end-user UI no longer exposes remote connect flow by default
 - old worker-first empty-state copy is removed or hidden from normal local-first UX
 
@@ -172,7 +186,6 @@ Required verification after implementation:
 
 Later design work will still be needed for:
 
-- `Attach folder` / `Move to project/folder`
 - naming rules for scratch workspaces in the sidebar
-- deletion semantics for scratch workspaces and their files
+- cleanup strategy for hidden backup private workspaces
 - any future reintroduction of remote execution into end-user UI

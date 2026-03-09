@@ -2,11 +2,11 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Replace the current worker-first and folder-first entry flow with a local-first session model where `New session` always opens immediately in a new persistent scratch workspace, while `Open project/folder` always opens a new session in a chosen real folder.
+**Goal:** Replace the current folder-first and worker-first entry flow with a single `New session` action that always starts immediately in a persistent private workspace, then let users choose a real folder later from inside the session with copy-and-switch semantics.
 
-**Architecture:** Scratch workspaces should be implemented as normal local workspaces with app-managed directories so the existing engine, permissions, session, reload, and persistence machinery can be reused. UI entry points should resolve into two explicit actions only: `New session` for a fresh private workspace and `Open project/folder` for an explicit user-selected folder. Remote execution stays in code, but end-user UI paths for remote connect are hidden.
+**Architecture:** Scratch workspaces should be implemented as normal local workspaces with app-managed directories so the existing engine, permissions, session, reload, and persistence machinery can be reused. The default UI should expose one creation action only: `New session`. A private-workspace session may later use `Choose folder` to copy its contents into a user-selected real folder, switch the backing workspace to that folder, and keep the original private workspace as a hidden backup.
 
-**Tech Stack:** SolidJS, Tauri dialog APIs, workspace context store in `packages/app/src/app/context/workspace.ts`, app shell wiring in `packages/app/src/app/app.tsx`, UI screens in `packages/app/src/app/pages/*.tsx`, package scripts in `packages/app/package.json`
+**Tech Stack:** SolidJS, Tauri dialog/file APIs, workspace context store in `packages/app/src/app/context/workspace.ts`, app shell wiring in `packages/app/src/app/app.tsx`, session/dashboard UI in `packages/app/src/app/pages/*.tsx`, Tauri Rust commands under `packages/desktop/src-tauri/src`
 
 ---
 
@@ -14,33 +14,33 @@
 
 - Work only in `/Users/vaclavsoukup/AI agent projects/Openwork`.
 - Do not remove remote/runtime support from the data model or connection code.
-- Do not keep the current `CLOUD_ONLY_MODE = false` hack as the way to make local UI work.
-- Prefer normal workspace primitives over inventing a new folderless execution mode.
+- Do not rely on `CLOUD_ONLY_MODE = false` as the mechanism for local-first behavior.
+- Prefer normal local workspace primitives over inventing a folderless execution mode.
 - Keep commits small and scoped to each task.
 
-### Task 1: Add scratch workspace primitives and fix local engine startup
+### Task 1: Guarantee local runtime readiness for session creation
 
 **Files:**
 - Modify: `packages/app/src/app/context/workspace.ts`
 - Modify: `packages/app/src/app/app.tsx`
+- Modify: `packages/app/src/app/lib/cloud-policy.impl.js`
+- Test: `packages/app/package.json`
 - Test: `packages/app/scripts/health.mjs`
 - Test: `packages/app/scripts/sessions.mjs`
 - Test: `packages/app/scripts/cloud-policy.mjs`
 
-**Step 1: Write the failing test scenario**
+**Step 1: Capture the current failure**
 
-Document the expected runtime behavior in code comments next to the changed functions:
+Document the expected contract near the relevant functions:
 
 ```ts
-// Expected behavior:
-// 1. Creating a scratch workspace yields a real local workspace with a real directory.
-// 2. Activating that workspace guarantees a running local client before session creation.
-// 3. Session creation must never silently no-op because `client()` is missing.
+// Session creation contract:
+// 1. The active local workspace must have a running local client.
+// 2. createSessionAndOpen() must not silently no-op because client() is missing.
+// 3. New-session flows may create or switch workspaces, but must end with a ready client.
 ```
 
-Add a temporary assertion path or guard in `app.tsx` so the current flow fails loudly during development if `createSessionAndOpen()` is called without a client.
-
-**Step 2: Run current checks to capture the failing baseline**
+**Step 2: Run baseline checks**
 
 Run:
 
@@ -51,12 +51,12 @@ pnpm --filter @neatech/veslo-ui test:sessions
 
 Expected:
 
-- `test:cloud-policy` currently fails because the runtime policy was changed as a side effect.
-- `test:sessions` passes, but it does not cover the broken first-run UI flow yet.
+- `test:cloud-policy` fails in the current worktree because policy was changed as a side effect
+- `test:sessions` passes but does not cover the broken first-run local flow
 
-**Step 3: Write minimal runtime primitives**
+**Step 3: Add explicit local-runtime helpers**
 
-In `workspace.ts`, add explicit helpers along these lines:
+In `workspace.ts`, add reusable helpers along these lines:
 
 ```ts
 async function ensureLocalWorkspaceActive(workspaceId: string) {
@@ -70,22 +70,15 @@ async function ensureLocalWorkspaceActive(workspaceId: string) {
   }
   return Boolean(options.client());
 }
-
-async function createScratchWorkspace() {
-  const folder = await createManagedScratchWorkspaceFolder();
-  await createWorkspaceFlow("starter", folder);
-  const created = workspaces().find((w) => w.workspaceType === "local" && w.path === folder);
-  return created ?? null;
-}
 ```
 
-Do not implement the final details from the snippet blindly; use the repo’s existing workspace creation and engine helpers.
+Use existing runtime helpers rather than introducing parallel startup logic.
 
 **Step 4: Remove the policy regression**
 
-Restore `packages/app/src/app/lib/cloud-policy.impl.js` to a value and behavior that match the intended product policy, then decouple local-first UI behavior from that constant.
+Restore `packages/app/src/app/lib/cloud-policy.impl.js` to a value and behavior that match the intended product policy, and make the local-first UX explicit in the UI flow instead of piggybacking on that constant.
 
-**Step 5: Run runtime checks**
+**Step 5: Verify**
 
 Run:
 
@@ -98,53 +91,44 @@ pnpm --filter @neatech/veslo-ui test:cloud-policy
 
 Expected:
 
-- all four pass
+- all pass
 
 **Step 6: Commit**
 
 ```bash
 git add packages/app/src/app/context/workspace.ts packages/app/src/app/app.tsx packages/app/src/app/lib/cloud-policy.impl.js
-git commit -m "fix(app): guarantee local runtime for new session flows"
+git commit -m "fix(app): guarantee local runtime before session creation"
 ```
 
-### Task 2: Replace folder-first `New session` with scratch-first `New session`
+### Task 2: Make `New session` create a fresh private workspace
 
 **Files:**
-- Modify: `packages/app/src/app/app.tsx`
 - Modify: `packages/app/src/app/context/workspace.ts`
-- Modify: `packages/app/src/app/components/session/workspace-session-list.tsx`
-- Modify: `packages/app/src/app/pages/dashboard.tsx`
-- Modify: `packages/app/src/app/pages/session.tsx`
+- Modify: `packages/app/src/app/app.tsx`
+- Modify: `packages/app/src/app/lib/tauri.ts`
+- Modify: `packages/desktop/src-tauri/src/commands/workspace.rs`
+- Modify: `packages/desktop/src-tauri/src/lib.rs`
 - Test: `packages/app/scripts/sessions.mjs`
 
-**Step 1: Write the failing behavior contract**
+**Step 1: Add scratch workspace creation primitives**
 
-Add a short block comment in `app.tsx` above the new action:
+Expose a helper in the Tauri layer that can create a persistent app-managed workspace folder, then create or register a normal local workspace for it.
+
+Expected shape:
 
 ```ts
-// New session contract:
-// - always create a brand-new scratch workspace
-// - never reuse the current real project by default
-// - always open a new session immediately
+async function createScratchWorkspace(): Promise<WorkspaceInfo | null>
 ```
 
-**Step 2: Implement a dedicated app action**
+Use the app data directory or another app-managed location rather than temp directories.
 
-Replace the current directory-first handler in `app.tsx` with two explicit actions:
+**Step 2: Replace the current folder-picker new-session handler**
+
+In `app.tsx`, replace the current directory-first flow with:
 
 ```ts
 const openNewSession = async () => {
-  const scratch = await workspaceStore.createScratchWorkspace();
-  if (!scratch?.id) return;
-  const ready = await workspaceStore.ensureLocalWorkspaceActive(scratch.id);
-  if (!ready) return;
-  await createSessionAndOpen();
-};
-
-const openProjectFolder = async () => {
-  const selected = await workspaceStore.pickWorkspaceFolder();
-  if (!selected) return;
-  const workspace = await workspaceStore.ensureWorkspaceForFolder(selected);
+  const workspace = await workspaceStore.createScratchWorkspace();
   if (!workspace?.id) return;
   const ready = await workspaceStore.ensureLocalWorkspaceActive(workspace.id);
   if (!ready) return;
@@ -152,22 +136,13 @@ const openProjectFolder = async () => {
 };
 ```
 
-Use the repo’s real naming conventions, but keep this exact behavior.
+`New session` must not open a directory picker.
 
-**Step 3: Wire all primary UI entry points**
+**Step 3: Keep private workspaces isolated**
 
-Replace current `onQuickNewSession` / `openCreateWorkspace` behavior so:
+Ensure repeated `New session` actions create distinct directories and distinct local workspace records.
 
-- primary CTA maps to `openNewSession`
-- secondary filesystem CTA maps to `openProjectFolder`
-
-Do this consistently in:
-
-- sidebar
-- dashboard
-- session empty states
-
-**Step 4: Run targeted checks**
+**Step 4: Verify**
 
 Run:
 
@@ -183,85 +158,110 @@ Expected:
 **Step 5: Commit**
 
 ```bash
-git add packages/app/src/app/app.tsx packages/app/src/app/context/workspace.ts packages/app/src/app/components/session/workspace-session-list.tsx packages/app/src/app/pages/dashboard.tsx packages/app/src/app/pages/session.tsx
-git commit -m "feat(app): make new session create scratch workspaces"
+git add packages/app/src/app/context/workspace.ts packages/app/src/app/app.tsx packages/app/src/app/lib/tauri.ts packages/desktop/src-tauri/src/commands/workspace.rs packages/desktop/src-tauri/src/lib.rs
+git commit -m "feat(app): make new session create private workspaces"
 ```
 
-### Task 3: Add explicit `Open project/folder` behavior for real folders
+### Task 3: Add in-session `Choose folder` copy-and-switch flow
 
 **Files:**
+- Modify: `packages/app/src/app/pages/session.tsx`
 - Modify: `packages/app/src/app/context/workspace.ts`
 - Modify: `packages/app/src/app/app.tsx`
-- Modify: `packages/app/src/app/pages/session.tsx`
-- Modify: `packages/app/src/app/pages/dashboard.tsx`
+- Modify: `packages/app/src/app/lib/tauri.ts`
+- Modify: `packages/desktop/src-tauri/src/commands/workspace.rs`
+- Modify: `packages/desktop/src-tauri/src/lib.rs`
 - Test: `packages/app/scripts/sessions.mjs`
-- Test: `packages/app/scripts/health.mjs`
 
-**Step 1: Define the reuse/bootstrap branch**
+**Step 1: Validate the session-directory contract**
 
-In `workspace.ts`, add or refactor a helper with this behavior:
+Before changing UI behavior, prove the session API behavior with a focused script/test:
+
+1. create a session in a private workspace directory
+2. attempt to switch it to a second directory using the raw SDK
+3. verify whether the same session ID can continue in the new directory
+
+OpenCode does not mutate the stored `session.directory`, but the same session can continue running against a new request `directory`. Veslo must therefore persist a local session-directory override so the migrated session stays attached to the chosen folder in the UI and across restarts.
+
+**Step 2: Add folder-switch primitives**
+
+Expose a helper that can:
+
+1. inspect the current private workspace contents
+2. compare them with a chosen target folder
+3. detect filename conflicts
+4. copy files into the target folder
+5. preserve the old private workspace as backup
+6. update the active workspace/session to use the real folder
+7. persist a local session-directory override for the migrated session
+
+Expected shape:
 
 ```ts
-async function ensureWorkspaceForFolder(folder: string) {
-  const normalized = normalizeDirectoryPath(folder.trim());
-  const existing = workspaces().find((ws) => ws.workspaceType === "local" && normalizeDirectoryPath(ws.path) === normalized);
-  if (existing) return existing;
-  await createWorkspaceFlow("starter", normalized);
-  return workspaces().find((ws) => ws.workspaceType === "local" && normalizeDirectoryPath(ws.path) === normalized) ?? null;
-}
+type FolderSwitchResult =
+  | { kind: "ok"; workspace: WorkspaceInfo }
+  | { kind: "conflict"; paths: string[] }
+  | { kind: "cancel" };
 ```
 
-Also make sure metadata/bootstrap repair happens on activation if the folder is missing expected config.
+**Step 3: Add a simple conflict model**
 
-**Step 2: Make `Open project/folder` always open a new session**
+Do not build per-file merge UX. Support exactly these outcomes:
 
-Do not stop on “open existing project and show its old sessions”. After activation, always call `createSessionAndOpen()`.
+- replace conflicting files
+- choose another folder
+- cancel
 
-**Step 3: Update UI copy**
+The user must be prompted before overwrite.
 
-Replace wording like:
+**Step 4: Show `Choose folder` only for private-workspace sessions**
 
-- `Create worker on this device`
-- `Create or connect a worker`
+In `session.tsx`:
 
-With wording like:
+- show a subtle `Choose folder` action only when the active session is still backed by a private workspace
+- hide or disable it once the session has switched to a real folder
+- show the folder/project as read-only context after switch
 
-- `Open project/folder`
-- `Start a new session`
-
-**Step 4: Run checks**
+**Step 5: Verify**
 
 Run:
 
 ```bash
 pnpm --filter @neatech/veslo-ui typecheck
-pnpm --filter @neatech/veslo-ui test:health
 pnpm --filter @neatech/veslo-ui test:sessions
 ```
 
 Expected:
 
-- all pass
+- both pass
 
-**Step 5: Commit**
+**Step 6: Commit**
 
 ```bash
-git add packages/app/src/app/context/workspace.ts packages/app/src/app/app.tsx packages/app/src/app/pages/session.tsx packages/app/src/app/pages/dashboard.tsx
-git commit -m "feat(app): open folders as new-session local projects"
+git add packages/app/src/app/pages/session.tsx packages/app/src/app/context/workspace.ts packages/app/src/app/app.tsx packages/app/src/app/lib/tauri.ts packages/desktop/src-tauri/src/commands/workspace.rs packages/desktop/src-tauri/src/lib.rs
+git commit -m "feat(app): allow private sessions to choose a folder later"
 ```
 
-### Task 4: Remove remote/worker-first UI from the default local-first product surface
+### Task 4: Remove top-level folder actions and worker-first UI
 
 **Files:**
+- Modify: `packages/app/src/app/components/session/workspace-session-list.tsx`
 - Modify: `packages/app/src/app/pages/session.tsx`
 - Modify: `packages/app/src/app/pages/dashboard.tsx`
-- Modify: `packages/app/src/app/components/session/workspace-session-list.tsx`
 - Modify: `packages/app/src/app/app.tsx`
 - Test: `packages/app/scripts/cloud-ui-guards.mjs`
 
-**Step 1: Write the failing UI guard**
+**Step 1: Remove top-level folder picking from primary flows**
 
-Extend `packages/app/scripts/cloud-ui-guards.mjs` so it fails if the normal local-first UI still renders any of the legacy default copy:
+Default visible creation action should be only:
+
+- `New session`
+
+Remove or hide top-level `Open project/folder` entry points from default BFU UI.
+
+**Step 2: Remove worker-first copy**
+
+Extend `packages/app/scripts/cloud-ui-guards.mjs` so it fails if the normal local-first UI still renders any of:
 
 ```js
 [
@@ -272,22 +272,18 @@ Extend `packages/app/scripts/cloud-ui-guards.mjs` so it fails if the normal loca
 ]
 ```
 
-Only keep remote terms in hidden or explicitly gated internal/admin flows if they still exist.
+Keep remote/admin terms only in explicitly gated internal flows if they still exist.
 
-**Step 2: Hide remote entry points from default UI**
-
-Change the visible end-user surfaces so they do not advertise remote connect in the normal local-first product path. Leave runtime handlers in place if they are still needed internally.
-
-**Step 3: Replace copy with project/session-first language**
+**Step 3: Replace copy**
 
 Target copy:
 
 - `New session`
-- `Open project/folder`
 - `Start a new session`
-- `Begin in a private workspace, or open an existing project folder.`
+- `Begin in a private workspace. You can choose a folder later if you need one.`
+- `Choose folder`
 
-**Step 4: Run checks**
+**Step 4: Verify**
 
 Run:
 
@@ -303,66 +299,31 @@ Expected:
 **Step 5: Commit**
 
 ```bash
-git add packages/app/src/app/pages/session.tsx packages/app/src/app/pages/dashboard.tsx packages/app/src/app/components/session/workspace-session-list.tsx packages/app/src/app/app.tsx packages/app/scripts/cloud-ui-guards.mjs
-git commit -m "refactor(app): make default UI session-first and local-first"
+git add packages/app/src/app/components/session/workspace-session-list.tsx packages/app/src/app/pages/session.tsx packages/app/src/app/pages/dashboard.tsx packages/app/src/app/app.tsx packages/app/scripts/cloud-ui-guards.mjs
+git commit -m "refactor(app): simplify top-level UI to new session only"
 ```
 
-### Task 5: Align product and architecture docs with the approved runtime model
+### Task 5: Update docs and end-to-end verification
 
 **Files:**
+- Modify: `docs/plans/2026-03-09-session-first-scratch-workspaces-design.md`
 - Modify: `PRODUCT.md`
 - Modify: `ARCHITECTURE.md`
-- Optionally modify: `AGENTS.md`
-- Modify: `docs/plans/2026-03-09-new-session-directory-flow-design.md`
+- Modify: `VISION.md`
+- Modify: `INFRASTRUCTURE.md`
+- Optionally add screenshots under `packages/app/pr/`
 
-**Step 1: Update product language**
+**Step 1: Align docs with implemented behavior**
 
-In `PRODUCT.md`, replace current primary flow descriptions so they describe:
+Make sure docs describe:
 
-- `New session` creates a persistent private workspace and opens a chat immediately
-- `Open project/folder` opens a real folder and starts a new chat there
-- current end-user UI is local-first
-- remote execution remains supported in platform/runtime, but is not shown in current UI
+- one top-level `New session`
+- later in-session `Choose folder`
+- copy-and-switch semantics
+- conflict confirmation
+- cross-device view-only behavior
 
-**Step 2: Update architecture language**
-
-In `ARCHITECTURE.md`, describe:
-
-- scratch workspaces as normal local workspaces with app-managed directories
-- sessions always running against a real directory
-- remote support as a capability retained in code
-- user concepts as session/project, not worker
-
-**Step 3: Mark the old design as superseded**
-
-Add a short note at the top of `docs/plans/2026-03-09-new-session-directory-flow-design.md` pointing to the new approved design, or otherwise archive it clearly.
-
-**Step 4: Review diffs**
-
-Run:
-
-```bash
-git diff -- PRODUCT.md ARCHITECTURE.md AGENTS.md docs/plans/2026-03-09-new-session-directory-flow-design.md docs/plans/2026-03-09-session-first-scratch-workspaces-design.md
-```
-
-Expected:
-
-- docs consistently describe the same local-first UX
-
-**Step 5: Commit**
-
-```bash
-git add PRODUCT.md ARCHITECTURE.md AGENTS.md docs/plans/2026-03-09-new-session-directory-flow-design.md
-git commit -m "docs: align product and architecture with session-first local UX"
-```
-
-### Task 6: End-to-end verification in desktop/dev stack
-
-**Files:**
-- No code changes required unless verification uncovers bugs
-- Capture screenshots in a repo path such as `packages/app/pr/` if needed
-
-**Step 1: Start the stack**
+**Step 2: Start the dev stack**
 
 Run:
 
@@ -372,25 +333,20 @@ bash packaging/docker/dev-up.sh
 
 Expected:
 
-- dev web app and local services start cleanly
+- dev services start cleanly
 
-**Step 2: Verify scratch-first flow manually**
+**Step 3: Manual/E2E verification**
 
-Use the desktop/Tauri-capable flow if available:
+Verify:
 
-1. Launch app
-2. Click `New session`
-3. Confirm a new chat opens without a folder picker
-4. Confirm a new private workspace is created
-5. Repeat and confirm another distinct private workspace is created
+1. `New session` opens immediately without folder picker
+2. a second `New session` creates a distinct private workspace
+3. `Choose folder` is visible in private-workspace sessions
+4. choosing a clean folder copies and switches the session
+5. choosing a conflicting folder shows overwrite/choose another/cancel
+6. after switch, `Choose folder` is gone or disabled
 
-**Step 3: Verify `Open project/folder` flow manually**
-
-1. Click `Open project/folder`
-2. Choose a folder with no prior workspace
-3. Confirm Veslo bootstraps it and opens a new session
-4. Repeat with the same folder
-5. Confirm Veslo opens another new session in the existing project
+If desktop-native dialog automation is blocked here, verify as much as possible via tests and local logs, and say exactly what remains manual.
 
 **Step 4: Run automated checks**
 
@@ -412,8 +368,7 @@ Expected:
 
 ```bash
 git add -A
-git commit -m "test(app): verify session-first scratch workspace flows"
+git commit -m "test(app): verify private workspace and choose-folder flows"
 ```
 
 Only create this commit if verification required code changes.
-

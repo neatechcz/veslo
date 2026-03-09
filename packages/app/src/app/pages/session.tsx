@@ -87,7 +87,6 @@ import {
 } from "../utils";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
-import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 
 import browserSetupTemplate from "../data/commands/browser-setup.md?raw";
 import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
@@ -122,6 +121,8 @@ export type SessionViewProps = {
   openCreateWorkspace: () => void;
   openCreateRemoteWorkspace: () => void;
   openNewSessionWithDirectory: () => void;
+  canChooseSessionFolder: boolean;
+  chooseFolderForCurrentSession: () => Promise<boolean>;
   showRemoteActions?: boolean;
   importWorkspaceConfig: () => void;
   importingWorkspaceConfig: boolean;
@@ -376,12 +377,18 @@ export default function SessionView(props: SessionViewProps) {
     workspace.vesloWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
-    "Worker";
+    "Workspace";
   const todoList = createMemo(() => props.todos.filter((todo) => todo.content.trim()));
   const todoCount = createMemo(() => todoList().length);
   const todoCompletedCount = createMemo(() =>
     todoList().filter((todo) => todo.status === "completed").length
   );
+  const sessionWorkspaceContextLabel = createMemo(() => {
+    if (showWorkspaceSetupEmptyState()) return "";
+    if (props.activeWorkspaceDisplay.workspaceType !== "local") return "";
+    if (!props.activeWorkspaceRoot.trim()) return "";
+    return props.canChooseSessionFolder ? "Private workspace" : workspaceLabel(props.activeWorkspaceDisplay);
+  });
 
   const commandPaletteSessionOptions = createMemo(() => {
     const out: Array<{
@@ -2431,6 +2438,23 @@ export default function SessionView(props: SessionViewProps) {
     }
   };
 
+  const chooseFolderForSession = async () => {
+    setSessionMenuOpen(false);
+    if (!props.selectedSessionId) {
+      setToastMessage("No session selected");
+      return;
+    }
+    try {
+      const moved = await props.chooseFolderForCurrentSession();
+      if (moved) {
+        setToastMessage("Folder selected. Continuing in the chosen folder.");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : props.safeStringify(error);
+      setToastMessage(message || "Failed to choose folder");
+    }
+  };
+
   const openDeleteSessionModal = () => {
     setSessionMenuOpen(false);
     if (!props.selectedSessionId) {
@@ -3095,7 +3119,7 @@ export default function SessionView(props: SessionViewProps) {
       {
         id: "new-session",
         title: "Create new session",
-        detail: "Start a fresh task in the current worker",
+        detail: "Start a fresh task in a new private workspace",
         meta: "Create",
         action: () => {
           closeCommandPalette();
@@ -3108,7 +3132,7 @@ export default function SessionView(props: SessionViewProps) {
       {
         id: "sessions",
         title: "Search sessions",
-        detail: `${totalSessionCount().toLocaleString()} available across workers`,
+        detail: `${totalSessionCount().toLocaleString()} available across workspaces`,
         meta: "Jump",
         action: () => {
           setCommandPaletteMode("sessions");
@@ -3169,7 +3193,7 @@ export default function SessionView(props: SessionViewProps) {
       id: `session:${item.workspaceId}:${item.sessionId}`,
       title: item.title,
       detail: item.workspaceTitle,
-      meta: item.workspaceId === props.activeWorkspaceId ? "Current worker" : "Switch",
+      meta: item.workspaceId === props.activeWorkspaceId ? "Current workspace" : "Switch",
       action: () => {
         closeCommandPalette();
         openSessionFromList(item.workspaceId, item.sessionId);
@@ -3217,7 +3241,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const commandPalettePlaceholder = createMemo(() => {
     const mode = commandPaletteMode();
-    if (mode === "sessions") return "Find by session title or worker";
+    if (mode === "sessions") return "Find by session title or workspace";
     if (mode === "thinking") return "Filter thinking options";
     return "Search actions";
   });
@@ -3462,9 +3486,12 @@ export default function SessionView(props: SessionViewProps) {
 
             <h1 class="text-[13.5px] font-medium text-gray-11 truncate">
               {showWorkspaceSetupEmptyState()
-                ? "Create or connect a worker"
+                ? "Start a new session"
                 : (selectedSessionTitle() || "New session")}
             </h1>
+            <Show when={sessionWorkspaceContextLabel()}>
+              {(label) => <span class="text-xs text-gray-9 truncate">· {label()}</span>}
+            </Show>
             <Show when={props.developerMode}>
               <span class="text-xs text-dls-secondary">{props.headerStatus}</span>
             </Show>
@@ -3571,6 +3598,17 @@ export default function SessionView(props: SessionViewProps) {
                   class="absolute right-0 top-[calc(100%+4px)] z-20 w-52 rounded-lg border border-gray-6 bg-gray-1 shadow-lg p-1"
                   onClick={(event) => event.stopPropagation()}
                 >
+                  <Show when={props.canChooseSessionFolder}>
+                    <button
+                      type="button"
+                      class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
+                      onClick={() => {
+                        void chooseFolderForSession();
+                      }}
+                    >
+                      Choose folder
+                    </button>
+                  </Show>
                   <button
                     type="button"
                     class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3 disabled:opacity-60"
@@ -3674,37 +3712,22 @@ export default function SessionView(props: SessionViewProps) {
             <Show when={showWorkspaceSetupEmptyState()}>
               <div class="mx-auto max-w-xl rounded-3xl border border-gray-6 bg-gray-2/60 p-8 text-center shadow-sm">
                 <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-gray-6 bg-gray-1 text-gray-11">
-                  <HardDrive size={24} />
+                  <MessageCircle size={24} />
                 </div>
-                <h3 class="text-2xl font-semibold text-gray-12">Connect your worker</h3>
+                <h3 class="text-2xl font-semibold text-gray-12">Start a new session</h3>
                 <p class="mt-2 text-sm text-gray-10">
-                  {CLOUD_ONLY_MODE
-                    ? "Veslo needs a remote worker before you can start a session."
-                    : "Veslo needs a worker before you can start a session."}
+                  Begin in a private workspace. You can choose a folder later if you need one.
                 </p>
-                <div class={`mt-6 grid gap-3 ${CLOUD_ONLY_MODE ? "" : "sm:grid-cols-2"}`}>
-                  <Show when={!CLOUD_ONLY_MODE}>
-                    <button
-                      type="button"
-                      class="rounded-2xl border border-gray-7 bg-gray-12 px-4 py-3 text-sm font-semibold text-gray-1 transition-colors hover:bg-gray-11"
-                      onClick={props.openCreateWorkspace}
-                    >
-                      Create worker on this device
-                    </button>
-                  </Show>
-                  <Show when={CLOUD_ONLY_MODE || props.showRemoteActions !== false}>
-                    <button
-                      type="button"
-                      class={`rounded-2xl border border-gray-7 px-4 py-3 text-sm font-semibold transition-colors ${
-                        CLOUD_ONLY_MODE
-                          ? "bg-gray-12 text-gray-1 hover:bg-gray-11"
-                          : "bg-gray-1 text-gray-12 hover:bg-gray-3"
-                      }`}
-                      onClick={props.openCreateRemoteWorkspace}
-                    >
-                      Connect remote worker
-                    </button>
-                  </Show>
+                <div class="mt-6 flex justify-center">
+                  <button
+                    type="button"
+                    class="rounded-2xl border border-gray-7 bg-gray-12 px-4 py-3 text-sm font-semibold text-gray-1 transition-colors hover:bg-gray-11"
+                    onClick={() => {
+                      void props.openNewSessionWithDirectory();
+                    }}
+                  >
+                    New session
+                  </button>
                 </div>
               </div>
             </Show>

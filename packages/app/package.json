@@ -18,6 +18,7 @@
     "test:todos": "node scripts/todos.mjs",
     "test:permissions": "node scripts/permissions.mjs",
     "test:session-switch": "node scripts/session-switch.mjs",
+    "test:session-directory-switch": "node scripts/session-directory-switch.mjs",
     "test:fs-engine": "node scripts/fs-engine.mjs",
     "test:local-file-path": "node scripts/local-file-path.mjs",
     "test:i18n": "node scripts/i18n-parity.mjs",

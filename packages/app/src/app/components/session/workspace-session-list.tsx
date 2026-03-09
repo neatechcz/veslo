@@ -49,7 +49,7 @@ const workspaceLabel = (workspace: WorkspaceInfo) =>
   workspace.vesloWorkspaceName?.trim() ||
   workspace.name?.trim() ||
   workspace.path?.trim() ||
-  "Worker";
+  "Workspace";
 
 const workspaceKindLabel = (workspace: WorkspaceInfo) =>
   workspace.workspaceType === "remote"
@@ -271,7 +271,7 @@ export default function WorkspaceSessionList(props: Props) {
                             : { workspaceId: workspace().id, rowKey: row.rowKey },
                         );
                       }}
-                      aria-label="Worker options"
+                      aria-label="Workspace options"
                     >
                       <MoreHorizontal size={14} />
                     </button>

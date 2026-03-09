@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use tauri::Manager;
 
-use crate::types::{WorkspaceInfo, WorkspaceState, WorkspaceType, WORKSPACE_STATE_VERSION};
+use crate::types::{WorkspaceState, WORKSPACE_STATE_VERSION};
 
 pub fn stable_workspace_id(path: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -39,33 +39,6 @@ pub fn load_workspace_state(app: &tauri::AppHandle) -> Result<WorkspaceState, St
     Ok(state)
 }
 
-pub fn sanitize_cloud_only_state(state: &mut WorkspaceState) {
-    state
-        .workspaces
-        .retain(|workspace| workspace.workspace_type == WorkspaceType::Remote);
-
-    if state.active_id.trim().is_empty() {
-        state.active_id = state
-            .workspaces
-            .first()
-            .map(|entry| entry.id.clone())
-            .unwrap_or_default();
-        return;
-    }
-
-    if !state
-        .workspaces
-        .iter()
-        .any(|entry| entry.id == state.active_id)
-    {
-        state.active_id = state
-            .workspaces
-            .first()
-            .map(|entry| entry.id.clone())
-            .unwrap_or_default();
-    }
-}
-
 pub fn save_workspace_state(app: &tauri::AppHandle, state: &WorkspaceState) -> Result<(), String> {
     let (dir, path) = veslo_state_paths(app)?;
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create {}: {e}", dir.display()))?;
@@ -75,35 +48,6 @@ pub fn save_workspace_state(app: &tauri::AppHandle, state: &WorkspaceState) -> R
     )
     .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
     Ok(())
-}
-
-pub fn ensure_starter_workspace(app: &tauri::AppHandle) -> Result<WorkspaceInfo, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
-    let starter_dir = data_dir.join("workspaces").join("starter");
-    fs::create_dir_all(&starter_dir)
-        .map_err(|e| format!("Failed to create starter workspace: {e}"))?;
-
-    Ok(WorkspaceInfo {
-        id: stable_workspace_id(starter_dir.to_string_lossy().as_ref()),
-        name: "Starter".to_string(),
-        path: starter_dir.to_string_lossy().to_string(),
-        preset: "starter".to_string(),
-        workspace_type: WorkspaceType::Local,
-        remote_type: None,
-        base_url: None,
-        directory: None,
-        display_name: None,
-        veslo_host_url: None,
-        veslo_token: None,
-        veslo_workspace_id: None,
-        veslo_workspace_name: None,
-        sandbox_backend: None,
-        sandbox_run_id: None,
-        sandbox_container_name: None,
-    })
 }
 
 pub fn stable_workspace_id_for_remote(base_url: &str, directory: Option<&str>) -> String {
@@ -126,67 +70,4 @@ pub fn stable_workspace_id_for_veslo(host_url: &str, workspace_id: Option<&str>)
         }
     }
     stable_workspace_id(&key)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::types::RemoteType;
-
-    fn sample_local(id: &str) -> WorkspaceInfo {
-        WorkspaceInfo {
-            id: id.to_string(),
-            name: "Local".to_string(),
-            path: "/tmp/local".to_string(),
-            preset: "starter".to_string(),
-            workspace_type: WorkspaceType::Local,
-            remote_type: None,
-            base_url: None,
-            directory: None,
-            display_name: None,
-            veslo_host_url: None,
-            veslo_token: None,
-            veslo_workspace_id: None,
-            veslo_workspace_name: None,
-            sandbox_backend: None,
-            sandbox_run_id: None,
-            sandbox_container_name: None,
-        }
-    }
-
-    fn sample_remote(id: &str) -> WorkspaceInfo {
-        WorkspaceInfo {
-            id: id.to_string(),
-            name: "Remote".to_string(),
-            path: String::new(),
-            preset: "remote".to_string(),
-            workspace_type: WorkspaceType::Remote,
-            remote_type: Some(RemoteType::Veslo),
-            base_url: Some("https://veslo.example/opencode".to_string()),
-            directory: None,
-            display_name: None,
-            veslo_host_url: Some("https://veslo.example".to_string()),
-            veslo_token: None,
-            veslo_workspace_id: Some("ws_123".to_string()),
-            veslo_workspace_name: Some("Remote".to_string()),
-            sandbox_backend: None,
-            sandbox_run_id: None,
-            sandbox_container_name: None,
-        }
-    }
-
-    #[test]
-    fn cloud_only_sanitizer_drops_local_workspaces() {
-        let mut state = WorkspaceState {
-            version: WORKSPACE_STATE_VERSION,
-            active_id: "local".to_string(),
-            workspaces: vec![sample_local("local"), sample_remote("remote")],
-        };
-
-        sanitize_cloud_only_state(&mut state);
-
-        assert_eq!(state.workspaces.len(), 1);
-        assert_eq!(state.workspaces[0].id, "remote");
-        assert_eq!(state.active_id, "remote");
-    }
 }

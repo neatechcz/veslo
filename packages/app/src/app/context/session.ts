@@ -120,6 +120,7 @@ export function createSessionStore(options: {
   activeWorkspaceRoot: () => string;
   selectedSessionId: () => string | null;
   setSelectedSessionId: (id: string | null) => void;
+  sessionDirectoryOverrideById?: () => Record<string, string>;
   sessionModelState: () => SessionModelState;
   setSessionModelState: (updater: (current: SessionModelState) => SessionModelState) => SessionModelState;
   lastUserModelFromMessages: (messages: MessageWithParts[]) => ModelRef | null;
@@ -158,6 +159,16 @@ export function createSessionStore(options: {
     }
   };
   const MAX_RELOAD_DETECTION_KEYS = 5000;
+
+  const sessionDirectoryOverrides = () => options.sessionDirectoryOverrideById?.() ?? {};
+  const applySessionDirectoryOverride = <T extends Session>(session: T): T => {
+    const override = sessionDirectoryOverrides()[session.id]?.trim() ?? "";
+    if (!override) return session;
+    if ((session.directory ?? "").trim() === override) return session;
+    return { ...session, directory: override } as T;
+  };
+  const resolveSessionDirectory = (session: Pick<Session, "id" | "directory">) =>
+    normalizeDirectoryPath(sessionDirectoryOverrides()[session.id] ?? session.directory ?? "");
 
   const [store, setStore] = createStore<StoreState>({
     sessions: [],
@@ -621,10 +632,31 @@ export function createSessionStore(options: {
     // multiple roots (e.g. older servers or proxies).
     const root = normalizeDirectoryPath(scopeRoot);
     const filtered = root
-      ? list.filter((session) => normalizeDirectoryPath(session.directory) === root)
-      : list;
-    sessionDebug("sessions:load:filtered", { root: root || null, count: filtered.length });
-    setStore("sessions", reconcile(sortSessionsByActivity(filtered), { key: "id" }));
+      ? list
+        .map((session) => applySessionDirectoryOverride(session))
+        .filter((session) => resolveSessionDirectory(session) === root)
+      : list.map((session) => applySessionDirectoryOverride(session));
+
+    const overrideIds = root
+      ? Object.entries(sessionDirectoryOverrides())
+        .filter(([, directory]) => normalizeDirectoryPath(directory) === root)
+        .map(([sessionID]) => sessionID)
+      : [];
+
+    const merged = new Map(filtered.map((session) => [session.id, session] as const));
+    for (const sessionID of overrideIds) {
+      if (merged.has(sessionID)) continue;
+      try {
+        const fetched = unwrap(await c.session.get({ sessionID, directory: queryDirectory }));
+        merged.set(sessionID, applySessionDirectoryOverride(fetched));
+      } catch {
+        // ignore stale local overrides; delete path is handled by app state
+      }
+    }
+
+    const nextSessions = sortSessionsByActivity(Array.from(merged.values()));
+    sessionDebug("sessions:load:filtered", { root: root || null, count: nextSessions.length });
+    setStore("sessions", reconcile(nextSessions, { key: "id" }));
   }
 
   async function renameSession(sessionID: string, title: string) {
@@ -634,7 +666,7 @@ export function createSessionStore(options: {
     if (!trimmed) {
       throw new Error("Session name is required");
     }
-    const next = unwrap(await c.session.update({ sessionID, title: trimmed }));
+    const next = applySessionDirectoryOverride(unwrap(await c.session.update({ sessionID, title: trimmed })));
     setStore("sessions", (current) => upsertSession(current, next));
   }
 
@@ -996,7 +1028,7 @@ export function createSessionStore(options: {
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
         if (record.info && typeof record.info === "object") {
-          const info = record.info as Session;
+          const info = applySessionDirectoryOverride(record.info as Session);
           setStore("sessions", (current) => upsertSession(current, info));
         }
       }

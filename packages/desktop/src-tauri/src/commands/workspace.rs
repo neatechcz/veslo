@@ -6,9 +6,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::types::{
     ExecResult, RemoteType, WorkspaceInfo, WorkspaceList, WorkspaceVesloConfig, WorkspaceType,
 };
+use crate::fs::{collect_copy_conflicts, copy_dir_recursive};
+use crate::workspace::files::ensure_workspace_files;
 use crate::workspace::state::{
-    load_workspace_state, sanitize_cloud_only_state, save_workspace_state, stable_workspace_id,
-    stable_workspace_id_for_remote, stable_workspace_id_for_veslo,
+    load_workspace_state, save_workspace_state, stable_workspace_id, stable_workspace_id_for_remote,
+    stable_workspace_id_for_veslo,
 };
 use crate::workspace::watch::{update_workspace_watch, WorkspaceWatchState};
 use serde::Serialize;
@@ -23,8 +25,7 @@ pub fn workspace_bootstrap(
     watch_state: State<WorkspaceWatchState>,
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] bootstrap");
-    let mut state = load_workspace_state(&app)?;
-    sanitize_cloud_only_state(&mut state);
+    let state = load_workspace_state(&app)?;
 
     save_workspace_state(&app, &state)?;
     let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
@@ -63,7 +64,6 @@ pub fn workspace_forget(
             .map(|entry| entry.id.clone())
             .unwrap_or_else(|| "".to_string());
     }
-    sanitize_cloud_only_state(&mut state);
 
     save_workspace_state(&app, &state)?;
     let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
@@ -141,15 +141,118 @@ pub fn workspace_update_display_name(
     })
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFolderTransferResult {
+    kind: String,
+    conflicts: Vec<String>,
+}
+
+#[tauri::command]
+pub fn workspace_copy_into_folder(
+    source_path: String,
+    target_path: String,
+    overwrite: bool,
+) -> Result<WorkspaceFolderTransferResult, String> {
+    let source = PathBuf::from(source_path.trim());
+    let target = PathBuf::from(target_path.trim());
+
+    if source.as_os_str().is_empty() {
+        return Err("sourcePath is required".to_string());
+    }
+    if target.as_os_str().is_empty() {
+        return Err("targetPath is required".to_string());
+    }
+    if !source.is_dir() {
+        return Err(format!("Source is not a directory: {}", source.display()));
+    }
+    if source == target {
+        return Err("Choose a different folder.".to_string());
+    }
+    if target.starts_with(&source) {
+        return Err("Choose a folder outside the current private workspace.".to_string());
+    }
+
+    fs::create_dir_all(&target)
+        .map_err(|e| format!("Failed to create target folder {}: {e}", target.display()))?;
+
+    let conflicts = collect_copy_conflicts(&source, &target)?;
+    if !conflicts.is_empty() && !overwrite {
+        return Ok(WorkspaceFolderTransferResult {
+            kind: "conflict".to_string(),
+            conflicts,
+        });
+    }
+
+    copy_dir_recursive(&source, &target)?;
+    Ok(WorkspaceFolderTransferResult {
+        kind: "ok".to_string(),
+        conflicts: Vec::new(),
+    })
+}
+
 #[tauri::command]
 pub fn workspace_create(
-    _app: tauri::AppHandle,
-    _folder_path: String,
-    _name: String,
-    _preset: String,
-    _watch_state: State<WorkspaceWatchState>,
+    app: tauri::AppHandle,
+    folder_path: String,
+    name: String,
+    preset: String,
+    watch_state: State<WorkspaceWatchState>,
 ) -> Result<WorkspaceList, String> {
-    Err("cloud_only_local_disabled: Local workspace creation is disabled".to_string())
+    println!("[workspace] create local request");
+    let folder = folder_path.trim().to_string();
+    if folder.is_empty() {
+        return Err("folderPath is required".to_string());
+    }
+
+    let workspace_name = name.trim().to_string();
+    if workspace_name.is_empty() {
+        return Err("name is required".to_string());
+    }
+
+    let preset = preset.trim().to_string();
+    let preset = if preset.is_empty() {
+        "starter".to_string()
+    } else {
+        preset
+    };
+
+    fs::create_dir_all(&folder).map_err(|e| format!("Failed to create workspace folder: {e}"))?;
+
+    let id = stable_workspace_id(&folder);
+
+    ensure_workspace_files(&folder, &preset)?;
+
+    let mut state = load_workspace_state(&app)?;
+    state.workspaces.retain(|w| w.id != id);
+    state.workspaces.push(WorkspaceInfo {
+        id: id.clone(),
+        name: workspace_name,
+        path: folder,
+        preset,
+        workspace_type: WorkspaceType::Local,
+        remote_type: None,
+        base_url: None,
+        directory: None,
+        display_name: None,
+        veslo_host_url: None,
+        veslo_token: None,
+        veslo_workspace_id: None,
+        veslo_workspace_name: None,
+        sandbox_backend: None,
+        sandbox_run_id: None,
+        sandbox_container_name: None,
+    });
+    state.active_id = id.clone();
+    save_workspace_state(&app, &state)?;
+    let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
+    update_workspace_watch(&app, watch_state, active_workspace)?;
+    println!("[workspace] create local complete: {id}");
+
+    Ok(WorkspaceList {
+        active_id: state.active_id,
+        workspaces: state.workspaces,
+    })
 }
 
 #[tauri::command]

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Veslo Multi-Tenant Cloud Design Tables</title>
+  <title>Veslo Multi-Tenant Cloud: Planned vs Implemented</title>
   <style>
     :root {
       --bg: #f6f8fb;
@@ -13,6 +13,15 @@
       --line: #d1d5db;
       --head: #e5edf8;
       --accent: #1f6feb;
+      --ok-bg: #ecfdf5;
+      --ok-text: #065f46;
+      --ok-line: #a7f3d0;
+      --partial-bg: #fff7ed;
+      --partial-text: #9a3412;
+      --partial-line: #fed7aa;
+      --no-bg: #fef2f2;
+      --no-text: #991b1b;
+      --no-line: #fecaca;
     }
 
     body {
@@ -24,7 +33,7 @@
     }
 
     .container {
-      max-width: 1320px;
+      max-width: 1440px;
       margin: 24px auto 64px;
       padding: 0 16px;
     }
@@ -32,17 +41,16 @@
     h1, h2 {
       margin: 0 0 12px;
       line-height: 1.2;
+      color: #0f172a;
     }
 
     h1 {
       font-size: 28px;
-      color: #0f172a;
     }
 
     h2 {
-      margin-top: 28px;
       font-size: 20px;
-      color: #0f172a;
+      margin-top: 28px;
     }
 
     p {
@@ -69,7 +77,7 @@
     table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 980px;
+      min-width: 1120px;
       background: #fff;
     }
 
@@ -83,7 +91,6 @@
 
     th {
       background: var(--head);
-      color: #0f172a;
       font-weight: 600;
     }
 
@@ -108,30 +115,32 @@
       font-weight: 600;
     }
 
-    .latest-chip {
+    .status {
       display: inline-block;
-      border: 1px solid #10b981;
-      background: #ecfdf5;
-      color: #065f46;
       border-radius: 999px;
       padding: 2px 8px;
       font-size: 12px;
       font-weight: 700;
-      margin-left: 8px;
+      border: 1px solid transparent;
+      white-space: nowrap;
     }
 
-    .latest-row td {
-      background: #ecfdf5;
+    .status.ok {
+      background: var(--ok-bg);
+      color: var(--ok-text);
+      border-color: var(--ok-line);
     }
 
-    .latest-section {
-      border-color: #10b981;
-      box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.2), 0 1px 2px rgba(15, 23, 42, 0.04);
+    .status.partial {
+      background: var(--partial-bg);
+      color: var(--partial-text);
+      border-color: var(--partial-line);
     }
 
-    .latest-note {
-      border-color: #10b981;
-      background: #ecfdf5;
+    .status.no {
+      background: var(--no-bg);
+      color: var(--no-text);
+      border-color: var(--no-line);
     }
 
     .footer {
@@ -139,277 +148,94 @@
       color: var(--muted);
       font-size: 13px;
     }
-
-    .strong {
-      color: var(--text);
-      font-weight: 600;
-    }
-
-    a {
-      color: var(--accent);
-      text-decoration: none;
-    }
-
-    a:hover {
-      text-decoration: underline;
-    }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>Veslo Multi-Tenant Cloud Design Tables</h1>
-    <p><span class="badge">Design Draft</span> Organization-first, real multi-tenant model with owner-managed billing, admin-governed global sharing, and project-first UI semantics.</p>
+    <h1>Veslo Multi-Tenant Cloud: Planned vs Implemented</h1>
+    <p><span class="badge">Single Comparison Document</span> Full planned multi-tenant model compared against the actual implementation built so far.</p>
+    <section class="card">
+      <p>This document is intentionally not split into MVP vs final specs. It compares the full intended model against the current implementation state.</p>
+      <p>Implementation state reflects the work completed on branch <code>feature/multi-tenant-mvp</code> at commit <code>72b0df08</code>.</p>
+      <p>Status legend: <span class="status ok">Implemented</span> <span class="status partial">Partial</span> <span class="status no">Not implemented</span></p>
+    </section>
 
     <section class="card">
-      <h2>1. Core Multi-Tenant Operating Model</h2>
+      <h2>1. Operating Model Comparison</h2>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
               <th>Area</th>
-              <th>Design Decision</th>
-              <th>Platform Admin</th>
-              <th>Org Owner</th>
-              <th>Org Member</th>
-              <th>DB/API Impact</th>
+              <th>Planned Model</th>
+              <th>Actual Implementation</th>
+              <th>Status</th>
+              <th>Difference / Next Step</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td>Org auto-creation</td>
-              <td>When no org is mapped to the user's email domain, user creates a new org and becomes owner.</td>
-              <td>Can override or merge orgs.</td>
-              <td>Auto-assigned owner on create.</td>
-              <td>N/A</td>
-              <td><code>org</code>, <code>org_domain</code>, signup hook.</td>
+              <td>Organization creation</td>
+              <td>Users can create organizations; when no matching organization exists for their domain, they create a new org and become the first owner.</td>
+              <td>Users without memberships are given a personal/default org via bootstrap logic. There is no general create-organization flow yet.</td>
+              <td><span class="status partial">Partial</span></td>
+              <td>Add explicit organization creation beyond personal bootstrap.</td>
             </tr>
             <tr>
-              <td>Public email domains</td>
-              <td>Public domains default to personal org creation. Public-domain list is advisory, not a hard dependency.</td>
-              <td>Maintains baseline list, but logic must still work if list is incomplete.</td>
-              <td>N/A</td>
-              <td>N/A</td>
-              <td><code>public_email_domain</code> optional hint table only.</td>
+              <td>Domain-based onboarding</td>
+              <td>After sign-in, domain match drives `create new org` vs `join existing org` based on owner-controlled domain rules.</td>
+              <td>No <code>org_domain</code> model, no onboarding decision endpoint, no create-vs-join flow, and no join requests.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add <code>org_domain</code>, onboarding decision API, and join request flow.</td>
             </tr>
             <tr>
-              <td>Existing domain behavior</td>
-              <td>If org exists for domain, user sees: <code>Create new org</code> or <code>Join existing org</code> unless owner has locked domain joining.</td>
-              <td>Can override in support flows.</td>
-              <td>Can lock domain to join-only mode.</td>
-              <td>Choose create/join based on org policy.</td>
-              <td><code>org_domain.allow_new_org_on_match</code>, pre-login decision API.</td>
+              <td>Public-domain behavior</td>
+              <td>Public domains should default to personal org creation, while still allowing invite/request-based joining. The public-domain list is advisory only.</td>
+              <td>Users with no memberships fall back to a personal org, but there is no explicit public-domain classification or invite/request UX.</td>
+              <td><span class="status partial">Partial</span></td>
+              <td>Add advisory public-domain handling as part of domain onboarding.</td>
             </tr>
             <tr>
-              <td>Domain ownership</td>
-              <td>Org domains can be DNS-verified; verified domain unlocks trusted join paths.</td>
-              <td>Can force-verify/revoke.</td>
-              <td>Add/verify domains.</td>
-              <td>View only.</td>
-              <td><code>org_domain(status, verified_at, token)</code>.</td>
-            </tr>
-            <tr>
-              <td>Multi-owner support</td>
-              <td>Any org can have multiple owners.</td>
-              <td>Override promote/demote.</td>
-              <td>Promote/demote owners and members.</td>
-              <td>No.</td>
-              <td><code>org_membership(role)</code>.</td>
-            </tr>
-            <tr>
-              <td>Join policy</td>
-              <td>Per-org policy: <code>invite_only</code>, <code>domain_request</code>, <code>domain_auto_join</code>; owner can require approval even for domain joins.</td>
-              <td>Can enforce global floor/ceiling policy.</td>
-              <td>Configure policy.</td>
-              <td>Request or auto-join based on policy.</td>
-              <td><code>org.join_policy</code>, invite/join APIs.</td>
+              <td>Role model</td>
+              <td>Three roles: <code>platform_admin</code>, <code>org_owner</code>, <code>org_member</code>, with admin stronger than owner.</td>
+              <td><code>platform_role</code> exists for admin grants. Org membership owner/member roles exist. Admin can bypass owner checks on org routes and delete any worker.</td>
+              <td><span class="status partial">Partial</span></td>
+              <td>Role model exists in foundation, but not all planned admin-controlled surfaces exist yet.</td>
             </tr>
             <tr>
               <td>Active org context</td>
-              <td>User may belong to multiple orgs; each request requires explicit <code>active_org_id</code>.</td>
-              <td>Can support/impersonate with audit.</td>
-              <td>Switch among own orgs.</td>
-              <td>Switch among own orgs.</td>
-              <td>Session claim + org guard middleware.</td>
+              <td>Every multi-tenant request uses explicit <code>active_org_id</code> and users can switch among organizations they belong to.</td>
+              <td>Cloud control loads orgs, stores selected org in browser local storage, and sends <code>x-veslo-org-id</code>. Single-org users get automatic fallback.</td>
+              <td><span class="status partial">Partial</span></td>
+              <td>Current active org is client-managed, not server session-managed.</td>
             </tr>
             <tr>
               <td>Tenant isolation</td>
-              <td>Every tenant table row must carry <code>org_id</code>; all queries filter by it.</td>
-              <td>Audit and emergency override only.</td>
-              <td>Within own org only.</td>
-              <td>Within own org only.</td>
-              <td>Mandatory <code>org_id</code> + policy tests.</td>
+              <td>All tenant data is keyed by <code>org_id</code> and filtered by org context.</td>
+              <td>Membership and worker routes are org-scoped. Future entities are not present yet.</td>
+              <td><span class="status partial">Partial</span></td>
+              <td>Isolation works on current org-aware surfaces; extend the same rule to future entities.</td>
             </tr>
             <tr>
-              <td>Platform settings visibility</td>
-              <td>Platform settings are hidden from org owners and members.</td>
-              <td>Full control.</td>
-              <td>No visibility.</td>
-              <td>No visibility.</td>
-              <td><code>platform_settings</code>, admin-only APIs.</td>
+              <td>Project creation and naming</td>
+              <td>UI should use `Projects`; members can create them; backend may temporarily keep <code>worker</code>.</td>
+              <td>Members can create org-scoped workers. UI still uses `Workers` in visible labels.</td>
+              <td><span class="status partial">Partial</span></td>
+              <td>Rename UI from Workers to Projects.</td>
             </tr>
             <tr>
-              <td>Org model preferences</td>
-              <td>Each org can choose preferred provider/model profile (future-safe for Gemini/OpenAI/etc.).</td>
-              <td>Can define platform-level allowed provider catalog.</td>
-              <td>Can configure org model defaults within allowed catalog.</td>
-              <td>Can use defaults; no policy changes.</td>
-              <td><code>org_settings.model_profile</code>, policy checks at runtime.</td>
-            </tr>
-            <tr>
-              <td>Project management permissions (UI)</td>
-              <td>UI uses "Projects" as the user-facing name. Backend can keep <code>worker</code> short-term as a compatibility layer. Members can create projects in V1. Private member-only projects remain a future extension, not V1 behavior.</td>
-              <td>Superuser only for exceptional intervention: legal, security, billing, compliance, or recovery cases. No day-to-day project management. Every action requires reason + audit.</td>
-              <td>Primary operators for project lifecycle inside the org, including stop/start and org policy management.</td>
-              <td>Create projects and manage projects they own or are explicitly assigned to.</td>
-              <td><code>worker.org_id</code> isolation + <code>project</code> label alias + admin emergency-action audit schema.</td>
-            </tr>
-            <tr>
-              <td>Billing ownership</td>
-              <td>Exactly one subscription per org, managed by owners.</td>
-              <td>Can approve invoice mode and override status.</td>
-              <td>Primary billing controllers.</td>
-              <td>No billing permissions.</td>
-              <td><code>org_subscription</code> (1:1 with <code>org</code>).</td>
-            </tr>
-            <tr>
-              <td>Billing modes</td>
-              <td><code>self_serve</code> (Polar/Stripe) or <code>admin_invoiced</code> (manual invoice, admin-approved).</td>
-              <td>Approves and manages invoice mode.</td>
-              <td>Requests/selects mode.</td>
-              <td>No.</td>
-              <td><code>org_billing_request</code>, <code>org.billing_mode</code>.</td>
-            </tr>
-            <tr>
-              <td>Admin trial control</td>
-              <td>Admin can set or extend trial duration to any date/time per org.</td>
-              <td>Set, extend, or clear trial end date.</td>
-              <td>Can request extension.</td>
-              <td>No.</td>
-              <td><code>org_subscription.trial_ends_at</code>, admin billing API.</td>
-            </tr>
-            <tr>
-              <td>Global MCP catalog</td>
-              <td>Admin publishes MCPs globally.</td>
-              <td>Publish/retire.</td>
-              <td>Consume; propose via workflow.</td>
-              <td>Consume.</td>
-              <td><code>artifact(scope=global, kind=mcp)</code>.</td>
-            </tr>
-            <tr>
-              <td>Global skills & automations</td>
-              <td>Admin publishes to all orgs/users after approval.</td>
-              <td>Publish/retire.</td>
-              <td>Consume; submit candidates.</td>
-              <td>Consume.</td>
-              <td><code>artifact(scope=global)</code> + approvals.</td>
-            </tr>
-            <tr>
-              <td>Artifact defaults</td>
-              <td>Default artifact scope is private-to-user or private-to-org. Sharing is a separate UI action layered on top.</td>
-              <td>Can enforce policy constraints.</td>
-              <td>Can publish org-wide when policy allows.</td>
-              <td>Create private artifacts by default.</td>
-              <td><code>artifact.scope_default</code> + explicit publish actions.</td>
-            </tr>
-            <tr>
-              <td>Org-level sharing</td>
-              <td>Owners publish org-scoped MCP/skills/automations to all members.</td>
-              <td>Moderation override.</td>
-              <td>Approve and publish.</td>
-              <td>Submit for review.</td>
-              <td><code>artifact(scope=org)</code>, approval transitions.</td>
-            </tr>
-            <tr>
-              <td>Member contributions</td>
-              <td>Members create skills/MCP/automations in private scope, then submit to owners for org sharing.</td>
-              <td>Escalation review only.</td>
-              <td>Approve/reject.</td>
-              <td>Create/submit.</td>
-              <td><code>artifact_submission</code>.</td>
-            </tr>
-            <tr>
-              <td>Org-to-global promotion</td>
-              <td>Owner submits org artifact for global catalog; admin approves/rejects before platform-wide rollout.</td>
-              <td>Final gate.</td>
-              <td>Submit and track status.</td>
-              <td>No direct global publish.</td>
-              <td><code>artifact_release(state machine)</code>.</td>
-            </tr>
-            <tr>
-              <td>Auditability</td>
-              <td>All role, billing, sharing, and approval events are immutable and auditable.</td>
-              <td>Full visibility.</td>
-              <td>Org-visible logs.</td>
-              <td>Limited self-scoped visibility.</td>
-              <td><code>audit_event(org_id, actor, action, payload)</code>.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>1A. Project Governance and Admin Superuser Intervention</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Control Area</th>
-              <th>Org Member</th>
-              <th>Org Owner</th>
-              <th>Platform Admin (Emergency Only)</th>
-              <th>Implementation Rule</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Create project</td>
-              <td>Allowed by default.</td>
-              <td>Allowed.</td>
-              <td>Not needed.</td>
-              <td>Project is stored as org-scoped backend <code>worker</code> entity.</td>
-            </tr>
-            <tr>
-              <td>Edit/rename project</td>
-              <td>Own/assigned projects only.</td>
-              <td>Any project in org.</td>
-              <td>Only for break-glass support.</td>
-              <td>Ownership and assignment checks enforced per request.</td>
-            </tr>
-            <tr>
-              <td>Archive/delete project</td>
-              <td>Own projects only (or owner policy limit).</td>
-              <td>Any project in org.</td>
-              <td>Force archive/delete when needed for abuse/recovery.</td>
-              <td>Soft-delete preferred; hard-delete requires extra confirmation path.</td>
-            </tr>
-            <tr>
-              <td>Stop/start project execution</td>
-              <td>Own/assigned projects only.</td>
-              <td>Any project in org.</td>
-              <td>Allowed, but exceptional only.</td>
-              <td>Owners are the normal operators. Admin action is reserved for exceptional intervention and must be audited.</td>
-            </tr>
-            <tr>
-              <td>Suspend organization</td>
-              <td>No.</td>
-              <td>No.</td>
-              <td>Allowed (billing/compliance/security incidents).</td>
-              <td>Blocks project creation and execution across org.</td>
+              <td>Private member-only projects</td>
+              <td>Keep the door open for member-private projects that owners cannot access, but do not implement this in the first version.</td>
+              <td>No private-project model exists.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Future privacy model only; not part of the current implementation.</td>
             </tr>
             <tr>
               <td>Admin superuser intervention</td>
-              <td>No.</td>
-              <td>Normal org policy applies.</td>
-              <td>Allowed for legal, security, compliance, billing, or recovery incidents only.</td>
-              <td>No separate temporary-policy system in V1. Interventions must include <code>reason</code> and immutable audit trail.</td>
-            </tr>
-            <tr>
-              <td>Ownership recovery</td>
-              <td>No.</td>
-              <td>Can reassign inside org.</td>
-              <td>Can force transfer when org is locked out.</td>
-              <td>Always audited as privileged operation.</td>
+              <td>Admin has stronger-than-owner authority for exceptional cases only: legal, security, billing, compliance, or recovery. Actions must be audited.</td>
+              <td>Admin can bypass owner-only membership checks and delete any org worker. There are no project/org suspend controls yet.</td>
+              <td><span class="status partial">Partial</span></td>
+              <td>Add explicit stop/suspend/recovery controls with audit requirements.</td>
             </tr>
           </tbody>
         </table>
@@ -417,53 +243,102 @@
     </section>
 
     <section class="card">
-      <h2>2. Domain Login Decision Matrix</h2>
+      <h2>2. Governance, Settings, Billing, and Sharing Comparison</h2>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Condition at Login</th>
-              <th>User Choices</th>
-              <th>Owner Policy Influence</th>
-              <th>Outcome</th>
+              <th>Area</th>
+              <th>Planned Model</th>
+              <th>Actual Implementation</th>
+              <th>Status</th>
+              <th>Difference / Next Step</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td>No org mapped to domain</td>
-              <td>Create new org</td>
-              <td>N/A</td>
-              <td>Org created, user becomes owner.</td>
+              <td>Platform settings boundary</td>
+              <td>Platform settings are admin-only and hidden from owners and members.</td>
+              <td>No platform settings surface exists yet, so owners/members do not see one, but the feature itself is not implemented.</td>
+              <td><span class="status partial">Partial</span></td>
+              <td>Add explicit platform settings table/API/UI for admins only.</td>
             </tr>
             <tr>
-              <td>Org exists for domain, creation allowed</td>
-              <td>Create new org or request join existing</td>
-              <td>Owner can keep creation allowed.</td>
-              <td>User picks either path.</td>
+              <td>Organization settings</td>
+              <td>Owners manage org join rules, domain policy, and future org-specific model/provider preferences.</td>
+              <td>No <code>org_settings</code> model or settings API exists.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add <code>org_settings</code> and owner settings surfaces.</td>
             </tr>
             <tr>
-              <td>Org exists for domain, creation locked</td>
-              <td>Join existing only</td>
-              <td>Owner sets domain to join-only.</td>
-              <td>User cannot create another org for that domain.</td>
+              <td>Org model preferences</td>
+              <td>Each organization can pick allowed provider/model defaults such as OpenAI or Gemini within platform policy.</td>
+              <td>No organization-level model preference system exists.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Implement this through <code>org_settings</code>.</td>
             </tr>
             <tr>
-              <td>Join request submitted</td>
-              <td>Wait for approval</td>
-              <td>Owner approval required when policy says so.</td>
-              <td>Membership becomes active after owner approval.</td>
+              <td>Billing ownership</td>
+              <td>Exactly one subscription per org, managed by org owners.</td>
+              <td>Billing is still user-scoped under worker billing endpoints.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Move billing ownership to <code>org_subscription</code>.</td>
             </tr>
             <tr>
-              <td>Domain auto-join enabled</td>
-              <td>Join immediately</td>
-              <td>Owner can disable auto-join anytime.</td>
-              <td>User becomes member without manual approval.</td>
+              <td>Self-serve billing</td>
+              <td>Owners start Stripe/Polar checkout for the organization subscription.</td>
+              <td>Checkout exists only in the user-scoped worker billing flow.</td>
+              <td><span class="status partial">Partial</span></td>
+              <td>Re-scope checkout to organization billing.</td>
             </tr>
             <tr>
-              <td>Public domain user (<code>gmail</code>, etc.)</td>
-              <td>Create personal org by default; join via invite/request</td>
-              <td>Owner invite/join policy still applies.</td>
-              <td>No blind domain-based auto-grouping.</td>
+              <td>Admin-invoiced billing</td>
+              <td>Owners can request invoiced billing; admin approves and the org runs without in-app card entry.</td>
+              <td>No invoiced billing workflow exists.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add <code>org_billing_request</code> and admin approval flow.</td>
+            </tr>
+            <tr>
+              <td>Admin trial control</td>
+              <td>Admin can set or extend trial to any date/time for any org.</td>
+              <td>No organization trial control exists.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add org trial fields and admin controls.</td>
+            </tr>
+            <tr>
+              <td>Artifact default scopes</td>
+              <td>Artifacts default to user-private or org-private; sharing is an explicit overlay action.</td>
+              <td>No artifact-sharing model exists yet.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add artifact data model and default private scope semantics.</td>
+            </tr>
+            <tr>
+              <td>Org-level sharing</td>
+              <td>Owners can publish MCPs, skills, and automations to their organization.</td>
+              <td>No org-sharing workflow exists.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add publish and approval workflow for org scope.</td>
+            </tr>
+            <tr>
+              <td>Member contributions</td>
+              <td>Members can create private skills/MCPs/automations and submit them to owners for org sharing.</td>
+              <td>No member contribution workflow exists.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add submission, approval, and revision states.</td>
+            </tr>
+            <tr>
+              <td>Org-to-global promotion</td>
+              <td>Owners can submit org artifacts for global sharing and admins approve or reject.</td>
+              <td>No promotion workflow exists.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add global catalog approval path.</td>
+            </tr>
+            <tr>
+              <td>AI audits / auto-stop</td>
+              <td>Future AI governance can warn or stop projects based on organization policy.</td>
+              <td>No AI audit or auto-stop system exists.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Future governance layer only.</td>
             </tr>
           </tbody>
         </table>
@@ -471,261 +346,109 @@
     </section>
 
     <section class="card">
-      <h2>3. Billing State Model (Org-Level)</h2>
+      <h2>3. Data Model Comparison</h2>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Billing State</th>
-              <th>Entry Trigger</th>
-              <th>Who Can Change</th>
-              <th>System Effect</th>
+              <th>Table / Entity</th>
+              <th>Planned Model</th>
+              <th>Actual Implementation</th>
+              <th>Status</th>
+              <th>Difference / Next Step</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td><code>trialing</code></td>
-              <td>New org trial or admin custom trial assignment.</td>
-              <td>Admin / Owner (request)</td>
-              <td>Trial entitlements active.</td>
+              <td><code>org</code></td>
+              <td>Organization root with tenant policy and billing-related configuration.</td>
+              <td>Exists and is used as the tenant root.</td>
+              <td><span class="status ok">Implemented</span></td>
+              <td>Extend with planned domain and billing policy fields as needed.</td>
             </tr>
             <tr>
-              <td><code>active_self_serve</code></td>
-              <td>Successful Stripe/Polar checkout.</td>
-              <td>Owner / Admin</td>
-              <td>Full paid access.</td>
+              <td><code>org_membership</code></td>
+              <td>Owner/member membership model with multi-owner support.</td>
+              <td>Exists and is used. Owner/member role enforcement is active. Final-owner protection exists.</td>
+              <td><span class="status ok">Implemented</span></td>
+              <td>Invitation and join-request layers still need to be added around it.</td>
             </tr>
-            <tr>
-              <td><code>admin_invoiced_pending</code></td>
-              <td>Owner requests invoice mode.</td>
-              <td>Admin</td>
-              <td>Pending approval; restricted as configured.</td>
-            </tr>
-            <tr>
-              <td><code>active_admin_invoiced</code></td>
-              <td>Admin approves invoiced billing.</td>
-              <td>Admin (Owner visible)</td>
-              <td>Full access without in-app card requirement.</td>
-            </tr>
-            <tr>
-              <td><code>past_due</code></td>
-              <td>Invoice overdue or card charge failed.</td>
-              <td>Owner / Admin</td>
-              <td>Grace period + warnings.</td>
-            </tr>
-            <tr>
-              <td><code>suspended</code></td>
-              <td>Past due exceeds grace or admin suspension.</td>
-              <td>Admin</td>
-              <td>Cloud project creation blocked; restricted runtime.</td>
-            </tr>
-            <tr>
-              <td><code>canceled</code></td>
-              <td>Owner/admin cancellation.</td>
-              <td>Owner / Admin</td>
-              <td>Access ends at period end.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>4. Settings Responsibility Model</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Settings Scope</th>
-              <th>Examples</th>
-              <th>Visible To</th>
-              <th>Editable By</th>
-              <th>Notes</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><span class="strong">Platform settings</span></td>
-              <td>Global model provider credentials, global infra connectors, global policy defaults.</td>
-              <td>Platform admins only.</td>
-              <td>Platform admins only.</td>
-              <td>Hidden from owners/members by design.</td>
-            </tr>
-            <tr>
-              <td><span class="strong">Org settings</span></td>
-              <td>Join policy, domain lock, approval policy, org model preference profile.</td>
-              <td>Owners (+ optional read-only members).</td>
-              <td>Owners.</td>
-              <td>Future-ready for per-company model choices (Gemini/OpenAI/etc.).</td>
-            </tr>
-            <tr>
-              <td><span class="strong">Project settings</span></td>
-              <td>Per-project defaults, runtime knobs, project-level skills/automations.</td>
-              <td>Project collaborators in org.</td>
-              <td>Creator + permitted collaborators.</td>
-              <td>UI term is <code>Project</code>; backend may keep <code>worker</code> temporarily.</td>
-            </tr>
-            <tr>
-              <td><span class="strong">User settings</span></td>
-              <td>Personal drafts, private skills, preferences.</td>
-              <td>User only.</td>
-              <td>User.</td>
-              <td>Private by default unless explicitly shared.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>5. Artifact Sharing Workflow (Overlay Feature)</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Workflow State</th>
-              <th>Created By</th>
-              <th>Required Next Approval</th>
-              <th>Visibility</th>
-              <th>Meaning</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><code>private_user</code></td>
-              <td>Member / Owner</td>
-              <td>None</td>
-              <td>Creator only</td>
-              <td>Default personal artifact.</td>
-            </tr>
-            <tr>
-              <td><code>private_org</code></td>
-              <td>Owner or org-authorized creator</td>
-              <td>None</td>
-              <td>Owner team only</td>
-              <td>Default org-scoped artifact before publication.</td>
-            </tr>
-            <tr>
-              <td><code>submitted_to_org</code></td>
-              <td>Member / Owner</td>
-              <td>Org Owner approval</td>
-              <td>Owners + submitter</td>
-              <td>Member contribution awaiting org sharing decision.</td>
-            </tr>
-            <tr>
-              <td><code>org_published</code></td>
-              <td>Org Owner</td>
-              <td>Optional admin approval for global promotion</td>
-              <td>All members in org</td>
-              <td>Shared inside organization.</td>
-            </tr>
-            <tr>
-              <td><code>submitted_to_global</code></td>
-              <td>Org Owner</td>
-              <td>Platform Admin approval</td>
-              <td>Admin + source org owners</td>
-              <td>Org-to-global promotion request.</td>
-            </tr>
-            <tr>
-              <td><code>global_published</code></td>
-              <td>Platform Admin</td>
-              <td>None</td>
-              <td>All orgs and users</td>
-              <td>Global catalog distribution.</td>
-            </tr>
-            <tr>
-              <td><code>rejected</code></td>
-              <td>Owner / Admin</td>
-              <td>Resubmission by member/owner</td>
-              <td>Submitter + approvers</td>
-              <td>Needs revision before republish.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>6. Data Model Sketch</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Table</th>
-              <th>Purpose</th>
-              <th>Critical Keys / Constraints</th>
-            </tr>
-          </thead>
-          <tbody>
             <tr>
               <td><code>platform_role</code></td>
-              <td>Global admin roles.</td>
-              <td><code>user_id</code> unique per role grant.</td>
-            </tr>
-            <tr>
-              <td><code>org</code> (extend)</td>
-              <td>Tenant root and policy config.</td>
-              <td><code>id</code>, <code>slug</code> unique, <code>join_policy</code>, <code>billing_mode</code>, <code>allow_new_org_on_domain_match</code>.</td>
+              <td>Global platform role grants, especially <code>platform_admin</code>.</td>
+              <td>Implemented and used for admin capability checks.</td>
+              <td><span class="status ok">Implemented</span></td>
+              <td>No bootstrap/admin-management UI yet.</td>
             </tr>
             <tr>
               <td><code>org_domain</code></td>
-              <td>Email domain to org mapping + verification state.</td>
-              <td><code>domain</code> indexed (not always unique), <code>org_id</code> foreign key, <code>allow_join</code>, <code>require_owner_approval</code>.</td>
-            </tr>
-            <tr>
-              <td><code>org_membership</code> (extend)</td>
-              <td>Membership and role assignment.</td>
-              <td>Unique <code>(org_id, user_id)</code>.</td>
-            </tr>
-            <tr>
-              <td><code>org_invite</code></td>
-              <td>Invite-only onboarding flow.</td>
-              <td><code>token</code> unique, <code>expires_at</code>.</td>
+              <td>Domain-to-organization mapping with join/create rules and later verification.</td>
+              <td>Does not exist.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Required for domain onboarding.</td>
             </tr>
             <tr>
               <td><code>org_join_request</code></td>
-              <td>Owner-managed domain join requests.</td>
-              <td>Unique open request per <code>(org_id, user_id)</code>.</td>
+              <td>Owner-managed request queue for domain joins.</td>
+              <td>Does not exist.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Required for approval-based domain joining.</td>
             </tr>
             <tr>
-              <td><code>org_subscription</code></td>
-              <td>Single subscription record per org.</td>
-              <td>Unique <code>org_id</code>, provider ids indexed, <code>trial_ends_at</code> admin-settable.</td>
-            </tr>
-            <tr>
-              <td><code>org_billing_request</code></td>
-              <td>Invoice approval workflow.</td>
-              <td><code>org_id</code>, <code>status</code>, <code>approved_by_admin_id</code>.</td>
+              <td><code>org_invite</code></td>
+              <td>Invitation token/email flow for invite-only onboarding.</td>
+              <td>No invitation table or invite token flow exists.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Current member add requires the target user to already exist.</td>
             </tr>
             <tr>
               <td><code>org_settings</code></td>
-              <td>Organization-configurable behavior and model preferences.</td>
-              <td><code>org_id</code> unique, model/provider profile fields, policy toggles.</td>
+              <td>Organization-level settings including join policy and model preferences.</td>
+              <td>Does not exist.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Needed for owner-managed org configuration.</td>
+            </tr>
+            <tr>
+              <td><code>org_subscription</code></td>
+              <td>Single subscription record per organization.</td>
+              <td>Does not exist.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Needed to move billing from user scope to org scope.</td>
+            </tr>
+            <tr>
+              <td><code>org_billing_request</code></td>
+              <td>Admin-approved invoiced billing workflow.</td>
+              <td>Does not exist.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Needed for invoice-based billing mode.</td>
             </tr>
             <tr>
               <td><code>platform_settings</code></td>
-              <td>Global infrastructure and provider credentials.</td>
-              <td>Admin-only table; no org read access.</td>
+              <td>Admin-only global provider credentials and infrastructure settings.</td>
+              <td>Does not exist.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Needed for a real admin configuration surface.</td>
             </tr>
             <tr>
-              <td><code>artifact</code></td>
-              <td>Unified item for skill/MCP/automation.</td>
-              <td><code>kind</code>, <code>scope</code> (<code>private_user</code>/<code>private_org</code>/<code>org</code>/<code>global</code>), <code>org_id</code> nullable for global.</td>
+              <td><code>worker</code></td>
+              <td>Temporary backend runtime entity behind the user-facing Project concept.</td>
+              <td>Exists and is org-scoped. Used for list/create/get/token/delete.</td>
+              <td><span class="status ok">Implemented</span></td>
+              <td>UI naming still needs to move to Projects.</td>
             </tr>
             <tr>
-              <td><code>artifact_release</code></td>
-              <td>Approval state transitions.</td>
-              <td><code>artifact_id</code>, <code>state</code>, immutable transition log.</td>
+              <td><code>audit_event</code></td>
+              <td>Immutable audit trail for membership, billing, admin actions, and publishing workflows.</td>
+              <td>Exists and is used for membership and worker governance events.</td>
+              <td><span class="status partial">Partial</span></td>
+              <td>Coverage needs to expand as more admin, billing, and sharing actions are added.</td>
             </tr>
             <tr>
-              <td><code>artifact_distribution</code></td>
-              <td>Rollout targeting and enable flags.</td>
-              <td><code>artifact_id</code>, target <code>all_orgs</code> or specific <code>org_id</code>.</td>
-            </tr>
-            <tr>
-              <td><code>audit_event</code> (existing/extend)</td>
-              <td>Security, billing, sharing auditability.</td>
-              <td>Indexed <code>org_id</code>, actor, action, timestamp.</td>
+              <td><code>artifact</code>, <code>artifact_release</code>, <code>artifact_distribution</code></td>
+              <td>Artifact sharing, approval, and global rollout model.</td>
+              <td>Do not exist.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Needed for MCP/skill/automation sharing.</td>
             </tr>
           </tbody>
         </table>
@@ -733,101 +456,247 @@
     </section>
 
     <section class="card">
-      <h2>7. Function Inventory with Current Implementation</h2>
-      <p>This keeps the original function-planning view but adds what is actually implemented today and where it differs.</p>
+      <h2>4. Function and API Comparison</h2>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Function</th>
-              <th>Purpose</th>
-              <th>Why Required for V1 Multi-Tenancy</th>
-              <th>Implemented Today / Difference</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td><code>resolveUserOrganizations(userId)</code></td><td>List org memberships for current user.</td><td>Needed for org switch and auth scope.</td><td>Yes. Implemented in Den.</td></tr>
-            <tr><td><code>setActiveOrganization(sessionId, orgId)</code></td><td>Bind session/request context to one org.</td><td>Prevents cross-tenant ambiguity.</td><td>No. Current model is client-selected org via <code>x-veslo-org-id</code>, not a server-side persisted active-org session binding.</td></tr>
-            <tr><td><code>requireOrgContext(request)</code></td><td>Reject requests missing valid org context.</td><td>Core isolation guard.</td><td>Partial. Implemented as <code>requireOrganizationAccess(request, response, options)</code>, which resolves org context plus role/admin checks together.</td></tr>
-            <tr><td><code>requireOrgRole(orgId, userId, role)</code></td><td>Enforce owner/member/admin permissions.</td><td>Role separation baseline.</td><td>Partial. Role enforcement exists, but inside <code>requireOrganizationAccess(...)</code> rather than as a separate exported function.</td></tr>
-            <tr><td><code>parseEmailDomain(email)</code></td><td>Extract normalized domain from login email.</td><td>Domain onboarding logic entry point.</td><td>No. Only ad hoc email-domain parsing exists in web analytics/UI code, not as onboarding control-plane logic.</td></tr>
-            <tr><td><code>findOrganizationsByDomain(domain)</code></td><td>Find existing organizations for domain.</td><td>Supports join/create decision.</td><td>No. No <code>org_domain</code> model yet.</td></tr>
-            <tr><td><code>getDomainOnboardingOptions(userId, domain)</code></td><td>Return allowed actions: create, join, request.</td><td>Implements domain policy behavior.</td><td>No. Domain onboarding flow is not implemented.</td></tr>
-            <tr><td><code>createOrganization(input, ownerUserId)</code></td><td>Create org and initial owner membership.</td><td>Primary tenant creation path.</td><td>Partial. <code>ensureDefaultOrg(...)</code> creates a personal org automatically, but there is no general organization-creation flow yet.</td></tr>
-            <tr><td><code>setOrganizationDomainPolicy(orgId, ownerId, policy)</code></td><td>Owner sets join-only / approval requirements.</td><td>Required domain governance rule.</td><td>No. Domain policy system is not implemented.</td></tr>
-            <tr><td><code>requestOrganizationJoin(orgId, userId)</code></td><td>Submit membership request.</td><td>Approval-based joining.</td><td>No. Join-request workflow is not implemented.</td></tr>
-            <tr><td><code>approveOrganizationJoin(orgId, ownerId, requestId)</code></td><td>Owner accepts join request.</td><td>Owner-controlled membership.</td><td>No. Join-request workflow is not implemented.</td></tr>
-            <tr><td><code>inviteOrganizationMember(orgId, ownerId, email, role)</code></td><td>Owner invites member/owner.</td><td>Controlled org growth.</td><td>Partial. Owners can add an existing user by email directly; there is no invitation token/email flow.</td></tr>
-            <tr><td><code>updateOrganizationMemberRole(orgId, ownerId, memberId, role)</code></td><td>Promote/demote members and owners.</td><td>Multi-owner operation.</td><td>Yes. Implemented with final-owner protection.</td></tr>
-            <tr><td><code>createProject(orgId, actorId, payload)</code></td><td>Create project (backend worker).</td><td>Any-user project creation requirement.</td><td>Yes. Implemented as <code>POST /v1/workers</code>; backend entity is still <code>worker</code>.</td></tr>
-            <tr><td><code>listProjects(orgId, actorId)</code></td><td>List visible projects in active org.</td><td>Tenant-scoped project UX.</td><td>Yes. Implemented as <code>GET /v1/workers</code>; backend entity is still <code>worker</code>.</td></tr>
-            <tr><td><code>updateProject(projectId, actorId, payload)</code></td><td>Edit project metadata/settings.</td><td>Core collaboration flow.</td><td>No. No project update endpoint yet.</td></tr>
-            <tr><td><code>stopProject(projectId, actorId, reason)</code></td><td>Stop project execution.</td><td>Owner primary control + audited admin fallback.</td><td>No. No stop/suspend project action yet.</td></tr>
-            <tr><td><code>adminSuspendOrganization(orgId, adminId, reason)</code></td><td>Exceptional org-level execution suspension.</td><td>Admin stronger-than-owner safety control.</td><td>No. Admin role exists, but org suspension controls do not.</td></tr>
-            <tr><td><code>getOrganizationBilling(orgId, actorId)</code></td><td>Read org billing state.</td><td>Owner billing operations.</td><td>No. Billing is still user-scoped under <code>/v1/workers/billing</code>.</td></tr>
-            <tr><td><code>startOrganizationCheckout(orgId, ownerId)</code></td><td>Start self-serve checkout.</td><td>Single-subscription activation path.</td><td>No. Checkout/paywall still happens at user scope during worker creation.</td></tr>
-            <tr><td><code>requestInvoicedBilling(orgId, ownerId)</code></td><td>Owner asks for admin invoiced mode.</td><td>Required invoicing path.</td><td>No. Not implemented.</td></tr>
-            <tr><td><code>approveInvoicedBilling(orgId, adminId)</code></td><td>Admin activates invoiced billing.</td><td>Admin billing approval rule.</td><td>No. Not implemented.</td></tr>
-            <tr><td><code>setOrganizationTrialEnd(orgId, adminId, trialEndsAt)</code></td><td>Admin sets/extends trial duration.</td><td>Explicit requirement from product direction.</td><td>No. Not implemented.</td></tr>
-            <tr><td><code>getOrganizationSettings(orgId, actorId)</code></td><td>Read org settings including model preferences.</td><td>Org-level control surface.</td><td>No. <code>org_settings</code> does not exist yet.</td></tr>
-            <tr><td><code>updateOrganizationSettings(orgId, ownerId, patch)</code></td><td>Owner updates org settings.</td><td>Company-specific defaults.</td><td>No. <code>org_settings</code> does not exist yet.</td></tr>
-            <tr><td><code>getPlatformSettings(adminId)</code></td><td>Read platform settings.</td><td>Admin-only visibility boundary.</td><td>No. Platform settings surface is not implemented yet.</td></tr>
-            <tr><td><code>updatePlatformSettings(adminId, patch)</code></td><td>Edit platform settings.</td><td>Admin-only global control.</td><td>No. Platform settings surface is not implemented yet.</td></tr>
-            <tr><td><code>recordAuditEvent(input)</code></td><td>Persist immutable security/audit events.</td><td>Traceability for privileged actions.</td><td>Yes. Implemented and used for member and worker governance events.</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>8. Phased Implementation Plan (Parts)</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Phase</th>
-              <th>Goal</th>
-              <th>Minimum Deliverables</th>
-              <th>Out of Scope (for that phase)</th>
+              <th>Function / Capability</th>
+              <th>Planned Model</th>
+              <th>Actual Implementation</th>
+              <th>Status</th>
+              <th>Difference / Next Step</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td>Phase 1: Tenant & Role Foundation</td>
-              <td>Separate platform admin from org roles and enforce org context.</td>
-              <td>Admin role table, active-org context in session/API, org-guard middleware, query hardening by <code>org_id</code>.</td>
-              <td>Global catalog publishing UI.</td>
+              <td><code>resolveUserOrganizations(userId)</code></td>
+              <td>List all organizations the user belongs to.</td>
+              <td>Implemented in Den and exposed through org listing flows.</td>
+              <td><span class="status ok">Implemented</span></td>
+              <td>Foundation exists.</td>
             </tr>
             <tr>
-              <td>Phase 2: Domain Join/Create Flows</td>
-              <td>Implement domain-based decision matrix and owner-controlled join policy.</td>
-              <td>Domain decision endpoint, create-vs-join UI flow, join request + owner approval flow, domain lock controls.</td>
-              <td>Advanced DNS verification automation.</td>
+              <td><code>setActiveOrganization(sessionId, orgId)</code></td>
+              <td>Persist active organization as part of authenticated session context.</td>
+              <td>Not server-persisted. Current model is client-selected <code>x-veslo-org-id</code> plus single-org fallback.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add server-managed active-org session state if desired.</td>
             </tr>
             <tr>
-              <td>Phase 3: Org Billing Control</td>
-              <td>Move billing to org-level ownership with admin invoice path.</td>
-              <td><code>org_subscription</code>, invoice approval workflow, admin custom trial duration control, owner billing screens.</td>
-              <td>Complex finance reporting.</td>
+              <td><code>requireOrgContext(request)</code></td>
+              <td>Reject requests without valid organization context.</td>
+              <td>Implemented indirectly by <code>requireOrganizationAccess(...)</code>.</td>
+              <td><span class="status partial">Partial</span></td>
+              <td>Works today, but bundled with role/admin checks rather than isolated as its own function.</td>
             </tr>
             <tr>
-              <td>Phase 4: Project UI Migration</td>
-              <td>Rename "Workers" to "Projects" in UI and allow creation by all org users.</td>
-              <td>UI copy migration, permissions update for member project creation, backward-compatible backend naming.</td>
-              <td>Backend entity rename from <code>worker</code> to <code>project</code>.</td>
+              <td><code>requireOrgRole(orgId, userId, role)</code></td>
+              <td>Separate owner/member/admin role enforcement helper.</td>
+              <td>Role enforcement exists inside <code>requireOrganizationAccess(...)</code>.</td>
+              <td><span class="status partial">Partial</span></td>
+              <td>Separate helper is still absent.</td>
             </tr>
             <tr>
-              <td>Phase 5: Artifact Sharing Overlay</td>
-              <td>Add contribution, org publish, and global promotion flow.</td>
-              <td>Private defaults, owner approval path, admin global approval gate, audit trail for publish actions.</td>
-              <td>Marketplace/revenue features.</td>
+              <td><code>parseEmailDomain(email)</code></td>
+              <td>Normalize email domain for onboarding decisions.</td>
+              <td>No onboarding control-plane implementation.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Needed for domain flow.</td>
+            </tr>
+            <tr>
+              <td><code>findOrganizationsByDomain(domain)</code></td>
+              <td>Lookup matching organizations for a domain.</td>
+              <td>No <code>org_domain</code> model.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Needed for create-vs-join decisions.</td>
+            </tr>
+            <tr>
+              <td><code>getDomainOnboardingOptions(userId, domain)</code></td>
+              <td>Return create/join/request options after sign-in.</td>
+              <td>No such flow exists.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Needed for Phase 2A domain onboarding.</td>
+            </tr>
+            <tr>
+              <td><code>createOrganization(input, ownerUserId)</code></td>
+              <td>Create a general organization with initial owner membership.</td>
+              <td>Personal org bootstrap exists via default-org logic, but not general organization creation.</td>
+              <td><span class="status partial">Partial</span></td>
+              <td>Add explicit create-organization flow.</td>
+            </tr>
+            <tr>
+              <td><code>setOrganizationDomainPolicy(orgId, ownerId, policy)</code></td>
+              <td>Owner controls domain matching behavior and approval rules.</td>
+              <td>No domain policy system exists.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add owner-managed domain rules.</td>
+            </tr>
+            <tr>
+              <td><code>requestOrganizationJoin(orgId, userId)</code></td>
+              <td>User submits a join request.</td>
+              <td>No join request flow exists.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add <code>org_join_request</code> and APIs.</td>
+            </tr>
+            <tr>
+              <td><code>approveOrganizationJoin(orgId, ownerId, requestId)</code></td>
+              <td>Owner approves a join request.</td>
+              <td>No join request flow exists.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add owner approval flow.</td>
+            </tr>
+            <tr>
+              <td><code>inviteOrganizationMember(orgId, ownerId, email, role)</code></td>
+              <td>Invite member or owner through a proper invite flow.</td>
+              <td>Owners can add an existing user by email directly via org member APIs; no invite token/email flow.</td>
+              <td><span class="status partial">Partial</span></td>
+              <td>Add true invitation onboarding.</td>
+            </tr>
+            <tr>
+              <td><code>updateOrganizationMemberRole(orgId, ownerId, memberId, role)</code></td>
+              <td>Promote or demote org owners and members.</td>
+              <td>Implemented. Final owner cannot be removed or demoted.</td>
+              <td><span class="status ok">Implemented</span></td>
+              <td>Foundation exists.</td>
+            </tr>
+            <tr>
+              <td>Org member APIs</td>
+              <td>Owners/admins can list, add, update, and remove members.</td>
+              <td><code>GET/POST/PATCH/DELETE /v1/orgs/:orgId/members</code> implemented.</td>
+              <td><span class="status ok">Implemented</span></td>
+              <td>Add invite-token flow later if needed.</td>
+            </tr>
+            <tr>
+              <td><code>createProject(orgId, actorId, payload)</code></td>
+              <td>Create an organization project.</td>
+              <td>Implemented as <code>POST /v1/workers</code>. Members can create.</td>
+              <td><span class="status ok">Implemented</span></td>
+              <td>Backend name remains <code>worker</code>.</td>
+            </tr>
+            <tr>
+              <td><code>listProjects(orgId, actorId)</code></td>
+              <td>List active-org projects.</td>
+              <td>Implemented as <code>GET /v1/workers</code>.</td>
+              <td><span class="status ok">Implemented</span></td>
+              <td>Backend name remains <code>worker</code>.</td>
+            </tr>
+            <tr>
+              <td><code>getProject(projectId)</code></td>
+              <td>Read one project within org scope.</td>
+              <td>Implemented as <code>GET /v1/workers/:id</code>.</td>
+              <td><span class="status ok">Implemented</span></td>
+              <td>Foundation exists.</td>
+            </tr>
+            <tr>
+              <td><code>getProjectToken(projectId)</code></td>
+              <td>Issue or retrieve project connection token within org scope.</td>
+              <td>Implemented as <code>POST /v1/workers/:id/tokens</code>.</td>
+              <td><span class="status ok">Implemented</span></td>
+              <td>Foundation exists.</td>
+            </tr>
+            <tr>
+              <td><code>updateProject(projectId, actorId, payload)</code></td>
+              <td>Edit project metadata/settings.</td>
+              <td>No project update endpoint exists.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add update endpoint if project metadata editing is required.</td>
+            </tr>
+            <tr>
+              <td><code>stopProject(projectId, actorId, reason)</code></td>
+              <td>Normal owner-led project stop with audited admin fallback.</td>
+              <td>No explicit stop/suspend endpoint exists.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add stop/start/suspend controls.</td>
+            </tr>
+            <tr>
+              <td><code>deleteProject(projectId, actorId)</code></td>
+              <td>Delete/archive a project according to org role rules.</td>
+              <td>Implemented as <code>DELETE /v1/workers/:id</code> for creator, owner, or platform admin.</td>
+              <td><span class="status ok">Implemented</span></td>
+              <td>No soft-delete/archive layer yet.</td>
+            </tr>
+            <tr>
+              <td><code>adminSuspendOrganization(orgId, adminId, reason)</code></td>
+              <td>Suspend org execution in exceptional cases.</td>
+              <td>No org suspension controls exist.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add org-level suspension APIs and audit rules.</td>
+            </tr>
+            <tr>
+              <td><code>getOrganizationBilling(orgId, actorId)</code></td>
+              <td>Read organization billing state.</td>
+              <td>No org billing endpoint exists. Current billing remains user-scoped under worker billing.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Move billing read path to org scope.</td>
+            </tr>
+            <tr>
+              <td><code>startOrganizationCheckout(orgId, ownerId)</code></td>
+              <td>Start self-serve organization checkout.</td>
+              <td>Current checkout exists only for user-scoped worker billing.</td>
+              <td><span class="status partial">Partial</span></td>
+              <td>Re-scope checkout to organization ownership.</td>
+            </tr>
+            <tr>
+              <td><code>requestInvoicedBilling(orgId, ownerId)</code></td>
+              <td>Request invoice-based billing.</td>
+              <td>Not implemented.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add invoice request workflow.</td>
+            </tr>
+            <tr>
+              <td><code>approveInvoicedBilling(orgId, adminId)</code></td>
+              <td>Admin approves invoiced billing.</td>
+              <td>Not implemented.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add admin invoice approval flow.</td>
+            </tr>
+            <tr>
+              <td><code>setOrganizationTrialEnd(orgId, adminId, trialEndsAt)</code></td>
+              <td>Admin sets or extends org trial duration.</td>
+              <td>Not implemented.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add org trial controls.</td>
+            </tr>
+            <tr>
+              <td><code>getOrganizationSettings(orgId, actorId)</code></td>
+              <td>Read org settings and model preferences.</td>
+              <td>Not implemented.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add <code>org_settings</code> read API.</td>
+            </tr>
+            <tr>
+              <td><code>updateOrganizationSettings(orgId, ownerId, patch)</code></td>
+              <td>Owner updates org settings.</td>
+              <td>Not implemented.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add owner org settings update API.</td>
+            </tr>
+            <tr>
+              <td><code>getPlatformSettings(adminId)</code></td>
+              <td>Read platform settings.</td>
+              <td>Not implemented.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add admin-only platform settings API.</td>
+            </tr>
+            <tr>
+              <td><code>updatePlatformSettings(adminId, patch)</code></td>
+              <td>Edit platform settings.</td>
+              <td>Not implemented.</td>
+              <td><span class="status no">Not implemented</span></td>
+              <td>Add admin-only platform settings update API.</td>
+            </tr>
+            <tr>
+              <td><code>recordAuditEvent(input)</code></td>
+              <td>Persist immutable audit records for all privileged actions.</td>
+              <td>Implemented and used for membership and worker governance events.</td>
+              <td><span class="status ok">Implemented</span></td>
+              <td>Extend coverage as more privileged operations are added.</td>
             </tr>
           </tbody>
         </table>
       </div>
-      <p class="footer">
-        Source context: current cloud control plane under <code>services/den</code>, with existing org/worker baseline and extension points for true multi-org tenant operations.
-      </p>
+      <p class="footer">Current implemented APIs include <code>GET /v1/orgs</code>, member management routes under <code>/v1/orgs/:orgId/members</code>, and org-scoped worker routes under <code>/v1/workers</code>. Billing remains user-scoped under <code>/v1/workers/billing</code>.</p>
     </section>
   </div>
 </body>

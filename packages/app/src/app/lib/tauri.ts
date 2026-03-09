@@ -130,6 +130,11 @@ export type WorkspaceList = {
   workspaces: WorkspaceInfo[];
 };
 
+export type WorkspaceFolderTransferResult = {
+  kind: "ok" | "conflict";
+  conflicts: string[];
+};
+
 export type WorkspaceExportSummary = {
   outputPath: string;
   included: number;
@@ -171,6 +176,18 @@ export async function workspaceCreate(input: {
     folderPath: input.folderPath,
     name: input.name,
     preset: input.preset,
+  });
+}
+
+export async function workspaceCopyIntoFolder(input: {
+  sourcePath: string;
+  targetPath: string;
+  overwrite?: boolean;
+}): Promise<WorkspaceFolderTransferResult> {
+  return invoke<WorkspaceFolderTransferResult>("workspace_copy_into_folder", {
+    sourcePath: input.sourcePath,
+    targetPath: input.targetPath,
+    overwrite: input.overwrite ?? false,
   });
 }
 

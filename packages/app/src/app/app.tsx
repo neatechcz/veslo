@@ -142,6 +142,7 @@ import {
   orchestratorStatus,
   opencodeRouterInfo,
   setWindowDecorations,
+  workspaceCopyIntoFolder,
   type OrchestratorStatus,
   type VesloServerInfo,
   type OpenCodeRouterInfo,
@@ -1126,6 +1127,7 @@ export default function App() {
     null
   );
   const SESSION_BY_WORKSPACE_KEY = "veslo.workspace-last-session.v1";
+  const SESSION_DIRECTORY_OVERRIDE_KEY = "veslo.session-workspace-override.v1";
   const readSessionByWorkspace = () => {
     if (typeof window === "undefined") return {} as Record<string, string>;
     try {
@@ -1145,6 +1147,52 @@ export default function App() {
     } catch {
       // ignore
     }
+  };
+  const readSessionDirectoryOverrides = () => {
+    if (typeof window === "undefined") return {} as Record<string, string>;
+    try {
+      const raw = window.localStorage.getItem(SESSION_DIRECTORY_OVERRIDE_KEY);
+      if (!raw) return {} as Record<string, string>;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return {} as Record<string, string>;
+      return parsed as Record<string, string>;
+    } catch {
+      return {} as Record<string, string>;
+    }
+  };
+  const writeSessionDirectoryOverrides = (map: Record<string, string>) => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(SESSION_DIRECTORY_OVERRIDE_KEY, JSON.stringify(map));
+    } catch {
+      // ignore
+    }
+  };
+  const [sessionDirectoryOverrideById, setSessionDirectoryOverrideById] = createSignal<
+    Record<string, string>
+  >(readSessionDirectoryOverrides());
+  const persistSessionDirectoryOverride = (sessionID: string, directory?: string | null) => {
+    const id = sessionID.trim();
+    if (!id) return;
+    const normalized = normalizeDirectoryPath(directory ?? "");
+    setSessionDirectoryOverrideById((current) => {
+      const next = { ...current };
+      if (normalized) {
+        next[id] = normalized;
+      } else {
+        delete next[id];
+      }
+      writeSessionDirectoryOverrides(next);
+      return next;
+    });
+  };
+  const resolveSessionDirectory = (session: Pick<Session, "id" | "directory">) =>
+    normalizeDirectoryPath(sessionDirectoryOverrideById()[session.id] ?? session.directory ?? "");
+  const applySessionDirectoryOverride = <T extends Session | SidebarSessionItem>(session: T): T => {
+    const override = sessionDirectoryOverrideById()[session.id]?.trim() ?? "";
+    if (!override) return session;
+    if ((session.directory ?? "").trim() === override) return session;
+    return { ...session, directory: override } as T;
   };
   const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<
     Record<string, ModelRef>
@@ -1167,6 +1215,7 @@ export default function App() {
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot().trim(),
     selectedSessionId,
     setSelectedSessionId,
+    sessionDirectoryOverrideById,
     sessionModelState: () => ({
       overrides: sessionModelOverrideById(),
       resolved: sessionModelById(),
@@ -1837,6 +1886,7 @@ export default function App() {
     // Remove the deleted session from the store and sidebar locally.
     // SSE will handle any further sync — calling loadSessions/refreshSidebarWorkspaceSessions
     // here races with SSE and can wipe unrelated sessions from the store.
+    persistSessionDirectoryOverride(trimmed, null);
     setSessions(sessions().filter((s) => s.id !== trimmed));
     const activeWsId = workspaceStore.activeWorkspaceId();
     setSidebarSessionsByWorkspaceId((prev) => ({
@@ -2689,9 +2739,31 @@ export default function App() {
 
       // Defensive client-side filter in case upstream ignores the directory query.
       const root = normalizeDirectoryPath(directory);
-      const filtered = root ? list.filter((session) => normalizeDirectoryPath(session.directory) === root) : list;
+      const filtered = root
+        ? list
+          .map((session) => applySessionDirectoryOverride(session))
+          .filter((session) => resolveSessionDirectory(session) === root)
+        : list.map((session) => applySessionDirectoryOverride(session));
 
-      const sorted = sortSessionsByActivity(filtered);
+      const overrideIds = root
+        ? Object.entries(sessionDirectoryOverrideById())
+          .filter(([, directory]) => normalizeDirectoryPath(directory) === root)
+          .map(([sessionID]) => sessionID)
+        : [];
+      const merged = new Map(filtered.map((session) => [session.id, session] as const));
+      for (const sessionID of overrideIds) {
+        if (merged.has(sessionID)) continue;
+        try {
+          const fetched = applySessionDirectoryOverride(
+            unwrap(await c.session.get({ sessionID, directory: queryDirectory })),
+          );
+          merged.set(sessionID, fetched);
+        } catch {
+          // ignore stale local overrides
+        }
+      }
+
+      const sorted = sortSessionsByActivity(Array.from(merged.values()));
       const items: SidebarSessionItem[] = sorted.map((session) => ({
         id: session.id,
         title: session.title,
@@ -2821,7 +2893,7 @@ export default function App() {
           : activeWorkspace?.directory ?? activeWorkspace?.path,
       );
       const scopedSessions = activeWorkspaceRoot
-        ? allSessions.filter((session) => normalizeDirectoryPath(session.directory) === activeWorkspaceRoot)
+        ? allSessions.filter((session) => resolveSessionDirectory(session) === activeWorkspaceRoot)
         : allSessions;
       const sorted = sortSessionsByActivity(scopedSessions);
       setSidebarSessionsByWorkspaceId((prev) => ({
@@ -4860,7 +4932,8 @@ export default function App() {
   async function createSessionAndOpen() {
     const c = client();
     if (!c) {
-      return;
+      setError("Local runtime is not ready yet.");
+      return undefined;
     }
 
     const perfEnabled = developerMode();
@@ -5009,45 +5082,109 @@ export default function App() {
     }
   }
 
-  const resolvePreferredNewSessionDirectory = () => {
-    const activeDirectory = normalizeDirectoryPath(workspaceStore.activeWorkspaceRoot().trim());
-    if (activeDirectory) return activeDirectory;
-    const lastDirectory = normalizeDirectoryPath(workspaceProjectDir().trim());
-    return lastDirectory;
-  };
-
   const openNewSessionWithDirectory = async () => {
-    if (!isTauriRuntime()) {
+    if (isTauriRuntime()) {
+      const scratch = await workspaceStore.createScratchWorkspace();
+      if (!scratch?.id) return;
+      const ready = await workspaceStore.ensureLocalWorkspaceActive(scratch.id);
+      if (!ready) return;
       await createSessionAndOpen();
       return;
     }
 
-    const preferredDirectory = resolvePreferredNewSessionDirectory();
-    const selectedDirectory = await workspaceStore.pickWorkspaceFolder(preferredDirectory || undefined);
-    if (!selectedDirectory) return;
+    await createSessionAndOpen();
+  };
 
-    const normalizedSelected = normalizeDirectoryPath(selectedDirectory.trim());
-    if (!normalizedSelected) return;
+  const chooseFolderForCurrentSession = async () => {
+    if (!isTauriRuntime()) return false;
 
-    const findLocalWorkspaceByPath = () =>
-      workspaceStore.workspaces().find(
-        (workspace) =>
-          workspace.workspaceType === "local" &&
-          normalizeDirectoryPath(workspace.path?.trim() ?? "") === normalizedSelected,
-      ) ?? null;
-
-    let targetWorkspace = findLocalWorkspaceByPath();
-    if (!targetWorkspace) {
-      await workspaceStore.createWorkspaceFlow("starter", selectedDirectory);
-      targetWorkspace = findLocalWorkspaceByPath();
+    const sessionID = (selectedSessionId() ?? "").trim();
+    if (!sessionID) {
+      throw new Error("No session selected");
     }
 
-    if (!targetWorkspace?.id) return;
+    const sourceWorkspace = workspaceStore.activeWorkspaceDisplay();
+    const sourceWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+    const sourceRoot = workspaceStore.activeWorkspaceRoot().trim();
+    if (sourceWorkspace.workspaceType !== "local" || !workspaceStore.isPrivateWorkspacePath(sourceRoot)) {
+      throw new Error("Choose folder is only available for private workspaces.");
+    }
+    if (!sourceRoot) {
+      throw new Error("Private workspace folder is unavailable.");
+    }
 
-    const activated = await Promise.resolve(workspaceStore.activateWorkspace(targetWorkspace.id));
-    if (activated === false) return;
+    while (true) {
+      const selectedDirectory = await workspaceStore.pickWorkspaceFolder();
+      if (!selectedDirectory) return false;
 
-    await createSessionAndOpen();
+      let transfer = await workspaceCopyIntoFolder({
+        sourcePath: sourceRoot,
+        targetPath: selectedDirectory,
+        overwrite: false,
+      });
+
+      if (transfer.kind === "conflict") {
+        const preview = transfer.conflicts.slice(0, 6);
+        const suffix =
+          transfer.conflicts.length > preview.length
+            ? `\n…and ${transfer.conflicts.length - preview.length} more.`
+            : "";
+        const overwrite = window.confirm(
+          `This folder already has conflicting files:\n\n${preview.join("\n")}${suffix}\n\nReplace conflicting files?`,
+        );
+        if (!overwrite) {
+          const chooseAnother = window.confirm(
+            "Choose another folder? Click Cancel to keep using the private workspace.",
+          );
+          if (chooseAnother) continue;
+          return false;
+        }
+
+        transfer = await workspaceCopyIntoFolder({
+          sourcePath: sourceRoot,
+          targetPath: selectedDirectory,
+          overwrite: true,
+        });
+      }
+
+      if (transfer.kind !== "ok") {
+        return false;
+      }
+
+      const targetWorkspace = await workspaceStore.ensureWorkspaceForFolder(selectedDirectory);
+      if (!targetWorkspace?.id) return false;
+      const ready = await workspaceStore.ensureLocalWorkspaceActive(targetWorkspace.id);
+      if (!ready) return false;
+
+      persistSessionDirectoryOverride(sessionID, targetWorkspace.path);
+      setSessions(
+        sessions().map((session) =>
+          session.id === sessionID ? { ...session, directory: targetWorkspace.path } : session
+        ),
+      );
+
+      const sessionMap = readSessionByWorkspace();
+      const nextSessionMap = { ...sessionMap, [targetWorkspace.id]: sessionID };
+      if (sourceWorkspaceId) {
+        delete nextSessionMap[sourceWorkspaceId];
+      }
+      writeSessionByWorkspace(nextSessionMap);
+
+      setSidebarSessionsByWorkspaceId((prev) => ({
+        ...prev,
+        [sourceWorkspaceId]: (prev[sourceWorkspaceId] ?? []).filter((session) => session.id !== sessionID),
+      }));
+
+      await selectSession(sessionID);
+      await refreshSidebarWorkspaceSessions(targetWorkspace.id).catch(() => undefined);
+
+      if (sourceWorkspaceId && sourceWorkspaceId !== targetWorkspace.id) {
+        await workspaceStore.forgetWorkspace(sourceWorkspaceId);
+      }
+
+      goToSession(sessionID, { replace: true });
+      return true;
+    }
   };
 
   function runSoulPrompt(promptText: string) {
@@ -6226,6 +6363,12 @@ export default function App() {
     },
     openCreateRemoteWorkspace,
     openNewSessionWithDirectory,
+    canChooseSessionFolder:
+      isTauriRuntime() &&
+      activeSessionId() !== null &&
+      workspaceStore.activeWorkspaceDisplay().workspaceType === "local" &&
+      workspaceStore.isPrivateWorkspacePath(workspaceStore.activeWorkspaceRoot().trim()),
+    chooseFolderForCurrentSession,
     showRemoteActions: showRemoteActions(),
     importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
     importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
