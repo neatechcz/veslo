@@ -141,6 +141,26 @@ export const PlatformRoleTable = mysqlTable(
   ],
 )
 
+export const DesktopAuthHandoffTable = mysqlTable(
+  "desktop_auth_handoff",
+  {
+    id: id().primaryKey(),
+    code: varchar("code", { length: 255 }).notNull(),
+    user_id: varchar("user_id", { length: 64 }).notNull(),
+    org_id: varchar("org_id", { length: 64 }).notNull(),
+    session_token: varchar("session_token", { length: 255 }).notNull(),
+    expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+    consumed_at: timestamp("consumed_at", { fsp: 3 }),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("desktop_auth_handoff_code").on(table.code),
+    index("desktop_auth_handoff_user_id").on(table.user_id),
+    index("desktop_auth_handoff_org_id").on(table.org_id),
+    index("desktop_auth_handoff_expires_at").on(table.expires_at),
+  ],
+)
+
 export const WorkerTable = mysqlTable(
   "worker",
   {
