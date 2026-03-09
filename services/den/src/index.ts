@@ -27,8 +27,10 @@ if (env.corsOrigins.length > 0) {
   )
 }
 
-app.use(express.json())
+// Better Auth reads the raw request body itself — mount BEFORE express.json()
+// so the body stream isn't consumed by Express's JSON parser first
 app.all("/api/auth/*", toNodeHandler(auth))
+app.use(express.json())
 app.use(express.static(publicDir))
 
 app.get("/health", (_, res) => {
