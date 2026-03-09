@@ -1,4 +1,6 @@
-export const CLOUD_ONLY_MODE = false;
+import { APP_RUNTIME_MODE } from "./runtime-policy.impl.js";
+
+export const CLOUD_ONLY_MODE = APP_RUNTIME_MODE === "cloud_only";
 
 const normalizeUrl = (raw) => {
   const value = String(raw ?? "").trim();

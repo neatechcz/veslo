@@ -1,9 +1,9 @@
 import {
-  CLOUD_ONLY_MODE as cloudOnlyModeImpl,
   filterRemoteWorkspaces as filterRemoteWorkspacesImpl,
   mergeVesloServerSettingsWithEnv as mergeVesloServerSettingsWithEnvImpl,
   resolveVesloCloudEnvironment as resolveVesloCloudEnvironmentImpl,
 } from "./cloud-policy.impl.js";
+import { APP_RUNTIME_MODE } from "./runtime-policy";
 
 export type VesloCloudEnvironment = {
   name: "development" | "test" | "production";
@@ -19,7 +19,7 @@ export type VesloServerSettingsLike = {
   token?: string;
 };
 
-export const CLOUD_ONLY_MODE: boolean = cloudOnlyModeImpl;
+export const CLOUD_ONLY_MODE: boolean = APP_RUNTIME_MODE === "cloud_only";
 
 export const filterRemoteWorkspaces = <
   T extends {

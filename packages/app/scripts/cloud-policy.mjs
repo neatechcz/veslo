@@ -8,7 +8,7 @@ import {
   resolveVesloCloudEnvironment,
 } from "../src/app/lib/cloud-policy.impl.js";
 
-assert.equal(CLOUD_ONLY_MODE, true, "cloud-only mode must be enabled");
+assert.equal(CLOUD_ONLY_MODE, false, "cloud-only mode should be disabled in local-sync runtime policy");
 
 const filtered = filterRemoteWorkspaces([
   { id: "l1", workspaceType: "local" },
@@ -108,8 +108,8 @@ const workspaceSource = readFileSync(
 );
 assert.equal(
   workspaceSource.includes("filterRemoteWorkspaces(ws.workspaces)"),
-  true,
-  "workspace bootstrap must filter local workers",
+  false,
+  "workspace bootstrap should retain local workers in local-sync mode",
 );
 assert.equal(workspaceSource.includes("cloud_only_local_disabled"), true, "workspace store must expose cloud-only local action guard code");
 

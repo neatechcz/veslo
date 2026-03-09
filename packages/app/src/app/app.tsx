@@ -54,6 +54,7 @@ import {
   AUTO_COMPACT_CONTEXT_PREF_KEY,
   DEFAULT_MODEL,
   HIDE_TITLEBAR_PREF_KEY,
+  LANGUAGE_PREF_KEY,
   MCP_QUICK_CONNECT,
   MODEL_PREF_KEY,
   SESSION_MODEL_PREF_KEY,
@@ -107,7 +108,7 @@ import {
   normalizeDirectoryQueryPath,
   normalizeDirectoryPath,
 } from "./utils";
-import { currentLocale, setLocale, t, type Language } from "../i18n";
+import { currentLocale, isLanguage, setLocale, t, type Language } from "../i18n";
 import {
   isWindowsPlatform,
   lastUserModelFromMessages,
@@ -177,6 +178,7 @@ import {
   VesloServerError,
 } from "./lib/veslo-server";
 import { CLOUD_ONLY_MODE, resolveVesloCloudEnvironment } from "./lib/cloud-policy";
+import { isRemoteUiEnabled } from "./lib/runtime-policy";
 
 type RemoteWorkspaceDefaults = {
   vesloHostUrl?: string | null;
@@ -678,8 +680,17 @@ export default function App() {
   };
 
   const [startupPreference, setStartupPreference] = createSignal<StartupPreference | null>(null);
+  const initialOnboardingStep = (): OnboardingStep => {
+    if (typeof window === "undefined") return "welcome";
+    try {
+      const stored = window.localStorage.getItem(LANGUAGE_PREF_KEY);
+      return isLanguage(stored) ? "welcome" : "language";
+    } catch {
+      return "welcome";
+    }
+  };
   const [onboardingStep, setOnboardingStep] =
-    createSignal<OnboardingStep>("welcome");
+    createSignal<OnboardingStep>(initialOnboardingStep());
   const [rememberStartupChoice, setRememberStartupChoice] = createSignal(false);
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
 
@@ -774,9 +785,11 @@ export default function App() {
       const next = writeVesloServerSettings(merged);
       setVesloServerSettings(next);
 
-      if (invite.startup === "server" && untrack(onboardingStep) === "welcome") {
+      if (invite.startup === "server") {
         setStartupPreference("server");
-        setOnboardingStep("server");
+        if (untrack(onboardingStep) !== "language") {
+          setOnboardingStep("server");
+        }
       }
     }
 
@@ -3322,7 +3335,10 @@ export default function App() {
     setDeepLinkRemoteWorkspaceDefaults(null);
   });
 
-  const quickAddWorkerEnabled = createMemo(() => CLOUD_ONLY_MODE || !isTauriRuntime());
+  const showRemoteActions = createMemo(() => isRemoteUiEnabled());
+  const quickAddWorkerEnabled = createMemo(
+    () => (CLOUD_ONLY_MODE || showRemoteActions()) && !isTauriRuntime(),
+  );
 
   const openCreateRemoteWorkspace = () => {
     if (!quickAddWorkerEnabled()) {
@@ -5814,6 +5830,7 @@ export default function App() {
   const onboardingProps = () => ({
     startupPreference: startupPreference(),
     onboardingStep: onboardingStep(),
+    language: currentLocale(),
     rememberStartupChoice: rememberStartupChoice(),
     busy: busy(),
     clientDirectory: clientDirectory(),
@@ -5842,6 +5859,7 @@ export default function App() {
     migrationRepairBusy: workspaceStore.migrationRepairBusy(),
     migrationRepairResult: workspaceStore.migrationRepairResult(),
     isWindows: isWindowsPlatform(),
+    showRemoteActions: showRemoteActions(),
     onClientDirectoryChange: setClientDirectory,
     onVesloHostUrlChange: (value: string) =>
       updateVesloServerSettings({
@@ -5854,6 +5872,11 @@ export default function App() {
         token: value,
       }),
     onSelectStartup: workspaceStore.onSelectStartup,
+    onSetLanguage: setLocale,
+    onConfirmLanguage: async () => {
+      setLocale(currentLocale());
+      await workspaceStore.onConfirmLanguage();
+    },
     onRememberStartupToggle: workspaceStore.onRememberStartupToggle,
     onStartHost: workspaceStore.onStartHost,
     onRepairMigration: workspaceStore.onRepairOpencodeMigration,
@@ -6203,6 +6226,7 @@ export default function App() {
     },
     openCreateRemoteWorkspace,
     openNewSessionWithDirectory,
+    showRemoteActions: showRemoteActions(),
     importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
     importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
     exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
@@ -6342,6 +6366,11 @@ export default function App() {
     const rawPath = location.pathname.trim();
     const path = rawPath.toLowerCase();
 
+    if (onboardingStep() === "language" && !path.startsWith("/onboarding")) {
+      navigate("/onboarding", { replace: true });
+      return;
+    }
+
     if (path === "" || path === "/") {
       navigate(initialRoute(), { replace: true });
       return;
@@ -6410,6 +6439,9 @@ export default function App() {
     }
 
     if (path.startsWith("/onboarding")) {
+      if (onboardingStep() === "language") {
+        return;
+      }
       navigate("/session", { replace: true });
       return;
     }

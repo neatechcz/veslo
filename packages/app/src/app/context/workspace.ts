@@ -20,6 +20,7 @@ import {
   safeStringify,
   writeStartupPreference,
 } from "../utils";
+import { LANGUAGE_PREF_KEY } from "../constants";
 import { unwrap } from "../lib/opencode";
 import {
   buildVesloWorkspaceBaseUrl,
@@ -64,9 +65,9 @@ import {
 } from "../lib/tauri";
 import { waitForHealthy, createClient, type OpencodeAuth } from "../lib/opencode";
 import type { OpencodeConnectStatus, ProviderListItem } from "../types";
-import { t, currentLocale } from "../../i18n";
+import { t, currentLocale, isLanguage } from "../../i18n";
 import { mapConfigProvidersToList } from "../utils/providers";
-import { CLOUD_ONLY_MODE, filterRemoteWorkspaces } from "../lib/cloud-policy";
+import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
 
@@ -2734,7 +2735,7 @@ export function createWorkspaceStore(options: {
       options.setSseConnected(false);
 
       options.setStartupPreference(null);
-      options.setOnboardingStep("welcome");
+      options.setOnboardingStep(resolveWelcomeOnboardingStep());
 
       options.setView("session");
     } catch (e) {
@@ -2919,6 +2920,18 @@ export function createWorkspaceStore(options: {
     }
   }
 
+  const hasPersistedLanguagePreference = () => {
+    if (typeof window === "undefined") return true;
+    try {
+      return isLanguage(window.localStorage.getItem(LANGUAGE_PREF_KEY));
+    } catch {
+      return false;
+    }
+  };
+
+  const resolveWelcomeOnboardingStep = (): OnboardingStep =>
+    hasPersistedLanguagePreference() ? "welcome" : "language";
+
   async function persistAuthorizedRoots(nextRoots: string[]) {
     if (!isTauriRuntime()) return;
     if (activeWorkspaceInfo()?.workspaceType === "remote") return;
@@ -3031,7 +3044,7 @@ export function createWorkspaceStore(options: {
     if (isTauriRuntime()) {
       try {
         const ws = await workspaceBootstrap();
-        const nextWorkspaces = CLOUD_ONLY_MODE ? filterRemoteWorkspaces(ws.workspaces) : ws.workspaces;
+        const nextWorkspaces = ws.workspaces;
         setWorkspaces(nextWorkspaces);
         const nextActiveId =
           nextWorkspaces.find((item) => item.id === ws.activeId)?.id ??
@@ -3078,6 +3091,11 @@ export function createWorkspaceStore(options: {
     const info = engine();
     if (info?.baseUrl) {
       options.setBaseUrl(info.baseUrl);
+    }
+
+    if (!hasPersistedLanguagePreference()) {
+      options.setOnboardingStep("language");
+      return;
     }
 
     if (CLOUD_ONLY_MODE) {
@@ -3171,7 +3189,7 @@ export function createWorkspaceStore(options: {
         );
         if (!ok) {
           options.setStartupPreference(null);
-          options.setOnboardingStep("welcome");
+          options.setOnboardingStep(resolveWelcomeOnboardingStep());
           return;
         }
         markOnboardingComplete();
@@ -3193,7 +3211,7 @@ export function createWorkspaceStore(options: {
       return;
     }
 
-    options.setOnboardingStep("welcome");
+    options.setOnboardingStep(resolveWelcomeOnboardingStep());
   }
 
   function onSelectStartup(nextPref: StartupPreference) {
@@ -3213,7 +3231,7 @@ export function createWorkspaceStore(options: {
 
   function onBackToWelcome() {
     options.setStartupPreference(null);
-    options.setOnboardingStep("welcome");
+    options.setOnboardingStep(resolveWelcomeOnboardingStep());
   }
 
   async function onStartHost() {
@@ -3250,7 +3268,7 @@ export function createWorkspaceStore(options: {
     );
     if (!ok) {
       options.setStartupPreference(null);
-      options.setOnboardingStep("welcome");
+      options.setOnboardingStep(resolveWelcomeOnboardingStep());
     }
   }
 
@@ -3267,6 +3285,10 @@ export function createWorkspaceStore(options: {
     if (!ok) {
       options.setOnboardingStep("server");
     }
+  }
+
+  async function onConfirmLanguage() {
+    await bootstrapOnboarding();
   }
 
   function onRememberStartupToggle() {
@@ -3354,6 +3376,7 @@ export function createWorkspaceStore(options: {
     onRepairOpencodeMigration,
     onAttachHost,
     onConnectClient,
+    onConfirmLanguage,
     onRememberStartupToggle,
     onInstallEngine,
     addAuthorizedDir,

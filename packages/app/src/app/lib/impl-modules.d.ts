@@ -31,3 +31,9 @@ declare module "./cloud-policy.impl.js" {
     options?: { cloudOnlyMode?: boolean },
   ): { next: VesloServerSettingsLike; changed: boolean };
 }
+
+declare module "./runtime-policy.impl.js" {
+  export const APP_RUNTIME_MODE: "local_sync" | "cloud_only" | "hybrid";
+  export function isLocalExecutionOnly(): boolean;
+  export function isRemoteUiEnabled(): boolean;
+}

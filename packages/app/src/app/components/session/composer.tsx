@@ -5,6 +5,7 @@ import { ArrowUp, AtSign, Check, ChevronDown, File as FileIcon, Paperclip, Squar
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
+import { currentLocale, t } from "../../../i18n";
 
 type MentionOption = {
   id: string;
@@ -446,6 +447,7 @@ const buildRangeFromOffsets = (root: HTMLElement, start: number, end: number) =>
 };
 
 export default function Composer(props: ComposerProps) {
+  const translate = (key: string) => t(key, currentLocale());
   let editorRef: HTMLDivElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
   let inboxFileInputRef: HTMLInputElement | undefined;
@@ -1731,7 +1733,7 @@ export default function Composer(props: ComposerProps) {
                   <div class="relative">
                     <Show when={!hasDraftContent()}>
                       <div class="absolute left-0 top-0 text-gray-9 text-[15px] leading-relaxed pointer-events-none">
-                        Ask Veslo...
+                        {translate("session.placeholder")}
                       </div>
                     </Show>
                     <div
@@ -1954,6 +1956,10 @@ export default function Composer(props: ComposerProps) {
                           </button>
                         </Show>
                       </div>
+                    </div>
+
+                    <div class="px-2 pt-1 pb-2 text-[11px] leading-4 text-gray-9">
+                      {translate("session.composer_disclaimer")}
                     </div>
                   </div>
                 </div>
