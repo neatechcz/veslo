@@ -1,4 +1,4 @@
-export const CLOUD_ONLY_MODE = true;
+export const CLOUD_ONLY_MODE = false;
 
 const normalizeUrl = (raw) => {
   const value = String(raw ?? "").trim();

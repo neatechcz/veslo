@@ -6,19 +6,25 @@ Veslo helps users run agents, skills, and MCP. It is an open-source alternative 
 
 Veslo is a practical control surface for agentic work:
 
-* Run local and remote agent workflows from one place.
+* Run local-first agent workflows from one place.
 * Use OpenCode capabilities directly through Veslo.
 * Compose desktop app, server, and messaging connectors without lock-in.
 * Treat the Veslo app as a client of the Veslo server API surface.
-* Connect to hosted workers through a simple user flow: `Add a worker` -> `Connect remote`.
+* Support cloud-backed user data without making cloud equal remote execution.
 
 ## Core Philosophy
 
-* **Local-first, cloud-ready**: Veslo runs on your machine in one click and can connect to cloud workflows when needed.
+* **Local-first, cloud-backed**: Veslo runs on your machine in one click. Cloud is used for user/account data, not primary task execution.
 * **Server-consumption first**: the app should consume Veslo server surfaces (self-hosted or hosted), not invent parallel behavior.
 * **Composable**: use the desktop app, WhatsApp/Slack/Telegram connectors, or server mode based on the task.
 * **Ejectable**: Veslo is powered by OpenCode, so anything OpenCode can do is available in Veslo, even before a dedicated UI exists.
 * **Sharing is caring**: start solo, then share quickly; one CLI or desktop command can spin up an instantly shareable instance.
+
+## Current UI Operating Mode (Important)
+
+* Worker execution is local (on-device processing), UI allows only that.
+* Cloud is used for user/account data storage and sync.
+* Remote worker connectivity remains available in the platform/runtime, but is intentionally not exposed to end users in UI for now.
 
 ## Core Runtime Model (Updated)
 
@@ -28,15 +34,17 @@ Veslo now has three production-grade ways to run the same product surface:
    - Veslo app runs locally and can host server functionality on-device.
 2. **CLI-hosted server (openwork-orchestrator)**
    - Veslo server surfaces can be provided by the orchestrator/CLI on a trusted machine.
-3. **Hosted Veslo Cloud server**
-   - Veslo-hosted infrastructure provisions workers and exposes the same remote-connect semantics.
+3. **Hosted Veslo Cloud data services**
+   - Veslo-hosted infrastructure stores user/account data and sync state.
+   - Cloud services are not the default execution runtime for tasks.
 
 User mental model:
 
 * The app is the UI and control layer.
-* The server is the execution/control API layer.
-* A worker is a remote runtime destination.
-* Connecting to a worker happens through `Add worker` -> `Connect remote` using URL + token (or deep link).
+* The worker runtime executes primarily on local infrastructure.
+* Cloud handles user/account data and sync, not primary execution.
+* A worker is primarily a local runtime destination.
+* In current UI, users create/use local workers; remote connect is not shown.
 
 Read INFRASTRUCTURE.md
 

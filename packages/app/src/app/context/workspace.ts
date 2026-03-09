@@ -2313,14 +2313,18 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function pickWorkspaceFolder() {
+  async function pickWorkspaceFolder(defaultPath?: string | null) {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
       return null;
     }
 
     try {
-      const selection = await pickDirectory({ title: t("onboarding.choose_workspace_folder", currentLocale()) });
+      const preferredPath = defaultPath?.trim() ?? "";
+      const selection = await pickDirectory({
+        title: t("onboarding.choose_workspace_folder", currentLocale()),
+        defaultPath: preferredPath || undefined,
+      });
       const folder =
         typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
 

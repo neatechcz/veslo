@@ -4993,6 +4993,47 @@ export default function App() {
     }
   }
 
+  const resolvePreferredNewSessionDirectory = () => {
+    const activeDirectory = normalizeDirectoryPath(workspaceStore.activeWorkspaceRoot().trim());
+    if (activeDirectory) return activeDirectory;
+    const lastDirectory = normalizeDirectoryPath(workspaceProjectDir().trim());
+    return lastDirectory;
+  };
+
+  const openNewSessionWithDirectory = async () => {
+    if (!isTauriRuntime()) {
+      await createSessionAndOpen();
+      return;
+    }
+
+    const preferredDirectory = resolvePreferredNewSessionDirectory();
+    const selectedDirectory = await workspaceStore.pickWorkspaceFolder(preferredDirectory || undefined);
+    if (!selectedDirectory) return;
+
+    const normalizedSelected = normalizeDirectoryPath(selectedDirectory.trim());
+    if (!normalizedSelected) return;
+
+    const findLocalWorkspaceByPath = () =>
+      workspaceStore.workspaces().find(
+        (workspace) =>
+          workspace.workspaceType === "local" &&
+          normalizeDirectoryPath(workspace.path?.trim() ?? "") === normalizedSelected,
+      ) ?? null;
+
+    let targetWorkspace = findLocalWorkspaceByPath();
+    if (!targetWorkspace) {
+      await workspaceStore.createWorkspaceFlow("starter", selectedDirectory);
+      targetWorkspace = findLocalWorkspaceByPath();
+    }
+
+    if (!targetWorkspace?.id) return;
+
+    const activated = await Promise.resolve(workspaceStore.activateWorkspace(targetWorkspace.id));
+    if (activated === false) return;
+
+    await createSessionAndOpen();
+  };
+
   function runSoulPrompt(promptText: string) {
     const text = promptText.trim();
     if (!text) return;
@@ -5951,7 +5992,7 @@ export default function App() {
         workspaceStore.setCreateWorkspaceOpen(true);
       },
       openCreateRemoteWorkspace,
-      quickAddWorker: quickAddWorkerEnabled(),
+      openNewSessionWithDirectory,
       importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
       importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
       exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
@@ -6161,7 +6202,7 @@ export default function App() {
       workspaceStore.setCreateWorkspaceOpen(true);
     },
     openCreateRemoteWorkspace,
-    quickAddWorker: quickAddWorkerEnabled(),
+    openNewSessionWithDirectory,
     importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
     importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
     exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,

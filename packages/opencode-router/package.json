@@ -5,7 +5,8 @@
   "private": false,
   "type": "module",
   "bin": {
-    "veslo-code-router": "dist/cli.js"
+    "veslo-code-router": "dist/cli.js",
+    "opencode-router": "dist/cli.js"
   },
   "license": "MIT",
   "repository": {

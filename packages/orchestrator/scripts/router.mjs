@@ -28,12 +28,23 @@ async function findFreePort() {
   });
 }
 
-async function waitFor(url, timeoutMs = 10_000, pollMs = 250) {
+function tail(text, maxChars = 4000) {
+  if (!text) return "";
+  return text.length > maxChars ? text.slice(-maxChars) : text;
+}
+
+async function waitFor(url, daemon, daemonLogs, timeoutMs = 30_000, pollMs = 250, requestTimeoutMs = 1500) {
   const start = Date.now();
   let lastError;
   while (Date.now() - start < timeoutMs) {
+    if (daemon.exitCode !== null) {
+      const stderrTail = tail(daemonLogs.stderr);
+      throw new Error(
+        `daemon exited before health check (code ${daemon.exitCode})${stderrTail ? `: ${stderrTail}` : ""}`,
+      );
+    }
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: AbortSignal.timeout(requestTimeoutMs) });
       if (response.ok) return;
       lastError = new Error(`HTTP ${response.status}`);
     } catch (error) {
@@ -41,7 +52,16 @@ async function waitFor(url, timeoutMs = 10_000, pollMs = 250) {
     }
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
-  throw lastError ?? new Error("Timed out waiting for daemon");
+  const lastErrorMessage = lastError instanceof Error ? lastError.message : String(lastError ?? "unknown error");
+  const stdoutTail = tail(daemonLogs.stdout);
+  const stderrTail = tail(daemonLogs.stderr);
+  const diagnostics = [
+    `timed out waiting for daemon health after ${timeoutMs}ms`,
+    `last error: ${lastErrorMessage}`,
+  ];
+  if (stdoutTail) diagnostics.push(`daemon stdout tail:\n${stdoutTail}`);
+  if (stderrTail) diagnostics.push(`daemon stderr tail:\n${stderrTail}`);
+  throw new Error(diagnostics.join("\n"));
 }
 
 async function runCli(args, dataDir) {
@@ -103,12 +123,23 @@ const daemon = spawn(
       ...process.env,
       VESLO_DATA_DIR: dataDir,
     },
+    cwd: root,
     stdio: ["ignore", "pipe", "pipe"],
   },
 );
 
+const daemonLogs = { stdout: "", stderr: "" };
+daemon.stdout.setEncoding("utf8");
+daemon.stderr.setEncoding("utf8");
+daemon.stdout.on("data", (chunk) => {
+  daemonLogs.stdout += chunk;
+});
+daemon.stderr.on("data", (chunk) => {
+  daemonLogs.stderr += chunk;
+});
+
 try {
-  await waitFor(`${daemonUrl}/health`);
+  await waitFor(`${daemonUrl}/health`, daemon, daemonLogs);
 
   const addedA = await runCli(["workspace", "add", workspaceA, "--json"], dataDir);
   const addedB = await runCli(["workspace", "add", workspaceB, "--json"], dataDir);
@@ -139,9 +170,17 @@ try {
 
   console.log(JSON.stringify({ ok: true, dataDir, daemonUrl, workspaces: [idA, idB] }, null, 2));
 } catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
   console.error(
     JSON.stringify(
-      { ok: false, error: error instanceof Error ? error.message : String(error), daemonUrl },
+      {
+        ok: false,
+        error: message,
+        daemonUrl,
+        daemonExitCode: daemon.exitCode,
+        daemonStdoutTail: tail(daemonLogs.stdout),
+        daemonStderrTail: tail(daemonLogs.stderr),
+      },
       null,
       2,
     ),
@@ -153,5 +192,13 @@ try {
     // ignore
   }
 } finally {
+  if (daemon.exitCode === null) {
+    daemon.kill("SIGTERM");
+    await Promise.race([once(daemon, "exit"), new Promise((resolve) => setTimeout(resolve, 1500))]);
+    if (daemon.exitCode === null) {
+      daemon.kill("SIGKILL");
+      await Promise.race([once(daemon, "exit"), new Promise((resolve) => setTimeout(resolve, 1500))]);
+    }
+  }
   await rm(root, { recursive: true, force: true });
 }
