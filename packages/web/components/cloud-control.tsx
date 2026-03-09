@@ -6,6 +6,7 @@ type Step = 1 | 2;
 type AuthMode = "sign-in" | "sign-up";
 type ShellView = "workers" | "billing";
 type WorkerStatusBucket = "ready" | "starting" | "attention" | "other";
+type DesktopAuthStatus = "idle" | "preparing" | "redirecting" | "failed";
 
 type BillingPrice = {
   amount: number | null;
@@ -139,12 +140,19 @@ declare global {
   }
 }
 
-function getAuthInfoForMode(mode: AuthMode): string {
+function getAuthInfoForMode(mode: AuthMode, options: { desktopOnboarding?: boolean } = {}): string {
+  if (options.desktopOnboarding) {
+    return mode === "sign-up"
+      ? "Create your Veslo account to continue in the desktop app."
+      : "Sign in to Veslo to continue in the desktop app.";
+  }
+
   return mode === "sign-up"
     ? "Create an account to launch and manage cloud workers."
     : "Sign in to launch and manage cloud workers.";
 }
 
+const DESKTOP_ONBOARDING_QUERY_KEY = "desktopOnboarding";
 const LAST_WORKER_STORAGE_KEY = "veslo:web:last-worker";
 const PENDING_GITHUB_SIGNUP_STORAGE_KEY = "veslo:web:pending-github-signup";
 const AUTH_TOKEN_STORAGE_KEY = "veslo:web:auth-token";
@@ -220,11 +228,36 @@ async function trackDenSignupInLoops(payload: DenSignupTrackPayload) {
   }
 }
 
-function getGithubCallbackUrl(): string {
+function isDesktopOnboardingMode(search: string): boolean {
+  const params = new URLSearchParams(search);
+  const rawValue = params.get(DESKTOP_ONBOARDING_QUERY_KEY)?.trim().toLowerCase() ?? "";
+  return rawValue === "1" || rawValue === "true";
+}
+
+function buildDesktopAuthCompleteDeepLink(code: string): string {
+  const params = new URLSearchParams({ code });
+  return `veslo://auth-complete?${params.toString()}`;
+}
+
+function getDesktopAuthCode(payload: unknown): string | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  return typeof payload.code === "string" ? payload.code : null;
+}
+
+function getGithubCallbackUrl(desktopOnboarding = false): string {
   try {
-    return new URL("/", VESLO_AUTH_CALLBACK_BASE_URL || "https://app.veslo.neatech.com").toString();
+    const url = new URL("/", VESLO_AUTH_CALLBACK_BASE_URL || "https://app.veslo.neatech.com");
+    if (desktopOnboarding) {
+      url.searchParams.set(DESKTOP_ONBOARDING_QUERY_KEY, "1");
+    }
+    return url.toString();
   } catch {
-    return "https://app.veslo.neatech.com/";
+    return desktopOnboarding
+      ? "https://app.veslo.neatech.com/?desktopOnboarding=1"
+      : "https://app.veslo.neatech.com/";
   }
 }
 
@@ -984,13 +1017,24 @@ function CredentialRow({
 export function CloudControlPanel() {
   const [step, setStep] = useState<Step>(1);
   const [shellView, setShellView] = useState<ShellView>("workers");
+  const [desktopOnboarding] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+
+    return isDesktopOnboardingMode(window.location.search);
+  });
 
   const [authMode, setAuthMode] = useState<AuthMode>("sign-up");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
-  const [authInfo, setAuthInfo] = useState(getAuthInfoForMode("sign-up"));
+  const [authInfo, setAuthInfo] = useState(getAuthInfoForMode("sign-up", { desktopOnboarding }));
   const [authError, setAuthError] = useState<string | null>(null);
+  const [desktopAuthStatus, setDesktopAuthStatus] = useState<DesktopAuthStatus>("idle");
+  const [desktopAuthError, setDesktopAuthError] = useState<string | null>(null);
+  const [desktopAuthDeepLink, setDesktopAuthDeepLink] = useState<string | null>(null);
+  const [desktopAuthRequestKey, setDesktopAuthRequestKey] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(() => {
     if (typeof window === "undefined") {
@@ -1053,7 +1097,7 @@ export function CloudControlPanel() {
         : worker;
 
   const progressWidth = step === 1 ? "45%" : "100%";
-  const isShellStep = step === 2;
+  const isShellStep = step === 2 && !desktopOnboarding;
   const vesloConnectUrl = activeWorker?.vesloUrl ?? activeWorker?.instanceUrl ?? null;
   const hasWorkspaceScopedUrl = Boolean(vesloConnectUrl && /\/w\/[^/?#]+/.test(vesloConnectUrl));
   const vesloDeepLink = buildVesloDeepLink(
@@ -1215,6 +1259,56 @@ export function CloudControlPanel() {
       setOrgsError(message);
     } finally {
       setOrgsBusy(false);
+    }
+  }
+
+  async function startDesktopAuthHandoff(orgId: string | null) {
+    if (!user) {
+      return;
+    }
+
+    setDesktopAuthStatus("preparing");
+    setDesktopAuthError(null);
+    setDesktopAuthDeepLink(null);
+    setAuthError(null);
+    setAuthInfo("Signed in. Returning to Veslo...");
+
+    try {
+      const { response, payload } = await requestJson("/v1/desktop-auth/handoff", {
+        method: "POST",
+        headers: buildDenHeaders(authToken, { orgId }),
+        body: JSON.stringify(orgId ? { orgId } : {})
+      });
+
+      if (!response.ok) {
+        const message = getErrorMessage(payload, `Desktop handoff failed with ${response.status}.`);
+        setDesktopAuthStatus("failed");
+        setDesktopAuthError(message);
+        setDesktopAuthRequestKey(null);
+        appendEvent("error", "Desktop handoff failed", message);
+        return;
+      }
+
+      const code = getDesktopAuthCode(payload);
+      if (!code) {
+        setDesktopAuthStatus("failed");
+        setDesktopAuthError("Desktop handoff response was missing a code.");
+        setDesktopAuthRequestKey(null);
+        appendEvent("error", "Desktop handoff failed", "Missing handoff code");
+        return;
+      }
+
+      const deepLink = buildDesktopAuthCompleteDeepLink(code);
+      setDesktopAuthDeepLink(deepLink);
+      setDesktopAuthStatus("redirecting");
+      appendEvent("success", "Desktop handoff ready", orgId ?? user.email);
+      window.location.assign(deepLink);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown network error";
+      setDesktopAuthStatus("failed");
+      setDesktopAuthError(message);
+      setDesktopAuthRequestKey(null);
+      appendEvent("error", "Desktop handoff failed", message);
     }
   }
 
@@ -1479,6 +1573,10 @@ export function CloudControlPanel() {
       return;
     }
 
+    if (desktopOnboarding) {
+      return;
+    }
+
     if (orgsBusy) {
       return;
     }
@@ -1492,7 +1590,7 @@ export function CloudControlPanel() {
     }
 
     void refreshWorkers();
-  }, [user?.id, authToken, selectedOrgId, organizations.length, orgsBusy]);
+  }, [user?.id, authToken, selectedOrgId, organizations.length, orgsBusy, desktopOnboarding]);
 
   useEffect(() => {
     if (!user) {
@@ -1501,16 +1599,24 @@ export function CloudControlPanel() {
       return;
     }
 
+    if (desktopOnboarding) {
+      return;
+    }
+
     void refreshBilling({ quiet: true });
-  }, [user?.id, authToken]);
+  }, [user?.id, authToken, desktopOnboarding]);
 
   useEffect(() => {
     if (!user || shellView !== "billing") {
       return;
     }
 
+    if (desktopOnboarding) {
+      return;
+    }
+
     void refreshBilling();
-  }, [shellView, user?.id, authToken]);
+  }, [shellView, user?.id, authToken, desktopOnboarding]);
 
   useEffect(() => {
     if (!user || typeof window === "undefined") {
@@ -1635,13 +1741,53 @@ export function CloudControlPanel() {
       return;
     }
 
+    if (desktopOnboarding) {
+      return;
+    }
+
     if (workers.length === 0) {
       setShowLaunchForm(true);
     }
-  }, [step, workers.length]);
+  }, [step, workers.length, desktopOnboarding]);
+
+  useEffect(() => {
+    if (!desktopOnboarding || !user) {
+      return;
+    }
+
+    if (orgsBusy) {
+      return;
+    }
+
+    const resolvedOrgId = (selectedOrganization?.id ?? selectedOrgId) || null;
+    const requestKey = `${user.id}:${resolvedOrgId ?? "default"}`;
+    if (desktopAuthRequestKey === requestKey) {
+      return;
+    }
+
+    if (desktopAuthStatus === "preparing" || desktopAuthStatus === "redirecting") {
+      return;
+    }
+
+    setDesktopAuthRequestKey(requestKey);
+    void startDesktopAuthHandoff(resolvedOrgId);
+  }, [
+    authToken,
+    desktopOnboarding,
+    desktopAuthRequestKey,
+    desktopAuthStatus,
+    orgsBusy,
+    selectedOrgId,
+    selectedOrganization?.id,
+    user?.id
+  ]);
 
   useEffect(() => {
     if (!user || !worker) {
+      return;
+    }
+
+    if (desktopOnboarding) {
       return;
     }
     if (worker.clientToken) {
@@ -1803,7 +1949,7 @@ export function CloudControlPanel() {
     });
 
     try {
-      const callbackURL = getGithubCallbackUrl();
+      const callbackURL = getGithubCallbackUrl(desktopOnboarding);
       const { response, payload } = await requestJson("/api/auth/sign-in/social", {
         method: "POST",
         body: JSON.stringify({
@@ -1817,7 +1963,7 @@ export function CloudControlPanel() {
         if (shouldTrackGithubSignup) {
           window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
         }
-        setAuthInfo(getAuthInfoForMode(authMode));
+        setAuthInfo(getAuthInfoForMode(authMode, { desktopOnboarding }));
         setAuthError(getErrorMessage(payload, `GitHub sign-in failed with ${response.status}.`));
         trackPosthogEvent("den_auth_failed", {
           mode: authMode,
@@ -1836,7 +1982,7 @@ export function CloudControlPanel() {
         if (shouldTrackGithubSignup) {
           window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
         }
-        setAuthInfo(getAuthInfoForMode(authMode));
+        setAuthInfo(getAuthInfoForMode(authMode, { desktopOnboarding }));
         setAuthError("GitHub sign-in did not return a redirect URL.");
         trackPosthogEvent("den_auth_failed", {
           mode: authMode,
@@ -1857,7 +2003,7 @@ export function CloudControlPanel() {
         window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
       }
       const message = error instanceof Error ? error.message : "Unknown network error";
-      setAuthInfo(getAuthInfoForMode(authMode));
+      setAuthInfo(getAuthInfoForMode(authMode, { desktopOnboarding }));
       setAuthError(message);
       trackPosthogEvent("den_auth_failed", {
         mode: authMode,
@@ -1918,7 +2064,11 @@ export function CloudControlPanel() {
     setAuthMode("sign-up");
     setEmail("");
     setPassword("");
-    setAuthInfo(getAuthInfoForMode("sign-up"));
+    setAuthInfo(getAuthInfoForMode("sign-up", { desktopOnboarding }));
+    setDesktopAuthStatus("idle");
+    setDesktopAuthError(null);
+    setDesktopAuthDeepLink(null);
+    setDesktopAuthRequestKey(null);
     setLaunchStatus("Name your worker and click launch.");
     setEvents([]);
     resetPosthogUser();
@@ -1932,6 +2082,11 @@ export function CloudControlPanel() {
   }
 
   async function handleLaunchWorker() {
+    if (desktopOnboarding) {
+      setLaunchError("Desktop onboarding does not launch cloud workers.");
+      return;
+    }
+
     if (!user) {
       setAuthError("Sign in before launching a worker.");
       return;
@@ -2055,6 +2210,13 @@ export function CloudControlPanel() {
     const quiet = options.quiet === true;
     const background = options.background === true;
 
+    if (desktopOnboarding) {
+      if (!quiet) {
+        setLaunchError("Desktop onboarding does not manage cloud workers.");
+      }
+      return;
+    }
+
     if (!user) {
       if (!quiet) {
         setLaunchError("Sign in before checking worker status.");
@@ -2164,6 +2326,11 @@ export function CloudControlPanel() {
   }
 
   async function handleGenerateKey() {
+    if (desktopOnboarding) {
+      setLaunchError("Desktop onboarding does not fetch cloud worker tokens.");
+      return;
+    }
+
     if (!user) {
       setLaunchError("Sign in before fetching a worker access token.");
       return;
@@ -2238,6 +2405,11 @@ export function CloudControlPanel() {
   }
 
   async function handleDeleteWorker(workerId: string) {
+    if (desktopOnboarding) {
+      setLaunchError("Desktop onboarding does not delete cloud workers.");
+      return;
+    }
+
     if (!user) {
       setLaunchError("Sign in before deleting a worker.");
       return;
@@ -2314,11 +2486,19 @@ export function CloudControlPanel() {
           <div className="ow-stack">
             <div className="ow-heading-block">
               <span className="ow-icon-chip">01</span>
-              <h1 className="ow-title">{authMode === "sign-up" ? "Get started" : "Welcome back"}</h1>
+              <h1 className="ow-title">
+                {desktopOnboarding
+                  ? authMode === "sign-up"
+                    ? "Create your Veslo account"
+                    : "Sign in to Veslo"
+                  : authMode === "sign-up"
+                    ? "Get started"
+                    : "Welcome back"}
+              </h1>
               <p className="ow-subtitle">
                 {authMode === "sign-up"
-                  ? getAuthInfoForMode("sign-up")
-                  : getAuthInfoForMode("sign-in")}
+                  ? getAuthInfoForMode("sign-up", { desktopOnboarding })
+                  : getAuthInfoForMode("sign-in", { desktopOnboarding })}
               </p>
             </div>
 
@@ -2348,7 +2528,13 @@ export function CloudControlPanel() {
               </label>
 
               <button type="submit" className="ow-btn-primary" disabled={authBusy}>
-                {authBusy ? "Working..." : authMode === "sign-in" ? "Sign in" : "Create account"}
+                {authBusy
+                  ? "Working..."
+                  : authMode === "sign-in"
+                    ? desktopOnboarding
+                      ? "Sign in to Veslo"
+                      : "Sign in"
+                    : "Create account"}
               </button>
 
               <button type="button" className="ow-btn-secondary w-full" onClick={() => void handleGitHubSignIn()} disabled={authBusy}>
@@ -2364,7 +2550,7 @@ export function CloudControlPanel() {
                 onClick={() => {
                   const nextMode = authMode === "sign-in" ? "sign-up" : "sign-in";
                   setAuthMode(nextMode);
-                  setAuthInfo(getAuthInfoForMode(nextMode));
+                  setAuthInfo(getAuthInfoForMode(nextMode, { desktopOnboarding }));
                   setAuthError(null);
                 }}
               >
@@ -2379,7 +2565,51 @@ export function CloudControlPanel() {
           </div>
         ) : null}
 
-        {step === 2 ? (
+        {step === 2 && desktopOnboarding ? (
+          <div className="ow-stack">
+            <div className="ow-heading-block">
+              <span className="ow-icon-chip">02</span>
+              <h1 className="ow-title">Sign in to Veslo</h1>
+              <p className="ow-subtitle">Your account is ready. Return to the desktop app to finish local setup.</p>
+            </div>
+
+            <div className="ow-note-box">
+              <p>
+                {desktopAuthStatus === "failed"
+                  ? "We could not return to Veslo automatically."
+                  : desktopAuthStatus === "redirecting"
+                    ? "Returning to Veslo now..."
+                    : desktopAuthStatus === "preparing"
+                      ? "Preparing a secure handoff to Veslo..."
+                      : "Checking your account and organization."}
+              </p>
+              {desktopAuthError ? <p className="ow-error-text">{desktopAuthError}</p> : null}
+            </div>
+
+            <div className="ow-inline-row">
+              {desktopAuthDeepLink ? (
+                <a href={desktopAuthDeepLink} className="ow-btn-primary">
+                  Open Veslo
+                </a>
+              ) : null}
+
+              <button
+                type="button"
+                className="ow-btn-secondary"
+                onClick={() => {
+                  setDesktopAuthStatus("idle");
+                  setDesktopAuthError(null);
+                  setDesktopAuthRequestKey(null);
+                }}
+                disabled={desktopAuthStatus === "preparing"}
+              >
+                Retry handoff
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {step === 2 && !desktopOnboarding ? (
           <div className="flex h-full flex-col gap-3">
             <div className="mb-3 flex items-center justify-between rounded-[18px] border border-slate-200 bg-white p-2 lg:hidden">
               <div className="flex gap-2">
