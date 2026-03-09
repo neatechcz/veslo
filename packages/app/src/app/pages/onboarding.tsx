@@ -37,6 +37,10 @@ export type OnboardingViewProps = {
   engineDoctorCheckedAt: number | null;
   engineInstallLogs: string | null;
   error: string | null;
+  vesloLoginUrl: string;
+  denAuthBusy: boolean;
+  denAuthError: string | null;
+  denAuthUserEmail: string | null;
   canRepairMigration: boolean;
   migrationRepairUnavailableReason: string | null;
   migrationRepairBusy: boolean;
@@ -48,6 +52,7 @@ export type OnboardingViewProps = {
   onVesloHostUrlChange: (value: string) => void;
   onVesloTokenChange: (value: string) => void;
   onSelectStartup: (mode: StartupPreference) => void;
+  onSignInToVeslo: () => void | Promise<void>;
   onSetLanguage: (language: Language) => void;
   onConfirmLanguage: () => void | Promise<void>;
   onRememberStartupToggle: () => void;
@@ -649,6 +654,51 @@ export default function OnboardingView(props: OnboardingViewProps) {
               <Show when={props.error}>
                 <div class="rounded-2xl bg-red-1/40 px-5 py-4 text-sm text-red-12 border border-red-7/20">
                   {props.error}
+                </div>
+              </Show>
+            </div>
+          </div>
+        </div>
+      </Match>
+
+      <Match when={props.onboardingStep === "auth"}>
+        <div class="min-h-screen flex flex-col items-center justify-center bg-gray-1 text-gray-12 p-6 relative">
+          <div class="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-gray-2 to-transparent opacity-20 pointer-events-none" />
+
+          <div class="max-w-lg w-full z-10 space-y-8">
+            <div class="text-center space-y-3">
+              <div class="flex items-center justify-center">
+                <VesloLogo size={48} />
+              </div>
+              <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-gray-6 bg-gray-2/60">
+                <Globe size={20} class="text-gray-11" />
+              </div>
+              <h2 class="text-2xl font-bold tracking-tight">Sign in to Veslo</h2>
+              <p class="text-gray-11 text-sm leading-relaxed">
+                Continue in your browser to verify your Veslo account and organization before local setup starts.
+              </p>
+            </div>
+
+            <div class="space-y-4">
+              <Button class="w-full py-3 text-base" onClick={() => void props.onSignInToVeslo()} disabled={props.denAuthBusy}>
+                {props.denAuthBusy ? "Opening browser..." : "Sign in to Veslo"}
+              </Button>
+
+              <Show when={props.vesloLoginUrl}>
+                <div class="rounded-2xl border border-gray-6 bg-gray-2/40 px-4 py-3 text-xs text-gray-10">
+                  Browser target: <span class="font-mono text-gray-11">{props.vesloLoginUrl}</span>
+                </div>
+              </Show>
+
+              <Show when={props.denAuthUserEmail}>
+                <div class="rounded-2xl border border-emerald-7/20 bg-emerald-2/20 px-4 py-3 text-sm text-emerald-11">
+                  Signed in as {props.denAuthUserEmail}. Return here after browser authentication finishes.
+                </div>
+              </Show>
+
+              <Show when={props.denAuthError || props.error}>
+                <div class="rounded-2xl bg-red-1/40 px-5 py-4 text-sm text-red-12 border border-red-7/20">
+                  {props.denAuthError ?? props.error}
                 </div>
               </Show>
             </div>

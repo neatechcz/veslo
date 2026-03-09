@@ -179,12 +179,25 @@ import {
 } from "./lib/veslo-server";
 import { CLOUD_ONLY_MODE, resolveVesloCloudEnvironment } from "./lib/cloud-policy";
 import { isRemoteUiEnabled } from "./lib/runtime-policy";
+import {
+  buildDesktopOnboardingLoginUrl,
+  clearDenAuthState,
+  exchangeDesktopAuthCode,
+  readDenAuthState,
+  validateDenAuthState,
+  writeDenAuthState,
+  type DenAuthState,
+} from "./lib/den-auth";
 
 type RemoteWorkspaceDefaults = {
   vesloHostUrl?: string | null;
   vesloToken?: string | null;
   directory?: string | null;
   displayName?: string | null;
+};
+
+type DesktopAuthCompleteDeepLink = {
+  code: string;
 };
 
 type SharedSkillItem = {
@@ -513,6 +526,67 @@ function stripSharedBundleQuery(rawUrl: string): string | null {
   return `${url.pathname}${search ? `?${search}` : ""}${url.hash}`;
 }
 
+function parseDesktopAuthCompleteDeepLink(rawUrl: string): DesktopAuthCompleteDeepLink | null {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  const protocol = url.protocol.toLowerCase();
+  if (protocol !== "veslo:" && protocol !== "https:" && protocol !== "http:") {
+    return null;
+  }
+
+  const routeHost = url.hostname.toLowerCase();
+  const routePath = url.pathname.replace(/^\/+/, "").toLowerCase();
+  const routeSegments = routePath.split("/").filter(Boolean);
+  const routeTail = routeSegments[routeSegments.length - 1] ?? "";
+  if (routeHost !== "auth-complete" && routePath !== "auth-complete" && routeTail !== "auth-complete") {
+    return null;
+  }
+
+  const code = (url.searchParams.get("code") ?? "").trim();
+  if (!code) {
+    return null;
+  }
+
+  return { code };
+}
+
+function stripDesktopAuthCompleteQuery(rawUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  const routeHost = url.hostname.toLowerCase();
+  const routePath = url.pathname.replace(/^\/+/, "").toLowerCase();
+  const routeSegments = routePath.split("/").filter(Boolean);
+  const routeTail = routeSegments[routeSegments.length - 1] ?? "";
+  if (routeHost !== "auth-complete" && routePath !== "auth-complete" && routeTail !== "auth-complete") {
+    return null;
+  }
+
+  let changed = false;
+  for (const key of ["code"]) {
+    if (url.searchParams.has(key)) {
+      url.searchParams.delete(key);
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    return null;
+  }
+
+  const search = url.searchParams.toString();
+  return `${url.pathname}${search ? `?${search}` : ""}${url.hash}`;
+}
+
 function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefaults | null {
   let url: URL;
   try {
@@ -587,8 +661,10 @@ function stripRemoteConnectQuery(rawUrl: string): string | null {
 }
 
 export default function App() {
-  const envVesloWorkspaceId =
-    resolveVesloCloudEnvironment(import.meta.env as Record<string, string | undefined>).workspaceId ?? null;
+  const envCloud = resolveVesloCloudEnvironment(import.meta.env as Record<string, string | undefined>);
+  const envVesloWorkspaceId = envCloud.workspaceId ?? null;
+  const vesloLoginBaseUrl = envCloud.loginUrl || envCloud.vesloUrl || "";
+  const vesloLoginUrl = buildDesktopOnboardingLoginUrl(vesloLoginBaseUrl) ?? "";
 
   // Workspace switch tracing is noisy, so only emit in developer mode.
   // (Veslo already has a developer mode toggle in Settings.)
@@ -684,13 +760,21 @@ export default function App() {
     if (typeof window === "undefined") return "welcome";
     try {
       const stored = window.localStorage.getItem(LANGUAGE_PREF_KEY);
-      return isLanguage(stored) ? "welcome" : "language";
+      if (!isLanguage(stored)) {
+        return "language";
+      }
+      return readDenAuthState() ? "welcome" : "auth";
     } catch {
       return "welcome";
     }
   };
   const [onboardingStep, setOnboardingStep] =
     createSignal<OnboardingStep>(initialOnboardingStep());
+  const [denAuthState, setDenAuthState] = createSignal<DenAuthState | null>(
+    typeof window === "undefined" ? null : readDenAuthState(),
+  );
+  const [denAuthBusy, setDenAuthBusy] = createSignal(false);
+  const [denAuthError, setDenAuthError] = createSignal<string | null>(null);
   const [rememberStartupChoice, setRememberStartupChoice] = createSignal(false);
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
 
@@ -3283,6 +3367,8 @@ export default function App() {
   const [editRemoteWorkspaceOpen, setEditRemoteWorkspaceOpen] = createSignal(false);
   const [editRemoteWorkspaceId, setEditRemoteWorkspaceId] = createSignal<string | null>(null);
   const [editRemoteWorkspaceError, setEditRemoteWorkspaceError] = createSignal<string | null>(null);
+  const [pendingDesktopAuthComplete, setPendingDesktopAuthComplete] =
+    createSignal<DesktopAuthCompleteDeepLink | null>(null);
   const [deepLinkRemoteWorkspaceDefaults, setDeepLinkRemoteWorkspaceDefaults] = createSignal<RemoteWorkspaceDefaults | null>(null);
   const [pendingRemoteConnectDeepLink, setPendingRemoteConnectDeepLink] = createSignal<RemoteWorkspaceDefaults | null>(null);
   const [pendingSharedBundleInvite, setPendingSharedBundleInvite] = createSignal<SharedBundleDeepLink | null>(null);
@@ -3292,6 +3378,15 @@ export default function App() {
   const [renameWorkspaceId, setRenameWorkspaceId] = createSignal<string | null>(null);
   const [renameWorkspaceName, setRenameWorkspaceName] = createSignal("");
   const [renameWorkspaceBusy, setRenameWorkspaceBusy] = createSignal(false);
+
+  const queueDesktopAuthCompleteDeepLink = (rawUrl: string): boolean => {
+    const parsed = parseDesktopAuthCompleteDeepLink(rawUrl);
+    if (!parsed) {
+      return false;
+    }
+    setPendingDesktopAuthComplete(parsed);
+    return true;
+  };
 
   const queueRemoteConnectDeepLink = (rawUrl: string): boolean => {
     const parsed = parseRemoteConnectDeepLink(rawUrl);
@@ -3311,6 +3406,123 @@ export default function App() {
     setSharedBundleNoticeShown(false);
     return true;
   };
+
+  const hasPersistedLanguagePreference = () => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+
+    try {
+      return isLanguage(window.localStorage.getItem(LANGUAGE_PREF_KEY));
+    } catch {
+      return false;
+    }
+  };
+
+  const bootstrapAfterCloudIdentity = async () => {
+    await workspaceStore.bootstrapOnboarding();
+  };
+
+  const ensureCloudIdentityBeforeBootstrap = async () => {
+    const storedAuth = readDenAuthState();
+    setDenAuthState(storedAuth);
+    setDenAuthError(null);
+
+    if (pendingDesktopAuthComplete()) {
+      setOnboardingStep(hasPersistedLanguagePreference() ? "auth" : "language");
+      return;
+    }
+
+    if (!hasPersistedLanguagePreference()) {
+      setOnboardingStep("language");
+      return;
+    }
+
+    if (!storedAuth) {
+      setOnboardingStep("auth");
+      return;
+    }
+
+    setDenAuthBusy(true);
+    try {
+      const validated = await validateDenAuthState(storedAuth);
+      if (!validated) {
+        clearDenAuthState();
+        setDenAuthState(null);
+        setDenAuthError("Your Veslo session expired. Sign in again.");
+        setOnboardingStep("auth");
+        return;
+      }
+
+      const nextAuth = writeDenAuthState(validated);
+      setDenAuthState(nextAuth);
+      await bootstrapAfterCloudIdentity();
+    } catch (error) {
+      setDenAuthError(error instanceof Error ? error.message : "Failed to verify Veslo sign-in.");
+      setOnboardingStep("auth");
+    } finally {
+      setDenAuthBusy(false);
+    }
+  };
+
+  const handleDesktopAuthCompleteCode = async (code: string) => {
+    const trimmedCode = code.trim();
+    setPendingDesktopAuthComplete(null);
+
+    if (!trimmedCode) {
+      return;
+    }
+
+    setDenAuthBusy(true);
+    setDenAuthError(null);
+    setOnboardingStep(hasPersistedLanguagePreference() ? "auth" : "language");
+
+    try {
+      const exchanged = await exchangeDesktopAuthCode(vesloLoginBaseUrl, trimmedCode);
+      const nextAuth = writeDenAuthState(exchanged);
+      setDenAuthState(nextAuth);
+      await bootstrapAfterCloudIdentity();
+    } catch (error) {
+      clearDenAuthState();
+      setDenAuthState(null);
+      setDenAuthError(error instanceof Error ? error.message : "Failed to finish Veslo sign-in.");
+      setOnboardingStep(hasPersistedLanguagePreference() ? "auth" : "language");
+    } finally {
+      setDenAuthBusy(false);
+    }
+  };
+
+  const openVesloSignIn = async () => {
+    if (!vesloLoginUrl) {
+      setDenAuthError("Veslo login URL is not configured.");
+      return;
+    }
+
+    setDenAuthBusy(true);
+    setDenAuthError(null);
+
+    try {
+      if (isTauriRuntime()) {
+        const { openUrl } = await import("@tauri-apps/plugin-opener");
+        await openUrl(vesloLoginUrl);
+      } else {
+        window.open(vesloLoginUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      setDenAuthError(error instanceof Error ? error.message : "Failed to open Veslo sign-in.");
+    } finally {
+      setDenAuthBusy(false);
+    }
+  };
+
+  createEffect(() => {
+    const pending = pendingDesktopAuthComplete();
+    if (!pending || denAuthBusy()) {
+      return;
+    }
+
+    void handleDesktopAuthCompleteCode(pending.code);
+  });
 
   createEffect(() => {
     const pending = pendingRemoteConnectDeepLink();
@@ -5307,7 +5519,11 @@ export default function App() {
             return;
           }
           for (const url of urls) {
-            if (queueRemoteConnectDeepLink(url) || queueSharedBundleDeepLink(url)) {
+            if (
+              queueDesktopAuthCompleteDeepLink(url) ||
+              queueRemoteConnectDeepLink(url) ||
+              queueSharedBundleDeepLink(url)
+            ) {
               break;
             }
           }
@@ -5328,9 +5544,11 @@ export default function App() {
     if (!isTauriRuntime()) {
       const currentUrl = typeof window === "undefined" ? "" : window.location.href;
       if (currentUrl) {
+        queueDesktopAuthCompleteDeepLink(currentUrl);
         queueRemoteConnectDeepLink(currentUrl);
         queueSharedBundleDeepLink(currentUrl);
-        const remoteStripped = stripRemoteConnectQuery(currentUrl) ?? currentUrl;
+        const authStripped = stripDesktopAuthCompleteQuery(currentUrl) ?? currentUrl;
+        const remoteStripped = stripRemoteConnectQuery(authStripped) ?? authStripped;
         const bundleStripped = stripSharedBundleQuery(remoteStripped) ?? remoteStripped;
         if (bundleStripped !== currentUrl) {
           window.history.replaceState({}, "", bundleStripped);
@@ -5338,7 +5556,7 @@ export default function App() {
       }
     }
 
-    void workspaceStore.bootstrapOnboarding().finally(() => setBooting(false));
+    void ensureCloudIdentityBeforeBootstrap().finally(() => setBooting(false));
   });
 
   createEffect(() => {
@@ -5854,6 +6072,10 @@ export default function App() {
     engineDoctorCheckedAt: engineDoctorCheckedAt(),
     engineInstallLogs: engineInstallLogs(),
     error: error(),
+    vesloLoginUrl,
+    denAuthBusy: denAuthBusy(),
+    denAuthError: denAuthError(),
+    denAuthUserEmail: denAuthState()?.user.email ?? null,
     canRepairMigration: workspaceStore.canRepairOpencodeMigration(),
     migrationRepairUnavailableReason: migrationRepairUnavailableReason(),
     migrationRepairBusy: workspaceStore.migrationRepairBusy(),
@@ -5872,9 +6094,14 @@ export default function App() {
         token: value,
       }),
     onSelectStartup: workspaceStore.onSelectStartup,
+    onSignInToVeslo: openVesloSignIn,
     onSetLanguage: setLocale,
     onConfirmLanguage: async () => {
       setLocale(currentLocale());
+      if (!readDenAuthState()) {
+        setOnboardingStep("auth");
+        return;
+      }
       await workspaceStore.onConfirmLanguage();
     },
     onRememberStartupToggle: workspaceStore.onRememberStartupToggle,
@@ -6366,7 +6593,10 @@ export default function App() {
     const rawPath = location.pathname.trim();
     const path = rawPath.toLowerCase();
 
-    if (onboardingStep() === "language" && !path.startsWith("/onboarding")) {
+    if (
+      (onboardingStep() === "language" || onboardingStep() === "auth") &&
+      !path.startsWith("/onboarding")
+    ) {
       navigate("/onboarding", { replace: true });
       return;
     }
@@ -6439,7 +6669,7 @@ export default function App() {
     }
 
     if (path.startsWith("/onboarding")) {
-      if (onboardingStep() === "language") {
+      if (onboardingStep() === "language" || onboardingStep() === "auth") {
         return;
       }
       navigate("/session", { replace: true });

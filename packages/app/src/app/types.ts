@@ -133,7 +133,7 @@ export type StartupPreference = "local" | "server";
 
 export type EngineRuntime = "direct" | "veslo-orchestrator";
 
-export type OnboardingStep = "language" | "welcome" | "local" | "server" | "connecting";
+export type OnboardingStep = "language" | "auth" | "welcome" | "local" | "server" | "connecting";
 
 export type DashboardTab =
   | "scheduled"
