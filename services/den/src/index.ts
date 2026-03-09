@@ -29,7 +29,25 @@ if (env.corsOrigins.length > 0) {
 
 // Better Auth reads the raw request body itself — mount BEFORE express.json()
 // so the body stream isn't consumed by Express's JSON parser first
-app.all("/api/auth/*", toNodeHandler(auth))
+const authHandler = toNodeHandler(auth)
+app.all("/api/auth/*", (req, res, next) => {
+  try {
+    const result = authHandler(req, res, next)
+    if (result && typeof result.catch === "function") {
+      result.catch((err: unknown) => {
+        console.error("[den] auth handler error:", err)
+        if (!res.headersSent) {
+          res.status(500).json({ error: "auth_handler_error", message: String(err) })
+        }
+      })
+    }
+  } catch (err) {
+    console.error("[den] auth handler sync error:", err)
+    if (!res.headersSent) {
+      res.status(500).json({ error: "auth_handler_error", message: String(err) })
+    }
+  }
+})
 app.use(express.json())
 app.use(express.static(publicDir))
 
