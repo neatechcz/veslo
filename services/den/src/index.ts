@@ -76,6 +76,37 @@ app.get("/v1/debug/tables", asyncRoute(async (_req, res) => {
     } catch (e: any) { testResults.push(`org_membership: FAIL - ${e.message}`) }
 
     results.testResults = testResults
+
+    // Test sign-up via Better Auth internal API
+    try {
+      const testEmail = `debug-${Date.now()}@test.com`
+      const signupResult = await auth.api.signUpEmail({
+        body: {
+          name: "Debug Test",
+          email: testEmail,
+          password: "TestPass123!",
+        },
+      })
+      results.signupTest = { success: true, userId: signupResult?.user?.id, email: testEmail }
+      // Clean up test user
+      try {
+        await db.execute(sql`DELETE FROM \`org_membership\` WHERE \`user_id\` = ${signupResult?.user?.id}`)
+        await db.execute(sql`DELETE FROM \`org\` WHERE \`owner_user_id\` = ${signupResult?.user?.id}`)
+        await db.execute(sql`DELETE FROM \`session\` WHERE \`user_id\` = ${signupResult?.user?.id}`)
+        await db.execute(sql`DELETE FROM \`account\` WHERE \`user_id\` = ${signupResult?.user?.id}`)
+        await db.execute(sql`DELETE FROM \`user\` WHERE \`id\` = ${signupResult?.user?.id}`)
+      } catch (cleanupErr: any) {
+        results.cleanupError = cleanupErr.message
+      }
+    } catch (signupErr: any) {
+      results.signupTest = {
+        success: false,
+        error: signupErr.message,
+        stack: signupErr.stack?.split("\n").slice(0, 10),
+        code: signupErr.code,
+        cause: signupErr.cause?.message,
+      }
+    }
   } catch (e: any) {
     results.error = e.message
   }
