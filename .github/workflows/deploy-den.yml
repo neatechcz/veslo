@@ -252,10 +252,27 @@ jobs:
           ]
 
           request("PUT", f"/services/{service_id}/env-vars", env_vars)
-          _, deploy = request("POST", f"/services/{service_id}/deploys", {})
-          deploy_id = deploy.get("id") or (deploy.get("deploy") or {}).get("id")
+
+          # Snapshot current latest deploy to detect the new one
+          _, before = request("GET", f"/services/{service_id}/deploys?limit=1")
+          before_id = before[0]["deploy"]["id"] if before else None
+
+          request("POST", f"/services/{service_id}/deploys", {})
+          print("Deploy triggered, waiting for new deploy to appear...")
+
+          # Wait for a new deploy to appear
+          deploy_id = None
+          for _ in range(30):
+              time.sleep(5)
+              _, deploys = request("GET", f"/services/{service_id}/deploys?limit=1")
+              if deploys:
+                  latest = deploys[0]["deploy"]
+                  if latest["id"] != before_id:
+                      deploy_id = latest["id"]
+                      print(f"New deploy detected: {deploy_id}")
+                      break
           if not deploy_id:
-              raise RuntimeError(f"Unexpected deploy response: {deploy}")
+              raise RuntimeError("No new deploy appeared after triggering")
 
           terminal = {"live", "update_failed", "build_failed", "canceled"}
           started = time.time()
