@@ -53,6 +53,258 @@ app.use(errorMiddleware)
 
 async function ensureTables() {
   try {
+    // Auth tables (Better Auth requires these with snake_case columns)
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`user\` (
+        \`id\` varchar(36) NOT NULL,
+        \`name\` varchar(255) NOT NULL,
+        \`email\` varchar(255) NOT NULL,
+        \`email_verified\` boolean NOT NULL DEFAULT false,
+        \`image\` text,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT \`user_id\` PRIMARY KEY(\`id\`),
+        CONSTRAINT \`user_email\` UNIQUE(\`email\`)
+      )
+    `)
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`session\` (
+        \`id\` varchar(36) NOT NULL,
+        \`expires_at\` timestamp(3) NOT NULL,
+        \`token\` varchar(255) NOT NULL,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        \`ip_address\` text,
+        \`user_agent\` text,
+        \`user_id\` varchar(36) NOT NULL,
+        CONSTRAINT \`session_id\` PRIMARY KEY(\`id\`),
+        CONSTRAINT \`session_token\` UNIQUE(\`token\`)
+      )
+    `)
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`session_user_id\` ON \`session\` (\`user_id\`)`)
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`account\` (
+        \`id\` varchar(36) NOT NULL,
+        \`account_id\` text NOT NULL,
+        \`provider_id\` text NOT NULL,
+        \`user_id\` varchar(36) NOT NULL,
+        \`access_token\` text,
+        \`refresh_token\` text,
+        \`id_token\` text,
+        \`access_token_expires_at\` timestamp(3),
+        \`refresh_token_expires_at\` timestamp(3),
+        \`scope\` text,
+        \`password\` text,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT \`account_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`account_user_id\` ON \`account\` (\`user_id\`)`)
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`verification\` (
+        \`id\` varchar(36) NOT NULL,
+        \`identifier\` varchar(255) NOT NULL,
+        \`value\` text NOT NULL,
+        \`expires_at\` timestamp(3) NOT NULL,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT \`verification_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`verification_identifier\` ON \`verification\` (\`identifier\`)`)
+
+    // Check if auth tables have wrong column names (camelCase from migration 0000)
+    let needsAuthFix = false
+    try {
+      await db.execute(sql`SELECT \`user_id\` FROM \`account\` LIMIT 0`)
+    } catch {
+      needsAuthFix = true
+    }
+    if (needsAuthFix) {
+      console.log("[den] auth tables have camelCase columns, recreating with snake_case...")
+      await db.execute(sql`DROP TABLE IF EXISTS \`account\``)
+      await db.execute(sql`DROP TABLE IF EXISTS \`session\``)
+      await db.execute(sql`DROP TABLE IF EXISTS \`verification\``)
+      await db.execute(sql`DROP TABLE IF EXISTS \`user\``)
+      await db.execute(sql`
+        CREATE TABLE \`user\` (
+          \`id\` varchar(36) NOT NULL,
+          \`name\` varchar(255) NOT NULL,
+          \`email\` varchar(255) NOT NULL,
+          \`email_verified\` boolean NOT NULL DEFAULT false,
+          \`image\` text,
+          \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+          \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+          CONSTRAINT \`user_id\` PRIMARY KEY(\`id\`),
+          CONSTRAINT \`user_email\` UNIQUE(\`email\`)
+        )
+      `)
+      await db.execute(sql`
+        CREATE TABLE \`session\` (
+          \`id\` varchar(36) NOT NULL,
+          \`expires_at\` timestamp(3) NOT NULL,
+          \`token\` varchar(255) NOT NULL,
+          \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+          \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+          \`ip_address\` text,
+          \`user_agent\` text,
+          \`user_id\` varchar(36) NOT NULL,
+          CONSTRAINT \`session_id\` PRIMARY KEY(\`id\`),
+          CONSTRAINT \`session_token\` UNIQUE(\`token\`)
+        )
+      `)
+      await db.execute(sql`CREATE INDEX \`session_user_id\` ON \`session\` (\`user_id\`)`)
+      await db.execute(sql`
+        CREATE TABLE \`account\` (
+          \`id\` varchar(36) NOT NULL,
+          \`account_id\` text NOT NULL,
+          \`provider_id\` text NOT NULL,
+          \`user_id\` varchar(36) NOT NULL,
+          \`access_token\` text,
+          \`refresh_token\` text,
+          \`id_token\` text,
+          \`access_token_expires_at\` timestamp(3),
+          \`refresh_token_expires_at\` timestamp(3),
+          \`scope\` text,
+          \`password\` text,
+          \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+          \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+          CONSTRAINT \`account_id\` PRIMARY KEY(\`id\`)
+        )
+      `)
+      await db.execute(sql`CREATE INDEX \`account_user_id\` ON \`account\` (\`user_id\`)`)
+      await db.execute(sql`
+        CREATE TABLE \`verification\` (
+          \`id\` varchar(36) NOT NULL,
+          \`identifier\` varchar(255) NOT NULL,
+          \`value\` text NOT NULL,
+          \`expires_at\` timestamp(3) NOT NULL,
+          \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+          \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+          CONSTRAINT \`verification_id\` PRIMARY KEY(\`id\`)
+        )
+      `)
+      await db.execute(sql`CREATE INDEX \`verification_identifier\` ON \`verification\` (\`identifier\`)`)
+      console.log("[den] auth tables recreated with correct column names")
+    }
+
+    // Application tables
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`org\` (
+        \`id\` varchar(64) NOT NULL,
+        \`name\` varchar(255) NOT NULL,
+        \`slug\` varchar(255) NOT NULL,
+        \`owner_user_id\` varchar(64) NOT NULL,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT \`org_id\` PRIMARY KEY(\`id\`),
+        CONSTRAINT \`org_slug\` UNIQUE(\`slug\`)
+      )
+    `)
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`org_owner_user_id\` ON \`org\` (\`owner_user_id\`)`)
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`org_membership\` (
+        \`id\` varchar(64) NOT NULL,
+        \`org_id\` varchar(64) NOT NULL,
+        \`user_id\` varchar(64) NOT NULL,
+        \`role\` enum('owner','member') NOT NULL,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        CONSTRAINT \`org_membership_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`org_membership_org_id\` ON \`org_membership\` (\`org_id\`)`)
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`org_membership_user_id\` ON \`org_membership\` (\`user_id\`)`)
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`platform_role\` (
+        \`id\` varchar(64) NOT NULL,
+        \`user_id\` varchar(64) NOT NULL,
+        \`role\` enum('platform_admin') NOT NULL,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        CONSTRAINT \`platform_role_id\` PRIMARY KEY(\`id\`),
+        CONSTRAINT \`platform_role_user_id\` UNIQUE(\`user_id\`)
+      )
+    `)
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`worker\` (
+        \`id\` varchar(64) NOT NULL,
+        \`org_id\` varchar(64) NOT NULL,
+        \`created_by_user_id\` varchar(64),
+        \`name\` varchar(255) NOT NULL,
+        \`description\` varchar(1024),
+        \`destination\` enum('local','cloud') NOT NULL,
+        \`status\` enum('provisioning','healthy','failed','stopped') NOT NULL,
+        \`image_version\` varchar(128),
+        \`workspace_path\` varchar(1024),
+        \`sandbox_backend\` varchar(64),
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT \`worker_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_org_id\` ON \`worker\` (\`org_id\`)`)
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_created_by_user_id\` ON \`worker\` (\`created_by_user_id\`)`)
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_status\` ON \`worker\` (\`status\`)`)
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`worker_instance\` (
+        \`id\` varchar(64) NOT NULL,
+        \`worker_id\` varchar(64) NOT NULL,
+        \`provider\` varchar(64) NOT NULL,
+        \`region\` varchar(64),
+        \`url\` varchar(2048) NOT NULL,
+        \`status\` enum('provisioning','healthy','failed','stopped') NOT NULL,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT \`worker_instance_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_instance_worker_id\` ON \`worker_instance\` (\`worker_id\`)`)
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`worker_token\` (
+        \`id\` varchar(64) NOT NULL,
+        \`worker_id\` varchar(64) NOT NULL,
+        \`scope\` enum('client','host') NOT NULL,
+        \`token\` varchar(128) NOT NULL,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`revoked_at\` timestamp(3),
+        CONSTRAINT \`worker_token_id\` PRIMARY KEY(\`id\`),
+        CONSTRAINT \`worker_token_token\` UNIQUE(\`token\`)
+      )
+    `)
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_token_worker_id\` ON \`worker_token\` (\`worker_id\`)`)
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`worker_bundle\` (
+        \`id\` varchar(64) NOT NULL,
+        \`worker_id\` varchar(64) NOT NULL,
+        \`storage_url\` varchar(2048) NOT NULL,
+        \`status\` varchar(64) NOT NULL,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        CONSTRAINT \`worker_bundle_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_bundle_worker_id\` ON \`worker_bundle\` (\`worker_id\`)`)
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`audit_event\` (
+        \`id\` varchar(64) NOT NULL,
+        \`org_id\` varchar(64) NOT NULL,
+        \`worker_id\` varchar(64),
+        \`actor_user_id\` varchar(64) NOT NULL,
+        \`action\` varchar(128) NOT NULL,
+        \`payload\` json,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        CONSTRAINT \`audit_event_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`audit_event_org_id\` ON \`audit_event\` (\`org_id\`)`)
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`audit_event_worker_id\` ON \`audit_event\` (\`worker_id\`)`)
+
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`desktop_auth_handoff\` (
         \`id\` varchar(64) NOT NULL,
@@ -66,10 +318,9 @@ async function ensureTables() {
         CONSTRAINT \`desktop_auth_handoff_code\` UNIQUE(\`code\`)
       )
     `)
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS \`desktop_auth_handoff_user_id\` ON \`desktop_auth_handoff\` (\`user_id\`)
-    `)
-    console.log("[den] desktop_auth_handoff table ensured")
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`desktop_auth_handoff_user_id\` ON \`desktop_auth_handoff\` (\`user_id\`)`)
+
+    console.log("[den] all tables ensured")
   } catch (err) {
     console.warn("[den] table ensure warning:", err)
   }
