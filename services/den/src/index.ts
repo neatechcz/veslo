@@ -4,7 +4,9 @@ import express from "express"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
+import { sql } from "drizzle-orm"
 import { auth } from "./auth.js"
+import { db } from "./db/index.js"
 import { env } from "./env.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
@@ -49,6 +51,32 @@ app.use("/v1/orgs", orgsRouter)
 app.use("/v1/workers", workersRouter)
 app.use(errorMiddleware)
 
-app.listen(env.port, () => {
-  console.log(`den listening on ${env.port} (provisioner=${env.provisionerMode})`)
+async function ensureTables() {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`desktop_auth_handoff\` (
+        \`id\` varchar(64) NOT NULL,
+        \`code\` varchar(255) NOT NULL,
+        \`user_id\` varchar(64) NOT NULL,
+        \`org_id\` varchar(64) NOT NULL,
+        \`expires_at\` timestamp(3) NOT NULL,
+        \`consumed_at\` timestamp(3),
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        CONSTRAINT \`desktop_auth_handoff_id\` PRIMARY KEY(\`id\`),
+        CONSTRAINT \`desktop_auth_handoff_code\` UNIQUE(\`code\`)
+      )
+    `)
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS \`desktop_auth_handoff_user_id\` ON \`desktop_auth_handoff\` (\`user_id\`)
+    `)
+    console.log("[den] desktop_auth_handoff table ensured")
+  } catch (err) {
+    console.warn("[den] table ensure warning:", err)
+  }
+}
+
+ensureTables().then(() => {
+  app.listen(env.port, () => {
+    console.log(`den listening on ${env.port} (provisioner=${env.provisionerMode})`)
+  })
 })
