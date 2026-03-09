@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - dev
+      - main
     paths:
       - "services/den/**"
       - "services/den-worker-runtime/**"
