@@ -158,10 +158,7 @@
 <body>
   <div class="container">
     <h1>Veslo Multi-Tenant Cloud Design Tables</h1>
-    <p><span class="badge">Design Draft</span> Organization-first, real multi-tenant model with owner-managed billing, admin-governed global sharing, and project-first UI semantics.<span class="latest-chip">Latest revision</span></p>
-    <section class="card latest-note">
-      <p><span class="strong">Change Marking Legend:</span> green rows and green-bordered sections are changes from the latest revision only.</p>
-    </section>
+    <p><span class="badge">Design Draft</span> Organization-first, real multi-tenant model with owner-managed billing, admin-governed global sharing, and project-first UI semantics.</p>
 
     <section class="card">
       <h2>1. Core Multi-Tenant Operating Model</h2>
@@ -258,11 +255,11 @@
               <td>Can use defaults; no policy changes.</td>
               <td><code>org_settings.model_profile</code>, policy checks at runtime.</td>
             </tr>
-            <tr class="latest-row">
+            <tr>
               <td>Project management permissions (UI)</td>
-              <td>UI uses "Projects" as the user-facing name. Backend can keep <code>worker</code> short-term as a compatibility layer.</td>
-              <td>Emergency controls only: suspend project/org, temporary policy override, and ownership recovery; every action requires reason + audit.</td>
-              <td>Define org project policies and manage all org projects.</td>
+              <td>UI uses "Projects" as the user-facing name. Backend can keep <code>worker</code> short-term as a compatibility layer. Members can create projects in V1. Private member-only projects remain a future extension, not V1 behavior.</td>
+              <td>Superuser only for exceptional intervention: legal, security, billing, compliance, or recovery cases. No day-to-day project management. Every action requires reason + audit.</td>
+              <td>Primary operators for project lifecycle inside the org, including stop/start and org policy management.</td>
               <td>Create projects and manage projects they own or are explicitly assigned to.</td>
               <td><code>worker.org_id</code> isolation + <code>project</code> label alias + admin emergency-action audit schema.</td>
             </tr>
@@ -351,8 +348,8 @@
       </div>
     </section>
 
-    <section class="card latest-section">
-      <h2>1A. Project Governance and Admin Emergency Controls <span class="latest-chip">Clarified</span></h2>
+    <section class="card">
+      <h2>1A. Project Governance and Admin Superuser Intervention</h2>
       <div class="table-wrap">
         <table>
           <thead>
@@ -365,49 +362,49 @@
             </tr>
           </thead>
           <tbody>
-            <tr class="latest-row">
+            <tr>
               <td>Create project</td>
               <td>Allowed by default.</td>
               <td>Allowed.</td>
               <td>Not needed.</td>
               <td>Project is stored as org-scoped backend <code>worker</code> entity.</td>
             </tr>
-            <tr class="latest-row">
+            <tr>
               <td>Edit/rename project</td>
               <td>Own/assigned projects only.</td>
               <td>Any project in org.</td>
               <td>Only for break-glass support.</td>
               <td>Ownership and assignment checks enforced per request.</td>
             </tr>
-            <tr class="latest-row">
+            <tr>
               <td>Archive/delete project</td>
               <td>Own projects only (or owner policy limit).</td>
               <td>Any project in org.</td>
               <td>Force archive/delete when needed for abuse/recovery.</td>
               <td>Soft-delete preferred; hard-delete requires extra confirmation path.</td>
             </tr>
-            <tr class="latest-row">
-              <td>Suspend project execution</td>
-              <td>No.</td>
-              <td>Allowed within org policy.</td>
-              <td>Allowed globally.</td>
-              <td>Suspended project becomes read-only for execution APIs.</td>
+            <tr>
+              <td>Stop/start project execution</td>
+              <td>Own/assigned projects only.</td>
+              <td>Any project in org.</td>
+              <td>Allowed, but exceptional only.</td>
+              <td>Owners are the normal operators. Admin action is reserved for exceptional intervention and must be audited.</td>
             </tr>
-            <tr class="latest-row">
+            <tr>
               <td>Suspend organization</td>
               <td>No.</td>
               <td>No.</td>
               <td>Allowed (billing/compliance/security incidents).</td>
               <td>Blocks project creation and execution across org.</td>
             </tr>
-            <tr class="latest-row">
-              <td>Policy override</td>
+            <tr>
+              <td>Admin superuser intervention</td>
               <td>No.</td>
-              <td>Standard policy only.</td>
-              <td>Temporary override only.</td>
-              <td>Override must include <code>reason</code>, <code>scope</code>, <code>expires_at</code>, and audit trail.</td>
+              <td>Normal org policy applies.</td>
+              <td>Allowed for legal, security, compliance, billing, or recovery incidents only.</td>
+              <td>No separate temporary-policy system in V1. Interventions must include <code>reason</code> and immutable audit trail.</td>
             </tr>
-            <tr class="latest-row">
+            <tr>
               <td>Ownership recovery</td>
               <td>No.</td>
               <td>Can reassign inside org.</td>
@@ -736,7 +733,54 @@
     </section>
 
     <section class="card">
-      <h2>7. Phased Implementation Plan (Parts)</h2>
+      <h2>7. Function Inventory with Current Implementation</h2>
+      <p>This keeps the original function-planning view but adds what is actually implemented today and where it differs.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Function</th>
+              <th>Purpose</th>
+              <th>Why Required for V1 Multi-Tenancy</th>
+              <th>Implemented Today / Difference</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>resolveUserOrganizations(userId)</code></td><td>List org memberships for current user.</td><td>Needed for org switch and auth scope.</td><td>Yes. Implemented in Den.</td></tr>
+            <tr><td><code>setActiveOrganization(sessionId, orgId)</code></td><td>Bind session/request context to one org.</td><td>Prevents cross-tenant ambiguity.</td><td>No. Current model is client-selected org via <code>x-veslo-org-id</code>, not a server-side persisted active-org session binding.</td></tr>
+            <tr><td><code>requireOrgContext(request)</code></td><td>Reject requests missing valid org context.</td><td>Core isolation guard.</td><td>Partial. Implemented as <code>requireOrganizationAccess(request, response, options)</code>, which resolves org context plus role/admin checks together.</td></tr>
+            <tr><td><code>requireOrgRole(orgId, userId, role)</code></td><td>Enforce owner/member/admin permissions.</td><td>Role separation baseline.</td><td>Partial. Role enforcement exists, but inside <code>requireOrganizationAccess(...)</code> rather than as a separate exported function.</td></tr>
+            <tr><td><code>parseEmailDomain(email)</code></td><td>Extract normalized domain from login email.</td><td>Domain onboarding logic entry point.</td><td>No. Only ad hoc email-domain parsing exists in web analytics/UI code, not as onboarding control-plane logic.</td></tr>
+            <tr><td><code>findOrganizationsByDomain(domain)</code></td><td>Find existing organizations for domain.</td><td>Supports join/create decision.</td><td>No. No <code>org_domain</code> model yet.</td></tr>
+            <tr><td><code>getDomainOnboardingOptions(userId, domain)</code></td><td>Return allowed actions: create, join, request.</td><td>Implements domain policy behavior.</td><td>No. Domain onboarding flow is not implemented.</td></tr>
+            <tr><td><code>createOrganization(input, ownerUserId)</code></td><td>Create org and initial owner membership.</td><td>Primary tenant creation path.</td><td>Partial. <code>ensureDefaultOrg(...)</code> creates a personal org automatically, but there is no general organization-creation flow yet.</td></tr>
+            <tr><td><code>setOrganizationDomainPolicy(orgId, ownerId, policy)</code></td><td>Owner sets join-only / approval requirements.</td><td>Required domain governance rule.</td><td>No. Domain policy system is not implemented.</td></tr>
+            <tr><td><code>requestOrganizationJoin(orgId, userId)</code></td><td>Submit membership request.</td><td>Approval-based joining.</td><td>No. Join-request workflow is not implemented.</td></tr>
+            <tr><td><code>approveOrganizationJoin(orgId, ownerId, requestId)</code></td><td>Owner accepts join request.</td><td>Owner-controlled membership.</td><td>No. Join-request workflow is not implemented.</td></tr>
+            <tr><td><code>inviteOrganizationMember(orgId, ownerId, email, role)</code></td><td>Owner invites member/owner.</td><td>Controlled org growth.</td><td>Partial. Owners can add an existing user by email directly; there is no invitation token/email flow.</td></tr>
+            <tr><td><code>updateOrganizationMemberRole(orgId, ownerId, memberId, role)</code></td><td>Promote/demote members and owners.</td><td>Multi-owner operation.</td><td>Yes. Implemented with final-owner protection.</td></tr>
+            <tr><td><code>createProject(orgId, actorId, payload)</code></td><td>Create project (backend worker).</td><td>Any-user project creation requirement.</td><td>Yes. Implemented as <code>POST /v1/workers</code>; backend entity is still <code>worker</code>.</td></tr>
+            <tr><td><code>listProjects(orgId, actorId)</code></td><td>List visible projects in active org.</td><td>Tenant-scoped project UX.</td><td>Yes. Implemented as <code>GET /v1/workers</code>; backend entity is still <code>worker</code>.</td></tr>
+            <tr><td><code>updateProject(projectId, actorId, payload)</code></td><td>Edit project metadata/settings.</td><td>Core collaboration flow.</td><td>No. No project update endpoint yet.</td></tr>
+            <tr><td><code>stopProject(projectId, actorId, reason)</code></td><td>Stop project execution.</td><td>Owner primary control + audited admin fallback.</td><td>No. No stop/suspend project action yet.</td></tr>
+            <tr><td><code>adminSuspendOrganization(orgId, adminId, reason)</code></td><td>Exceptional org-level execution suspension.</td><td>Admin stronger-than-owner safety control.</td><td>No. Admin role exists, but org suspension controls do not.</td></tr>
+            <tr><td><code>getOrganizationBilling(orgId, actorId)</code></td><td>Read org billing state.</td><td>Owner billing operations.</td><td>No. Billing is still user-scoped under <code>/v1/workers/billing</code>.</td></tr>
+            <tr><td><code>startOrganizationCheckout(orgId, ownerId)</code></td><td>Start self-serve checkout.</td><td>Single-subscription activation path.</td><td>No. Checkout/paywall still happens at user scope during worker creation.</td></tr>
+            <tr><td><code>requestInvoicedBilling(orgId, ownerId)</code></td><td>Owner asks for admin invoiced mode.</td><td>Required invoicing path.</td><td>No. Not implemented.</td></tr>
+            <tr><td><code>approveInvoicedBilling(orgId, adminId)</code></td><td>Admin activates invoiced billing.</td><td>Admin billing approval rule.</td><td>No. Not implemented.</td></tr>
+            <tr><td><code>setOrganizationTrialEnd(orgId, adminId, trialEndsAt)</code></td><td>Admin sets/extends trial duration.</td><td>Explicit requirement from product direction.</td><td>No. Not implemented.</td></tr>
+            <tr><td><code>getOrganizationSettings(orgId, actorId)</code></td><td>Read org settings including model preferences.</td><td>Org-level control surface.</td><td>No. <code>org_settings</code> does not exist yet.</td></tr>
+            <tr><td><code>updateOrganizationSettings(orgId, ownerId, patch)</code></td><td>Owner updates org settings.</td><td>Company-specific defaults.</td><td>No. <code>org_settings</code> does not exist yet.</td></tr>
+            <tr><td><code>getPlatformSettings(adminId)</code></td><td>Read platform settings.</td><td>Admin-only visibility boundary.</td><td>No. Platform settings surface is not implemented yet.</td></tr>
+            <tr><td><code>updatePlatformSettings(adminId, patch)</code></td><td>Edit platform settings.</td><td>Admin-only global control.</td><td>No. Platform settings surface is not implemented yet.</td></tr>
+            <tr><td><code>recordAuditEvent(input)</code></td><td>Persist immutable security/audit events.</td><td>Traceability for privileged actions.</td><td>Yes. Implemented and used for member and worker governance events.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>8. Phased Implementation Plan (Parts)</h2>
       <div class="table-wrap">
         <table>
           <thead>

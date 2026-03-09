@@ -1,8 +1,8 @@
-# OpenWork Architecture
+# Veslo Architecture
 
 ## Design principle: Predictable > Clever
 
-OpenWork optimizes for **predictability** over "clever" auto-detection. Users should be able to form a correct mental model of what will happen.
+Veslo optimizes for **predictability** over "clever" auto-detection. Users should be able to form a correct mental model of what will happen.
 
 Guidelines:
 
@@ -65,54 +65,58 @@ use when you need to create tasks that are executed by different models than the
 
 These are all opencode primitives you can read the docs to find out exactly how to set them up.
 
-## Core Concepts of OpenWork
+## Core Concepts of Veslo
 
 - uses all these primitives
 - uses native OpenCode commands for reusable flows (markdown files in `.opencode/commands`)
 - adds a new abstraction "workspace" is a project fodler and a simple .json file that includes a list of opencode primitives that map perfectly to an opencode workdir (not fully implemented)
-  - openwork can open a workpace.json and decide where to populate a folder with thse settings (not implemented today
+  - Veslo can open a workspace.json and decide where to populate a folder with these settings (not implemented today)
 
 ## Core Architecture
 
-OpenWork is a client experience that consumes OpenWork server surfaces.
+Veslo is a local-first client experience that consumes Veslo/OpenCode server surfaces.
 
-Historically, users reached OpenWork server capabilities in two ways:
+The current product architecture has three distinct layers:
 
-- a running desktop OpenWork app acting as host
-- a running `openwork-orchestrator` (CLI host)
+### Layer 1 - Local execution (default)
 
-Now there is a third, first-class path: hosted OpenWork Cloud workers.
-
-OpenWork therefore has three runtime connection modes:
-
-### Mode A - Host (Desktop/Server)
-
-- OpenWork runs on a desktop/laptop and **starts** OpenCode locally.
+- Veslo runs on a desktop/laptop and **starts** OpenCode locally.
 - The OpenCode server runs on loopback (default `127.0.0.1:4096`).
-- OpenWork UI connects via the official SDK and listens to events.
+- Veslo UI connects via the official SDK and listens to events.
+- Every session runs against a real workspace directory.
+- `New session` creates a new Veslo-managed private workspace directory.
+- `Open project/folder` binds a user-selected local folder and starts a new session there.
 
-### Mode B - Client (Desktop/Mobile)
+### Layer 2 - Cloud-backed identity and sync
 
-- OpenWork runs on iOS/Android as a **remote controller**.
-- It connects to an already-running OpenCode server hosted by a trusted device.
-- Pairing uses a QR code / one-time token and a secure transport (LAN or tunneled).
+- Veslo Cloud stores account, organization, chat/session history, and sync metadata.
+- Cloud does not mean remote execution in the current end-user UX.
+- If a session is backed by a workspace that exists only on one device, other devices can show that session as history but must mark it view-only and unavailable to continue.
 
-### Mode C - Hosted OpenWork Cloud
+### Layer 3 - Remote execution capability (not in current default UI)
 
-- User signs in to hosted OpenWork web/app surfaces.
-- User launches a cloud worker from hosted control plane.
-- OpenWork returns remote connect credentials (`/w/ws_*` URL + access token).
-- User connects from OpenWork app using `Add a worker` -> `Connect remote`.
+- Veslo can still connect to trusted remote OpenCode/Veslo runtimes.
+- Hosted cloud runtimes remain a platform capability.
+- These capabilities stay in the codebase, but they are not the default BFU flow in the current product UI.
 
-This model keeps the user experience consistent across self-hosted and hosted paths while preserving OpenCode parity.
+## Cross-device Continuation
 
-## Cloud Worker Connect Flow (Canonical)
+- Session history can sync to cloud independently of workspace files.
+- Continuing a session requires access to its backing workspace directory.
+- If the workspace exists only on one device, the session is view-only elsewhere.
+- In the future, an explicit "move workspace to cloud" flow can make that workspace continuable on other devices.
 
-1. Authenticate in OpenWork Cloud control surface.
-2. Launch worker (with checkout/paywall when needed).
+## Platform Capability: Hosted Cloud Workspaces
+
+Hosted cloud workspaces remain part of the platform architecture, but they are not the default UI flow today.
+
+Canonical capability flow:
+
+1. Authenticate in Veslo Cloud control surface.
+2. Launch or attach a cloud workspace/runtime.
 3. Wait for provisioning and health.
 4. Generate/retrieve connect credentials.
-5. Connect in OpenWork app via deep link or manual URL + token.
+5. Attach from Veslo through an explicit future cloud flow.
 
 Technical note:
 
@@ -129,16 +133,16 @@ The browser runtime cannot read or write arbitrary local files. Any feature that
 
 must be routed through a host-side service.
 
-In OpenWork, the long-term direction is:
+In Veslo, the long-term direction is:
 
-- Use the OpenWork server (`packages/server`) as the single API surface for filesystem-backed operations.
+- Use the Veslo server (`packages/server`) as the single API surface for filesystem-backed operations.
 - Treat Tauri-only file operations as an implementation detail / convenience fallback, not a separate feature set.
 
 This ensures the same UI flows work on desktop, mobile, and web clients, with approvals and auditing handled centrally.
 
 ## OpenCode Integration (Exact SDK + APIs)
 
-OpenWork uses the official JavaScript/TypeScript SDK:
+Veslo uses the official JavaScript/TypeScript SDK:
 
 - Package: `@opencode-ai/sdk/v2` (UI should import `@opencode-ai/sdk/v2/client` to avoid Node-only server code)
 - Purpose: type-safe client generated from OpenAPI spec
@@ -183,7 +187,7 @@ const client = createOpencodeClient({
 
 ### Event Streaming (Real-time UI)
 
-OpenWork must be real-time. It subscribes to SSE events:
+Veslo must be real-time. It subscribes to SSE events:
 
 - `client.event.subscribe()`
 
@@ -196,7 +200,7 @@ The UI uses these events to drive:
 
 ### Sessions (Primary Primitive)
 
-OpenWork maps a "Task Run" to an OpenCode **Session**.
+Veslo maps a "Task Run" to an OpenCode **Session**.
 
 Core methods:
 
@@ -210,7 +214,7 @@ Core methods:
 
 ### Files + Search
 
-OpenWork's file browser and "what changed" UI are powered by:
+Veslo's file browser and "what changed" UI are powered by:
 
 - `client.find.text()`
 - `client.find.files()`
@@ -220,12 +224,12 @@ OpenWork's file browser and "what changed" UI are powered by:
 
 ### Permissions
 
-OpenWork must surface permission requests clearly and respond explicitly.
+Veslo must surface permission requests clearly and respond explicitly.
 
 - Permission response API:
   - `client.permission.reply({ requestID, reply })` (where `reply` is `once` | `always` | `reject`)
 
-OpenWork UI should:
+Veslo UI should:
 
 1. Show what is being requested (scope + reason).
 2. Provide choices (allow once / allow for session / deny).
@@ -234,7 +238,7 @@ OpenWork UI should:
 
 ### Config + Providers
 
-OpenWork's settings pages use:
+Veslo's settings pages use:
 
 - `client.config.get()`
 - `client.config.providers()`
@@ -242,27 +246,27 @@ OpenWork's settings pages use:
 
 ### Extensibility - Skills + Plugins
 
-OpenWork exposes two extension surfaces:
+Veslo exposes two extension surfaces:
 
 1. **Skills (OpenPackage)**
    - Installed into `.opencode/skills/*`.
-   - OpenWork can run `opkg install` to pull packages from the registry or GitHub.
+   - Veslo can run `opkg install` to pull packages from the registry or GitHub.
 
 2. **Plugins (OpenCode)**
    - Plugins are configured via `opencode.json` in the workspace.
    - The format is the same as OpenCode CLI uses today.
-   - OpenWork should show plugin status and instructions; a native plugin manager is planned.
+   - Veslo should show plugin status and instructions; a native plugin manager is planned.
 
 ### Engine reload (config refresh)
 
-- OpenWork server exposes `POST /workspace/:id/engine/reload`.
+- Veslo server exposes `POST /workspace/:id/engine/reload`.
 - It calls OpenCode `POST /instance/dispose` with the workspace directory to force a config re-read.
 - Use after skills/plugins/MCP/config edits; reloads can interrupt active sessions.
-- Reload requests follow OpenWork server approval rules.
+- Reload requests follow Veslo server approval rules.
 
 ### OpenPackage Registry (Current + Future)
 
-- Today, OpenWork only supports **curated lists + manual sources**.
+- Today, Veslo only supports **curated lists + manual sources**.
 - Publishing to the official registry currently requires authentication (`opkg push` + `opkg configure`).
 - Future goals:
   - in-app registry search
@@ -274,11 +278,16 @@ OpenWork exposes two extension surfaces:
 - `client.project.list()` / `client.project.current()`
 - `client.path.get()`
 
-OpenWork conceptually treats "workspace" as the current project/path.
+Veslo conceptually treats a workspace as the current project/path, but there are two important workspace classes:
+
+- user-selected project folders
+- Veslo-managed private workspaces created automatically for `New session`
+
+Both classes are real directories. Session history may sync independently of those files, but continuing the session still depends on access to the backing directory.
 
 ## Optional TUI Control (Advanced)
 
-The SDK exposes `client.tui.*` methods. OpenWork can optionally provide a "Developer Mode" screen to:
+The SDK exposes `client.tui.*` methods. Veslo can optionally provide a "Developer Mode" screen to:
 
 - append/submit prompt
 - open help/sessions/themes/models
@@ -288,15 +297,16 @@ This is optional and not required for non-technical MVP.
 
 ## Folder Authorization Model
 
-OpenWork enforces folder access through **two layers**:
+Veslo enforces folder access through **two layers**:
 
-1. **OpenWork UI authorization**
-   - user explicitly selects allowed folders via native picker
-   - OpenWork remembers allowed roots per profile
+1. **Veslo UI authorization**
+   - Veslo-managed private workspaces are implicitly authorized by the app
+   - user-selected project folders are explicitly authorized via native picker
+   - Veslo remembers allowed roots per profile/device
 
 2. **OpenCode server permissions**
    - OpenCode requests permissions as needed
-   - OpenWork intercepts requests via events and displays them
+   - Veslo intercepts requests via events and displays them
 
 Rules:
 
@@ -304,9 +314,10 @@ Rules:
 - "Allow once" never expands persistent scope.
 - "Allow for session" applies only to the session ID.
 - "Always allow" (if offered) must be explicit and reversible.
+- On another device, a session without access to its backing directory must be treated as view-only.
 
 ## Open Questions
 
 - Best packaging strategy for Host mode engine (bundled vs user-installed Node/runtime).
 - Best remote transport for mobile client (LAN only vs optional tunnel).
-- Scheduling API surface (native in OpenCode server vs OpenWork-managed scheduler).
+- Scheduling API surface (native in OpenCode server vs Veslo-managed scheduler).

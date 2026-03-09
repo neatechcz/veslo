@@ -117,8 +117,14 @@ use the design from ./design.ts that is your core reference for building the ent
 - User signs in or signs up with email/SSO.
 - If the user has an existing organization or invite, prompt them to join it.
 - Otherwise, create a new organization for them as the default fallback.
-- User creates their first worker/session with a human-readable name.
-- The agent runs locally against the selected folder while account and chat state sync to the cloud.
+- User starts their first session immediately in a Veslo-managed private workspace, or chooses `Open project/folder` to work in an existing local folder.
+- Execution runs locally. Account, organization, and chat state sync to the cloud.
+
+### Cross-device Continuation
+
+- Veslo syncs account state, organization state, and chat/session history across signed-in devices.
+- If a session is backed by a local private workspace or a local project folder that exists only on one device, other devices can open that session as history but must mark it view-only and unavailable to continue.
+- In the future, once a workspace is explicitly moved to cloud, it can become continuable on other devices.
 
 ### Task Execution
 
@@ -152,8 +158,14 @@ use the design from ./design.ts that is your core reference for building the ent
 2. App launches.
 3. User signs in or signs up.
 4. User joins an existing organization when available; otherwise Veslo creates a new one.
-5. User creates the first worker/session and selects the local folder it should use.
+5. User clicks `New session` to start in a Veslo-managed private workspace, or `Open project/folder` to choose an existing local folder.
 6. Veslo starts local execution and syncs account/chat state to the cloud.
+
+### 1. Cross-device Continuity
+
+1. Veslo syncs account state and chat/session history to other signed-in devices.
+2. If the backing workspace exists only on the original device, Veslo shows the session as view-only on other devices.
+3. Veslo marks that session unavailable to continue until the workspace is explicitly moved to cloud in a later product flow.
 
 ### 3. Runtime Health & Recovery
 
