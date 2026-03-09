@@ -1579,6 +1579,8 @@ export function CloudControlPanel() {
     const params = new URLSearchParams(window.location.search);
     if (params.get(DESKTOP_ONBOARDING_PARAM) === "1") {
       setDesktopOnboarding(true);
+      setAuthMode("sign-in");
+      setAuthInfo(getAuthInfoForMode("sign-in"));
     }
   }, []);
 

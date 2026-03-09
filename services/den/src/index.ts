@@ -4,7 +4,9 @@ import express from "express"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
+import { migrate } from "drizzle-orm/mysql2/migrator"
 import { auth } from "./auth.js"
+import { db } from "./db/index.js"
 import { env } from "./env.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
@@ -14,6 +16,7 @@ import { workersRouter } from "./http/workers.js"
 const app = express()
 const currentFile = fileURLToPath(import.meta.url)
 const publicDir = path.resolve(path.dirname(currentFile), "../public")
+const migrationsDir = path.resolve(path.dirname(currentFile), "../drizzle")
 
 if (env.corsOrigins.length > 0) {
   app.use(
@@ -49,6 +52,18 @@ app.use("/v1/orgs", orgsRouter)
 app.use("/v1/workers", workersRouter)
 app.use(errorMiddleware)
 
-app.listen(env.port, () => {
-  console.log(`den listening on ${env.port} (provisioner=${env.provisionerMode})`)
-})
+async function start() {
+  try {
+    await migrate(db, { migrationsFolder: migrationsDir })
+    console.log("[den] migrations applied")
+  } catch (err) {
+    console.error("[den] migration failed:", err)
+    process.exit(1)
+  }
+
+  app.listen(env.port, () => {
+    console.log(`den listening on ${env.port} (provisioner=${env.provisionerMode})`)
+  })
+}
+
+start()
