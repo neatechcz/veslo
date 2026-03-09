@@ -2,6 +2,8 @@
 
 Control plane for hosted workers. Provides Better Auth, worker CRUD, and provisioning hooks.
 
+Desktop onboarding also uses Den for one-time desktop auth handoff exchange. The browser stays on the existing web auth flow, then desktop redeems a short-lived code through Den.
+
 ## Quick start
 
 ```bash
@@ -85,6 +87,10 @@ pnpm db:migrate
 - `GET /health`
 - `GET /` demo web app (sign-up + auth + worker launch)
 - `GET /v1/me`
+- `POST /v1/desktop-auth/handoff`
+  - Creates a short-lived one-time code from an authenticated browser session and active org.
+- `POST /v1/desktop-auth/exchange`
+  - Consumes the one-time code and returns desktop auth state for Veslo local onboarding.
 - `GET /v1/orgs`
 - `GET /v1/orgs/:orgId/members`
 - `POST /v1/orgs/:orgId/members`
@@ -124,6 +130,7 @@ Optional GitHub Actions variable:
 - `DEN_RENDER_WORKER_PLAN` (defaults to `standard`)
 - `DEN_RENDER_WORKER_VESLO_VERSION` (defaults to `0.11.113`)
 - `DEN_CORS_ORIGINS` (defaults to `https://app.veslo.neatech.com,https://api.veslo.neatech.com,<render-service-url>`)
+  - Include the web deployment origin used for desktop onboarding if you are testing against a preview or non-production auth UI.
 - `DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` (defaults to `veslo.studio`)
 - `DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` (defaults to `240000`)
 - `DEN_VERCEL_API_BASE` (defaults to `https://api.vercel.com`)

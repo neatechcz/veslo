@@ -5,6 +5,7 @@ Frontend for `app.veslo.neatech.com`.
 ## What it does
 
 - Signs up / signs in users against Den service auth.
+- Supports desktop onboarding mode (`?desktopOnboarding=1`) and returns `veslo://auth-complete?code=...` after auth + org resolution.
 - Launches cloud workers via `POST /v1/workers`.
 - Handles paywall responses (`402 payment_required`) and shows Polar checkout links.
 - Uses a Next.js proxy route (`/api/den/*`) to reach `api.veslo.neatech.com` without browser CORS issues.
@@ -24,11 +25,12 @@ Frontend for `app.veslo.neatech.com`.
   - default: `https://api.veslo.neatech.com`
 - `DEN_AUTH_ORIGIN` (server-only): Origin header sent to Better Auth endpoints.
   - default: `https://den-control-plane-veslo.onrender.com`
-- `NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL` (client): Base URL for "Open in App" links.
+- `NEXT_PUBLIC_VESLO_APP_CONNECT_URL` (client): Base URL for "Open in App" links.
   - Example: `https://veslo.neatech.com/app`
   - The web panel appends `/connect-remote` and injects worker URL/token params automatically.
-- `NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL` (client): Canonical URL used for GitHub auth callback redirects.
+- `NEXT_PUBLIC_VESLO_AUTH_CALLBACK_URL` (client): Canonical URL used for GitHub auth callback redirects.
   - default: `https://app.veslo.neatech.com`
+  - Desktop onboarding should use the same deployed origin for GitHub callback and `desktopOnboarding=1` handoff mode.
 - `NEXT_PUBLIC_POSTHOG_KEY` (client): PostHog project key used for Den analytics.
   - set this to the same project key used by `packages/landing`
 - `NEXT_PUBLIC_POSTHOG_HOST` (client): PostHog host URL.
