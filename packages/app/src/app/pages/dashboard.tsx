@@ -84,6 +84,7 @@ export type DashboardViewProps = {
   providerAuthError: string | null;
   providerAuthMethods: Record<string, { type: "oauth" | "api"; label: string }[]>;
   openProviderAuthModal: () => Promise<void>;
+  disconnectProvider: (providerId: string) => Promise<string | void>;
   connectLmStudioProvider: (baseUrlInput?: string) => Promise<string | void>;
   closeProviderAuthModal: () => void;
   startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
@@ -1342,6 +1343,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   providerConnectedIds={props.providerConnectedIds}
                   providerAuthBusy={props.providerAuthBusy}
                   openProviderAuthModal={props.openProviderAuthModal}
+                  disconnectProvider={props.disconnectProvider}
                   vesloServerStatus={props.vesloServerStatus}
                   vesloServerUrl={props.vesloServerUrl}
                   vesloReconnectBusy={props.vesloReconnectBusy}
