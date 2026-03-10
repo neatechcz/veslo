@@ -114,9 +114,13 @@ export async function exchangeHandoffCode(code: string): Promise<DenExchangeResu
 
 export async function validateDenAuth(state: DenAuthState): Promise<boolean> {
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8_000);
     const response = await fetch(`${state.denApiBase}/v1/me`, {
       headers: { Authorization: `Bearer ${state.token}` },
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
     return response.ok;
   } catch {
     return false;
