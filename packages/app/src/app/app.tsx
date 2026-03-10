@@ -5511,7 +5511,16 @@ export default function App() {
       }
     }
 
-    void workspaceStore.bootstrapOnboarding().finally(() => setBooting(false));
+    // Safety timeout: if bootstrapOnboarding hangs on any Tauri IPC call or
+    // network request, force-complete booting after 15 seconds so the app is usable.
+    const bootTimeout = setTimeout(() => {
+      console.warn("[boot] bootstrapOnboarding timed out after 15s — forcing boot complete");
+      setBooting(false);
+    }, 15_000);
+    void workspaceStore.bootstrapOnboarding().finally(() => {
+      clearTimeout(bootTimeout);
+      setBooting(false);
+    });
   });
 
   createEffect(() => {

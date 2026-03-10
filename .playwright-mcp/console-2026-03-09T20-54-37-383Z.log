@@ -1,0 +1,2 @@
+[     394ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://openwork-den-dev-api.onrender.com/favicon.ico:0
+[   23470ms] [ERROR] Failed to launch 'veslo://auth-complete?code=NC-IApoMfgKqfGvmflwY8JX_9QuF77QLS8L6WB-tg0w' because the scheme does not have a registered handler. @ https://openwork-den-dev-api.onrender.com/?desktopOnboarding=1:0

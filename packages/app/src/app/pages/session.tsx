@@ -383,6 +383,10 @@ export default function SessionView(props: SessionViewProps) {
   const todoCompletedCount = createMemo(() =>
     todoList().filter((todo) => todo.status === "completed").length
   );
+  const hasWorkspaceConfigured = createMemo(() => props.workspaces.length > 0);
+  const showWorkspaceSetupEmptyState = createMemo(
+    () => !hasWorkspaceConfigured() && !props.selectedSessionId && props.messages.length === 0,
+  );
   const sessionWorkspaceContextLabel = createMemo(() => {
     if (showWorkspaceSetupEmptyState()) return "";
     if (props.activeWorkspaceDisplay.workspaceType !== "local") return "";
@@ -2394,10 +2398,6 @@ export default function SessionView(props: SessionViewProps) {
     }
     return "";
   });
-  const hasWorkspaceConfigured = createMemo(() => props.workspaces.length > 0);
-  const showWorkspaceSetupEmptyState = createMemo(
-    () => !hasWorkspaceConfigured() && !props.selectedSessionId && props.messages.length === 0,
-  );
 
   const renameCanSave = createMemo(() => {
     if (renameBusy()) return false;

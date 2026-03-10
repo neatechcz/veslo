@@ -1,0 +1,1 @@
+[   14715ms] [ERROR] Failed to launch 'veslo://auth-complete?code=nxlCSPhK-dCSJ1ncOg8SJB2AGBOD48UBqXUcXftrZUM' because the scheme does not have a registered handler. @ https://openwork-den-dev-api.onrender.com/?desktopOnboarding=1:0

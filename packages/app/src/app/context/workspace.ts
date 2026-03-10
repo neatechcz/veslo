@@ -3155,7 +3155,29 @@ export function createWorkspaceStore(options: {
     }
   }
 
+  /** Race a promise against a timeout; resolves to undefined on timeout. */
+  function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T | undefined> {
+    return Promise.race([
+      promise,
+      new Promise<undefined>((resolve) => {
+        setTimeout(() => {
+          bootTrace(`TIMEOUT: ${label} after ${ms}ms`);
+          resolve(undefined);
+        }, ms);
+      }),
+    ]);
+  }
+
+  /** Send boot trace to local debug server + console */
+  function bootTrace(...args: unknown[]) {
+    const msg = args.map(a => typeof a === "string" ? a : String(a)).join(" ");
+    const line = `[${Date.now()}] ${msg}`;
+    console.log("[boot]", msg);
+    try { fetch("http://127.0.0.1:9876", { method: "POST", body: line, mode: "no-cors" }).catch(() => {}); } catch { /* ignore */ }
+  }
+
   async function bootstrapOnboarding() {
+    bootTrace("bootstrapOnboarding START");
     const startupPref = readStartupPreference();
     const onboardingComplete = (() => {
       try {
@@ -3164,24 +3186,33 @@ export function createWorkspaceStore(options: {
         return false;
       }
     })();
+    bootTrace("startupPref=" + startupPref + " onboardingComplete=" + onboardingComplete + " isTauri=" + isTauriRuntime());
 
     if (isTauriRuntime()) {
       try {
-        const ws = await workspaceBootstrap();
-        const nextWorkspaces = ws.workspaces;
-        setWorkspaces(nextWorkspaces);
-        const nextActiveId =
-          nextWorkspaces.find((item) => item.id === ws.activeId)?.id ??
-          nextWorkspaces[0]?.id ??
-          "";
-        syncActiveWorkspaceId(nextActiveId);
+        bootTrace("workspaceBootstrap...");
+        const ws = await withTimeout(workspaceBootstrap(), 10_000, "workspaceBootstrap");
+        if (ws) {
+          bootTrace("workspaceBootstrap DONE, " + ws.workspaces.length + " workspaces");
+          const nextWorkspaces = ws.workspaces;
+          setWorkspaces(nextWorkspaces);
+          const nextActiveId =
+            nextWorkspaces.find((item) => item.id === ws.activeId)?.id ??
+            nextWorkspaces[0]?.id ??
+            "";
+          syncActiveWorkspaceId(nextActiveId);
+        }
       } catch {
-        // ignore
+        bootTrace("workspaceBootstrap FAILED (ignored)");
       }
     }
 
-    await refreshEngine();
-    await refreshEngineDoctor();
+    bootTrace("refreshEngine...");
+    await withTimeout(refreshEngine(), 10_000, "refreshEngine");
+    bootTrace("refreshEngine DONE");
+    bootTrace("refreshEngineDoctor...");
+    await withTimeout(refreshEngineDoctor(), 10_000, "refreshEngineDoctor");
+    bootTrace("refreshEngineDoctor DONE");
 
     if (isTauriRuntime()) {
       const active = workspaces().find((w) => w.id === activeWorkspaceId()) ?? null;
@@ -3197,11 +3228,17 @@ export function createWorkspaceStore(options: {
         } else {
           setProjectDir(active.path);
           try {
-            const cfg = await workspaceVesloRead({ workspacePath: active.path });
-            setWorkspaceConfig(cfg);
-            setWorkspaceConfigLoaded(true);
-            const roots = Array.isArray(cfg.authorizedRoots) ? cfg.authorizedRoots : [];
-            setAuthorizedDirs(roots.length ? roots : [active.path]);
+            const cfg = await withTimeout(workspaceVesloRead({ workspacePath: active.path }), 10_000, "workspaceVesloRead");
+            if (cfg) {
+              setWorkspaceConfig(cfg);
+              setWorkspaceConfigLoaded(true);
+              const roots = Array.isArray(cfg.authorizedRoots) ? cfg.authorizedRoots : [];
+              setAuthorizedDirs(roots.length ? roots : [active.path]);
+            } else {
+              setWorkspaceConfig(null);
+              setWorkspaceConfigLoaded(true);
+              setAuthorizedDirs([active.path]);
+            }
           } catch {
             setWorkspaceConfig(null);
             setWorkspaceConfigLoaded(true);
@@ -3217,21 +3254,28 @@ export function createWorkspaceStore(options: {
       options.setBaseUrl(info.baseUrl);
     }
 
+    bootTrace("language check...", "hasPersistedLanguage=", hasPersistedLanguagePreference());
     if (!hasPersistedLanguagePreference()) {
+      bootTrace("→ setOnboardingStep('language') and RETURN");
       options.setOnboardingStep("language");
       return;
     }
 
     // Check Den desktop auth before proceeding
     const denAuth = readDenAuth();
+    bootTrace("denAuth present=", Boolean(denAuth));
     if (!denAuth) {
+      bootTrace("→ setOnboardingStep('auth') and RETURN");
       options.setOnboardingStep("auth");
       return;
     }
     // Validate stored auth with Den server
+    bootTrace("validateDenAuth...");
     const authValid = await validateDenAuth(denAuth);
+    bootTrace("validateDenAuth DONE, valid=", authValid);
     if (!authValid) {
       clearDenAuth();
+      bootTrace("→ auth invalid, setOnboardingStep('auth') and RETURN");
       options.setOnboardingStep("auth");
       return;
     }
@@ -3295,10 +3339,13 @@ export function createWorkspaceStore(options: {
     }
 
     const activeWorkspace = activeWorkspaceInfo();
+    bootTrace("activeWorkspace type=", activeWorkspace?.workspaceType, "CLOUD_ONLY=", CLOUD_ONLY_MODE);
     if (activeWorkspace?.workspaceType === "remote") {
+      bootTrace("remote workspace → activateWorkspace...");
       options.setStartupPreference("server");
       options.setOnboardingStep("connecting");
       const ok = await activateWorkspace(activeWorkspace.id);
+      bootTrace("activateWorkspace ok=", ok);
       if (!ok) {
         options.setOnboardingStep("server");
       }
@@ -3310,14 +3357,17 @@ export function createWorkspaceStore(options: {
     }
 
     if (startupPref === "server") {
+      bootTrace("→ setOnboardingStep('server') and RETURN");
       options.setOnboardingStep("server");
       return;
     }
 
+    bootTrace("activeWorkspacePath=", activeWorkspacePath().trim() || "(empty)");
     if (activeWorkspacePath().trim()) {
       options.setStartupPreference("local");
 
       if (info?.running && info.baseUrl) {
+        bootTrace("engine running, connectToServer...");
         options.setOnboardingStep("connecting");
         const ok = await connectToServer(
           info.baseUrl,
@@ -3325,6 +3375,7 @@ export function createWorkspaceStore(options: {
           { reason: "bootstrap-local" },
           engineAuth() ?? undefined,
         );
+        bootTrace("connectToServer ok=", ok);
         if (!ok) {
           options.setStartupPreference(null);
           options.setOnboardingStep(resolveWelcomeOnboardingStep());
@@ -3334,8 +3385,10 @@ export function createWorkspaceStore(options: {
         return;
       }
 
+      bootTrace("startHost...");
       options.setOnboardingStep("connecting");
       const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
+      bootTrace("startHost ok=", ok);
       if (!ok) {
         options.setOnboardingStep("local");
         return;
@@ -3422,7 +3475,10 @@ export function createWorkspaceStore(options: {
     });
     if (!ok) {
       options.setOnboardingStep("server");
+      return;
     }
+    // Avoid leaving onboarding on the transient "connecting" step after a successful attach.
+    options.setOnboardingStep("server");
   }
 
   async function onConfirmLanguage() {

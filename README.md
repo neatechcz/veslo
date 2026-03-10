@@ -117,6 +117,21 @@ pnpm dev
 pnpm dev:ui
 ```
 
+### Developing against the cloud dev environment (pre-authenticated)
+
+`packages/app/.env.development` contains credentials for the shared dev cloud stack. When you run `pnpm dev` or `pnpm dev:ui`, Vite picks this file up automatically and injects these values into the app at startup:
+
+| Variable | Purpose |
+|---|---|
+| `VITE_VESLO_ENV=development` | Selects the `_DEV` suffix for all env lookups |
+| `VITE_VESLO_URL_DEV` | Points the UI at the dev cloud worker |
+| `VITE_VESLO_LOGIN_URL_DEV` | Den API base URL for desktop auth |
+| `VITE_VESLO_TOKEN_DEV` | Access token written to `localStorage` on first load |
+
+On startup, `hydrateVesloServerSettingsFromEnv()` (see `packages/app/src/app/lib/veslo-server.ts`) reads these values and persists them to `localStorage`. This means the app boots already connected to the dev worker with a valid token — no manual URL or token entry needed in the settings UI.
+
+> **Note:** This pre-fills the **veslo server connection token** only. Den cloud auth (`veslo.den.auth` in `localStorage`) is separate and still requires going through the normal sign-in flow.
+
 ### Arch Users:
 
 ```bash

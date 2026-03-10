@@ -45,5 +45,10 @@ assert.equal(
   true,
   "router must not redirect away from onboarding while language step is active",
 );
+assert.equal(
+  /async function onConnectClient\(\)\s*{[\s\S]*options\.setOnboardingStep\("connecting"\)[\s\S]*const ok = await createRemoteWorkspaceFlow\([\s\S]*if \(!ok\)\s*{[\s\S]*options\.setOnboardingStep\("server"\);[\s\S]*return;[\s\S]*}[\s\S]*options\.setOnboardingStep\("server"\);[\s\S]*}/.test(workspaceSource),
+  true,
+  "server connect flow must clear the transient connecting onboarding step after success or failure",
+);
 
-console.log(JSON.stringify({ ok: true, checks: 8 }));
+console.log(JSON.stringify({ ok: true, checks: 9 }));
