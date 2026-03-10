@@ -7,33 +7,45 @@ const listSource = readFileSync(
 );
 
 assert.equal(
-  listSource.includes("workspaceSessionGroups.flatMap"),
+  listSource.includes('type SidebarViewMode = "by-project" | "recent"'),
   true,
-  "workspace session list should flatten sessions across workers",
+  "workspace session list should define by-project and recent sidebar modes",
 );
 
 assert.equal(
-  listSource.includes("MAX_SESSIONS_PREVIEW"),
-  false,
-  "workspace session list should not use grouped preview pagination",
+  listSource.includes("const projectGroups = createMemo"),
+  true,
+  "workspace session list should derive grouped project sections",
 );
 
 assert.equal(
-  listSource.includes("COLLAPSED_SESSIONS_PREVIEW"),
-  false,
-  "workspace session list should not use collapsed grouped previews",
+  listSource.includes("props.workspaceSessionGroups.flatMap"),
+  true,
+  "workspace session list should still derive a recent flat feed",
 );
 
 assert.equal(
-  listSource.includes("toggleWorkspaceExpanded"),
-  false,
-  "workspace session list should not render worker expand/collapse controls",
+  listSource.includes('aria-label="By project"'),
+  true,
+  "workspace session list should render a By project toggle control",
 );
 
 assert.equal(
-  listSource.includes("showMoreSessions"),
-  false,
-  "workspace session list should not expose grouped show-more actions",
+  listSource.includes('aria-label="Recent"'),
+  true,
+  "workspace session list should render a Recent toggle control",
 );
 
-console.log(JSON.stringify({ ok: true, checks: 5 }));
+assert.equal(
+  listSource.includes('aria-label="Create session in this project"'),
+  true,
+  "workspace session list should expose project-scoped session creation",
+);
+
+assert.equal(
+  listSource.includes('aria-label="New task"'),
+  false,
+  "workspace session list should not render per-session create buttons",
+);
+
+console.log(JSON.stringify({ ok: true, checks: 7 }));
