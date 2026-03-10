@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
+import { bearer } from "better-auth/plugins/bearer"
 import { db } from "./db/index.js"
 import * as schema from "./db/schema.js"
 import { env } from "./env.js"
@@ -23,6 +24,7 @@ export const auth = betterAuth({
     provider: "mysql",
     schema,
   }),
+  plugins: [bearer()],
   emailAndPassword: {
     enabled: true,
   },

@@ -1,7 +1,8 @@
+import crypto from "node:crypto"
 import express from "express"
 import { eq } from "drizzle-orm"
 import { db } from "../db/index.js"
-import { DesktopAuthHandoffTable } from "../db/schema.js"
+import { AuthSessionTable, DesktopAuthHandoffTable } from "../db/schema.js"
 import { requireSession } from "./session.js"
 import { resolveMembershipOrganizations, readRequestedOrganizationId, serializeOrganization } from "./org-auth.js"
 import { pickActiveOrganization } from "./access.js"
@@ -82,6 +83,20 @@ desktopAuthRouter.post("/exchange", async (req, res) => {
     .set({ consumed_at: result.record.consumedAt })
     .where(eq(DesktopAuthHandoffTable.id, record.id))
 
+  // Create a real Better Auth session so the token works with /v1/me
+  const sessionId = crypto.randomUUID()
+  const sessionToken = crypto.randomBytes(32).toString("base64url")
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+
+  await db.insert(AuthSessionTable).values({
+    id: sessionId,
+    userId: record.userId,
+    token: sessionToken,
+    expiresAt,
+    ipAddress: req.ip ?? null,
+    userAgent: req.get("user-agent") ?? null,
+  })
+
   const organizations = await resolveMembershipOrganizations({
     user: { id: record.userId, email: null, name: null },
   })
@@ -89,7 +104,7 @@ desktopAuthRouter.post("/exchange", async (req, res) => {
   const org = organizations.find((o) => o.id === record.orgId)
 
   res.json({
-    token: record.code,
+    token: sessionToken,
     user: { id: record.userId },
     org: org
       ? { id: org.id, name: org.name, slug: org.slug, role: org.role }
