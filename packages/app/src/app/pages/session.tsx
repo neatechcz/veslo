@@ -87,6 +87,7 @@ import {
 } from "../utils";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
+import { currentLocale, t } from "../../i18n";
 
 import browserSetupTemplate from "../data/commands/browser-setup.md?raw";
 import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
@@ -288,18 +289,27 @@ const STREAM_SCROLL_MIN_INTERVAL_MS = 90;
 const STREAM_RENDER_BATCH_MS = 220;
 const MAIN_THREAD_LAG_INTERVAL_MS = 200;
 const MAIN_THREAD_LAG_WARN_MS = 180;
+const interpolate = (template: string, values: Record<string, string | number>) =>
+  Object.entries(values).reduce(
+    (result, [key, value]) => result.replaceAll(`{${key}}`, String(value)),
+    template,
+  );
+
 
 type CommandPaletteMode = "root" | "sessions" | "thinking";
 
 const COMMAND_PALETTE_THINKING_OPTIONS = [
-  { value: "none", label: "None", detail: "Fastest responses" },
-  { value: "low", label: "Low", detail: "Light reasoning" },
-  { value: "medium", label: "Medium", detail: "Balanced depth" },
-  { value: "high", label: "High", detail: "Deeper reasoning" },
-  { value: "xhigh", label: "X-High", detail: "Maximum effort" },
+  { value: "none", labelKey: "session.thinking_option_none", detailKey: "session.thinking_option_none_detail" },
+  { value: "low", labelKey: "session.thinking_option_low", detailKey: "session.thinking_option_low_detail" },
+  { value: "medium", labelKey: "session.thinking_option_medium", detailKey: "session.thinking_option_medium_detail" },
+  { value: "high", labelKey: "session.thinking_option_high", detailKey: "session.thinking_option_high_detail" },
+  { value: "xhigh", labelKey: "session.thinking_option_xhigh", detailKey: "session.thinking_option_xhigh_detail" },
 ] as const;
 
 export default function SessionView(props: SessionViewProps) {
+  const tr = (key: string) => t(key, currentLocale());
+  const formatTr = (key: string, values: Record<string, string | number>) =>
+    interpolate(tr(key), values);
   let messagesEndEl: HTMLDivElement | undefined;
   let bottomVisibilityEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
@@ -372,13 +382,13 @@ export default function SessionView(props: SessionViewProps) {
     });
   });
 
-  const agentLabel = createMemo(() => props.selectedSessionAgent ?? "Default agent");
+  const agentLabel = createMemo(() => props.selectedSessionAgent ?? tr("session.default_agent"));
   const workspaceLabel = (workspace: WorkspaceInfo) =>
     workspace.displayName?.trim() ||
     workspace.vesloWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
-    "Workspace";
+    tr("sidebar.workspace_fallback");
   const todoList = createMemo(() => props.todos.filter((todo) => todo.content.trim()));
   const todoCount = createMemo(() => todoList().length);
   const todoCompletedCount = createMemo(() =>
@@ -392,7 +402,7 @@ export default function SessionView(props: SessionViewProps) {
     if (showWorkspaceSetupEmptyState()) return "";
     if (props.activeWorkspaceDisplay.workspaceType !== "local") return "";
     if (!props.activeWorkspaceRoot.trim()) return "";
-    return props.canChooseSessionFolder ? "Private workspace" : workspaceLabel(props.activeWorkspaceDisplay);
+    return props.canChooseSessionFolder ? tr("sidebar.private_workspace") : workspaceLabel(props.activeWorkspaceDisplay);
   });
 
   const commandPaletteSessionOptions = createMemo(() => {
@@ -412,7 +422,7 @@ export default function SessionView(props: SessionViewProps) {
       for (const session of group.sessions) {
         const sessionId = session.id?.trim() ?? "";
         if (!sessionId) continue;
-        const title = session.title?.trim() || "Untitled session";
+        const title = session.title?.trim() || tr("session.untitled");
         const slug = session.slug?.trim() ?? "";
         const updatedAt = session.time?.updated ?? session.time?.created ?? 0;
         out.push({
@@ -570,11 +580,11 @@ export default function SessionView(props: SessionViewProps) {
 
   const activeSearchPositionLabel = createMemo(() => {
     const hits = searchHits();
-    if (!hits.length) return "No matches";
+    if (!hits.length) return tr("session.search_no_matches");
     const size = hits.length;
     const raw = activeSearchHitIndex();
     const index = ((raw % size) + size) % size;
-    return `${index + 1} of ${size}`;
+    return `${index + 1}/${size}`;
   });
 
   const searchActive = createMemo(() => searchOpen() && searchQuery().trim().length > 0);
@@ -1327,11 +1337,11 @@ export default function SessionView(props: SessionViewProps) {
 
   const revealArtifact = async (file: string) => {
     if (props.activeWorkspaceDisplay.workspaceType === "remote") {
-      setToastMessage("Reveal is unavailable for remote workers.");
+      setToastMessage(tr("session.reveal_remote_unavailable"));
       return;
     }
     if (!isTauriRuntime()) {
-      setToastMessage("Reveal is available in the desktop app.");
+      setToastMessage(tr("session.reveal_desktop_only"));
       return;
     }
     try {
@@ -1344,7 +1354,7 @@ export default function SessionView(props: SessionViewProps) {
         await revealItemInDir(candidate);
       });
       if (!result.ok && result.reason === "missing-root") {
-        setToastMessage("Pick a worker to reveal files.");
+        setToastMessage(tr("session.pick_worker_reveal_files"));
         return;
       }
       if (!result.ok) {
@@ -1352,7 +1362,7 @@ export default function SessionView(props: SessionViewProps) {
         return;
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to reveal file";
+      const message = error instanceof Error ? error.message : tr("session.unable_reveal_file");
       setToastMessage(message);
     }
   };
@@ -1360,11 +1370,11 @@ export default function SessionView(props: SessionViewProps) {
   const openArtifactInObsidian = async (file: string) => {
     if (!/\.(md|mdx|markdown)$/i.test(file)) return;
     if (!obsidianAvailable()) {
-      setToastMessage("Obsidian is not available on this system.");
+      setToastMessage(tr("session.obsidian_unavailable"));
       return;
     }
     if (!isTauriRuntime()) {
-      setToastMessage("Open in Obsidian is available in the desktop app.");
+      setToastMessage(tr("session.obsidian_desktop_only"));
       return;
     }
 
@@ -1380,7 +1390,7 @@ export default function SessionView(props: SessionViewProps) {
           return;
         }
         if (localResult.reason === "missing-root" && !isRemoteWorkspace) {
-          setToastMessage("Pick a worker to open files.");
+          setToastMessage(tr("session.pick_worker_open_files"));
           return;
         }
         if (!isRemoteWorkspace) {
@@ -1390,14 +1400,14 @@ export default function SessionView(props: SessionViewProps) {
       }
 
       if (!isRemoteWorkspace) {
-        setToastMessage("Pick a worker to open files.");
+        setToastMessage(tr("session.pick_worker_open_files"));
         return;
       }
 
       const mirrored = await mirrorRemoteArtifactForObsidian(file);
       await openInObsidian(mirrored);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to open file in Obsidian";
+      const message = error instanceof Error ? error.message : tr("session.unable_open_obsidian");
       setToastMessage(message);
     }
   };
@@ -1407,11 +1417,11 @@ export default function SessionView(props: SessionViewProps) {
     if (!workspace || workspace.workspaceType !== "local") return;
     const target = workspace.path?.trim() ?? "";
     if (!target) {
-      setToastMessage("Workspace path is unavailable.");
+      setToastMessage(tr("session.workspace_path_unavailable"));
       return;
     }
     if (!isTauriRuntime()) {
-      setToastMessage("Reveal is available in the desktop app.");
+      setToastMessage(tr("session.reveal_desktop_only"));
       return;
     }
     try {
@@ -1422,14 +1432,17 @@ export default function SessionView(props: SessionViewProps) {
         await revealItemInDir(target);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to reveal workspace";
+      const message = error instanceof Error ? error.message : tr("session.unable_reveal_workspace");
       setToastMessage(message);
     }
   };
   const todoLabel = createMemo(() => {
     const total = todoCount();
     if (!total) return "";
-    return `${todoCompletedCount()} out of ${total} tasks completed`;
+    return formatTr("session.tasks_completed", {
+      completed: todoCompletedCount(),
+      total,
+    });
   });
   const [shareWorkspaceId, setShareWorkspaceId] = createSignal<string | null>(null);
   let initialAnchorRafA: number | undefined;
@@ -1442,9 +1455,9 @@ export default function SessionView(props: SessionViewProps) {
   const attachmentsDisabledReason = createMemo(() => {
     if (attachmentsEnabled()) return null;
     if (props.vesloServerStatus === "limited") {
-      return "Add a server token to attach files.";
+      return tr("session.add_server_token_to_attach");
     }
-    return "Connect to Veslo server to attach files.";
+    return tr("session.connect_server_to_attach");
   });
 
   const scrollToLatest = (behavior: ScrollBehavior = "auto") => {
@@ -1573,12 +1586,12 @@ export default function SessionView(props: SessionViewProps) {
     if (!trimmed) return;
 
     if (props.activeWorkspaceDisplay.workspaceType === "remote") {
-      setToastMessage("File open is unavailable for remote workers.");
+      setToastMessage(tr("session.file_open_remote_unavailable"));
       return;
     }
 
     if (!isTauriRuntime()) {
-      setToastMessage("File open is available in the desktop app.");
+      setToastMessage(tr("session.file_open_desktop_only"));
       return;
     }
 
@@ -1588,7 +1601,7 @@ export default function SessionView(props: SessionViewProps) {
         await openPath(candidate);
       });
       if (!result.ok && result.reason === "missing-root") {
-        setToastMessage("Pick a worker to open files.");
+        setToastMessage(tr("session.pick_worker_open_files"));
         return;
       }
       if (!result.ok) {
@@ -1596,7 +1609,7 @@ export default function SessionView(props: SessionViewProps) {
         return;
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to open file";
+      const message = error instanceof Error ? error.message : tr("session.unable_open_file");
       setToastMessage(message);
     }
   };
@@ -1613,7 +1626,7 @@ export default function SessionView(props: SessionViewProps) {
       setAgentPickerReady(true);
       return sorted;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to load agents";
+      const message = error instanceof Error ? error.message : tr("session.failed_load_agents");
       setAgentPickerError(message);
       setAgentOptions([]);
       return [];
@@ -1731,26 +1744,26 @@ export default function SessionView(props: SessionViewProps) {
       const tool = typeof record.tool === "string" ? record.tool : "";
       switch (tool) {
         case "task":
-          return "Delegating";
+          return tr("session.status_delegating");
         case "todowrite":
         case "todoread":
-          return "Planning";
+          return tr("session.status_planning");
         case "read":
-          return "Gathering context";
+          return tr("session.status_gathering_context");
         case "list":
         case "grep":
         case "glob":
-          return "Searching codebase";
+          return tr("session.status_searching_codebase");
         case "webfetch":
-          return "Searching the web";
+          return tr("session.status_searching_web");
         case "edit":
         case "write":
         case "apply_patch":
-          return "Writing file";
+          return tr("session.status_writing_file");
         case "bash":
-          return "Running shell";
+          return tr("session.status_running_shell");
         default:
-          return "Working";
+          return tr("session.status_working");
       }
     }
     if (part.type === "reasoning") {
@@ -1761,12 +1774,12 @@ export default function SessionView(props: SessionViewProps) {
         .find(Boolean);
       if (first) {
         const clipped = first.length > 56 ? `${first.slice(0, 53)}...` : first;
-        return `Thinking: ${clipped}`;
+        return formatTr("session.status_thinking_prefix", { text: clipped });
       }
-      return "Thinking";
+      return tr("session.status_thinking");
     }
     if (part.type === "text") {
-      return "Gathering thoughts";
+      return tr("session.status_gathering_thoughts");
     }
     return null;
   };
@@ -1774,7 +1787,7 @@ export default function SessionView(props: SessionViewProps) {
   const thinkingStatus = createMemo(() => {
     const status = computeStatusFromPart(latestRunPart());
     if (status) return status;
-    if (runPhase() === "thinking") return "Thinking";
+    if (runPhase() === "thinking") return tr("session.status_thinking");
     return null;
   });
 
@@ -1809,15 +1822,15 @@ export default function SessionView(props: SessionViewProps) {
   const runLabel = createMemo(() => {
     switch (runPhase()) {
       case "sending":
-        return "Sending";
+        return tr("session.run_sending");
       case "retrying":
-        return "Retrying";
+        return tr("session.run_retrying");
       case "responding":
-        return "Responding";
+        return tr("session.run_responding");
       case "thinking":
-        return "Thinking";
+        return tr("session.run_thinking");
       case "error":
-        return "Run failed";
+        return tr("session.run_failed");
       default:
         return "";
     }
@@ -2158,17 +2171,17 @@ export default function SessionView(props: SessionViewProps) {
   const cancelRun = async () => {
     if (abortBusy()) return;
     if (!props.selectedSessionId) {
-      setToastMessage("No session selected");
+      setToastMessage(tr("session.no_session_selected_toast"));
       return;
     }
 
     setAbortBusy(true);
-    setToastMessage("Stopping the run...");
+    setToastMessage(tr("session.stopping_run"));
     try {
       await props.abortSession(props.selectedSessionId);
-      setToastMessage("Stopped.");
+      setToastMessage(tr("session.run_stopped"));
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to stop";
+      const message = error instanceof Error ? error.message : tr("session.failed_to_stop");
       setToastMessage(message);
     } finally {
       setAbortBusy(false);
@@ -2178,13 +2191,13 @@ export default function SessionView(props: SessionViewProps) {
   const retryRun = async () => {
     const text = props.lastPromptSent.trim();
     if (!text) {
-      setToastMessage("Nothing to retry yet");
+      setToastMessage(tr("session.nothing_to_retry"));
       return;
     }
 
     if (abortBusy()) return;
     setAbortBusy(true);
-    setToastMessage("Trying again...");
+    setToastMessage(tr("session.trying_again"));
     try {
       if (showRunIndicator() && props.selectedSessionId) {
         await props.abortSession(props.selectedSessionId);
@@ -2268,17 +2281,17 @@ export default function SessionView(props: SessionViewProps) {
   const undoLastMessage = async () => {
     if (historyActionBusy()) return;
     if (!canUndoLastMessage()) {
-      setToastMessage("Nothing to undo yet.");
+      setToastMessage(tr("session.nothing_to_undo"));
       return;
     }
 
     setHistoryActionBusy("undo");
     try {
       await props.undoLastUserMessage();
-      setToastMessage("Reverted the last user message.");
+      setToastMessage(tr("session.undo_success"));
     } catch (error) {
       const message = error instanceof Error ? error.message : props.safeStringify(error);
-      setToastMessage(message || "Failed to undo");
+      setToastMessage(message || tr("session.failed_to_undo"));
     } finally {
       setHistoryActionBusy(null);
     }
@@ -2287,17 +2300,17 @@ export default function SessionView(props: SessionViewProps) {
   const redoLastMessage = async () => {
     if (historyActionBusy()) return;
     if (!canRedoLastMessage()) {
-      setToastMessage("Nothing to redo.");
+      setToastMessage(tr("session.nothing_to_redo"));
       return;
     }
 
     setHistoryActionBusy("redo");
     try {
       await props.redoLastUserMessage();
-      setToastMessage("Restored the reverted message.");
+      setToastMessage(tr("session.redo_success"));
     } catch (error) {
       const message = error instanceof Error ? error.message : props.safeStringify(error);
-      setToastMessage(message || "Failed to redo");
+      setToastMessage(message || tr("session.failed_to_redo"));
     } finally {
       setHistoryActionBusy(null);
     }
@@ -2306,23 +2319,23 @@ export default function SessionView(props: SessionViewProps) {
   const compactSessionHistory = async () => {
     if (historyActionBusy()) return;
     if (!canCompactSession()) {
-      setToastMessage("Nothing to compact yet.");
+      setToastMessage(tr("session.nothing_to_compact"));
       return;
     }
 
     const sessionID = props.selectedSessionId;
     const startedAt = perfNow();
     setHistoryActionBusy("compact");
-    setToastMessage("Compacting session context...");
+    setToastMessage(tr("session.compacting"));
     try {
       await props.compactSession();
-      setToastMessage("Session compacted.");
+      setToastMessage(tr("session.compact_success"));
       finishPerf(props.developerMode, "session.compact", "ui-done", startedAt, {
         sessionID,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : props.safeStringify(error);
-      setToastMessage(message || "Failed to compact session");
+      setToastMessage(message || tr("session.failed_to_compact"));
       finishPerf(props.developerMode, "session.compact", "ui-error", startedAt, {
         sessionID,
         error: message,
@@ -2368,7 +2381,7 @@ export default function SessionView(props: SessionViewProps) {
     const prev = prevTodoCount();
     if (count > prev && prev > 0) {
       const lastMsg = chatContainerEl?.querySelector('[data-message-role="assistant"]:last-child');
-      triggerFlyout(lastMsg ?? null, "sidebar-progress", "New Task", "check");
+      triggerFlyout(lastMsg ?? null, "sidebar-progress", tr("session.new_task_flyout"), "check");
     }
     setPrevTodoCount(count);
   });
@@ -2379,7 +2392,7 @@ export default function SessionView(props: SessionViewProps) {
     const prev = prevFileCount();
     if (count > prev && prev > 0) {
       const lastMsg = chatContainerEl?.querySelector('[data-message-role="assistant"]:last-child');
-      triggerFlyout(lastMsg ?? null, "sidebar-context", "File Modified", "folder");
+      triggerFlyout(lastMsg ?? null, "sidebar-context", tr("session.file_modified_flyout"), "folder");
     }
     setPrevFileCount(count);
   });
@@ -2410,7 +2423,7 @@ export default function SessionView(props: SessionViewProps) {
   const openRenameModal = () => {
     setSessionMenuOpen(false);
     if (!props.selectedSessionId) {
-      setToastMessage("No session selected");
+      setToastMessage(tr("session.no_session_selected_toast"));
       return;
     }
     setRenameTitle(selectedSessionTitle());
@@ -2442,24 +2455,24 @@ export default function SessionView(props: SessionViewProps) {
   const chooseFolderForSession = async () => {
     setSessionMenuOpen(false);
     if (!props.selectedSessionId) {
-      setToastMessage("No session selected");
+      setToastMessage(tr("session.no_session_selected_toast"));
       return;
     }
     try {
       const moved = await props.chooseFolderForCurrentSession();
       if (moved) {
-        setToastMessage("Folder selected. Continuing in the chosen folder.");
+        setToastMessage(tr("session.folder_selected_continue"));
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : props.safeStringify(error);
-      setToastMessage(message || "Failed to choose folder");
+      setToastMessage(message || tr("session.failed_choose_folder"));
     }
   };
 
   const openDeleteSessionModal = () => {
     setSessionMenuOpen(false);
     if (!props.selectedSessionId) {
-      setToastMessage("No session selected");
+      setToastMessage(tr("session.no_session_selected_toast"));
       return;
     }
     setDeleteSessionOpen(true);
@@ -2478,12 +2491,12 @@ export default function SessionView(props: SessionViewProps) {
     try {
       await props.deleteSession(sessionId);
       setDeleteSessionOpen(false);
-      setToastMessage("Session deleted");
+      setToastMessage(tr("session.delete_success"));
       // Route away from the deleted session id.
       props.setView("session");
     } catch (error) {
       const message = error instanceof Error ? error.message : props.safeStringify(error);
-      setToastMessage(message || "Failed to delete session");
+      setToastMessage(message || tr("session.failed_delete"));
     } finally {
       setDeleteSessionBusy(false);
     }
@@ -2492,7 +2505,7 @@ export default function SessionView(props: SessionViewProps) {
   const requireSessionId = () => {
     const sessionId = props.selectedSessionId;
     if (!sessionId) {
-      setToastMessage("No session selected");
+      setToastMessage(tr("session.no_session_selected_toast"));
       return null;
     }
     return sessionId;
@@ -2554,10 +2567,10 @@ export default function SessionView(props: SessionViewProps) {
     setProviderAuthActionBusy(true);
     try {
       const message = await props.completeProviderAuthOAuth(providerId, methodIndex, code);
-      setToastMessage(message || "Provider connected");
+      setToastMessage(message || tr("session.provider_connected"));
       props.closeProviderAuthModal();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "OAuth failed";
+      const message = error instanceof Error ? error.message : tr("session.oauth_failed");
       setToastMessage(message);
     } finally {
       setProviderAuthActionBusy(false);
@@ -2569,10 +2582,10 @@ export default function SessionView(props: SessionViewProps) {
     setProviderAuthActionBusy(true);
     try {
       const message = await props.submitProviderApiKey(providerId, apiKey);
-      setToastMessage(message || "API key saved");
+      setToastMessage(message || tr("session.api_key_saved"));
       props.closeProviderAuthModal();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to save API key";
+      const message = error instanceof Error ? error.message : tr("session.api_key_save_failed");
       setToastMessage(message);
     } finally {
       setProviderAuthActionBusy(false);
@@ -2584,9 +2597,9 @@ export default function SessionView(props: SessionViewProps) {
     setProviderAuthActionBusy(true);
     try {
       const message = await props.testProviderApiKey(providerId, apiKey);
-      setToastMessage(message || "Connection verified");
+      setToastMessage(message || tr("session.connection_verified"));
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Connection test failed";
+      const message = error instanceof Error ? error.message : tr("session.connection_test_failed");
       setToastMessage(message);
     } finally {
       setProviderAuthActionBusy(false);
@@ -3000,7 +3013,10 @@ export default function SessionView(props: SessionViewProps) {
       // Fall back to prompt-based setup below.
     }
 
-    const text = BROWSER_SETUP_TEMPLATE.body || "Help me set up browser automation.";
+    const text =
+      currentLocale() === "cs"
+        ? tr("session.quickstart_browser_prompt")
+        : BROWSER_SETUP_TEMPLATE.body || tr("session.quickstart_browser_prompt");
     handleSendPrompt({
       mode: "prompt",
       text,
@@ -3031,7 +3047,10 @@ export default function SessionView(props: SessionViewProps) {
       // Fall back to prompt-based setup below.
     }
 
-    const text = SOUL_SETUP_TEMPLATE.body || "Give me a soul.";
+    const text =
+      currentLocale() === "cs"
+        ? tr("session.quickstart_soul_prompt")
+        : SOUL_SETUP_TEMPLATE.body || tr("session.quickstart_soul_prompt");
     handleSendPrompt({
       mode: "prompt",
       text,
@@ -3119,22 +3138,24 @@ export default function SessionView(props: SessionViewProps) {
     const items: CommandPaletteItem[] = [
       {
         id: "new-session",
-        title: "Create new session",
-        detail: "Start a fresh task in a new private workspace",
-        meta: "Create",
+        title: tr("session.command_palette_create_session"),
+        detail: tr("session.command_palette_create_session_detail"),
+        meta: tr("session.command_palette_meta_create"),
         action: () => {
           closeCommandPalette();
           void Promise.resolve(props.createSessionAndOpen()).catch((error) => {
-            const message = error instanceof Error ? error.message : "Failed to create session";
+            const message = error instanceof Error ? error.message : tr("session.failed_create_session");
             setToastMessage(message);
           });
         },
       },
       {
         id: "sessions",
-        title: "Search sessions",
-        detail: `${totalSessionCount().toLocaleString()} available across workspaces`,
-        meta: "Jump",
+        title: tr("session.command_palette_search_sessions"),
+        detail: formatTr("session.command_palette_search_sessions_detail", {
+          count: totalSessionCount().toLocaleString(),
+        }),
+        meta: tr("session.command_palette_meta_jump"),
         action: () => {
           setCommandPaletteMode("sessions");
           setCommandPaletteQuery("");
@@ -3144,9 +3165,11 @@ export default function SessionView(props: SessionViewProps) {
       },
       {
         id: "model",
-        title: "Change model",
-        detail: `Current: ${props.selectedSessionModelLabel || "Model"}`,
-        meta: "Open",
+        title: tr("session.command_palette_change_model"),
+        detail: formatTr("session.command_palette_current_model", {
+          model: props.selectedSessionModelLabel || tr("session.model"),
+        }),
+        meta: tr("session.command_palette_meta_open"),
         action: () => {
           closeCommandPalette();
           props.openSessionModelPicker();
@@ -3154,22 +3177,24 @@ export default function SessionView(props: SessionViewProps) {
       },
       {
         id: "provider",
-        title: "Connect provider",
-        detail: "Open provider connection flow",
-        meta: "Open",
+        title: tr("session.command_palette_connect_provider"),
+        detail: tr("session.command_palette_connect_provider_detail"),
+        meta: tr("session.command_palette_meta_open"),
         action: () => {
           closeCommandPalette();
           void props.openProviderAuthModal().catch((error) => {
-            const message = error instanceof Error ? error.message : "Failed to load providers";
+            const message = error instanceof Error ? error.message : tr("session.failed_load_providers");
             setToastMessage(message);
           });
         },
       },
       {
         id: "thinking",
-        title: "Change thinking",
-        detail: `Current: ${props.modelVariantLabel}`,
-        meta: "Adjust",
+        title: tr("session.command_palette_change_thinking"),
+        detail: formatTr("session.command_palette_current_thinking", {
+          thinking: props.modelVariantLabel,
+        }),
+        meta: tr("session.command_palette_meta_adjust"),
         action: () => {
           setCommandPaletteMode("thinking");
           setCommandPaletteQuery("");
@@ -3194,7 +3219,10 @@ export default function SessionView(props: SessionViewProps) {
       id: `session:${item.workspaceId}:${item.sessionId}`,
       title: item.title,
       detail: item.workspaceTitle,
-      meta: item.workspaceId === props.activeWorkspaceId ? "Current workspace" : "Switch",
+      meta:
+        item.workspaceId === props.activeWorkspaceId
+          ? tr("session.command_palette_meta_current_workspace")
+          : tr("session.command_palette_meta_switch"),
       action: () => {
         closeCommandPalette();
         openSessionFromList(item.workspaceId, item.sessionId);
@@ -3209,6 +3237,11 @@ export default function SessionView(props: SessionViewProps) {
     const query = commandPaletteQuery().trim().toLowerCase();
 
     return COMMAND_PALETTE_THINKING_OPTIONS
+      .map((option) => ({
+        ...option,
+        label: tr(option.labelKey),
+        detail: tr(option.detailKey),
+      }))
       .filter((option) => {
         if (!query) return true;
         return `${option.label} ${option.detail}`.toLowerCase().includes(query);
@@ -3217,11 +3250,11 @@ export default function SessionView(props: SessionViewProps) {
         id: `thinking:${option.value}`,
         title: option.label,
         detail: option.detail,
-        meta: activeVariant === option.value ? "Current" : undefined,
+        meta: activeVariant === option.value ? tr("session.command_palette_meta_current") : undefined,
         action: () => {
           props.setModelVariant(option.value);
           closeCommandPalette();
-          setToastMessage(`Thinking set to ${option.label}.`);
+          setToastMessage(formatTr("session.thinking_set", { label: option.label }));
         },
       }));
   });
@@ -3235,16 +3268,16 @@ export default function SessionView(props: SessionViewProps) {
 
   const commandPaletteTitle = createMemo(() => {
     const mode = commandPaletteMode();
-    if (mode === "sessions") return "Search sessions";
-    if (mode === "thinking") return "Change thinking";
-    return "Quick actions";
+    if (mode === "sessions") return tr("session.command_palette_search_sessions");
+    if (mode === "thinking") return tr("session.command_palette_change_thinking");
+    return tr("session.quick_actions");
   });
 
   const commandPalettePlaceholder = createMemo(() => {
     const mode = commandPaletteMode();
-    if (mode === "sessions") return "Find by session title or workspace";
-    if (mode === "thinking") return "Filter thinking options";
-    return "Search actions";
+    if (mode === "sessions") return tr("session.command_palette_find_by_session_or_workspace");
+    if (mode === "thinking") return tr("session.command_palette_filter_thinking");
+    return tr("session.command_palette_search_actions");
   });
 
   createEffect(
@@ -3488,8 +3521,8 @@ export default function SessionView(props: SessionViewProps) {
 
             <h1 class="text-[13.5px] font-medium text-gray-11 truncate">
               {showWorkspaceSetupEmptyState()
-                ? "Start a new session"
-                : (selectedSessionTitle() || "New session")}
+                ? tr("session.start_new_session")
+                : (selectedSessionTitle() || tr("session.new_session_label"))}
             </h1>
             <Show when={sessionWorkspaceContextLabel()}>
               {(label) => <span class="text-xs text-gray-9 truncate">· {label()}</span>}
@@ -3519,8 +3552,8 @@ export default function SessionView(props: SessionViewProps) {
                 }
                 window.setTimeout(() => openCommandPalette(), 0);
               }}
-              title="Quick actions (Ctrl/Cmd+K)"
-              aria-label="Quick actions"
+              title={`${tr("session.quick_actions")} (Ctrl/Cmd+K)`}
+              aria-label={tr("session.quick_actions")}
             >
               Cmd+K
             </button>
@@ -3538,8 +3571,8 @@ export default function SessionView(props: SessionViewProps) {
                 }
                 openSearch();
               }}
-              title="Search conversation (Ctrl/Cmd+F)"
-              aria-label="Search conversation"
+              title={`${tr("session.search_conversation")} (Ctrl/Cmd+F)`}
+              aria-label={tr("session.search_conversation")}
             >
               <Search size={16} />
             </button>
@@ -3548,8 +3581,8 @@ export default function SessionView(props: SessionViewProps) {
               class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               onClick={undoLastMessage}
               disabled={!canUndoLastMessage() || historyActionBusy() !== null}
-              title="Undo last message"
-              aria-label="Undo last message"
+              title={tr("session.undo_last_message")}
+              aria-label={tr("session.undo_last_message")}
             >
               <Show when={historyActionBusy() === "undo"} fallback={<Undo2 size={16} />}>
                 <Loader2 size={16} class="animate-spin" />
@@ -3560,8 +3593,8 @@ export default function SessionView(props: SessionViewProps) {
               class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               onClick={redoLastMessage}
               disabled={!canRedoLastMessage() || historyActionBusy() !== null}
-              title="Redo last reverted message"
-              aria-label="Redo last reverted message"
+              title={tr("session.redo_last_message")}
+              aria-label={tr("session.redo_last_message")}
             >
               <Show when={historyActionBusy() === "redo"} fallback={<Redo2 size={16} />}>
                 <Loader2 size={16} class="animate-spin" />
@@ -3572,8 +3605,8 @@ export default function SessionView(props: SessionViewProps) {
               class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               onClick={compactSessionHistory}
               disabled={!canCompactSession() || historyActionBusy() !== null}
-              title="Compact session context"
-              aria-label="Compact session context"
+              title={tr("session.compact_context")}
+              aria-label={tr("session.compact_context")}
             >
               <Show when={historyActionBusy() === "compact"} fallback={<Maximize2 size={16} />}>
                 <Loader2 size={16} class="animate-spin" />
@@ -3584,8 +3617,8 @@ export default function SessionView(props: SessionViewProps) {
                 type="button"
                 class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 disabled={!props.selectedSessionId}
-                title={props.selectedSessionId ? "Session actions" : "Select a session to manage it"}
-                aria-label={props.selectedSessionId ? "Session actions" : "Select a session to manage it"}
+                title={props.selectedSessionId ? tr("session.session_actions") : tr("session.select_session_to_manage")}
+                aria-label={props.selectedSessionId ? tr("session.session_actions") : tr("session.select_session_to_manage")}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -3608,7 +3641,7 @@ export default function SessionView(props: SessionViewProps) {
                         void chooseFolderForSession();
                       }}
                     >
-                      Choose folder
+                      {tr("session.choose_folder")}
                     </button>
                   </Show>
                   <button
@@ -3620,21 +3653,21 @@ export default function SessionView(props: SessionViewProps) {
                     }}
                     disabled={!canCompactSession() || historyActionBusy() !== null}
                   >
-                    Compact session context
+                    {tr("session.compact_context")}
                   </button>
                   <button
                     type="button"
                     class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
                     onClick={openRenameModal}
                   >
-                    Rename session
+                    {tr("session.rename_title")}
                   </button>
                   <button
                     type="button"
                     class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3 text-red-11"
                     onClick={openDeleteSessionModal}
                   >
-                    Delete session
+                    {tr("session.delete_session_action")}
                   </button>
                 </div>
               </Show>
@@ -3666,8 +3699,8 @@ export default function SessionView(props: SessionViewProps) {
                   }
                 }}
                 class="min-w-0 flex-1 bg-transparent text-sm text-gray-11 placeholder:text-gray-9 focus:outline-none"
-                placeholder="Search in this chat"
-                aria-label="Search in this chat"
+                placeholder={tr("session.search_in_chat")}
+                aria-label={tr("session.search_in_chat")}
               />
               <span class="text-[11px] text-gray-10 tabular-nums">{activeSearchPositionLabel()}</span>
               <button
@@ -3675,24 +3708,24 @@ export default function SessionView(props: SessionViewProps) {
                 class="rounded-md border border-gray-6 px-2 py-1 text-[11px] text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60"
                 disabled={searchHits().length === 0}
                 onClick={() => moveSearchHit(-1)}
-                aria-label="Previous match"
+                aria-label={tr("session.previous_match")}
               >
-                Prev
+                {tr("session.previous_short")}
               </button>
               <button
                 type="button"
                 class="rounded-md border border-gray-6 px-2 py-1 text-[11px] text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60"
                 disabled={searchHits().length === 0}
                 onClick={() => moveSearchHit(1)}
-                aria-label="Next match"
+                aria-label={tr("session.next_match")}
               >
-                Next
+                {tr("session.next_short")}
               </button>
               <button
                 type="button"
                 class="h-7 w-7 flex items-center justify-center rounded-md text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors"
                 onClick={closeSearch}
-                aria-label="Close search"
+                aria-label={tr("session.close_search")}
               >
                 <X size={14} />
               </button>
@@ -3716,9 +3749,9 @@ export default function SessionView(props: SessionViewProps) {
                 <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-gray-6 bg-gray-1 text-gray-11">
                   <MessageCircle size={24} />
                 </div>
-                <h3 class="text-2xl font-semibold text-gray-12">Start a new session</h3>
+                <h3 class="text-2xl font-semibold text-gray-12">{tr("session.start_new_session")}</h3>
                 <p class="mt-2 text-sm text-gray-10">
-                  Begin in a private workspace. You can choose a folder later if you need one.
+                  {tr("session.start_new_session_description")}
                 </p>
                 <div class="mt-6 flex justify-center">
                   <button
@@ -3728,7 +3761,7 @@ export default function SessionView(props: SessionViewProps) {
                       void props.openNewSessionWithDirectory();
                     }}
                   >
-                    New session
+                    {tr("session.new_session_label")}
                   </button>
                 </div>
               </div>
@@ -3739,9 +3772,9 @@ export default function SessionView(props: SessionViewProps) {
                   <Zap class="text-dls-secondary" />
                 </div>
               <div class="space-y-2">
-                <h3 class="text-xl font-medium">What do you want to do?</h3>
+                <h3 class="text-xl font-medium">{tr("session.quickstart_title")}</h3>
                 <p class="text-dls-secondary text-sm max-w-sm mx-auto">
-                  Pick a starting point or just type below.
+                  {tr("session.quickstart_description")}
                 </p>
               </div>
               <div class="grid gap-3 sm:grid-cols-2 max-w-2xl mx-auto text-left">
@@ -3752,9 +3785,9 @@ export default function SessionView(props: SessionViewProps) {
                     void handleBrowserAutomationQuickstart();
                   }}
                 >
-                  <div class="text-sm font-semibold text-dls-text">Automate your browser</div>
+                  <div class="text-sm font-semibold text-dls-text">{tr("session.quickstart_browser_title")}</div>
                   <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
-                    Set up browser actions and run reliable web tasks from Veslo.
+                    {tr("session.quickstart_browser_description")}
                   </div>
                 </button>
                 <button
@@ -3764,11 +3797,9 @@ export default function SessionView(props: SessionViewProps) {
                     void handleSoulQuickstart();
                   }}
                 >
-                  <div class="text-sm font-semibold text-dls-text">Give me a soul</div>
+                  <div class="text-sm font-semibold text-dls-text">{tr("session.quickstart_soul_title")}</div>
                   <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
-                    Keep your goals and preferences across sessions with light scheduled check-ins.
-                    Tradeoff: more autonomy can create extra background runs, but revert is one command.
-                    Audit setup and heartbeat evidence from the Soul section.
+                    {tr("session.quickstart_soul_description")}
                   </div>
                 </button>
               </div>
@@ -3786,10 +3817,10 @@ export default function SessionView(props: SessionViewProps) {
                 disabled={props.loadingEarlierMessages}
               >
                 {props.loadingEarlierMessages
-                  ? "Loading earlier messages..."
+                  ? tr("session.loading_earlier_messages")
                   : hiddenMessageCount() > 0
-                    ? `Show ${nextRevealCount().toLocaleString()} earlier message${nextRevealCount() === 1 ? "" : "s"}`
-                    : "Load earlier messages"}
+                    ? formatTr("session.show_earlier_messages", { count: nextRevealCount().toLocaleString() })
+                    : tr("session.load_earlier_messages")}
               </button>
             </div>
           </Show>
@@ -3934,7 +3965,7 @@ export default function SessionView(props: SessionViewProps) {
           onSend={handleSendPrompt}
           onStop={cancelRun}
           onDraftChange={handleDraftChange}
-          selectedModelLabel={props.selectedSessionModelLabel || "Model"}
+          selectedModelLabel={props.selectedSessionModelLabel || tr("session.model")}
           onModelClick={props.openSessionModelPicker}
           modelVariantLabel={props.modelVariantLabel}
           modelVariant={props.modelVariant}
@@ -4104,13 +4135,13 @@ export default function SessionView(props: SessionViewProps) {
             <div class="border-b border-dls-border px-4 py-3 space-y-2">
               <div class="flex items-center gap-2">
                 <Show when={commandPaletteMode() !== "root"}>
-                  <button
-                    type="button"
-                    class="h-8 px-2 rounded-md text-xs text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors"
-                    onClick={returnToCommandRoot}
-                  >
-                    Back
-                  </button>
+                <button
+                  type="button"
+                  class="h-8 px-2 rounded-md text-xs text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors"
+                  onClick={returnToCommandRoot}
+                >
+                  {tr("session.back")}
+                </button>
                 </Show>
                 <Search size={14} class="text-dls-secondary shrink-0" />
                 <input
@@ -4126,7 +4157,7 @@ export default function SessionView(props: SessionViewProps) {
                   type="button"
                   class="h-8 w-8 flex items-center justify-center rounded-md text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors"
                   onClick={closeCommandPalette}
-                  aria-label="Close quick actions"
+                  aria-label={tr("session.close_quick_actions")}
                 >
                   <X size={14} />
                 </button>
@@ -4139,7 +4170,7 @@ export default function SessionView(props: SessionViewProps) {
                 when={commandPaletteItems().length > 0}
                 fallback={
                   <div class="px-3 py-6 text-sm text-dls-secondary text-center">
-                    No matches.
+                    {tr("session.command_palette_no_matches")}
                   </div>
                 }
               >
@@ -4179,8 +4210,8 @@ export default function SessionView(props: SessionViewProps) {
             </div>
 
             <div class="border-t border-dls-border px-3 py-2 text-[11px] text-dls-secondary flex items-center justify-between gap-2">
-              <span>Arrow keys to navigate</span>
-              <span>Enter to run · Esc to close</span>
+              <span>{tr("session.command_palette_navigation_hint")}</span>
+              <span>{tr("session.command_palette_run_hint")}</span>
             </div>
           </div>
         </div>
@@ -4213,14 +4244,14 @@ export default function SessionView(props: SessionViewProps) {
 
       <ConfirmModal
         open={deleteSessionOpen()}
-        title="Delete session?"
+        title={tr("session.delete_session_title")}
         message={
           selectedSessionTitle().trim()
-            ? `This will permanently delete \"${selectedSessionTitle().trim()}\" and its messages.`
-            : "This will permanently delete the selected session and its messages."
+            ? formatTr("session.delete_session_named", { title: selectedSessionTitle().trim() })
+            : tr("session.delete_session_unnamed")
         }
-        confirmLabel={deleteSessionBusy() ? "Deleting..." : "Delete"}
-        cancelLabel="Cancel"
+        confirmLabel={deleteSessionBusy() ? tr("session.deleting") : tr("session.delete_session_action")}
+        cancelLabel={tr("session.cancel")}
         variant="danger"
         onConfirm={confirmDeleteSession}
         onCancel={closeDeleteSessionModal}
@@ -4266,16 +4297,16 @@ export default function SessionView(props: SessionViewProps) {
                   <Shield size={24} />
                 </div>
                 <div>
-                  <h3 class="text-lg font-semibold text-gray-12">Permission Required</h3>
-                  <p class="text-sm text-gray-11 mt-1">OpenCode is requesting permission to continue.</p>
+                  <h3 class="text-lg font-semibold text-gray-12">{tr("session.permission_required")}</h3>
+                  <p class="text-sm text-gray-11 mt-1">{tr("session.permission_description")}</p>
                 </div>
               </div>
 
               <div class="bg-gray-1/50 rounded-xl p-4 border border-gray-6 mb-6">
-                <div class="text-xs text-gray-10 uppercase tracking-wider mb-2 font-semibold">Permission</div>
+                <div class="text-xs text-gray-10 uppercase tracking-wider mb-2 font-semibold">{tr("session.permission_label")}</div>
                 <div class="text-sm text-gray-12 font-mono">{props.activePermission?.permission}</div>
 
-                <div class="text-xs text-gray-10 uppercase tracking-wider mt-4 mb-2 font-semibold">Scope</div>
+                <div class="text-xs text-gray-10 uppercase tracking-wider mt-4 mb-2 font-semibold">{tr("session.scope_label")}</div>
                 <div class="flex items-center gap-2 text-sm font-mono text-amber-12 bg-amber-1/30 px-2 py-1 rounded border border-amber-7/20">
                   <HardDrive size={12} />
                   {props.activePermission?.patterns.join(", ")}
@@ -4283,7 +4314,7 @@ export default function SessionView(props: SessionViewProps) {
 
                 <Show when={Object.keys(props.activePermission?.metadata ?? {}).length > 0}>
                   <details class="mt-4 rounded-lg bg-gray-1/20 p-2">
-                    <summary class="cursor-pointer text-xs text-gray-11">Details</summary>
+                    <summary class="cursor-pointer text-xs text-gray-11">{tr("session.details")}</summary>
                     <pre class="mt-2 whitespace-pre-wrap break-words text-xs text-gray-12">
                       {props.safeStringify(props.activePermission?.metadata)}
                     </pre>
@@ -4300,8 +4331,7 @@ export default function SessionView(props: SessionViewProps) {
                   }
                   disabled={props.permissionReplyBusy}
                 >
-
-                  Deny
+                  {tr("session.deny")}
                 </Button>
                 <div class="grid grid-cols-2 gap-2">
                   <Button
@@ -4310,7 +4340,7 @@ export default function SessionView(props: SessionViewProps) {
                     onClick={() => props.activePermission && props.respondPermission(props.activePermission.id, "once")}
                     disabled={props.permissionReplyBusy}
                   >
-                    Once
+                    {tr("session.once")}
                   </Button>
                   <Button
                     variant="primary"
@@ -4321,7 +4351,7 @@ export default function SessionView(props: SessionViewProps) {
                     }
                     disabled={props.permissionReplyBusy}
                   >
-                    Allow for session
+                    {tr("session.allow_for_session")}
                   </Button>
                 </div>
               </div>

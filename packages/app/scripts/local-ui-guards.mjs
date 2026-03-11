@@ -3,21 +3,20 @@ import { readFileSync } from "node:fs";
 
 const listSource = readFileSync(new URL("../src/app/components/session/workspace-session-list.tsx", import.meta.url), "utf8");
 const sessionSource = readFileSync(new URL("../src/app/pages/session.tsx", import.meta.url), "utf8");
-
 assert.equal(
-  listSource.includes("New session"),
+  listSource.includes('tr("sidebar.new_session")'),
   true,
   "workspace list must expose the new session primary action",
 );
 
 assert.equal(
-  sessionSource.includes("Start a new session"),
+  sessionSource.includes('tr("session.start_new_session")'),
   true,
   "session empty state must use session-first copy",
 );
 
 assert.equal(
-  sessionSource.includes("Choose folder"),
+  sessionSource.includes('tr("session.choose_folder")'),
   true,
   "session actions must expose choose-folder copy-and-switch flow",
 );

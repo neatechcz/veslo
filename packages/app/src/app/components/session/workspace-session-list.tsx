@@ -16,6 +16,7 @@ import {
   type FlatSessionRow,
   type ProjectSessionGroup,
 } from "./workspace-session-list-model";
+import { currentLocale, t } from "../../../i18n";
 
 type Props = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
@@ -80,19 +81,20 @@ const workspaceLabel = (workspace: WorkspaceInfo) =>
   workspace.name?.trim() ||
   workspace.directory?.trim() ||
   workspace.path?.trim() ||
-  "Workspace";
+  t("sidebar.workspace_fallback", currentLocale());
 
 const workspaceKindLabel = (workspace: WorkspaceInfo) =>
   workspace.workspaceType === "remote"
     ? workspace.sandboxBackend === "docker" ||
       Boolean(workspace.sandboxRunId?.trim()) ||
       Boolean(workspace.sandboxContainerName?.trim())
-      ? "Sandbox"
-      : "Remote"
-    : "Local";
+      ? t("sidebar.workspace_kind_sandbox", currentLocale())
+      : t("sidebar.workspace_kind_remote", currentLocale())
+    : t("sidebar.workspace_kind_local", currentLocale());
 
 export default function WorkspaceSessionList(props: Props) {
-  const revealLabel = isWindowsPlatform() ? "Reveal in Explorer" : "Reveal in Finder";
+  const tr = (key: string) => t(key, currentLocale());
+  const revealLabel = isWindowsPlatform() ? tr("sidebar.reveal_in_explorer") : tr("sidebar.reveal_in_finder");
   const [sidebarModeSignal, setSidebarModeSignal] = createSignal<SidebarViewMode>(readSidebarViewMode());
   const [workspaceMenuTarget, setWorkspaceMenuTarget] = createSignal<WorkspaceMenuTarget | null>(null);
   const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
@@ -189,7 +191,7 @@ export default function WorkspaceSessionList(props: Props) {
               setWorkspaceMenuTarget(null);
             }}
           >
-            Edit name
+            {tr("sidebar.edit_name")}
           </button>
           <button
             type="button"
@@ -199,7 +201,7 @@ export default function WorkspaceSessionList(props: Props) {
               setWorkspaceMenuTarget(null);
             }}
           >
-            Share...
+            {tr("sidebar.share")}
           </button>
           <button
             type="button"
@@ -209,7 +211,7 @@ export default function WorkspaceSessionList(props: Props) {
               setWorkspaceMenuTarget(null);
             }}
           >
-            {soulEnabled ? "Soul settings" : "Enable soul"}
+            {soulEnabled ? tr("sidebar.soul_settings") : tr("sidebar.enable_soul")}
           </button>
           <Show when={workspace.workspaceType === "local"}>
             <button
@@ -234,7 +236,7 @@ export default function WorkspaceSessionList(props: Props) {
                 }}
                 disabled={isConnectionActionBusy}
               >
-                Recover
+                {tr("sidebar.recover")}
               </button>
             </Show>
             <button
@@ -246,7 +248,7 @@ export default function WorkspaceSessionList(props: Props) {
               }}
               disabled={isConnectionActionBusy}
             >
-              Test connection
+              {tr("sidebar.test_connection")}
             </button>
             <button
               type="button"
@@ -257,7 +259,7 @@ export default function WorkspaceSessionList(props: Props) {
               }}
               disabled={isConnectionActionBusy}
             >
-              Edit connection
+              {tr("sidebar.edit_connection")}
             </button>
           </Show>
           <button
@@ -268,7 +270,7 @@ export default function WorkspaceSessionList(props: Props) {
               setWorkspaceMenuTarget(null);
             }}
           >
-            Remove workspace
+            {tr("sidebar.remove_workspace")}
           </button>
         </div>
       </Show>
@@ -281,7 +283,7 @@ export default function WorkspaceSessionList(props: Props) {
       fallback={
         <Show
           when={emptyError()}
-          fallback={<div class="px-2 py-1.5 text-xs text-gray-10">No sessions yet.</div>}
+          fallback={<div class="px-2 py-1.5 text-xs text-gray-10">{tr("sidebar.no_sessions")}</div>}
         >
           {(errorDisplay) => (
             <div
@@ -298,7 +300,7 @@ export default function WorkspaceSessionList(props: Props) {
         </Show>
       }
     >
-      <div class="px-2 py-1.5 text-xs text-gray-10">Loading tasks...</div>
+      <div class="px-2 py-1.5 text-xs text-gray-10">{tr("sidebar.loading_tasks")}</div>
     </Show>
   );
 
@@ -317,7 +319,7 @@ export default function WorkspaceSessionList(props: Props) {
           }}
         >
           <Plus size={14} />
-          New session
+          {tr("sidebar.new_session")}
         </button>
 
         <Show when={!props.onQuickNewSession && addWorkspaceMenuOpen()}>
@@ -331,7 +333,7 @@ export default function WorkspaceSessionList(props: Props) {
               }}
             >
               <Plus size={12} />
-              New worker
+              {tr("sidebar.new_worker")}
             </button>
             <Show when={props.showRemoteActions !== false}>
               <button
@@ -343,7 +345,7 @@ export default function WorkspaceSessionList(props: Props) {
                 }}
               >
                 <Plus size={12} />
-                Connect remote
+                {tr("sidebar.connect_remote")}
               </button>
             </Show>
             <button
@@ -356,7 +358,7 @@ export default function WorkspaceSessionList(props: Props) {
               }}
             >
               <Plus size={12} />
-              Import config
+              {tr("sidebar.import_config")}
             </button>
           </div>
         </Show>
@@ -371,8 +373,8 @@ export default function WorkspaceSessionList(props: Props) {
                 ? "bg-gray-4/90 text-gray-12"
                 : "text-gray-9 hover:bg-gray-3 hover:text-gray-11"
             }`}
-            aria-label="By project"
-            title="By project"
+            aria-label={tr("sidebar.by_project")}
+            title={tr("sidebar.by_project")}
             aria-pressed={sidebarMode() === "by-project"}
             onClick={() => setSidebarMode("by-project")}
           >
@@ -385,8 +387,8 @@ export default function WorkspaceSessionList(props: Props) {
                 ? "bg-gray-4/90 text-gray-12"
                 : "text-gray-9 hover:bg-gray-3 hover:text-gray-11"
             }`}
-            aria-label="Recent"
-            title="Recent"
+            aria-label={tr("sidebar.recent")}
+            title={tr("sidebar.recent")}
             aria-pressed={sidebarMode() === "recent"}
             onClick={() => setSidebarMode("recent")}
           >
@@ -442,7 +444,7 @@ export default function WorkspaceSessionList(props: Props) {
                           <Show when={soulEnabled()}>
                             <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
                               <HeartPulse size={10} />
-                              Soul
+                              {tr("sidebar.soul_badge")}
                             </span>
                           </Show>
                           <Show when={isConnecting()}>
@@ -478,7 +480,7 @@ export default function WorkspaceSessionList(props: Props) {
                             current?.anchorKey === anchorKey ? null : { workspaceId: workspace().id, anchorKey },
                           );
                         }}
-                        aria-label="Workspace options"
+                        aria-label={tr("sidebar.workspace_options")}
                       >
                         <MoreHorizontal size={14} />
                       </button>
@@ -519,7 +521,7 @@ export default function WorkspaceSessionList(props: Props) {
                             : "text-gray-11 hover:text-gray-12 hover:bg-gray-2/70"
                         }`}
                         title={project.projectTitle}
-                        aria-label={project.projectLabel ? `Open project ${project.projectLabel}` : "Open project"}
+                        aria-label={project.projectLabel ? `${tr("sidebar.open_project")} ${project.projectLabel}` : tr("sidebar.open_project")}
                         onClick={() => {
                           if (isConnectionActionBusy()) return;
                           if (isActiveWorkspace()) return;
@@ -540,7 +542,7 @@ export default function WorkspaceSessionList(props: Props) {
                           <Show when={soulEnabled()}>
                             <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
                               <HeartPulse size={10} />
-                              Soul
+                              {tr("sidebar.soul_badge")}
                             </span>
                           </Show>
                           <Show when={isConnecting()}>
@@ -567,8 +569,8 @@ export default function WorkspaceSessionList(props: Props) {
                           class="p-1 rounded-md text-gray-8 hover:text-gray-11 hover:bg-gray-3"
                           onClick={() => props.onCreateTaskInWorkspace(workspace().id)}
                           disabled={props.newTaskDisabled}
-                          aria-label="Create session in this project"
-                          title="Create session in this project"
+                          aria-label={tr("sidebar.create_session_in_project")}
+                          title={tr("sidebar.create_session_in_project")}
                         >
                           <Plus size={14} />
                         </button>
@@ -581,7 +583,7 @@ export default function WorkspaceSessionList(props: Props) {
                               current?.anchorKey === anchorKey ? null : { workspaceId: workspace().id, anchorKey },
                             );
                           }}
-                          aria-label="Workspace options"
+                          aria-label={tr("sidebar.workspace_options")}
                         >
                           <MoreHorizontal size={14} />
                         </button>

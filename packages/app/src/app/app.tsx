@@ -2493,11 +2493,11 @@ export default function App() {
   const [autoCompactingSessionId, setAutoCompactingSessionId] = createSignal<string | null>(null);
 
   const MODEL_VARIANT_OPTIONS = [
-    { value: "none", label: "None" },
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High" },
-    { value: "xhigh", label: "X-High" },
+    { value: "none", labelKey: "session.thinking_option_none" },
+    { value: "low", labelKey: "session.thinking_option_low" },
+    { value: "medium", labelKey: "session.thinking_option_medium" },
+    { value: "high", labelKey: "session.thinking_option_high" },
+    { value: "xhigh", labelKey: "session.thinking_option_xhigh" },
   ];
 
   const normalizeModelVariant = (value: string | null) => {
@@ -2518,7 +2518,8 @@ export default function App() {
 
   const formatModelVariantLabel = (value: string | null) => {
     const normalized = normalizeModelVariant(value) ?? "none";
-    return MODEL_VARIANT_OPTIONS.find((option) => option.value === normalized)?.label ?? "None";
+    const option = MODEL_VARIANT_OPTIONS.find((entry) => entry.value === normalized);
+    return option ? t(option.labelKey, currentLocale()) : t("session.thinking_option_none", currentLocale());
   };
 
   const handleEditModelVariant = () => {

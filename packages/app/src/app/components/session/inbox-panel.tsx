@@ -3,6 +3,7 @@ import { Download, RefreshCw, UploadCloud } from "lucide-solid";
 
 import type { VesloInboxItem, VesloServerClient } from "../../lib/veslo-server";
 import { formatBytes, formatRelativeTime } from "../../utils";
+import { currentLocale, t } from "../../../i18n";
 
 export type InboxPanelProps = {
   id?: string;
@@ -30,6 +31,7 @@ function toInboxWorkspacePath(item: VesloInboxItem): string {
 }
 
 export default function InboxPanel(props: InboxPanelProps) {
+  const tr = (key: string) => t(key, currentLocale());
   const [items, setItems] = createSignal<VesloInboxItem[]>([]);
   const [loading, setLoading] = createSignal(false);
   const [uploading, setUploading] = createSignal(false);
@@ -45,7 +47,7 @@ export default function InboxPanel(props: InboxPanelProps) {
   });
 
   const connected = createMemo(() => Boolean(props.client && (props.workspaceId ?? "").trim()));
-  const helperText = "Share files with your remote worker.";
+  const helperText = tr("inbox.helper");
 
   const visibleItems = createMemo(() => (items() ?? []).slice(0, maxPreview()));
   const hiddenCount = createMemo(() => Math.max(0, (items() ?? []).length - visibleItems().length));
@@ -68,7 +70,7 @@ export default function InboxPanel(props: InboxPanelProps) {
       const result = await client.listInbox(workspaceId);
       setItems(result.items ?? []);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to load inbox";
+      const message = err instanceof Error ? err.message : tr("inbox.failed_load");
       setError(message);
       setItems([]);
     } finally {
@@ -80,7 +82,7 @@ export default function InboxPanel(props: InboxPanelProps) {
     const client = props.client;
     const workspaceId = (props.workspaceId ?? "").trim();
     if (!client || !workspaceId) {
-      toast("Connect to a worker to upload inbox files.");
+      toast(tr("inbox.connect_to_upload"));
       return;
     }
     if (!files.length) return;
@@ -89,14 +91,14 @@ export default function InboxPanel(props: InboxPanelProps) {
     setError(null);
     try {
       const label = files.length === 1 ? files[0]?.name ?? "file" : `${files.length} files`;
-      toast(`Uploading ${label}...`);
+      toast(`${tr("inbox.uploading")} ${label}...`);
       for (const file of files) {
         await client.uploadInbox(workspaceId, file);
       }
-      toast("Uploaded to worker inbox.");
+      toast(tr("inbox.uploaded"));
       await refresh();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Inbox upload failed";
+      const message = err instanceof Error ? err.message : tr("inbox.upload_failed");
       setError(message);
       toast(message);
     } finally {
@@ -108,9 +110,9 @@ export default function InboxPanel(props: InboxPanelProps) {
     const path = toInboxWorkspacePath(item);
     try {
       await navigator.clipboard.writeText(path);
-      toast(`Copied: ${path}`);
+      toast(`${tr("inbox.copied")}: ${path}`);
     } catch {
-      toast("Copy failed. Your browser may block clipboard access.");
+      toast(tr("inbox.copy_failed"));
     }
   };
 
@@ -118,12 +120,12 @@ export default function InboxPanel(props: InboxPanelProps) {
     const client = props.client;
     const workspaceId = (props.workspaceId ?? "").trim();
     if (!client || !workspaceId) {
-      toast("Connect to a worker to download inbox files.");
+      toast(tr("inbox.connect_to_download"));
       return;
     }
     const id = String(item.id ?? "").trim();
     if (!id) {
-      toast("Missing inbox item id.");
+      toast(tr("inbox.missing_item_id"));
       return;
     }
 
@@ -139,7 +141,7 @@ export default function InboxPanel(props: InboxPanelProps) {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Download failed";
+      const message = err instanceof Error ? err.message : tr("inbox.download_failed");
       toast(message);
     }
   };
@@ -154,7 +156,7 @@ export default function InboxPanel(props: InboxPanelProps) {
   return (
     <div id={props.id}>
       <div class="flex items-center justify-between px-2 mb-3">
-        <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-10">Inbox</span>
+        <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-10">{tr("inbox.title")}</span>
         <div class="flex items-center gap-2">
           <Show when={(items() ?? []).length > 0}>
             <span class="text-[11px] font-medium bg-gray-4/60 text-gray-10 px-1.5 rounded">
@@ -165,8 +167,8 @@ export default function InboxPanel(props: InboxPanelProps) {
             type="button"
             class="rounded-md p-1 text-gray-9 hover:text-gray-11 hover:bg-gray-3 transition-colors"
             onClick={() => void refresh()}
-            title="Refresh inbox"
-            aria-label="Refresh inbox"
+            title={tr("inbox.refresh")}
+            aria-label={tr("inbox.refresh")}
             disabled={!connected() || loading()}
           >
             <RefreshCw size={14} class={loading() ? "animate-spin" : ""} />
@@ -208,12 +210,12 @@ export default function InboxPanel(props: InboxPanelProps) {
           if (files.length) void uploadFiles(files);
         }}
         disabled={uploading()}
-        title={connected() ? "Drop files here to upload" : "Connect to a worker to upload"}
+        title={connected() ? tr("inbox.drop_files_title") : tr("inbox.connect_upload_title")}
       >
         <div class="flex flex-col items-center justify-center text-center">
           <UploadCloud size={18} class="text-gray-9 mb-2" />
           <span class="text-[13px] font-medium text-gray-11">
-            {uploading() ? "Uploading..." : "Drop files or click to upload"}
+            {uploading() ? `${tr("inbox.uploading")}...` : tr("inbox.drop_or_click")}
           </span>
           <span class="mt-0.5 text-[11px] text-gray-9">{helperText}</span>
         </div>
@@ -228,8 +230,8 @@ export default function InboxPanel(props: InboxPanelProps) {
           when={visibleItems().length > 0}
           fallback={
             <div class="text-xs text-gray-10 px-1 py-1">
-              <Show when={connected()} fallback={"Connect to see inbox files."}>
-                No inbox files yet.
+              <Show when={connected()} fallback={tr("inbox.connect_to_see")}>
+                {tr("inbox.empty")}
               </Show>
             </div>
           }
@@ -247,8 +249,8 @@ export default function InboxPanel(props: InboxPanelProps) {
                     type="button"
                     class="min-w-0 flex-1 text-left"
                     onClick={() => void copyPath(item)}
-                    title={rel() ? `Copy ${INBOX_PREFIX}${rel()}` : "Copy inbox path"}
-                    aria-label={rel() ? `Copy ${INBOX_PREFIX}${rel()}` : "Copy inbox path"}
+                    title={rel() ? `${tr("inbox.copy_path")} ${INBOX_PREFIX}${rel()}` : tr("inbox.copy_path")}
+                    aria-label={rel() ? `${tr("inbox.copy_path")} ${INBOX_PREFIX}${rel()}` : tr("inbox.copy_path")}
                     disabled={!connected()}
                   >
                     <div class="truncate text-xs font-medium text-gray-11">{name()}</div>
@@ -269,8 +271,8 @@ export default function InboxPanel(props: InboxPanelProps) {
                     type="button"
                     class="shrink-0 rounded-md p-1 text-gray-9 opacity-0 group-hover:opacity-100 hover:text-gray-11 hover:bg-gray-3"
                     onClick={() => void downloadItem(item)}
-                    title="Download"
-                    aria-label="Download"
+                    title={tr("inbox.download")}
+                    aria-label={tr("inbox.download")}
                     disabled={!connected()}
                   >
                     <Download size={14} />
@@ -282,7 +284,9 @@ export default function InboxPanel(props: InboxPanelProps) {
         </Show>
 
         <Show when={hiddenCount() > 0}>
-          <div class="text-[11px] text-gray-10 px-1 py-1">Showing first {maxPreview()}.</div>
+          <div class="text-[11px] text-gray-10 px-1 py-1">
+            {tr("inbox.showing_first").replace("{count}", String(maxPreview()))}
+          </div>
         </Show>
       </div>
     </div>
