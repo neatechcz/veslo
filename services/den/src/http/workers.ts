@@ -36,7 +36,6 @@ const token = () => randomBytes(32).toString("hex")
 
 type WorkerRow = typeof WorkerTable.$inferSelect
 type WorkerInstanceRow = typeof WorkerInstanceTable.$inferSelect
-const cloudProvisionFailureByWorkerId = new Map<string, string>()
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
@@ -211,7 +210,7 @@ function toWorkerResponse(row: WorkerRow, userId: string) {
     imageVersion: row.image_version,
     workspacePath: row.workspace_path,
     sandboxBackend: row.sandbox_backend,
-    provisioningError: row.status === "failed" ? (cloudProvisionFailureByWorkerId.get(row.id) ?? null) : null,
+    provisioningError: row.failure_reason,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -228,7 +227,10 @@ async function continueCloudProvisioning(input: { workerId: string; name: string
 
     await db
       .update(WorkerTable)
-      .set({ status: provisioned.status })
+      .set({
+        status: provisioned.status,
+        failure_reason: null,
+      })
       .where(eq(WorkerTable.id, input.workerId))
 
     await db.insert(WorkerInstanceTable).values({
@@ -239,15 +241,16 @@ async function continueCloudProvisioning(input: { workerId: string; name: string
       url: provisioned.url,
       status: provisioned.status,
     })
-    cloudProvisionFailureByWorkerId.delete(input.workerId)
   } catch (error) {
+    const message = error instanceof Error ? error.message : "provisioning_failed"
     await db
       .update(WorkerTable)
-      .set({ status: "failed" })
+      .set({
+        status: "failed",
+        failure_reason: message.slice(0, 2048),
+      })
       .where(eq(WorkerTable.id, input.workerId))
 
-    const message = error instanceof Error ? error.message : "provisioning_failed"
-    cloudProvisionFailureByWorkerId.set(input.workerId, message)
     console.error(`[workers] provisioning failed for ${input.workerId}: ${message}`)
   }
 }
@@ -332,6 +335,7 @@ workersRouter.post("/", asyncRoute(async (req, res) => {
     description: parsed.data.description,
     destination: parsed.data.destination,
     status: workerStatus,
+    failure_reason: null,
     image_version: parsed.data.imageVersion,
     workspace_path: parsed.data.workspacePath,
     sandbox_backend: parsed.data.sandboxBackend,
@@ -384,6 +388,7 @@ workersRouter.post("/", asyncRoute(async (req, res) => {
         description: parsed.data.description ?? null,
         destination: parsed.data.destination,
         status: workerStatus,
+        failure_reason: null,
         image_version: parsed.data.imageVersion ?? null,
         workspace_path: parsed.data.workspacePath ?? null,
         sandbox_backend: parsed.data.sandboxBackend ?? null,

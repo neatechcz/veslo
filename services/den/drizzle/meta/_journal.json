@@ -43,6 +43,13 @@
       "when": 1773356400000,
       "tag": "0005_worker_token_encryption",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1773369000000,
+      "tag": "0006_worker_failure_reason",
+      "breakpoints": true
     }
   ]
 }

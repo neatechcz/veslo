@@ -151,6 +151,7 @@ export const WorkerTable = mysqlTable(
     description: varchar("description", { length: 1024 }),
     destination: mysqlEnum("destination", WorkerDestination).notNull(),
     status: mysqlEnum("status", WorkerStatus).notNull(),
+    failure_reason: varchar("failure_reason", { length: 2048 }),
     image_version: varchar("image_version", { length: 128 }),
     workspace_path: varchar("workspace_path", { length: 1024 }),
     sandbox_backend: varchar("sandbox_backend", { length: 64 }),

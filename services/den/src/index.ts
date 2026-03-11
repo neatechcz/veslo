@@ -175,6 +175,7 @@ async function ensureTables() {
         \`description\` varchar(1024),
         \`destination\` enum('local','cloud') NOT NULL,
         \`status\` enum('provisioning','healthy','failed','stopped') NOT NULL,
+        \`failure_reason\` varchar(2048),
         \`image_version\` varchar(128),
         \`workspace_path\` varchar(1024),
         \`sandbox_backend\` varchar(64),
@@ -186,6 +187,7 @@ async function ensureTables() {
     await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_org_id\` ON \`worker\` (\`org_id\`)`)
     await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_created_by_user_id\` ON \`worker\` (\`created_by_user_id\`)`)
     await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_status\` ON \`worker\` (\`status\`)`)
+    await db.execute(sql`ALTER TABLE \`worker\` ADD COLUMN IF NOT EXISTS \`failure_reason\` varchar(2048)`)
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`worker_instance\` (
