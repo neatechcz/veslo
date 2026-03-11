@@ -320,6 +320,17 @@ jobs:
                   if status != "live":
                       _, deploy_detail = request("GET", f"/services/{service_id}/deploys/{deploy_id}")
                       _, service_events = request("GET", f"/services/{service_id}/events?limit=50")
+                      logs_query = urllib.parse.urlencode(
+                          {
+                              "ownerId": owner_id,
+                              "resource": [service_id],
+                              "type": ["app", "build"],
+                              "direction": "backward",
+                              "limit": "80",
+                          },
+                          doseq=True,
+                      )
+                      _, recent_logs = request("GET", f"/logs?{logs_query}")
                       related_events = []
                       for row in service_events or []:
                           event = row.get("event") if isinstance(row, dict) else None
@@ -337,6 +348,21 @@ jobs:
                           )
                           if len(related_events) >= 10:
                               break
+                      log_lines = []
+                      for entry in (recent_logs or {}).get("logs", []):
+                          if not isinstance(entry, dict):
+                              continue
+                          message = entry.get("message")
+                          if not isinstance(message, str) or not message.strip():
+                              continue
+                          log_lines.append(
+                              {
+                                  "timestamp": entry.get("timestamp"),
+                                  "message": message[:300],
+                              }
+                          )
+                          if len(log_lines) >= 20:
+                              break
                       print(
                           "Render deploy failure detail:",
                           json.dumps(
@@ -346,9 +372,10 @@ jobs:
                                   "trigger": deploy_detail.get("trigger"),
                                   "imageRef": deploy_detail.get("imageRef"),
                                   "events": related_events,
-                              }
+                                }
                           )[:2000],
                       )
+                      print("Render recent logs:", json.dumps(log_lines))
                       raise RuntimeError(f"Render deploy {deploy_id} ended with {status}")
                   print(f"Render deploy {deploy_id} is live at {service_url}")
                   break
