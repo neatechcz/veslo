@@ -109,6 +109,7 @@ import {
   normalizeDirectoryPath,
   sessionDirectoryMatchesRoot,
 } from "./utils";
+import { computeWorkspaceSwitchOverlayHoldMs } from "./utils/workspace-switch-overlay";
 import {
   parseAuthCompleteDeepLink,
   exchangeHandoffCode,
@@ -5977,8 +5978,13 @@ export default function App() {
   });
 
   // Avoid flashing the full-screen switch overlay for fast workspace switches.
-  // Only show it if a switch is still in progress after a short delay.
+  // Only show it if a switch is still in progress after a short delay and keep
+  // it visible briefly once shown to avoid blinky transitions.
+  const WORKSPACE_SWITCH_OVERLAY_DELAY_MS = 250;
+  const WORKSPACE_SWITCH_OVERLAY_MIN_VISIBLE_MS = 350;
   const [workspaceSwitchDelayElapsed, setWorkspaceSwitchDelayElapsed] = createSignal(false);
+  const [workspaceSwitchVisibleSinceMs, setWorkspaceSwitchVisibleSinceMs] = createSignal<number | null>(null);
+  const [workspaceSwitchHoldOpen, setWorkspaceSwitchHoldOpen] = createSignal(false);
   createEffect(() => {
     if (typeof window === "undefined") return;
     const switchingId = workspaceStore.connectingWorkspaceId();
@@ -5988,13 +5994,48 @@ export default function App() {
     }
 
     setWorkspaceSwitchDelayElapsed(false);
-    const timer = window.setTimeout(() => setWorkspaceSwitchDelayElapsed(true), 250);
+    const timer = window.setTimeout(() => setWorkspaceSwitchDelayElapsed(true), WORKSPACE_SWITCH_OVERLAY_DELAY_MS);
+    onCleanup(() => window.clearTimeout(timer));
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    const connecting = Boolean(workspaceStore.connectingWorkspaceId());
+    const shouldShowForSwitch = connecting && workspaceSwitchDelayElapsed();
+    const visibleSinceMs = workspaceSwitchVisibleSinceMs();
+
+    if (shouldShowForSwitch) {
+      setWorkspaceSwitchHoldOpen(false);
+      if (visibleSinceMs === null) {
+        setWorkspaceSwitchVisibleSinceMs(Date.now());
+      }
+      return;
+    }
+
+    if (visibleSinceMs === null) return;
+    setWorkspaceSwitchVisibleSinceMs(null);
+
+    const holdMs = computeWorkspaceSwitchOverlayHoldMs({
+      visibleSinceMs,
+      nowMs: Date.now(),
+      minVisibleMs: WORKSPACE_SWITCH_OVERLAY_MIN_VISIBLE_MS,
+    });
+    if (holdMs <= 0) {
+      setWorkspaceSwitchHoldOpen(false);
+      return;
+    }
+
+    setWorkspaceSwitchHoldOpen(true);
+    const timer = window.setTimeout(() => {
+      setWorkspaceSwitchHoldOpen(false);
+    }, holdMs);
     onCleanup(() => window.clearTimeout(timer));
   });
 
   const workspaceSwitchOpen = createMemo(() => {
     if (booting()) return true;
     if (workspaceStore.connectingWorkspaceId()) return workspaceSwitchDelayElapsed();
+    if (workspaceSwitchHoldOpen()) return true;
     if (!busy() || !busyLabel()) return false;
     const label = busyLabel();
     return (

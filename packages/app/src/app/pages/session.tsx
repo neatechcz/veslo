@@ -86,6 +86,7 @@ import {
 } from "../utils";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
+import { shouldStopRunOnEscape } from "./session-shortcuts";
 import { currentLocale, t } from "../../i18n";
 
 import browserSetupTemplate from "../data/commands/browser-setup.md?raw";
@@ -98,6 +99,7 @@ import type { SidebarSectionState } from "../components/session/sidebar";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
 import ArtifactsPanel from "../components/session/artifacts-panel";
+import { openSessionWithWorkspaceActivation } from "./session-navigation";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -2028,15 +2030,35 @@ export default function SessionView(props: SessionViewProps) {
         openSearch();
         return;
       }
-      if (!searchOpen()) return;
-      if (mod && !event.altKey && event.key.toLowerCase() === "g") {
-        event.preventDefault();
-        moveSearchHit(event.shiftKey ? -1 : 1);
-        return;
+      if (searchOpen()) {
+        if (mod && !event.altKey && event.key.toLowerCase() === "g") {
+          event.preventDefault();
+          moveSearchHit(event.shiftKey ? -1 : 1);
+          return;
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeSearch();
+          return;
+        }
       }
-      if (event.key === "Escape") {
+
+      if (
+        shouldStopRunOnEscape({
+          key: event.key,
+          defaultPrevented: event.defaultPrevented,
+          metaKey: event.metaKey,
+          ctrlKey: event.ctrlKey,
+          altKey: event.altKey,
+          shiftKey: event.shiftKey,
+          commandPaletteOpen: commandPaletteOpen(),
+          searchOpen: searchOpen(),
+          showRunIndicator: showRunIndicator(),
+          abortBusy: abortBusy(),
+        })
+      ) {
         event.preventDefault();
-        closeSearch();
+        void cancelRun();
       }
     };
 
@@ -3107,17 +3129,14 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
-    if (!sessionId) return;
-    // Route-driven selection: navigate first and let the route effect own selectSession.
-    if (workspaceId === props.activeWorkspaceId) {
-      props.setView("session", sessionId);
-      return;
-    }
-    // For different workspace, activate workspace first
-    void (async () => {
-      await Promise.resolve(props.activateWorkspace(workspaceId));
-      props.setView("session", sessionId);
-    })();
+    void openSessionWithWorkspaceActivation({
+      activeWorkspaceId: props.activeWorkspaceId,
+      workspaceId,
+      sessionId,
+      activateWorkspace: props.activateWorkspace,
+      // Route-driven selection: navigate first and let the route effect own selectSession.
+      openSession: (nextSessionId) => props.setView("session", nextSessionId),
+    });
   };
 
   const createTaskInWorkspace = (workspaceId: string) => {
