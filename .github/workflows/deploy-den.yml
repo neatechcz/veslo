@@ -87,6 +87,7 @@ jobs:
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
+          DEN_RENDER_WORKER_REPO: ${{ vars.DEN_RENDER_WORKER_REPO }}
           DEN_RENDER_WORKER_PLAN: ${{ vars.DEN_RENDER_WORKER_PLAN }}
           DEN_RENDER_WORKER_VESLO_VERSION: ${{ vars.DEN_RENDER_WORKER_VESLO_VERSION }}
           DEN_CORS_ORIGINS: ${{ vars.DEN_CORS_ORIGINS }}
@@ -118,6 +119,7 @@ jobs:
           owner_id = os.environ["RENDER_OWNER_ID"]
           veslo_version = os.environ.get("DEN_RENDER_WORKER_VESLO_VERSION") or "0.11.113"
           worker_plan = os.environ.get("DEN_RENDER_WORKER_PLAN") or "standard"
+          worker_repo = os.environ.get("DEN_RENDER_WORKER_REPO") or f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'neatechcz/veslo')}"
           configured_cors_origins = os.environ.get("DEN_CORS_ORIGINS") or ""
           worker_public_domain_suffix = os.environ.get("DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX") or "veslo.studio"
           custom_domain_ready_timeout_ms = os.environ.get("DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS") or "240000"
@@ -225,7 +227,7 @@ jobs:
               {"key": "RENDER_API_BASE", "value": "https://api.render.com/v1"},
               {"key": "RENDER_API_KEY", "value": api_key},
               {"key": "RENDER_OWNER_ID", "value": owner_id},
-              {"key": "RENDER_WORKER_REPO", "value": "https://github.com/neatech/veslo"},
+              {"key": "RENDER_WORKER_REPO", "value": worker_repo},
               {"key": "RENDER_WORKER_BRANCH", "value": "dev"},
               {"key": "RENDER_WORKER_ROOT_DIR", "value": "services/den-worker-runtime"},
               {"key": "RENDER_WORKER_PLAN", "value": worker_plan},

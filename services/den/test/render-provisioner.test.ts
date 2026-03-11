@@ -69,11 +69,13 @@ test("render provisioner uses install command compatible with published orchestr
       assert.ok(createCall?.body, "expected Render service create payload")
 
       const payload = JSON.parse(createCall.body) as {
+        repo?: string
         serviceDetails?: { envSpecificDetails?: { buildCommand?: string } }
       }
 
       const buildCommand = payload.serviceDetails?.envSpecificDetails?.buildCommand ?? ""
       assert.match(buildCommand, /openwork-orchestrator@/)
+      assert.equal(payload.repo, "https://github.com/neatechcz/veslo")
     } finally {
       globalThis.fetch = originalFetch
     }

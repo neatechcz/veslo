@@ -41,7 +41,7 @@ cp .env.development .env
 - `RENDER_API_BASE` Render API base URL (default `https://api.render.com/v1`)
 - `RENDER_API_KEY` Render API key (required for `PROVISIONER_MODE=render`)
 - `RENDER_OWNER_ID` Render workspace owner id (required for `PROVISIONER_MODE=render`)
-- `RENDER_WORKER_REPO` repository URL used to create worker services
+- `RENDER_WORKER_REPO` repository URL used to create worker services (default `https://github.com/neatechcz/veslo`)
 - `RENDER_WORKER_BRANCH` branch used for worker services
 - `RENDER_WORKER_ROOT_DIR` render `rootDir` for worker services
 - `RENDER_WORKER_PLAN` Render plan for worker services
@@ -127,6 +127,7 @@ Optional GitHub Actions secrets (enable GitHub social sign-in):
 
 Optional GitHub Actions variable:
 
+- `DEN_RENDER_WORKER_REPO` (defaults to `https://github.com/<github.repository>` in workflow, or `https://github.com/neatechcz/veslo` fallback)
 - `DEN_RENDER_WORKER_PLAN` (defaults to `standard`)
 - `DEN_RENDER_WORKER_VESLO_VERSION` (defaults to `0.11.113` and is used for `openwork-orchestrator`, with legacy fallback to `veslo-orchestrator`)
 - `DEN_CORS_ORIGINS` (defaults to `https://app.veslo.neatech.com,https://api.veslo.neatech.com,<render-service-url>`)
