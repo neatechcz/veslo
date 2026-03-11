@@ -36,6 +36,7 @@ const token = () => randomBytes(32).toString("hex")
 
 type WorkerRow = typeof WorkerTable.$inferSelect
 type WorkerInstanceRow = typeof WorkerInstanceTable.$inferSelect
+const cloudProvisionFailureByWorkerId = new Map<string, string>()
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
@@ -210,6 +211,7 @@ function toWorkerResponse(row: WorkerRow, userId: string) {
     imageVersion: row.image_version,
     workspacePath: row.workspace_path,
     sandboxBackend: row.sandbox_backend,
+    provisioningError: row.status === "failed" ? (cloudProvisionFailureByWorkerId.get(row.id) ?? null) : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -237,6 +239,7 @@ async function continueCloudProvisioning(input: { workerId: string; name: string
       url: provisioned.url,
       status: provisioned.status,
     })
+    cloudProvisionFailureByWorkerId.delete(input.workerId)
   } catch (error) {
     await db
       .update(WorkerTable)
@@ -244,6 +247,7 @@ async function continueCloudProvisioning(input: { workerId: string; name: string
       .where(eq(WorkerTable.id, input.workerId))
 
     const message = error instanceof Error ? error.message : "provisioning_failed"
+    cloudProvisionFailureByWorkerId.set(input.workerId, message)
     console.error(`[workers] provisioning failed for ${input.workerId}: ${message}`)
   }
 }
