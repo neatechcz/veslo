@@ -366,7 +366,7 @@ export default function WorkspaceSessionList(props: Props) {
         </Show>
       </div>
 
-      <div class="mb-3 flex items-center justify-start">
+      <div class="mb-3 flex items-center gap-2">
         <div class="inline-flex items-center gap-1 rounded-full border border-gray-6 bg-gray-1 p-1 shadow-sm">
           <button
             type="button"
@@ -396,18 +396,18 @@ export default function WorkspaceSessionList(props: Props) {
           >
             <List size={14} />
           </button>
-          <Show when={props.onOpenSessionSearch}>
-            <button
-              type="button"
-              class="inline-flex h-7 w-7 items-center justify-center rounded-full text-gray-9 transition-colors hover:bg-gray-3 hover:text-gray-11"
-              aria-label={tr("session.command_palette_search_sessions")}
-              title={tr("session.command_palette_search_sessions")}
-              onClick={() => props.onOpenSessionSearch?.()}
-            >
-              <Search size={14} />
-            </button>
-          </Show>
         </div>
+        <Show when={props.onOpenSessionSearch}>
+          <button
+            type="button"
+            class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-9 shadow-sm transition-colors hover:bg-gray-3 hover:text-gray-11"
+            aria-label={tr("session.command_palette_search_sessions")}
+            title={tr("session.command_palette_search_sessions")}
+            onClick={() => props.onOpenSessionSearch?.()}
+          >
+            <Search size={14} />
+          </button>
+        </Show>
       </div>
 
       <div class="space-y-2.5 mb-3">
