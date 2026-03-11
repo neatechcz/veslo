@@ -3,6 +3,16 @@ import test from "node:test";
 
 import { openSessionWithWorkspaceActivation } from "./session-navigation.js";
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 test("opens immediately when session is in active workspace", async () => {
   const opened: string[] = [];
   const activated: string[] = [];
@@ -61,4 +71,47 @@ test("opens session after successful cross-workspace activation", async () => {
   assert.equal(result, true);
   assert.deepEqual(activated, ["ws-other"]);
   assert.deepEqual(opened, ["sess-3"]);
+});
+
+test("serializes rapid cross-workspace session clicks and only opens the latest session", async () => {
+  const opened: string[] = [];
+  const activationEvents: string[] = [];
+  const gate = deferred<void>();
+  let concurrent = 0;
+  let maxConcurrent = 0;
+  const activateWorkspace = async (id: string) => {
+    concurrent += 1;
+    maxConcurrent = Math.max(maxConcurrent, concurrent);
+    activationEvents.push(`start:${id}`);
+    await gate.promise;
+    concurrent -= 1;
+    activationEvents.push(`end:${id}`);
+    return true;
+  };
+
+  const first = openSessionWithWorkspaceActivation({
+    activeWorkspaceId: "ws-active",
+    workspaceId: "ws-one",
+    sessionId: "sess-1",
+    activateWorkspace,
+    openSession: (id) => opened.push(id),
+  });
+
+  const second = openSessionWithWorkspaceActivation({
+    activeWorkspaceId: "ws-active",
+    workspaceId: "ws-two",
+    sessionId: "sess-2",
+    activateWorkspace,
+    openSession: (id) => opened.push(id),
+  });
+
+  gate.resolve();
+  const firstResult = await first;
+  const secondResult = await second;
+
+  assert.equal(firstResult, false);
+  assert.equal(secondResult, true);
+  assert.equal(maxConcurrent, 1);
+  assert.deepEqual(activationEvents, ["start:ws-two", "end:ws-two"]);
+  assert.deepEqual(opened, ["sess-2"]);
 });

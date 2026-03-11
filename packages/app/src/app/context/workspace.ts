@@ -68,6 +68,7 @@ import { waitForHealthy, createClient, type OpencodeAuth } from "../lib/opencode
 import type { OpencodeConnectStatus, ProviderListItem } from "../types";
 import { t, currentLocale, isLanguage } from "../../i18n";
 import { mapConfigProvidersToList } from "../utils/providers";
+import { withTimeoutOrThrow } from "../utils/promise-timeout";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
@@ -195,6 +196,12 @@ export function createWorkspaceStore(options: {
   let createRemoteInFlight: Promise<boolean> | null = null;
   const DEFAULT_CONNECT_HEALTH_TIMEOUT_MS = 12_000;
   const LOCAL_BOOT_CONNECT_HEALTH_TIMEOUT_MS = 180_000;
+  const WORKSPACE_IO_TIMEOUT_MS = 8_000;
+  const WORKSPACE_SET_ACTIVE_TIMEOUT_MS = 8_000;
+  const ENGINE_INFO_TIMEOUT_MS = 12_000;
+  const START_HOST_TIMEOUT_MS = 45_000;
+  const WORKSPACE_ACTIVATE_TIMEOUT_MS = 30_000;
+  const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS = 15_000;
   const LONG_BOOT_CONNECT_REASONS = new Set(["host-start"]);
   const DB_MIGRATE_UNSUPPORTED_PATTERNS = [
     /unknown(?:\s+sub)?command\s+['"`]?db['"`]?/i,
@@ -590,6 +597,16 @@ export function createWorkspaceStore(options: {
     return resolved;
   };
 
+  async function activateOrchestratorWorkspace(input: { workspacePath: string; name?: string | null }) {
+    return await withTimeoutOrThrow(
+      orchestratorWorkspaceActivate(input),
+      {
+        timeoutMs: ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS,
+        label: "orchestrator workspace activation",
+      },
+    );
+  }
+
   const activateVesloHostWorkspace = async (workspacePath: string) => {
     const client = options.vesloServerClient?.();
     if (!client) return;
@@ -819,6 +836,22 @@ export function createWorkspaceStore(options: {
     setConnectingWorkspaceId(id);
     updateWorkspaceConnectionState(id, { status: "connecting", message: null });
 
+    let activateTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    if (typeof window !== "undefined") {
+      activateTimeoutId = setTimeout(() => {
+        const current = connectingWorkspaceId();
+        if (current !== id) return;
+        const message = `Timed out switching worker after ${Math.round(WORKSPACE_ACTIVATE_TIMEOUT_MS / 1000)}s.`;
+        wsDebug("activate:timeout", { id, timeoutMs: WORKSPACE_ACTIVATE_TIMEOUT_MS });
+        options.setError(message);
+        updateWorkspaceConnectionState(id, { status: "error", message });
+        setConnectingWorkspaceId((existing) => (existing === id ? null : existing));
+        options.setBusy(false);
+        options.setBusyLabel(null);
+        options.setBusyStartedAt(null);
+      }, WORKSPACE_ACTIVATE_TIMEOUT_MS);
+    }
+
     // Allow the UI to paint the "switching" state before we kick off work that can
     // trigger expensive reactive updates (e.g. sidebar session refreshes).
     if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
@@ -965,7 +998,10 @@ export function createWorkspaceStore(options: {
 
           if (isTauriRuntime()) {
             try {
-              await workspaceSetActive(id);
+              await withTimeoutOrThrow(
+                workspaceSetActive(id),
+                { timeoutMs: WORKSPACE_SET_ACTIVE_TIMEOUT_MS, label: "workspace_set_active" },
+              );
             } catch {
               // ignore
             }
@@ -1013,7 +1049,10 @@ export function createWorkspaceStore(options: {
 
         if (isTauriRuntime()) {
           try {
-            await workspaceSetActive(id);
+            await withTimeoutOrThrow(
+              workspaceSetActive(id),
+              { timeoutMs: WORKSPACE_SET_ACTIVE_TIMEOUT_MS, label: "workspace_set_active" },
+            );
           } catch {
             // ignore
           }
@@ -1049,7 +1088,10 @@ export function createWorkspaceStore(options: {
       } else {
         setWorkspaceConfigLoaded(false);
         try {
-          const cfg = await workspaceVesloRead({ workspacePath: next.path });
+          const cfg = await withTimeoutOrThrow(
+            workspaceVesloRead({ workspacePath: next.path }),
+            { timeoutMs: WORKSPACE_IO_TIMEOUT_MS, label: "workspace_veslo_read" },
+          );
           setWorkspaceConfig(cfg);
           setWorkspaceConfigLoaded(true);
 
@@ -1067,7 +1109,10 @@ export function createWorkspaceStore(options: {
       }
 
       try {
-        await workspaceSetActive(id);
+        await withTimeoutOrThrow(
+          workspaceSetActive(id),
+          { timeoutMs: WORKSPACE_SET_ACTIVE_TIMEOUT_MS, label: "workspace_set_active" },
+        );
       } catch {
         // ignore
       }
@@ -1118,13 +1163,16 @@ export function createWorkspaceStore(options: {
       if (canReuseHost && runtime === "veslo-orchestrator") {
         try {
           const reuseStart = Date.now();
-          await orchestratorWorkspaceActivate({
+          await activateOrchestratorWorkspace({
             workspacePath: next.path,
             name: next.displayName?.trim() || next.name?.trim() || null,
           });
           await activateVesloHostWorkspace(next.path);
 
-          const nextInfo = await engineInfo();
+          const nextInfo = await withTimeoutOrThrow(
+            engineInfo(),
+            { timeoutMs: ENGINE_INFO_TIMEOUT_MS, label: "engine_info" },
+          );
           setEngine(nextInfo);
 
           const username = nextInfo.opencodeUsername?.trim() ?? "";
@@ -1158,7 +1206,10 @@ export function createWorkspaceStore(options: {
 
       if (!connectedToLocalHost) {
         const startHostAt = Date.now();
-        const ok = await startHost({ workspacePath: next.path, navigate: false });
+        const ok = await withTimeoutOrThrow(
+          startHost({ workspacePath: next.path, navigate: false }),
+          { timeoutMs: START_HOST_TIMEOUT_MS, label: "startHost" },
+        );
         wsDebug("activate:remote->local:startHost:done", { ok, ms: Date.now() - startHostAt });
         if (!ok) {
           updateWorkspaceConnectionState(id, {
@@ -1181,13 +1232,16 @@ export function createWorkspaceStore(options: {
       try {
         const runtime = resolveEngineRuntime();
         if (runtime === "veslo-orchestrator") {
-          await orchestratorWorkspaceActivate({
+          await activateOrchestratorWorkspace({
             workspacePath: next.path,
             name: next.displayName?.trim() || next.name?.trim() || null,
           });
           await activateVesloHostWorkspace(next.path);
 
-          const newInfo = await engineInfo();
+          const newInfo = await withTimeoutOrThrow(
+            engineInfo(),
+            { timeoutMs: ENGINE_INFO_TIMEOUT_MS, label: "engine_info" },
+          );
           setEngine(newInfo);
 
           const username = newInfo.opencodeUsername?.trim() ?? "";
@@ -1267,7 +1321,10 @@ export function createWorkspaceStore(options: {
       wsDebug("activate:local:done", { id, ms: Date.now() - activateStart });
       return true;
     } finally {
-      setConnectingWorkspaceId(null);
+      if (activateTimeoutId !== null) {
+        clearTimeout(activateTimeoutId);
+      }
+      setConnectingWorkspaceId((current) => (current === id ? null : current));
       wsDebug("activate:finally", { id, ms: Date.now() - activateStart });
     }
   }
@@ -2929,7 +2986,7 @@ export function createWorkspaceStore(options: {
       const runtime = engine()?.runtime ?? resolveEngineRuntime();
       if (runtime === "veslo-orchestrator") {
         await orchestratorInstanceDispose(root);
-        await orchestratorWorkspaceActivate({
+        await activateOrchestratorWorkspace({
           workspacePath: root,
           name: activeWorkspaceInfo()?.displayName?.trim() || activeWorkspaceInfo()?.name?.trim() || null,
         });

@@ -3131,6 +3131,7 @@ export default function SessionView(props: SessionViewProps) {
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
     void openSessionWithWorkspaceActivation({
       activeWorkspaceId: props.activeWorkspaceId,
+      getActiveWorkspaceId: () => props.activeWorkspaceId,
       workspaceId,
       sessionId,
       activateWorkspace: props.activateWorkspace,
