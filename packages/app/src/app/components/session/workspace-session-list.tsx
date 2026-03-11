@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { Folder, HeartPulse, List, Loader2, MoreHorizontal, Plus, Trash2 } from "lucide-solid";
+import { Folder, HeartPulse, List, Loader2, MoreHorizontal, Plus, Search, Trash2 } from "lucide-solid";
 
 import type { VesloSoulStatus } from "../../lib/veslo-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
@@ -46,6 +46,7 @@ type Props = {
   onOpenCreateRemoteWorkspace: () => void;
   onImportWorkspaceConfig: () => void;
   onQuickNewSession?: () => void;
+  onOpenSessionSearch?: () => void;
 };
 
 type SidebarViewMode = "by-project" | "recent";
@@ -395,6 +396,17 @@ export default function WorkspaceSessionList(props: Props) {
           >
             <List size={14} />
           </button>
+          <Show when={props.onOpenSessionSearch}>
+            <button
+              type="button"
+              class="inline-flex h-7 w-7 items-center justify-center rounded-full text-gray-9 transition-colors hover:bg-gray-3 hover:text-gray-11"
+              aria-label={tr("session.command_palette_search_sessions")}
+              title={tr("session.command_palette_search_sessions")}
+              onClick={() => props.onOpenSessionSearch?.()}
+            >
+              <Search size={14} />
+            </button>
+          </Show>
         </div>
       </div>
 
@@ -620,7 +632,7 @@ export default function WorkspaceSessionList(props: Props) {
                                 class={`w-full flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors pr-10 ${
                                   isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
                                 }`}
-                                onClick={() => props.onOpenSession(workspace().id, session().id)}
+                                onClick={() => props.onOpenSession(row.workspace.id, session().id)}
                               >
                                 <div class="min-w-0 flex-1">
                                   <div class="flex items-center gap-1.5 min-w-0">
@@ -645,7 +657,7 @@ export default function WorkspaceSessionList(props: Props) {
                                     class="p-1 rounded-md text-gray-9 hover:text-red-11 hover:bg-red-3/60"
                                     onClick={(event) => {
                                       event.stopPropagation();
-                                      props.onDeleteSession?.(workspace().id, session().id);
+                                      props.onDeleteSession?.(row.workspace.id, session().id);
                                     }}
                                     aria-label={tr("session.delete_session_action")}
                                     title={tr("session.delete_session_action")}

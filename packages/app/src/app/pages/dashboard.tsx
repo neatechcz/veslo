@@ -51,7 +51,7 @@ import ConfigView from "./config";
 import SettingsView from "./settings";
 import SkillsView from "./skills";
 import IdentitiesView from "./identities";
-import StatusBar from "../components/status-bar";
+import SidebarStatusControls from "../components/sidebar-status-controls";
 import ProviderAuthModal, { type ProviderOAuthStartResult } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
@@ -66,7 +66,6 @@ import {
   MessageCircle,
   MoreHorizontal,
   Plus,
-  Settings,
   SlidersHorizontal,
   Zap,
 } from "lucide-solid";
@@ -1110,6 +1109,11 @@ export default function DashboardView(props: DashboardViewProps) {
             onQuickNewSession={props.openNewSessionWithDirectory}
           />
         </div>
+        <SidebarStatusControls
+          clientConnected={props.clientConnected}
+          vesloServerStatus={props.vesloServerStatus}
+          onOpenSettings={() => openSettings("general")}
+        />
 
       </aside>
 
@@ -1488,18 +1492,6 @@ export default function DashboardView(props: DashboardViewProps) {
         />
         </div>
 
-        <StatusBar
-          clientConnected={props.clientConnected}
-          vesloServerStatus={props.vesloServerStatus}
-          startupPreference={props.startupPreference}
-          developerMode={props.developerMode}
-          onOpenSettings={() => openSettings("general")}
-          onOpenMessaging={openConfig}
-          onOpenProviders={() => props.openProviderAuthModal()}
-          onOpenMcp={() => props.setTab("mcp")}
-          providerConnectedIds={props.providerConnectedIds}
-          mcpStatuses={props.mcpStatuses}
-        />
         <nav class="md:hidden border-t border-dls-border bg-dls-surface">
           <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-6" : "grid-cols-5"}`}>
             <button

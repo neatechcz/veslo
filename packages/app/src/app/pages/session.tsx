@@ -47,7 +47,6 @@ import {
   MoreHorizontal,
   Redo2,
   Search,
-  Settings,
   Shield,
   SlidersHorizontal,
   Undo2,
@@ -60,7 +59,7 @@ import ConfirmModal from "../components/confirm-modal";
 import RenameSessionModal from "../components/rename-session-modal";
 import ProviderAuthModal, { type ProviderOAuthStartResult } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
-import StatusBar from "../components/status-bar";
+import SidebarStatusControls from "../components/sidebar-status-controls";
 import {
   buildVesloConnectInviteUrl,
   buildVesloWorkspaceBaseUrl,
@@ -3395,11 +3394,6 @@ export default function SessionView(props: SessionViewProps) {
     openSettings("advanced");
   };
 
-  const openMcp = () => {
-    props.setTab("mcp");
-    props.setView("dashboard");
-  };
-
   const openSoul = (workspaceId?: string) => {
     const id = (workspaceId ?? props.activeWorkspaceId).trim();
     if (!id) return;
@@ -3417,13 +3411,6 @@ export default function SessionView(props: SessionViewProps) {
   );
 
   const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
-
-  const openProviderAuth = () => {
-    void props.openProviderAuthModal().catch((error) => {
-      const message = error instanceof Error ? error.message : "Connect failed";
-      setToastMessage(message);
-    });
-  };
 
   return (
     <div class="flex h-screen w-full bg-dls-sidebar text-gray-12 font-sans overflow-hidden">
@@ -3484,8 +3471,14 @@ export default function SessionView(props: SessionViewProps) {
             onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
             onImportWorkspaceConfig={props.importWorkspaceConfig}
             onQuickNewSession={props.openNewSessionWithDirectory}
+            onOpenSessionSearch={() => openCommandPalette("sessions")}
           />
         </div>
+        <SidebarStatusControls
+          clientConnected={props.clientConnected}
+          vesloServerStatus={props.vesloServerStatus}
+          onOpenSettings={() => openSettings("general")}
+        />
 
       </aside>
 
@@ -4002,18 +3995,6 @@ export default function SessionView(props: SessionViewProps) {
         />
       </Show>
 
-        <StatusBar
-          clientConnected={props.clientConnected}
-          vesloServerStatus={props.vesloServerStatus}
-          startupPreference={props.startupPreference}
-          developerMode={props.developerMode}
-          onOpenSettings={() => openSettings("general")}
-          onOpenMessaging={openConfig}
-          onOpenProviders={openProviderAuth}
-          onOpenMcp={openMcp}
-          providerConnectedIds={props.providerConnectedIds}
-          mcpStatuses={props.mcpStatuses}
-        />
       </main>
 
       <aside class="w-[280px] hidden xl:flex flex-col bg-dls-sidebar border-l border-gray-6/70 p-3">
