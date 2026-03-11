@@ -7118,11 +7118,7 @@ export default function App() {
         onConfirmWorker={
           isTauriRuntime()
             ? async (preset, folder) => {
-                const ok = await workspaceStore.createSandboxFlow(preset, folder, {
-                  onReady: async () => {
-                    await createSessionAndOpen();
-                  },
-                });
+                const ok = await workspaceStore.createSandboxFlow(preset, folder);
                 if (!ok) return;
               }
             : undefined

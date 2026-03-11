@@ -1551,6 +1551,37 @@ export function createWorkspaceStore(options: {
     }
   }
 
+  const openEmptySession = async (scopeRoot?: string) => {
+    const root = (scopeRoot ?? activeWorkspaceRoot().trim()).trim();
+    if (options.client()) {
+      try {
+        await options.loadSessions(root || undefined);
+      } catch {
+        // If session loading fails, still fall back to an empty session draft view.
+      }
+    }
+    options.setSelectedSessionId(null);
+    options.setMessages([]);
+    options.setTodos([]);
+    options.setPendingPermissions([]);
+    options.setSessionStatusById({});
+    options.setView("session");
+  };
+
+  const activateFreshLocalWorkspace = async (workspaceId: string | null, workspacePath: string) => {
+    if (!workspaceId) {
+      await openEmptySession(workspacePath);
+      return true;
+    }
+    const hasClient = Boolean(options.client());
+    const ok = hasClient
+      ? await activateWorkspace(workspaceId)
+      : await startHost({ workspacePath, navigate: false });
+    if (!ok) return false;
+    await openEmptySession(activeWorkspaceRoot().trim() || workspacePath);
+    return true;
+  };
+
   async function createLocalWorkspace(
     preset: WorkspacePreset,
     folder: string | null,
@@ -1631,11 +1662,14 @@ export function createWorkspaceStore(options: {
   }
 
   async function createWorkspaceFlow(preset: WorkspacePreset, folder: string | null) {
-    await createLocalWorkspace(preset, folder, {
+    const created = await createLocalWorkspace(preset, folder, {
       markOnboardingComplete: true,
-      navigateToDashboard: true,
+      navigateToDashboard: false,
       closeModal: true,
     });
+    if (!created) return;
+    const opened = await activateFreshLocalWorkspace(created.id ?? null, created.path);
+    if (!opened) return;
   }
 
   async function createScratchWorkspace() {
@@ -1927,15 +1961,16 @@ export function createWorkspaceStore(options: {
 
         if (input?.onReady) {
           setSandboxCreatePhase("finalizing");
-          setSandboxStage("Opening session...");
-          setSandboxStep("connect", { status: "active", detail: "Opening session" });
-          pushSandboxCreateLog("Opening session in new worker...");
+          setSandboxStage("Finalizing worker...");
+          setSandboxStep("connect", { status: "active", detail: "Applying setup" });
+          pushSandboxCreateLog("Applying final worker setup...");
           await input.onReady();
         }
 
         setSandboxStep("connect", { status: "done", detail: null });
         setSandboxStage("Sandbox ready.");
         setCreateWorkspaceOpen(false);
+        await openEmptySession(activeWorkspaceRoot().trim() || resolvedFolder);
         clearSandboxCreateProgress();
         return true;
       } finally {
@@ -2143,6 +2178,7 @@ export function createWorkspaceStore(options: {
       if (activeId) {
         updateWorkspaceConnectionState(activeId, { status: "connected", message: null });
       }
+      await openEmptySession(activeWorkspaceRoot().trim() || finalDirectory);
       return true;
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
@@ -2637,12 +2673,11 @@ export function createWorkspaceStore(options: {
       syncActiveWorkspaceId(ws.activeId);
       setCreateWorkspaceOpen(false);
       setCreateRemoteWorkspaceOpen(false);
-      options.setTab("scheduled");
-      options.setView("dashboard");
       markOnboardingComplete();
 
-      if (ws.activeId) {
-        await activateWorkspace(ws.activeId);
+      const opened = await activateFreshLocalWorkspace(ws.activeId ?? null, resolvedFolder);
+      if (!opened) {
+        return;
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
