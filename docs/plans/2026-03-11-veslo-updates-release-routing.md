@@ -134,19 +134,19 @@ git commit -m "feat(release): add public desktop release mirroring"
 
 **Step 1: Write the failing test**
 
-Add or extend the node test so it asserts the public repo can be passed as the `--repo` target for `latest.json` generation and that the workflow references `VESLO_UPDATES_REPO`.
+Add or extend the node test so it asserts the public repo can be passed as the `--repo` target for `latest.json` generation and that the workflow references `RELEASE_UPDATES_REPO`.
 
 **Step 2: Run test to verify it fails**
 
 Run: `node --test scripts/release/public-release-assets.test.mjs`
-Expected: FAIL because the workflow still uploads `latest.json` only to the source repo and does not mirror to `VESLO_UPDATES_REPO`.
+Expected: FAIL because the workflow still uploads `latest.json` only to the source repo and does not mirror to `RELEASE_UPDATES_REPO`.
 
 **Step 3: Write minimal implementation**
 
 Update the workflow to:
 
-- read `VESLO_UPDATES_REPO`
-- authenticate with `VESLO_UPDATES_GH_TOKEN`
+- read `RELEASE_UPDATES_REPO`
+- authenticate with `RELEASE_UPDATES_GH_TOKEN`
 - mirror desktop artifacts after `publish-tauri`
 - generate and upload `latest.json` to the public repo release
 
@@ -181,8 +181,8 @@ Expected: PASS for version alignment; operator documentation still missing the p
 
 Document:
 
-- `VESLO_UPDATES_REPO=neatechcz/veslo-updates`
-- required secret `VESLO_UPDATES_GH_TOKEN`
+- `RELEASE_UPDATES_REPO=neatechcz/veslo-updates`
+- required secret `RELEASE_UPDATES_GH_TOKEN`
 - release tag `v2026.3.0`
 - validation commands
 

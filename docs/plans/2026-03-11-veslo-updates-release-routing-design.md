@@ -58,10 +58,10 @@ Non-desktop sidecar releases and npm publishing remain in the source repository.
 
 Because the default `GITHUB_TOKEN` cannot write to another repository, the workflow will use explicit public-release configuration:
 
-- repository variable: `VESLO_UPDATES_REPO`
-- repository secret: `VESLO_UPDATES_GH_TOKEN`
+- repository variable: `RELEASE_UPDATES_REPO`
+- repository secret: `RELEASE_UPDATES_GH_TOKEN`
 
-The expected value for `VESLO_UPDATES_REPO` is `neatechcz/veslo-updates`.
+The expected value for `RELEASE_UPDATES_REPO` is `neatechcz/veslo-updates`.
 
 ### 4. Script and Workflow Shape
 

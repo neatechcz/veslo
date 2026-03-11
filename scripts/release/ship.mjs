@@ -13,6 +13,8 @@ import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { DEFAULT_PUBLIC_RELEASE_REPO } from "./public-release-assets.mjs";
+
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const args = process.argv.slice(2);
 
@@ -42,6 +44,11 @@ const run = (cmd, opts = {}) => {
     if (opts.allowFail) return "";
     fail(`Command failed: ${cmd}\n${err.stderr || err.message}`);
   }
+};
+
+const repoFromRemoteUrl = (remoteUrl) => {
+  const match = String(remoteUrl || "").trim().match(/github\.com[:/]([^/]+\/[^/.]+?)(?:\.git)?$/);
+  return match ? match[1] : "";
 };
 
 // ── Step 1: Resolve tag from HEAD ───────────────────────────────────
@@ -78,10 +85,15 @@ success("Pushed dev");
 // ── Step 4: Print workflow URL ──────────────────────────────────────
 heading("GitHub Actions");
 
-const repo = "neatech/veslo";
-const url = `https://github.com/${repo}/actions/workflows/release-macos-aarch64.yml`;
-log(`Workflow: ${url}`);
-log(`Release:  https://github.com/${repo}/releases/tag/${tag}`);
+const sourceRepo =
+  repoFromRemoteUrl(run("git remote get-url origin", { readOnly: true, allowFail: true })) ||
+  "neatechcz/veslo";
+const publicRepo =
+  process.env.RELEASE_UPDATES_REPO || process.env.VESLO_UPDATES_REPO || DEFAULT_PUBLIC_RELEASE_REPO;
+const workflowUrl = `https://github.com/${sourceRepo}/actions/workflows/release-macos-aarch64.yml`;
+log(`Workflow:       ${workflowUrl}`);
+log(`Source release: https://github.com/${sourceRepo}/releases/tag/${tag}`);
+log(`Public release: https://github.com/${publicRepo}/releases/tag/${tag}`);
 
 // ── Step 5: Optionally watch ────────────────────────────────────────
 if (watch && !dryRun) {
@@ -93,12 +105,12 @@ if (watch && !dryRun) {
 
   try {
     const runs = run(
-      `gh run list --repo ${repo} --workflow "Release App" --limit 1 --json databaseId,headBranch,event -q ".[0].databaseId"`,
+      `gh run list --repo ${sourceRepo} --workflow "Release App" --limit 1 --json databaseId,headBranch,event -q ".[0].databaseId"`,
       { readOnly: true }
     );
     if (runs) {
       log(`Run ID: ${runs}`);
-      run(`gh run watch ${runs} --repo ${repo} --exit-status`, { inherit: true });
+      run(`gh run watch ${runs} --repo ${sourceRepo} --exit-status`, { inherit: true });
     } else {
       log("Could not find the workflow run. Check the Actions tab manually.");
     }

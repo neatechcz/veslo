@@ -608,13 +608,53 @@ jobs:
 
           echo "Found bundled versions.json at $manifest_path"
 
-  publish-updater-json:
-    name: Publish consolidated latest.json
+  mirror-public-release:
+    name: Mirror desktop release to public repo
     needs: [resolve-release, verify-release, publish-tauri]
     if: needs.resolve-release.outputs.build_tauri == 'true'
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+      RELEASE_NAME: ${{ needs.resolve-release.outputs.release_name }}
+      RELEASE_BODY: ${{ needs.resolve-release.outputs.release_body }}
+      RELEASE_DRAFT: ${{ needs.resolve-release.outputs.draft }}
+      RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}
+      PUBLIC_RELEASE_REPO: ${{ vars.RELEASE_UPDATES_REPO || vars.VESLO_UPDATES_REPO || 'neatechcz/veslo-updates' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Mirror public desktop assets
+        env:
+          SOURCE_GH_TOKEN: ${{ github.token }}
+          TARGET_GH_TOKEN: ${{ secrets.RELEASE_UPDATES_GH_TOKEN || secrets.VESLO_UPDATES_GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TARGET_GH_TOKEN:-}" ]; then
+            echo "RELEASE_UPDATES_GH_TOKEN is required to publish the public desktop release." >&2
+            exit 1
+          fi
+
+          node scripts/release/mirror-public-release.mjs \
+            --source-repo "$GITHUB_REPOSITORY" \
+            --target-repo "$PUBLIC_RELEASE_REPO" \
+            --tag "$RELEASE_TAG" \
+            --release-name "$RELEASE_NAME" \
+            --release-body "$RELEASE_BODY" \
+            --draft "$RELEASE_DRAFT" \
+            --prerelease "$RELEASE_PRERELEASE"
+
+  publish-updater-json:
+    name: Publish public latest.json
+    needs: [resolve-release, verify-release, mirror-public-release]
+    if: needs.resolve-release.outputs.build_tauri == 'true'
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+      PUBLIC_RELEASE_REPO: ${{ vars.RELEASE_UPDATES_REPO || vars.VESLO_UPDATES_REPO || 'neatechcz/veslo-updates' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -624,22 +664,54 @@ jobs:
 
       - name: Generate latest.json from release assets
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_UPDATES_GH_TOKEN || secrets.VESLO_UPDATES_GH_TOKEN }}
         run: |
           set -euo pipefail
           node scripts/release/generate-latest-json.mjs \
             --tag "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
+            --repo "$PUBLIC_RELEASE_REPO" \
             --output "$RUNNER_TEMP/latest.json"
 
       - name: Upload latest.json
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_UPDATES_GH_TOKEN || secrets.VESLO_UPDATES_GH_TOKEN }}
         run: |
           set -euo pipefail
           gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/latest.json#latest.json" \
-            --repo "$GITHUB_REPOSITORY" \
+            --repo "$PUBLIC_RELEASE_REPO" \
             --clobber
+
+  publish-public-release:
+    name: Publish public desktop release
+    needs:
+      - resolve-release
+      - verify-release
+      - mirror-public-release
+      - publish-updater-json
+    if: |
+      always() &&
+      needs.resolve-release.outputs.build_tauri == 'true' &&
+      needs.resolve-release.result == 'success' &&
+      needs.verify-release.result == 'success' &&
+      needs.mirror-public-release.result == 'success' &&
+      needs.publish-updater-json.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+      RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}
+      PUBLIC_RELEASE_REPO: ${{ vars.RELEASE_UPDATES_REPO || vars.VESLO_UPDATES_REPO || 'neatechcz/veslo-updates' }}
+    steps:
+      - name: Publish public release after assets are ready
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_UPDATES_GH_TOKEN || secrets.VESLO_UPDATES_GH_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ "${RELEASE_PRERELEASE}" = "true" ]; then
+            gh release edit "$RELEASE_TAG" --repo "$PUBLIC_RELEASE_REPO" --draft=false --prerelease
+          else
+            gh release edit "$RELEASE_TAG" --repo "$PUBLIC_RELEASE_REPO" --draft=false --latest
+          fi
 
   release-orchestrator-sidecars:
     name: Build + Upload veslo-orchestrator Sidecars
@@ -946,7 +1018,9 @@ jobs:
       - resolve-release
       - verify-release
       - publish-tauri
+      - mirror-public-release
       - publish-updater-json
+      - publish-public-release
       - release-orchestrator-sidecars
       - publish-npm
     if: |
@@ -955,7 +1029,9 @@ jobs:
       needs.resolve-release.result == 'success' &&
       needs.verify-release.result == 'success' &&
       (needs.publish-tauri.result == 'success' || needs.publish-tauri.result == 'skipped') &&
+      (needs.mirror-public-release.result == 'success' || needs.mirror-public-release.result == 'skipped') &&
       (needs.publish-updater-json.result == 'success' || needs.publish-updater-json.result == 'skipped') &&
+      (needs.publish-public-release.result == 'success' || needs.publish-public-release.result == 'skipped') &&
       (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped')
     runs-on: ubuntu-latest
