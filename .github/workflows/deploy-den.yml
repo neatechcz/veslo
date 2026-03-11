@@ -204,6 +204,18 @@ jobs:
 
           _, service = request("GET", f"/services/{service_id}")
           service_url = (service.get("serviceDetails") or {}).get("url")
+          print(
+              "Render service source:",
+              json.dumps(
+                  {
+                      "name": service.get("name"),
+                      "repo": service.get("repo"),
+                      "branch": service.get("branch"),
+                      "rootDir": service.get("rootDir"),
+                      "url": service_url,
+                  }
+              ),
+          )
           if not service_url:
               raise RuntimeError(f"Render service {service_id} has no public URL")
 
