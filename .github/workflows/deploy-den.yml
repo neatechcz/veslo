@@ -318,6 +318,18 @@ jobs:
               if latest and latest.get("id") == deploy_id and latest.get("status") in terminal:
                   status = latest.get("status")
                   if status != "live":
+                      _, deploy_detail = request("GET", f"/services/{service_id}/deploys/{deploy_id}")
+                      print(
+                          "Render deploy failure detail:",
+                          json.dumps(
+                              {
+                                  "deploy": deploy_detail.get("deploy"),
+                                  "commit": deploy_detail.get("commit"),
+                                  "trigger": deploy_detail.get("trigger"),
+                                  "imageRef": deploy_detail.get("imageRef"),
+                              }
+                          )[:2000],
+                      )
                       raise RuntimeError(f"Render deploy {deploy_id} ended with {status}")
                   print(f"Render deploy {deploy_id} is live at {service_url}")
                   break
