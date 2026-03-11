@@ -99,7 +99,6 @@ import type { SidebarSectionState } from "../components/session/sidebar";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
 import ArtifactsPanel from "../components/session/artifacts-panel";
-import InboxPanel from "../components/session/inbox-panel";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -233,7 +232,7 @@ export type SessionViewProps = {
   hasEarlierMessages: boolean;
   loadingEarlierMessages: boolean;
   loadEarlierMessages: (sessionId: string) => Promise<void>;
-  deleteSession: (sessionId: string) => Promise<void>;
+  deleteSession: (sessionId: string, workspaceId?: string) => Promise<void>;
 };
 
 type SharedSkillItem = {
@@ -295,7 +294,6 @@ const interpolate = (template: string, values: Record<string, string | number>) 
     template,
   );
 
-
 type CommandPaletteMode = "root" | "sessions" | "thinking";
 
 const COMMAND_PALETTE_THINKING_OPTIONS = [
@@ -335,6 +333,10 @@ export default function SessionView(props: SessionViewProps) {
   const [sessionMenuOpen, setSessionMenuOpen] = createSignal(false);
   const [deleteSessionOpen, setDeleteSessionOpen] = createSignal(false);
   const [deleteSessionBusy, setDeleteSessionBusy] = createSignal(false);
+  const [deleteSessionTarget, setDeleteSessionTarget] = createSignal<{
+    sessionId: string;
+    workspaceId: string | null;
+  } | null>(null);
   const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
   const [agentPickerBusy, setAgentPickerBusy] = createSignal(false);
   const [agentPickerReady, setAgentPickerReady] = createSignal(false);
@@ -2403,15 +2405,19 @@ export default function SessionView(props: SessionViewProps) {
     return () => window.clearTimeout(id);
   });
 
-  const selectedSessionTitle = createMemo(() => {
-    const id = props.selectedSessionId;
+  const sessionTitleById = (sessionId: string | null | undefined) => {
+    const id = (sessionId ?? "").trim();
     if (!id) return "";
     for (const group of props.workspaceSessionGroups) {
       const match = group.sessions.find((session) => session.id === id);
       if (match) return match.title ?? "";
     }
     return "";
-  });
+  };
+
+  const selectedSessionTitle = createMemo(() => sessionTitleById(props.selectedSessionId));
+  const deleteSessionTargetId = createMemo(() => deleteSessionTarget()?.sessionId ?? props.selectedSessionId ?? null);
+  const deleteSessionTargetTitle = createMemo(() => sessionTitleById(deleteSessionTargetId()));
 
   const renameCanSave = createMemo(() => {
     if (renameBusy()) return false;
@@ -2469,31 +2475,48 @@ export default function SessionView(props: SessionViewProps) {
     }
   };
 
-  const openDeleteSessionModal = () => {
+  const openDeleteSessionModalForTarget = (workspaceId: string | null | undefined, sessionId: string | null | undefined) => {
     setSessionMenuOpen(false);
-    if (!props.selectedSessionId) {
+    const id = (sessionId ?? "").trim();
+    if (!id) {
       setToastMessage(tr("session.no_session_selected_toast"));
       return;
     }
+    const targetWorkspaceId = (workspaceId ?? "").trim() || null;
+    setDeleteSessionTarget({ sessionId: id, workspaceId: targetWorkspaceId });
     setDeleteSessionOpen(true);
+  };
+
+  const openDeleteSessionModal = () => {
+    openDeleteSessionModalForTarget(props.activeWorkspaceId, props.selectedSessionId);
+  };
+
+  const openDeleteSessionModalForSession = (workspaceId: string, sessionId: string) => {
+    openDeleteSessionModalForTarget(workspaceId, sessionId);
   };
 
   const closeDeleteSessionModal = () => {
     if (deleteSessionBusy()) return;
     setDeleteSessionOpen(false);
+    setDeleteSessionTarget(null);
   };
 
   const confirmDeleteSession = async () => {
     if (deleteSessionBusy()) return;
-    const sessionId = props.selectedSessionId;
+    const sessionId = (deleteSessionTarget()?.sessionId ?? props.selectedSessionId ?? "").trim();
     if (!sessionId) return;
+    const workspaceId = deleteSessionTarget()?.workspaceId ?? props.activeWorkspaceId;
+    const wasSelectedSession = props.selectedSessionId === sessionId;
     setDeleteSessionBusy(true);
     try {
-      await props.deleteSession(sessionId);
+      await props.deleteSession(sessionId, workspaceId || undefined);
       setDeleteSessionOpen(false);
+      setDeleteSessionTarget(null);
       setToastMessage(tr("session.delete_success"));
-      // Route away from the deleted session id.
-      props.setView("session");
+      if (wasSelectedSession) {
+        // Route away from the deleted session id.
+        props.setView("session");
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : props.safeStringify(error);
       setToastMessage(message || tr("session.failed_delete"));
@@ -3062,47 +3085,6 @@ export default function SessionView(props: SessionViewProps) {
 
   const isSandboxWorkspace = createMemo(() => Boolean((props.activeWorkspaceDisplay as any)?.sandboxContainerName?.trim()));
 
-  const uploadInboxFiles = async (
-    files: File[],
-    options?: { notify?: boolean },
-  ): Promise<Array<{ name: string; path: string }>> => {
-    const notify = options?.notify ?? true;
-    const client = props.vesloServerClient;
-    const workspaceId = props.vesloServerWorkspaceId?.trim() ?? "";
-    if (!client || !workspaceId) {
-      if (notify) {
-        setToastMessage("Connect to the Veslo server to upload inbox files.");
-      }
-      return [];
-    }
-    if (!files.length) return [];
-
-    const label = files.length === 1 ? files[0]?.name ?? "file" : `${files.length} files`;
-    if (notify) {
-      setToastMessage(`Uploading ${label} to inbox...`);
-    }
-
-    try {
-      const uploaded: Array<{ name: string; path: string }> = [];
-      for (const file of files) {
-        const result = await client.uploadInbox(workspaceId, file);
-        const path = result.path?.trim() || file.name;
-        uploaded.push({ name: file.name || path, path });
-      }
-      if (notify) {
-        const summary = uploaded.map((file) => file.name).filter(Boolean).join(", ");
-        setToastMessage(summary ? `Uploaded to inbox: ${summary}` : "Uploaded to inbox.");
-      }
-      return uploaded;
-    } catch (error) {
-      if (notify) {
-        const message = error instanceof Error ? error.message : "Inbox upload failed";
-        setToastMessage(message);
-      }
-      return [];
-    }
-  };
-
   const handleDraftChange = (draft: ComposerDraft) => {
     props.setPrompt(draft.text);
   };
@@ -3470,6 +3452,7 @@ export default function SessionView(props: SessionViewProps) {
             isPrivateWorkspacePath={props.isPrivateWorkspacePath}
             onActivateWorkspace={props.activateWorkspace}
             onOpenSession={openSessionFromList}
+            onDeleteSession={openDeleteSessionModalForSession}
             onCreateTaskInWorkspace={createTaskInWorkspace}
             onOpenRenameWorkspace={props.openRenameWorkspace}
             onShareWorkspace={(workspaceId) => setShareWorkspaceId(workspaceId)}
@@ -3994,7 +3977,8 @@ export default function SessionView(props: SessionViewProps) {
           listCommands={props.listCommands}
           isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
           isSandboxWorkspace={isSandboxWorkspace()}
-          onUploadInboxFiles={uploadInboxFiles}
+          canChooseSessionFolder={props.canChooseSessionFolder}
+          onChooseSessionFolder={chooseFolderForSession}
           attachmentsEnabled={attachmentsEnabled()}
           attachmentsDisabledReason={attachmentsDisabledReason()}
         />
@@ -4104,13 +4088,6 @@ export default function SessionView(props: SessionViewProps) {
             </button>
           </Show>
           </div>
-
-          <InboxPanel
-            id="sidebar-inbox"
-            client={props.vesloServerClient}
-            workspaceId={props.vesloServerWorkspaceId}
-            onToast={(message) => setToastMessage(message)}
-          />
 
           <ArtifactsPanel
             id="sidebar-artifacts"
@@ -4246,8 +4223,8 @@ export default function SessionView(props: SessionViewProps) {
         open={deleteSessionOpen()}
         title={tr("session.delete_session_title")}
         message={
-          selectedSessionTitle().trim()
-            ? formatTr("session.delete_session_named", { title: selectedSessionTitle().trim() })
+          deleteSessionTargetTitle().trim()
+            ? formatTr("session.delete_session_named", { title: deleteSessionTargetTitle().trim() })
             : tr("session.delete_session_unnamed")
         }
         confirmLabel={deleteSessionBusy() ? tr("session.deleting") : tr("session.delete_session_action")}

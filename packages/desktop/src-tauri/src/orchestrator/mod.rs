@@ -147,10 +147,16 @@ pub fn read_orchestrator_state(data_dir: &str) -> Option<OrchestratorStateFile> 
 }
 
 fn fetch_json<T: DeserializeOwned>(url: &str) -> Result<T, String> {
-    let response = ureq::get(url)
+    const ORCHESTRATOR_FETCH_TIMEOUT_MS: u64 = 1200;
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_millis(ORCHESTRATOR_FETCH_TIMEOUT_MS))
+        .build();
+
+    let response = agent
+        .get(url)
         .set("Accept", "application/json")
         .call()
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|e| format!("Failed to fetch {url}: {e}"))?;
     response
         .into_json::<T>()
         .map_err(|e| format!("Failed to parse response: {e}"))

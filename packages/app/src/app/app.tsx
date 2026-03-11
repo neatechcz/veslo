@@ -1877,7 +1877,7 @@ export default function App() {
     await refreshSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
   }
 
-  async function deleteSessionById(sessionID: string) {
+  async function deleteSessionById(sessionID: string, workspaceID?: string) {
     const trimmed = sessionID.trim();
     if (!trimmed) return;
     const c = client();
@@ -1885,7 +1885,15 @@ export default function App() {
       throw new Error("Not connected to a server");
     }
 
-    const root = workspaceStore.activeWorkspaceRoot().trim();
+    const workspaceId = (workspaceID ?? "").trim();
+    const workspace = workspaceId
+      ? workspaceStore.workspaces().find((item) => item.id === workspaceId)
+      : null;
+    const root = workspace
+      ? workspace.workspaceType === "local"
+        ? workspace.path?.trim() ?? ""
+        : workspace.directory?.trim() ?? ""
+      : workspaceStore.activeWorkspaceRoot().trim();
     const params = root ? { sessionID: trimmed, directory: root } : { sessionID: trimmed };
     unwrap(await c.session.delete(params));
 
@@ -1894,10 +1902,10 @@ export default function App() {
     // here races with SSE and can wipe unrelated sessions from the store.
     persistSessionDirectoryOverride(trimmed, null);
     setSessions(sessions().filter((s) => s.id !== trimmed));
-    const activeWsId = workspaceStore.activeWorkspaceId();
+    const sidebarWorkspaceId = workspace?.id ?? workspaceStore.activeWorkspaceId();
     setSidebarSessionsByWorkspaceId((prev) => ({
       ...prev,
-      [activeWsId]: (prev[activeWsId] ?? []).filter((s) => s.id !== trimmed),
+      [sidebarWorkspaceId]: (prev[sidebarWorkspaceId] ?? []).filter((s) => s.id !== trimmed),
     }));
 
     // If we're currently routed to the deleted session, navigate away immediately.
@@ -6401,7 +6409,9 @@ export default function App() {
     setTab,
     setSettingsTab,
     activeWorkspaceDisplay: activeWorkspaceDisplay(),
-    activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
+    activeWorkspaceRoot:
+      resolveSessionDirectory(selectedSession() ?? { id: "", directory: "" }) ||
+      workspaceStore.activeWorkspaceRoot().trim(),
     workspaces: workspaceStore.workspaces(),
     activeWorkspaceId: workspaceStore.activeWorkspaceId(),
     connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),

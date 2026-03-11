@@ -17,6 +17,7 @@ use crate::orchestrator::{self, OrchestratorSpawnOptions};
 use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
 use crate::utils::truncate_output;
 use serde_json::json;
+use std::time::Duration;
 use tauri_plugin_shell::process::CommandEvent;
 use uuid::Uuid;
 
@@ -57,71 +58,171 @@ struct OutputState {
     exit_code: Option<i32>,
 }
 
+fn is_opencode_reachable(base_url: &str) -> bool {
+    const HEALTH_TIMEOUT_MS: u64 = 1200;
+    let trimmed = base_url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_millis(HEALTH_TIMEOUT_MS))
+        .build();
+
+    for path in ["/global/health", "/health"] {
+        let url = format!("{trimmed}{path}");
+        let request = agent.get(&url).set("Accept", "application/json");
+
+        match request.call() {
+            Ok(response) => {
+                if path == "/global/health" {
+                    match response.into_json::<serde_json::Value>() {
+                        Ok(payload) => {
+                            if payload
+                                .get("healthy")
+                                .and_then(|value| value.as_bool())
+                                .unwrap_or(true)
+                            {
+                                return true;
+                            }
+                        }
+                        Err(_) => return true,
+                    }
+                } else {
+                    return true;
+                }
+            }
+            Err(ureq::Error::Status(401, _)) | Err(ureq::Error::Status(403, _)) => {
+                // Auth failures still prove the server is up.
+                return true;
+            }
+            Err(_) => continue,
+        }
+    }
+
+    false
+}
+
 #[tauri::command]
 pub fn engine_info(
     manager: State<EngineManager>,
     orchestrator_manager: State<OrchestratorManager>,
 ) -> EngineInfo {
-    let mut state = manager.inner.lock().expect("engine mutex poisoned");
-    if state.runtime == EngineRuntime::Orchestrator {
-        let data_dir = orchestrator_manager
-            .inner
-            .lock()
-            .ok()
-            .and_then(|state| state.data_dir.clone())
-            .unwrap_or_else(orchestrator::resolve_orchestrator_data_dir);
-        let last_stdout = orchestrator_manager
-            .inner
-            .lock()
-            .ok()
-            .and_then(|state| state.last_stdout.clone());
-        let last_stderr = orchestrator_manager
-            .inner
-            .lock()
-            .ok()
-            .and_then(|state| state.last_stderr.clone());
-        let status = orchestrator::resolve_orchestrator_status(&data_dir, last_stderr.clone());
-        let opencode = status.opencode.clone();
-        let base_url = opencode
-            .as_ref()
-            .map(|entry| format!("http://127.0.0.1:{}", entry.port));
-        let project_dir = status
-            .active_id
-            .as_ref()
-            .and_then(|active| status.workspaces.iter().find(|ws| &ws.id == active))
-            .map(|ws| ws.path.clone())
-            .or_else(|| state.project_dir.clone());
+    let (
+        direct_snapshot,
+        runtime,
+        state_project_dir,
+        state_opencode_username,
+        state_opencode_password,
+    ) = {
+        let mut state = manager.inner.lock().expect("engine mutex poisoned");
+        let direct_snapshot = EngineManager::snapshot_locked(&mut state);
+        if state.runtime != EngineRuntime::Orchestrator && direct_snapshot.running {
+            return direct_snapshot;
+        }
+        (
+            direct_snapshot,
+            state.runtime.clone(),
+            state.project_dir.clone(),
+            state.opencode_username.clone(),
+            state.opencode_password.clone(),
+        )
+    };
 
-        // The orchestrator can keep running across app relaunches. In that case, the in-memory
-        // EngineManager state (including opencode basic auth) is lost. Persist a small
-        // auth snapshot next to veslo-orchestrator-state.json so the UI can reconnect.
-        let auth_snapshot = orchestrator::read_orchestrator_auth(&data_dir);
-        let opencode_username = state.opencode_username.clone().or_else(|| {
-            auth_snapshot
-                .as_ref()
-                .and_then(|auth| auth.opencode_username.clone())
-        });
-        let opencode_password = state.opencode_password.clone().or_else(|| {
-            auth_snapshot
-                .as_ref()
-                .and_then(|auth| auth.opencode_password.clone())
-        });
-        let project_dir = project_dir.or_else(|| auth_snapshot.and_then(|auth| auth.project_dir));
-        return EngineInfo {
-            running: status.running,
-            runtime: state.runtime.clone(),
-            base_url,
-            project_dir,
-            hostname: Some("127.0.0.1".to_string()),
-            port: opencode.as_ref().map(|entry| entry.port),
-            opencode_username,
-            opencode_password,
-            pid: opencode.as_ref().map(|entry| entry.pid),
-            last_stdout,
-            last_stderr,
+    let (data_dir, orchestrator_stdout, orchestrator_stderr) =
+        if let Ok(orchestrator_state) = orchestrator_manager.inner.lock() {
+            (
+                orchestrator_state
+                    .data_dir
+                    .clone()
+                    .unwrap_or_else(orchestrator::resolve_orchestrator_data_dir),
+                orchestrator_state.last_stdout.clone(),
+                orchestrator_state.last_stderr.clone(),
+            )
+        } else {
+            (
+                orchestrator::resolve_orchestrator_data_dir(),
+                None,
+                None,
+            )
         };
+
+    let status = orchestrator::resolve_orchestrator_status(&data_dir, orchestrator_stderr.clone());
+    let should_use_orchestrator = status.running || runtime == EngineRuntime::Orchestrator;
+    if !should_use_orchestrator {
+        return direct_snapshot;
     }
-    EngineManager::snapshot_locked(&mut state)
+
+    // The orchestrator can keep running across app relaunches. In that case, the in-memory
+    // EngineManager state (including opencode basic auth) is lost. Persist a small
+    // auth snapshot next to veslo-orchestrator-state.json so the UI can reconnect.
+    let auth_snapshot = orchestrator::read_orchestrator_auth(&data_dir);
+    let opencode_username = state_opencode_username.or_else(|| {
+        auth_snapshot
+            .as_ref()
+            .and_then(|auth| auth.opencode_username.clone())
+    });
+    let opencode_password = state_opencode_password.or_else(|| {
+        auth_snapshot
+            .as_ref()
+            .and_then(|auth| auth.opencode_password.clone())
+    });
+    let auth_project_dir = auth_snapshot
+        .as_ref()
+        .and_then(|auth| auth.project_dir.clone());
+    let opencode = status.opencode.clone();
+    let base_url = opencode
+        .as_ref()
+        .map(|entry| format!("http://127.0.0.1:{}", entry.port));
+    let opencode_reachable = base_url
+        .as_deref()
+        .map(is_opencode_reachable)
+        .unwrap_or(false);
+    let running = status.running && opencode_reachable;
+    let project_dir = status
+        .active_id
+        .as_ref()
+        .and_then(|active| status.workspaces.iter().find(|ws| &ws.id == active))
+        .map(|ws| ws.path.clone())
+        .or_else(|| state_project_dir.clone())
+        .or_else(|| auth_project_dir);
+
+    let effective_base_url = if running { base_url.clone() } else { None };
+    let effective_port = if running {
+        opencode.as_ref().map(|entry| entry.port)
+    } else {
+        None
+    };
+    let effective_pid = if running {
+        opencode.as_ref().map(|entry| entry.pid)
+    } else {
+        None
+    };
+
+    if running {
+        let mut state = manager.inner.lock().expect("engine mutex poisoned");
+        state.runtime = EngineRuntime::Orchestrator;
+        state.project_dir = project_dir.clone();
+        state.base_url = effective_base_url.clone();
+        state.hostname = Some("127.0.0.1".to_string());
+        state.port = effective_port;
+        state.opencode_username = opencode_username.clone();
+        state.opencode_password = opencode_password.clone();
+    }
+
+    EngineInfo {
+        running,
+        runtime: EngineRuntime::Orchestrator,
+        base_url: effective_base_url,
+        project_dir,
+        hostname: Some("127.0.0.1".to_string()),
+        port: effective_port,
+        opencode_username,
+        opencode_password,
+        pid: effective_pid,
+        last_stdout: orchestrator_stdout,
+        last_stderr: orchestrator_stderr,
+    }
 }
 
 #[tauri::command]

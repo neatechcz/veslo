@@ -52,10 +52,8 @@ type ComposerProps = {
   searchFiles: (query: string) => Promise<string[]>;
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
-  onUploadInboxFiles?: (
-    files: File[],
-    options?: { notify?: boolean },
-  ) => void | Promise<Array<{ name: string; path: string }> | void>;
+  canChooseSessionFolder: boolean;
+  onChooseSessionFolder: () => Promise<void> | void;
   attachmentsEnabled: boolean;
   attachmentsDisabledReason: string | null;
   listCommands: () => Promise<SlashCommandOption[]>;
@@ -121,15 +119,6 @@ const parseClipboardLinks = (clipboard: DataTransfer) => {
     }
   }
   return links;
-};
-
-const inboxPathToLink = (path: string) => {
-  const normalized = path.trim().replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/^\/+/, "");
-  if (!normalized) return "";
-  if (normalized.startsWith(".opencode/veslo/inbox/")) {
-    return normalized;
-  }
-  return `.opencode/veslo/inbox/${normalized}`;
 };
 
 const formatLinks = (links: Array<{ name: string; target: string }>) =>
@@ -450,7 +439,6 @@ export default function Composer(props: ComposerProps) {
   const translate = (key: string) => t(key, currentLocale());
   let editorRef: HTMLDivElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
-  let inboxFileInputRef: HTMLInputElement | undefined;
   let variantPickerRef: HTMLDivElement | undefined;
   let mentionSearchRun = 0;
   let suppressPromptSync = false;
@@ -480,7 +468,6 @@ export default function Composer(props: ComposerProps) {
   const [historyIndex, setHistoryIndex] = createSignal({ prompt: -1, shell: -1 });
   const [history, setHistory] = createSignal({ prompt: [] as ComposerDraft[], shell: [] as ComposerDraft[] });
   const [variantMenuOpen, setVariantMenuOpen] = createSignal(false);
-  const [showInboxUploadAction, setShowInboxUploadAction] = createSignal(false);
   const activeVariant = createMemo(() => props.modelVariant ?? "none");
   const attachmentsDisabled = createMemo(() => !props.attachmentsEnabled);
   const hasDraftContent = createMemo(() => draftText().trim().length > 0 || attachments().length > 0);
@@ -1198,34 +1185,6 @@ export default function Composer(props: ComposerProps) {
         target: clipboardLinks[index] || createObjectUrl(file),
       }));
 
-    if (props.onUploadInboxFiles) {
-      const uploaded = await Promise.resolve(props.onUploadInboxFiles(files, { notify: false }));
-      if (Array.isArray(uploaded) && uploaded.length) {
-        const links = uploaded
-          .map((item, index) => {
-            const target = inboxPathToLink(item.path ?? "");
-            const fallbackName = files[index]?.name || `file-${index + 1}`;
-            const name = item.name?.trim() || fallbackName;
-            return { name, target };
-          })
-          .filter((entry) => entry.target);
-        const text = formatLinks(links);
-        if (text) {
-          insertPlainTextAtSelection(text);
-          updateMentionQuery();
-          updateSlashQuery();
-          emitDraftChange();
-          props.onToast(
-            links.length === 1
-              ? translate("session.uploaded_inbox_single").replace("{name}", links[0].name)
-              : translate("session.uploaded_inbox_multiple").replace("{count}", String(links.length)),
-          );
-          return;
-        }
-      }
-      props.onToast(translate("session.upload_inbox_fallback_links"));
-    }
-
     const text = formatLinks(fallbackLinks());
     if (!text) {
       props.onToast(translate("session.unsupported_attachment_type"));
@@ -1269,7 +1228,6 @@ export default function Composer(props: ComposerProps) {
       const hasAbsoluteWindows = /(^|\s)[a-zA-Z]:\\/.test(trimmedForCheck);
       if (hasFileUrl || hasAbsolutePosix || hasAbsoluteWindows) {
         props.onToast(translate("session.remote_worker_local_paths_warning"));
-        setShowInboxUploadAction(Boolean(props.onUploadInboxFiles));
       }
     }
 
@@ -1291,12 +1249,6 @@ export default function Composer(props: ComposerProps) {
     updateSlashQuery();
     emitDraftChange();
   };
-
-  createEffect(() => {
-    if (!props.toast) {
-      setShowInboxUploadAction(false);
-    }
-  });
 
   const handleDrop = (event: DragEvent) => {
     if (!event.dataTransfer) return;
@@ -1707,27 +1659,32 @@ export default function Composer(props: ComposerProps) {
             <div class="relative min-h-[120px]">
               <Show when={props.toast}>
                 <div class="absolute bottom-full right-0 mb-2 z-30 rounded-xl border border-gray-6 bg-gray-1 px-3 py-2 text-xs text-gray-11 shadow-lg backdrop-blur-md">
-                  <div class="flex items-center gap-3">
-                    <span>{props.toast}</span>
-                    <Show when={showInboxUploadAction() && props.onUploadInboxFiles}>
-                      <button
-                        type="button"
-                        class="shrink-0 rounded-md border border-gray-6 bg-gray-2 px-2 py-1 text-[10px] text-gray-11 hover:bg-gray-3"
-                        onClick={() => inboxFileInputRef?.click()}
-                      >
-                        {translate("session.upload_to_inbox")}
-                      </button>
-                    </Show>
-                  </div>
+                  <span>{props.toast}</span>
                 </div>
               </Show>
 
               <div class="flex flex-col gap-2">
                 <div class="flex-1 min-w-0">
-                  <div class="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-9">
-                    {props.isRemoteWorkspace ? translate("session.remote_workspace_label") : translate("session.local_workspace_label")}
-                  </div>
-
+                  <Show
+                    when={props.canChooseSessionFolder}
+                    fallback={
+                      <div class="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-9">
+                        {props.isRemoteWorkspace ? translate("session.remote_workspace_label") : translate("session.local_workspace_label")}
+                      </div>
+                    }
+                  >
+                    <div class="mb-2">
+                      <button
+                        type="button"
+                        class="inline-flex items-center rounded-md border border-gray-6 bg-gray-2 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-11"
+                        onClick={() => {
+                          void props.onChooseSessionFolder();
+                        }}
+                      >
+                        {translate("session.choose_folder")}
+                      </button>
+                    </div>
+                  </Show>
                   <div class="relative">
                     <Show when={!hasDraftContent()}>
                       <div class="absolute left-0 top-0 text-gray-9 text-[15px] leading-relaxed pointer-events-none">
@@ -1748,20 +1705,6 @@ export default function Composer(props: ComposerProps) {
 
                     <div class="mt-3 flex items-center justify-between px-2 pb-2">
                       <div class="flex items-center gap-2">
-                        <input
-                          ref={inboxFileInputRef}
-                          type="file"
-                          multiple
-                          class="hidden"
-                          onChange={(event: Event) => {
-                            const target = event.currentTarget as HTMLInputElement;
-                            const files = Array.from(target.files ?? []);
-                            if (files.length && props.onUploadInboxFiles) {
-                              void Promise.resolve(props.onUploadInboxFiles(files));
-                            }
-                            target.value = "";
-                          }}
-                        />
                         <input
                           ref={fileInputRef}
                           type="file"

@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { Folder, HeartPulse, List, Loader2, MoreHorizontal, Plus } from "lucide-solid";
+import { Folder, HeartPulse, List, Loader2, MoreHorizontal, Plus, Trash2 } from "lucide-solid";
 
 import type { VesloSoulStatus } from "../../lib/veslo-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
@@ -32,6 +32,7 @@ type Props = {
   isPrivateWorkspacePath?: (folder: string | null | undefined) => boolean;
   onActivateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
+  onDeleteSession?: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
@@ -415,10 +416,10 @@ export default function WorkspaceSessionList(props: Props) {
                 const isConnectionActionBusy = () => isConnectionActionBusyFor(workspace().id);
 
                 return (
-                  <div class="relative group">
+                  <div class="relative group/session-row">
                     <button
                       type="button"
-                      class={`w-full flex items-center min-h-11 px-3 rounded-xl text-left transition-colors pr-11 ${
+                      class={`w-full flex items-center min-h-11 px-3 rounded-xl text-left transition-colors pr-20 ${
                         isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
                       }`}
                       onClick={() => props.onOpenSession(workspace().id, session().id)}
@@ -470,7 +471,21 @@ export default function WorkspaceSessionList(props: Props) {
                       </span>
                     </button>
 
-                    <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                    <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100 transition-opacity">
+                      <Show when={props.onDeleteSession}>
+                        <button
+                          type="button"
+                          class="p-1 rounded-md text-gray-9 hover:text-red-11 hover:bg-red-3/60"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            props.onDeleteSession?.(workspace().id, session().id);
+                          }}
+                          aria-label={tr("session.delete_session_action")}
+                          title={tr("session.delete_session_action")}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </Show>
                       <button
                         type="button"
                         class="p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"
@@ -599,28 +614,47 @@ export default function WorkspaceSessionList(props: Props) {
                             (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
 
                           return (
-                            <button
-                              type="button"
-                              class={`w-full flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors ${
-                                isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
-                              }`}
-                              onClick={() => props.onOpenSession(workspace().id, session().id)}
-                            >
-                              <div class="min-w-0 flex-1">
-                                <div class="flex items-center gap-1.5 min-w-0">
-                                  <Show when={isSessionActive()}>
-                                    <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
-                                  </Show>
-                                  <span class="text-[13px] text-gray-11 truncate font-medium">
-                                    {session().title}
-                                  </span>
+                            <div class="relative group/session-row">
+                              <button
+                                type="button"
+                                class={`w-full flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors pr-10 ${
+                                  isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
+                                }`}
+                                onClick={() => props.onOpenSession(workspace().id, session().id)}
+                              >
+                                <div class="min-w-0 flex-1">
+                                  <div class="flex items-center gap-1.5 min-w-0">
+                                    <Show when={isSessionActive()}>
+                                      <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
+                                    </Show>
+                                    <span class="text-[13px] text-gray-11 truncate font-medium">
+                                      {session().title}
+                                    </span>
+                                  </div>
                                 </div>
-                              </div>
 
-                              <span class="text-[11px] text-gray-9 whitespace-nowrap">
-                                {formatRelativeTime(displayTimestamp(session()))}
-                              </span>
-                            </button>
+                                <span class="text-[11px] text-gray-9 whitespace-nowrap">
+                                  {formatRelativeTime(displayTimestamp(session()))}
+                                </span>
+                              </button>
+
+                              <Show when={props.onDeleteSession}>
+                                <div class="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100 transition-opacity">
+                                  <button
+                                    type="button"
+                                    class="p-1 rounded-md text-gray-9 hover:text-red-11 hover:bg-red-3/60"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      props.onDeleteSession?.(workspace().id, session().id);
+                                    }}
+                                    aria-label={tr("session.delete_session_action")}
+                                    title={tr("session.delete_session_action")}
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </Show>
+                            </div>
                           );
                         }}
                       </For>

@@ -44,7 +44,12 @@ const isWorkspaceRelativeFilePath = (value: string) => {
 
   const segments = normalized.split("/");
   if (!segments.length) return false;
-  return segments.every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+  if (!segments.every((segment) => segment.length > 0 && segment !== "." && segment !== "..")) return false;
+
+  // Reject purely numeric paths (e.g. "536/38") — they are not file paths
+  if (segments.every((segment) => /^\d+$/.test(segment))) return false;
+
+  return true;
 };
 
 const isRelativeFilePath = (value: string) => {
@@ -71,7 +76,12 @@ const isBareRelativeFilePath = (value: string) => {
   const extension = value.split(".").pop() ?? "";
   if (!/[A-Za-z]/.test(extension)) return false;
 
-  const dotCount = (value.match(/\./g) ?? []).length;
+  const allParts = value.split(".");
+
+  // Reject abbreviations where every segment is 1–2 alphabetic chars (e.g. "s.r.o", "a.s")
+  if (allParts.every((part) => /^[A-Za-z]{1,2}$/.test(part))) return false;
+
+  const dotCount = allParts.length - 1;
   if (dotCount === 1 && !value.includes("_") && !value.includes("-")) {
     const [name, tld] = value.split(".");
     if (/^[A-Za-z]{2,24}$/.test(name ?? "") && /^[A-Za-z]{2,10}$/.test(tld ?? "")) {
@@ -237,6 +247,16 @@ export const renderInlineTextWithLinks = (text: string) =>
       return `<a href="${escapeHtml(token.href)}" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 text-dls-accent hover:text-[var(--dls-accent-hover)]">${escapeHtml(token.value)}</a>`;
     })
     .join("");
+
+export const renderCodeSpanWithLink = (text: string, inlineCodeClass: string) => {
+  const link = parseLinkFromToken(text);
+  const codeHtml = `<code class="${inlineCodeClass}">${escapeHtml(text)}</code>`;
+  if (!link || link.type !== "file" || link.value !== text) {
+    return codeHtml;
+  }
+
+  return `<a href="${escapeHtml(link.href)}" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 text-dls-accent hover:text-[var(--dls-accent-hover)]">${codeHtml}</a>`;
+};
 
 const normalizeRelativePath = (relativePath: string, workspaceRoot: string) => {
   const root = workspaceRoot.trim().replace(/\\/g, "/").replace(/\/+$/g, "");

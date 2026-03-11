@@ -3,6 +3,7 @@ import { openSync } from "node:fs";
 import { access, mkdir } from "node:fs/promises";
 import { createServer } from "node:net";
 import { randomUUID } from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 
 const cwd = process.cwd();
@@ -105,8 +106,13 @@ const vesloPort = await resolvePort(process.env.VESLO_PORT, "127.0.0.1");
 const webPort = await resolvePort(process.env.VESLO_WEB_PORT, "127.0.0.1");
 const vesloToken = process.env.VESLO_TOKEN ?? randomUUID();
 const vesloHostToken = process.env.VESLO_HOST_TOKEN ?? randomUUID();
+const defaultHeadlessDataDir = path.join(os.homedir(), ".veslo", "veslo-orchestrator-web");
+const headlessDataDir =
+  process.env.VESLO_DATA_DIR ??
+  process.env.VESLO_DEV_HEADLESS_DATA_DIR ??
+  defaultHeadlessDataDir;
 const vesloServerBin = path.join(cwd, "packages/server/dist/bin/veslo-server");
-const opencodeRouterBin = path.join(cwd, "packages/opencode-router/dist/bin/opencode-router");
+const opencodeRouterBin = path.join(cwd, "packages/opencode-router/dist/bin/veslo-code-router");
 
 const ensureVesloServer = async () => {
   try {
@@ -139,15 +145,15 @@ const ensureOpencodeRouter = async () => {
     if (!autoBuildEnabled) {
       logLine(`[dev:headless-web] Missing opencode-router binary at ${opencodeRouterBin}`);
       logLine("[dev:headless-web] Auto-build disabled (VESLO_DEV_HEADLESS_WEB_AUTOBUILD=0)");
-      logLine("[dev:headless-web] Run: pnpm --filter opencode-router build:bin");
+      logLine("[dev:headless-web] Run: pnpm --filter veslo-code-router build:bin");
       logLine("[dev:headless-web] Or unset/enable VESLO_DEV_HEADLESS_WEB_AUTOBUILD to auto-build.");
       process.exit(1);
     }
 
     logLine(`[dev:headless-web] Missing opencode-router binary at ${opencodeRouterBin}`);
-    logLine("[dev:headless-web] Auto-building: pnpm --filter opencode-router build:bin");
+    logLine("[dev:headless-web] Auto-building: pnpm --filter veslo-code-router build:bin");
     try {
-      await runCommand("pnpm", ["--filter", "opencode-router", "build:bin"]);
+      await runCommand("pnpm", ["--filter", "veslo-code-router", "build:bin"]);
       await access(opencodeRouterBin);
     } catch (error) {
       logLine(`[dev:headless-web] Auto-build failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -174,6 +180,7 @@ const viteEnv = {
 };
 const headlessEnv = {
   ...process.env,
+  VESLO_DATA_DIR: headlessDataDir,
   VESLO_WORKSPACE: workspace,
   VESLO_HOST: host,
   VESLO_PORT: String(vesloPort),
@@ -191,6 +198,7 @@ if (opencodeRouterEnabled) {
 
 logLine("[dev:headless-web] Starting services");
 logLine(`[dev:headless-web] Workspace: ${workspace}`);
+logLine(`[dev:headless-web] Data dir: ${headlessDataDir}`);
 logLine(`[dev:headless-web] Veslo server: ${vesloUrl}`);
 logLine(`[dev:headless-web] Web host: ${viteHost}`);
 logLine(`[dev:headless-web] Web port: ${webPort}`);
@@ -234,8 +242,7 @@ const headlessProcess = spawnLogged(
     "auto",
     "--allow-external",
     "--no-opencode-auth",
-    "--opencode-router",
-    opencodeRouterEnabled ? "true" : "false",
+    ...(opencodeRouterEnabled ? [] : ["--no-veslo-code-router"]),
     ...(opencodeRouterRequired ? ["--opencode-router-required"] : []),
     "--veslo-host",
     host,

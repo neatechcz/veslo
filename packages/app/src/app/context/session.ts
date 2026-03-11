@@ -40,6 +40,7 @@ type StoreState = {
   sessionStatus: Record<string, string>;
   messages: Record<string, MessageInfo[]>;
   parts: Record<string, Part[]>;
+  commandDisplayByMessageID: Record<string, string>;
   todos: Record<string, TodoItem[]>;
   pendingPermissions: PendingPermission[];
   pendingQuestions: PendingQuestion[];
@@ -68,6 +69,13 @@ const COMPACTION_LOOP_WARN_THRESHOLD = 3;
 const COMPACTION_LOOP_WARN_MIN_INTERVAL_MS = 10_000;
 const INITIAL_SESSION_MESSAGE_LIMIT = 140;
 const SESSION_MESSAGE_LOAD_CHUNK = 120;
+
+const formatSlashCommandDisplay = (name: string, args: string) => {
+  const cleanName = name.trim().replace(/^\/+/, "");
+  if (!cleanName) return "";
+  const cleanArgs = args.trim();
+  return cleanArgs ? `/${cleanName} ${cleanArgs}` : `/${cleanName}`;
+};
 
 const createPlaceholderMessage = (part: Part): PlaceholderAssistantMessage => ({
   id: part.messageID,
@@ -175,6 +183,7 @@ export function createSessionStore(options: {
     sessionStatus: {},
     messages: {},
     parts: {},
+    commandDisplayByMessageID: {},
     todos: {},
     pendingPermissions: [],
     pendingQuestions: [],
@@ -590,7 +599,28 @@ export function createSessionStore(options: {
     const id = options.selectedSessionId();
     if (!id) return [];
     const list = store.messages[id] ?? [];
-    return list.map((info) => ({ info, parts: store.parts[info.id] ?? [] }));
+    return list.map((info) => {
+      const parts = store.parts[info.id] ?? [];
+      const alias = store.commandDisplayByMessageID[info.id];
+      if (!alias || (info as { role?: string }).role !== "user") {
+        return { info, parts };
+      }
+
+      const firstText = parts.find((part) => part.type === "text");
+      const aliasPart = firstText
+        ? ({ ...firstText, text: alias, synthetic: false, ignored: false } as Part)
+        : ({
+            id: `command-display:${info.id}`,
+            sessionID: info.sessionID,
+            messageID: info.id,
+            type: "text",
+            text: alias,
+            synthetic: false,
+            ignored: false,
+          } as Part);
+      const nonTextParts = parts.filter((part) => part.type !== "text");
+      return { info, parts: [aliasPart, ...nonTextParts] };
+    });
   });
 
   const todos = createMemo<TodoItem[]>(() => {
@@ -1039,9 +1069,20 @@ export function createSessionStore(options: {
         const record = event.properties as Record<string, unknown>;
         const info = record.info as Session | undefined;
         if (info?.id) {
+          const removedMessageIDs = (store.messages[info.id] ?? []).map((message) => message.id);
           syntheticContinueEventTimesBySession.delete(info.id);
           syntheticContinueLoopLastWarnAtBySession.delete(info.id);
           setStore("sessions", (current) => removeSession(current, info.id));
+          if (removedMessageIDs.length > 0) {
+            setStore(
+              "commandDisplayByMessageID",
+              produce((draft: Record<string, string>) => {
+                removedMessageIDs.forEach((messageID) => {
+                  delete draft[messageID];
+                });
+              }),
+            );
+          }
         }
       }
     }
@@ -1135,6 +1176,25 @@ export function createSessionStore(options: {
         if (sessionID && messageID) {
           setStore("messages", sessionID, (current = []) => removeMessageInfo(current, messageID));
           setStore("parts", messageID, []);
+          setStore(
+            "commandDisplayByMessageID",
+            produce((draft: Record<string, string>) => {
+              delete draft[messageID];
+            }),
+          );
+        }
+      }
+    }
+
+    if (event.type === "command.executed") {
+      if (event.properties && typeof event.properties === "object") {
+        const record = event.properties as Record<string, unknown>;
+        const messageID = typeof record.messageID === "string" ? record.messageID.trim() : "";
+        const name = typeof record.name === "string" ? record.name : "";
+        const args = typeof record.arguments === "string" ? record.arguments : "";
+        const display = formatSlashCommandDisplay(name, args);
+        if (messageID && display) {
+          setStore("commandDisplayByMessageID", messageID, display);
         }
       }
     }

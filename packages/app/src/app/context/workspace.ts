@@ -195,7 +195,7 @@ export function createWorkspaceStore(options: {
   let createRemoteInFlight: Promise<boolean> | null = null;
   const DEFAULT_CONNECT_HEALTH_TIMEOUT_MS = 12_000;
   const LOCAL_BOOT_CONNECT_HEALTH_TIMEOUT_MS = 180_000;
-  const LONG_BOOT_CONNECT_REASONS = new Set(["host-start", "bootstrap-local"]);
+  const LONG_BOOT_CONNECT_REASONS = new Set(["host-start"]);
   const DB_MIGRATE_UNSUPPORTED_PATTERNS = [
     /unknown(?:\s+sub)?command\s+['"`]?db['"`]?/i,
     /unrecognized(?:\s+sub)?command\s+['"`]?db['"`]?/i,
@@ -719,8 +719,13 @@ export function createWorkspaceStore(options: {
           reconnectingEngine = true;
           connectToServer(
             info.baseUrl,
-            info.projectDir ?? undefined,
-            { reason: "engine-refresh" },
+            (activeWorkspaceRoot().trim() || info.projectDir || undefined),
+            {
+              workspaceId: activeWorkspaceId().trim() || undefined,
+              workspaceType: "local",
+              targetRoot: activeWorkspaceRoot().trim() || undefined,
+              reason: "engine-refresh",
+            },
             auth ?? undefined,
             { quiet: true, navigate: false },
           )
@@ -1130,8 +1135,13 @@ export function createWorkspaceStore(options: {
           if (nextInfo.baseUrl) {
             connectedToLocalHost = await connectToServer(
               nextInfo.baseUrl,
-              nextInfo.projectDir ?? undefined,
-              { reason: "workspace-attach-local" },
+              next.path,
+              {
+                workspaceId: next.id,
+                workspaceType: "local",
+                targetRoot: next.path,
+                reason: "workspace-attach-local",
+              },
               auth,
               { navigate: false },
             );
@@ -1185,18 +1195,23 @@ export function createWorkspaceStore(options: {
           const auth = username && password ? { username, password } : undefined;
           setEngineAuth(auth ?? null);
 
-            if (newInfo.baseUrl) {
-              const ok = await connectToServer(
-                newInfo.baseUrl,
-                newInfo.projectDir ?? undefined,
-                { reason: "workspace-orchestrator-switch" },
-                auth,
-                { navigate: false },
-              );
-              if (!ok) {
-                options.setError("Failed to reconnect after worker switch");
-              }
+          if (newInfo.baseUrl) {
+            const ok = await connectToServer(
+              newInfo.baseUrl,
+              next.path,
+              {
+                workspaceId: next.id,
+                workspaceType: "local",
+                targetRoot: next.path,
+                reason: "workspace-orchestrator-switch",
+              },
+              auth,
+              { navigate: false },
+            );
+            if (!ok) {
+              options.setError("Failed to reconnect after worker switch");
             }
+          }
         } else {
           // Stop the current engine
           const info = await engineStop();
@@ -1218,18 +1233,23 @@ export function createWorkspaceStore(options: {
           setEngineAuth(auth ?? null);
 
           // Reconnect to server
-            if (newInfo.baseUrl) {
-              const ok = await connectToServer(
-                newInfo.baseUrl,
-                newInfo.projectDir ?? undefined,
-                { reason: "workspace-restart" },
-                auth,
-                { navigate: false },
-              );
-              if (!ok) {
-                options.setError("Failed to reconnect after worker switch");
-              }
+          if (newInfo.baseUrl) {
+            const ok = await connectToServer(
+              newInfo.baseUrl,
+              next.path,
+              {
+                workspaceId: next.id,
+                workspaceType: "local",
+                targetRoot: next.path,
+                reason: "workspace-restart",
+              },
+              auth,
+              { navigate: false },
+            );
+            if (!ok) {
+              options.setError("Failed to reconnect after worker switch");
             }
+          }
         }
       } catch (e) {
         const message = e instanceof Error ? e.message : safeStringify(e);
@@ -2773,16 +2793,23 @@ export function createWorkspaceStore(options: {
       const auth = username && password ? { username, password } : undefined;
       setEngineAuth(auth ?? null);
 
-       if (info.baseUrl) {
-         const ok = await connectToServer(
-           info.baseUrl,
-           info.projectDir ?? undefined,
-           { reason: "host-start" },
-           auth,
-           { navigate: optionsOverride?.navigate ?? true },
-         );
-         if (!ok) return false;
-       }
+      if (info.baseUrl) {
+        const activeLocalWorkspace =
+          activeWorkspaceInfo()?.workspaceType === "local" ? activeWorkspaceInfo() : null;
+        const ok = await connectToServer(
+          info.baseUrl,
+          dir,
+          {
+            workspaceId: activeLocalWorkspace?.id,
+            workspaceType: "local",
+            targetRoot: dir,
+            reason: "host-start",
+          },
+          auth,
+          { navigate: optionsOverride?.navigate ?? true },
+        );
+        if (!ok) return false;
+      }
 
       markOnboardingComplete();
       return true;
@@ -2918,8 +2945,16 @@ export function createWorkspaceStore(options: {
         if (nextInfo.baseUrl) {
           const ok = await connectToServer(
             nextInfo.baseUrl,
-            nextInfo.projectDir ?? undefined,
-            { reason: "engine-reload-orchestrator" },
+            root,
+            {
+              workspaceId:
+                activeWorkspaceInfo()?.workspaceType === "local"
+                  ? activeWorkspaceInfo()?.id
+                  : undefined,
+              workspaceType: "local",
+              targetRoot: root,
+              reason: "engine-reload-orchestrator",
+            },
             auth,
           );
           if (!ok) {
@@ -2951,8 +2986,16 @@ export function createWorkspaceStore(options: {
       if (nextInfo.baseUrl) {
         const ok = await connectToServer(
           nextInfo.baseUrl,
-          nextInfo.projectDir ?? undefined,
-          { reason: "engine-reload" },
+          root,
+          {
+            workspaceId:
+              activeWorkspaceInfo()?.workspaceType === "local"
+                ? activeWorkspaceInfo()?.id
+                : undefined,
+            workspaceType: "local",
+            targetRoot: root,
+            reason: "engine-reload",
+          },
           auth,
         );
         if (!ok) {
@@ -3157,15 +3200,19 @@ export function createWorkspaceStore(options: {
 
   /** Race a promise against a timeout; resolves to undefined on timeout. */
   function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T | undefined> {
-    return Promise.race([
-      promise,
-      new Promise<undefined>((resolve) => {
-        setTimeout(() => {
-          bootTrace(`TIMEOUT: ${label} after ${ms}ms`);
-          resolve(undefined);
-        }, ms);
-      }),
-    ]);
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<undefined>((resolve) => {
+      timeoutHandle = setTimeout(() => {
+        bootTrace(`TIMEOUT: ${label} after ${ms}ms`);
+        resolve(undefined);
+      }, ms);
+    });
+
+    return Promise.race([promise, timeout]).finally(() => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    });
   }
 
   /** Send boot trace to local debug server + console */
@@ -3173,6 +3220,7 @@ export function createWorkspaceStore(options: {
     const msg = args.map(a => typeof a === "string" ? a : String(a)).join(" ");
     const line = `[${Date.now()}] ${msg}`;
     console.log("[boot]", msg);
+    if (!wsDebugEnabled() || !isTauriRuntime()) return;
     try { fetch("http://127.0.0.1:9876", { method: "POST", body: line, mode: "no-cors" }).catch(() => {}); } catch { /* ignore */ }
   }
 
@@ -3261,23 +3309,33 @@ export function createWorkspaceStore(options: {
       return;
     }
 
-    // Check Den desktop auth before proceeding
-    const denAuth = readDenAuth();
-    bootTrace("denAuth present=", Boolean(denAuth));
-    if (!denAuth) {
-      bootTrace("→ setOnboardingStep('auth') and RETURN");
-      options.setOnboardingStep("auth");
-      return;
-    }
-    // Validate stored auth with Den server
-    bootTrace("validateDenAuth...");
-    const authValid = await validateDenAuth(denAuth);
-    bootTrace("validateDenAuth DONE, valid=", authValid);
-    if (!authValid) {
-      clearDenAuth();
-      bootTrace("→ auth invalid, setOnboardingStep('auth') and RETURN");
-      options.setOnboardingStep("auth");
-      return;
+    const activeWorkspace = activeWorkspaceInfo();
+    const requiresDenAuth =
+      CLOUD_ONLY_MODE ||
+      startupPref === "server" ||
+      activeWorkspace?.workspaceType === "remote";
+
+    // Den auth is required for cloud/remote flows, but local host boot should work offline.
+    if (requiresDenAuth) {
+      const denAuth = readDenAuth();
+      bootTrace("denAuth required, present=", Boolean(denAuth));
+      if (!denAuth) {
+        bootTrace("→ setOnboardingStep('auth') and RETURN");
+        options.setOnboardingStep("auth");
+        return;
+      }
+      // Validate stored auth with Den server
+      bootTrace("validateDenAuth...");
+      const authValid = await validateDenAuth(denAuth);
+      bootTrace("validateDenAuth DONE, valid=", authValid);
+      if (!authValid) {
+        clearDenAuth();
+        bootTrace("→ auth invalid, setOnboardingStep('auth') and RETURN");
+        options.setOnboardingStep("auth");
+        return;
+      }
+    } else {
+      bootTrace("denAuth optional for local boot");
     }
 
     if (CLOUD_ONLY_MODE) {
@@ -3338,7 +3396,6 @@ export function createWorkspaceStore(options: {
       return;
     }
 
-    const activeWorkspace = activeWorkspaceInfo();
     bootTrace("activeWorkspace type=", activeWorkspace?.workspaceType, "CLOUD_ONLY=", CLOUD_ONLY_MODE);
     if (activeWorkspace?.workspaceType === "remote") {
       bootTrace("remote workspace → activateWorkspace...");
@@ -3371,8 +3428,13 @@ export function createWorkspaceStore(options: {
         options.setOnboardingStep("connecting");
         const ok = await connectToServer(
           info.baseUrl,
-          info.projectDir ?? undefined,
-          { reason: "bootstrap-local" },
+          (activeWorkspacePath().trim() || info.projectDir || undefined),
+          {
+            workspaceId: activeWorkspace?.id || undefined,
+            workspaceType: "local",
+            targetRoot: activeWorkspacePath().trim() || undefined,
+            reason: "bootstrap-local",
+          },
           engineAuth() ?? undefined,
         );
         bootTrace("connectToServer ok=", ok);
@@ -3453,8 +3515,16 @@ export function createWorkspaceStore(options: {
     options.setOnboardingStep("connecting");
     const ok = await connectToServer(
       engine()?.baseUrl ?? "",
-      engine()?.projectDir ?? undefined,
-      { reason: "attach-local" },
+      (activeWorkspacePath().trim() || engine()?.projectDir || undefined),
+      {
+        workspaceId:
+          activeWorkspaceInfo()?.workspaceType === "local"
+            ? activeWorkspaceInfo()?.id
+            : undefined,
+        workspaceType: "local",
+        targetRoot: activeWorkspacePath().trim() || undefined,
+        reason: "attach-local",
+      },
       engineAuth() ?? undefined,
     );
     if (!ok) {
