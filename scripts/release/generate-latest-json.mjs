@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { DEFAULT_PUBLIC_RELEASE_REPO } from "./public-release-assets.mjs";
+
 const ARCH_ALIASES = new Map([
   ["x64", "x86_64"],
   ["amd64", "x86_64"],
@@ -14,7 +16,7 @@ function normalizeArch(arch) {
 function parseArgs(argv) {
   const options = {
     tag: process.env.RELEASE_TAG || "",
-    repo: process.env.GITHUB_REPOSITORY || "neatech/veslo",
+    repo: process.env.PUBLIC_RELEASE_REPO || process.env.GITHUB_REPOSITORY || DEFAULT_PUBLIC_RELEASE_REPO,
     output: "latest.json",
   };
 
