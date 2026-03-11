@@ -87,6 +87,9 @@ jobs:
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
+          DEN_RENDER_CONTROL_PLANE_REPO: ${{ vars.DEN_RENDER_CONTROL_PLANE_REPO }}
+          DEN_RENDER_CONTROL_PLANE_BRANCH: ${{ vars.DEN_RENDER_CONTROL_PLANE_BRANCH }}
+          DEN_RENDER_CONTROL_PLANE_ROOT_DIR: ${{ vars.DEN_RENDER_CONTROL_PLANE_ROOT_DIR }}
           DEN_RENDER_WORKER_REPO: ${{ vars.DEN_RENDER_WORKER_REPO }}
           DEN_RENDER_WORKER_PLAN: ${{ vars.DEN_RENDER_WORKER_PLAN }}
           DEN_RENDER_WORKER_VESLO_VERSION: ${{ vars.DEN_RENDER_WORKER_VESLO_VERSION }}
@@ -119,6 +122,11 @@ jobs:
           owner_id = os.environ["RENDER_OWNER_ID"]
           veslo_version = os.environ.get("DEN_RENDER_WORKER_VESLO_VERSION") or "0.11.113"
           worker_plan = os.environ.get("DEN_RENDER_WORKER_PLAN") or "standard"
+          default_repo = f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'neatechcz/veslo')}"
+          default_branch = os.environ.get("GITHUB_REF_NAME") or "dev"
+          control_plane_repo = os.environ.get("DEN_RENDER_CONTROL_PLANE_REPO") or default_repo
+          control_plane_branch = os.environ.get("DEN_RENDER_CONTROL_PLANE_BRANCH") or default_branch
+          control_plane_root_dir = os.environ.get("DEN_RENDER_CONTROL_PLANE_ROOT_DIR") or "services/den"
           worker_repo = os.environ.get("DEN_RENDER_WORKER_REPO") or f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'neatechcz/veslo')}"
           configured_cors_origins = os.environ.get("DEN_CORS_ORIGINS") or ""
           worker_public_domain_suffix = os.environ.get("DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX") or "veslo.studio"
@@ -203,6 +211,19 @@ jobs:
                   raise RuntimeError(f"{method} {path} failed ({err.code}): {text[:600]}")
 
           _, service = request("GET", f"/services/{service_id}")
+          source_patch = {}
+          if service.get("repo") != control_plane_repo:
+              source_patch["repo"] = control_plane_repo
+          if service.get("branch") != control_plane_branch:
+              source_patch["branch"] = control_plane_branch
+          if service.get("rootDir") != control_plane_root_dir:
+              source_patch["rootDir"] = control_plane_root_dir
+
+          if source_patch:
+              print("Updating Render control-plane source:", json.dumps(source_patch))
+              request("PATCH", f"/services/{service_id}", source_patch)
+              _, service = request("GET", f"/services/{service_id}")
+
           service_url = (service.get("serviceDetails") or {}).get("url")
           print(
               "Render service source:",
