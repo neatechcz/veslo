@@ -31,10 +31,11 @@ cp .env.development .env
 - `DATABASE_URL` MySQL connection URL
 - `BETTER_AUTH_SECRET` 32+ char secret
 - `BETTER_AUTH_URL` base URL for auth callbacks
+- `WORKER_TOKEN_ENCRYPTION_KEY` optional key material for encrypting worker host/client tokens at rest (falls back to `BETTER_AUTH_SECRET` when unset)
 - `GITHUB_CLIENT_ID` optional OAuth app client ID for GitHub sign-in
 - `GITHUB_CLIENT_SECRET` optional OAuth app client secret for GitHub sign-in
 - `PORT` server port
-- `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS)
+- `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS). In production, wildcard `*` is rejected.
 - `PROVISIONER_MODE` `stub` or `render`
 - `WORKER_URL_TEMPLATE` template string with `{workerId}`
 - `RENDER_API_BASE` Render API base URL (default `https://api.render.com/v1`)

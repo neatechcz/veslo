@@ -36,6 +36,13 @@
       "when": 1773274800000,
       "tag": "0004_desktop_auth_handoff",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1773356400000,
+      "tag": "0005_worker_token_encryption",
+      "breakpoints": true
     }
   ]
 }

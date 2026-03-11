@@ -183,7 +183,7 @@ export const WorkerTokenTable = mysqlTable(
     id: id().primaryKey(),
     worker_id: varchar("worker_id", { length: 64 }).notNull(),
     scope: mysqlEnum("scope", TokenScope).notNull(),
-    token: varchar("token", { length: 128 }).notNull(),
+    token: varchar("token", { length: 512 }).notNull(),
     created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     revoked_at: timestamp("revoked_at", { fsp: 3 }),
   },

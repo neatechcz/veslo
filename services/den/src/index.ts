@@ -117,79 +117,14 @@ async function ensureTables() {
     `)
     await db.execute(sql`CREATE INDEX IF NOT EXISTS \`verification_identifier\` ON \`verification\` (\`identifier\`)`)
 
-    // Check if auth tables have wrong column names (camelCase from migration 0000)
-    let needsAuthFix = false
+    // Detect legacy auth schema (camelCase columns from early migrations) and fail closed.
     try {
       await db.execute(sql`SELECT \`user_id\` FROM \`account\` LIMIT 0`)
-    } catch {
-      needsAuthFix = true
-    }
-    if (needsAuthFix) {
-      console.log("[den] auth tables have camelCase columns, recreating with snake_case...")
-      await db.execute(sql`DROP TABLE IF EXISTS \`account\``)
-      await db.execute(sql`DROP TABLE IF EXISTS \`session\``)
-      await db.execute(sql`DROP TABLE IF EXISTS \`verification\``)
-      await db.execute(sql`DROP TABLE IF EXISTS \`user\``)
-      await db.execute(sql`
-        CREATE TABLE \`user\` (
-          \`id\` varchar(36) NOT NULL,
-          \`name\` varchar(255) NOT NULL,
-          \`email\` varchar(255) NOT NULL,
-          \`email_verified\` boolean NOT NULL DEFAULT false,
-          \`image\` text,
-          \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
-          \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-          CONSTRAINT \`user_id\` PRIMARY KEY(\`id\`),
-          CONSTRAINT \`user_email\` UNIQUE(\`email\`)
-        )
-      `)
-      await db.execute(sql`
-        CREATE TABLE \`session\` (
-          \`id\` varchar(36) NOT NULL,
-          \`expires_at\` timestamp(3) NOT NULL,
-          \`token\` varchar(255) NOT NULL,
-          \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
-          \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-          \`ip_address\` text,
-          \`user_agent\` text,
-          \`user_id\` varchar(36) NOT NULL,
-          CONSTRAINT \`session_id\` PRIMARY KEY(\`id\`),
-          CONSTRAINT \`session_token\` UNIQUE(\`token\`)
-        )
-      `)
-      await db.execute(sql`CREATE INDEX \`session_user_id\` ON \`session\` (\`user_id\`)`)
-      await db.execute(sql`
-        CREATE TABLE \`account\` (
-          \`id\` varchar(36) NOT NULL,
-          \`account_id\` text NOT NULL,
-          \`provider_id\` text NOT NULL,
-          \`user_id\` varchar(36) NOT NULL,
-          \`access_token\` text,
-          \`refresh_token\` text,
-          \`id_token\` text,
-          \`access_token_expires_at\` timestamp(3),
-          \`refresh_token_expires_at\` timestamp(3),
-          \`scope\` text,
-          \`password\` text,
-          \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
-          \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-          CONSTRAINT \`account_id\` PRIMARY KEY(\`id\`)
-        )
-      `)
-      await db.execute(sql`CREATE INDEX \`account_user_id\` ON \`account\` (\`user_id\`)`)
-      await db.execute(sql`
-        CREATE TABLE \`verification\` (
-          \`id\` varchar(36) NOT NULL,
-          \`identifier\` varchar(255) NOT NULL,
-          \`value\` text NOT NULL,
-          \`expires_at\` timestamp(3) NOT NULL,
-          \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
-          \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-          CONSTRAINT \`verification_id\` PRIMARY KEY(\`id\`)
-        )
-      `)
-      await db.execute(sql`CREATE INDEX \`verification_identifier\` ON \`verification\` (\`identifier\`)`)
-      console.log("[den] auth tables recreated with correct column names")
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown_error"
+      throw new Error(
+        `Detected incompatible Better Auth schema (missing account.user_id). Run 'pnpm --dir services/den db:migrate' before starting DEN. Original error: ${message}`,
+      )
     }
 
     // Application tables
@@ -272,7 +207,7 @@ async function ensureTables() {
         \`id\` varchar(64) NOT NULL,
         \`worker_id\` varchar(64) NOT NULL,
         \`scope\` enum('client','host') NOT NULL,
-        \`token\` varchar(128) NOT NULL,
+        \`token\` varchar(512) NOT NULL,
         \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
         \`revoked_at\` timestamp(3),
         CONSTRAINT \`worker_token_id\` PRIMARY KEY(\`id\`),
@@ -325,12 +260,20 @@ async function ensureTables() {
 
     console.log("[den] all tables ensured")
   } catch (err) {
-    console.warn("[den] table ensure warning:", err)
+    console.error("[den] table ensure failed:", err)
+    throw err
   }
 }
 
-ensureTables().then(() => {
+async function bootstrap() {
+  await ensureTables()
   app.listen(env.port, () => {
     console.log(`den listening on ${env.port} (provisioner=${env.provisionerMode})`)
   })
+}
+
+void bootstrap().catch((error) => {
+  const message = error instanceof Error ? error.stack ?? error.message : String(error)
+  console.error(`[den] bootstrap failed: ${message}`)
+  process.exit(1)
 })

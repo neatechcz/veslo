@@ -4,6 +4,7 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1),
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.string().min(1),
+  WORKER_TOKEN_ENCRYPTION_KEY: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
   PORT: z.string().optional(),
@@ -54,11 +55,17 @@ const corsOrigins = parsed.CORS_ORIGINS?.split(",")
   .filter(Boolean)
 
 const polarFeatureGateEnabled = (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true"
+const nodeEnv = (process.env.NODE_ENV ?? "development").toLowerCase()
+
+if (nodeEnv === "production" && (corsOrigins ?? []).includes("*")) {
+  throw new Error("CORS_ORIGINS cannot contain '*' in production for DEN")
+}
 
 export const env = {
   databaseUrl: parsed.DATABASE_URL,
   betterAuthSecret: parsed.BETTER_AUTH_SECRET,
   betterAuthUrl: parsed.BETTER_AUTH_URL,
+  workerTokenEncryptionKey: parsed.WORKER_TOKEN_ENCRYPTION_KEY?.trim() || null,
   github: {
     clientId: parsed.GITHUB_CLIENT_ID?.trim() || undefined,
     clientSecret: parsed.GITHUB_CLIENT_SECRET?.trim() || undefined,

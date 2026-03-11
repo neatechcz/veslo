@@ -7,8 +7,9 @@ import { getCloudWorkerBillingStatus, requireCloudWorkerAccess, setCloudWorkerSu
 import { db } from "../db/index.js"
 import { WorkerBundleTable, WorkerInstanceTable, WorkerTable, WorkerTokenTable } from "../db/schema.js"
 import { env } from "../env.js"
+import { decryptWorkerToken, encryptWorkerToken } from "../security/token-crypto.js"
 import { asyncRoute, isTransientDbConnectionError } from "./errors.js"
-import { canDeleteWorker } from "./access.js"
+import { canDeleteWorker, canRevealWorkerHostToken } from "./access.js"
 import { requireOrganizationAccess } from "./org-auth.js"
 import { requireSession } from "./session.js"
 import { deprovisionWorker, provisionWorker } from "../workers/provisioner.js"
@@ -130,6 +131,15 @@ function queryIncludesFlag(value: unknown): boolean {
   }
 
   return false
+}
+
+function decodeStoredToken(value: string): string {
+  try {
+    return decryptWorkerToken(value)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "token_decode_failed"
+    throw new Error(`failed to decode stored worker token: ${message}`)
+  }
 }
 
 async function resolveConnectUrlFromCandidates(workerId: string, instanceUrl: string | null, clientToken: string) {
@@ -289,6 +299,7 @@ workersRouter.post("/", asyncRoute(async (req, res) => {
     const access = await requireCloudWorkerAccess({
       userId: context.session.user.id,
       email: context.session.user.email ?? `${context.session.user.id}@placeholder.local`,
+      emailVerified: context.session.user.emailVerified,
       name: context.session.user.name ?? context.session.user.email ?? "Veslo User",
     })
 
@@ -329,13 +340,13 @@ workersRouter.post("/", asyncRoute(async (req, res) => {
       id: randomUUID(),
       worker_id: workerId,
       scope: "host",
-      token: hostToken,
+      token: encryptWorkerToken(hostToken),
     },
     {
       id: randomUUID(),
       worker_id: workerId,
       scope: "client",
-      token: clientToken,
+      token: encryptWorkerToken(clientToken),
     },
   ])
 
@@ -397,6 +408,7 @@ workersRouter.get("/billing", asyncRoute(async (req, res) => {
   const billingInput = {
     userId: session.user.id,
     email: session.user.email ?? `${session.user.id}@placeholder.local`,
+    emailVerified: session.user.emailVerified,
     name: session.user.name ?? session.user.email ?? "Veslo User",
   }
 
@@ -431,6 +443,7 @@ workersRouter.post("/billing/subscription", asyncRoute(async (req, res) => {
   const billingInput = {
     userId: session.user.id,
     email: session.user.email ?? `${session.user.id}@placeholder.local`,
+    emailVerified: session.user.emailVerified,
     name: session.user.name ?? session.user.email ?? "Veslo User",
   }
 
@@ -489,16 +502,26 @@ workersRouter.post("/:id/tokens", asyncRoute(async (req, res) => {
     return
   }
 
+  const worker = rows[0]
+  const canReadHostToken = canRevealWorkerHostToken({
+    actorUserId: context.session.user.id,
+    actorRole: context.orgRole,
+    createdByUserId: worker.created_by_user_id,
+    isPlatformAdmin: context.isPlatformAdmin,
+  })
+
   const tokenRows = await db
     .select()
     .from(WorkerTokenTable)
-    .where(and(eq(WorkerTokenTable.worker_id, rows[0].id), isNull(WorkerTokenTable.revoked_at)))
+    .where(and(eq(WorkerTokenTable.worker_id, worker.id), isNull(WorkerTokenTable.revoked_at)))
     .orderBy(asc(WorkerTokenTable.created_at))
 
-  const hostToken = tokenRows.find((entry) => entry.scope === "host")?.token ?? null
-  const clientToken = tokenRows.find((entry) => entry.scope === "client")?.token ?? null
+  const hostTokenEntry = tokenRows.find((entry) => entry.scope === "host")?.token ?? null
+  const clientTokenEntry = tokenRows.find((entry) => entry.scope === "client")?.token ?? null
+  const clientToken = clientTokenEntry ? decodeStoredToken(clientTokenEntry) : null
+  const hostToken = canReadHostToken && hostTokenEntry ? decodeStoredToken(hostTokenEntry) : null
 
-  if (!hostToken || !clientToken) {
+  if (!clientToken || (canReadHostToken && !hostToken)) {
     res.status(409).json({
       error: "worker_tokens_unavailable",
       message: "Worker tokens are missing for this worker. Launch a new worker and try again.",
@@ -506,14 +529,28 @@ workersRouter.post("/:id/tokens", asyncRoute(async (req, res) => {
     return
   }
 
-  const instance = await getLatestWorkerInstance(rows[0].id)
-  const connect = await resolveConnectUrlFromCandidates(rows[0].id, instance?.url ?? null, clientToken)
+  const instance = await getLatestWorkerInstance(worker.id)
+  const connect = await resolveConnectUrlFromCandidates(worker.id, instance?.url ?? null, clientToken)
+
+  await recordAuditEvent({
+    orgId: context.organization.id,
+    actorUserId: context.session.user.id,
+    action: "worker.tokens.read",
+    workerId: worker.id,
+    payload: {
+      includeHostToken: canReadHostToken,
+      actorRole: context.orgRole ?? "member",
+      actorIsPlatformAdmin: context.isPlatformAdmin,
+    },
+  })
+
+  const tokens: { client: string; host?: string } = { client: clientToken }
+  if (canReadHostToken && hostToken) {
+    tokens.host = hostToken
+  }
 
   res.json({
-    tokens: {
-      host: hostToken,
-      client: clientToken,
-    },
+    tokens,
     connect: connect ?? (instance?.url ? { vesloUrl: instance.url, workspaceId: null } : null),
   })
 }))
