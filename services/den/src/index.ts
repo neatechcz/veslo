@@ -54,6 +54,71 @@ app.use("/v1/orgs", orgsRouter)
 app.use("/v1/workers", workersRouter)
 app.use(errorMiddleware)
 
+const identifierPattern = /^[a-zA-Z0-9_]+$/
+
+function quoteIdentifier(value: string) {
+  if (!identifierPattern.test(value)) {
+    throw new Error(`Invalid SQL identifier: ${value}`)
+  }
+  return `\`${value}\``
+}
+
+function extractRows(value: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(value)) {
+    return value as Array<Record<string, unknown>>
+  }
+
+  if (value && typeof value === "object") {
+    const maybeRows = (value as { rows?: unknown }).rows
+    if (Array.isArray(maybeRows)) {
+      return maybeRows as Array<Record<string, unknown>>
+    }
+  }
+
+  return []
+}
+
+async function ensureIndex(table: string, indexName: string, columns: string[]) {
+  const existing = await db.execute(sql`
+    SELECT 1
+    FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ${table}
+      AND INDEX_NAME = ${indexName}
+    LIMIT 1
+  `)
+
+  if (extractRows(existing).length > 0) {
+    return
+  }
+
+  const columnList = columns.map((column) => quoteIdentifier(column)).join(", ")
+  await db.execute(
+    sql.raw(`CREATE INDEX ${quoteIdentifier(indexName)} ON ${quoteIdentifier(table)} (${columnList})`),
+  )
+}
+
+async function ensureColumn(table: string, columnName: string, columnDefinition: string) {
+  const existing = await db.execute(sql`
+    SELECT 1
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ${table}
+      AND COLUMN_NAME = ${columnName}
+    LIMIT 1
+  `)
+
+  if (extractRows(existing).length > 0) {
+    return
+  }
+
+  await db.execute(
+    sql.raw(
+      `ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN ${quoteIdentifier(columnName)} ${columnDefinition}`,
+    ),
+  )
+}
+
 async function ensureTables() {
   try {
     // Auth tables (Better Auth requires these with snake_case columns)
@@ -84,7 +149,7 @@ async function ensureTables() {
         CONSTRAINT \`session_token\` UNIQUE(\`token\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`session_user_id\` ON \`session\` (\`user_id\`)`)
+    await ensureIndex("session", "session_user_id", ["user_id"])
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`account\` (
         \`id\` varchar(36) NOT NULL,
@@ -103,7 +168,7 @@ async function ensureTables() {
         CONSTRAINT \`account_id\` PRIMARY KEY(\`id\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`account_user_id\` ON \`account\` (\`user_id\`)`)
+    await ensureIndex("account", "account_user_id", ["user_id"])
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`verification\` (
         \`id\` varchar(36) NOT NULL,
@@ -115,7 +180,7 @@ async function ensureTables() {
         CONSTRAINT \`verification_id\` PRIMARY KEY(\`id\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`verification_identifier\` ON \`verification\` (\`identifier\`)`)
+    await ensureIndex("verification", "verification_identifier", ["identifier"])
 
     // Detect legacy auth schema (camelCase columns from early migrations) and fail closed.
     try {
@@ -140,7 +205,7 @@ async function ensureTables() {
         CONSTRAINT \`org_slug\` UNIQUE(\`slug\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`org_owner_user_id\` ON \`org\` (\`owner_user_id\`)`)
+    await ensureIndex("org", "org_owner_user_id", ["owner_user_id"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`org_membership\` (
@@ -152,8 +217,8 @@ async function ensureTables() {
         CONSTRAINT \`org_membership_id\` PRIMARY KEY(\`id\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`org_membership_org_id\` ON \`org_membership\` (\`org_id\`)`)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`org_membership_user_id\` ON \`org_membership\` (\`user_id\`)`)
+    await ensureIndex("org_membership", "org_membership_org_id", ["org_id"])
+    await ensureIndex("org_membership", "org_membership_user_id", ["user_id"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`platform_role\` (
@@ -184,10 +249,10 @@ async function ensureTables() {
         CONSTRAINT \`worker_id\` PRIMARY KEY(\`id\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_org_id\` ON \`worker\` (\`org_id\`)`)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_created_by_user_id\` ON \`worker\` (\`created_by_user_id\`)`)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_status\` ON \`worker\` (\`status\`)`)
-    await db.execute(sql`ALTER TABLE \`worker\` ADD COLUMN IF NOT EXISTS \`failure_reason\` varchar(2048)`)
+    await ensureIndex("worker", "worker_org_id", ["org_id"])
+    await ensureIndex("worker", "worker_created_by_user_id", ["created_by_user_id"])
+    await ensureIndex("worker", "worker_status", ["status"])
+    await ensureColumn("worker", "failure_reason", "varchar(2048)")
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`worker_instance\` (
@@ -202,7 +267,7 @@ async function ensureTables() {
         CONSTRAINT \`worker_instance_id\` PRIMARY KEY(\`id\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_instance_worker_id\` ON \`worker_instance\` (\`worker_id\`)`)
+    await ensureIndex("worker_instance", "worker_instance_worker_id", ["worker_id"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`worker_token\` (
@@ -216,7 +281,7 @@ async function ensureTables() {
         CONSTRAINT \`worker_token_token\` UNIQUE(\`token\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_token_worker_id\` ON \`worker_token\` (\`worker_id\`)`)
+    await ensureIndex("worker_token", "worker_token_worker_id", ["worker_id"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`worker_bundle\` (
@@ -228,7 +293,7 @@ async function ensureTables() {
         CONSTRAINT \`worker_bundle_id\` PRIMARY KEY(\`id\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_bundle_worker_id\` ON \`worker_bundle\` (\`worker_id\`)`)
+    await ensureIndex("worker_bundle", "worker_bundle_worker_id", ["worker_id"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`audit_event\` (
@@ -242,8 +307,8 @@ async function ensureTables() {
         CONSTRAINT \`audit_event_id\` PRIMARY KEY(\`id\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`audit_event_org_id\` ON \`audit_event\` (\`org_id\`)`)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`audit_event_worker_id\` ON \`audit_event\` (\`worker_id\`)`)
+    await ensureIndex("audit_event", "audit_event_org_id", ["org_id"])
+    await ensureIndex("audit_event", "audit_event_worker_id", ["worker_id"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`desktop_auth_handoff\` (
@@ -258,7 +323,7 @@ async function ensureTables() {
         CONSTRAINT \`desktop_auth_handoff_code\` UNIQUE(\`code\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`desktop_auth_handoff_user_id\` ON \`desktop_auth_handoff\` (\`user_id\`)`)
+    await ensureIndex("desktop_auth_handoff", "desktop_auth_handoff_user_id", ["user_id"])
 
     console.log("[den] all tables ensured")
   } catch (err) {
