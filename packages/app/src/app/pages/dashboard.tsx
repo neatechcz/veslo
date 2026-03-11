@@ -147,6 +147,7 @@ export type DashboardViewProps = {
   exportWorkspaceBusy: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
   selectedSessionId: string | null;
+  isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
   openRenameWorkspace: (workspaceId: string) => void;
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
@@ -1091,6 +1092,7 @@ export default function DashboardView(props: DashboardViewProps) {
             newTaskDisabled={props.newTaskDisabled}
             importingWorkspaceConfig={props.importingWorkspaceConfig}
             soulStatusByWorkspaceId={props.soulStatusByWorkspaceId}
+            isPrivateWorkspacePath={props.isPrivateWorkspacePath}
             onActivateWorkspace={props.activateWorkspace}
             onOpenSession={openSessionFromList}
             onCreateTaskInWorkspace={createTaskInWorkspace}

@@ -163,6 +163,7 @@ export type SessionViewProps = {
   retryLastPrompt: () => void;
   newTaskDisabled: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
+  isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
   openRenameWorkspace: (workspaceId: string) => void;
   selectSession: (sessionId: string) => Promise<void> | void;
   messages: MessageWithParts[];
@@ -3433,6 +3434,7 @@ export default function SessionView(props: SessionViewProps) {
             importingWorkspaceConfig={props.importingWorkspaceConfig}
             showRemoteActions={props.showRemoteActions}
             soulStatusByWorkspaceId={props.soulStatusByWorkspaceId}
+            isPrivateWorkspacePath={props.isPrivateWorkspacePath}
             onActivateWorkspace={props.activateWorkspace}
             onOpenSession={openSessionFromList}
             onCreateTaskInWorkspace={createTaskInWorkspace}

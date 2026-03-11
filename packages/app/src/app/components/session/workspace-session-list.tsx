@@ -8,8 +8,14 @@ import {
   formatRelativeTime,
   getWorkspaceTaskLoadErrorDisplay,
   isWindowsPlatform,
-  normalizeDirectoryPath,
 } from "../../utils";
+import {
+  buildProjectGroups,
+  buildRecentRows,
+  displayTimestamp,
+  type FlatSessionRow,
+  type ProjectSessionGroup,
+} from "./workspace-session-list-model";
 
 type Props = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
@@ -22,6 +28,7 @@ type Props = {
   importingWorkspaceConfig: boolean;
   showRemoteActions?: boolean;
   soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
+  isPrivateWorkspacePath?: (folder: string | null | undefined) => boolean;
   onActivateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string) => void;
@@ -44,32 +51,6 @@ type SidebarViewMode = "by-project" | "recent";
 type WorkspaceMenuTarget = {
   workspaceId: string;
   anchorKey: string;
-};
-
-type FlatSessionRow = {
-  rowKey: string;
-  workspace: WorkspaceInfo;
-  session: WorkspaceSessionGroup["sessions"][number];
-  status: WorkspaceSessionGroup["status"];
-  error: string | null;
-  createdAt: number;
-  updatedAt: number;
-  activityAt: number;
-  projectRoot: string;
-  projectLabel: string;
-  projectTitle: string;
-};
-
-type ProjectSessionGroup = {
-  key: string;
-  workspace: WorkspaceInfo;
-  sessions: FlatSessionRow[];
-  status: WorkspaceSessionGroup["status"];
-  error: string | null;
-  activityAt: number;
-  projectRoot: string;
-  projectLabel: string;
-  projectTitle: string;
 };
 
 const SIDEBAR_VIEW_MODE_KEY = "veslo.sidebar-session-view.v1";
@@ -110,68 +91,6 @@ const workspaceKindLabel = (workspace: WorkspaceInfo) =>
       : "Remote"
     : "Local";
 
-const creationTimestamp = (session: WorkspaceSessionGroup["sessions"][number]) =>
-  session.time?.created ?? 0;
-
-const updatedTimestamp = (session: WorkspaceSessionGroup["sessions"][number]) =>
-  session.time?.updated ?? 0;
-
-const activityTimestamp = (session: WorkspaceSessionGroup["sessions"][number]) =>
-  session.time?.updated ?? session.time?.created ?? 0;
-
-const displayTimestamp = (session: WorkspaceSessionGroup["sessions"][number]) =>
-  activityTimestamp(session) || Date.now();
-
-const rootForWorkspace = (workspace: WorkspaceInfo) =>
-  normalizeDirectoryPath(
-    workspace.workspaceType === "remote"
-      ? workspace.directory?.trim() ?? workspace.path?.trim() ?? ""
-      : workspace.path?.trim() ?? "",
-  );
-
-const rootForSession = (
-  workspace: WorkspaceInfo,
-  session: WorkspaceSessionGroup["sessions"][number],
-) => normalizeDirectoryPath(session.directory?.trim() ?? "") || rootForWorkspace(workspace);
-
-const basenameFromRoot = (root: string) => {
-  const normalized = normalizeDirectoryPath(root);
-  if (!normalized) return "";
-  if (normalized === "/") return "/";
-  const segments = normalized.split("/").filter(Boolean);
-  return segments[segments.length - 1] ?? "";
-};
-
-const compareRecentRows = (a: FlatSessionRow, b: FlatSessionRow) => {
-  const byCreated = b.createdAt - a.createdAt;
-  if (byCreated !== 0) return byCreated;
-
-  const byUpdated = b.updatedAt - a.updatedAt;
-  if (byUpdated !== 0) return byUpdated;
-
-  return a.session.id.localeCompare(b.session.id);
-};
-
-const compareProjectRows = (a: FlatSessionRow, b: FlatSessionRow) => {
-  const byActivity = b.activityAt - a.activityAt;
-  if (byActivity !== 0) return byActivity;
-
-  const byCreated = b.createdAt - a.createdAt;
-  if (byCreated !== 0) return byCreated;
-
-  return a.session.id.localeCompare(b.session.id);
-};
-
-const compareProjectGroups = (a: ProjectSessionGroup, b: ProjectSessionGroup) => {
-  const byActivity = b.activityAt - a.activityAt;
-  if (byActivity !== 0) return byActivity;
-
-  const byLabel = a.projectLabel.localeCompare(b.projectLabel);
-  if (byLabel !== 0) return byLabel;
-
-  return a.workspace.id.localeCompare(b.workspace.id);
-};
-
 export default function WorkspaceSessionList(props: Props) {
   const revealLabel = isWindowsPlatform() ? "Reveal in Explorer" : "Reveal in Finder";
   const [sidebarModeSignal, setSidebarModeSignal] = createSignal<SidebarViewMode>(readSidebarViewMode());
@@ -186,67 +105,12 @@ export default function WorkspaceSessionList(props: Props) {
     writeSidebarViewMode(value);
   };
 
-  const recentRows = createMemo<FlatSessionRow[]>(() => {
-    const rows = props.workspaceSessionGroups.flatMap((group) =>
-      group.sessions.map((session) => {
-        const projectRoot = rootForSession(group.workspace, session);
-        return {
-          rowKey: `${group.workspace.id}:${session.id}`,
-          workspace: group.workspace,
-          session,
-          status: group.status,
-          error: group.error ?? null,
-          createdAt: creationTimestamp(session),
-          updatedAt: updatedTimestamp(session),
-          activityAt: activityTimestamp(session),
-          projectRoot,
-          projectLabel: basenameFromRoot(projectRoot),
-          projectTitle: projectRoot || workspaceLabel(group.workspace),
-        };
-      }),
-    );
-
-    rows.sort(compareRecentRows);
-    return rows;
-  });
+  const recentRows = createMemo<FlatSessionRow[]>(() =>
+    buildRecentRows(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
+  );
 
   const projectGroups = createMemo<ProjectSessionGroup[]>(() =>
-    props.workspaceSessionGroups
-      .map((group) => {
-        const projectRoot = rootForWorkspace(group.workspace);
-        const sessions = group.sessions
-          .map((session) => {
-            const sessionRoot = rootForSession(group.workspace, session);
-            return {
-              rowKey: `${group.workspace.id}:${session.id}`,
-              workspace: group.workspace,
-              session,
-              status: group.status,
-              error: group.error ?? null,
-              createdAt: creationTimestamp(session),
-              updatedAt: updatedTimestamp(session),
-              activityAt: activityTimestamp(session),
-              projectRoot: sessionRoot,
-              projectLabel: basenameFromRoot(sessionRoot),
-              projectTitle: sessionRoot || workspaceLabel(group.workspace),
-            };
-          })
-          .sort(compareProjectRows);
-
-        return {
-          key: projectRoot || `workspace:${group.workspace.id}`,
-          workspace: group.workspace,
-          sessions,
-          status: group.status,
-          error: group.error ?? null,
-          activityAt: sessions[0]?.activityAt ?? 0,
-          projectRoot,
-          projectLabel: basenameFromRoot(projectRoot),
-          projectTitle: projectRoot || workspaceLabel(group.workspace),
-        };
-      })
-      .filter((group) => group.sessions.length > 0)
-      .sort(compareProjectGroups),
+    buildProjectGroups(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
   );
 
   const emptyError = createMemo(() => {
