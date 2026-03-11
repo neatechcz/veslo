@@ -3994,6 +3994,7 @@ export default function SessionView(props: SessionViewProps) {
           developerMode={props.developerMode}
           busy={props.busy}
           isStreaming={showRunIndicator()}
+          compactTopSpacing={todoCount() > 0}
           onSend={handleSendPrompt}
           onStop={cancelRun}
           onDraftChange={handleDraftChange}
