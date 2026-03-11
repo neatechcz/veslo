@@ -3963,6 +3963,8 @@ export default function SessionView(props: SessionViewProps) {
           listCommands={props.listCommands}
           isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
           isSandboxWorkspace={isSandboxWorkspace()}
+          canChooseSessionFolder={props.canChooseSessionFolder}
+          onChooseSessionFolder={chooseFolderForSession}
           onUploadInboxFiles={uploadInboxFiles}
           attachmentsEnabled={attachmentsEnabled()}
           attachmentsDisabledReason={attachmentsDisabledReason()}

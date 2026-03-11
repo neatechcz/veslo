@@ -52,6 +52,8 @@ type ComposerProps = {
   searchFiles: (query: string) => Promise<string[]>;
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
+  canChooseSessionFolder: boolean;
+  onChooseSessionFolder: () => Promise<void> | void;
   onUploadInboxFiles?: (
     files: File[],
     options?: { notify?: boolean },
@@ -1726,9 +1728,26 @@ export default function Composer(props: ComposerProps) {
 
               <div class="flex flex-col gap-2">
                 <div class="flex-1 min-w-0">
-                  <div class="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-9">
-                    {props.isRemoteWorkspace ? "Remote workspace" : "Local workspace"}
-                  </div>
+                  <Show
+                    when={props.canChooseSessionFolder}
+                    fallback={
+                      <div class="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-9">
+                        {props.isRemoteWorkspace ? "Remote workspace" : "Local workspace"}
+                      </div>
+                    }
+                  >
+                    <div class="mb-2">
+                      <button
+                        type="button"
+                        class="inline-flex items-center rounded-md border border-gray-6 bg-gray-2 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-11"
+                        onClick={() => {
+                          void props.onChooseSessionFolder();
+                        }}
+                      >
+                        Choose folder
+                      </button>
+                    </div>
+                  </Show>
 
                   <div class="relative">
                     <Show when={!hasDraftContent()}>

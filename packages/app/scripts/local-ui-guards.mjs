@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 const listSource = readFileSync(new URL("../src/app/components/session/workspace-session-list.tsx", import.meta.url), "utf8");
 const sessionSource = readFileSync(new URL("../src/app/pages/session.tsx", import.meta.url), "utf8");
+const composerSource = readFileSync(new URL("../src/app/components/session/composer.tsx", import.meta.url), "utf8");
 
 assert.equal(
   listSource.includes("New session"),
@@ -20,6 +21,24 @@ assert.equal(
   sessionSource.includes("Choose folder"),
   true,
   "session actions must expose choose-folder copy-and-switch flow",
+);
+
+assert.equal(
+  composerSource.includes("canChooseSessionFolder"),
+  true,
+  "composer must accept choose-folder state for private workspace sessions",
+);
+
+assert.equal(
+  composerSource.includes("onChooseSessionFolder"),
+  true,
+  "composer must accept choose-folder action handler",
+);
+
+assert.equal(
+  composerSource.includes("Choose folder"),
+  true,
+  "composer must expose choose-folder action next to the prompt for private workspaces",
 );
 
 assert.equal(
@@ -46,4 +65,4 @@ assert.equal(
   "session empty state must not expose remote worker connect in the default UI",
 );
 
-console.log(JSON.stringify({ ok: true, checks: 7 }));
+console.log(JSON.stringify({ ok: true, checks: 10 }));
