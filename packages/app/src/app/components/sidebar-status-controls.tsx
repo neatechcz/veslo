@@ -1,4 +1,4 @@
-import { createMemo } from "solid-js";
+import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { Cpu, Server, Settings } from "lucide-solid";
 
 import type { VesloServerStatus } from "../lib/veslo-server";
@@ -10,6 +10,25 @@ type SidebarStatusControlsProps = {
 };
 
 export default function SidebarStatusControls(props: SidebarStatusControlsProps) {
+  const [statusDetailOpen, setStatusDetailOpen] = createSignal(false);
+  let statusControlRef: HTMLDivElement | undefined;
+  let statusPopoverRef: HTMLDivElement | undefined;
+
+  const toggleStatusDetail = () => setStatusDetailOpen((prev) => !prev);
+  const closeStatusDetail = () => setStatusDetailOpen(false);
+
+  createEffect(() => {
+    if (!statusDetailOpen()) return;
+    const onClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (statusControlRef?.contains(target)) return;
+      if (statusPopoverRef?.contains(event.target as Node)) return;
+      closeStatusDetail();
+    };
+    window.addEventListener("click", onClick, true);
+    onCleanup(() => window.removeEventListener("click", onClick, true));
+  });
+
   const opencodeStatusMeta = createMemo(() =>
     props.clientConnected
       ? { text: "text-green-11", label: "Connected" }
@@ -35,36 +54,53 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
 
   return (
     <div class="mt-3 border-t border-gray-6/70 pt-3">
-      <div class="rounded-xl border border-gray-6 bg-gray-2/40 px-3 py-2">
-        <div class="flex items-center gap-2">
-          <span class={`h-2 w-2 rounded-full ${unifiedStatusMeta().dot}`} />
-          <span class="text-xs font-medium text-gray-11">Connection</span>
-          <span class={`ml-auto text-xs font-medium ${unifiedStatusMeta().text}`}>
-            {unifiedStatusMeta().label}
-          </span>
-        </div>
-        <div class="mt-1.5 space-y-1">
-          <div class="flex items-center gap-1.5 text-[11px] text-gray-10">
-            <Cpu size={12} class="text-gray-9" />
-            <span>OpenCode</span>
-            <span class={`ml-auto ${opencodeStatusMeta().text}`}>{opencodeStatusMeta().label}</span>
-          </div>
-          <div class="flex items-center gap-1.5 text-[11px] text-gray-10">
-            <Server size={12} class="text-gray-9" />
-            <span>Server</span>
-            <span class={`ml-auto ${vesloStatusMeta().text}`}>{vesloStatusMeta().label}</span>
-          </div>
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          class="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-gray-6 bg-gray-1 text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-11"
+          onClick={props.onOpenSettings}
+          title="Settings"
+          aria-label="Settings"
+        >
+          <Settings size={14} />
+        </button>
+
+        <div class="relative min-w-0 flex-1" ref={(el) => (statusControlRef = el)}>
+          <button
+            type="button"
+            class="w-full inline-flex items-center gap-2 rounded-lg border border-gray-6 bg-gray-1 px-2.5 py-1.5 text-xs transition-colors hover:bg-gray-2"
+            onClick={toggleStatusDetail}
+            title="Connection status"
+            aria-label="Connection status"
+          >
+            <span class={`h-2 w-2 rounded-full ${unifiedStatusMeta().dot}`} />
+            <span class={`font-medium ${unifiedStatusMeta().text}`}>{unifiedStatusMeta().label}</span>
+          </button>
+
+          <Show when={statusDetailOpen()}>
+            <div
+              ref={statusPopoverRef}
+              class="absolute bottom-full left-0 mb-2 z-[120] w-56 rounded-xl border border-gray-6 bg-gray-2 shadow-xl p-3 space-y-2"
+            >
+              <div class="text-[11px] font-medium text-gray-11 uppercase tracking-wider">
+                Service status
+              </div>
+              <div class="space-y-1.5">
+                <div class="flex items-center gap-1.5 text-xs text-gray-10">
+                  <Cpu size={12} class="text-gray-9" />
+                  <span>OpenCode</span>
+                  <span class={`ml-auto ${opencodeStatusMeta().text}`}>{opencodeStatusMeta().label}</span>
+                </div>
+                <div class="flex items-center gap-1.5 text-xs text-gray-10">
+                  <Server size={12} class="text-gray-9" />
+                  <span>Server</span>
+                  <span class={`ml-auto ${vesloStatusMeta().text}`}>{vesloStatusMeta().label}</span>
+                </div>
+              </div>
+            </div>
+          </Show>
         </div>
       </div>
-
-      <button
-        type="button"
-        class="mt-2.5 w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-6 bg-gray-1 px-2 py-2 text-xs font-medium text-gray-11 transition-colors hover:bg-gray-2"
-        onClick={props.onOpenSettings}
-      >
-        <Settings size={13} />
-        Settings
-      </button>
     </div>
   );
 }
