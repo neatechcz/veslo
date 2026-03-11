@@ -23,6 +23,7 @@ import {
   normalizeDirectoryPath,
   normalizeEvent,
   normalizeSessionStatus,
+  sessionDirectoryMatchesRoot,
   safeStringify,
 } from "../utils";
 import { unwrap } from "../lib/opencode";
@@ -664,7 +665,7 @@ export function createSessionStore(options: {
     const filtered = root
       ? list
         .map((session) => applySessionDirectoryOverride(session))
-        .filter((session) => resolveSessionDirectory(session) === root)
+        .filter((session) => sessionDirectoryMatchesRoot(resolveSessionDirectory(session), root))
       : list.map((session) => applySessionDirectoryOverride(session));
 
     const overrideIds = root

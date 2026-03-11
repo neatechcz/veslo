@@ -194,6 +194,18 @@ export function normalizeDirectoryPath(input?: string | null) {
   return isWindowsPlatform() ? normalized.toLowerCase() : normalized;
 }
 
+// Sessions created in private/scratch flows may come back without directory metadata.
+// In that case, scope them to the currently active workspace root.
+export function sessionDirectoryMatchesRoot(
+  sessionDirectory: string | null | undefined,
+  workspaceRoot: string | null | undefined,
+) {
+  const root = normalizeDirectoryPath(workspaceRoot ?? "");
+  if (!root) return false;
+  const sessionRoot = normalizeDirectoryPath(sessionDirectory ?? "") || root;
+  return sessionRoot === root;
+}
+
 export function normalizeEvent(raw: unknown): OpencodeEvent | null {
   if (!raw || typeof raw !== "object") {
     return null;

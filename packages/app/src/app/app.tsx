@@ -107,6 +107,7 @@ import {
   modelEquals,
   normalizeDirectoryQueryPath,
   normalizeDirectoryPath,
+  sessionDirectoryMatchesRoot,
 } from "./utils";
 import {
   parseAuthCompleteDeepLink,
@@ -2764,7 +2765,7 @@ export default function App() {
       const filtered = root
         ? list
           .map((session) => applySessionDirectoryOverride(session))
-          .filter((session) => resolveSessionDirectory(session) === root)
+          .filter((session) => sessionDirectoryMatchesRoot(resolveSessionDirectory(session), root))
         : list.map((session) => applySessionDirectoryOverride(session));
 
       const overrideIds = root
@@ -2915,7 +2916,9 @@ export default function App() {
           : activeWorkspace?.directory ?? activeWorkspace?.path,
       );
       const scopedSessions = activeWorkspaceRoot
-        ? allSessions.filter((session) => resolveSessionDirectory(session) === activeWorkspaceRoot)
+        ? allSessions.filter((session) =>
+            sessionDirectoryMatchesRoot(resolveSessionDirectory(session), activeWorkspaceRoot),
+          )
         : allSessions;
       const sorted = sortSessionsByActivity(scopedSessions);
       setSidebarSessionsByWorkspaceId((prev) => ({
