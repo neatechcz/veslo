@@ -232,6 +232,7 @@ export type DashboardViewProps = {
   setSelectedMcp: (value: string | null) => void;
   quickConnect: McpDirectoryInfo[];
   connectMcp: (entry: McpDirectoryInfo) => void;
+  authorizeMcp: (entry: McpServerEntry) => void;
   logoutMcpAuth: (name: string) => Promise<void> | void;
   removeMcp: (name: string) => void;
   showMcpReloadBanner: boolean;
@@ -1266,6 +1267,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 setSelectedMcp={props.setSelectedMcp}
                 quickConnect={props.quickConnect}
                 connectMcp={props.connectMcp}
+                authorizeMcp={props.authorizeMcp}
                 logoutMcpAuth={props.logoutMcpAuth}
                 removeMcp={props.removeMcp}
                 showMcpReloadBanner={props.showMcpReloadBanner}

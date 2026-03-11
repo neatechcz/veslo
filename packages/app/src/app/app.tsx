@@ -2517,6 +2517,7 @@ export default function App() {
   // MCP OAuth modal state
   const [mcpAuthModalOpen, setMcpAuthModalOpen] = createSignal(false);
   const [mcpAuthEntry, setMcpAuthEntry] = createSignal<(typeof MCP_QUICK_CONNECT)[number] | null>(null);
+  const [mcpAuthNeedsReload, setMcpAuthNeedsReload] = createSignal(false);
 
   const extensionsStore = createExtensionsStore({
     client,
@@ -4106,6 +4107,16 @@ export default function App() {
     await reloadWorkspaceEngine();
   };
 
+  const activeMcpBlockingSessions = createMemo(() => {
+    const statuses = sessionStatusById();
+    return sessions()
+      .filter((session) => statuses[session.id] === "running")
+      .map((session) => ({
+        id: session.id,
+        title: session.title?.trim() || session.slug?.trim() || session.id,
+      }));
+  });
+
   const markReloadRequired = (
     _reason: ReloadReason,
     _options?: { force?: boolean; trigger?: ReloadTrigger },
@@ -4748,6 +4759,11 @@ export default function App() {
   }
 
   async function refreshMcpServers() {
+    const filterConfiguredStatuses = (status: McpStatusMap, entries: McpServerEntry[]) => {
+      const configured = new Set(entries.map((entry) => entry.name));
+      return Object.fromEntries(Object.entries(status).filter(([name]) => configured.has(name))) as McpStatusMap;
+    };
+
     const projectDir = workspaceProjectDir().trim();
     const isRemoteWorkspace = workspaceStore.activeWorkspaceDisplay().workspaceType === "remote";
     const isLocalWorkspace = !isRemoteWorkspace;
@@ -4782,7 +4798,7 @@ export default function App() {
         if (activeClient && projectDir) {
           try {
             const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
-            setMcpStatuses(status as McpStatusMap);
+            setMcpStatuses(filterConfiguredStatuses(status as McpStatusMap, next));
           } catch {
             setMcpStatuses({});
           }
@@ -4816,7 +4832,7 @@ export default function App() {
         if (activeClient && projectDir) {
           try {
             const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
-            setMcpStatuses(status as McpStatusMap);
+            setMcpStatuses(filterConfiguredStatuses(status as McpStatusMap, next));
           } catch {
             setMcpStatuses({});
           }
@@ -4867,7 +4883,7 @@ export default function App() {
       if (activeClient) {
         try {
           const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
-          setMcpStatuses(status as McpStatusMap);
+          setMcpStatuses(filterConfiguredStatuses(status as McpStatusMap, next));
         } catch {
           setMcpStatuses({});
         }
@@ -5076,6 +5092,7 @@ export default function App() {
 
       if (entry.oauth) {
         setMcpAuthEntry(entry);
+        setMcpAuthNeedsReload(true);
         setMcpAuthModalOpen(true);
       } else {
         setMcpStatus(t("mcp.connected", currentLocale()));
@@ -5097,6 +5114,30 @@ export default function App() {
     } finally {
       setMcpConnectingName(null);
     }
+  }
+
+  function authorizeMcp(entry: McpServerEntry) {
+    if (entry.config.type !== "remote" || entry.config.oauth === false) {
+      setMcpStatus(t("mcp.login_unavailable", currentLocale()));
+      return;
+    }
+
+    const matchingQuickConnect = MCP_QUICK_CONNECT.find((candidate) => {
+      const candidateSlug = candidate.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      return candidateSlug === entry.name || candidate.name === entry.name;
+    });
+
+    setMcpAuthEntry(
+      matchingQuickConnect ?? {
+        name: entry.name,
+        description: "",
+        type: "remote",
+        url: entry.config.url,
+        oauth: true,
+      },
+    );
+    setMcpAuthNeedsReload(false);
+    setMcpAuthModalOpen(true);
   }
 
   async function logoutMcpAuth(name: string) {
@@ -6681,6 +6722,7 @@ export default function App() {
       setSelectedMcp,
       quickConnect: MCP_QUICK_CONNECT,
       connectMcp,
+      authorizeMcp,
       logoutMcpAuth,
       removeMcp,
       refreshMcpServers,
@@ -7044,16 +7086,20 @@ export default function App() {
         entry={mcpAuthEntry()}
         projectDir={workspaceProjectDir()}
         language={currentLocale()}
-        reloadRequired={false}
-        reloadBlocked={anyActiveRuns()}
+        reloadRequired={mcpAuthNeedsReload()}
+        reloadBlocked={activeMcpBlockingSessions().length > 0}
+        activeSessions={activeMcpBlockingSessions()}
         isRemoteWorkspace={activeWorkspaceDisplay().workspaceType === "remote"}
+        onForceStopSession={(sessionID) => abortSession(sessionID)}
         onClose={() => {
           setMcpAuthModalOpen(false);
           setMcpAuthEntry(null);
+          setMcpAuthNeedsReload(false);
         }}
         onComplete={async () => {
           setMcpAuthModalOpen(false);
           setMcpAuthEntry(null);
+          setMcpAuthNeedsReload(false);
           await refreshMcpServers();
         }}
         onReloadEngine={() => reloadWorkspaceEngineAndResume()}
