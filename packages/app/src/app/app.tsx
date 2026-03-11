@@ -2191,6 +2191,13 @@ export default function App() {
       providerID: resolvedProviderId,
       auth: { type: "api", key: trimmed },
     });
+    // Dispose the instance to force provider state recomputation.
+    // The provider state is memoized on first use and is not invalidated by auth.set(),
+    // so newly-added providers (e.g. Google) stay absent from the runtime list until reset.
+    unwrap(await c.instance.dispose());
+    // Refresh provider state before the connection test so that the newly-added provider
+    // is available when resolveProviderConnectionTestModelID looks it up.
+    await refreshProviderState(c);
     await runProviderConnectionTest(c, resolvedProviderId);
     await refreshProviderState(c, resolvedProviderId);
 

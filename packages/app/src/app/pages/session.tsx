@@ -1887,6 +1887,13 @@ export default function SessionView(props: SessionViewProps) {
         setSearchQueryDebounced("");
         setActiveSearchHitIndex(0);
 
+        // Reset run state when switching sessions so a stuck error from a
+        // previous session doesn't bleed into the new one.
+        setRunStartedAt(null);
+        setRunHasBegun(false);
+        setRunLastProgressAt(null);
+        setRunBaseline({ assistantId: null, partCount: 0 });
+
         if (!sessionId) return;
         const firstVisit = !topInitializedSessionIds.has(sessionId);
         topInitializedSessionIds.add(sessionId);
@@ -2172,6 +2179,17 @@ export default function SessionView(props: SessionViewProps) {
 
   const cancelRun = async () => {
     if (abortBusy()) return;
+
+    // If the run is already in error state (e.g. model failed before responding),
+    // the session is already idle server-side. Just dismiss the stuck indicator locally.
+    if (runPhase() === "error") {
+      setRunStartedAt(null);
+      setRunHasBegun(false);
+      setRunLastProgressAt(null);
+      setRunBaseline({ assistantId: null, partCount: 0 });
+      return;
+    }
+
     if (!props.selectedSessionId) {
       setToastMessage(tr("session.no_session_selected_toast"));
       return;
