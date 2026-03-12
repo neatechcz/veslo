@@ -7,6 +7,7 @@ import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 import { sql } from "drizzle-orm"
 import { auth } from "./auth.js"
 import { db } from "./db/index.js"
+import { shouldWidenVarcharColumn } from "./db/schema-reconcile.js"
 import { env } from "./env.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
@@ -78,6 +79,27 @@ function extractRows(value: unknown): Array<Record<string, unknown>> {
   return []
 }
 
+function readRowValueCaseInsensitive(row: Record<string, unknown>, key: string) {
+  const lowered = key.toLowerCase()
+  for (const [rowKey, rowValue] of Object.entries(row)) {
+    if (rowKey.toLowerCase() === lowered) {
+      return rowValue
+    }
+  }
+  return undefined
+}
+
+function toNullableNumber(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
 async function ensureIndex(table: string, indexName: string, columns: string[]) {
   const existing = await db.execute(sql`
     SELECT 1
@@ -115,6 +137,45 @@ async function ensureColumn(table: string, columnName: string, columnDefinition:
   await db.execute(
     sql.raw(
       `ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN ${quoteIdentifier(columnName)} ${columnDefinition}`,
+    ),
+  )
+}
+
+async function ensureVarcharColumnMinimumLength(
+  table: string,
+  columnName: string,
+  minimumLength: number,
+  nullable: boolean,
+) {
+  const metadataResult = await db.execute(sql`
+    SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ${table}
+      AND COLUMN_NAME = ${columnName}
+    LIMIT 1
+  `)
+
+  const metadataRow = extractRows(metadataResult)[0]
+  if (!metadataRow) {
+    return
+  }
+
+  const columnMetadata = {
+    dataType: typeof readRowValueCaseInsensitive(metadataRow, "DATA_TYPE") === "string"
+      ? String(readRowValueCaseInsensitive(metadataRow, "DATA_TYPE"))
+      : null,
+    maxLength: toNullableNumber(readRowValueCaseInsensitive(metadataRow, "CHARACTER_MAXIMUM_LENGTH")),
+  }
+
+  if (!shouldWidenVarcharColumn(columnMetadata, minimumLength)) {
+    return
+  }
+
+  const nullableClause = nullable ? "NULL" : "NOT NULL"
+  await db.execute(
+    sql.raw(
+      `ALTER TABLE ${quoteIdentifier(table)} MODIFY COLUMN ${quoteIdentifier(columnName)} varchar(${minimumLength}) ${nullableClause}`,
     ),
   )
 }
@@ -250,6 +311,7 @@ async function ensureTables() {
       )
     `)
     await ensureIndex("worker", "worker_org_id", ["org_id"])
+    await ensureColumn("worker", "created_by_user_id", "varchar(64)")
     await ensureIndex("worker", "worker_created_by_user_id", ["created_by_user_id"])
     await ensureIndex("worker", "worker_status", ["status"])
     await ensureColumn("worker", "failure_reason", "varchar(2048)")
@@ -282,6 +344,7 @@ async function ensureTables() {
       )
     `)
     await ensureIndex("worker_token", "worker_token_worker_id", ["worker_id"])
+    await ensureVarcharColumnMinimumLength("worker_token", "token", 512, false)
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`worker_bundle\` (
