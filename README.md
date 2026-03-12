@@ -82,6 +82,7 @@ Before running `pnpm dev`, ensure these are installed and active in your shell:
 - **Bun 1.3.9+** (`bun --version`)
 - Rust toolchain (for Tauri), with Cargo from current `rustup` stable (supports `Cargo.lock` v4)
 - Xcode Command Line Tools (macOS)
+- On Linux, WebKitGTK 4.1 development packages so `pkg-config` can resolve `webkit2gtk-4.1` and `javascriptcoregtk-4.1`
 
 ### One-minute sanity check
 
@@ -135,6 +136,7 @@ On startup, `hydrateVesloServerSettingsFromEnv()` (see `packages/app/src/app/lib
 ### Arch Users:
 
 ```bash
+sudo pacman -S --needed webkit2gtk-4.1
 yay -s opencode # Releases version
 ```
 
