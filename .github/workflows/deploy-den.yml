@@ -120,6 +120,7 @@ jobs:
           api_key = os.environ["RENDER_API_KEY"]
           service_id = os.environ["RENDER_DEN_CONTROL_PLANE_SERVICE_ID"]
           owner_id = os.environ["RENDER_OWNER_ID"]
+          debug_logs = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
           veslo_version = os.environ.get("DEN_RENDER_WORKER_VESLO_VERSION") or "0.11.113"
           worker_plan = os.environ.get("DEN_RENDER_WORKER_PLAN") or "standard"
           default_repo = f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'neatechcz/veslo')}"
@@ -317,7 +318,7 @@ jobs:
               latest = deploys[0]["deploy"] if deploys else None
               if latest and latest.get("id") == deploy_id and latest.get("status") in terminal:
                   status = latest.get("status")
-                  if status != "live":
+              if status != "live":
                       _, deploy_detail = request("GET", f"/services/{service_id}/deploys/{deploy_id}")
                       _, service_events = request("GET", f"/services/{service_id}/events?limit=50")
                       logs_query = urllib.parse.urlencode(
@@ -375,10 +376,39 @@ jobs:
                                 }
                           )[:2000],
                       )
-                      print("Render recent logs:", json.dumps(log_lines))
-                      raise RuntimeError(f"Render deploy {deploy_id} ended with {status}")
-                  print(f"Render deploy {deploy_id} is live at {service_url}")
-                  break
+                  print("Render recent logs:", json.dumps(log_lines))
+                  raise RuntimeError(f"Render deploy {deploy_id} ended with {status}")
+              print(f"Render deploy {deploy_id} is live at {service_url}")
+              if debug_logs:
+                  logs_query = urllib.parse.urlencode(
+                      {
+                          "ownerId": owner_id,
+                          "resource": [service_id],
+                          "type": ["app", "build"],
+                          "direction": "backward",
+                          "limit": "120",
+                      },
+                      doseq=True,
+                  )
+                  _, recent_logs = request("GET", f"/logs?{logs_query}")
+                  runtime_lines = []
+                  for entry in (recent_logs or {}).get("logs", []):
+                      if not isinstance(entry, dict):
+                          continue
+                      message = entry.get("message")
+                      if not isinstance(message, str) or not message.strip():
+                          continue
+                      runtime_lines.append(
+                          {
+                              "timestamp": entry.get("timestamp"),
+                              "level": entry.get("level"),
+                              "message": message[:400],
+                          }
+                      )
+                      if len(runtime_lines) >= 40:
+                          break
+                  print("Render recent runtime logs (workflow_dispatch):", json.dumps(runtime_lines))
+              break
               time.sleep(10)
           else:
               raise RuntimeError(f"Timed out waiting for deploy {deploy_id}")
