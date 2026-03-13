@@ -99,7 +99,10 @@ import type { SidebarSectionState } from "../components/session/sidebar";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
 import ArtifactsPanel from "../components/session/artifacts-panel";
-import { openSessionWithWorkspaceActivation } from "./session-navigation";
+import {
+  createSessionWithWorkspaceActivation,
+  openSessionWithWorkspaceActivation,
+} from "./session-navigation";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -3148,14 +3151,13 @@ export default function SessionView(props: SessionViewProps) {
   const createTaskInWorkspace = (workspaceId: string) => {
     const id = workspaceId.trim();
     if (!id) return;
-    if (id === props.activeWorkspaceId) {
-      props.createSessionAndOpen();
-      return;
-    }
-    void (async () => {
-      await Promise.resolve(props.activateWorkspace(id));
-      props.createSessionAndOpen();
-    })();
+    void createSessionWithWorkspaceActivation({
+      activeWorkspaceId: props.activeWorkspaceId,
+      getActiveWorkspaceId: () => props.activeWorkspaceId,
+      workspaceId: id,
+      activateWorkspace: props.activateWorkspace,
+      createSession: () => props.createSessionAndOpen(),
+    });
   };
 
   const commandPaletteRootItems = createMemo<CommandPaletteItem[]>(() => {

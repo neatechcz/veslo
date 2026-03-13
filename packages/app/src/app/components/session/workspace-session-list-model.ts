@@ -31,6 +31,7 @@ export type ProjectSessionGroup = {
 };
 
 export const PRIVATE_PROJECT_GROUP_KEY = "project:veslo-private";
+export type CollapsedProjectMap = Record<string, boolean>;
 
 const defaultPrivateWorkspacePath = () => false;
 
@@ -53,6 +54,17 @@ export const activityTimestamp = (session: WorkspaceSessionGroup["sessions"][num
 
 export const displayTimestamp = (session: WorkspaceSessionGroup["sessions"][number]) =>
   activityTimestamp(session) || Date.now();
+
+export const isProjectCollapsed = (collapsedProjects: CollapsedProjectMap, projectKey: string) =>
+  Boolean(collapsedProjects[projectKey]);
+
+export const toggleProjectCollapsed = (
+  collapsedProjects: CollapsedProjectMap,
+  projectKey: string,
+): CollapsedProjectMap => ({
+  ...collapsedProjects,
+  [projectKey]: !collapsedProjects[projectKey],
+});
 
 const rootForWorkspace = (workspace: WorkspaceInfo) =>
   normalizeDirectoryPath(

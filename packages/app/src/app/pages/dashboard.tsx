@@ -55,7 +55,10 @@ import SidebarStatusControls from "../components/sidebar-status-controls";
 import ProviderAuthModal, { type ProviderOAuthStartResult } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
-import { openSessionWithWorkspaceActivation } from "./session-navigation";
+import {
+  createSessionWithWorkspaceActivation,
+  openSessionWithWorkspaceActivation,
+} from "./session-navigation";
 import {
   Box,
   ChevronDown,
@@ -396,14 +399,13 @@ export default function DashboardView(props: DashboardViewProps) {
   const createTaskInWorkspace = (workspaceId: string) => {
     const id = workspaceId.trim();
     if (!id) return;
-    if (id === props.activeWorkspaceId) {
-      props.createSessionAndOpen();
-      return;
-    }
-    void (async () => {
-      await Promise.resolve(props.activateWorkspace(id));
-      props.createSessionAndOpen();
-    })();
+    void createSessionWithWorkspaceActivation({
+      activeWorkspaceId: props.activeWorkspaceId,
+      getActiveWorkspaceId: () => props.activeWorkspaceId,
+      workspaceId: id,
+      activateWorkspace: props.activateWorkspace,
+      createSession: () => props.createSessionAndOpen(),
+    });
   };
 
   // Track last refreshed tab to avoid duplicate calls

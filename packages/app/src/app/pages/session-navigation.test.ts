@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { openSessionWithWorkspaceActivation } from "./session-navigation.js";
+import {
+  createSessionWithWorkspaceActivation,
+  openSessionWithWorkspaceActivation,
+} from "./session-navigation.js";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -114,4 +117,48 @@ test("serializes rapid cross-workspace session clicks and only opens the latest 
   assert.equal(maxConcurrent, 1);
   assert.deepEqual(activationEvents, ["start:ws-two", "end:ws-two"]);
   assert.deepEqual(opened, ["sess-2"]);
+});
+
+test("does not create session when cross-workspace activation fails", async () => {
+  const activated: string[] = [];
+  const created: string[] = [];
+
+  const result = await createSessionWithWorkspaceActivation({
+    activeWorkspaceId: "ws-active",
+    workspaceId: "ws-other",
+    activateWorkspace: async (id) => {
+      activated.push(id);
+      return false;
+    },
+    createSession: async () => {
+      created.push("created");
+      return "sess-created";
+    },
+  });
+
+  assert.equal(result, false);
+  assert.deepEqual(activated, ["ws-other"]);
+  assert.deepEqual(created, []);
+});
+
+test("creates session after successful cross-workspace activation", async () => {
+  const activated: string[] = [];
+  const created: string[] = [];
+
+  const result = await createSessionWithWorkspaceActivation({
+    activeWorkspaceId: "ws-active",
+    workspaceId: "ws-other",
+    activateWorkspace: async (id) => {
+      activated.push(id);
+      return true;
+    },
+    createSession: async () => {
+      created.push("created");
+      return "sess-created";
+    },
+  });
+
+  assert.equal(result, true);
+  assert.deepEqual(activated, ["ws-other"]);
+  assert.deepEqual(created, ["created"]);
 });

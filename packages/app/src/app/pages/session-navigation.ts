@@ -7,10 +7,20 @@ export type OpenSessionWithWorkspaceActivationInput = {
   openSession: (sessionId: string) => void;
 };
 
+export type CreateSessionWithWorkspaceActivationInput = {
+  activeWorkspaceId: string;
+  getActiveWorkspaceId?: () => string;
+  workspaceId: string;
+  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  createSession: () => Promise<string | undefined> | string | undefined | void;
+};
+
 // Keep cross-worker session navigation single-flight to avoid overlapping
 // activateWorkspace calls when users click between workers rapidly.
 let openSessionNavigationQueue: Promise<void> = Promise.resolve();
 let openSessionNavigationToken = 0;
+let createSessionNavigationQueue: Promise<void> = Promise.resolve();
+let createSessionNavigationToken = 0;
 
 export async function openSessionWithWorkspaceActivation(
   input: OpenSessionWithWorkspaceActivationInput,
@@ -38,6 +48,38 @@ export async function openSessionWithWorkspaceActivation(
 
   const task = openSessionNavigationQueue.then(run, run);
   openSessionNavigationQueue = task.then(
+    () => undefined,
+    () => undefined,
+  );
+  return await task;
+}
+
+export async function createSessionWithWorkspaceActivation(
+  input: CreateSessionWithWorkspaceActivationInput,
+): Promise<boolean> {
+  const workspaceId = input.workspaceId.trim();
+  const activeWorkspaceId = input.activeWorkspaceId.trim();
+  const getActiveWorkspaceId = () => input.getActiveWorkspaceId?.().trim() || activeWorkspaceId;
+  if (!workspaceId) return false;
+
+  const token = ++createSessionNavigationToken;
+
+  const run = async () => {
+    if (token !== createSessionNavigationToken) return false;
+
+    if (workspaceId !== getActiveWorkspaceId()) {
+      const activated = await Promise.resolve(input.activateWorkspace(workspaceId));
+      if (!activated) return false;
+    }
+
+    if (token !== createSessionNavigationToken) return false;
+    const created = await Promise.resolve(input.createSession());
+    if (typeof created === "string") return created.trim().length > 0;
+    return created !== undefined && created !== null;
+  };
+
+  const task = createSessionNavigationQueue.then(run, run);
+  createSessionNavigationQueue = task.then(
     () => undefined,
     () => undefined,
   );
