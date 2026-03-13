@@ -191,6 +191,17 @@ export type SessionViewProps = {
   mcpStatus: string | null;
   skills: SkillCard[];
   skillsStatus: string | null;
+  showSkillReloadBanner: boolean;
+  reloadBannerTitle: string;
+  reloadBannerBody: string;
+  reloadBannerBlocked: boolean;
+  reloadBannerActiveCount: number;
+  canReloadWorkspace: boolean;
+  reloadWorkspaceEngine: () => Promise<void>;
+  forceStopActiveConversations: () => Promise<void>;
+  dismissReloadBanner: () => void;
+  reloadBusy: boolean;
+  reloadError: string | null;
   busy: boolean;
   prompt: string;
   setPrompt: (value: string) => void;
@@ -265,12 +276,9 @@ type SkillsSetBundleV1 = {
   };
 };
 
-const BROWSER_SETUP_TEMPLATE = (() => {
+const BROWSER_AUTOMATION_QUICKSTART_PROMPT = (() => {
   const parsed = parseTemplateFrontmatter(browserSetupTemplate);
-  const name = parsed?.data?.name?.trim() || "browser-setup";
-  const description = parsed?.data?.description?.trim() || "Guide the user through browser automation setup";
-  const body = (parsed?.body ?? browserSetupTemplate).trim();
-  return { name, description, body };
+  return (parsed?.body ?? browserSetupTemplate).trim();
 })();
 
 const SOUL_SETUP_TEMPLATE = (() => {
@@ -3072,30 +3080,10 @@ export default function SessionView(props: SessionViewProps) {
     props.sendPromptAsync(draft).catch(() => undefined);
   };
 
-  const handleBrowserAutomationQuickstart = async () => {
-    const name = BROWSER_SETUP_TEMPLATE.name;
-    try {
-      const commands = await props.listCommands();
-      const hasCommand = commands.some((cmd) => cmd.name === name);
-      if (hasCommand) {
-        handleSendPrompt({
-          mode: "prompt",
-          text: `/${name}`,
-          resolvedText: `/${name}`,
-          parts: [{ type: "text", text: `/${name}` }],
-          attachments: [],
-          command: { name, arguments: "" },
-        });
-        return;
-      }
-    } catch {
-      // Fall back to prompt-based setup below.
-    }
-
+  const handleBrowserAutomationQuickstart = () => {
     const text =
-      currentLocale() === "cs"
-        ? tr("session.quickstart_browser_prompt")
-        : BROWSER_SETUP_TEMPLATE.body || tr("session.quickstart_browser_prompt");
+      BROWSER_AUTOMATION_QUICKSTART_PROMPT ||
+      "Try Chrome DevTools MCP now. If it is unavailable, explain how to connect Control Chrome in Veslo and ask me to retry.";
     handleSendPrompt({
       mode: "prompt",
       text,
@@ -3765,6 +3753,53 @@ export default function SessionView(props: SessionViewProps) {
           </div>
         </Show>
 
+        <Show when={props.showSkillReloadBanner}>
+          <div class="border-b border-amber-6/50 bg-amber-2/70 px-6 py-3">
+            <div class="mx-auto flex w-full max-w-[800px] flex-col gap-3 rounded-2xl border border-amber-6/60 bg-amber-1/80 px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+              <div class="min-w-0">
+                <div class="text-sm font-medium text-amber-11">{props.reloadBannerTitle}</div>
+                <div class="mt-0.5 text-xs text-amber-11/80">
+                  {props.reloadBannerBody}
+                  <Show when={props.reloadBannerBlocked}>
+                    <span>
+                      {` Reloading stops ${props.reloadBannerActiveCount} active conversation${props.reloadBannerActiveCount === 1 ? "" : "s"}.`}
+                    </span>
+                  </Show>
+                </div>
+                <Show when={props.reloadError}>
+                  <div class="mt-1 text-xs text-red-11">{props.reloadError}</div>
+                </Show>
+              </div>
+
+              <div class="flex items-center gap-2 sm:shrink-0">
+                <button
+                  type="button"
+                  class="rounded-xl border border-amber-7 bg-amber-4 px-3 py-2 text-xs font-medium text-amber-12 transition-colors hover:bg-amber-5 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={!props.canReloadWorkspace || props.reloadBusy}
+                  onClick={() =>
+                    void (props.reloadBannerBlocked
+                      ? props.forceStopActiveConversations()
+                      : props.reloadWorkspaceEngine())
+                  }
+                >
+                  {props.reloadBusy
+                    ? "Reloading..."
+                    : props.reloadBannerBlocked
+                      ? "Reload & Stop Tasks"
+                      : "Reload"}
+                </button>
+                <button
+                  type="button"
+                  class="rounded-xl border border-amber-6/70 bg-transparent px-3 py-2 text-xs font-medium text-amber-11 transition-colors hover:bg-amber-3"
+                  onClick={props.dismissReloadBanner}
+                >
+                  Later
+                </button>
+              </div>
+            </div>
+          </div>
+        </Show>
+
         <div class="flex-1 flex overflow-hidden">
           <div class="flex-1 min-w-0 relative overflow-hidden bg-gray-1">
             <div
@@ -3994,6 +4029,7 @@ export default function SessionView(props: SessionViewProps) {
           developerMode={props.developerMode}
           busy={props.busy}
           isStreaming={showRunIndicator()}
+          compactTopSpacing={todoCount() > 0}
           onSend={handleSendPrompt}
           onStop={cancelRun}
           onDraftChange={handleDraftChange}
@@ -4286,6 +4322,11 @@ export default function SessionView(props: SessionViewProps) {
         shareWorkspaceProfileError={shareWorkspaceProfileError()}
         shareWorkspaceProfileDisabledReason={shareServiceDisabledReason()}
         onShareSkillsSet={publishSkillsSetLink}
+        onOpenSingleSkillShare={() => {
+          setShareWorkspaceId(null);
+          props.setTab("skills");
+          props.setView("dashboard");
+        }}
         shareSkillsSetBusy={shareSkillsSetBusy()}
         shareSkillsSetUrl={shareSkillsSetUrl()}
         shareSkillsSetError={shareSkillsSetError()}

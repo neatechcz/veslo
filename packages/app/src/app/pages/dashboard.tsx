@@ -84,6 +84,7 @@ export type DashboardViewProps = {
   providerAuthError: string | null;
   providerAuthMethods: Record<string, { type: "oauth" | "api"; label: string }[]>;
   openProviderAuthModal: () => Promise<void>;
+  disconnectProvider: (providerId: string) => Promise<string | void>;
   connectLmStudioProvider: (baseUrlInput?: string) => Promise<string | void>;
   closeProviderAuthModal: () => void;
   startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
@@ -231,6 +232,7 @@ export type DashboardViewProps = {
   setSelectedMcp: (value: string | null) => void;
   quickConnect: McpDirectoryInfo[];
   connectMcp: (entry: McpDirectoryInfo) => void;
+  authorizeMcp: (entry: McpServerEntry) => void;
   logoutMcpAuth: (name: string) => Promise<void> | void;
   removeMcp: (name: string) => void;
   showMcpReloadBanner: boolean;
@@ -1265,6 +1267,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 setSelectedMcp={props.setSelectedMcp}
                 quickConnect={props.quickConnect}
                 connectMcp={props.connectMcp}
+                authorizeMcp={props.authorizeMcp}
                 logoutMcpAuth={props.logoutMcpAuth}
                 removeMcp={props.removeMcp}
                 showMcpReloadBanner={props.showMcpReloadBanner}
@@ -1342,6 +1345,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   providerConnectedIds={props.providerConnectedIds}
                   providerAuthBusy={props.providerAuthBusy}
                   openProviderAuthModal={props.openProviderAuthModal}
+                  disconnectProvider={props.disconnectProvider}
                   vesloServerStatus={props.vesloServerStatus}
                   vesloServerUrl={props.vesloServerUrl}
                   vesloReconnectBusy={props.vesloReconnectBusy}
@@ -1491,6 +1495,10 @@ export default function DashboardView(props: DashboardViewProps) {
           shareWorkspaceProfileError={shareWorkspaceProfileError()}
           shareWorkspaceProfileDisabledReason={shareServiceDisabledReason()}
           onShareSkillsSet={publishSkillsSetLink}
+          onOpenSingleSkillShare={() => {
+            setShareWorkspaceId(null);
+            props.setTab("skills");
+          }}
           shareSkillsSetBusy={shareSkillsSetBusy()}
           shareSkillsSetUrl={shareSkillsSetUrl()}
           shareSkillsSetError={shareSkillsSetError()}

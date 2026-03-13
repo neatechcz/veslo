@@ -63,10 +63,12 @@ import {
   VARIANT_PREF_KEY,
 } from "./constants";
 import { parseMcpServersFromContent, removeMcpFromConfig, validateMcpServerName } from "./mcp";
+import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "./types";
 import type {
   Client,
   DashboardTab,
   MessageWithParts,
+  PlaceholderAssistantMessage,
   StartupPreference,
   EngineRuntime,
   ModelOption,
@@ -89,6 +91,7 @@ import type {
   ComposerDraft,
   ComposerPart,
   ProviderListItem,
+  SessionErrorTurn,
   UpdateHandle,
   OpencodeConnectStatus,
   ScheduledJob,
@@ -1218,6 +1221,7 @@ export default function App() {
   const [sessionModelById, setSessionModelById] = createSignal<
     Record<string, ModelRef>
   >({});
+  const [pendingSessionModel, setPendingSessionModel] = createSignal<ModelRef | null>(null);
   const [sessionModelOverridesReady, setSessionModelOverridesReady] = createSignal(false);
   const [workspaceDefaultModelReady, setWorkspaceDefaultModelReady] = createSignal(false);
   const [legacyDefaultModel, setLegacyDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
@@ -1228,6 +1232,10 @@ export default function App() {
   const [providerAuthError, setProviderAuthError] = createSignal<string | null>(null);
   const [providerAuthMethods, setProviderAuthMethods] = createSignal<Record<string, ProviderAuthMethod[]>>({});
 
+  let markReloadRequiredHandler: ((reason: ReloadReason, trigger?: ReloadTrigger) => void) | undefined;
+  const markReloadRequired = (reason: ReloadReason, trigger?: ReloadTrigger) => {
+    markReloadRequiredHandler?.(reason, trigger);
+  };
   const sessionStore = createSessionStore({
     client,
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot().trim(),
@@ -1251,6 +1259,7 @@ export default function App() {
     developerMode,
     setError,
     setSseConnected,
+    markReloadRequired,
     onHotReloadApplied: () => {
       void refreshSkills({ force: true });
       void refreshPlugins(pluginScope());
@@ -1645,7 +1654,7 @@ export default function App() {
         error: e instanceof Error ? e.message : safeStringify(e),
       });
       const message = e instanceof Error ? e.message : safeStringify(e);
-      setError(addOpencodeCacheHint(message));
+      sessionStore.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(message));
     } finally {
       setBusy(false);
       setBusyLabel(null);
@@ -1756,6 +1765,65 @@ export default function App() {
     return "";
   };
 
+  const createSyntheticSessionErrorMessage = (
+    sessionID: string,
+    errorTurn: SessionErrorTurn,
+  ): MessageWithParts => {
+    const info: PlaceholderAssistantMessage = {
+      id: errorTurn.id,
+      sessionID,
+      role: "assistant",
+      time: { created: errorTurn.time, completed: errorTurn.time },
+      parentID: errorTurn.afterMessageID ?? "",
+      modelID: "",
+      providerID: "",
+      mode: "",
+      agent: "",
+      path: { cwd: "", root: "" },
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    };
+
+    return {
+      info,
+      parts: [
+        {
+          id: `${errorTurn.id}:text`,
+          sessionID,
+          messageID: errorTurn.id,
+          type: "text",
+          text: errorTurn.text,
+        } as Part,
+      ],
+    };
+  };
+
+  const insertSyntheticSessionErrors = (
+    list: MessageWithParts[],
+    sessionID: string | null,
+    errorTurns: SessionErrorTurn[],
+  ) => {
+    if (!sessionID || errorTurns.length === 0) return list;
+
+    const next = list.slice();
+    errorTurns.forEach((errorTurn) => {
+      if (next.some((message) => messageIdFromInfo(message) === errorTurn.id)) return;
+      const syntheticMessage = createSyntheticSessionErrorMessage(sessionID, errorTurn);
+      const anchorIndex = errorTurn.afterMessageID
+        ? next.findIndex((message) => messageIdFromInfo(message) === errorTurn.afterMessageID)
+        : -1;
+
+      if (anchorIndex === -1) {
+        next.push(syntheticMessage);
+        return;
+      }
+
+      next.splice(anchorIndex + 1, 0, syntheticMessage);
+    });
+
+    return next;
+  };
+
   const upsertLocalSession = (next: Session | null | undefined) => {
     const id = (next as { id?: string } | null)?.id ?? "";
     if (!id) return;
@@ -1775,13 +1843,18 @@ export default function App() {
   // as the visibility boundary. Veslo mirrors that behavior by filtering the
   // displayed transcript.
   const visibleMessages = createMemo(() => {
-    const list = messages();
+    const sessionID = selectedSessionId();
+    const errorTurns = sessionStore.selectedSessionErrorTurns();
+    const list = messages().filter((message) => {
+      const id = messageIdFromInfo(message);
+      return !id.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
+    });
     const revert = selectedSession()?.revert?.messageID ?? null;
-    if (!revert) return list;
-    return list.filter((message) => {
+    const visible = !revert ? list : list.filter((message) => {
       const id = messageIdFromInfo(message);
       return Boolean(id) && id < revert;
     });
+    return insertSyntheticSessionErrors(visible, sessionID, errorTurns);
   });
 
   const restorePromptFromUserMessage = (message: MessageWithParts) => {
@@ -2246,6 +2319,40 @@ export default function App() {
     }
   }
 
+  async function disconnectProvider(providerId: string) {
+    setProviderAuthError(null);
+    const c = client();
+    if (!c) {
+      throw new Error("Not connected to a server");
+    }
+
+    const resolved = providerId.trim();
+    if (!resolved) {
+      throw new Error("Provider ID is required");
+    }
+
+    const removeProviderAuth = async () => {
+      const rawClient = (c as unknown as { client?: { delete?: (options: { url: string }) => Promise<unknown> } })
+        .client;
+      if (rawClient?.delete) {
+        await rawClient.delete({ url: `/auth/${encodeURIComponent(resolved)}` });
+        return;
+      }
+      await c.auth.set({ providerID: resolved, auth: null as never });
+    };
+
+    try {
+      await removeProviderAuth();
+      unwrap(await c.instance.dispose());
+      await refreshProviderState(c);
+      return `Disconnected ${resolved}`;
+    } catch (error) {
+      const message = describeProviderError(error, "Failed to disconnect provider");
+      setProviderAuthError(message);
+      throw error instanceof Error ? error : new Error(message);
+    }
+  }
+
   async function connectLmStudioProvider(baseUrlInput?: string) {
     setProviderAuthError(null);
     const c = client();
@@ -2482,6 +2589,7 @@ export default function App() {
   // MCP OAuth modal state
   const [mcpAuthModalOpen, setMcpAuthModalOpen] = createSignal(false);
   const [mcpAuthEntry, setMcpAuthEntry] = createSignal<(typeof MCP_QUICK_CONNECT)[number] | null>(null);
+  const [mcpAuthNeedsReload, setMcpAuthNeedsReload] = createSignal(false);
 
   const extensionsStore = createExtensionsStore({
     client,
@@ -2496,6 +2604,7 @@ export default function App() {
     setBusyLabel,
     setBusyStartedAt,
     setError,
+    markReloadRequired,
     onNotionSkillInstalled: () => {
       setNotionSkillInstalled(true);
       try {
@@ -3931,9 +4040,13 @@ export default function App() {
   });
 
   const {
+    reloadRequired,
+    reloadCopy,
+    reloadTrigger,
     reloadBusy,
     reloadError,
     reloadWorkspaceEngine,
+    clearReloadRequired,
     cacheRepairBusy,
     cacheRepairResult,
     repairOpencodeCache,
@@ -3964,6 +4077,8 @@ export default function App() {
     confirmReset,
     anyActiveRuns,
   } = systemState;
+
+  markReloadRequiredHandler = systemState.markReloadRequired;
 
   const UPDATE_AUTO_CHECK_EVERY_MS = 12 * 60 * 60_000;
   const UPDATE_AUTO_CHECK_POLL_MS = 60_000;
@@ -4071,11 +4186,26 @@ export default function App() {
     await reloadWorkspaceEngine();
   };
 
-  const markReloadRequired = (
-    _reason: ReloadReason,
-    _options?: { force?: boolean; trigger?: ReloadTrigger },
-  ) => {
-    return;
+  const activeReloadBlockingSessions = createMemo(() => {
+    const statuses = sessionStatusById();
+    return sessions()
+      .filter((session) => statuses[session.id] === "running")
+      .map((session) => ({
+        id: session.id,
+        title: session.title?.trim() || session.slug?.trim() || session.id,
+      }));
+  });
+
+  const forceStopActiveSessionsAndReload = async () => {
+    const activeSessions = activeReloadBlockingSessions();
+    for (const session of activeSessions) {
+      try {
+        await abortSession(session.id);
+      } catch {
+        // ignore and continue stopping the rest before reload
+      }
+    }
+    await reloadWorkspaceEngineAndResume();
   };
 
   onMount(() => {
@@ -4456,7 +4586,7 @@ export default function App() {
 
   const selectedSessionModel = createMemo<ModelRef>(() => {
     const id = selectedSessionId();
-    if (!id) return defaultModel();
+    if (!id) return pendingSessionModel() ?? defaultModel();
 
     const override = sessionModelOverrideById()[id];
     if (override) return override;
@@ -4534,7 +4664,6 @@ export default function App() {
         if (defaultModelID === model.id || isDefault) {
           footerBits.push(t("settings.model_default", currentLocale()));
         }
-        if (isFree) footerBits.push(t("settings.model_free", currentLocale()));
         if (model.reasoning) footerBits.push(t("settings.model_reasoning", currentLocale()));
 
         next.push({
@@ -4603,6 +4732,9 @@ export default function App() {
 
     const id = selectedSessionId();
     if (!id) {
+      setPendingSessionModel(next);
+      setDefaultModelExplicit(true);
+      setDefaultModel(next);
       setModelPickerOpen(false);
       return;
     }
@@ -4619,6 +4751,10 @@ export default function App() {
     }
   }
 
+  function openSettingsFromModelPicker() {
+    setTab("settings");
+    setView("dashboard");
+  }
 
   async function connectNotion() {
     if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") {
@@ -4707,6 +4843,11 @@ export default function App() {
   }
 
   async function refreshMcpServers() {
+    const filterConfiguredStatuses = (status: McpStatusMap, entries: McpServerEntry[]) => {
+      const configured = new Set(entries.map((entry) => entry.name));
+      return Object.fromEntries(Object.entries(status).filter(([name]) => configured.has(name))) as McpStatusMap;
+    };
+
     const projectDir = workspaceProjectDir().trim();
     const isRemoteWorkspace = workspaceStore.activeWorkspaceDisplay().workspaceType === "remote";
     const isLocalWorkspace = !isRemoteWorkspace;
@@ -4741,7 +4882,7 @@ export default function App() {
         if (activeClient && projectDir) {
           try {
             const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
-            setMcpStatuses(status as McpStatusMap);
+            setMcpStatuses(filterConfiguredStatuses(status as McpStatusMap, next));
           } catch {
             setMcpStatuses({});
           }
@@ -4775,7 +4916,7 @@ export default function App() {
         if (activeClient && projectDir) {
           try {
             const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
-            setMcpStatuses(status as McpStatusMap);
+            setMcpStatuses(filterConfiguredStatuses(status as McpStatusMap, next));
           } catch {
             setMcpStatuses({});
           }
@@ -4826,7 +4967,7 @@ export default function App() {
       if (activeClient) {
         try {
           const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
-          setMcpStatuses(status as McpStatusMap);
+          setMcpStatuses(filterConfiguredStatuses(status as McpStatusMap, next));
         } catch {
           setMcpStatuses({});
         }
@@ -4942,7 +5083,7 @@ export default function App() {
       return;
     }
 
-    const slug = entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const slug = entry.id ?? entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
     try {
       setMcpStatus(null);
@@ -5035,6 +5176,7 @@ export default function App() {
 
       if (entry.oauth) {
         setMcpAuthEntry(entry);
+        setMcpAuthNeedsReload(true);
         setMcpAuthModalOpen(true);
       } else {
         setMcpStatus(t("mcp.connected", currentLocale()));
@@ -5056,6 +5198,30 @@ export default function App() {
     } finally {
       setMcpConnectingName(null);
     }
+  }
+
+  function authorizeMcp(entry: McpServerEntry) {
+    if (entry.config.type !== "remote" || entry.config.oauth === false) {
+      setMcpStatus(t("mcp.login_unavailable", currentLocale()));
+      return;
+    }
+
+    const matchingQuickConnect = MCP_QUICK_CONNECT.find((candidate) => {
+      const candidateSlug = candidate.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      return candidateSlug === entry.name || candidate.name === entry.name;
+    });
+
+    setMcpAuthEntry(
+      matchingQuickConnect ?? {
+        name: entry.name,
+        description: "",
+        type: "remote",
+        url: entry.config.url,
+        oauth: true,
+      },
+    );
+    setMcpAuthNeedsReload(false);
+    setMcpAuthModalOpen(true);
   }
 
   async function logoutMcpAuth(name: string) {
@@ -5282,11 +5448,20 @@ export default function App() {
       }
 
       const session = unwrap(rawResult);
+      const pendingModel = pendingSessionModel();
       // Immediately select and show the new session before background list refresh.
       setBusyLabel("status.loading_session");
       mark("session:select:start", { sessionID: session.id });
       await selectSession(session.id);
       mark("session:select:ok", { sessionID: session.id });
+
+      if (pendingModel) {
+        setSessionModelOverrideById((current) => ({
+          ...current,
+          [session.id]: pendingModel,
+        }));
+        setPendingSessionModel(null);
+      }
 
       // Inject the new session into the reactive sessions() store so
       // the createEffect bridge (sessions → sidebar) will always include it,
@@ -5895,9 +6070,7 @@ export default function App() {
           await vesloClient.patchConfig(vesloWorkspaceId, {
             opencode: { model: formatModelRef(nextModel) },
           });
-          markReloadRequired("config", {
-            trigger: { type: "config", name: "opencode.json", action: "updated" },
-          });
+          markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
           return;
         }
 
@@ -5911,9 +6084,7 @@ export default function App() {
           throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
         }
         setLastKnownConfigSnapshot(getConfigSnapshot(content));
-        markReloadRequired("config", {
-          trigger: { type: "config", name: "opencode.json", action: "updated" },
-        });
+        markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
       } catch (error) {
         if (cancelled) return;
         const message = error instanceof Error ? error.message : safeStringify(error);
@@ -6412,6 +6583,7 @@ export default function App() {
       providerAuthError: providerAuthError(),
       providerAuthMethods: providerAuthMethods(),
       openProviderAuthModal,
+      disconnectProvider,
       connectLmStudioProvider,
       closeProviderAuthModal,
       startProviderAuth,
@@ -6630,6 +6802,7 @@ export default function App() {
       setSelectedMcp,
       quickConnect: MCP_QUICK_CONNECT,
       connectMcp,
+      authorizeMcp,
       logoutMcpAuth,
       removeMcp,
       refreshMcpServers,
@@ -6729,6 +6902,17 @@ export default function App() {
     mcpStatus: mcpStatus(),
     skills: skills(),
     skillsStatus: skillsStatus(),
+    showSkillReloadBanner: reloadRequired() && reloadTrigger()?.type === "skill",
+    reloadBannerTitle: reloadCopy().title,
+    reloadBannerBody: reloadCopy().body,
+    reloadBannerBlocked: activeReloadBlockingSessions().length > 0,
+    reloadBannerActiveCount: activeReloadBlockingSessions().length,
+    canReloadWorkspace: canReloadWorkspace(),
+    reloadWorkspaceEngine: reloadWorkspaceEngineAndResume,
+    forceStopActiveConversations: forceStopActiveSessionsAndReload,
+    dismissReloadBanner: clearReloadRequired,
+    reloadBusy: reloadBusy(),
+    reloadError: reloadError(),
     createSessionAndOpen: createSessionAndOpen,
     sendPromptAsync: sendPrompt,
     abortSession: abortSession,
@@ -6966,6 +7150,7 @@ export default function App() {
         target={modelPickerTarget()}
         current={modelPickerCurrent()}
         onSelect={applyModelSelection}
+        onOpenSettings={openSettingsFromModelPicker}
         onClose={() => setModelPickerOpen(false)}
       />
 
@@ -6992,16 +7177,20 @@ export default function App() {
         entry={mcpAuthEntry()}
         projectDir={workspaceProjectDir()}
         language={currentLocale()}
-        reloadRequired={false}
-        reloadBlocked={anyActiveRuns()}
+        reloadRequired={mcpAuthNeedsReload()}
+        reloadBlocked={activeReloadBlockingSessions().length > 0}
+        activeSessions={activeReloadBlockingSessions()}
         isRemoteWorkspace={activeWorkspaceDisplay().workspaceType === "remote"}
+        onForceStopSession={(sessionID) => abortSession(sessionID)}
         onClose={() => {
           setMcpAuthModalOpen(false);
           setMcpAuthEntry(null);
+          setMcpAuthNeedsReload(false);
         }}
         onComplete={async () => {
           setMcpAuthModalOpen(false);
           setMcpAuthEntry(null);
+          setMcpAuthNeedsReload(false);
           await refreshMcpServers();
         }}
         onReloadEngine={() => reloadWorkspaceEngineAndResume()}
@@ -7020,11 +7209,7 @@ export default function App() {
         onConfirmWorker={
           isTauriRuntime()
             ? async (preset, folder) => {
-                const ok = await workspaceStore.createSandboxFlow(preset, folder, {
-                  onReady: async () => {
-                    await createSessionAndOpen();
-                  },
-                });
+                const ok = await workspaceStore.createSandboxFlow(preset, folder);
                 if (!ok) return;
               }
             : undefined

@@ -109,16 +109,21 @@ export function createSystemState(options: {
 
   const anyActiveRuns = createMemo(() => {
     const statuses = options.sessionStatusById();
-    return options.sessions().some((s) => statuses[s.id] === "running" || statuses[s.id] === "retry");
+    return options.sessions().some((s) => statuses[s.id] === "running");
   });
 
-  function clearVesloLocalStorage() {
+  function clearVesloLocalStorage(mode: ResetVesloMode) {
     if (typeof window === "undefined") return;
 
     try {
+      if (mode === "all") {
+        window.localStorage.clear();
+        return;
+      }
+
       const keys = Object.keys(window.localStorage);
       for (const key of keys) {
-        if (key.startsWith("veslo.")) {
+        if (key.includes("veslo") || key.includes("openwork")) {
           window.localStorage.removeItem(key);
         }
       }
@@ -159,7 +164,7 @@ export function createSystemState(options: {
         await resetVesloState(resetModalMode());
       }
 
-      clearVesloLocalStorage();
+      clearVesloLocalStorage(resetModalMode());
 
       if (isTauriRuntime()) {
         await relaunch();

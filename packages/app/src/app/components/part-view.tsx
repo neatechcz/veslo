@@ -101,11 +101,15 @@ const applyTextHighlights = (root: HTMLElement, query: string) => {
 function useThrottledValue<T>(value: () => T, delayMs: number | (() => number) = 80) {
   const [state, setState] = createSignal<T>(value());
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let hasEmitted = false;
 
   createEffect(() => {
     const next = value();
     const delay = typeof delayMs === "function" ? delayMs() : delayMs;
-    if (!delay) {
+    // Always apply the first non-empty value synchronously so the initial
+    // render never falls through to the raw-text fallback.
+    if (!delay || !hasEmitted) {
+      hasEmitted = true;
       setState(() => next);
       return;
     }
@@ -291,6 +295,11 @@ export default function PartView(props: Props) {
       }
 
       const html = typeof result === "string" ? result : "";
+      // If marked returned empty HTML for non-empty source, treat as a parse
+      // failure so the fallback renders plain text instead of blank space.
+      if (!html && text.trim()) {
+        return null;
+      }
       writeMarkdownCache(cacheKey, html);
       return html;
     } catch (error) {
@@ -578,24 +587,21 @@ export default function PartView(props: Props) {
             </div>
           }
         >
-          <Show
-            when={renderedMarkdown()}
-            fallback={
-              <div
-                ref={(el) => {
-                  textContainerEl = el;
-                }}
-                class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}
-              >
-                {renderTextWithLinks()}
-              </div>
-            }
-          >
+          {/* null = parse error → plain text; "" = empty/pending → nothing; string = rendered HTML */}
+          <Show when={renderedMarkdown() === null}>
             <div
-              ref={(el) => {
-                textContainerEl = el;
-              }}
+              ref={(el) => { textContainerEl = el; }}
+              class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}
+            >
+              {renderTextWithLinks()}
+            </div>
+          </Show>
+          <Show when={typeof renderedMarkdown() === "string" && renderedMarkdown()}>
+            <div
+              ref={(el) => { textContainerEl = el; }}
               class={`markdown-content max-w-none ${textClass()}
+                [&_strong]:font-semibold
+                [&_em]:italic
                 [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-4
                 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-3
                 [&_h3]:text-lg [&_h3]:font-bold [&_h3]:my-2
