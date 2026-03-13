@@ -113,6 +113,7 @@ import { computeWorkspaceSwitchOverlayHoldMs } from "./utils/workspace-switch-ov
 import {
   parseAuthCompleteDeepLink,
   exchangeHandoffCode,
+  readDenAuth,
   writeDenAuth,
   getDenApiBase,
 } from "./lib/den-auth";
@@ -188,6 +189,15 @@ import {
 } from "./lib/veslo-server";
 import { CLOUD_ONLY_MODE, resolveVesloCloudEnvironment } from "./lib/cloud-policy";
 import { isRemoteUiEnabled } from "./lib/runtime-policy";
+import {
+  extractOpenAiCompatibleModelIds,
+  LM_STUDIO_DEFAULT_BASE_URL,
+  LM_STUDIO_PROVIDER_ID,
+  LM_STUDIO_PROVIDER_NAME,
+  LM_STUDIO_PROVIDER_NPM,
+  resolveLmStudioBaseUrl,
+  resolveEffectiveConnectedProviderIds,
+} from "./utils/providers";
 
 type RemoteWorkspaceDefaults = {
   vesloHostUrl?: string | null;
@@ -1985,9 +1995,17 @@ export default function App() {
     availableProviders: ProviderListItem[],
   ) => {
     const merged = { ...methods } as Record<string, ProviderAuthMethod[]>;
+    const lmStudioExisting = merged[LM_STUDIO_PROVIDER_ID] ?? [];
+    if (!lmStudioExisting.some((method) => method.type === "api")) {
+      merged[LM_STUDIO_PROVIDER_ID] = [...lmStudioExisting, { type: "api", label: "Local URL (no key)" }];
+    }
+
     for (const provider of availableProviders ?? []) {
       const id = provider.id?.trim();
       if (!id || id === "opencode") continue;
+      if (id === LM_STUDIO_PROVIDER_ID) {
+        continue;
+      }
       if (!Array.isArray(provider.env) || provider.env.length === 0) continue;
       const existing = merged[id] ?? [];
       if (existing.some((method) => method.type === "api")) continue;
@@ -2228,6 +2246,136 @@ export default function App() {
     }
   }
 
+  async function connectLmStudioProvider(baseUrlInput?: string) {
+    setProviderAuthError(null);
+    const c = client();
+    if (!c) {
+      throw new Error("Not connected to a server");
+    }
+
+    if (!isTauriRuntime()) {
+      throw new Error("LM Studio setup is currently supported in the desktop app only.");
+    }
+
+    const workspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
+    if (!workspaceRoot) {
+      throw new Error("Pick a workspace folder first.");
+    }
+
+    const configFile = await readOpencodeConfig("project", workspaceRoot);
+    const parsed = (() => {
+      const raw = configFile?.content?.trim() ?? "";
+      if (!raw) return {} as Record<string, unknown>;
+      const next = parse(raw);
+      if (!next || typeof next !== "object" || Array.isArray(next)) {
+        return {} as Record<string, unknown>;
+      }
+      return next as Record<string, unknown>;
+    })();
+
+    const providerRootRaw =
+      parsed.provider && typeof parsed.provider === "object" && !Array.isArray(parsed.provider)
+        ? (parsed.provider as Record<string, unknown>)
+        : {};
+    const lmstudioRaw =
+      providerRootRaw[LM_STUDIO_PROVIDER_ID] &&
+      typeof providerRootRaw[LM_STUDIO_PROVIDER_ID] === "object" &&
+      !Array.isArray(providerRootRaw[LM_STUDIO_PROVIDER_ID])
+        ? (providerRootRaw[LM_STUDIO_PROVIDER_ID] as Record<string, unknown>)
+        : {};
+    const optionsRaw =
+      lmstudioRaw.options && typeof lmstudioRaw.options === "object" && !Array.isArray(lmstudioRaw.options)
+        ? (lmstudioRaw.options as Record<string, unknown>)
+        : {};
+    const existingModelsRaw =
+      lmstudioRaw.models && typeof lmstudioRaw.models === "object" && !Array.isArray(lmstudioRaw.models)
+        ? (lmstudioRaw.models as Record<string, unknown>)
+        : {};
+
+    const configuredBaseUrl = typeof optionsRaw.baseURL === "string" ? optionsRaw.baseURL : "";
+    const candidateBaseUrl = resolveLmStudioBaseUrl(baseUrlInput, configuredBaseUrl || LM_STUDIO_DEFAULT_BASE_URL);
+
+    let baseURL = candidateBaseUrl;
+    try {
+      const parsed = new URL(candidateBaseUrl);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        throw new Error("invalid protocol");
+      }
+      baseURL = parsed.toString().replace(/\/+$/, "");
+    } catch {
+      throw new Error("LM Studio URL must be a valid http(s) URL (for example http://127.0.0.1:1234/v1).");
+    }
+
+    const modelsUrl = `${baseURL}/models`;
+
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), 10_000);
+    let payload: unknown;
+
+    try {
+      const response = await fetch(modelsUrl, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        signal: timeoutController.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`LM Studio request failed (${response.status}).`);
+      }
+      payload = await response.json();
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error("LM Studio did not respond in time.");
+      }
+      throw error instanceof Error
+        ? error
+        : new Error("Failed to connect to LM Studio.");
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    const modelIds = extractOpenAiCompatibleModelIds(payload);
+    if (!modelIds.length) {
+      throw new Error("LM Studio responded, but no local models were found. Load a model in LM Studio and retry.");
+    }
+
+    const models = Object.fromEntries(
+      modelIds.map((modelId) => {
+        const existingModelRaw =
+          existingModelsRaw[modelId] &&
+          typeof existingModelsRaw[modelId] === "object" &&
+          !Array.isArray(existingModelsRaw[modelId])
+            ? (existingModelsRaw[modelId] as Record<string, unknown>)
+            : {};
+        const existingName = typeof existingModelRaw.name === "string" ? existingModelRaw.name.trim() : "";
+        return [modelId, { ...existingModelRaw, name: existingName || `${modelId} (local)` }];
+      }),
+    );
+
+    parsed.provider = {
+      ...providerRootRaw,
+      [LM_STUDIO_PROVIDER_ID]: {
+        ...lmstudioRaw,
+        npm: LM_STUDIO_PROVIDER_NPM,
+        name: LM_STUDIO_PROVIDER_NAME,
+        options: {
+          ...optionsRaw,
+          baseURL,
+        },
+        models,
+      },
+    };
+
+    const serialized = JSON.stringify(parsed, null, 2);
+    const writeResult = await writeOpencodeConfig("project", workspaceRoot, `${serialized}\n`);
+    if (!writeResult.ok) {
+      throw new Error(writeResult.stderr || writeResult.stdout || "Failed to update opencode.json");
+    }
+
+    unwrap(await c.instance.dispose());
+    await refreshProviderState(c, LM_STUDIO_PROVIDER_ID);
+    return `Connected LM Studio (${modelIds.length} model${modelIds.length === 1 ? "" : "s"})`;
+  }
+
   async function openProviderAuthModal() {
     setProviderAuthBusy(true);
     setProviderAuthError(null);
@@ -2397,7 +2545,12 @@ export default function App() {
   const globalSync = useGlobalSync();
   const providers = createMemo(() => globalSync.data.provider.all ?? []);
   const providerDefaults = createMemo(() => globalSync.data.provider.default ?? {});
-  const providerConnectedIds = createMemo(() => globalSync.data.provider.connected ?? []);
+  const providerConnectedIds = createMemo(() =>
+    resolveEffectiveConnectedProviderIds(
+      providers(),
+      globalSync.data.provider.connected ?? [],
+    ),
+  );
   const setProviders = (value: ProviderListItem[]) => {
     globalSync.set("provider", "all", value);
   };
@@ -3411,6 +3564,7 @@ export default function App() {
   };
 
   const [authCompleteExchangeBusy, setAuthCompleteExchangeBusy] = createSignal(false);
+  const [authenticatedUser, setAuthenticatedUser] = createSignal<string | null>(null);
 
   const queueAuthCompleteDeepLink = (rawUrl: string): boolean => {
     const code = parseAuthCompleteDeepLink(rawUrl);
@@ -3438,6 +3592,59 @@ export default function App() {
 
     return true;
   };
+
+  const resolveDenUserLabel = (auth: ReturnType<typeof readDenAuth>) => {
+    const userName = auth?.user?.name?.trim() ?? "";
+    if (userName) return userName;
+    const userEmail = auth?.user?.email?.trim() ?? "";
+    if (userEmail) return userEmail;
+    const userId = auth?.user?.id?.trim() ?? "";
+    return userId || null;
+  };
+
+  createEffect(() => {
+    authCompleteExchangeBusy();
+
+    const auth = readDenAuth();
+    setAuthenticatedUser(resolveDenUserLabel(auth));
+    if (!auth) return;
+
+    const token = auth?.token?.trim() ?? "";
+    const denApiBase = auth?.denApiBase?.trim() ?? "";
+    if (!token || !denApiBase) return;
+    if ((auth?.user?.name?.trim() ?? "") || (auth?.user?.email?.trim() ?? "")) return;
+
+    let canceled = false;
+    void (async () => {
+      try {
+        const response = await fetch(`${denApiBase.replace(/\/+$/, "")}/v1/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok || canceled) return;
+        const payload = (await response.json()) as { user?: { id?: unknown; name?: unknown; email?: unknown } };
+        const userId = typeof payload?.user?.id === "string" ? payload.user.id.trim() : "";
+        if (!userId) return;
+        const userName = typeof payload?.user?.name === "string" ? payload.user.name.trim() : "";
+        const userEmail = typeof payload?.user?.email === "string" ? payload.user.email.trim() : "";
+        if (canceled) return;
+        setAuthenticatedUser(userName || userEmail || userId);
+        writeDenAuth({
+          ...auth,
+          user: {
+            id: userId,
+            name: userName || undefined,
+            email: userEmail || undefined,
+          },
+        });
+      } catch {
+        // keep local value
+      }
+    })();
+
+    onCleanup(() => {
+      canceled = true;
+    });
+  });
 
   createEffect(() => {
     const pending = pendingRemoteConnectDeepLink();
@@ -6205,6 +6412,7 @@ export default function App() {
       providerAuthError: providerAuthError(),
       providerAuthMethods: providerAuthMethods(),
       openProviderAuthModal,
+      connectLmStudioProvider,
       closeProviderAuthModal,
       startProviderAuth,
       completeProviderAuthOAuth,
@@ -6215,6 +6423,7 @@ export default function App() {
       startupPreference: startupPreference(),
       baseUrl: baseUrl(),
       clientConnected: Boolean(client()),
+      authenticatedUser: authenticatedUser(),
       busy: busy(),
       busyHint: busyHint(),
       busyLabel: busyLabel(),
@@ -6493,6 +6702,7 @@ export default function App() {
     exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
     exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
     clientConnected: Boolean(client()),
+    authenticatedUser: authenticatedUser(),
     vesloServerStatus: vesloServerStatus(),
     startupPreference: startupPreference(),
     vesloServerClient: vesloServerClient(),
@@ -6566,6 +6776,7 @@ export default function App() {
     completeProviderAuthOAuth: completeProviderAuthOAuth,
     submitProviderApiKey: submitProviderApiKey,
     testProviderApiKey: testProviderApiKey,
+    connectLmStudioProvider: connectLmStudioProvider,
     openProviderAuthModal: openProviderAuthModal,
     closeProviderAuthModal: closeProviderAuthModal,
     providerAuthModalOpen: providerAuthModalOpen(),

@@ -130,6 +130,7 @@ export type SessionViewProps = {
   exportWorkspaceConfig: (workspaceId?: string) => void;
   exportWorkspaceBusy: boolean;
   clientConnected: boolean;
+  authenticatedUser: string | null;
   vesloServerStatus: VesloServerStatus;
   startupPreference: StartupPreference | null;
   vesloServerClient: VesloServerClient | null;
@@ -215,6 +216,7 @@ export type SessionViewProps = {
   completeProviderAuthOAuth: (providerId: string, methodIndex: number, code?: string) => Promise<string | void>;
   submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
   testProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
+  connectLmStudioProvider: (baseUrlInput?: string) => Promise<string | void>;
   openProviderAuthModal: () => Promise<void>;
   closeProviderAuthModal: () => void;
   providerAuthModalOpen: boolean;
@@ -2668,6 +2670,21 @@ export default function SessionView(props: SessionViewProps) {
     }
   };
 
+  const handleProviderAuthLmStudio = async (baseUrlInput?: string) => {
+    if (providerAuthActionBusy()) return;
+    setProviderAuthActionBusy(true);
+    try {
+      const message = await props.connectLmStudioProvider(baseUrlInput);
+      setToastMessage(message || tr("session.provider_connected"));
+      props.closeProviderAuthModal();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : tr("session.connection_test_failed");
+      setToastMessage(message);
+    } finally {
+      setProviderAuthActionBusy(false);
+    }
+  };
+
   const shareWorkspace = createMemo(() => {
     const id = shareWorkspaceId();
     if (!id) return null;
@@ -3497,6 +3514,7 @@ export default function SessionView(props: SessionViewProps) {
         <SidebarStatusControls
           clientConnected={props.clientConnected}
           vesloServerStatus={props.vesloServerStatus}
+          authenticatedUser={props.authenticatedUser}
           onOpenSettings={() => openSettings("general")}
         />
 
@@ -3869,7 +3887,7 @@ export default function SessionView(props: SessionViewProps) {
                           runPhase() === "error" ? "bg-red-9" : "bg-gray-8 animate-pulse"
                         }`}
                       />
-                      <span class="truncate">{thinkingStatus() || runLabel()}</span>
+                      <span class="truncate">{(runPhase() === "error" && props.error) ? props.error : (thinkingStatus() || runLabel())}</span>
                       <Show when={props.developerMode}>
                         <span class="text-[10px] text-gray-8 ml-auto shrink-0">{runElapsedLabel()}</span>
                       </Show>
@@ -4224,6 +4242,7 @@ export default function SessionView(props: SessionViewProps) {
         onSelect={handleProviderAuthSelect}
         onSubmitApiKey={handleProviderAuthApiKey}
         onTestApiKey={handleProviderAuthApiKeyTest}
+        onConnectLmStudio={handleProviderAuthLmStudio}
         onSubmitOAuth={handleProviderAuthOAuth}
         onClose={props.closeProviderAuthModal}
       />

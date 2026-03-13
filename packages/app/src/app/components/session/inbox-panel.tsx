@@ -4,6 +4,7 @@ import { Download, RefreshCw, UploadCloud } from "lucide-solid";
 import type { VesloInboxItem, VesloServerClient } from "../../lib/veslo-server";
 import { formatBytes, formatRelativeTime } from "../../utils";
 import { currentLocale, t } from "../../../i18n";
+import { extractFilesFromDataTransfer } from "../../utils/data-transfer-files";
 
 export type InboxPanelProps = {
   id?: string;
@@ -206,7 +207,7 @@ export default function InboxPanel(props: InboxPanelProps) {
         onDrop={(event: DragEvent) => {
           event.preventDefault();
           setDragOver(false);
-          const files = Array.from(event.dataTransfer?.files ?? []);
+          const files = extractFilesFromDataTransfer(event.dataTransfer);
           if (files.length) void uploadFiles(files);
         }}
         disabled={uploading()}

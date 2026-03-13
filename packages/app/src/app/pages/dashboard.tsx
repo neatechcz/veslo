@@ -55,6 +55,7 @@ import SidebarStatusControls from "../components/sidebar-status-controls";
 import ProviderAuthModal, { type ProviderOAuthStartResult } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
+import { openSessionWithWorkspaceActivation } from "./session-navigation";
 import {
   Box,
   ChevronDown,
@@ -83,6 +84,7 @@ export type DashboardViewProps = {
   providerAuthError: string | null;
   providerAuthMethods: Record<string, { type: "oauth" | "api"; label: string }[]>;
   openProviderAuthModal: () => Promise<void>;
+  connectLmStudioProvider: (baseUrlInput?: string) => Promise<string | void>;
   closeProviderAuthModal: () => void;
   startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
   completeProviderAuthOAuth: (providerId: string, methodIndex: number, code?: string) => Promise<string | void>;
@@ -93,6 +95,7 @@ export type DashboardViewProps = {
   startupPreference: StartupPreference | null;
   baseUrl: string;
   clientConnected: boolean;
+  authenticatedUser: string | null;
   busy: boolean;
   busyHint: string | null;
   busyLabel: string | null;
@@ -377,16 +380,15 @@ export default function DashboardView(props: DashboardViewProps) {
       : "Local";
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
-    // Route-driven selection: navigate first and let the route effect own selectSession.
-    if (workspaceId === props.activeWorkspaceId) {
-      props.setView("session", sessionId);
-      return;
-    }
-    // For different workspace, activate workspace first
-    void (async () => {
-      await Promise.resolve(props.activateWorkspace(workspaceId));
-      props.setView("session", sessionId);
-    })();
+    void openSessionWithWorkspaceActivation({
+      activeWorkspaceId: props.activeWorkspaceId,
+      getActiveWorkspaceId: () => props.activeWorkspaceId,
+      workspaceId,
+      sessionId,
+      activateWorkspace: props.activateWorkspace,
+      // Route-driven selection: navigate first and let the route effect own selectSession.
+      openSession: (nextSessionId) => props.setView("session", nextSessionId),
+    });
   };
 
   const createTaskInWorkspace = (workspaceId: string) => {
@@ -451,6 +453,19 @@ export default function DashboardView(props: DashboardViewProps) {
     setProviderAuthActionBusy(true);
     try {
       await props.testProviderApiKey(providerId, apiKey);
+    } catch {
+      // Errors are surfaced in the modal.
+    } finally {
+      setProviderAuthActionBusy(false);
+    }
+  };
+
+  const handleProviderAuthLmStudio = async (baseUrlInput?: string) => {
+    if (providerAuthActionBusy()) return;
+    setProviderAuthActionBusy(true);
+    try {
+      await props.connectLmStudioProvider(baseUrlInput);
+      props.closeProviderAuthModal();
     } catch {
       // Errors are surfaced in the modal.
     } finally {
@@ -1112,6 +1127,7 @@ export default function DashboardView(props: DashboardViewProps) {
         <SidebarStatusControls
           clientConnected={props.clientConnected}
           vesloServerStatus={props.vesloServerStatus}
+          authenticatedUser={props.authenticatedUser}
           onOpenSettings={() => openSettings("general")}
         />
 
@@ -1456,6 +1472,7 @@ export default function DashboardView(props: DashboardViewProps) {
           onSelect={handleProviderAuthSelect}
           onSubmitApiKey={handleProviderAuthApiKey}
           onTestApiKey={handleProviderAuthApiKeyTest}
+          onConnectLmStudio={handleProviderAuthLmStudio}
           onSubmitOAuth={handleProviderAuthOAuth}
           onClose={props.closeProviderAuthModal}
         />

@@ -5,7 +5,7 @@ export type DenAuthState = {
   denApiBase: string;
   token: string;
   orgId: string;
-  user: { id: string };
+  user: { id: string; name?: string; email?: string };
   org: { id: string; name?: string; slug?: string; role?: string };
 };
 
@@ -83,7 +83,7 @@ export async function exchangeHandoffCode(code: string): Promise<DenExchangeResu
 
     const payload = (await response.json()) as {
       token?: string;
-      user?: { id?: string };
+      user?: { id?: string; name?: string; email?: string };
       org?: { id?: string; name?: string; slug?: string; role?: string };
     };
 
@@ -97,7 +97,11 @@ export async function exchangeHandoffCode(code: string): Promise<DenExchangeResu
       denApiBase,
       token: payload.token ?? code,
       orgId,
-      user: { id: userId },
+      user: {
+        id: userId,
+        name: payload.user?.name,
+        email: payload.user?.email,
+      },
       org: {
         id: orgId,
         name: payload.org?.name,

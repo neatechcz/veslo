@@ -10,6 +10,7 @@
     "build:web": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:unit": "node --test --import=tsx/esm src/app/**/*.test.ts src/app/**/**/*.test.ts",
     "test:health": "node scripts/health.mjs",
     "test:mention-send": "node scripts/mention-send.mjs",
     "test:sessions": "node scripts/sessions.mjs",

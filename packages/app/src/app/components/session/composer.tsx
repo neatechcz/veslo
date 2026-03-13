@@ -6,6 +6,7 @@ import { ArrowUp, AtSign, Check, ChevronDown, File as FileIcon, Paperclip, Squar
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { currentLocale, t } from "../../../i18n";
+import { extractFilesFromDataTransfer } from "../../utils/data-transfer-files";
 
 type MentionOption = {
   id: string;
@@ -1200,12 +1201,7 @@ export default function Composer(props: ComposerProps) {
   const handlePaste = (event: ClipboardEvent) => {
     if (!event.clipboardData) return;
     const clipboard = event.clipboardData;
-    const fileItems = Array.from(clipboard.items || []).filter((item) => item.kind === "file");
-    const files = Array.from(clipboard.files || []);
-    const itemFiles = fileItems
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => !!file);
-    const allFiles = files.length ? files : itemFiles;
+    const allFiles = extractFilesFromDataTransfer(clipboard);
     if (allFiles.length) {
       event.preventDefault();
       const supported = allFiles.filter((file) => isSupportedAttachmentType(file.type));
@@ -1253,7 +1249,7 @@ export default function Composer(props: ComposerProps) {
   const handleDrop = (event: DragEvent) => {
     if (!event.dataTransfer) return;
     event.preventDefault();
-    const files = Array.from(event.dataTransfer.files || []);
+    const files = extractFilesFromDataTransfer(event.dataTransfer);
     if (files.length) void addAttachments(files);
   };
 

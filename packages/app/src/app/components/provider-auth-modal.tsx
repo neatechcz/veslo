@@ -3,6 +3,11 @@ import { CheckCircle2, Loader2, X } from "lucide-solid";
 import type { ProviderListItem } from "../types";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { isTauriRuntime } from "../utils";
+import {
+  isApiCredentialRequired,
+  LM_STUDIO_DEFAULT_BASE_URL,
+  LM_STUDIO_PROVIDER_ID,
+} from "../utils/providers";
 
 import Button from "./button";
 import TextInput from "./text-input";
@@ -44,6 +49,7 @@ export type ProviderAuthModalProps = {
   onSelect: (providerId: string) => Promise<ProviderOAuthStartResult>;
   onSubmitApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
   onTestApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
+  onConnectLmStudio: (baseUrlInput?: string) => Promise<string | void>;
   onSubmitOAuth: (providerId: string, methodIndex: number, code?: string) => Promise<string | void>;
   onClose: () => void;
 };
@@ -117,6 +123,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const selectedEntry = createMemo(() =>
     entries().find((entry) => entry.id === selectedProviderId()) ?? null,
   );
+  const isLmStudioEntry = createMemo(() => selectedEntry()?.id === LM_STUDIO_PROVIDER_ID);
 
   const resolvedView = createMemo(() => (selectedEntry() ? view() : "list"));
   const errorMessage = createMemo(() => localError() ?? props.error);
@@ -281,7 +288,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     if (!entry || actionDisabled()) return;
 
     const trimmed = apiKeyInput().trim();
-    if (!trimmed) {
+    if (isApiCredentialRequired(entry.id) && !trimmed) {
       setLocalError("API key is required.");
       return;
     }
@@ -290,10 +297,17 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setApiAction("save");
     setApiValidationLocked(false);
     try {
-      await props.onSubmitApiKey(entry.id, trimmed);
+      if (entry.id === LM_STUDIO_PROVIDER_ID) {
+        await props.onConnectLmStudio(trimmed || undefined);
+      } else {
+        await props.onSubmitApiKey(entry.id, trimmed);
+      }
       setApiValidationLocked(false);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to save API key";
+      const fallbackMessage = entry.id === LM_STUDIO_PROVIDER_ID
+        ? "Failed to connect LM Studio"
+        : "Failed to save API key";
+      const message = error instanceof Error ? error.message : fallbackMessage;
       setLocalError(message);
       setApiValidationLocked(true);
     } finally {
@@ -306,7 +320,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     if (!entry || actionDisabled()) return;
 
     const trimmed = apiKeyInput().trim();
-    if (!trimmed) {
+    if (isApiCredentialRequired(entry.id) && !trimmed) {
       setLocalError("API key is required.");
       return;
     }
@@ -315,10 +329,17 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setApiAction("test");
     setApiValidationLocked(false);
     try {
-      await props.onTestApiKey(entry.id, trimmed);
+      if (entry.id === LM_STUDIO_PROVIDER_ID) {
+        await props.onConnectLmStudio(trimmed || undefined);
+      } else {
+        await props.onTestApiKey(entry.id, trimmed);
+      }
       setApiValidationLocked(false);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Connection test failed";
+      const fallbackMessage = entry.id === LM_STUDIO_PROVIDER_ID
+        ? "Failed to connect LM Studio"
+        : "Connection test failed";
+      const message = error instanceof Error ? error.message : fallbackMessage;
       setLocalError(message);
       setApiValidationLocked(true);
     } finally {
@@ -373,6 +394,10 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const submittingLabel = () => {
     if (!props.submitting) return null;
     if (resolvedView() === "api") {
+      if (isLmStudioEntry()) {
+        if (apiAction() === "test") return "Testing LM Studio URL...";
+        return "Connecting LM Studio...";
+      }
       if (apiAction() === "test") return "Testing connection...";
       return "Saving and testing API key...";
     }
@@ -568,7 +593,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                           onClick={() => handleMethodSelect("api")}
                           disabled={actionDisabled()}
                         >
-                          Use API key
+                          {isLmStudioEntry() ? "Use local URL" : "Use API key"}
                         </Button>
                       </Show>
                     </div>
@@ -580,16 +605,20 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     <div class="flex items-center justify-between gap-4">
                       <div>
                         <div class="text-sm font-medium text-gray-12">{selectedEntry()!.name}</div>
-                        <div class="text-xs text-gray-10 mt-1">Paste your API key to connect.</div>
+                        <div class="text-xs text-gray-10 mt-1">
+                          {isLmStudioEntry()
+                            ? "Set LM Studio URL to connect. Leave blank to use local default."
+                            : "Paste your API key to connect."}
+                        </div>
                       </div>
                       <Button variant="ghost" onClick={handleBack} disabled={actionDisabled() || apiValidationLocked()}>
                         Back
                       </Button>
                     </div>
                     <TextInput
-                      label="API key"
-                      type="password"
-                      placeholder="sk-..."
+                      label={isLmStudioEntry() ? "LM Studio URL (optional)" : "API key"}
+                      type={isLmStudioEntry() ? "text" : "password"}
+                      placeholder={isLmStudioEntry() ? LM_STUDIO_DEFAULT_BASE_URL : "sk-..."}
                       value={apiKeyInput()}
                       onInput={(event) => {
                         setApiKeyInput(event.currentTarget.value);
@@ -605,28 +634,41 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                         Env vars: <span class="font-mono">{selectedEntry()!.env.join(", ")}</span>
                       </div>
                     </Show>
+                    <Show when={isLmStudioEntry()}>
+                      <div class="text-[11px] text-gray-9">
+                        No API key is required for LM Studio.
+                      </div>
+                    </Show>
                     <div class="flex items-center justify-between gap-3">
-                      <div class="text-[11px] text-gray-9">Keys are stored locally by OpenCode.</div>
+                      <div class="text-[11px] text-gray-9">
+                        {isLmStudioEntry() ? "URL is stored in opencode.json for this worker." : "Keys are stored locally by OpenCode."}
+                      </div>
                       <div class="flex items-center gap-2">
                         <Button
                           variant="outline"
                           onClick={() => void handleApiTest()}
-                          disabled={actionDisabled() || !apiKeyInput().trim()}
+                          disabled={actionDisabled() || (isApiCredentialRequired(selectedEntry()!.id) && !apiKeyInput().trim())}
                         >
-                          {props.submitting && apiAction() === "test" ? "Testing..." : "Test connection"}
+                          {props.submitting && apiAction() === "test"
+                            ? (isLmStudioEntry() ? "Testing..." : "Testing...")
+                            : (isLmStudioEntry() ? "Test URL" : "Test connection")}
                         </Button>
                         <Button
                           variant="secondary"
                           onClick={() => void handleApiSubmit()}
-                          disabled={actionDisabled() || !apiKeyInput().trim()}
+                          disabled={actionDisabled() || (isApiCredentialRequired(selectedEntry()!.id) && !apiKeyInput().trim())}
                         >
-                          {props.submitting && apiAction() !== "test" ? "Saving..." : "Save & test"}
+                          {props.submitting && apiAction() !== "test"
+                            ? (isLmStudioEntry() ? "Connecting..." : "Saving...")
+                            : (isLmStudioEntry() ? "Connect" : "Save & test")}
                         </Button>
                       </div>
                     </div>
                     <Show when={apiValidationLocked()}>
                       <div class="text-[11px] text-amber-11">
-                        Connection failed. Update the key and retry, or cancel.
+                        {isLmStudioEntry()
+                          ? "Connection failed. Update the URL and retry, or cancel."
+                          : "Connection failed. Update the key and retry, or cancel."}
                       </div>
                     </Show>
                   </div>
