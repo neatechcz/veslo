@@ -4,11 +4,16 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use crate::engine::doctor::resolve_engine_path;
+use crate::engine::manager::EngineManager;
+use crate::opencode_router::manager::OpenCodeRouterManager;
+use crate::orchestrator;
+use crate::orchestrator::manager::OrchestratorManager;
 use crate::paths::home_dir;
 use crate::platform::command_for_program;
 use crate::types::{ExecResult, WorkspaceVesloConfig};
+use crate::veslo_server::manager::VesloServerManager;
 use crate::workspace::state::load_workspace_state;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, State};
 
 #[derive(serde::Serialize)]
 pub struct CacheResetResult {
@@ -70,7 +75,7 @@ fn opencode_cache_candidates() -> Vec<PathBuf> {
 fn stop_host_services(
     engine_manager: &State<EngineManager>,
     orchestrator_manager: &State<OrchestratorManager>,
-    openwork_manager: &State<OpenworkServerManager>,
+    veslo_manager: &State<VesloServerManager>,
     opencode_router_manager: &State<OpenCodeRouterManager>,
 ) {
     if let Ok(mut engine) = engine_manager.inner.lock() {
@@ -79,8 +84,8 @@ fn stop_host_services(
     if let Ok(mut orchestrator_state) = orchestrator_manager.inner.lock() {
         OrchestratorManager::stop_locked(&mut orchestrator_state);
     }
-    if let Ok(mut openwork_state) = openwork_manager.inner.lock() {
-        OpenworkServerManager::stop_locked(&mut openwork_state);
+    if let Ok(mut veslo_state) = veslo_manager.inner.lock() {
+        VesloServerManager::stop_locked(&mut veslo_state);
     }
     if let Ok(mut opencode_router_state) = opencode_router_manager.inner.lock() {
         OpenCodeRouterManager::stop_locked(&mut opencode_router_state);
@@ -267,7 +272,7 @@ pub fn reset_veslo_state(
     mode: String,
     engine_manager: State<EngineManager>,
     orchestrator_manager: State<OrchestratorManager>,
-    openwork_manager: State<OpenworkServerManager>,
+    veslo_manager: State<VesloServerManager>,
     opencode_router_manager: State<OpenCodeRouterManager>,
 ) -> Result<(), String> {
     let mode = mode.trim();
@@ -278,7 +283,7 @@ pub fn reset_veslo_state(
     stop_host_services(
         &engine_manager,
         &orchestrator_manager,
-        &openwork_manager,
+        &veslo_manager,
         &opencode_router_manager,
     );
 

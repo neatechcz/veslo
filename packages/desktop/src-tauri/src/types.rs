@@ -294,6 +294,7 @@ impl Default for WorkspaceType {
 #[serde(rename_all = "lowercase")]
 pub enum RemoteType {
     Opencode,
+    #[serde(alias = "openwork")]
     Veslo,
 }
 
@@ -320,13 +321,13 @@ pub struct WorkspaceInfo {
     pub directory: Option<String>,
     #[serde(default)]
     pub display_name: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "openworkHostUrl")]
     pub veslo_host_url: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "openworkToken")]
     pub veslo_token: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "openworkWorkspaceId")]
     pub veslo_workspace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "openworkWorkspaceName")]
     pub veslo_workspace_name: Option<String>,
 
     // Sandbox lifecycle metadata (desktop-managed)

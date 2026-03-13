@@ -528,6 +528,9 @@ export const DEFAULT_VESLO_SERVER_PORT = 8787;
 const STORAGE_URL_OVERRIDE = "veslo.server.urlOverride";
 const STORAGE_PORT_OVERRIDE = "veslo.server.port";
 const STORAGE_TOKEN = "veslo.server.token";
+const LEGACY_STORAGE_URL_OVERRIDE = "openwork.server.urlOverride";
+const LEGACY_STORAGE_PORT_OVERRIDE = "openwork.server.port";
+const LEGACY_STORAGE_TOKEN = "openwork.server.token";
 
 export function normalizeVesloServerUrl(input: string) {
   const trimmed = input.trim();
@@ -860,11 +863,19 @@ export function readVesloServerSettings(): VesloServerSettings {
   if (typeof window === "undefined") return {};
   try {
     const urlOverride = normalizeVesloServerUrl(
-      window.localStorage.getItem(STORAGE_URL_OVERRIDE) ?? "",
+      window.localStorage.getItem(STORAGE_URL_OVERRIDE) ??
+      window.localStorage.getItem(LEGACY_STORAGE_URL_OVERRIDE) ??
+      "",
     );
-    const portRaw = window.localStorage.getItem(STORAGE_PORT_OVERRIDE) ?? "";
+    const portRaw =
+      window.localStorage.getItem(STORAGE_PORT_OVERRIDE) ??
+      window.localStorage.getItem(LEGACY_STORAGE_PORT_OVERRIDE) ??
+      "";
     const portOverride = portRaw ? Number(portRaw) : undefined;
-    const token = window.localStorage.getItem(STORAGE_TOKEN) ?? undefined;
+    const token =
+      window.localStorage.getItem(STORAGE_TOKEN) ??
+      window.localStorage.getItem(LEGACY_STORAGE_TOKEN) ??
+      undefined;
     return {
       urlOverride: urlOverride ?? undefined,
       portOverride: Number.isNaN(portOverride) ? undefined : portOverride,
@@ -887,18 +898,21 @@ export function writeVesloServerSettings(next: VesloServerSettings): VesloServer
     } else {
       window.localStorage.removeItem(STORAGE_URL_OVERRIDE);
     }
+    window.localStorage.removeItem(LEGACY_STORAGE_URL_OVERRIDE);
 
     if (typeof portOverride === "number" && !Number.isNaN(portOverride)) {
       window.localStorage.setItem(STORAGE_PORT_OVERRIDE, String(portOverride));
     } else {
       window.localStorage.removeItem(STORAGE_PORT_OVERRIDE);
     }
+    window.localStorage.removeItem(LEGACY_STORAGE_PORT_OVERRIDE);
 
     if (token) {
       window.localStorage.setItem(STORAGE_TOKEN, token);
     } else {
       window.localStorage.removeItem(STORAGE_TOKEN);
     }
+    window.localStorage.removeItem(LEGACY_STORAGE_TOKEN);
 
     return readVesloServerSettings();
   } catch {
@@ -930,6 +944,9 @@ export function clearVesloServerSettings() {
     window.localStorage.removeItem(STORAGE_URL_OVERRIDE);
     window.localStorage.removeItem(STORAGE_PORT_OVERRIDE);
     window.localStorage.removeItem(STORAGE_TOKEN);
+    window.localStorage.removeItem(LEGACY_STORAGE_URL_OVERRIDE);
+    window.localStorage.removeItem(LEGACY_STORAGE_PORT_OVERRIDE);
+    window.localStorage.removeItem(LEGACY_STORAGE_TOKEN);
   } catch {
     // ignore
   }

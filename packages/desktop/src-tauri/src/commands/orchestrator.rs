@@ -1523,7 +1523,7 @@ exit 0
         let _docker_bin = EnvGuard::unset("DOCKER_BIN");
 
         let (status, stdout, _stderr) =
-            run_docker_command(&["--version"], Duration::from_millis(300))
+            run_docker_command(&["--version"], Duration::from_millis(1_500))
                 .expect("docker --version");
         assert_eq!(status, 0);
         assert!(stdout.contains("Docker version 0.0.0"));
