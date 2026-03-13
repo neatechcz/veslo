@@ -105,3 +105,34 @@ pnpm --filter @neatech/veslo exec tauri --version
 - A full merge currently collides with Veslo-specific rebrand, cloud/local policy changes, sidebar/session UX customizations, and service split decisions.
 - Selective import keeps your differentiated behavior while still pulling in upstream reliability fixes that users can actually see.
 - This gives a deterministic path with bounded risk and clear rollback points.
+
+## Execution Status (Applied on `codex/upstream-selective-merge-20260313`)
+
+### Successfully merged
+- `c4a16167` mini-fix(automations): pointing to the correct url (#774)
+- `72078491` Update settings.tsx (#760)
+- `276eb4af` fix: use theme-aware colors for modals and divs that hardcoded as (#775)
+- `d44e627d` fix: improve HTTP 413 error handling with user-friendly message (#832)
+- `50840499` fix: add explicit styling for markdown strong and em elements (#806)
+- `4ec2eb03` fix(app): prevent raw markdown flash during streaming responses (#861)
+- `87aa2560` fix(session): dock todo strip to composer (#840)
+- `8db0222a` fix(app): make browser quickstart target Chrome MCP first
+- `9785a73a` fix(mcp): seed Control Chrome as chrome-devtools (#876)
+- `73862d9d` fix: prevent sandbox Docker preflight from hanging indefinitely (#757)
+- `a8ad72da` fix(desktop): include stage diagnostics in sandbox probe timeout errors (#797)
+- `dc484b67` fix(desktop): fail fast on missing linux deps (#848)
+- `0b4f92f2` fix: handle UTF-8 skill description truncation (#836)
+- `15bf1a3f` fix: allow disconnecting providers from settings (#817)
+- `b6737e6b` Fix model picker provider sections (#825)
+- `dd44dc63` fix: stabilize MCP auth connection flows (#828)
+- `a2f5d1df` fix(app): keep app and worker opens on new session screen (#841)
+- `660aa7ac` Show session errors inline in chat (#845)
+- `5e67502b` fix(app): improve skill sharing and hot-reload flows (#880)
+- `ef95a95d` fix(desktop): fully clear reset state on relaunch (#867)
+
+### Deferred/skipped in this pass
+- `222ba9d3` fix provider oauth polling flow (#818) — deep conflicts in provider modal + app wiring.
+- `85d3b32c` fix(app): keep workspace shell navigation reachable (#874) — depends on status bar surfaces removed in this fork.
+- `091e57f6` fix: route shared bundles through blueprints flow (#833) — heavy divergence in share import architecture.
+- `53ba8cce` fix: target shared bundle imports to created worker (#835) — depends on same share import flow as above.
+- `9be0e66d` fix: improve sandbox worker startup diagnostics (#834) — high conflict spread with package/lockfile/version churn.
