@@ -8,7 +8,7 @@ Veslo is a practical control surface for agentic work:
 
 * Run local-first agent workflows from one place.
 * Use OpenCode capabilities directly through Veslo.
-* Compose desktop app, server, and messaging connectors without lock-in.
+* Compose desktop app and server modes without lock-in.
 * Treat the Veslo app as a client of the Veslo server API surface.
 * Support cloud-backed user data without making cloud equal remote execution.
 
@@ -16,7 +16,7 @@ Veslo is a practical control surface for agentic work:
 
 * **Local-first, cloud-backed**: Veslo runs on your machine in one click. Cloud is used for user/account data, not primary task execution.
 * **Server-consumption first**: the app should consume Veslo server surfaces (self-hosted or hosted), not invent parallel behavior.
-* **Composable**: use the desktop app, WhatsApp/Slack/Telegram connectors, or server mode based on the task.
+* **Composable**: use the desktop app or server mode based on the task; messaging connectors remain a runtime capability but are intentionally hidden in the current UI.
 * **Ejectable**: Veslo is powered by OpenCode, so anything OpenCode can do is available in Veslo, even before a dedicated UI exists.
 * **Sharing is caring**: start solo, then share quickly; one CLI or desktop command can spin up an instantly shareable instance.
 
@@ -25,6 +25,8 @@ Veslo is a practical control surface for agentic work:
 * Worker execution is local (on-device processing), UI allows only that.
 * Cloud is used for user/account data storage and sync.
 * Remote worker connectivity remains available in the platform/runtime, but is intentionally not exposed to end users in UI for now.
+* Messaging connectors (Telegram/Slack/WhatsApp via OpenCode Router) are implemented in runtime, but intentionally disabled in end-user UI.
+* Product direction prioritizes a native mobile application over messaging-surface UX.
 
 ## Core Runtime Model (Updated)
 
@@ -51,7 +53,7 @@ Read INFRASTRUCTURE.md
 ## Why Veslo Exists
 
 **Cowork is closed-source and locked to Claude Max.** We need an open alternative.
-**Mobile-first matters.** People want to run tasks from their phones, including via messaging surfaces like WhatsApp and Telegram through OpenCode Router.
+**Mobile-first matters.** People want to run tasks from their phones, and the priority is a native mobile app experience.
 **Slick UI is non-negotiable.** The experience must feel premium, not utilitarian.
 
 ## Agent Guidelines for development

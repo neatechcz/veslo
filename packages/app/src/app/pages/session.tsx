@@ -3324,7 +3324,7 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const openConfig = () => {
-    props.setTab(props.developerMode ? "config" : "identities");
+    props.setTab("config");
     props.setView("dashboard");
   };
 
@@ -3511,191 +3511,6 @@ export default function SessionView(props: SessionViewProps) {
       </aside>
 
       <main class="flex-1 flex flex-col overflow-hidden bg-gray-1">
-        <header class="h-14 border-b border-gray-5 flex items-center justify-between px-6 bg-gray-1 z-10 shrink-0">
-          <div class="flex items-center gap-3 min-w-0">
-            <Show when={showUpdatePill()}>
-              <button
-                type="button"
-                class={`md:hidden flex items-center gap-1.5 rounded-full border bg-dls-surface px-2.5 py-1 text-xs font-medium shadow-sm transition-colors active:scale-[0.99] focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)] ${updatePillBorderTone()} ${updatePillButtonTone()}`}
-                onClick={handleUpdatePillClick}
-                title={updatePillTitle()}
-                aria-label={updatePillTitle()}
-              >
-                <Show
-                  when={props.updateStatus?.state === "downloading"}
-                  fallback={
-                    <Circle
-                      size={8}
-                      class={`${updatePillDotTone()} shrink-0 ${props.updateStatus?.state === "available" ? "animate-pulse" : ""}`}
-                    />
-                  }
-                >
-                  <Loader2 size={13} class={`animate-spin shrink-0 ${updatePillDotTone()}`} />
-                </Show>
-                <span class="text-[11px]">{updatePillLabel()}</span>
-                <Show when={props.updateStatus?.version}>
-                  {(version) => (
-                    <span class={`hidden sm:inline font-mono text-[10px] ${updatePillVersionTone()}`}>v{version()}</span>
-                  )}
-                </Show>
-              </button>
-            </Show>
-
-            <h1 class="text-[13.5px] font-medium text-gray-11 truncate">
-              {showWorkspaceSetupEmptyState()
-                ? tr("session.start_new_session")
-                : (selectedSessionTitle() || tr("session.new_session_label"))}
-            </h1>
-            <Show when={sessionWorkspaceContextLabel()}>
-              {(label) => <span class="text-xs text-gray-9 truncate">· {label()}</span>}
-            </Show>
-            <Show when={props.developerMode}>
-              <span class="text-xs text-dls-secondary">{props.headerStatus}</span>
-            </Show>
-            <Show when={props.busyHint}>
-              <span class="text-xs text-dls-secondary">· {props.busyHint}</span>
-            </Show>
-          </div>
-
-          <div class="flex items-center gap-2">
-            <button
-              type="button"
-              class={`h-9 px-2.5 flex items-center justify-center rounded-lg text-[11px] font-mono transition-colors ${
-                commandPaletteOpen()
-                  ? "bg-gray-4 text-gray-12"
-                  : "text-gray-10 hover:text-gray-12 hover:bg-gray-3"
-              }`}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (commandPaletteOpen()) {
-                  closeCommandPalette();
-                  return;
-                }
-                window.setTimeout(() => openCommandPalette(), 0);
-              }}
-              title={`${tr("session.quick_actions")} (Ctrl/Cmd+K)`}
-              aria-label={tr("session.quick_actions")}
-            >
-              Cmd+K
-            </button>
-            <button
-              type="button"
-              class={`h-9 w-9 flex items-center justify-center rounded-lg transition-colors ${
-                searchOpen()
-                  ? "bg-gray-4 text-gray-12"
-                  : "text-gray-10 hover:text-gray-12 hover:bg-gray-3"
-              }`}
-              onClick={() => {
-                if (searchOpen()) {
-                  closeSearch();
-                  return;
-                }
-                openSearch();
-              }}
-              title={`${tr("session.search_conversation")} (Ctrl/Cmd+F)`}
-              aria-label={tr("session.search_conversation")}
-            >
-              <Search size={16} />
-            </button>
-            <button
-              type="button"
-              class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              onClick={undoLastMessage}
-              disabled={!canUndoLastMessage() || historyActionBusy() !== null}
-              title={tr("session.undo_last_message")}
-              aria-label={tr("session.undo_last_message")}
-            >
-              <Show when={historyActionBusy() === "undo"} fallback={<Undo2 size={16} />}>
-                <Loader2 size={16} class="animate-spin" />
-              </Show>
-            </button>
-            <button
-              type="button"
-              class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              onClick={redoLastMessage}
-              disabled={!canRedoLastMessage() || historyActionBusy() !== null}
-              title={tr("session.redo_last_message")}
-              aria-label={tr("session.redo_last_message")}
-            >
-              <Show when={historyActionBusy() === "redo"} fallback={<Redo2 size={16} />}>
-                <Loader2 size={16} class="animate-spin" />
-              </Show>
-            </button>
-            <button
-              type="button"
-              class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              onClick={compactSessionHistory}
-              disabled={!canCompactSession() || historyActionBusy() !== null}
-              title={tr("session.compact_context")}
-              aria-label={tr("session.compact_context")}
-            >
-              <Show when={historyActionBusy() === "compact"} fallback={<Maximize2 size={16} />}>
-                <Loader2 size={16} class="animate-spin" />
-              </Show>
-            </button>
-            <div ref={(el) => (sessionMenuRef = el)} class="relative">
-              <button
-                type="button"
-                class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                disabled={!props.selectedSessionId}
-                title={props.selectedSessionId ? tr("session.session_actions") : tr("session.select_session_to_manage")}
-                aria-label={props.selectedSessionId ? tr("session.session_actions") : tr("session.select_session_to_manage")}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setSessionMenuOpen((current) => !current);
-                }}
-              >
-                <MoreHorizontal size={18} />
-              </button>
-
-              <Show when={sessionMenuOpen() && props.selectedSessionId}>
-                <div
-                  class="absolute right-0 top-[calc(100%+4px)] z-20 w-52 rounded-lg border border-gray-6 bg-gray-1 shadow-lg p-1"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <Show when={props.canChooseSessionFolder}>
-                    <button
-                      type="button"
-                      class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
-                      onClick={() => {
-                        void chooseFolderForSession();
-                      }}
-                    >
-                      {tr("session.choose_folder")}
-                    </button>
-                  </Show>
-                  <button
-                    type="button"
-                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3 disabled:opacity-60"
-                    onClick={() => {
-                      setSessionMenuOpen(false);
-                      void compactSessionHistory();
-                    }}
-                    disabled={!canCompactSession() || historyActionBusy() !== null}
-                  >
-                    {tr("session.compact_context")}
-                  </button>
-                  <button
-                    type="button"
-                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
-                    onClick={openRenameModal}
-                  >
-                    {tr("session.rename_title")}
-                  </button>
-                  <button
-                    type="button"
-                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3 text-red-11"
-                    onClick={openDeleteSessionModal}
-                  >
-                    {tr("session.delete_session_action")}
-                  </button>
-                </div>
-              </Show>
-            </div>
-          </div>
-        </header>
 
         <Show when={searchOpen()}>
           <div class="border-b border-gray-5 bg-gray-2/70 px-6 py-2">
@@ -4133,21 +3948,6 @@ export default function SessionView(props: SessionViewProps) {
             <Box size={18} />
             Extensions
           </button>
-          <button
-            type="button"
-            class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-              showRightSidebarSelection() && props.tab === "identities"
-                ? "bg-gray-4 text-gray-12"
-                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-            }`}
-            onClick={() => {
-              props.setTab("identities");
-              props.setView("dashboard");
-            }}
-          >
-            <MessageCircle size={18} />
-            Messaging
-          </button>
           <Show when={props.developerMode}>
             <button
               type="button"
@@ -4343,7 +4143,6 @@ export default function SessionView(props: SessionViewProps) {
             }
         }
         exportDisabledReason={exportDisabledReason()}
-        onOpenBots={openConfig}
       />
 
       <Show when={props.activePermission}>

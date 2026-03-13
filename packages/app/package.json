@@ -34,7 +34,7 @@
     "test:sidebar-flat": "pnpm exec tsx scripts/sidebar-flat-sessions.mjs",
     "test:browser-entry": "node scripts/browser-entry.mjs",
     "test:desktop-auth-onboarding": "node scripts/desktop-auth-onboarding.mjs",
-    "test:e2e": "pnpm test:local-file-path && node scripts/e2e.mjs && node scripts/session-switch.mjs && node scripts/fs-engine.mjs && node scripts/browser-entry.mjs",
+    "test:e2e": "pnpm test:unit && pnpm test:local-file-path && node scripts/e2e.mjs && node scripts/session-switch.mjs && node scripts/fs-engine.mjs && node scripts/browser-entry.mjs",
     "bump:calver": "node scripts/bump-version.mjs calver",
     "bump:patch": "node scripts/bump-version.mjs patch",
     "bump:minor": "node scripts/bump-version.mjs minor",

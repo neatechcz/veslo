@@ -106,6 +106,8 @@ But what you can do is:
 
 * Runs standalone via `opencode-router` CLI.
 * Must be able to use Veslo server for config and approvals.
+* Messaging connectors are still implemented as infrastructure capability, but are intentionally hidden from current end-user UI.
+* Native mobile app delivery is prioritized over messaging-surface UX.
 
 ## Non-goals
 

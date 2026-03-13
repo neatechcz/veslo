@@ -376,7 +376,15 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
   };
 
   const getClient = (directory?: string | null) => {
-    const resolved = (directory ?? "").trim() || defaultDirectory;
+    const requested = (directory ?? "").trim();
+    const resolved = requested || defaultDirectory;
+    if (!requested && defaultDirectory) {
+      logger.warn(
+        { defaultDirectory },
+        "getClient: empty directory, falling back to defaultDirectory – " +
+          "this may indicate a race condition during workspace switch",
+      );
+    }
     if (deps.client && resolved === defaultDirectory) {
       return deps.client;
     }

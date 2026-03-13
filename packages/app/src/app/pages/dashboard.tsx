@@ -50,7 +50,6 @@ import SoulView from "./soul";
 import ConfigView from "./config";
 import SettingsView from "./settings";
 import SkillsView from "./skills";
-import IdentitiesView from "./identities";
 import SidebarStatusControls from "../components/sidebar-status-controls";
 import ProviderAuthModal, { type ProviderOAuthStartResult } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
@@ -67,7 +66,6 @@ import {
   History,
   HeartPulse,
   Loader2,
-  MessageCircle,
   MoreHorizontal,
   Plus,
   SlidersHorizontal,
@@ -358,8 +356,6 @@ export default function DashboardView(props: DashboardViewProps) {
         return "Extensions";
       case "mcp":
         return "Extensions";
-      case "identities":
-        return "Messaging";
       case "config":
         return "Advanced";
       case "settings":
@@ -557,10 +553,6 @@ export default function DashboardView(props: DashboardViewProps) {
     props.setTab("settings");
   };
 
-  const openConfig = () => {
-    props.setTab(props.developerMode ? "config" : "identities");
-  };
-
   const openSoulForWorkspace = (workspaceId?: string) => {
     const id = (workspaceId ?? props.activeWorkspaceId).trim();
     if (!id) return;
@@ -592,7 +584,7 @@ export default function DashboardView(props: DashboardViewProps) {
   createEffect(() => {
     if (props.developerMode) return;
     if (props.tab !== "config") return;
-    props.setTab("identities");
+    props.setTab("scheduled");
   });
 
   const shareWorkspace = createMemo(() => {
@@ -1295,20 +1287,6 @@ export default function DashboardView(props: DashboardViewProps) {
               />
             </Match>
 
-            <Match when={props.tab === "identities"}>
-              <IdentitiesView
-                busy={props.busy}
-                vesloServerStatus={props.vesloServerStatus}
-                vesloServerUrl={props.vesloServerUrl}
-                vesloServerClient={props.vesloServerClient}
-                vesloReconnectBusy={props.vesloReconnectBusy}
-                reconnectVesloServer={props.reconnectVesloServer}
-                vesloServerWorkspaceId={props.vesloServerWorkspaceId}
-                activeWorkspaceRoot={props.activeWorkspaceRoot}
-                developerMode={props.developerMode}
-              />
-            </Match>
-
             <Match when={props.tab === "config" && props.developerMode}>
               <ConfigView
                 busy={props.busy}
@@ -1515,12 +1493,11 @@ export default function DashboardView(props: DashboardViewProps) {
               }
           }
           exportDisabledReason={exportDisabledReason()}
-          onOpenBots={openConfig}
         />
         </div>
 
         <nav class="md:hidden border-t border-dls-border bg-dls-surface">
-          <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-6" : "grid-cols-5"}`}>
+          <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-5" : "grid-cols-4"}`}>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
                 props.tab === "scheduled" ? "text-gray-12" : "text-gray-10"
@@ -1557,15 +1534,6 @@ export default function DashboardView(props: DashboardViewProps) {
               <Box size={18} />
               Extensions
             </button>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "identities" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("identities")}
-            >
-              <MessageCircle size={18} />
-              IDs
-            </button>
             <Show when={props.developerMode}>
               <button
                 class={`flex flex-col items-center gap-1 text-xs ${
@@ -1587,7 +1555,6 @@ export default function DashboardView(props: DashboardViewProps) {
           {navItem("soul", "Soul", <HeartPulse size={18} class={soulNavIconClass()} />)}
           {navItem("skills", "Skills", <Zap size={18} />)}
           {navItem("mcp", "Extensions", <Box size={18} />)}
-          {navItem("identities", "Messaging", <MessageCircle size={18} />)}
           <Show when={props.developerMode}>{navItem("config", "Advanced", <SlidersHorizontal size={18} />)}</Show>
         </div>
       </aside>

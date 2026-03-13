@@ -99,6 +99,12 @@ The current product architecture has three distinct layers:
 - Hosted cloud runtimes remain a platform capability.
 - These capabilities stay in the codebase, but they are not the default BFU flow in the current product UI.
 
+### Messaging connectors (runtime capability, UI-disabled)
+
+- OpenCode Router messaging integration (Telegram/Slack/WhatsApp) remains implemented in runtime/server layers.
+- Current product UI intentionally hides messaging setup and identity management.
+- Product investment is focused on delivering a native mobile app instead of messaging-surface UX.
+
 ## Cross-device Continuation
 
 - Session history can sync to cloud independently of workspace files.

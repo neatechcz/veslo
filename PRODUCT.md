@@ -94,7 +94,8 @@ Every run provides an exportable audit log:
 
 ### Mobile-first Interaction
 
-- Mobile app flows are implemented, but mobile is not currently a supported product surface.
+- Native mobile app is the primary next product surface.
+- Messaging-surface flows (Telegram/Slack/WhatsApp via OpenCode Router) remain implemented in runtime but are intentionally hidden in the current end-user UI.
 - bottom navigation
 - swipe gestures (dismiss, approve, cancel)
 - haptics for major events

@@ -1,7 +1,7 @@
 {
   "name": "veslo-orchestrator",
   "version": "2026.3.0",
-  "opencodeVersion": "1.2.6",
+  "opencodeVersion": "1.2.25",
   "description": "Veslo host orchestrator for opencode + Veslo server + veslo-code-router",
   "private": true,
   "type": "module",

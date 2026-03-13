@@ -150,7 +150,6 @@ export type DashboardTab =
   | "skills"
   | "plugins"
   | "mcp"
-  | "identities"
   | "config"
   | "settings";
 

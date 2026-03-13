@@ -69,6 +69,10 @@ import type { OpencodeConnectStatus, ProviderListItem } from "../types";
 import { t, currentLocale, isLanguage } from "../../i18n";
 import { mapConfigProvidersToList } from "../utils/providers";
 import { withTimeoutOrThrow } from "../utils/promise-timeout";
+import {
+  activateVesloHostWorkspaceWithTimeout,
+  runWorkspaceEngineRestartWithTimeouts,
+} from "../utils/workspace-switch-timeouts";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
@@ -1170,7 +1174,9 @@ export function createWorkspaceStore(options: {
             workspacePath: next.path,
             name: next.displayName?.trim() || next.name?.trim() || null,
           });
-          await activateVesloHostWorkspace(next.path);
+          await activateVesloHostWorkspaceWithTimeout(
+            () => activateVesloHostWorkspace(next.path),
+          );
 
           const nextInfo = await withTimeoutOrThrow(
             engineInfo(),
@@ -1239,7 +1245,9 @@ export function createWorkspaceStore(options: {
             workspacePath: next.path,
             name: next.displayName?.trim() || next.name?.trim() || null,
           });
-          await activateVesloHostWorkspace(next.path);
+          await activateVesloHostWorkspaceWithTimeout(
+            () => activateVesloHostWorkspace(next.path),
+          );
 
           const newInfo = await withTimeoutOrThrow(
             engineInfo(),
@@ -1270,18 +1278,18 @@ export function createWorkspaceStore(options: {
             }
           }
         } else {
-          // Stop the current engine
-          const info = await engineStop();
-          setEngine(info);
-
-          // Start engine with new workspace directory
-          const newInfo = await engineStart(next.path, {
-            preferSidecar: options.engineSource() === "sidecar",
-            opencodeBinPath:
-              options.engineSource() === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
-            runtime,
-            workspacePaths: resolveWorkspacePaths(),
+          const { stopResult: info, startResult: newInfo } = await runWorkspaceEngineRestartWithTimeouts({
+            stop: () => engineStop(),
+            start: () =>
+              engineStart(next.path, {
+                preferSidecar: options.engineSource() === "sidecar",
+                opencodeBinPath:
+                  options.engineSource() === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
+                runtime,
+                workspacePaths: resolveWorkspacePaths(),
+              }),
           });
+          setEngine(info);
           setEngine(newInfo);
 
           const username = newInfo.opencodeUsername?.trim() ?? "";

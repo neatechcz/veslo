@@ -32,7 +32,6 @@ export default function ShareWorkspaceModal(props: {
   shareSkillsSetDisabledReason?: string | null;
   onExportConfig?: () => void;
   exportDisabledReason?: string | null;
-  onOpenBots?: () => void;
 }) {
   const [activeTab, setActiveTab] = createSignal<"access" | "links">("access");
   const [revealedByIndex, setRevealedByIndex] = createSignal<Record<number, boolean>>({});
@@ -373,31 +372,6 @@ export default function ShareWorkspaceModal(props: {
                   </div>
                 </div>
 
-                {/* Section: Bots */}
-                <div class="pt-2">
-                  <div class="flex items-center justify-between p-3 bg-gray-2 rounded-2xl group hover:bg-gray-3 transition-all border border-gray-6">
-                    <div class="flex items-center gap-3">
-                      <div class="p-2 bg-gray-1 rounded-lg text-gray-9 shadow-sm border border-gray-6 relative overflow-hidden flex items-center justify-center font-bold font-mono">
-                        B
-                        <div class="absolute inset-0 bg-amber-400 opacity-20"></div>
-                      </div>
-                      <div>
-                        <div class="flex items-center gap-2">
-                          <h4 class="text-[13px] font-bold text-gray-12">Bots</h4>
-                          <span class="text-[9px] px-1.5 py-0.5 uppercase tracking-wider font-bold rounded-full border border-gray-6 text-gray-10 bg-gray-1">alpha</span>
-                        </div>
-                        <p class="text-[12px] text-gray-10">Configure messaging surfaces</p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => props.onOpenBots?.()}
-                      disabled={!props.onOpenBots}
-                      class="px-4 py-2 bg-gray-1 border border-gray-7 hover:border-gray-8 hover:text-gray-12 rounded-xl text-[12px] font-bold text-gray-11 transition-all shadow-sm disabled:opacity-50 disabled:hover:border-gray-7 disabled:hover:text-gray-11"
-                    >
-                      Open setup
-                    </button>
-                  </div>
-                </div>
               </div>
             </Show>
           </div>

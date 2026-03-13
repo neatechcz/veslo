@@ -3,7 +3,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onMou
 import { formatBytes, formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
 
 import Button from "../components/button";
-import { CircleAlert, Copy, Download, FolderOpen, MessageCircle, PlugZap, RefreshCcw, Smartphone, X, Zap } from "lucide-solid";
+import { CircleAlert, Copy, Download, FolderOpen, PlugZap, RefreshCcw, Smartphone, X, Zap } from "lucide-solid";
 import type { OpencodeConnectStatus, ProviderListItem, SettingsTab, StartupPreference } from "../types";
 import type {
   VesloAuditEntry,
@@ -135,32 +135,6 @@ export type SettingsViewProps = {
   connectNotion: () => void;
   engineDoctorVersion: string | null;
 };
-
-// OpenCodeRouter Settings Component
-//
-// Messaging identities + routing are managed in the Identities tab.
-export function OpenCodeRouterSettings(_props: {
-  busy: boolean;
-  vesloServerStatus: VesloServerStatus;
-  vesloServerUrl: string;
-  vesloServerSettings: VesloServerSettings;
-  vesloServerWorkspaceId: string | null;
-  vesloServerHostInfo: VesloServerInfo | null;
-  developerMode: boolean;
-}) {
-  return (
-    <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-2">
-      <div class="flex items-center gap-2">
-        <MessageCircle size={16} class="text-gray-11" />
-        <div class="text-sm font-medium text-gray-12">Messaging</div>
-      </div>
-      <div class="text-xs text-gray-10">
-        Manage Telegram/Slack identities and bindings in the <span class="font-medium text-gray-12">Identities</span> tab.
-      </div>
-    </div>
-  );
-}
-
 
 export default function SettingsView(props: SettingsViewProps) {
   const translate = (key: string) => t(key, currentLocale());
@@ -1143,10 +1117,9 @@ export default function SettingsView(props: SettingsViewProps) {
                 <Button
                   variant="outline"
                   class="text-xs h-8 py-0 px-3 shrink-0"
-                  onClick={props.toggleAutoCompactContext}
-                  disabled={props.busy}
+                  disabled
                 >
-                  {props.autoCompactContext ? "On" : "Off"}
+                  Always on
                 </Button>
               </div>
 
@@ -2037,7 +2010,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       <div class="flex items-center justify-between gap-3">
                         <div>
                           <div class="text-sm font-medium text-gray-12">OpenCodeRouter sidecar</div>
-                          <div class="text-xs text-gray-10">Messaging bridge service.</div>
+                          <div class="text-xs text-gray-10">Bridge runtime (currently hidden from end-user UI).</div>
                         </div>
                         <div class={`text-xs px-2 py-1 rounded-full border ${opencodeRouterStatusStyle()}`}>
                           {opencodeRouterStatusLabel()}

@@ -50,6 +50,7 @@ import {
   listCommands as listCommandsTyped,
 } from "./lib/opencode-session";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
+import { createSkillReloadGuard } from "./lib/skill-reload-guard";
 import {
   AUTO_COMPACT_CONTEXT_PREF_KEY,
   DEFAULT_MODEL,
@@ -112,6 +113,7 @@ import {
   normalizeDirectoryPath,
   sessionDirectoryMatchesRoot,
 } from "./utils";
+import { createStartupGuard } from "./utils/startup-guard";
 import { computeWorkspaceSwitchOverlayHoldMs } from "./utils/workspace-switch-overlay";
 import {
   parseAuthCompleteDeepLink,
@@ -1232,10 +1234,31 @@ export default function App() {
   const [providerAuthError, setProviderAuthError] = createSignal<string | null>(null);
   const [providerAuthMethods, setProviderAuthMethods] = createSignal<Record<string, ProviderAuthMethod[]>>({});
 
+  const SKILL_HOT_RELOAD_GRACE_MS = 5000;
   let markReloadRequiredHandler: ((reason: ReloadReason, trigger?: ReloadTrigger) => void) | undefined;
+  let onHotReloadAppliedHandler: (() => void) | undefined;
+  const [pendingSkillFallbackAutoReload, setPendingSkillFallbackAutoReload] = createSignal(false);
+  const skillReloadGuard = createSkillReloadGuard({
+    graceMs: SKILL_HOT_RELOAD_GRACE_MS,
+    onFallbackNeeded: (trigger) => {
+      markReloadRequiredHandler?.("skills", trigger);
+      setPendingSkillFallbackAutoReload(true);
+    },
+  });
+
   const markReloadRequired = (reason: ReloadReason, trigger?: ReloadTrigger) => {
+    if (reason === "skills") {
+      skillReloadGuard.scheduleSkillFallback(trigger);
+      return;
+    }
+
     markReloadRequiredHandler?.(reason, trigger);
   };
+
+  onCleanup(() => {
+    skillReloadGuard.dispose();
+  });
+
   const sessionStore = createSessionStore({
     client,
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot().trim(),
@@ -1261,9 +1284,7 @@ export default function App() {
     setSseConnected,
     markReloadRequired,
     onHotReloadApplied: () => {
-      void refreshSkills({ force: true });
-      void refreshPlugins(pluginScope());
-      void refreshMcpServers();
+      onHotReloadAppliedHandler?.();
     },
   });
 
@@ -2767,9 +2788,15 @@ export default function App() {
 
   const [showThinking, setShowThinking] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
-  const [autoCompactContext, setAutoCompactContext] = createSignal(false);
+  const [autoCompactContext, setAutoCompactContext] = createSignal(true);
   const [modelVariant, setModelVariant] = createSignal<string | null>(null);
   const [autoCompactingSessionId, setAutoCompactingSessionId] = createSignal<string | null>(null);
+
+  createEffect(() => {
+    if (!autoCompactContext()) {
+      setAutoCompactContext(true);
+    }
+  });
 
   const MODEL_VARIANT_OPTIONS = [
     { value: "none", labelKey: "session.thinking_option_none" },
@@ -3341,7 +3368,7 @@ export default function App() {
           if (cancelled) return;
           const items = Array.isArray(response.items) ? response.items : [];
           const match = items.find((entry) => normalizeDirectoryPath(entry.path) === root);
-          setVesloServerWorkspaceId(match?.id ?? response.activeId ?? null);
+          setVesloServerWorkspaceId(match?.id ?? null);
         } catch {
           if (!cancelled) setVesloServerWorkspaceId(null);
         }
@@ -4041,6 +4068,7 @@ export default function App() {
 
   const {
     reloadRequired,
+    reloadReasons,
     reloadCopy,
     reloadTrigger,
     reloadBusy,
@@ -4079,6 +4107,21 @@ export default function App() {
   } = systemState;
 
   markReloadRequiredHandler = systemState.markReloadRequired;
+  onHotReloadAppliedHandler = () => {
+    const hadPendingSkillFallback = skillReloadGuard.hotReloadApplied();
+    if (hadPendingSkillFallback) {
+      setPendingSkillFallbackAutoReload(false);
+    }
+
+    const reasons = reloadReasons();
+    if (reasons.length === 1 && reasons[0] === "skills") {
+      clearReloadRequired();
+    }
+
+    void refreshSkills({ force: true });
+    void refreshPlugins(pluginScope());
+    void refreshMcpServers();
+  };
 
   const UPDATE_AUTO_CHECK_EVERY_MS = 12 * 60 * 60_000;
   const UPDATE_AUTO_CHECK_POLL_MS = 60_000;
@@ -4113,7 +4156,7 @@ export default function App() {
       setDefaultModelExplicit(false);
       setShowThinking(false);
       setHideTitlebar(false);
-      setAutoCompactContext(false);
+      setAutoCompactContext(true);
       setModelVariant(null);
       setUpdateAutoCheck(true);
       setUpdateAutoDownload(false);
@@ -4194,6 +4237,35 @@ export default function App() {
         id: session.id,
         title: session.title?.trim() || session.slug?.trim() || session.id,
       }));
+  });
+
+  createEffect(() => {
+    if (!reloadBusy()) return;
+    if (!skillReloadGuard.hasPending()) return;
+    skillReloadGuard.hotReloadApplied();
+    setPendingSkillFallbackAutoReload(false);
+  });
+
+  createEffect(() => {
+    if (!pendingSkillFallbackAutoReload()) return;
+    if (!reloadRequired()) {
+      setPendingSkillFallbackAutoReload(false);
+      return;
+    }
+    if (reloadBusy()) return;
+
+    const reasons = reloadReasons();
+    if (reasons.length !== 1 || reasons[0] !== "skills") {
+      setPendingSkillFallbackAutoReload(false);
+      return;
+    }
+
+    if (reloadTrigger()?.type !== "skill") return;
+    if (!canReloadWorkspace()) return;
+    if (activeReloadBlockingSessions().length > 0) return;
+
+    setPendingSkillFallbackAutoReload(false);
+    void reloadWorkspaceEngineAndResume();
   });
 
   const forceStopActiveSessionsAndReload = async () => {
@@ -5358,9 +5430,33 @@ export default function App() {
   }
 
   async function createSessionAndOpen() {
+    // Block session creation while a workspace switch is in progress.
+    // Without this gate, activeWorkspaceRoot() can return a stale or empty
+    // value and the session ends up in the wrong directory.
+    if (workspaceStore.connectingWorkspaceId()) {
+      console.warn(
+        "[createSessionAndOpen] Blocked: workspace switch in progress",
+        { connectingWorkspaceId: workspaceStore.connectingWorkspaceId() },
+      );
+      setError("Please wait for the workspace switch to complete.");
+      return undefined;
+    }
+
     const c = client();
     if (!c) {
       setError("Local runtime is not ready yet.");
+      return undefined;
+    }
+
+    // Guard against creating a session with an empty directory, which would
+    // cause the bridge to silently fall back to the orchestrator's default
+    // directory (possibly a temp folder or the wrong workspace).
+    const sessionDirectory = workspaceStore.activeWorkspaceRoot().trim();
+    if (!sessionDirectory) {
+      console.warn(
+        "[createSessionAndOpen] Blocked: activeWorkspaceRoot is empty",
+      );
+      setError("Workspace directory is not available. Please try again.");
       return undefined;
     }
 
@@ -5437,7 +5533,7 @@ export default function App() {
       try {
         mark("session:create:start");
         rawResult = await c.session.create({
-          directory: workspaceStore.activeWorkspaceRoot().trim(),
+          directory: sessionDirectory,
         });
         mark("session:create:ok");
       } catch (createErr) {
@@ -5646,6 +5742,15 @@ export default function App() {
 
 
   onMount(async () => {
+    const startupGuard = createStartupGuard({
+      timeoutMs: 15_000,
+      onTimeout: () => {
+        console.warn("[boot] app startup timed out after 15s — forcing boot complete");
+        setBooting(false);
+      },
+    });
+    onCleanup(() => startupGuard.dispose());
+
     if (typeof window !== "undefined" && CLOUD_ONLY_MODE) {
       const invite = readVesloConnectInviteFromSearch(window.location.search);
       if (!invite) {
@@ -5781,14 +5886,14 @@ export default function App() {
         }
 
         const storedAutoCompactContext = window.localStorage.getItem(AUTO_COMPACT_CONTEXT_PREF_KEY);
-        if (storedAutoCompactContext != null) {
+        if (storedAutoCompactContext !== "true") {
           try {
-            const parsed = JSON.parse(storedAutoCompactContext);
-            if (typeof parsed === "boolean") {
-              setAutoCompactContext(parsed);
+            const parsed = storedAutoCompactContext == null ? null : JSON.parse(storedAutoCompactContext);
+            if (parsed !== true) {
+              window.localStorage.setItem(AUTO_COMPACT_CONTEXT_PREF_KEY, JSON.stringify(true));
             }
           } catch {
-            // ignore
+            window.localStorage.setItem(AUTO_COMPACT_CONTEXT_PREF_KEY, JSON.stringify(true));
           }
         }
 
@@ -5845,7 +5950,7 @@ export default function App() {
           setNotionStatusDetail(t("mcp.connecting", currentLocale()));
         }
 
-        await refreshMcpServers();
+        void refreshMcpServers().catch(() => undefined);
 
         const storedNotionSkillInstalled = window.localStorage.getItem("veslo.notionSkillInstalled");
         if (storedNotionSkillInstalled === "1") {
@@ -5913,14 +6018,8 @@ export default function App() {
       }
     }
 
-    // Safety timeout: if bootstrapOnboarding hangs on any Tauri IPC call or
-    // network request, force-complete booting after 15 seconds so the app is usable.
-    const bootTimeout = setTimeout(() => {
-      console.warn("[boot] bootstrapOnboarding timed out after 15s — forcing boot complete");
-      setBooting(false);
-    }, 15_000);
     void workspaceStore.bootstrapOnboarding().finally(() => {
-      clearTimeout(bootTimeout);
+      startupGuard.complete();
       setBooting(false);
     });
   });
@@ -6727,7 +6826,7 @@ export default function App() {
       showThinking: showThinking(),
       toggleShowThinking: () => setShowThinking((v) => !v),
       autoCompactContext: autoCompactContext(),
-      toggleAutoCompactContext: () => setAutoCompactContext((v) => !v),
+      toggleAutoCompactContext: () => setAutoCompactContext(true),
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
       modelVariantLabel: formatModelVariantLabel(modelVariant()),
@@ -6934,7 +7033,7 @@ export default function App() {
     developerMode: developerMode(),
     showThinking: showThinking(),
     autoCompactContext: autoCompactContext(),
-    toggleAutoCompactContext: () => setAutoCompactContext((v) => !v),
+    toggleAutoCompactContext: () => setAutoCompactContext(true),
     groupMessageParts,
     summarizeStep,
     expandedStepIds: expandedStepIds(),
@@ -7001,7 +7100,6 @@ export default function App() {
     "skills",
     "plugins",
     "mcp",
-    "identities",
     "config",
     "settings",
   ]);

@@ -720,6 +720,13 @@ export function createSessionStore(options: {
 
     const nextSessions = sortSessionsByActivity(Array.from(merged.values()));
     sessionDebug("sessions:load:filtered", { root: root || null, count: nextSessions.length });
+
+    // Rebuild the workspace session ID set so SSE event filtering stays in sync.
+    workspaceSessionIds.clear();
+    for (const session of nextSessions) {
+      workspaceSessionIds.add(session.id);
+    }
+
     setStore("sessions", reconcile(nextSessions, { key: "id" }));
   }
 
@@ -1054,6 +1061,22 @@ export function createSessionStore(options: {
     };
   };
 
+  // Track session IDs that belong to the current workspace so we can
+  // reject SSE events for sessions from other workspaces. Populated by
+  // loadSessions() and session creation; cleared on workspace switch
+  // (when the client changes and the SSE subscription reconnects).
+  const workspaceSessionIds = new Set<string>();
+
+  const isKnownSessionId = (sessionID: string): boolean => {
+    if (workspaceSessionIds.has(sessionID)) return true;
+    // Also accept if the session is already in the store (e.g. just created)
+    if (store.sessions.some((s) => s.id === sessionID)) {
+      workspaceSessionIds.add(sessionID);
+      return true;
+    }
+    return false;
+  };
+
   const applyEvent = async (event: OpencodeEvent) => {
     if (event.type === "server.connected") {
       options.setSseConnected(true);
@@ -1093,6 +1116,19 @@ export function createSessionStore(options: {
         const record = event.properties as Record<string, unknown>;
         if (record.info && typeof record.info === "object") {
           const info = applySessionDirectoryOverride(record.info as Session);
+          // Validate that the session's directory belongs to the active workspace
+          // before accepting it into the store.
+          const root = normalizeDirectoryPath(options.activeWorkspaceRoot());
+          const sessionDir = resolveSessionDirectory(info);
+          if (root && sessionDir && !sessionDirectoryMatchesRoot(sessionDir, root)) {
+            sessionWarn("session.updated:ignored:wrong-workspace", {
+              sessionID: info.id,
+              sessionDir,
+              activeRoot: root,
+            });
+            return;
+          }
+          workspaceSessionIds.add(info.id);
           setStore("sessions", (current) => upsertSession(current, info));
         }
       }
@@ -1130,7 +1166,7 @@ export function createSessionStore(options: {
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
         const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
-        if (sessionID) {
+        if (sessionID && isKnownSessionId(sessionID)) {
           const normalized = normalizeSessionStatus(record.status);
           setStore("sessionStatus", sessionID, normalized);
           if (sessionID === options.selectedSessionId() && normalized !== "idle") {
@@ -1144,7 +1180,7 @@ export function createSessionStore(options: {
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
         const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
-        if (sessionID) {
+        if (sessionID && isKnownSessionId(sessionID)) {
           setStore("sessionStatus", sessionID, "idle");
           const c = options.client();
           if (c) {
@@ -1203,6 +1239,7 @@ export function createSessionStore(options: {
         const record = event.properties as Record<string, unknown>;
         if (record.info && typeof record.info === "object") {
           const info = record.info as Message;
+          if (!isKnownSessionId(info.sessionID)) return;
           const model = modelFromUserMessage(info as MessageInfo);
           if (model) {
             options.setSessionModelState((current) => ({
@@ -1259,6 +1296,18 @@ export function createSessionStore(options: {
         const record = event.properties as Record<string, unknown>;
         if (record.part && typeof record.part === "object") {
           const part = record.part as Part;
+
+          // Drop events for sessions that don't belong to the active workspace.
+          // This prevents cross-workspace message leakage through the shared SSE stream.
+          if (!isKnownSessionId(part.sessionID)) {
+            sessionWarn("message.part.updated:ignored:unknown-session", {
+              sessionID: part.sessionID,
+              messageID: part.messageID,
+              partID: part.id,
+            });
+            return;
+          }
+
           const delta = typeof record.delta === "string" ? record.delta : null;
           const partUpdatedStartedAt = perfNow();
 
@@ -1326,7 +1375,7 @@ export function createSessionStore(options: {
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
         const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
-        if (sessionID && Array.isArray(record.todos)) {
+        if (sessionID && isKnownSessionId(sessionID) && Array.isArray(record.todos)) {
           setStore("todos", sessionID, record.todos as TodoItem[]);
         }
       }
@@ -1356,6 +1405,11 @@ export function createSessionStore(options: {
   createEffect(() => {
     const c = options.client();
     if (!c) return;
+
+    // Client changed → workspace likely switched. Clear the known session IDs
+    // so stale events from the old workspace are rejected until loadSessions()
+    // repopulates the set.
+    workspaceSessionIds.clear();
 
     let cancelled = false;
     let reconnectAttempt = 0;

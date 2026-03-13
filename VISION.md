@@ -11,6 +11,7 @@
 - Processing is local-first. Cloud is used for identity, chat history, and sync.
 - If a session is backed by a workspace that exists only on one device, other devices can see it as history but cannot continue it there.
 - In the future, once a workspace is explicitly moved to cloud, that work can become continuable on other devices.
+- Messaging connectors remain implemented at the runtime layer, but are intentionally hidden from the end-user UI while Veslo prioritizes a native mobile app.
 
 Current cloud mental model:
 
