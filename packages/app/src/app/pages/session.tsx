@@ -265,12 +265,9 @@ type SkillsSetBundleV1 = {
   };
 };
 
-const BROWSER_SETUP_TEMPLATE = (() => {
+const BROWSER_AUTOMATION_QUICKSTART_PROMPT = (() => {
   const parsed = parseTemplateFrontmatter(browserSetupTemplate);
-  const name = parsed?.data?.name?.trim() || "browser-setup";
-  const description = parsed?.data?.description?.trim() || "Guide the user through browser automation setup";
-  const body = (parsed?.body ?? browserSetupTemplate).trim();
-  return { name, description, body };
+  return (parsed?.body ?? browserSetupTemplate).trim();
 })();
 
 const SOUL_SETUP_TEMPLATE = (() => {
@@ -3072,30 +3069,10 @@ export default function SessionView(props: SessionViewProps) {
     props.sendPromptAsync(draft).catch(() => undefined);
   };
 
-  const handleBrowserAutomationQuickstart = async () => {
-    const name = BROWSER_SETUP_TEMPLATE.name;
-    try {
-      const commands = await props.listCommands();
-      const hasCommand = commands.some((cmd) => cmd.name === name);
-      if (hasCommand) {
-        handleSendPrompt({
-          mode: "prompt",
-          text: `/${name}`,
-          resolvedText: `/${name}`,
-          parts: [{ type: "text", text: `/${name}` }],
-          attachments: [],
-          command: { name, arguments: "" },
-        });
-        return;
-      }
-    } catch {
-      // Fall back to prompt-based setup below.
-    }
-
+  const handleBrowserAutomationQuickstart = () => {
     const text =
-      currentLocale() === "cs"
-        ? tr("session.quickstart_browser_prompt")
-        : BROWSER_SETUP_TEMPLATE.body || tr("session.quickstart_browser_prompt");
+      BROWSER_AUTOMATION_QUICKSTART_PROMPT ||
+      "Try Chrome DevTools MCP now. If it is unavailable, explain how to connect Control Chrome in Veslo and ask me to retry.";
     handleSendPrompt({
       mode: "prompt",
       text,

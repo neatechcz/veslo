@@ -383,7 +383,7 @@ export function createSessionStore(options: {
     const name = typeof record.tool === "string" ? record.tool : "";
     const lower = name.toLowerCase();
     if (lower.includes("browser") || lower.includes("chrome") || lower.includes("devtools")) {
-      return "Veslo browser automation isn't set up yet. Go to Plugins and ensure the browser plugin/extension is installed and connected, then retry.";
+      return "Chrome MCP is not ready yet. Open the MCP tab, connect `Control Chrome`, then retry.";
     }
     return "Try again, or switch to an agent/prompt that only uses available tools in this worker.";
   };
