@@ -196,6 +196,9 @@ export function createWorkspaceStore(options: {
   let createRemoteInFlight: Promise<boolean> | null = null;
   const DEFAULT_CONNECT_HEALTH_TIMEOUT_MS = 12_000;
   const LOCAL_BOOT_CONNECT_HEALTH_TIMEOUT_MS = 180_000;
+  const CONNECT_PROVIDER_LIST_TIMEOUT_MS = 12_000;
+  const CONNECT_LOAD_SESSIONS_TIMEOUT_MS = 20_000;
+  const CONNECT_PENDING_PERMISSIONS_TIMEOUT_MS = 8_000;
   const WORKSPACE_IO_TIMEOUT_MS = 8_000;
   const WORKSPACE_SET_ACTIVE_TIMEOUT_MS = 8_000;
   const ENGINE_INFO_TIMEOUT_MS = 12_000;
@@ -1437,7 +1440,12 @@ export function createWorkspaceStore(options: {
           const providersAt = Date.now();
           wsDebug("connect:providers:start", { baseUrl: nextBaseUrl });
           try {
-            const providerList = unwrap(await nextClient.provider.list());
+            const providerList = unwrap(
+              await withTimeoutOrThrow(
+                nextClient.provider.list(),
+                { timeoutMs: CONNECT_PROVIDER_LIST_TIMEOUT_MS, label: "provider.list" },
+              ),
+            );
             wsDebug("connect:providers:done", {
               ms: Date.now() - providersAt,
               source: "provider.list",
@@ -1453,7 +1461,12 @@ export function createWorkspaceStore(options: {
             const message = error instanceof Error ? error.message : safeStringify(error);
             wsDebug("connect:providers:fallback", { ms: Date.now() - providersAt, message });
             try {
-              const cfg = unwrap(await nextClient.config.providers());
+              const cfg = unwrap(
+                await withTimeoutOrThrow(
+                  nextClient.config.providers(),
+                  { timeoutMs: CONNECT_PROVIDER_LIST_TIMEOUT_MS, label: "config.providers" },
+                ),
+              );
               const mapped = mapConfigProvidersToList(cfg.providers);
               wsDebug("connect:providers:done", {
                 ms: Date.now() - providersAt,
@@ -1483,11 +1496,17 @@ export function createWorkspaceStore(options: {
         const targetRoot = context?.targetRoot ?? (resolvedDirectory || activeWorkspaceRoot().trim());
         wsDebug("connect:loadSessions", { targetRoot, resolvedDirectory });
         const sessionsAt = Date.now();
-        await options.loadSessions(targetRoot);
+        await withTimeoutOrThrow(
+          options.loadSessions(targetRoot),
+          { timeoutMs: CONNECT_LOAD_SESSIONS_TIMEOUT_MS, label: "loadSessions" },
+        );
         connectMetrics.loadSessionsMs = Date.now() - sessionsAt;
         wsDebug("connect:loadSessions:done", { ms: Date.now() - sessionsAt });
         const pendingPermissionsAt = Date.now();
-        await options.refreshPendingPermissions();
+        await withTimeoutOrThrow(
+          options.refreshPendingPermissions(),
+          { timeoutMs: CONNECT_PENDING_PERMISSIONS_TIMEOUT_MS, label: "refreshPendingPermissions" },
+        );
         connectMetrics.pendingPermissionsMs = Date.now() - pendingPermissionsAt;
 
         const providerState = await providersPromise;
