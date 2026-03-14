@@ -206,6 +206,8 @@ export type SessionViewProps = {
   reloadBusy: boolean;
   reloadError: string | null;
   busy: boolean;
+  composerDraft: ComposerDraft;
+  setComposerDraft: (draft: ComposerDraft) => void;
   prompt: string;
   setPrompt: (value: string) => void;
   selectedSessionModelLabel: string;
@@ -3133,7 +3135,7 @@ export default function SessionView(props: SessionViewProps) {
   const isSandboxWorkspace = createMemo(() => Boolean((props.activeWorkspaceDisplay as any)?.sandboxContainerName?.trim()));
 
   const handleDraftChange = (draft: ComposerDraft) => {
-    props.setPrompt(draft.text);
+    props.setComposerDraft(draft);
   };
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
@@ -3841,49 +3843,55 @@ export default function SessionView(props: SessionViewProps) {
       </Show>
 
       <Show when={!showWorkspaceSetupEmptyState()}>
-        <Composer
-          prompt={props.prompt}
-          developerMode={props.developerMode}
-          busy={props.busy}
-          isStreaming={showRunIndicator()}
-          compactTopSpacing={todoCount() > 0}
-          onSend={handleSendPrompt}
-          onStop={cancelRun}
-          onDraftChange={handleDraftChange}
-          selectedModelLabel={props.selectedSessionModelLabel || tr("session.model")}
-          onModelClick={props.openSessionModelPicker}
-          modelVariantLabel={props.modelVariantLabel}
-          modelVariant={props.modelVariant}
-          onModelVariantChange={props.setModelVariant}
-          agentLabel={agentLabel()}
-          selectedAgent={props.selectedSessionAgent}
-          agentPickerOpen={agentPickerOpen()}
-          agentPickerBusy={agentPickerBusy()}
-          agentPickerError={agentPickerError()}
-          agentOptions={agentOptions()}
-          onToggleAgentPicker={openAgentPicker}
-          onSelectAgent={(agent) => {
-            applySessionAgent(agent);
-            setAgentPickerOpen(false);
-          }}
-          setAgentPickerRef={(el) => {
-            agentPickerRef = el;
-          }}
-          showNotionBanner={props.showTryNotionPrompt}
-          onNotionBannerClick={props.onTryNotionPrompt}
-          toast={toastMessage()}
-          onToast={(message) => setToastMessage(message)}
-          listAgents={props.listAgents}
-          recentFiles={props.workingFiles}
-          searchFiles={props.searchFiles}
-          listCommands={props.listCommands}
-          isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
-          isSandboxWorkspace={isSandboxWorkspace()}
-          canChooseSessionFolder={props.canChooseSessionFolder}
-          onChooseSessionFolder={chooseFolderForSession}
-          attachmentsEnabled={attachmentsEnabled()}
-          attachmentsDisabledReason={attachmentsDisabledReason()}
-        />
+        <Show when={props.selectedSessionId ?? "__no-session"} keyed>
+          {(_sessionKey) => (
+            <Composer
+              initialDraft={props.composerDraft}
+              prompt={props.composerDraft.text}
+              developerMode={props.developerMode}
+              busy={props.busy}
+              isStreaming={showRunIndicator()}
+              compactTopSpacing={todoCount() > 0}
+              onSend={handleSendPrompt}
+              onStop={cancelRun}
+              onDraftChange={handleDraftChange}
+              selectedModelLabel={props.selectedSessionModelLabel || tr("session.model")}
+              onModelClick={props.openSessionModelPicker}
+              modelVariantLabel={props.modelVariantLabel}
+              modelVariant={props.modelVariant}
+              onModelVariantChange={props.setModelVariant}
+              agentLabel={agentLabel()}
+              selectedAgent={props.selectedSessionAgent}
+              agentPickerOpen={agentPickerOpen()}
+              agentPickerBusy={agentPickerBusy()}
+              agentPickerError={agentPickerError()}
+              agentOptions={agentOptions()}
+              onToggleAgentPicker={openAgentPicker}
+              onSelectAgent={(agent) => {
+                applySessionAgent(agent);
+                setAgentPickerOpen(false);
+              }}
+              setAgentPickerRef={(el) => {
+                agentPickerRef = el;
+              }}
+              showNotionBanner={props.showTryNotionPrompt}
+              onNotionBannerClick={props.onTryNotionPrompt}
+              toast={toastMessage()}
+              onToast={(message) => setToastMessage(message)}
+              listAgents={props.listAgents}
+              recentFiles={props.workingFiles}
+              searchFiles={props.searchFiles}
+              listCommands={props.listCommands}
+              isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
+              isSandboxWorkspace={isSandboxWorkspace()}
+              localWorkspacePath={props.activeWorkspaceRoot}
+              canChooseSessionFolder={props.canChooseSessionFolder}
+              onChooseSessionFolder={chooseFolderForSession}
+              attachmentsEnabled={attachmentsEnabled()}
+              attachmentsDisabledReason={attachmentsDisabledReason()}
+            />
+          )}
+        </Show>
       </Show>
 
       </main>

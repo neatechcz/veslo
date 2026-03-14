@@ -82,7 +82,8 @@ export type SettingsViewProps = {
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
   modelVariantLabel: string;
-  editModelVariant: () => void;
+  modelVariant: string;
+  setModelVariant: (value: string) => void;
   language: Language;
   setLanguage: (value: Language) => void;
   themeMode: "light" | "dark" | "system";
@@ -135,6 +136,14 @@ export type SettingsViewProps = {
   connectNotion: () => void;
   engineDoctorVersion: string | null;
 };
+
+const MODEL_VARIANT_OPTIONS = [
+  { value: "none", labelKey: "session.thinking_option_none" },
+  { value: "low", labelKey: "session.thinking_option_low" },
+  { value: "medium", labelKey: "session.thinking_option_medium" },
+  { value: "high", labelKey: "session.thinking_option_high" },
+  { value: "xhigh", labelKey: "session.thinking_option_xhigh" },
+];
 
 export default function SettingsView(props: SettingsViewProps) {
   const translate = (key: string) => t(key, currentLocale());
@@ -1123,19 +1132,29 @@ export default function SettingsView(props: SettingsViewProps) {
                 </Button>
               </div>
 
-              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-                <div class="min-w-0">
-                  <div class="text-sm text-gray-12">Model variant</div>
-                  <div class="text-xs text-gray-7 font-mono truncate">{props.modelVariantLabel}</div>
+              <div class="bg-gray-1 p-3 rounded-xl border border-gray-6 space-y-2">
+                <div>
+                  <div class="text-sm text-gray-12">{translate("session.thinking_effort")}</div>
+                  <div class="text-xs text-gray-7">Default thinking mode for new sessions.</div>
                 </div>
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3 shrink-0"
-                  onClick={props.editModelVariant}
-                  disabled={props.busy}
-                >
-                  Edit
-                </Button>
+                <div class="flex gap-1.5 flex-wrap">
+                  <For each={MODEL_VARIANT_OPTIONS}>
+                    {(option) => (
+                      <button
+                        type="button"
+                        class={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                          props.modelVariant === option.value
+                            ? "bg-gray-12 text-gray-1"
+                            : "bg-gray-3 text-gray-11 hover:bg-gray-4 hover:text-gray-12"
+                        }`}
+                        onClick={() => props.setModelVariant(option.value)}
+                        disabled={props.busy}
+                      >
+                        {translate(option.labelKey)}
+                      </button>
+                    )}
+                  </For>
+                </div>
               </div>
             </div>
           </div>

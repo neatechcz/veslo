@@ -30,6 +30,7 @@ import {
 import { unwrap } from "../lib/opencode";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../types";
+import { createSelectSessionGuard } from "./select-session-guard";
 
 export type SessionModelState = {
   overrides: Record<string, ModelRef>;
@@ -608,8 +609,7 @@ export function createSessionStore(options: {
   };
 
   let selectRunCounter = 0;
-  let selectVersion = 0;
-  const selectInFlightBySession = new Map<string, Promise<void>>();
+  const selectGuard = createSelectSessionGuard();
 
   const sessions = () => store.sessions;
   const sessionStatusById = () => store.sessionStatus;
@@ -784,16 +784,21 @@ export function createSessionStore(options: {
     options.setSelectedSessionId(sessionID);
     options.setError(null);
 
-    const existing = selectInFlightBySession.get(sessionID);
+    const runId = ++selectRunCounter;
+    const version = selectGuard.nextVersion();
+
+    // Only join an existing in-flight load when it was started in the
+    // immediately preceding version (same session, no intervening selection
+    // change — e.g. a route re-fire).  If the user clicked A→B→A, the
+    // in-flight for A is stale (started at an earlier version) and will
+    // abort — we must start a fresh load so session A actually gets its data.
+    const existing = selectGuard.tryDedup(sessionID);
     if (existing) {
       recordPerfLog(perfEnabled, "session.select", "dedupe join", {
         sessionID,
       });
       return existing;
     }
-
-    const runId = ++selectRunCounter;
-    const version = ++selectVersion;
     const startedAt = perfNow();
     const mark = (event: string, payload?: Record<string, unknown>) => {
       const elapsedMs = Math.round((perfNow() - startedAt) * 100) / 100;
@@ -804,7 +809,7 @@ export function createSessionStore(options: {
         ...(payload ?? {}),
       });
     };
-    const isStale = () => version !== selectVersion || options.selectedSessionId() !== sessionID;
+    const isStale = () => version !== selectGuard.currentVersion() || options.selectedSessionId() !== sessionID;
     const abortIfStale = (reason: string) => {
       if (!isStale()) return false;
       mark(`aborting: ${reason}`);
@@ -891,14 +896,12 @@ export function createSessionStore(options: {
       setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
     })();
 
-    selectInFlightBySession.set(sessionID, run);
+    selectGuard.register(sessionID, version, run);
     try {
       await run;
     } finally {
       setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
-      if (selectInFlightBySession.get(sessionID) === run) {
-        selectInFlightBySession.delete(sessionID);
-      }
+      selectGuard.cleanup(sessionID, run);
     }
   }
 

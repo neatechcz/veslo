@@ -74,6 +74,7 @@ import {
   runWorkspaceEngineRestartWithTimeouts,
 } from "../utils/workspace-switch-timeouts";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
+import { createWorkspaceActivateGuard } from "./workspace-activate-guard";
 
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
 
@@ -196,6 +197,7 @@ export function createWorkspaceStore(options: {
     }
   };
 
+  const wsActivateGuard = createWorkspaceActivateGuard();
   const connectInFlightByKey = new Map<string, Promise<boolean>>();
   let createRemoteInFlight: Promise<boolean> | null = null;
   const DEFAULT_CONNECT_HEALTH_TIMEOUT_MS = 12_000;
@@ -825,6 +827,10 @@ export function createWorkspaceStore(options: {
       });
       return blockLocalAction("cloud_only_local_workspace_filtered", "Local workers are disabled.");
     }
+
+    const myVersion = wsActivateGuard.enter(id);
+    const isSuperseded = () => wsActivateGuard.isSuperseded(myVersion);
+
     console.log("[workspace] activate", { id: next.id, type: next.workspaceType });
     const activateStart = Date.now();
     wsDebug("activate:start", {
@@ -846,13 +852,12 @@ export function createWorkspaceStore(options: {
     let activateTimeoutId: ReturnType<typeof setTimeout> | null = null;
     if (typeof window !== "undefined") {
       activateTimeoutId = setTimeout(() => {
-        const current = connectingWorkspaceId();
-        if (current !== id) return;
+        if (wsActivateGuard.isSuperseded(myVersion)) return;
         const message = `Timed out switching worker after ${Math.round(WORKSPACE_ACTIVATE_TIMEOUT_MS / 1000)}s.`;
         wsDebug("activate:timeout", { id, timeoutMs: WORKSPACE_ACTIVATE_TIMEOUT_MS });
         options.setError(message);
         updateWorkspaceConnectionState(id, { status: "error", message });
-        setConnectingWorkspaceId((existing) => (existing === id ? null : existing));
+        wsActivateGuard.exit(myVersion, setConnectingWorkspaceId);
         options.setBusy(false);
         options.setBusyLabel(null);
         options.setBusyStartedAt(null);
@@ -863,6 +868,11 @@ export function createWorkspaceStore(options: {
     // trigger expensive reactive updates (e.g. sidebar session refreshes).
     if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    }
+
+    if (isSuperseded()) {
+      wsDebug("activate:superseded:early", { id });
+      return false;
     }
 
     try {
@@ -928,6 +938,11 @@ export function createWorkspaceStore(options: {
             return false;
           }
 
+          if (isSuperseded()) {
+            wsDebug("activate:superseded:after-veslo-resolve", { id });
+            return false;
+          }
+
           if (!resolvedBaseUrl) {
             options.setError(t("app.error.remote_base_url_required", currentLocale()));
             updateWorkspaceConnectionState(id, {
@@ -949,6 +964,11 @@ export function createWorkspaceStore(options: {
             resolvedAuth,
             { navigate: false },
           );
+
+          if (isSuperseded()) {
+            wsDebug("activate:superseded:after-veslo-connect", { id });
+            return false;
+          }
 
           if (!ok) {
             updateWorkspaceConnectionState(id, {
@@ -1039,6 +1059,11 @@ export function createWorkspaceStore(options: {
           undefined,
           { navigate: false },
         );
+
+        if (isSuperseded()) {
+          wsDebug("activate:superseded:after-direct-connect", { id });
+          return false;
+        }
 
         if (!ok) {
           updateWorkspaceConnectionState(id, {
@@ -1139,6 +1164,10 @@ export function createWorkspaceStore(options: {
     // Without this, we end up keeping the remote client while `startupPreference` flips to
     // "local", and subsequent session/file actions behave inconsistently.
     if (!isRemote && options.client() && !wasLocalConnection) {
+      if (isSuperseded()) {
+        wsDebug("activate:superseded:before-remote-to-local", { id });
+        return false;
+      }
       wsDebug("activate:remote->local:reconnect", {
         id,
         nextPath: next.path,
@@ -1232,6 +1261,10 @@ export function createWorkspaceStore(options: {
 
     // When running locally, restart the engine when workspace changes
     if (!isRemote && wasLocalConnection && workspaceChanged) {
+      if (isSuperseded()) {
+        wsDebug("activate:superseded:before-engine-restart", { id });
+        return false;
+      }
       wsDebug("activate:local->local:restartEngine", { id, nextPath: next.path });
       options.setError(null);
       options.setBusy(true);
@@ -1335,7 +1368,7 @@ export function createWorkspaceStore(options: {
       if (activateTimeoutId !== null) {
         clearTimeout(activateTimeoutId);
       }
-      setConnectingWorkspaceId((current) => (current === id ? null : current));
+      wsActivateGuard.exit(myVersion, setConnectingWorkspaceId);
       wsDebug("activate:finally", { id, ms: Date.now() - activateStart });
     }
   }
@@ -2431,6 +2464,7 @@ export function createWorkspaceStore(options: {
       return await testWorkspaceConnection(id);
     };
 
+    const myVersion = wsActivateGuard.enter(id);
     setConnectingWorkspaceId(id);
     options.setError(null);
 
@@ -2525,7 +2559,7 @@ export function createWorkspaceStore(options: {
       updateWorkspaceConnectionState(id, { status: "error", message: hint });
       return false;
     } finally {
-      setConnectingWorkspaceId((current) => (current === id ? null : current));
+      wsActivateGuard.exit(myVersion, setConnectingWorkspaceId);
     }
   }
 

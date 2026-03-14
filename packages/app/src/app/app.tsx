@@ -39,6 +39,12 @@ import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
 import ProtoWorkspacesView from "./pages/proto-workspaces";
 import ProtoV1UxView from "./pages/proto-v1-ux";
+import {
+  deleteSessionComposerDraft,
+  getSessionComposerDraft,
+  setSessionComposerDraft,
+  setSessionComposerPrompt,
+} from "./pages/session-composer-drafts";
 import { createClient, unwrap, waitForHealthy, type OpencodeAuth } from "./lib/opencode";
 import {
   abortSession as abortSessionTyped,
@@ -1355,7 +1361,17 @@ export default function App() {
     }
   });
 
-  const [prompt, setPrompt] = createSignal("");
+  const [composerDraftBySessionId, setComposerDraftBySessionId] = createSignal<Record<string, ComposerDraft>>({});
+  const composerDraft = createMemo(() =>
+    getSessionComposerDraft(composerDraftBySessionId(), selectedSessionId()),
+  );
+  const setComposerDraft = (draft: ComposerDraft) => {
+    setComposerDraftBySessionId((current) => setSessionComposerDraft(current, selectedSessionId(), draft));
+  };
+  const setPrompt = (value: string) => {
+    setComposerDraftBySessionId((current) => setSessionComposerPrompt(current, selectedSessionId(), value));
+  };
+  const prompt = createMemo(() => composerDraft().text);
   const [lastPromptSent, setLastPromptSent] = createSignal("");
 
   type PartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput;
@@ -1537,12 +1553,16 @@ export default function App() {
 
   async function sendPrompt(draft?: ComposerDraft) {
     const hasExplicitDraft = Boolean(draft);
-    const fallbackText = prompt().trim();
+    const fallbackDraft = composerDraft();
+    const fallbackText = fallbackDraft.text.trim();
+    const fallbackResolvedText = (fallbackDraft.resolvedText ?? fallbackDraft.text).trim();
     const resolvedDraft: ComposerDraft = draft ?? {
-      mode: "prompt",
-      parts: fallbackText ? [{ type: "text", text: fallbackText } as ComposerPart] : [],
-      attachments: [] as ComposerAttachment[],
+      mode: fallbackDraft.mode,
+      parts: fallbackDraft.parts.length ? fallbackDraft.parts : (fallbackText ? [{ type: "text", text: fallbackText } as ComposerPart] : []),
+      attachments: fallbackDraft.attachments,
       text: fallbackText,
+      resolvedText: fallbackResolvedText || undefined,
+      command: fallbackDraft.command,
     };
     const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
     if (!content && !resolvedDraft.attachments.length) return;
@@ -2008,6 +2028,7 @@ export default function App() {
     // here races with SSE and can wipe unrelated sessions from the store.
     persistSessionDirectoryOverride(trimmed, null);
     setSessions(sessions().filter((s) => s.id !== trimmed));
+    setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, trimmed));
     const sidebarWorkspaceId = workspace?.id ?? workspaceStore.activeWorkspaceId();
     setSidebarSessionsByWorkspaceId((prev) => ({
       ...prev,
@@ -2828,19 +2849,6 @@ export default function App() {
     return option ? t(option.labelKey, currentLocale()) : t("session.thinking_option_none", currentLocale());
   };
 
-  const handleEditModelVariant = () => {
-    const next = window.prompt(
-      "Model variant (none, low, medium, high, xhigh)",
-      normalizeModelVariant(modelVariant()) ?? "none"
-    );
-    if (next == null) return;
-    const normalized = normalizeModelVariant(next);
-    if (!normalized) {
-      window.alert("Variant must be one of: none, low, medium, high, xhigh.");
-      return;
-    }
-    setModelVariant(normalized);
-  };
 
   const workspaceStore = createWorkspaceStore({
     startupPreference,
@@ -6830,7 +6838,8 @@ export default function App() {
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
       modelVariantLabel: formatModelVariantLabel(modelVariant()),
-      editModelVariant: handleEditModelVariant,
+      modelVariant: normalizeModelVariant(modelVariant()) ?? "none",
+      setModelVariant: (value: string) => setModelVariant(value),
       updateAutoCheck: updateAutoCheck(),
       toggleUpdateAutoCheck: () => setUpdateAutoCheck((v) => !v),
       updateAutoDownload: updateAutoDownload(),
@@ -6992,7 +7001,7 @@ export default function App() {
     selectedSessionModelLabel: selectedSessionModelLabel(),
     openSessionModelPicker: openSessionModelPicker,
     modelVariantLabel: formatModelVariantLabel(modelVariant()),
-    modelVariant: modelVariant(),
+    modelVariant: normalizeModelVariant(modelVariant()) ?? "none",
     setModelVariant: (value: string) => setModelVariant(value),
     activePlugins: sidebarPluginList(),
     activePluginStatus: sidebarPluginStatus(),
@@ -7046,6 +7055,8 @@ export default function App() {
     busy: busy(),
     prompt: prompt(),
     setPrompt: setPrompt,
+    composerDraft: composerDraft(),
+    setComposerDraft: setComposerDraft,
     activePermission: activePermissionMemo(),
     permissionReplyBusy: permissionReplyBusy(),
     respondPermission: respondPermission,

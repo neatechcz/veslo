@@ -528,11 +528,38 @@ export function isStepPart(part: Part) {
 
 export function isUserVisiblePart(part: Part) {
   const flags = part as { synthetic?: boolean; ignored?: boolean };
-  return !flags.synthetic && !flags.ignored;
+  if (flags.synthetic || flags.ignored) return false;
+  if (part.type === "text" && isInternalAgentHandoff(part)) return false;
+  return true;
 }
 
 export function isVisibleTextPart(part: Part) {
   return part.type === "text" && isUserVisiblePart(part);
+}
+
+/**
+ * Detect internal agent handoff / session-compaction text that should be hidden.
+ *
+ * When OpenCode's `session.summarize()` runs, the AI model produces a
+ * summary for the *next* agent context (e.g. "Notes for Next Agent …").
+ * The server sometimes emits this as a regular TextPart without the
+ * `synthetic` flag, so it leaks into the user-visible message stream.
+ *
+ * We catch the most reliable markers here.  The patterns are intentionally
+ * tight to avoid false-positives on normal conversation text.
+ */
+const HANDOFF_MARKERS = [
+  "notes for next agent",
+  "the next agent should",
+  "context for the next",
+  "handoff to the next",
+] as const;
+
+function isInternalAgentHandoff(part: Part): boolean {
+  const text = (part as { text?: string }).text;
+  if (!text || text.length < 40) return false;
+  const lower = text.toLowerCase();
+  return HANDOFF_MARKERS.some((marker) => lower.includes(marker));
 }
 
 const EXPLORATION_TOOL_NAMES = new Set(["read", "glob", "grep", "search", "list", "list_files"]);

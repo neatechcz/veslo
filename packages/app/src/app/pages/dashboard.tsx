@@ -252,7 +252,8 @@ export type DashboardViewProps = {
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
   modelVariantLabel: string;
-  editModelVariant: () => void;
+  modelVariant: string;
+  setModelVariant: (value: string) => void;
   language: Language;
   setLanguage: (value: Language) => void;
   updateAutoCheck: boolean;
@@ -1364,7 +1365,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   hideTitlebar={props.hideTitlebar}
                   toggleHideTitlebar={props.toggleHideTitlebar}
                   modelVariantLabel={props.modelVariantLabel}
-                  editModelVariant={props.editModelVariant}
+                  modelVariant={props.modelVariant}
+                  setModelVariant={props.setModelVariant}
                   language={props.language}
                   setLanguage={props.setLanguage}
                   updateAutoCheck={props.updateAutoCheck}

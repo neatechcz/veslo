@@ -7,6 +7,7 @@ import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, Slash
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { currentLocale, t } from "../../../i18n";
 import { extractFilesFromDataTransfer } from "../../utils/data-transfer-files";
+import { resolveComposerWorkspaceLabel } from "./composer-workspace-label";
 
 type MentionOption = {
   id: string;
@@ -23,6 +24,7 @@ type MentionGroup = {
 };
 
 type ComposerProps = {
+  initialDraft: ComposerDraft;
   prompt: string;
   developerMode: boolean;
   busy: boolean;
@@ -54,6 +56,7 @@ type ComposerProps = {
   searchFiles: (query: string) => Promise<string[]>;
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
+  localWorkspacePath?: string | null;
   canChooseSessionFolder: boolean;
   onChooseSessionFolder: () => Promise<void> | void;
   attachmentsEnabled: boolean;
@@ -463,9 +466,11 @@ export default function Composer(props: ComposerProps) {
   const [agentOptions, setAgentOptions] = createSignal<Agent[]>([]);
   const [agentLoaded, setAgentLoaded] = createSignal(false);
   const [searchResults, setSearchResults] = createSignal<string[]>([]);
-  const [attachments, setAttachments] = createSignal<ComposerAttachment[]>([]);
-  const [draftText, setDraftText] = createSignal(normalizeText(props.prompt));
-  const [mode, setMode] = createSignal<PromptMode>("prompt");
+  const [attachments, setAttachments] = createSignal<ComposerAttachment[]>(
+    (props.initialDraft.attachments ?? []).map((attachment) => ({ ...attachment })),
+  );
+  const [draftText, setDraftText] = createSignal(normalizeText(props.initialDraft.text ?? props.prompt));
+  const [mode, setMode] = createSignal<PromptMode>(props.initialDraft.mode ?? "prompt");
   const [historySnapshot, setHistorySnapshot] = createSignal<ComposerDraft | null>(null);
   const [historyIndex, setHistoryIndex] = createSignal({ prompt: -1, shell: -1 });
   const [history, setHistory] = createSignal({ prompt: [] as ComposerDraft[], shell: [] as ComposerDraft[] });
@@ -473,6 +478,14 @@ export default function Composer(props: ComposerProps) {
   const activeVariant = createMemo(() => props.modelVariant ?? "none");
   const attachmentsDisabled = createMemo(() => !props.attachmentsEnabled);
   const hasDraftContent = createMemo(() => draftText().trim().length > 0 || attachments().length > 0);
+  const workspaceLabel = createMemo(() =>
+    resolveComposerWorkspaceLabel({
+      isRemoteWorkspace: props.isRemoteWorkspace,
+      localWorkspacePath: props.localWorkspacePath,
+      localLabel: translate("session.local_workspace_label"),
+      remoteLabel: translate("session.remote_workspace_label"),
+    }),
+  );
 
   onCleanup(() => {
     for (const url of objectUrls) {
@@ -1670,8 +1683,14 @@ export default function Composer(props: ComposerProps) {
                   <Show
                     when={props.canChooseSessionFolder}
                     fallback={
-                      <div class="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-9">
-                        {props.isRemoteWorkspace ? translate("session.remote_workspace_label") : translate("session.local_workspace_label")}
+                      <div
+                        class={`mb-2 text-gray-9 ${workspaceLabel().usePathStyle
+                          ? "truncate text-[11px] font-mono"
+                          : "text-[10px] font-bold uppercase tracking-widest"
+                          }`}
+                        title={workspaceLabel().label}
+                      >
+                        {workspaceLabel().label}
                       </div>
                     }
                   >
