@@ -2221,10 +2221,6 @@ export default function App() {
       throw new Error(`Unknown provider: ${providerId}`);
     }
 
-    if (providerId === "openai" && provider.models?.["gpt-4o-mini"]) {
-      return "gpt-4o-mini";
-    }
-
     const configuredDefault = providerDefaults()[providerId];
     if (configuredDefault && provider.models?.[configuredDefault]) {
       return configuredDefault;
@@ -6998,11 +6994,6 @@ export default function App() {
     updateEnv: updateEnv(),
     anyActiveRuns: anyActiveRuns(),
     installUpdateAndRestart,
-    selectedSessionModelLabel: selectedSessionModelLabel(),
-    openSessionModelPicker: openSessionModelPicker,
-    modelVariantLabel: formatModelVariantLabel(modelVariant()),
-    modelVariant: normalizeModelVariant(modelVariant()) ?? "none",
-    setModelVariant: (value: string) => setModelVariant(value),
     activePlugins: sidebarPluginList(),
     activePluginStatus: sidebarPluginStatus(),
     mcpServers: mcpServers(),

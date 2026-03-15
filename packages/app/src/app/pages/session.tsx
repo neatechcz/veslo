@@ -210,11 +210,6 @@ export type SessionViewProps = {
   setComposerDraft: (draft: ComposerDraft) => void;
   prompt: string;
   setPrompt: (value: string) => void;
-  selectedSessionModelLabel: string;
-  openSessionModelPicker: () => void;
-  modelVariantLabel: string;
-  modelVariant: string | null;
-  setModelVariant: (value: string) => void;
   activePermission: PendingPermission | null;
   showTryNotionPrompt: boolean;
   onTryNotionPrompt: () => void;
@@ -310,15 +305,7 @@ const interpolate = (template: string, values: Record<string, string | number>) 
     template,
   );
 
-type CommandPaletteMode = "root" | "sessions" | "thinking";
-
-const COMMAND_PALETTE_THINKING_OPTIONS = [
-  { value: "none", labelKey: "session.thinking_option_none", detailKey: "session.thinking_option_none_detail" },
-  { value: "low", labelKey: "session.thinking_option_low", detailKey: "session.thinking_option_low_detail" },
-  { value: "medium", labelKey: "session.thinking_option_medium", detailKey: "session.thinking_option_medium_detail" },
-  { value: "high", labelKey: "session.thinking_option_high", detailKey: "session.thinking_option_high_detail" },
-  { value: "xhigh", labelKey: "session.thinking_option_xhigh", detailKey: "session.thinking_option_xhigh_detail" },
-] as const;
+type CommandPaletteMode = "root" | "sessions";
 
 export default function SessionView(props: SessionViewProps) {
   const tr = (key: string) => t(key, currentLocale());
@@ -329,7 +316,6 @@ export default function SessionView(props: SessionViewProps) {
   let chatContainerEl: HTMLDivElement | undefined;
   let scrollMessageIntoViewById: ((messageId: string, behavior?: ScrollBehavior) => boolean) | null = null;
   const [isChatContainerReady, setIsChatContainerReady] = createSignal(false);
-  let agentPickerRef: HTMLDivElement | undefined;
   let sessionMenuRef: HTMLDivElement | undefined;
   let searchInputEl: HTMLInputElement | undefined;
   let scrollFrame: number | undefined;
@@ -353,11 +339,6 @@ export default function SessionView(props: SessionViewProps) {
     sessionId: string;
     workspaceId: string | null;
   } | null>(null);
-  const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
-  const [agentPickerBusy, setAgentPickerBusy] = createSignal(false);
-  const [agentPickerReady, setAgentPickerReady] = createSignal(false);
-  const [agentPickerError, setAgentPickerError] = createSignal<string | null>(null);
-  const [agentOptions, setAgentOptions] = createSignal<Agent[]>([]);
   const [nearBottom, setNearBottom] = createSignal(true);
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [searchQuery, setSearchQuery] = createSignal("");
@@ -400,7 +381,6 @@ export default function SessionView(props: SessionViewProps) {
     });
   });
 
-  const agentLabel = createMemo(() => props.selectedSessionAgent ?? tr("session.default_agent"));
   const workspaceLabel = (workspace: WorkspaceInfo) =>
     workspace.displayName?.trim() ||
     workspace.vesloWorkspaceName?.trim() ||
@@ -1632,27 +1612,6 @@ export default function SessionView(props: SessionViewProps) {
     }
   };
 
-  const loadAgentOptions = async (force = false) => {
-    if (agentPickerBusy()) return agentOptions();
-    if (agentPickerReady() && !force) return agentOptions();
-    setAgentPickerBusy(true);
-    setAgentPickerError(null);
-    try {
-      const agents = await props.listAgents();
-      const sorted = agents.slice().sort((a, b) => a.name.localeCompare(b.name));
-      setAgentOptions(sorted);
-      setAgentPickerReady(true);
-      return sorted;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : tr("session.failed_load_agents");
-      setAgentPickerError(message);
-      setAgentOptions([]);
-      return [];
-    } finally {
-      setAgentPickerBusy(false);
-    }
-  };
-
   type Flyout = {
     id: string;
     rect: { top: number; left: number; width: number; height: number };
@@ -1728,6 +1687,12 @@ export default function SessionView(props: SessionViewProps) {
   const latestRunPart = createMemo<Part | null>(() => {
     if (!showRunIndicator()) return null;
     const baseline = runBaseline();
+    const lastVisiblePart = (parts: Part[]): Part | null => {
+      for (let j = parts.length - 1; j >= 0; j--) {
+        if (isUserVisiblePart(parts[j])) return parts[j];
+      }
+      return null;
+    };
     for (let i = props.messages.length - 1; i >= 0; i -= 1) {
       const msg = props.messages[i];
       const info = msg?.info as { id?: string | number; role?: string } | undefined;
@@ -1739,10 +1704,10 @@ export default function SessionView(props: SessionViewProps) {
         if (msg.parts.length <= baseline.partCount) {
           return null;
         }
-        return msg.parts[msg.parts.length - 1] ?? null;
+        return lastVisiblePart(msg.parts);
       }
       if (!msg.parts.length) continue;
-      return msg.parts[msg.parts.length - 1] ?? null;
+      return lastVisiblePart(msg.parts);
     }
     return null;
   });
@@ -2588,13 +2553,6 @@ export default function SessionView(props: SessionViewProps) {
     return sessionId;
   };
 
-  const openAgentPicker = () => {
-    setAgentPickerOpen((current) => !current);
-    if (!agentPickerReady()) {
-      void loadAgentOptions();
-    }
-  };
-
   const applySessionAgent = async (agent: string | null) => {
     let sessionId = props.selectedSessionId;
     if (!sessionId) {
@@ -2604,17 +2562,6 @@ export default function SessionView(props: SessionViewProps) {
     }
     props.setSessionAgent(sessionId, agent);
   };
-
-  createEffect(() => {
-    if (!agentPickerOpen()) return;
-    const handler = (event: MouseEvent) => {
-      if (!agentPickerRef) return;
-      if (agentPickerRef.contains(event.target as Node)) return;
-      setAgentPickerOpen(false);
-    };
-    window.addEventListener("mousedown", handler);
-    onCleanup(() => window.removeEventListener("mousedown", handler));
-  });
 
   createEffect(() => {
     if (!sessionMenuOpen()) return;
@@ -3192,18 +3139,6 @@ export default function SessionView(props: SessionViewProps) {
         },
       },
       {
-        id: "model",
-        title: tr("session.command_palette_change_model"),
-        detail: formatTr("session.command_palette_current_model", {
-          model: props.selectedSessionModelLabel || tr("session.model"),
-        }),
-        meta: tr("session.command_palette_meta_open"),
-        action: () => {
-          closeCommandPalette();
-          props.openSessionModelPicker();
-        },
-      },
-      {
         id: "provider",
         title: tr("session.command_palette_connect_provider"),
         detail: tr("session.command_palette_connect_provider_detail"),
@@ -3214,20 +3149,6 @@ export default function SessionView(props: SessionViewProps) {
             const message = error instanceof Error ? error.message : tr("session.failed_load_providers");
             setToastMessage(message);
           });
-        },
-      },
-      {
-        id: "thinking",
-        title: tr("session.command_palette_change_thinking"),
-        detail: formatTr("session.command_palette_current_thinking", {
-          thinking: props.modelVariantLabel,
-        }),
-        meta: tr("session.command_palette_meta_adjust"),
-        action: () => {
-          setCommandPaletteMode("thinking");
-          setCommandPaletteQuery("");
-          setCommandPaletteActiveIndex(0);
-          focusCommandPaletteInput();
         },
       },
     ];
@@ -3258,53 +3179,21 @@ export default function SessionView(props: SessionViewProps) {
     }));
   });
 
-  const commandPaletteThinkingItems = createMemo<CommandPaletteItem[]>(() => {
-    const normalizedRaw = (props.modelVariant ?? "none").trim().toLowerCase();
-    const activeVariant =
-      normalizedRaw === "balanced" || normalizedRaw === "balance" ? "none" : normalizedRaw;
-    const query = commandPaletteQuery().trim().toLowerCase();
-
-    return COMMAND_PALETTE_THINKING_OPTIONS
-      .map((option) => ({
-        ...option,
-        label: tr(option.labelKey),
-        detail: tr(option.detailKey),
-      }))
-      .filter((option) => {
-        if (!query) return true;
-        return `${option.label} ${option.detail}`.toLowerCase().includes(query);
-      })
-      .map((option) => ({
-        id: `thinking:${option.value}`,
-        title: option.label,
-        detail: option.detail,
-        meta: activeVariant === option.value ? tr("session.command_palette_meta_current") : undefined,
-        action: () => {
-          props.setModelVariant(option.value);
-          closeCommandPalette();
-          setToastMessage(formatTr("session.thinking_set", { label: option.label }));
-        },
-      }));
-  });
-
   const commandPaletteItems = createMemo<CommandPaletteItem[]>(() => {
     const mode = commandPaletteMode();
     if (mode === "sessions") return commandPaletteSessionItems();
-    if (mode === "thinking") return commandPaletteThinkingItems();
     return commandPaletteRootItems();
   });
 
   const commandPaletteTitle = createMemo(() => {
     const mode = commandPaletteMode();
     if (mode === "sessions") return tr("session.command_palette_search_sessions");
-    if (mode === "thinking") return tr("session.command_palette_change_thinking");
     return tr("session.quick_actions");
   });
 
   const commandPalettePlaceholder = createMemo(() => {
     const mode = commandPaletteMode();
     if (mode === "sessions") return tr("session.command_palette_find_by_session_or_workspace");
-    if (mode === "thinking") return tr("session.command_palette_filter_thinking");
     return tr("session.command_palette_search_actions");
   });
 
@@ -3855,24 +3744,9 @@ export default function SessionView(props: SessionViewProps) {
               onSend={handleSendPrompt}
               onStop={cancelRun}
               onDraftChange={handleDraftChange}
-              selectedModelLabel={props.selectedSessionModelLabel || tr("session.model")}
-              onModelClick={props.openSessionModelPicker}
-              modelVariantLabel={props.modelVariantLabel}
-              modelVariant={props.modelVariant}
-              onModelVariantChange={props.setModelVariant}
-              agentLabel={agentLabel()}
               selectedAgent={props.selectedSessionAgent}
-              agentPickerOpen={agentPickerOpen()}
-              agentPickerBusy={agentPickerBusy()}
-              agentPickerError={agentPickerError()}
-              agentOptions={agentOptions()}
-              onToggleAgentPicker={openAgentPicker}
               onSelectAgent={(agent) => {
                 applySessionAgent(agent);
-                setAgentPickerOpen(false);
-              }}
-              setAgentPickerRef={(el) => {
-                agentPickerRef = el;
               }}
               showNotionBanner={props.showTryNotionPrompt}
               onNotionBannerClick={props.onTryNotionPrompt}

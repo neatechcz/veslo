@@ -530,6 +530,7 @@ export function isUserVisiblePart(part: Part) {
   const flags = part as { synthetic?: boolean; ignored?: boolean };
   if (flags.synthetic || flags.ignored) return false;
   if (part.type === "text" && isInternalAgentHandoff(part)) return false;
+  if (part.type === "text" && isInternalAgentPlan(part)) return false;
   return true;
 }
 
@@ -560,6 +561,44 @@ function isInternalAgentHandoff(part: Part): boolean {
   if (!text || text.length < 40) return false;
   const lower = text.toLowerCase();
   return HANDOFF_MARKERS.some((marker) => lower.includes(marker));
+}
+
+/**
+ * Detect internal agent plan/summary text that should be hidden.
+ *
+ * After completing a task, the agent sometimes emits a structured
+ * plan/summary document with sections like "Goal", "Instructions",
+ * "Discoveries", "Accomplished", and "Relevant files".  This is meant
+ * for internal bookkeeping (session compaction / context carry-over)
+ * and should not be shown to the user.
+ *
+ * We match section headers in plain-text form ("Goal"), with optional
+ * Markdown prefixes ("## Goal"), or with trailing colons ("Goal:").
+ * At least 3 distinct section groups must match to avoid false positives.
+ */
+const PLAN_SECTION_PATTERNS: RegExp[] = [
+  // Goal / Objective
+  /^#{0,4}\s*(?:goal|objective)s?:?\s*$/im,
+  // Instructions / Key directives / Constraints
+  /^#{0,4}\s*(?:instructions|key directives|constraints):?\s*$/im,
+  // Discoveries / Findings / Key findings
+  /^#{0,4}\s*(?:discover(?:ies|y)|(?:key )?findings):?\s*$/im,
+  // Accomplished / Completed / Done
+  /^#{0,4}\s*(?:accomplished|completed|done):?\s*$/im,
+  // Relevant files / directories / File paths
+  /^#{0,4}\s*(?:relevant files|file paths|relevant directories)/im,
+  // Still pending / Next steps / Remaining work / TODO
+  /^#{0,4}\s*(?:still pending|next steps|remaining work|todo):?\s*/im,
+];
+
+function isInternalAgentPlan(part: Part): boolean {
+  const text = (part as { text?: string }).text;
+  if (!text || text.length < 100) return false;
+  let matches = 0;
+  for (const pattern of PLAN_SECTION_PATTERNS) {
+    if (pattern.test(text)) matches++;
+  }
+  return matches >= 3;
 }
 
 const EXPLORATION_TOOL_NAMES = new Set(["read", "glob", "grep", "search", "list", "list_files"]);

@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import fuzzysort from "fuzzysort";
-import { ArrowUp, AtSign, Check, ChevronDown, File as FileIcon, Paperclip, Square, Terminal, X, Zap } from "lucide-solid";
+import { ArrowUp, AtSign, File as FileIcon, Paperclip, Square, Terminal, X, Zap } from "lucide-solid";
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
@@ -33,20 +33,8 @@ type ComposerProps = {
   onSend: (draft: ComposerDraft) => void;
   onStop: () => void;
   onDraftChange: (draft: ComposerDraft) => void;
-  selectedModelLabel: string;
-  onModelClick: () => void;
-  modelVariantLabel: string;
-  modelVariant: string | null;
-  onModelVariantChange: (value: string) => void;
-  agentLabel: string;
   selectedAgent: string | null;
-  agentPickerOpen: boolean;
-  agentPickerBusy: boolean;
-  agentPickerError: string | null;
-  agentOptions: Agent[];
-  onToggleAgentPicker: () => void;
   onSelectAgent: (agent: string | null) => void;
-  setAgentPickerRef: (el: HTMLDivElement) => void;
   showNotionBanner: boolean;
   onNotionBannerClick: () => void;
   toast: string | null;
@@ -203,14 +191,6 @@ const readEditorText = (editor: HTMLElement | undefined) => normalizeText(editor
 const RECENT_EMIT_TTL_MS = 30_000;
 const MAX_RECENT_EMITS = 400;
 const DRAFT_FLUSH_DEBOUNCE_MS = 140;
-
-const MODEL_VARIANT_OPTIONS = [
-  { value: "none", labelKey: "session.thinking_option_none" },
-  { value: "low", labelKey: "session.thinking_option_low" },
-  { value: "medium", labelKey: "session.thinking_option_medium" },
-  { value: "high", labelKey: "session.thinking_option_high" },
-  { value: "xhigh", labelKey: "session.thinking_option_xhigh" },
-];
 
 const partsToText = (parts: ComposerPart[]) =>
   parts
@@ -444,7 +424,6 @@ export default function Composer(props: ComposerProps) {
   const translate = (key: string) => t(key, currentLocale());
   let editorRef: HTMLDivElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
-  let variantPickerRef: HTMLDivElement | undefined;
   let mentionSearchRun = 0;
   let suppressPromptSync = false;
   let pasteCounter = 0;
@@ -474,10 +453,14 @@ export default function Composer(props: ComposerProps) {
   const [historySnapshot, setHistorySnapshot] = createSignal<ComposerDraft | null>(null);
   const [historyIndex, setHistoryIndex] = createSignal({ prompt: -1, shell: -1 });
   const [history, setHistory] = createSignal({ prompt: [] as ComposerDraft[], shell: [] as ComposerDraft[] });
-  const [variantMenuOpen, setVariantMenuOpen] = createSignal(false);
-  const activeVariant = createMemo(() => props.modelVariant ?? "none");
   const attachmentsDisabled = createMemo(() => !props.attachmentsEnabled);
   const hasDraftContent = createMemo(() => draftText().trim().length > 0 || attachments().length > 0);
+  const selectedMode = createMemo(() => props.selectedAgent ?? "build");
+  const modeOptions = [
+    { value: "build", label: "Build" },
+    { value: "plan", label: "Plan" },
+    { value: "veslo", label: "Task" },
+  ] as const;
   const workspaceLabel = createMemo(() =>
     resolveComposerWorkspaceLabel({
       isRemoteWorkspace: props.isRemoteWorkspace,
@@ -1473,17 +1456,6 @@ export default function Composer(props: ComposerProps) {
 
 
   createEffect(() => {
-    if (!variantMenuOpen()) return;
-    const handler = (event: MouseEvent) => {
-      if (!variantPickerRef) return;
-      if (variantPickerRef.contains(event.target as Node)) return;
-      setVariantMenuOpen(false);
-    };
-    window.addEventListener("mousedown", handler);
-    onCleanup(() => window.removeEventListener("mousedown", handler));
-  });
-
-  createEffect(() => {
     const handler = () => {
       editorRef?.focus();
     };
@@ -1671,7 +1643,7 @@ export default function Composer(props: ComposerProps) {
               </div>
             </Show>
 
-            <div class="relative min-h-[120px]">
+            <div class="relative">
               <Show when={props.toast}>
                 <div class="absolute bottom-full right-0 mb-2 z-30 rounded-xl border border-gray-6 bg-gray-1 px-3 py-2 text-xs text-gray-11 shadow-lg backdrop-blur-md">
                   <span>{props.toast}</span>
@@ -1680,32 +1652,6 @@ export default function Composer(props: ComposerProps) {
 
               <div class="flex flex-col gap-2">
                 <div class="flex-1 min-w-0">
-                  <Show
-                    when={props.canChooseSessionFolder}
-                    fallback={
-                      <div
-                        class={`mb-2 text-gray-9 ${workspaceLabel().usePathStyle
-                          ? "truncate text-[11px] font-mono"
-                          : "text-[10px] font-bold uppercase tracking-widest"
-                          }`}
-                        title={workspaceLabel().label}
-                      >
-                        {workspaceLabel().label}
-                      </div>
-                    }
-                  >
-                    <div class="mb-2">
-                      <button
-                        type="button"
-                        class="inline-flex items-center rounded-md border border-gray-6 bg-gray-2 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-11"
-                        onClick={() => {
-                          void props.onChooseSessionFolder();
-                        }}
-                      >
-                        {translate("session.choose_folder")}
-                      </button>
-                    </div>
-                  </Show>
                   <div class="relative">
                     <Show when={!hasDraftContent()}>
                       <div class="absolute left-0 top-0 text-gray-9 text-[15px] leading-relaxed pointer-events-none">
@@ -1721,11 +1667,11 @@ export default function Composer(props: ComposerProps) {
                       onKeyDown={handleKeyDown}
                       onPaste={handlePaste}
                       onClick={handleEditorClick}
-                      class="bg-transparent border-none p-0 pb-8 pr-4 text-gray-12 focus:ring-0 text-[15px] leading-relaxed resize-none min-h-[24px] max-h-40 overflow-y-auto outline-none relative z-10"
+                      class="bg-transparent border-none p-0 pb-2 pr-2 text-gray-12 focus:ring-0 text-[15px] leading-relaxed resize-none min-h-[24px] max-h-40 overflow-y-auto outline-none"
                     />
 
-                    <div class="mt-3 flex items-center justify-between px-2 pb-2">
-                      <div class="flex items-center gap-2">
+                    <div class="mt-3 flex flex-wrap items-center gap-2 pt-2">
+                      <div class="flex items-center gap-1.5">
                         <input
                           ref={fileInputRef}
                           type="file"
@@ -1756,141 +1702,60 @@ export default function Composer(props: ComposerProps) {
                         >
                           <Paperclip size={16} />
                         </button>
+                      </div>
 
-                        <div class="relative" ref={(el) => props.setAgentPickerRef(el)}>
-                          <button
-                            type="button"
-                            class="flex items-center gap-1.5 px-2 py-1 hover:bg-gray-3 rounded-md text-[13px] font-medium text-gray-11 hover:text-gray-12"
-                            onClick={props.onToggleAgentPicker}
-                            disabled={props.busy}
-                            aria-expanded={props.agentPickerOpen}
-                            title={translate("session.agent")}
+                      <div class="inline-flex items-center rounded-lg border border-gray-6/80 bg-gray-2 p-0.5">
+                        <For each={modeOptions}>
+                          {(m) => {
+                            const active = () => selectedMode() === m.value;
+                            return (
+                              <button
+                                type="button"
+                                disabled={props.busy}
+                                class={`px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors ${active()
+                                  ? "bg-gray-4 text-gray-12 shadow-sm"
+                                  : "text-gray-10 hover:text-gray-11"
+                                  }`}
+                                onClick={() => props.onSelectAgent(m.value)}
+                              >
+                                {m.label}
+                              </button>
+                            );
+                          }}
+                        </For>
+                      </div>
+
+                      <Show
+                        when={props.canChooseSessionFolder}
+                        fallback={
+                          <div
+                            class={`max-w-[260px] min-w-0 text-gray-9 ${workspaceLabel().usePathStyle
+                              ? "truncate text-[11px] font-mono"
+                              : "truncate text-[10px] font-bold uppercase tracking-widest"
+                              }`}
+                            title={workspaceLabel().label}
                           >
-                            <AtSign size={14} />
-                            <span class="max-w-[140px] truncate">{props.agentLabel}</span>
-                            <ChevronDown size={14} />
-                          </button>
-
-                          <Show when={props.agentPickerOpen}>
-                            <div class="absolute left-0 bottom-full mb-2 w-64 rounded-xl border border-gray-6 bg-gray-1 shadow-xl backdrop-blur-md overflow-hidden z-40">
-                              <div class="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10 border-b border-gray-6">
-                                {translate("session.agent")}
-                              </div>
-
-                              <div class="p-2 space-y-1 max-h-64 overflow-y-auto" onMouseDown={(event: MouseEvent) => event.preventDefault()}>
-                                <Show
-                                  when={!props.agentPickerBusy}
-                                  fallback={
-                                    <div class="px-3 py-2 text-xs text-gray-10">{translate("session.loading_agents")}</div>
-                                  }
-                                >
-                                  <Show when={!props.agentPickerError}>
-                                    <button
-                                      type="button"
-                                      class={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${!props.selectedAgent
-                                        ? "bg-gray-3 text-gray-12"
-                                        : "text-gray-11 hover:bg-gray-2"
-                                        }`}
-                                      onMouseDown={(event: MouseEvent) => {
-                                        event.preventDefault();
-                                        props.onSelectAgent(null);
-                                      }}
-                                    >
-                                      <span>{translate("session.default_agent")}</span>
-                                      <Show when={!props.selectedAgent}>
-                                        <Check size={14} class="text-gray-10" />
-                                      </Show>
-                                    </button>
-
-                                    <For each={props.agentOptions}>
-                                      {(agent: Agent) => {
-                                        const active = () => props.selectedAgent === agent.name;
-                                        return (
-                                          <button
-                                            type="button"
-                                            class={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${active()
-                                              ? "bg-gray-3 text-gray-12"
-                                              : "text-gray-11 hover:bg-gray-2"
-                                              }`}
-                                            onMouseDown={(event: MouseEvent) => {
-                                              event.preventDefault();
-                                              props.onSelectAgent(agent.name);
-                                            }}
-                                          >
-                                            <span class="truncate">@{agent.name}</span>
-                                            <Show when={active()}>
-                                              <Check size={14} class="text-gray-10" />
-                                            </Show>
-                                          </button>
-                                        );
-                                      }}
-                                    </For>
-                                  </Show>
-
-                                  <Show when={props.agentPickerError}>
-                                    <div class="px-3 py-2 text-xs text-red-11">
-                                      {props.agentPickerError}
-                                    </div>
-                                  </Show>
-                                </Show>
-                              </div>
-                            </div>
-                          </Show>
-                        </div>
-
+                            {workspaceLabel().label}
+                          </div>
+                        }
+                      >
                         <button
                           type="button"
-                          class="flex items-center gap-1.5 px-2 py-1 hover:bg-gray-3 rounded-md text-[13px] font-medium text-gray-11 hover:text-gray-12"
-                          onClick={props.onModelClick}
-                          disabled={props.busy}
+                          class="inline-flex shrink-0 items-center rounded-md border border-gray-6 bg-gray-2 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-11"
+                          onClick={() => {
+                            void props.onChooseSessionFolder();
+                          }}
                         >
-                          {props.selectedModelLabel}
-                          <ChevronDown size={14} />
+                          {translate("session.choose_folder")}
                         </button>
-                        <div class="relative" ref={(el) => (variantPickerRef = el)}>
-                          <button
-                            type="button"
-                            class="flex items-center gap-1.5 px-2 py-1 hover:bg-gray-3 rounded-md text-[13px] font-medium text-gray-11 hover:text-gray-12"
-                            onClick={() => setVariantMenuOpen((open) => !open)}
-                            disabled={props.busy}
-                            aria-expanded={variantMenuOpen()}
-                          >
-                            <span>{translate("session.thinking_label")}</span>
-                            <span class="font-mono text-gray-11">{props.modelVariantLabel}</span>
-                            <ChevronDown size={14} />
-                          </button>
-                          <Show when={variantMenuOpen()}>
-                            <div class="absolute left-0 bottom-full mb-2 w-48 rounded-xl border border-gray-6 bg-gray-1 shadow-xl backdrop-blur-md overflow-hidden z-40">
-                              <div class="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10 border-b border-gray-6">
-                                {translate("session.thinking_effort")}
-                              </div>
-                              <div class="p-2 space-y-1">
-                                <For each={MODEL_VARIANT_OPTIONS}>
-                                  {(option) => (
-                                    <button
-                                      type="button"
-                                      class={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${activeVariant() === option.value
-                                        ? "bg-gray-3 text-gray-12"
-                                        : "text-gray-11 hover:bg-gray-2"
-                                        }`}
-                                      onClick={() => {
-                                        props.onModelVariantChange(option.value);
-                                        setVariantMenuOpen(false);
-                                      }}
-                                    >
-                                      <span>{translate(option.labelKey)}</span>
-                                      <Show when={activeVariant() === option.value}>
-                                        <span class="text-[10px] uppercase tracking-wider text-gray-10">{translate("session.active")}</span>
-                                      </Show>
-                                    </button>
-                                  )}
-                                </For>
-                              </div>
-                            </div>
-                          </Show>
+                      </Show>
+
+                      <div class="ml-auto flex min-w-0 items-center gap-2 text-gray-10">
+                        <div class="max-w-[320px] min-w-0 flex-1">
+                          <span class="block text-[11px] leading-4 text-gray-9 truncate pr-4" title={translate("session.composer_disclaimer")}>
+                            {translate("session.composer_disclaimer")}
+                          </span>
                         </div>
-                      </div>
-                      <div class="flex items-center gap-3 text-gray-10">
                         <Show
                           when={props.isStreaming}
                           fallback={
@@ -1898,7 +1763,7 @@ export default function Composer(props: ComposerProps) {
                               type="button"
                               disabled={!hasDraftContent()}
                               onClick={sendDraft}
-                              class={`p-1.5 rounded-full transition-colors ${!hasDraftContent()
+                              class={`shrink-0 p-1.5 rounded-full transition-colors ${!hasDraftContent()
                                 ? "bg-gray-4 text-gray-10"
                                 : "bg-[#1B29FF] text-white hover:bg-blue-10"
                                 }`}
@@ -1911,17 +1776,13 @@ export default function Composer(props: ComposerProps) {
                           <button
                             type="button"
                             onClick={() => props.onStop()}
-                            class="p-1.5 rounded-full bg-gray-12 text-gray-1 hover:bg-gray-11 transition-colors"
+                            class="shrink-0 p-1.5 rounded-full bg-gray-12 text-gray-1 hover:bg-gray-11 transition-colors"
                             title={translate("session.stop_label")}
                           >
                             <Square size={14} fill="currentColor" />
                           </button>
                         </Show>
                       </div>
-                    </div>
-
-                    <div class="px-2 pt-1 pb-2 text-[11px] leading-4 text-gray-9">
-                      {translate("session.composer_disclaimer")}
                     </div>
                   </div>
                 </div>

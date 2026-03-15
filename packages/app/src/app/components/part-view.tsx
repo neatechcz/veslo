@@ -555,7 +555,7 @@ export default function PartView(props: Props) {
               ref={(el) => {
                 textContainerEl = el;
               }}
-              class={`whitespace-pre-wrap break-words text-[14px] leading-relaxed max-h-[22rem] overflow-hidden ${textClass()}`.trim()}
+              class={`whitespace-pre-wrap break-words text-[13px] leading-[1.5] max-h-[22rem] overflow-hidden ${textClass()}`.trim()}
             >
               {collapsedPreviewText()}
             </div>
@@ -605,14 +605,14 @@ export default function PartView(props: Props) {
                 [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-4
                 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-3
                 [&_h3]:text-lg [&_h3]:font-bold [&_h3]:my-2
-                [&_p]:my-3 [&_p]:leading-relaxed
-                [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3
-                [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3
+                [&_p]:my-2 [&_p]:leading-[1.5]
+                [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-2
+                [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-2
                 [&_li]:my-1
                 [&_blockquote]:border-l-4 [&_blockquote]:border-dls-border [&_blockquote]:pl-4 [&_blockquote]:my-4 [&_blockquote]:italic
-                [&_table]:w-full [&_table]:border-collapse [&_table]:my-4
-                [&_th]:border [&_th]:border-dls-border [&_th]:p-2 [&_th]:bg-dls-hover
-                [&_td]:border [&_td]:border-dls-border [&_td]:p-2
+                [&_table]:w-full [&_table]:border-collapse [&_table]:my-2 [&_table]:text-[13px] [&_table]:leading-[1.35]
+                [&_th]:border [&_th]:border-dls-border [&_th]:px-2 [&_th]:py-1 [&_th]:bg-dls-hover [&_th]:text-[12px] [&_th]:leading-4
+                [&_td]:border [&_td]:border-dls-border [&_td]:px-2 [&_td]:py-1 [&_td]:text-[12px] [&_td]:leading-4
               `.trim()}
               innerHTML={renderedMarkdown()!}
               onClick={openMarkdownLink}
