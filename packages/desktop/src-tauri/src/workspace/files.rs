@@ -35,7 +35,7 @@ description: Workspace guide to introduce Veslo and onboard new users.
 
 # Welcome to Veslo
 
-Hi, I'm Ben and this is Veslo. It's an open-source alternative to Claude's cowork. It helps you work on your files with AI and automate the mundane tasks so you don't have to.
+Hi, I'm Ben and this is Veslo. It's a local-first alternative to Claude's cowork. It helps you work on your files with AI and automate the mundane tasks so you don't have to.
 
 Before we start, use the question tool to ask:
 "Are you more technical or non-technical? I'll tailor the explanation."

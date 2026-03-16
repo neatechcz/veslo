@@ -66,7 +66,7 @@ export default async function StarterSuccessPage() {
           </section>
 
           <div className="mt-10 rounded-xl border border-gray-100 bg-white p-5 text-[13px] text-gray-500">
-            Veslo stays open source, runs in any environment, and works with
+            Veslo stays local-first, runs in any environment, and works with
             any model.
           </div>
 

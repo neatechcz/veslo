@@ -8,7 +8,7 @@
     "veslo-code-router": "dist/cli.js",
     "opencode-router": "dist/cli.js"
   },
-  "license": "MIT",
+  "license": "UNLICENSED",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/neatech/veslo.git",

@@ -73,7 +73,7 @@ for (const target of targets) {
     name,
     version,
     description: "Platform binary for veslo-orchestrator",
-    license: "MIT",
+    license: "UNLICENSED",
     os: [target.os],
     cpu: [target.cpu],
     bin: {
@@ -106,7 +106,7 @@ writeJson(join(meta, "package.json"), {
   name: "veslo-orchestrator",
   version,
   description: "Veslo host orchestrator for opencode + Veslo server + veslo-code-router",
-  license: "MIT",
+  license: "UNLICENSED",
   bin: {
     veslo: "./bin/veslo",
     "veslo-orchestrator": "./bin/veslo",

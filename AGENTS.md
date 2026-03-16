@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Veslo helps users run agents, skills, and MCP. It is an open-source alternative to Claude Cowork/Codex as a desktop app.
+Veslo helps users run agents, skills, and MCP. It is a local-first alternative to Claude Cowork/Codex as a desktop app.
 
 ## What Veslo Is
 
@@ -64,7 +64,7 @@ Read INFRASTRUCTURE.md
 * **Web parity**: anything that mutates `.opencode/` should be expressible via the Veslo server API; Tauri-only filesystem calls are a fallback for host mode, not a separate capability set.
 * **Self-referential**: maintain a gitignored mirror of OpenCode at `vendor/opencode` for inspection.
 * **Self-building**: prefer prompts, skills, and composable primitives over bespoke logic.
-* **Open source**: keep the repo portable; no secrets committed.
+* **Portable**: keep the repo portable; no secrets committed.
 * **Slick and fluid**: 60fps animations, micro-interactions, premium feel.
 * **Mobile-native**: touch targets, gestures, and layouts optimized for small screens.
 

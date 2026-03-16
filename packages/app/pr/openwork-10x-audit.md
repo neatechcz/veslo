@@ -7,7 +7,7 @@
 
 ## Context
 
-OpenWork is an open-source alternative to Claude Cowork. It is mobile-first, premium-feeling, and a thin UI layer on top of OpenCode primitives. Target users include:
+OpenWork is a local-first alternative to Claude Cowork. It is mobile-first, premium-feeling, and a thin UI layer on top of OpenCode primitives. Target users include:
 
 - Bob (IT/power user) who already uses OpenCode and wants to share workflows.
 - Susan (non-technical) who wants a polished experience that just works.

@@ -40,7 +40,7 @@
     "cli",
     "agent"
   ],
-  "license": "MIT",
+  "license": "UNLICENSED",
   "publishConfig": {
     "access": "public"
   },

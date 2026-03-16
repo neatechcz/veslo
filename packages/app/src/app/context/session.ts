@@ -1417,6 +1417,7 @@ export function createSessionStore(options: {
     let cancelled = false;
     let reconnectAttempt = 0;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let wasConnected = false;
 
     let queue: Array<OpencodeEvent | undefined> = [];
     const coalesced = new Map<string, number>();
@@ -1514,8 +1515,30 @@ export function createSessionStore(options: {
         let lastArrivalAt = Date.now();
 
         // Reset reconnect counter on successful connection
+        const isReconnection = wasConnected;
+        wasConnected = true;
         reconnectAttempt = 0;
         recordPerfLog(sessionDebugEnabled(), "session.sse", "connected");
+
+        // After SSE reconnection, resync any sessions that the UI still shows
+        // as "running". Events emitted during the disconnect gap are lost, so
+        // a session may have gone idle without the client knowing.
+        if (isReconnection) {
+          void (async () => {
+            for (const session of store.sessions) {
+              const status = store.sessionStatus[session.id];
+              if (!status || status === "idle") continue;
+              try {
+                const fetched = unwrap(await c.session.get({ sessionID: session.id })) as Record<string, unknown>;
+                const normalized = normalizeSessionStatus(fetched?.status);
+                setStore("sessionStatus", session.id, normalized);
+              } catch {
+                // If we can't fetch, assume idle to avoid a permanently stuck indicator.
+                setStore("sessionStatus", session.id, "idle");
+              }
+            }
+          })();
+        }
 
         for await (const raw of sub.stream) {
           if (cancelled) break;

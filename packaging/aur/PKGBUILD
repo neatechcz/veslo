@@ -1,10 +1,10 @@
 pkgname=veslo
 pkgver=0.11.134
 pkgrel=1 # pkgrel should change when PKGBUILD does. Standard is to change back to 1 next time. Any interger is valid.
-pkgdesc="An Open source alternative to Claude Cowork"
+pkgdesc="A local-first alternative to Claude Cowork"
 arch=('x86_64' 'aarch64')
 url="https://github.com/neatech/veslo"
-license=('MIT')
+license=('custom')
 depends=('gtk3' 'glib2' 'libayatana-appindicator' 'libsoup3' 'webkit2gtk-4.1' 'openssl' 'dbus' 'librsvg')
 
 # Architecture-specific sources and checksums

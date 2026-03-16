@@ -669,7 +669,7 @@ In `README.md`:
 **Step 2: Update PKGBUILD**
 
 - Line 1: `pkgname=openwork` → `pkgname=veslo`
-- Line 4: `pkgdesc="An Open source alternative to Claude Cowork"` → update description with Veslo
+- Line 4: `pkgdesc="A local-first alternative to Claude Cowork"` → update description with Veslo
 - Line 6: `url="https://github.com/different-ai/openwork"` → `url="https://github.com/neatech/veslo"`
 - Lines 11, 14: `openwork-${pkgver}.deb` → `veslo-${pkgver}.deb`
 - Lines 18, 30, 37: `openwork-desktop-linux-amd64.deb` → `veslo-desktop-linux-amd64.deb`, `opt/openwork/` → `opt/veslo/`, `/usr/bin/openwork` → `/usr/bin/veslo`

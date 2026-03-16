@@ -2,7 +2,7 @@
 
 # Veslo
 
-> Veslo helps you run your agents, skills, and MCP. It's an open-source alternative to Claude Cowork/Codex (desktop app).
+> Veslo helps you run your agents, skills, and MCP. It's a local-first alternative to Claude Cowork/Codex (desktop app).
 
 ## Core Philosophy
 
@@ -246,4 +246,4 @@ Interested in using Veslo in your organization? We'd love to hear from you — r
 
 ## License
 
-MIT — see `LICENSE`.
+Proprietary — all rights reserved. See `LICENSE`.

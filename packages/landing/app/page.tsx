@@ -393,9 +393,9 @@ export default async function Home() {
               <div>
                 <h4 className="mb-2 text-[15px] font-bold">Is it free?</h4>
                 <p className="text-[15px] leading-relaxed text-gray-700">
-                  Yes. Veslo is open source. You can download and use it for
-                  free using free models on your machine. You only pay for API
-                  usage if you choose to connect paid cloud models.
+                  Yes. You can download and use Veslo for free using free
+                  models on your machine. You only pay for API usage if you
+                  choose to connect paid cloud models.
                 </p>
               </div>
               <div>

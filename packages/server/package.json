@@ -36,7 +36,7 @@
     "headless",
     "cli"
   ],
-  "license": "MIT",
+  "license": "UNLICENSED",
   "publishConfig": {
     "access": "public"
   },

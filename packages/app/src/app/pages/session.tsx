@@ -2062,12 +2062,31 @@ export default function SessionView(props: SessionViewProps) {
 
   createEffect(() => {
     if (!runStartedAt()) return;
-    if (props.sessionStatus === "idle" && runHasBegun()) {
+    if (props.sessionStatus === "idle" && (runHasBegun() || responseStarted())) {
       setRunStartedAt(null);
       setRunHasBegun(false);
       setRunLastProgressAt(null);
       setRunBaseline({ assistantId: null, partCount: 0 });
     }
+  });
+
+  // Safety net: if the server reports idle but neither runHasBegun nor
+  // responseStarted ever flipped (e.g. "running" + "idle" SSE events
+  // arrived in the same SolidJS batch so effects only saw the final "idle"),
+  // force-reset after a short grace period.
+  createEffect(() => {
+    if (!runStartedAt()) return;
+    if (props.sessionStatus !== "idle") return;
+    if (runHasBegun() || responseStarted()) return;
+    const timer = setTimeout(() => {
+      if (runStartedAt() && props.sessionStatus === "idle" && !runHasBegun() && !responseStarted()) {
+        setRunStartedAt(null);
+        setRunHasBegun(false);
+        setRunLastProgressAt(null);
+        setRunBaseline({ assistantId: null, partCount: 0 });
+      }
+    }, 2_000);
+    onCleanup(() => clearTimeout(timer));
   });
 
   createEffect(() => {
