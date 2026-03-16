@@ -3423,14 +3423,17 @@ export default function App() {
     }
 
     setAuthCompleteExchangeBusy(true);
+    setError(null);
     exchangeHandoffCode(code).then((result) => {
       setAuthCompleteExchangeBusy(false);
       if (result.ok) {
         writeDenAuth(result.state);
+        setError(null);
         setOnboardingStep("local");
         setView("onboarding");
       } else {
         console.error("[den-auth] exchange failed:", result.error);
+        setError(`Sign in failed: ${result.error}`);
         setOnboardingStep("auth");
         setView("onboarding");
       }
@@ -6151,6 +6154,7 @@ export default function App() {
     themeMode: themeMode(),
     setThemeMode,
     onSignInWithBrowser: async () => {
+      setError(null);
       const url = `${getDenApiBase()}/?desktopOnboarding=1`;
       if (isTauriRuntime()) {
         const { openUrl } = await import("@tauri-apps/plugin-opener");

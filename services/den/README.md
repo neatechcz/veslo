@@ -35,7 +35,7 @@ cp .env.development .env
 - `GITHUB_CLIENT_ID` optional OAuth app client ID for GitHub sign-in
 - `GITHUB_CLIENT_SECRET` optional OAuth app client secret for GitHub sign-in
 - `PORT` server port
-- `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS). In production, wildcard `*` is rejected.
+- `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS). In production, wildcard `*` is rejected. Desktop CORS origins (`tauri://localhost`, `http://localhost:1420`, `http://localhost:1421`) are appended server-side to the Express CORS allowlist.
 - `PROVISIONER_MODE` `stub` or `render`
 - `WORKER_URL_TEMPLATE` template string with `{workerId}`
 - `RENDER_API_BASE` Render API base URL (default `https://api.render.com/v1`)

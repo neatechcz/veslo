@@ -1,5 +1,53 @@
+import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { isTauriRuntime } from "../utils";
+
 const DEN_AUTH_STORAGE_KEY = "veslo.den.auth";
 const DEFAULT_DEN_API_BASE = "https://openwork-den-dev-api.onrender.com";
+const DEN_EXCHANGE_TIMEOUT_MS = 12_000;
+const DEN_VALIDATE_TIMEOUT_MS = 8_000;
+
+type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+const resolveFetch = (): FetchLike => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
+
+async function fetchWithTimeout(
+  fetchImpl: FetchLike,
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return fetchImpl(url, init);
+  }
+
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const signal = controller?.signal;
+  const initWithSignal = signal && !init.signal ? { ...init, signal } : init;
+
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      try {
+        controller?.abort();
+      } catch {
+        // ignore
+      }
+      reject(new Error("Request timed out."));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([fetchImpl(url, initWithSignal), timeoutPromise]);
+  } catch (error) {
+    const name = (error && typeof error === "object" && "name" in error ? (error as { name?: string }).name : "") ?? "";
+    if (name === "AbortError") {
+      throw new Error("Request timed out.");
+    }
+    throw error;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
 
 export type DenAuthState = {
   denApiBase: string;
@@ -61,11 +109,16 @@ export function clearDenAuth(): void {
 export async function exchangeHandoffCode(code: string): Promise<DenExchangeResult> {
   const denApiBase = getDenApiBase();
   try {
-    const response = await fetch(`${denApiBase}/v1/desktop-auth/exchange`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
-    });
+    const response = await fetchWithTimeout(
+      resolveFetch(),
+      `${denApiBase}/v1/desktop-auth/exchange`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      },
+      DEN_EXCHANGE_TIMEOUT_MS,
+    );
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
@@ -108,19 +161,26 @@ export async function exchangeHandoffCode(code: string): Promise<DenExchangeResu
 
     return { ok: true, state };
   } catch (err) {
+    if (err instanceof Error && err.message === "Failed to fetch") {
+      return {
+        ok: false,
+        error: "Failed to reach the Openwork auth API. Check your network or API CORS settings.",
+      };
+    }
     return { ok: false, error: err instanceof Error ? err.message : "Network error" };
   }
 }
 
 export async function validateDenAuth(state: DenAuthState): Promise<boolean> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8_000);
-    const response = await fetch(`${state.denApiBase}/v1/me`, {
-      headers: { Authorization: `Bearer ${state.token}` },
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
+    const response = await fetchWithTimeout(
+      resolveFetch(),
+      `${state.denApiBase}/v1/me`,
+      {
+        headers: { Authorization: `Bearer ${state.token}` },
+      },
+      DEN_VALIDATE_TIMEOUT_MS,
+    );
     return response.ok;
   } catch {
     return false;

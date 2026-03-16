@@ -17,11 +17,16 @@ import { workersRouter } from "./http/workers.js"
 const app = express()
 const currentFile = fileURLToPath(import.meta.url)
 const publicDir = path.resolve(path.dirname(currentFile), "../public")
+const desktopCorsOrigins = ["tauri://localhost", "http://localhost:1420", "http://localhost:1421"] as const
+const corsOrigins =
+  env.corsOrigins.length > 0
+    ? Array.from(new Set([...env.corsOrigins, ...desktopCorsOrigins]))
+    : []
 
-if (env.corsOrigins.length > 0) {
+if (corsOrigins.length > 0) {
   app.use(
     cors({
-      origin: env.corsOrigins,
+      origin: corsOrigins,
       credentials: true,
       methods: ["GET", "POST", "PATCH", "DELETE"],
     }),
