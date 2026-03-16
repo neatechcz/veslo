@@ -8,6 +8,7 @@ import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { currentLocale, t } from "../../../i18n";
 import { extractFilesFromDataTransfer } from "../../utils/data-transfer-files";
 import { resolveComposerWorkspaceLabel } from "./composer-workspace-label";
+import { nextAgentModeOnShiftTab } from "../../pages/session-shortcuts";
 
 type MentionOption = {
   id: string;
@@ -1374,6 +1375,21 @@ export default function Composer(props: ComposerProps) {
         if (active) handleSlashSelect(active);
         return;
       }
+    }
+
+    const nextMode = nextAgentModeOnShiftTab(selectedMode(), {
+      key: event.key,
+      defaultPrevented: event.defaultPrevented,
+      metaKey: event.metaKey,
+      ctrlKey: event.ctrlKey,
+      altKey: event.altKey,
+      shiftKey: event.shiftKey,
+      busy: props.busy,
+    });
+    if (nextMode) {
+      event.preventDefault();
+      props.onSelectAgent(nextMode);
+      return;
     }
 
     if (event.key === "!" && mode() === "prompt") {
