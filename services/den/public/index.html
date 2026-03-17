@@ -172,6 +172,9 @@
       <div id="onboard-success" class="onboard-card success-card hidden">
         <h1>Signed in!</h1>
         <p>Returning to the app…</p>
+        <p id="onboard-success-hint" class="subtitle hidden" style="margin-top: 10px">
+          If the app did not open, <a id="onboard-open-app" href="#" style="color: #1B29FF">open Veslo</a>.
+        </p>
       </div>
 
       <!-- Busy -->
@@ -254,6 +257,8 @@
 
         const formCard = document.getElementById("onboard-form");
         const successCard = document.getElementById("onboard-success");
+        const openAppHint = document.getElementById("onboard-success-hint");
+        const openAppLink = document.getElementById("onboard-open-app");
         const busyCard = document.getElementById("onboard-busy");
 
         function updateUI() {
@@ -275,6 +280,12 @@
             toggleBtn.textContent = "Create account";
           }
           errorEl.classList.add("hidden");
+          if (openAppHint) {
+            openAppHint.classList.add("hidden");
+          }
+          if (openAppLink) {
+            openAppLink.href = "#";
+          }
         }
 
         toggleBtn.addEventListener("click", () => {
@@ -373,7 +384,13 @@
             const redirectUrl = typeof data?.redirectUrl === "string" && data.redirectUrl
               ? data.redirectUrl
               : fallbackRedirect;
-            window.location.href = redirectUrl;
+            if (openAppLink) {
+              openAppLink.href = redirectUrl;
+            }
+            if (openAppHint) {
+              openAppHint.classList.remove("hidden");
+            }
+            window.location.assign(redirectUrl);
           } catch (err) {
             busyCard.classList.add("hidden");
             formCard.classList.remove("hidden");
