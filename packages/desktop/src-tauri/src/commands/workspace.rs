@@ -3,14 +3,14 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::types::{
-    ExecResult, RemoteType, WorkspaceInfo, WorkspaceList, WorkspaceVesloConfig, WorkspaceType,
-};
 use crate::fs::{collect_copy_conflicts, copy_dir_recursive};
+use crate::types::{
+    ExecResult, RemoteType, WorkspaceInfo, WorkspaceList, WorkspaceType, WorkspaceVesloConfig,
+};
 use crate::workspace::files::ensure_workspace_files;
 use crate::workspace::state::{
-    load_workspace_state, save_workspace_state, stable_workspace_id, stable_workspace_id_for_remote,
-    stable_workspace_id_for_veslo,
+    load_workspace_state, save_workspace_state, stable_workspace_id,
+    stable_workspace_id_for_remote, stable_workspace_id_for_veslo,
 };
 use crate::workspace::watch::{update_workspace_watch, WorkspaceWatchState};
 use serde::Serialize;
@@ -25,7 +25,19 @@ pub fn workspace_bootstrap(
     watch_state: State<WorkspaceWatchState>,
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] bootstrap");
-    let state = load_workspace_state(&app)?;
+    let mut state = load_workspace_state(&app)?;
+
+    for workspace in state.workspaces.iter_mut() {
+        if workspace.workspace_type != WorkspaceType::Local {
+            continue;
+        }
+        if let Err(error) = ensure_workspace_files(&workspace.path, &workspace.preset) {
+            eprintln!(
+                "[workspace] bootstrap provisioning failed for {}: {}",
+                workspace.path, error
+            );
+        }
+    }
 
     save_workspace_state(&app, &state)?;
     let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
@@ -320,9 +332,7 @@ pub fn workspace_create_remote(
         .or_else(|| display_name.clone())
         .unwrap_or_else(|| {
             if remote_type == RemoteType::Veslo {
-                veslo_host_url
-                    .clone()
-                    .unwrap_or_else(|| base_url.clone())
+                veslo_host_url.clone().unwrap_or_else(|| base_url.clone())
             } else {
                 base_url.clone()
             }
