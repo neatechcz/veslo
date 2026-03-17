@@ -430,3 +430,155 @@ test("SSE event from wrong workspace is rejected", () => {
 
   assert.equal(accepted, false);
 });
+
+// ===================================================================
+// PART D — "Select directory after new session" end-to-end flow
+//
+// Scenario: user creates a new session (which provisions a scratch
+// workspace in a temp folder), then picks a real directory via
+// "Select Directory". After the directory is selected, the engine
+// and client must be restarted on the new directory. The bug causes
+// the engine to remain on the temp folder because createLocalWorkspace
+// prematurely sets projectDir before activateWorkspace runs.
+// ===================================================================
+
+// Mirrors the REAL workspace.ts activateWorkspace logic (line 1101-1102).
+// Uses projectDir for comparison — this is the buggy behavior.
+function createRealBehaviorStateMachine() {
+  let projectDir = "";
+  let activeWorkspaceId = "";
+  let clientDirectory = "";
+  let engineDirectory = "";
+
+  const workspaces: Array<{ id: string; path: string }> = [];
+
+  // Mirrors createLocalWorkspace: prematurely sets projectDir (line 1698)
+  function createLocalWorkspace(id: string, path: string) {
+    workspaces.push({ id, path });
+    activeWorkspaceId = id;
+    projectDir = path; // <-- premature update, same as real code
+    return { id, path };
+  }
+
+  // Mirrors activateWorkspace: compares BOTH projectDir AND actual engine
+  // directory vs nextRoot (fix for premature setProjectDir bug).
+  async function activateWorkspace(id: string) {
+    const next = workspaces.find((w) => w.id === id);
+    if (!next) return false;
+
+    const oldWorkspacePath = projectDir;
+    const nextRoot = next.path;
+    // FIX: also check actual engine directory, not just projectDir
+    const workspaceChanged =
+      oldWorkspacePath !== nextRoot ||
+      (engineDirectory !== "" && engineDirectory !== nextRoot);
+
+    activeWorkspaceId = id;
+    projectDir = nextRoot;
+
+    if (workspaceChanged) {
+      engineDirectory = nextRoot;
+      clientDirectory = nextRoot;
+    }
+
+    return true;
+  }
+
+  // Mirrors ensureLocalWorkspaceActive (line 1796-1812)
+  async function ensureLocalWorkspaceActive(workspaceId: string) {
+    const activated = await activateWorkspace(workspaceId);
+    if (!activated) return false;
+    // If no client yet (first time), startHost would create engine+client
+    if (!clientDirectory) {
+      const ws = workspaces.find((w) => w.id === workspaceId);
+      if (ws) {
+        engineDirectory = ws.path;
+        clientDirectory = ws.path;
+      }
+    }
+    return true;
+  }
+
+  // Mirrors createScratchWorkspace (line 1735-1759)
+  function createScratchWorkspace(tempPath: string) {
+    return createLocalWorkspace("ws-scratch", tempPath);
+  }
+
+  // Mirrors ensureWorkspaceForFolder (line 1772-1787)
+  function ensureWorkspaceForFolder(folder: string) {
+    const existing = workspaces.find((w) => w.path === folder);
+    if (existing) return existing;
+    return createLocalWorkspace(`ws-${folder.split("/").pop()}`, folder);
+  }
+
+  // Mirrors createSessionAndOpen (line 5458): reads activeWorkspaceRoot
+  function resolveSessionDirectory() {
+    const ws = workspaces.find((w) => w.id === activeWorkspaceId);
+    return ws?.path?.trim() ?? "";
+  }
+
+  return {
+    get projectDir() { return projectDir; },
+    get clientDirectory() { return clientDirectory; },
+    get engineDirectory() { return engineDirectory; },
+    get activeWorkspaceId() { return activeWorkspaceId; },
+    createScratchWorkspace,
+    ensureLocalWorkspaceActive,
+    ensureWorkspaceForFolder,
+    resolveSessionDirectory,
+  };
+}
+
+const SELECTED_FOLDER = "/Users/alice/projects/MyProject";
+
+test("FIXED: after 'select directory', engine switches from temp folder to selected directory", async () => {
+  const sm = createRealBehaviorStateMachine();
+
+  // Step 1: User creates a new session → openNewSessionWithDirectory
+  // This provisions a scratch workspace in a temp folder.
+  const scratch = sm.createScratchWorkspace(TEMP_FOLDER);
+  await sm.ensureLocalWorkspaceActive(scratch.id);
+
+  // Engine and client are now on the temp folder (startHost kicked in)
+  assert.equal(sm.engineDirectory, TEMP_FOLDER, "engine starts on temp folder");
+  assert.equal(sm.clientDirectory, TEMP_FOLDER, "client starts on temp folder");
+
+  // Session is created in temp folder
+  const sessionDir1 = sm.resolveSessionDirectory();
+  assert.equal(sessionDir1, TEMP_FOLDER, "session created in temp folder");
+
+  // Step 2: User clicks "Select Directory" → chooseFolderForCurrentSession
+  // This calls ensureWorkspaceForFolder → createLocalWorkspace (premature setProjectDir!)
+  // Then calls ensureLocalWorkspaceActive → activateWorkspace
+  const targetWorkspace = sm.ensureWorkspaceForFolder(SELECTED_FOLDER);
+  await sm.ensureLocalWorkspaceActive(targetWorkspace!.id);
+
+  // EXPECTED (correct behavior): engine and client switch to selected folder
+  // ACTUAL (buggy behavior): engine and client stay on temp folder
+  assert.equal(
+    sm.engineDirectory,
+    SELECTED_FOLDER,
+    "engine must switch to selected directory after 'Select Directory'",
+  );
+  assert.equal(
+    sm.clientDirectory,
+    SELECTED_FOLDER,
+    "client must switch to selected directory after 'Select Directory'",
+  );
+
+  // Session directory should resolve to the new folder
+  const sessionDir2 = sm.resolveSessionDirectory();
+  assert.equal(sessionDir2, SELECTED_FOLDER, "session directory resolves to selected folder");
+
+  // All three must agree
+  assert.equal(
+    sessionDir2,
+    sm.engineDirectory,
+    "session directory and engine directory must agree",
+  );
+  assert.equal(
+    sessionDir2,
+    sm.clientDirectory,
+    "session directory and client directory must agree",
+  );
+});

@@ -1099,7 +1099,14 @@ export function createWorkspaceStore(options: {
     options.setStartupPreference("local");
     const nextRoot = isRemote ? next.directory?.trim() ?? "" : next.path;
     const oldWorkspacePath = projectDir();
-    const workspaceChanged = oldWorkspacePath !== nextRoot;
+    // Compare against the actual engine directory, not just projectDir().
+    // createLocalWorkspace() prematurely updates projectDir before
+    // activateWorkspace runs, so projectDir() may already equal nextRoot
+    // even though the engine is still on the previous workspace.
+    const actualEngineDir = engine()?.projectDir?.trim() ?? "";
+    const workspaceChanged =
+      oldWorkspacePath !== nextRoot ||
+      (actualEngineDir !== "" && actualEngineDir !== nextRoot);
 
     wsDebug("activate:local:prep", {
       id,
@@ -1107,6 +1114,7 @@ export function createWorkspaceStore(options: {
       workspaceChanged,
       wasLocalConnection: Boolean(wasLocalConnection),
       prevProjectDir: oldWorkspacePath,
+      actualEngineDir,
     });
 
     syncActiveWorkspaceId(id);
