@@ -235,7 +235,10 @@
 
       /* ======== Desktop Onboarding ======== */
       function initOnboarding() {
-        let mode = "sign-in"; // default to sign-in for returning users
+        const search = new URLSearchParams(window.location.search);
+        const onboardingSessionId = (search.get("sid") || "").trim();
+        const requestedIntent = (search.get("intent") || "").trim().toLowerCase();
+        let mode = requestedIntent === "signup" ? "sign-up" : "sign-in"; // default to sign-in for returning users
         let bearerToken = "";
 
         const form = document.getElementById("auth-form");
@@ -337,10 +340,16 @@
               headers["Authorization"] = "Bearer " + bearerToken;
             }
 
+            const body = {};
+            if (onboardingSessionId) {
+              body.sessionId = onboardingSessionId;
+            }
+
             const res = await fetch("/v1/desktop-auth/handoff", {
               method: "POST",
               credentials: "include",
               headers,
+              body: JSON.stringify(body),
             });
 
             const data = await res.json().catch(() => null);
@@ -355,7 +364,16 @@
             // Success — redirect to deep link
             busyCard.classList.add("hidden");
             successCard.classList.remove("hidden");
-            window.location.href = "veslo://auth-complete?code=" + encodeURIComponent(data.code);
+            const fallbackParams = new URLSearchParams();
+            fallbackParams.set("code", String(data.code));
+            if (typeof data?.sessionId === "string" && data.sessionId) {
+              fallbackParams.set("sessionId", data.sessionId);
+            }
+            const fallbackRedirect = "veslo://auth-complete?" + fallbackParams.toString();
+            const redirectUrl = typeof data?.redirectUrl === "string" && data.redirectUrl
+              ? data.redirectUrl
+              : fallbackRedirect;
+            window.location.href = redirectUrl;
           } catch (err) {
             busyCard.classList.add("hidden");
             formCard.classList.remove("hidden");

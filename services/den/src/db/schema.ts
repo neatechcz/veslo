@@ -25,6 +25,8 @@ export const PlatformRole = ["platform_admin"] as const
 export const WorkerDestination = ["local", "cloud"] as const
 export const WorkerStatus = ["provisioning", "healthy", "failed", "stopped"] as const
 export const TokenScope = ["client", "host"] as const
+export const DesktopAuthIntent = ["signin", "signup"] as const
+export const DesktopAuthSessionStatus = ["started", "browser_authed", "exchanged", "expired", "cancelled"] as const
 
 export const AuthUserTable = mysqlTable(
   "user",
@@ -211,6 +213,7 @@ export const DesktopAuthHandoffTable = mysqlTable(
   {
     id: id().primaryKey(),
     code: varchar("code", { length: 255 }).notNull(),
+    session_id: varchar("session_id", { length: 64 }),
     user_id: varchar("user_id", { length: 64 }).notNull(),
     org_id: varchar("org_id", { length: 64 }).notNull(),
     expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
@@ -220,6 +223,31 @@ export const DesktopAuthHandoffTable = mysqlTable(
   (table) => [
     uniqueIndex("desktop_auth_handoff_code").on(table.code),
     index("desktop_auth_handoff_user_id").on(table.user_id),
+    index("desktop_auth_handoff_session_id").on(table.session_id),
+  ],
+)
+
+export const DesktopAuthSessionTable = mysqlTable(
+  "desktop_auth_session",
+  {
+    id: id().primaryKey(),
+    intent: mysqlEnum("intent", DesktopAuthIntent).notNull(),
+    state_hash: varchar("state_hash", { length: 128 }).notNull(),
+    code_challenge: varchar("code_challenge", { length: 255 }).notNull(),
+    code_challenge_method: varchar("code_challenge_method", { length: 16 }).notNull(),
+    redirect_uri: varchar("redirect_uri", { length: 512 }).notNull(),
+    status: mysqlEnum("status", DesktopAuthSessionStatus).notNull(),
+    user_id: varchar("user_id", { length: 64 }),
+    org_id: varchar("org_id", { length: 64 }),
+    browser_ip: text("browser_ip"),
+    browser_user_agent: text("browser_user_agent"),
+    expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+    exchanged_at: timestamp("exchanged_at", { fsp: 3 }),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("desktop_auth_session_status_expires").on(table.status, table.expires_at),
+    index("desktop_auth_session_user_id").on(table.user_id),
   ],
 )
 

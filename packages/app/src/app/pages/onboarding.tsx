@@ -72,6 +72,8 @@ export type OnboardingViewProps = {
   setThemeMode: (value: "light" | "dark" | "system") => void;
   onSignInWithBrowser: () => void;
   authExchangeBusy: boolean;
+  keepSignedIn: boolean;
+  onKeepSignedInChange: (value: boolean) => void;
 };
 
 export default function OnboardingView(props: OnboardingViewProps) {
@@ -239,6 +241,19 @@ export default function OnboardingView(props: OnboardingViewProps) {
             </div>
 
             <div class="space-y-4">
+              <label class="flex items-start gap-2 rounded-xl border border-gray-6/70 bg-gray-1/50 px-3 py-2 text-sm text-gray-11">
+                <input
+                  type="checkbox"
+                  class="mt-0.5 h-4 w-4 rounded border-gray-7 bg-gray-2/60"
+                  checked={props.keepSignedIn}
+                  onChange={(event) => props.onKeepSignedInChange(event.currentTarget.checked)}
+                />
+                <span>
+                  <span class="font-medium text-gray-12">Keep me signed in</span>
+                  <span class="block text-xs text-gray-9">Turn off to require sign in each time you launch Veslo.</span>
+                </span>
+              </label>
+
               <Button
                 class="w-full py-3 text-base"
                 onClick={() => props.onSignInWithBrowser()}

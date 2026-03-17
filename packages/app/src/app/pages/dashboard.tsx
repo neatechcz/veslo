@@ -255,6 +255,8 @@ export type DashboardViewProps = {
   toggleUpdateAutoDownload: () => void;
   themeMode: "light" | "dark" | "system";
   setThemeMode: (value: "light" | "dark" | "system") => void;
+  denKeepSignedIn: boolean;
+  toggleDenKeepSignedIn: () => void;
   updateStatus: {
     state: string;
     lastCheckedAt?: number | null;
@@ -1373,6 +1375,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   toggleUpdateAutoDownload={props.toggleUpdateAutoDownload}
                   themeMode={props.themeMode}
                   setThemeMode={props.setThemeMode}
+                  denKeepSignedIn={props.denKeepSignedIn}
+                  toggleDenKeepSignedIn={props.toggleDenKeepSignedIn}
                   updateStatus={props.updateStatus}
                   updateEnv={props.updateEnv}
                   appVersion={props.appVersion}

@@ -382,6 +382,7 @@ async function ensureTables() {
       CREATE TABLE IF NOT EXISTS \`desktop_auth_handoff\` (
         \`id\` varchar(64) NOT NULL,
         \`code\` varchar(255) NOT NULL,
+        \`session_id\` varchar(64),
         \`user_id\` varchar(64) NOT NULL,
         \`org_id\` varchar(64) NOT NULL,
         \`expires_at\` timestamp(3) NOT NULL,
@@ -391,7 +392,31 @@ async function ensureTables() {
         CONSTRAINT \`desktop_auth_handoff_code\` UNIQUE(\`code\`)
       )
     `)
+    await ensureColumn("desktop_auth_handoff", "session_id", "varchar(64)")
     await ensureIndex("desktop_auth_handoff", "desktop_auth_handoff_user_id", ["user_id"])
+    await ensureIndex("desktop_auth_handoff", "desktop_auth_handoff_session_id", ["session_id"])
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`desktop_auth_session\` (
+        \`id\` varchar(64) NOT NULL,
+        \`intent\` enum('signin','signup') NOT NULL,
+        \`state_hash\` varchar(128) NOT NULL,
+        \`code_challenge\` varchar(255) NOT NULL,
+        \`code_challenge_method\` varchar(16) NOT NULL,
+        \`redirect_uri\` varchar(512) NOT NULL,
+        \`status\` enum('started','browser_authed','exchanged','expired','cancelled') NOT NULL,
+        \`user_id\` varchar(64),
+        \`org_id\` varchar(64),
+        \`browser_ip\` text,
+        \`browser_user_agent\` text,
+        \`expires_at\` timestamp(3) NOT NULL,
+        \`exchanged_at\` timestamp(3),
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        CONSTRAINT \`desktop_auth_session_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await ensureIndex("desktop_auth_session", "desktop_auth_session_status_expires", ["status", "expires_at"])
+    await ensureIndex("desktop_auth_session", "desktop_auth_session_user_id", ["user_id"])
 
     console.log("[den] all tables ensured")
   } catch (err) {

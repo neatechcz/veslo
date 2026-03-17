@@ -30,6 +30,12 @@ import {
   pickFile,
   sandboxDebugProbe,
 } from "../lib/tauri";
+import {
+  getDefaultDenApiBase,
+  getDenApiBase,
+  readDenApiBaseOverride,
+  writeDenApiBaseOverride,
+} from "../lib/den-auth";
 import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 
@@ -86,6 +92,8 @@ export type SettingsViewProps = {
   setLanguage: (value: Language) => void;
   themeMode: "light" | "dark" | "system";
   setThemeMode: (value: "light" | "dark" | "system") => void;
+  denKeepSignedIn: boolean;
+  toggleDenKeepSignedIn: () => void;
   updateAutoCheck: boolean;
   toggleUpdateAutoCheck: () => void;
   updateAutoDownload: boolean;
@@ -335,6 +343,13 @@ export default function SettingsView(props: SettingsViewProps) {
   const [vesloRestartBusy, setVesloRestartBusy] = createSignal(false);
   const [vesloRestartStatus, setVesloRestartStatus] = createSignal<string | null>(null);
   const [vesloRestartError, setVesloRestartError] = createSignal<string | null>(null);
+  const defaultDenApiBase = getDefaultDenApiBase();
+  const [denApiBaseOverride, setDenApiBaseOverride] = createSignal(readDenApiBaseOverride() ?? "");
+  const [denApiBaseDraft, setDenApiBaseDraft] = createSignal(getDenApiBase());
+  const [denApiBaseStatus, setDenApiBaseStatus] = createSignal<string | null>(null);
+  const [denApiBaseError, setDenApiBaseError] = createSignal<string | null>(null);
+  const activeDenApiBase = createMemo(() => denApiBaseOverride() || defaultDenApiBase);
+  const denApiBaseDirty = createMemo(() => denApiBaseDraft().trim() !== activeDenApiBase());
   const providerConnectedCount = createMemo(() => (props.providerConnectedIds ?? []).length);
   const providerAvailableCount = createMemo(() => (props.providers ?? []).length);
   const connectedProviderNames = createMemo(() => {
@@ -417,6 +432,26 @@ export default function SettingsView(props: SettingsViewProps) {
     } finally {
       setVesloRestartBusy(false);
     }
+  };
+
+  const handleSaveDenApiBase = () => {
+    setDenApiBaseStatus(null);
+    setDenApiBaseError(null);
+    const result = writeDenApiBaseOverride(denApiBaseDraft());
+    if (!result.ok) {
+      setDenApiBaseError(result.error);
+      return;
+    }
+
+    const savedOverride = result.value ?? "";
+    setDenApiBaseOverride(savedOverride);
+    const effective = savedOverride || defaultDenApiBase;
+    setDenApiBaseDraft(effective);
+    setDenApiBaseStatus(
+      savedOverride
+        ? `Saved. Browser sign-in now uses ${effective}.`
+        : `Saved. Browser sign-in now uses the default endpoint (${effective}).`,
+    );
   };
 
   const vesloStatusLabel = createMemo(() => {
@@ -895,6 +930,8 @@ export default function SettingsView(props: SettingsViewProps) {
     "inline-flex items-center gap-1.5 rounded-md border border-dls-border bg-dls-surface px-3 py-1.5 text-xs font-medium text-dls-secondary shadow-sm transition-colors duration-150 hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] disabled:cursor-not-allowed disabled:opacity-60";
   const compactDangerActionClass =
     "inline-flex items-center gap-1.5 rounded-md border border-red-7/35 bg-red-3/25 px-3 py-1.5 text-xs font-medium text-red-11 transition-colors duration-150 hover:border-red-7/50 hover:bg-red-3/45 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-7/35 disabled:cursor-not-allowed disabled:opacity-60";
+  const compactInputClass =
+    "w-full rounded-md border border-dls-border bg-dls-surface px-3 py-2 text-xs text-dls-text font-mono shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] placeholder:text-dls-secondary/70";
 
   return (
     <section class="space-y-6">
@@ -1152,6 +1189,57 @@ export default function SettingsView(props: SettingsViewProps) {
               <div class="text-sm font-medium text-gray-12">Connection</div>
               <div class="text-xs text-gray-9">{props.headerStatus}</div>
               <div class="text-xs text-gray-8 font-mono break-all">{props.baseUrl}</div>
+              <div class="space-y-2 rounded-xl border border-gray-6/70 bg-gray-1/50 p-3">
+                <div class="text-xs text-gray-11">Browser sign-in endpoint</div>
+                <div class="text-[11px] text-gray-8">
+                  Used by the desktop sign-in flow and handoff exchange. Leave blank and Save to use the default.
+                </div>
+                <div class="flex flex-col gap-2 md:flex-row md:items-center">
+                  <input
+                    type="text"
+                    class={compactInputClass}
+                    spellcheck={false}
+                    value={denApiBaseDraft()}
+                    placeholder={defaultDenApiBase}
+                    onInput={(event) => {
+                      setDenApiBaseDraft(event.currentTarget.value);
+                      setDenApiBaseStatus(null);
+                      setDenApiBaseError(null);
+                    }}
+                  />
+                  <Button
+                    variant="outline"
+                    class="text-xs h-9 py-0 px-3 shrink-0"
+                    onClick={handleSaveDenApiBase}
+                    disabled={props.busy || !denApiBaseDirty()}
+                  >
+                    Save
+                  </Button>
+                </div>
+                <div class="text-[11px] text-gray-8">
+                  Active endpoint: <span class="font-mono break-all text-gray-10">{activeDenApiBase()}</span>
+                </div>
+                <Show when={denApiBaseStatus()}>
+                  {(value) => <div class="text-xs text-gray-10">{value()}</div>}
+                </Show>
+                <Show when={denApiBaseError()}>
+                  {(value) => <div class="text-xs text-red-11">{value()}</div>}
+                </Show>
+              </div>
+              <div class="flex items-center justify-between rounded-xl border border-gray-6/70 bg-gray-1/50 p-3 gap-3">
+                <div class="min-w-0">
+                  <div class="text-xs text-gray-11">Keep me signed in</div>
+                  <div class="text-[11px] text-gray-8">If off, Veslo asks for sign-in on each launch.</div>
+                </div>
+                <Button
+                  variant="outline"
+                  class="text-xs h-9 py-0 px-3 shrink-0"
+                  onClick={props.toggleDenKeepSignedIn}
+                  disabled={props.busy}
+                >
+                  {props.denKeepSignedIn ? "On" : "Off"}
+                </Button>
+              </div>
               <div class="pt-2 flex flex-wrap gap-2">
                 <button
                   type="button"
