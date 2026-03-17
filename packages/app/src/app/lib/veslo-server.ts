@@ -485,6 +485,15 @@ export type VesloSoulStatus = {
   heartbeatPath: string;
 };
 
+export type VesloWorkspaceSystemProvisionResult = {
+  ok: boolean;
+  workspaceId: string;
+  version: string;
+  status: "updated" | "unchanged";
+  written: number;
+  unchanged: number;
+};
+
 type RawJsonResponse<T> = {
   ok: boolean;
   status: number;
@@ -1203,6 +1212,7 @@ export function createVesloServerClient(options: { baseUrl: string; token?: stri
     opencodeRouter: 10_000,
     workspaceExport: 30_000,
     workspaceImport: 30_000,
+    workspaceProvision: 20_000,
     binary: 60_000,
   };
 
@@ -1260,6 +1270,17 @@ export function createVesloServerClient(options: { baseUrl: string; token?: stri
         body: payload,
         timeoutMs: timeouts.workspaceImport,
       }),
+    provisionWorkspaceSystem: (workspaceId: string) =>
+      requestJson<VesloWorkspaceSystemProvisionResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/system/provision`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          timeoutMs: timeouts.workspaceProvision,
+        },
+      ),
     getConfig: (workspaceId: string) =>
       requestJson<{ opencode: Record<string, unknown>; veslo: Record<string, unknown>; updatedAt?: number | null }>(
         baseUrl,

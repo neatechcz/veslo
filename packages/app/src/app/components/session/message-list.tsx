@@ -8,6 +8,7 @@ import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type MessageGroup, type Message
 import { groupMessageParts, isUserVisiblePart, summarizeStep } from "../../utils";
 import PartView from "../part-view";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
+import { getTaskPartSubagentInfo, isVesloInternalSubagentType } from "../../lib/internal-subagents";
 
 export type MessageListProps = {
   messages: MessageWithParts[];
@@ -188,6 +189,7 @@ type TaskStepInfo = {
   isTask: boolean;
   agentType?: string;
   sessionId?: string;
+  isInternal: boolean;
 };
 
 function formatAgentType(agentType: string): string {
@@ -201,26 +203,10 @@ function formatAgentType(agentType: string): string {
 }
 
 function getTaskStepInfo(part: Part): TaskStepInfo {
-  if (part.type !== "tool") return { isTask: false };
-
-  const record = part as any;
-  const tool = typeof record.tool === "string" ? record.tool.toLowerCase() : "";
-  if (tool !== "task") return { isTask: false };
-
-  const state = record.state ?? {};
-  const input = state.input && typeof state.input === "object" ? (state.input as Record<string, unknown>) : {};
-  const metadata = state.metadata && typeof state.metadata === "object" ? (state.metadata as Record<string, unknown>) : {};
-
-  const rawAgentType = typeof input.subagent_type === "string" ? input.subagent_type.trim() : "";
-  const agentType = rawAgentType ? formatAgentType(rawAgentType) : undefined;
-  const rawSessionId =
-    metadata.sessionId ??
-    metadata.sessionID ??
-    state.sessionId ??
-    state.sessionID;
-  const sessionId = typeof rawSessionId === "string" && rawSessionId.trim() ? rawSessionId.trim() : undefined;
-
-  return { isTask: true, agentType, sessionId };
+  const info = getTaskPartSubagentInfo(part);
+  if (!info.isTask) return { isTask: false, isInternal: false };
+  const agentType = info.subagentType && !info.internal ? formatAgentType(info.subagentType) : undefined;
+  return { isTask: true, agentType, sessionId: info.sessionId, isInternal: info.internal };
 }
 
 export default function MessageList(props: MessageListProps) {
@@ -579,7 +565,7 @@ export default function MessageList(props: MessageListProps) {
             skill
           </span>
         </Show>
-        <Show when={task().isTask}>
+        <Show when={task().isTask && !task().isInternal}>
           <span class="text-[10px] leading-4 px-1.5 py-0.5 rounded-full bg-blue-3 text-blue-11 shrink-0">
             subagent
           </span>
@@ -597,7 +583,12 @@ export default function MessageList(props: MessageListProps) {
             </span>
           )}
         </Show>
-        <Show when={Boolean(task().sessionId && props.openSessionById)}>
+        <Show when={task().isInternal && !summary().detail}>
+          <span class="text-[12px] leading-4 text-gray-9 truncate min-w-0">
+            internal processing
+          </span>
+        </Show>
+        <Show when={Boolean(task().sessionId && props.openSessionById && !task().isInternal)}>
           <button
             type="button"
             class="ml-auto text-[11px] text-blue-11 hover:text-blue-10 underline underline-offset-2"
@@ -757,9 +748,10 @@ export default function MessageList(props: MessageListProps) {
       }
 
       if (tool === "task") {
+        const agent = pick("subagent_type");
+        if (isVesloInternalSubagentType(agent)) return "Internal processing";
         const description = pick("description");
         if (description) return compactText(description);
-        const agent = pick("subagent_type");
         return agent ? `Delegate ${agent}` : "Delegate task";
       }
 

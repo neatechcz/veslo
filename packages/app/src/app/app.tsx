@@ -57,6 +57,7 @@ import {
 } from "./lib/opencode-session";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
 import { createSkillReloadGuard } from "./lib/skill-reload-guard";
+import { sessionLooksLikeInternalSubagent } from "./lib/internal-subagents";
 import {
   AUTO_COMPACT_CONTEXT_PREF_KEY,
   DEFAULT_MODEL,
@@ -1296,6 +1297,7 @@ export default function App() {
 
   const {
     sessions,
+    internalChildSessionIds,
     sessionStatusById,
     selectedSession,
     selectedSessionStatus,
@@ -1348,6 +1350,16 @@ export default function App() {
         if (delta !== 0) return delta;
         return a.id.localeCompare(b.id);
       });
+  const isHiddenInternalSessionId = (sessionID: string | null | undefined) => {
+    const id = (sessionID ?? "").trim();
+    if (!id) return false;
+    return internalChildSessionIds().has(id);
+  };
+  const includeUserVisibleSession = (session: Session) => {
+    if (isHiddenInternalSessionId(session.id)) return false;
+    if (sessionLooksLikeInternalSubagent(session)) return false;
+    return true;
+  };
 
   const [sessionsLoaded, setSessionsLoaded] = createSignal(false);
   const loadSessionsWithReady = async (scopeRoot?: string) => {
@@ -3080,7 +3092,9 @@ export default function App() {
         }
       }
 
-      const sorted = sortSessionsByActivity(Array.from(merged.values()));
+      const sorted = sortSessionsByActivity(Array.from(merged.values())).filter((session) =>
+        includeUserVisibleSession(session),
+      );
       const items: SidebarSessionItem[] = sorted.map((session) => ({
         id: session.id,
         title: session.title,
@@ -3214,7 +3228,9 @@ export default function App() {
             sessionDirectoryMatchesRoot(resolveSessionDirectory(session), activeWorkspaceRoot),
           )
         : allSessions;
-      const sorted = sortSessionsByActivity(scopedSessions);
+      const sorted = sortSessionsByActivity(scopedSessions).filter((session) =>
+        includeUserVisibleSession(session),
+      );
       setSidebarSessionsByWorkspaceId((prev) => ({
         ...prev,
         [wsId]: sorted.map((s) => ({
@@ -3226,6 +3242,21 @@ export default function App() {
         })),
       }));
     }
+  });
+
+  createEffect(() => {
+    const hidden = internalChildSessionIds();
+    if (hidden.size === 0) return;
+    setSidebarSessionsByWorkspaceId((prev) => {
+      let changed = false;
+      const next: Record<string, SidebarSessionItem[]> = {};
+      for (const [workspaceId, entries] of Object.entries(prev)) {
+        const filtered = entries.filter((entry) => !hidden.has(entry.id));
+        if (filtered.length !== entries.length) changed = true;
+        next[workspaceId] = filtered;
+      }
+      return changed ? next : prev;
+    });
   });
 
   const sidebarWorkspaceGroups = createMemo<WorkspaceSessionGroup[]>(() => {

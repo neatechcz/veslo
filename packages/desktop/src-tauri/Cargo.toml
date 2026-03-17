@@ -25,6 +25,7 @@ gethostname = "0.4"
 local-ip-address = "0.5"
 walkdir = "2.5"
 zip = "0.6"
+include_dir = "0.7"
 
 [profile.release]
 panic = "abort"

@@ -8,6 +8,7 @@ use zip::ZipArchive;
 use crate::types::{OpencodeCommand, WorkspaceVesloConfig};
 use crate::utils::now_ms;
 use crate::workspace::commands::{sanitize_command_name, serialize_command_frontmatter};
+use crate::workspace::internal_provision::{provision_internal_workspace_assets, ProvisionStatus};
 
 pub fn merge_plugins(existing: Vec<String>, required: &[&str]) -> Vec<String> {
     let mut out = existing;
@@ -361,6 +362,18 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
     fs::create_dir_all(&agents_dir)
         .map_err(|e| format!("Failed to create .opencode/agents: {e}"))?;
     seed_veslo_agent(&agents_dir)?;
+    let provision = provision_internal_workspace_assets(&root)?;
+    let provision_status = match provision.status {
+        ProvisionStatus::Updated => "updated",
+        ProvisionStatus::Unchanged => "unchanged",
+    };
+    println!(
+        "[workspace] internal provisioning {} (written={}, unchanged={}, version={})",
+        provision_status,
+        provision.written,
+        provision.unchanged,
+        crate::workspace::internal_provision::ProvisionResult::version(),
+    );
 
     let commands_dir = root.join(".opencode").join("commands");
     fs::create_dir_all(&commands_dir)

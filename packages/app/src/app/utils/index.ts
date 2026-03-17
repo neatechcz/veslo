@@ -10,6 +10,7 @@ import type {
   ProviderListItem,
 } from "../types";
 import type { WorkspaceInfo } from "../lib/tauri";
+import { isVesloInternalSubagentType } from "../lib/internal-subagents";
 
 export function formatModelRef(model: ModelRef) {
   return `${model.providerID}/${model.modelID}`;
@@ -817,7 +818,9 @@ function buildToolTitle(state: any, toolName: string): string {
   }
 
   if (lower === "task") {
-    const agent = formatAgentLabel(pick("subagent_type"));
+    const rawAgent = pick("subagent_type");
+    if (isVesloInternalSubagentType(rawAgent)) return "Internal processing";
+    const agent = formatAgentLabel(rawAgent);
     if (agent) return `${agent} task`;
     return "Task";
   }
@@ -868,9 +871,13 @@ function buildToolDetail(state: any, toolName: string): string | undefined {
   }
 
   if (lower === "task") {
+    const rawAgent = pick("subagent_type");
+    if (isVesloInternalSubagentType(rawAgent)) {
+      return "processing request";
+    }
     const description = pick("description");
     if (description) return truncateStepText(description, 80);
-    const agent = formatAgentLabel(pick("subagent_type"));
+    const agent = formatAgentLabel(rawAgent);
     if (agent) return `${agent} agent`;
   }
 

@@ -978,6 +978,30 @@ export function createWorkspaceStore(options: {
             return false;
           }
 
+          if (workspaceInfo?.id) {
+            try {
+              const scopedHostUrl =
+                buildVesloWorkspaceBaseUrl(hostUrl, workspaceInfo.id) ?? hostUrl;
+              const provisionClient = createVesloServerClient({
+                baseUrl: scopedHostUrl,
+                token: token || undefined,
+              });
+              const provision = await provisionClient.provisionWorkspaceSystem(workspaceInfo.id);
+              wsDebug("activate:veslo:provision", {
+                id: workspaceInfo.id,
+                status: provision.status,
+                version: provision.version,
+                written: provision.written,
+                unchanged: provision.unchanged,
+              });
+            } catch (error) {
+              wsDebug("activate:veslo:provision:failed", {
+                id: workspaceInfo.id,
+                message: error instanceof Error ? error.message : safeStringify(error),
+              });
+            }
+          }
+
           if (isTauriRuntime()) {
             try {
               const ws = await workspaceUpdateRemote({

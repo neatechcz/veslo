@@ -10,6 +10,7 @@ import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
 import { installHubSkill, listHubSkills } from "./skill-hub.js";
 import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
 import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
+import { provisionWorkspaceInternalSystem } from "./internal-system.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
@@ -1476,6 +1477,29 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       workspace,
       ...config.workspaces.filter((entry) => entry.id !== workspace.id),
     ];
+
+    let provision: { version: string; status: "updated" | "unchanged"; written: number; unchanged: number } | null = null;
+    try {
+      provision = await provisionWorkspaceInternalSystem(workspace.path);
+      if (provision.written > 0) {
+        emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+          type: "skill",
+          action: "updated",
+          path: ".opencode/veslo/internal",
+        });
+        emitReloadEvent(ctx.reloadEvents, workspace, "agents", {
+          type: "agent",
+          action: "updated",
+          path: ".opencode/agents",
+        });
+      }
+    } catch (error) {
+      console.warn("[veslo-server] workspace activation provisioning failed", {
+        workspaceId: workspace.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -1485,7 +1509,11 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       summary: "Switched active workspace",
       timestamp: Date.now(),
     });
-    return jsonResponse({ activeId: workspace.id, workspace: serializeWorkspace(workspace) });
+    return jsonResponse({
+      activeId: workspace.id,
+      workspace: serializeWorkspace(workspace),
+      provision,
+    });
   });
 
   addRoute(routes, "DELETE", "/workspaces/:id", "host", async (ctx) => {
@@ -1534,6 +1562,46 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const veslo = redactSensitiveConfig(await readVesloConfig(workspace.path));
     const lastAudit = await readLastAudit(workspace.path, workspace.id);
     return jsonResponse({ opencode, veslo, updatedAt: lastAudit?.timestamp ?? null });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/system/provision", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+
+    const result = await provisionWorkspaceInternalSystem(workspace.path);
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "system.provision",
+      target: ".opencode/veslo/internal",
+      summary: `Provisioned internal packs (${result.status})`,
+      timestamp: Date.now(),
+    });
+
+    if (result.written > 0) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+        type: "skill",
+        action: "updated",
+        path: ".opencode/veslo/internal",
+      });
+      emitReloadEvent(ctx.reloadEvents, workspace, "agents", {
+        type: "agent",
+        action: "updated",
+        path: ".opencode/agents",
+      });
+    }
+
+    return jsonResponse({
+      ok: true,
+      workspaceId: workspace.id,
+      version: result.version,
+      status: result.status,
+      written: result.written,
+      unchanged: result.unchanged,
+    });
   });
 
   addRoute(routes, "GET", "/workspace/:id/audit", "client", async (ctx) => {
