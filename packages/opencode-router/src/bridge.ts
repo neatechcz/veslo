@@ -172,7 +172,7 @@ type MessagingAgentConfig = {
 // Model presets for quick switching
 const MODEL_PRESETS: Record<string, ModelRef> = {
   opus: { providerID: "anthropic", modelID: "claude-opus-4-5-20251101" },
-  codex: { providerID: "openai", modelID: "gpt-5.2-codex" },
+  codex: { providerID: "openai", modelID: "gpt-5.3-codex" },
 };
 
 // Per-user model overrides (channel:peerId -> ModelRef)

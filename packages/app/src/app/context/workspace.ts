@@ -211,7 +211,11 @@ export function createWorkspaceStore(options: {
   const START_HOST_TIMEOUT_MS = 45_000;
   const WORKSPACE_ACTIVATE_TIMEOUT_MS = 30_000;
   const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS = 15_000;
-  const LONG_BOOT_CONNECT_REASONS = new Set(["host-start"]);
+  const LONG_BOOT_CONNECT_REASONS = new Set([
+    "host-start",
+    "workspace-orchestrator-switch",
+    "workspace-restart",
+  ]);
   const DB_MIGRATE_UNSUPPORTED_PATTERNS = [
     /unknown(?:\s+sub)?command\s+['"`]?db['"`]?/i,
     /unrecognized(?:\s+sub)?command\s+['"`]?db['"`]?/i,
@@ -1292,6 +1296,7 @@ export function createWorkspaceStore(options: {
     }
 
     // When running locally, restart the engine when workspace changes
+    let engineRestartFailed = false;
     if (!isRemote && wasLocalConnection && workspaceChanged) {
       if (isSuperseded()) {
         wsDebug("activate:superseded:before-engine-restart", { id });
@@ -1339,6 +1344,7 @@ export function createWorkspaceStore(options: {
               { navigate: false },
             );
             if (!ok) {
+              engineRestartFailed = true;
               options.setError("Failed to reconnect after worker switch");
             }
           }
@@ -1377,11 +1383,13 @@ export function createWorkspaceStore(options: {
               { navigate: false },
             );
             if (!ok) {
+              engineRestartFailed = true;
               options.setError("Failed to reconnect after worker switch");
             }
           }
         }
       } catch (e) {
+        engineRestartFailed = true;
         const message = e instanceof Error ? e.message : safeStringify(e);
         options.setError(addOpencodeCacheHint(message));
       } finally {
@@ -1390,6 +1398,15 @@ export function createWorkspaceStore(options: {
         options.setBusyStartedAt(null);
       }
     }
+
+      if (engineRestartFailed) {
+        updateWorkspaceConnectionState(id, {
+          status: "error",
+          message: "Failed to switch worker",
+        });
+        wsDebug("activate:local:engineRestartFailed", { id, ms: Date.now() - activateStart });
+        return false;
+      }
 
       options.refreshSkills({ force: true }).catch(() => undefined);
       options.refreshPlugins().catch(() => undefined);

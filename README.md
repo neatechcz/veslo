@@ -225,25 +225,6 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 veslo
 - If CI fails, classify failures in the PR body as either code-related regressions or external/environment/auth blockers.
 - Add new PRDs to `packages/app/pr/<name>.md` following the `.opencode/skills/prd-conventions/SKILL.md` conventions described in `AGENTS.md`.
 
-Community docs:
-
-- `CODE_OF_CONDUCT.md`
-- `SECURITY.md`
-- `SUPPORT.md`
-- `TRIAGE.md`
-
-First contribution checklist:
-
-- [ ] Run `pnpm install` and baseline verification commands.
-- [ ] Confirm your change has a clear issue link and scope.
-- [ ] Add/update tests for behavioral changes.
-- [ ] Include commands run and outcomes in your PR.
-- [ ] Add screenshots/video for user-facing flow changes.
-
-## For Teams & Businesses
-
-Interested in using Veslo in your organization? We'd love to hear from you — reach out at [benjamin.shafii@gmail.com](mailto:benjamin.shafii@gmail.com) to chat about your use case.
-
 ## License
 
 Proprietary — all rights reserved. See `LICENSE`.

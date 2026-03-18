@@ -2,10 +2,12 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { exists, ensureDir } from "./utils.js";
 
-export const INTERNAL_SYSTEM_VERSION = "2026-03-16.1";
+export const INTERNAL_SYSTEM_VERSION = "2026-03-18.2";
 const INTERNAL_SYSTEM_SOURCE = "openwork-snapshot";
 const MANIFEST_SCHEMA_VERSION = 1;
-const ROUTING_BLOCK_VERSION = 1;
+const ROUTING_BLOCK_VERSION = 2;
+
+const DELEGATE_PLUGIN_FILE = "veslo-delegate.js";
 
 const ROUTING_BLOCK_START = "<!-- VESLO_INTERNAL_ROUTING_START -->";
 const ROUTING_BLOCK_END = "<!-- VESLO_INTERNAL_ROUTING_END -->";
@@ -34,6 +36,7 @@ type InternalManifest = {
   source: string;
   packs: string[];
   agents: string[];
+  plugins: string[];
   routingBlockVersion: number;
 };
 
@@ -155,22 +158,9 @@ function managedVesloRoutingBlock() {
 
 This block is managed by Veslo. Keep it intact.
 
-Use hidden internal subagents for specialized document/skill work:
-- \`veslo-internal-docx\`
-- \`veslo-internal-pdf\`
-- \`veslo-internal-pptx\`
-- \`veslo-internal-xlsx\`
-- \`veslo-internal-skill-creator\`
-
-Delegation rules (balanced routing):
-- Delegate to document subagents on strong signals:
-  - file extensions (\`.docx\`, \`.pdf\`, \`.pptx\`, \`.xlsx\`)
-  - attached files of those types
-  - explicit file paths or workspace references to those files
-  - strong phrasing about editing/extracting/converting/generating those formats
-- Do not delegate general coding, planning, or plain-text tasks without document/file signals.
-- Delegate to \`veslo-internal-skill-creator\` only when the user explicitly asks to create/update a reusable skill.
-- For skill creation, keep output workspace-local in \`.opencode/skills/<name>/SKILL.md\`.
+Document and skill tasks are handled via the \`delegate\` tool, which routes work
+to specialized hidden subagents. Use it like any other tool — the model selects it
+based on context (file types, document references, skill creation requests).
 
 Execution behavior:
 - Internal subagent identities are implementation details; do not surface their names unless explicitly requested in developer/debug context.
@@ -253,6 +243,277 @@ async function writeInternalAgents(workspaceRoot: string, stats: ProvisionStats)
   }
 }
 
+function delegatePluginSource(): string {
+  return `import { tool } from "@opencode-ai/plugin";
+
+/**
+ * Veslo Delegate Plugin
+ *
+ * Registers a \`delegate\` tool that the model can call via native tool_use
+ * to route work to specialized Veslo internal subagents (docx, pdf, pptx,
+ * xlsx, skill-creator).
+ *
+ * This replaces text-based routing with a hard tool-call mechanism — the
+ * same way the model invokes read, bash, etc.
+ *
+ * Managed by Veslo internal system (v${INTERNAL_SYSTEM_VERSION}). Do not edit manually.
+ */
+
+const AGENTS = [
+  "veslo-internal-docx",
+  "veslo-internal-pdf",
+  "veslo-internal-pptx",
+  "veslo-internal-xlsx",
+  "veslo-internal-skill-creator",
+];
+
+const FORCE_DELEGATE_PREFIX = "[VESLO_ROUTER_FORCE_DELEGATE]";
+
+function normalizedText(value) {
+  return \` \${String(value || "")
+    .toLowerCase()
+    .replaceAll("\\n", " ")
+    .replaceAll("\\r", " ")
+    .replaceAll("\\t", " ")} \`;
+}
+
+function includesAny(value, tokens) {
+  return tokens.some((token) => value.includes(token));
+}
+
+function detectDelegateAgentFromText(text) {
+  const value = normalizedText(text);
+
+  if (
+    includesAny(value, [
+      " skill ",
+      " skills ",
+      " skill.md ",
+      " .opencode/skills ",
+      " create skill ",
+      " update skill ",
+      " vytvor skill ",
+      " vytvorit skill ",
+      " uprav skill ",
+      " skill creator ",
+    ])
+  ) {
+    return "veslo-internal-skill-creator";
+  }
+
+  if (
+    includesAny(value, [
+      ".xlsx",
+      ".xlsm",
+      ".xls ",
+      ".csv",
+      ".tsv",
+      " excel ",
+      " excelu ",
+      " exelu ",
+      " spreadsheet ",
+      " workbook ",
+      " worksheet ",
+      " tabulk",
+      " sesit ",
+      " sloupc",
+      " radek ",
+      " radku ",
+      " bunka ",
+      " listu ",
+      " list ",
+    ])
+  ) {
+    return "veslo-internal-xlsx";
+  }
+
+  if (
+    includesAny(value, [
+      ".docx",
+      ".doc ",
+      " docx ",
+      " word ",
+      " dokument ",
+      " smlouva ",
+    ])
+  ) {
+    return "veslo-internal-docx";
+  }
+
+  if (includesAny(value, [".pdf", " pdf ", " acrobat "])) {
+    return "veslo-internal-pdf";
+  }
+
+  if (
+    includesAny(value, [
+      ".pptx",
+      ".ppt ",
+      " pptx ",
+      " powerpoint ",
+      " prezentace ",
+      " slide ",
+      " slides ",
+      " slajd ",
+    ])
+  ) {
+    return "veslo-internal-pptx";
+  }
+
+  return null;
+}
+
+function textParts(parts) {
+  return (parts || [])
+    .filter((part) => part && part.type === "text" && typeof part.text === "string")
+    .map((part) => part.text)
+    .join("\\n")
+    .trim();
+}
+
+function forceDelegateInstruction(agent, userText) {
+  return [
+    \`\${FORCE_DELEGATE_PREFIX} \${agent}\`,
+    "Managed Veslo routing:",
+    \`First action MUST be a tool call: delegate(agent=\\"\${agent}\\").\`,
+    "Use the full original user request as delegate.task.",
+    "Do not answer from memory before delegate returns.",
+    "",
+    "Original user request:",
+    userText,
+  ].join("\\n");
+}
+
+export default async (ctx) => {
+  const { client } = ctx;
+
+  return {
+    "chat.message": async (input, output) => {
+      if (input.agent && input.agent !== "veslo") return;
+
+      const userText = textParts(output.parts);
+      if (!userText) return;
+      if (userText.includes(FORCE_DELEGATE_PREFIX)) return;
+
+      const delegateAgent = detectDelegateAgentFromText(userText);
+      if (!delegateAgent) return;
+
+      output.parts = [
+        {
+          type: "text",
+          text: forceDelegateInstruction(delegateAgent, userText),
+        },
+        ...output.parts,
+      ];
+    },
+    "experimental.chat.system.transform": async (input, output) => {
+      if (!input.sessionID) return;
+
+      let latestUser = null;
+      try {
+        const messages = await client.session.messages({
+          path: { sessionID: input.sessionID },
+          query: { limit: 8 },
+        });
+        const history = Array.isArray(messages.data) ? messages.data : [];
+        for (let index = history.length - 1; index >= 0; index -= 1) {
+          const candidate = history[index];
+          if (candidate?.info?.role === "user") {
+            latestUser = candidate;
+            break;
+          }
+        }
+      } catch {
+        return;
+      }
+
+      if (!latestUser) return;
+      if (latestUser.info?.agent && latestUser.info.agent !== "veslo") return;
+
+      const userText = textParts(latestUser.parts);
+      if (!userText) return;
+
+      const delegateAgent = detectDelegateAgentFromText(userText);
+      if (!delegateAgent) return;
+
+      output.system.push(
+        [
+          "Managed Veslo routing instruction:",
+          \`For the current user request, first action MUST be tool call delegate(agent=\\"\${delegateAgent}\\").\`,
+          "Pass the full user request as delegate.task.",
+          "Do not answer from memory before delegate returns.",
+        ].join("\\n"),
+      );
+    },
+    tool: {
+      delegate: tool({
+        description: [
+          "Delegate a task to a specialized Veslo document subagent.",
+          "Use this tool when the user's message involves working with documents:",
+          "- veslo-internal-xlsx: Excel/spreadsheet files (.xlsx, .xlsm, .csv, .tsv) — reading, writing, editing, charting, formulas",
+          "- veslo-internal-docx: Word documents (.docx) — authoring, editing, conversion, formatting",
+          "- veslo-internal-pdf: PDF files (.pdf) — extraction, form filling, transformation, merging",
+          "- veslo-internal-pptx: PowerPoint presentations (.pptx) — creating, editing slides",
+          "- veslo-internal-skill-creator: Creating or updating reusable skills (only on explicit user request)",
+          "",
+          "Delegate on any signal that document work is needed: file extensions, attached files,",
+          "file paths, references to document content, or phrasing about editing/reading/creating",
+          "those formats. When unsure whether a file exists, delegate to search for it.",
+          "Do not delegate general coding or plain-text tasks without document signals.",
+          "",
+          "Return the subagent's results directly. Do not expose internal agent names to the user.",
+        ].join("\\n"),
+        args: {
+          agent: tool.schema
+            .enum(AGENTS)
+            .describe("Which specialized subagent to delegate the task to"),
+          task: tool.schema
+            .string()
+            .describe("Complete description of what the subagent should do, including any relevant context from the conversation"),
+        },
+        async execute(args, context) {
+          try {
+            const created = await client.session.create({
+              body: {
+                parentID: context.sessionID,
+                title: \`Delegate: \${args.agent}\`,
+              },
+            });
+
+            const sessionId = created.data?.id ?? created.data;
+            if (!sessionId) {
+              return "Error: Failed to create delegate session — no session ID returned.";
+            }
+
+            const response = await client.session.prompt({
+              path: { id: typeof sessionId === "string" ? sessionId : String(sessionId) },
+              body: {
+                agent: args.agent,
+                parts: [{ type: "text", text: args.task }],
+              },
+            });
+
+            const parts = response.data?.parts ?? [];
+            const textParts = parts.filter((p) => p.type === "text");
+            const result = textParts.map((p) => p.text).join("\\n").trim();
+            return result || "Task completed (no text output from subagent).";
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return \`Error during delegation to \${args.agent}: \${message}\`;
+          }
+        },
+      }),
+    },
+  };
+};
+`;
+}
+
+async function writeDelegatePlugin(workspaceRoot: string, stats: ProvisionStats) {
+  const pluginsDir = join(workspaceRoot, ".opencode", "plugins");
+  await ensureDir(pluginsDir);
+  await writeIfChanged(join(pluginsDir, DELEGATE_PLUGIN_FILE), delegatePluginSource(), stats);
+}
+
 async function copyInternalPacks(workspaceRoot: string, stats: ProvisionStats) {
   const sourceRoot = await resolveInternalPackSourceRoot();
   const destinationRoot = join(workspaceRoot, ".opencode", "veslo", "internal");
@@ -283,6 +544,7 @@ async function writeInternalManifest(workspaceRoot: string, stats: ProvisionStat
     source: INTERNAL_SYSTEM_SOURCE,
     packs: [...INTERNAL_PACKS],
     agents: INTERNAL_AGENT_FILES.map((name) => name.replace(/\.md$/i, "")),
+    plugins: [DELEGATE_PLUGIN_FILE],
     routingBlockVersion: ROUTING_BLOCK_VERSION,
   };
   const path = join(workspaceRoot, ".opencode", "veslo", "internal", "manifest.json");
@@ -294,6 +556,7 @@ export async function provisionWorkspaceInternalSystem(workspaceRoot: string): P
 
   await copyInternalPacks(workspaceRoot, stats);
   await writeInternalAgents(workspaceRoot, stats);
+  await writeDelegatePlugin(workspaceRoot, stats);
   await ensureVesloAgentRouting(workspaceRoot, stats);
   await writeInternalManifest(workspaceRoot, stats);
 

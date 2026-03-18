@@ -1,0 +1,80 @@
+<h2>Where should the "Open Folder" button go?</h2>
+<p class="subtitle">Current UI has "Nova relace" button with a dropdown menu. Where does "Open Folder" fit best?</p>
+
+<div class="cards">
+  <!-- Option A: Side by side -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 20px; background: #1a1a2e;">
+      <div style="background: #16213e; border-radius: 12px; padding: 16px; max-width: 260px; margin: 0 auto;">
+        <div style="color: #8b8fa3; font-size: 11px; margin-bottom: 8px;">SIDEBAR</div>
+        <div style="display: flex; gap: 8px;">
+          <div style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px; border-radius: 8px; border: 1px solid #2a2d3e; background: #1a1a2e; color: #b0b4c8; font-size: 12px;">
+            <span style="font-size: 14px;">+</span> Nova relace
+          </div>
+          <div style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px; border-radius: 8px; border: 1px solid #3b82f6; background: #1e3a5f; color: #60a5fa; font-size: 12px;">
+            <span style="font-size: 14px;">&#128193;</span> Open Folder
+          </div>
+        </div>
+        <div style="margin-top: 12px; padding: 8px; border-radius: 6px; background: #1a1a2e; border: 1px solid #2a2d3e;">
+          <div style="color: #6b7280; font-size: 10px;">Session 1...</div>
+        </div>
+        <div style="margin-top: 4px; padding: 8px; border-radius: 6px; background: #1a1a2e; border: 1px solid #2a2d3e;">
+          <div style="color: #6b7280; font-size: 10px;">Session 2...</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A: Side by Side</h3>
+      <p>Two equal buttons next to each other at the top. Clear and discoverable, but takes more horizontal space in the sidebar.</p>
+    </div>
+  </div>
+
+  <!-- Option B: In the dropdown menu -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 20px; background: #1a1a2e;">
+      <div style="background: #16213e; border-radius: 12px; padding: 16px; max-width: 260px; margin: 0 auto;">
+        <div style="color: #8b8fa3; font-size: 11px; margin-bottom: 8px;">SIDEBAR</div>
+        <div style="display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px; border-radius: 8px; border: 1px solid #2a2d3e; background: #1a1a2e; color: #b0b4c8; font-size: 12px; width: 100%; box-sizing: border-box;">
+          <span style="font-size: 14px;">+</span> Nova relace
+        </div>
+        <div style="margin-top: 8px; border-radius: 8px; border: 1px solid #2a2d3e; background: #1a1a2e; overflow: hidden;">
+          <div style="padding: 8px 12px; color: #b0b4c8; font-size: 11px; border-bottom: 1px solid #2a2d3e;">+ New worker</div>
+          <div style="padding: 8px 12px; color: #b0b4c8; font-size: 11px; border-bottom: 1px solid #2a2d3e;">+ Connect remote</div>
+          <div style="padding: 8px 12px; color: #60a5fa; font-size: 11px; background: #1e3a5f; border-bottom: 1px solid #2a2d3e;">&#128193; Open folder</div>
+          <div style="padding: 8px 12px; color: #b0b4c8; font-size: 11px;">+ Import config</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B: Inside Dropdown Menu</h3>
+      <p>Add "Open Folder" as a new option in the existing dropdown alongside "New worker", "Connect remote", and "Import config". Minimal UI change.</p>
+    </div>
+  </div>
+
+  <!-- Option C: Separate button below -->
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 20px; background: #1a1a2e;">
+      <div style="background: #16213e; border-radius: 12px; padding: 16px; max-width: 260px; margin: 0 auto;">
+        <div style="color: #8b8fa3; font-size: 11px; margin-bottom: 8px;">SIDEBAR</div>
+        <div style="display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px; border-radius: 8px; border: 1px solid #2a2d3e; background: #1a1a2e; color: #b0b4c8; font-size: 12px; width: 100%; box-sizing: border-box;">
+          <span style="font-size: 14px;">+</span> Nova relace
+        </div>
+        <div style="margin-top: 6px; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px; border-radius: 8px; border: 1px dashed #3b82f6; color: #60a5fa; font-size: 11px; width: 100%; box-sizing: border-box;">
+          &#128193; Open folder...
+        </div>
+        <div style="margin-top: 12px; padding: 8px; border-radius: 6px; background: #1a1a2e; border: 1px solid #2a2d3e;">
+          <div style="color: #6b7280; font-size: 10px;">Session 1...</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C: Separate Button Below</h3>
+      <p>A standalone secondary button directly below "Nova relace". More prominent than a dropdown item, clearly a different action. Uses dashed border to differentiate.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 24px;">
+  <h3>Context</h3>
+  <p>The new "Open Folder" button will open the native OS folder picker. If the selected folder matches an existing worker, it opens that worker with a new session. Otherwise, it creates a new worker for that folder.</p>
+</div>

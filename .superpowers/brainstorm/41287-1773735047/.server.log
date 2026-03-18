@@ -1,0 +1,4 @@
+{"type":"server-started","port":51523,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:51523","screen_dir":"/Users/vaclavsoukup/AI agent projects/Openwork/.superpowers/brainstorm/41287-1773735047"}
+{"type":"screen-added","file":"/Users/vaclavsoukup/AI agent projects/Openwork/.superpowers/brainstorm/41287-1773735047/button-placement.html"}
+{"type":"screen-added","file":"/Users/vaclavsoukup/AI agent projects/Openwork/.superpowers/brainstorm/41287-1773735047/waiting.html"}
+{"type":"server-stopped","reason":"idle timeout"}

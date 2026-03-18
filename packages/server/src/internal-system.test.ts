@@ -47,14 +47,27 @@ You are Veslo.
 
       const vesloAgent = await readFile(join(workspaceRoot, ".opencode", "agents", "veslo.md"), "utf8");
       expect(vesloAgent).toContain("VESLO_INTERNAL_ROUTING_START");
-      expect(vesloAgent).toContain("veslo-internal-skill-creator");
+      expect(vesloAgent).toContain("delegate");
+
+      const plugin = await readFile(
+        join(workspaceRoot, ".opencode", "plugins", "veslo-delegate.js"),
+        "utf8",
+      );
+      expect(plugin).toContain('import { tool } from "@opencode-ai/plugin"');
+      expect(plugin).toContain("veslo-internal-xlsx");
+      expect(plugin).toContain("veslo-internal-docx");
+      expect(plugin).toContain("export default async");
+      expect(plugin).toContain('"chat.message"');
+      expect(plugin).toContain("VESLO_ROUTER_FORCE_DELEGATE");
 
       const manifest = await readFile(
         join(workspaceRoot, ".opencode", "veslo", "internal", "manifest.json"),
         "utf8",
       );
-      expect(manifest).toContain('"version": "2026-03-16.1"');
+      expect(manifest).toContain('"version": "2026-03-18.2"');
       expect(manifest).toContain('"schemaVersion": 1');
+      expect(manifest).toContain('"plugins"');
+      expect(manifest).toContain("veslo-delegate.js");
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

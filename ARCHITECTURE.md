@@ -263,6 +263,52 @@ Veslo exposes two extension surfaces:
    - The format is the same as OpenCode CLI uses today.
    - Veslo should show plugin status and instructions; a native plugin manager is planned.
 
+### Internal Delegation via `delegate` Tool
+
+Veslo provisions specialized hidden subagents for document work (docx, pdf, pptx,
+xlsx) and skill creation. These subagents are invoked through the `delegate` plugin
+tool — a native `tool_use` call, not a prompt-based routing decision.
+
+#### How it works
+
+1. The Veslo internal system (`packages/server/src/internal-system.ts`) provisions
+   a plugin file (`.opencode/plugins/veslo-delegate.js`) into each workspace.
+2. OpenCode auto-discovers plugins in `.opencode/plugins/` and registers their
+   tools with the model's tool list.
+3. The model sees `delegate` as a callable tool (same mechanism as `read`, `bash`,
+   `grep`). When context involves documents, the model calls it via `tool_use`.
+4. The plugin's `execute` function creates a child session with the target subagent
+   and returns the result.
+
+#### Available subagents
+
+| Agent | Purpose |
+|-------|---------|
+| `veslo-internal-xlsx` | Spreadsheets (.xlsx, .xlsm, .csv, .tsv) |
+| `veslo-internal-docx` | Word documents (.docx) |
+| `veslo-internal-pdf` | PDFs (.pdf) |
+| `veslo-internal-pptx` | Presentations (.pptx) |
+| `veslo-internal-skill-creator` | Reusable skill authoring |
+
+#### Why tool_use instead of prompt routing
+
+Previously, delegation was handled by a text block in `veslo.md` that described
+routing rules. The model had to interpret those rules and decide whether to
+delegate. This was unreliable — the model's thinking might conclude "I should look
+at the Excel file" but then produce a text answer instead of acting.
+
+By registering delegation as a tool, the model's native tool-calling mechanism
+handles it. The same mechanism that reliably fires `read` and `bash` also fires
+`delegate`. The model's extended thinking drives the decision, and `tool_use`
+ensures the action follows.
+
+#### Provisioning
+
+The delegate plugin is provisioned alongside internal agents and packs via
+`provisionWorkspaceInternalSystem()`. The manifest
+(`.opencode/veslo/internal/manifest.json`) tracks provisioned plugins. The plugin
+file is auto-generated — do not edit manually.
+
 ### Engine reload (config refresh)
 
 - Veslo server exposes `POST /workspace/:id/engine/reload`.

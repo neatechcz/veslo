@@ -238,8 +238,29 @@ export default function MessageList(props: MessageListProps) {
   });
 
   const handleCopy = async (text: string, id: string) => {
+    let ok = false;
     try {
       await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch {
+      // navigator.clipboard can fail in Tauri WKWebView; fall back to execCommand
+    }
+    if (!ok) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch {
+        // ignore
+      }
+    }
+    if (ok) {
       setCopyingId(id);
       if (copyTimeout !== undefined) {
         window.clearTimeout(copyTimeout);
@@ -248,8 +269,6 @@ export default function MessageList(props: MessageListProps) {
         setCopyingId(null);
         copyTimeout = undefined;
       }, 2000);
-    } catch {
-      // ignore
     }
   };
 
