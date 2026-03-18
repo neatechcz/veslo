@@ -27,6 +27,7 @@ export const WorkerStatus = ["provisioning", "healthy", "failed", "stopped"] as 
 export const TokenScope = ["client", "host"] as const
 export const DesktopAuthIntent = ["signin", "signup"] as const
 export const DesktopAuthSessionStatus = ["started", "browser_authed", "exchanged", "expired", "cancelled"] as const
+export const DesktopAuthTransactionStatus = ["started", "browser_authed", "exchanged", "expired", "cancelled"] as const
 
 export const AuthUserTable = mysqlTable(
   "user",
@@ -248,6 +249,39 @@ export const DesktopAuthSessionTable = mysqlTable(
   (table) => [
     index("desktop_auth_session_status_expires").on(table.status, table.expires_at),
     index("desktop_auth_session_user_id").on(table.user_id),
+  ],
+)
+
+export const DesktopAuthTransactionTable = mysqlTable(
+  "desktop_auth_transaction",
+  {
+    id: id().primaryKey(),
+    transaction_id: varchar("transaction_id", { length: 64 }).notNull(),
+    intent: mysqlEnum("intent", DesktopAuthIntent).notNull(),
+    state_hash: varchar("state_hash", { length: 128 }).notNull(),
+    code_challenge: varchar("code_challenge", { length: 255 }).notNull(),
+    code_challenge_method: varchar("code_challenge_method", { length: 16 }).notNull(),
+    redirect_uri: varchar("redirect_uri", { length: 512 }).notNull(),
+    status: mysqlEnum("status", DesktopAuthTransactionStatus).notNull(),
+    user_id: varchar("user_id", { length: 64 }),
+    org_id: varchar("org_id", { length: 64 }),
+    browser_ip: text("browser_ip"),
+    browser_user_agent: text("browser_user_agent"),
+    authorization_code_hash: varchar("authorization_code_hash", { length: 128 }),
+    manual_code_hash: varchar("manual_code_hash", { length: 128 }),
+    code_issued_at: timestamp("code_issued_at", { fsp: 3 }),
+    exchanged_at: timestamp("exchanged_at", { fsp: 3 }),
+    expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updated_at: timestamp("updated_at", { fsp: 3 })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [
+    uniqueIndex("desktop_auth_transaction_transaction_id").on(table.transaction_id),
+    index("desktop_auth_transaction_status_expires").on(table.status, table.expires_at),
+    index("desktop_auth_transaction_authorization_code_hash").on(table.authorization_code_hash),
+    index("desktop_auth_transaction_manual_code_hash").on(table.manual_code_hash),
   ],
 )
 

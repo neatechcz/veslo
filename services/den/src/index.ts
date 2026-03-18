@@ -11,6 +11,7 @@ import { shouldWidenVarcharColumn } from "./db/schema-reconcile.js"
 import { env } from "./env.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
+import { desktopAuthV2Router } from "./http/desktop-auth-v2.js"
 import { orgsRouter } from "./http/orgs.js"
 import { workersRouter } from "./http/workers.js"
 
@@ -56,6 +57,7 @@ app.get("/v1/me", asyncRoute(async (req, res) => {
 }))
 
 app.use("/v1/desktop-auth", desktopAuthRouter)
+app.use("/v2/desktop-auth", desktopAuthV2Router)
 app.use("/v1/orgs", orgsRouter)
 app.use("/v1/workers", workersRouter)
 app.use(errorMiddleware)
@@ -105,7 +107,7 @@ function toNullableNumber(value: unknown) {
   return null
 }
 
-async function ensureIndex(table: string, indexName: string, columns: string[]) {
+async function ensureIndex(table: string, indexName: string, columns: string[], unique = false) {
   const existing = await db.execute(sql`
     SELECT 1
     FROM INFORMATION_SCHEMA.STATISTICS
@@ -120,8 +122,9 @@ async function ensureIndex(table: string, indexName: string, columns: string[]) 
   }
 
   const columnList = columns.map((column) => quoteIdentifier(column)).join(", ")
+  const createKeyword = unique ? "CREATE UNIQUE INDEX" : "CREATE INDEX"
   await db.execute(
-    sql.raw(`CREATE INDEX ${quoteIdentifier(indexName)} ON ${quoteIdentifier(table)} (${columnList})`),
+    sql.raw(`${createKeyword} ${quoteIdentifier(indexName)} ON ${quoteIdentifier(table)} (${columnList})`),
   )
 }
 
@@ -417,6 +420,60 @@ async function ensureTables() {
     `)
     await ensureIndex("desktop_auth_session", "desktop_auth_session_status_expires", ["status", "expires_at"])
     await ensureIndex("desktop_auth_session", "desktop_auth_session_user_id", ["user_id"])
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`desktop_auth_transaction\` (
+        \`id\` varchar(64) NOT NULL,
+        \`transaction_id\` varchar(64) NOT NULL,
+        \`intent\` enum('signin','signup') NOT NULL,
+        \`state_hash\` varchar(128) NOT NULL,
+        \`code_challenge\` varchar(255) NOT NULL,
+        \`code_challenge_method\` varchar(16) NOT NULL,
+        \`redirect_uri\` varchar(512) NOT NULL,
+        \`status\` enum('started','browser_authed','exchanged','expired','cancelled') NOT NULL,
+        \`user_id\` varchar(64),
+        \`org_id\` varchar(64),
+        \`browser_ip\` text,
+        \`browser_user_agent\` text,
+        \`authorization_code_hash\` varchar(128),
+        \`manual_code_hash\` varchar(128),
+        \`code_issued_at\` timestamp(3),
+        \`exchanged_at\` timestamp(3),
+        \`expires_at\` timestamp(3) NOT NULL,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT \`desktop_auth_transaction_id\` PRIMARY KEY(\`id\`),
+        CONSTRAINT \`desktop_auth_transaction_transaction_id\` UNIQUE(\`transaction_id\`)
+      )
+    `)
+    await ensureColumn("desktop_auth_transaction", "browser_ip", "text")
+    await ensureColumn("desktop_auth_transaction", "browser_user_agent", "text")
+    await ensureColumn("desktop_auth_transaction", "authorization_code_hash", "varchar(128)")
+    await ensureColumn("desktop_auth_transaction", "manual_code_hash", "varchar(128)")
+    await ensureColumn("desktop_auth_transaction", "code_issued_at", "timestamp(3)")
+    await ensureColumn("desktop_auth_transaction", "exchanged_at", "timestamp(3)")
+    await ensureColumn(
+      "desktop_auth_transaction",
+      "updated_at",
+      "timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)",
+    )
+    await ensureIndex(
+      "desktop_auth_transaction",
+      "desktop_auth_transaction_transaction_id",
+      ["transaction_id"],
+      true,
+    )
+    await ensureIndex(
+      "desktop_auth_transaction",
+      "desktop_auth_transaction_status_expires",
+      ["status", "expires_at"],
+    )
+    await ensureIndex(
+      "desktop_auth_transaction",
+      "desktop_auth_transaction_authorization_code_hash",
+      ["authorization_code_hash"],
+    )
+    await ensureIndex("desktop_auth_transaction", "desktop_auth_transaction_manual_code_hash", ["manual_code_hash"])
 
     console.log("[den] all tables ensured")
   } catch (err) {

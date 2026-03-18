@@ -9,6 +9,7 @@ const schema = z.object({
   GITHUB_CLIENT_SECRET: z.string().optional(),
   PORT: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
+  DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: z.string().optional(),
   PROVISIONER_MODE: z.enum(["stub", "render"]).optional(),
   WORKER_URL_TEMPLATE: z.string().optional(),
   RENDER_API_BASE: z.string().optional(),
@@ -72,6 +73,7 @@ export const env = {
   },
   port: Number(parsed.PORT ?? "8788"),
   corsOrigins: corsOrigins ?? [],
+  desktopAuthRequireEmailVerified: (parsed.DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED ?? "false").toLowerCase() === "true",
   provisionerMode: parsed.PROVISIONER_MODE ?? "stub",
   workerUrlTemplate: parsed.WORKER_URL_TEMPLATE,
   render: {

@@ -48,6 +48,10 @@ export function hashState(state: string): string {
   return crypto.createHash("sha256").update(state).digest("hex")
 }
 
+export function hashAuthCode(code: string): string {
+  return crypto.createHash("sha256").update(code).digest("hex")
+}
+
 export function createPkceS256Challenge(codeVerifier: string): string {
   return crypto.createHash("sha256").update(codeVerifier).digest("base64url")
 }

@@ -240,6 +240,8 @@
       function initOnboarding() {
         const search = new URLSearchParams(window.location.search);
         const onboardingSessionId = (search.get("sid") || "").trim();
+        const onboardingTransactionId = (search.get("tid") || "").trim();
+        const onboardingState = (search.get("state") || "").trim();
         const requestedIntent = (search.get("intent") || "").trim().toLowerCase();
         let mode = requestedIntent === "signup" ? "sign-up" : "sign-in"; // default to sign-in for returning users
         let bearerToken = "";
@@ -349,6 +351,51 @@
             const headers = { "Content-Type": "application/json" };
             if (bearerToken) {
               headers["Authorization"] = "Bearer " + bearerToken;
+            }
+
+            if (onboardingTransactionId && onboardingState) {
+              const authorizeResponse = await fetch("/v2/desktop-auth/authorize", {
+                method: "POST",
+                credentials: "include",
+                headers,
+                redirect: "manual",
+                body: JSON.stringify({
+                  transactionId: onboardingTransactionId,
+                  state: onboardingState,
+                }),
+              });
+
+              const redirectUrl = authorizeResponse.headers.get("location");
+              if (authorizeResponse.status !== 302 || !redirectUrl) {
+                const text = await authorizeResponse.text().catch(() => "");
+                let errorMessage = "Authorization redirect failed";
+                try {
+                  const parsed = text ? JSON.parse(text) : null;
+                  if (parsed && typeof parsed.error === "string") {
+                    errorMessage = parsed.error;
+                  }
+                } catch {
+                  if (text.trim()) {
+                    errorMessage = text.trim();
+                  }
+                }
+                busyCard.classList.add("hidden");
+                formCard.classList.remove("hidden");
+                showError(errorMessage);
+                updateUI();
+                return;
+              }
+
+              busyCard.classList.add("hidden");
+              successCard.classList.remove("hidden");
+              if (openAppLink) {
+                openAppLink.href = redirectUrl;
+              }
+              if (openAppHint) {
+                openAppHint.classList.remove("hidden");
+              }
+              window.location.assign(redirectUrl);
+              return;
             }
 
             const body = {};

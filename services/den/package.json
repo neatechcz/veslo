@@ -7,6 +7,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "test": "tsx --test test/**/*.test.ts",
+    "test:desktop-auth-v2": "tsx --test test/desktop-auth-v2-contract.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "auth:generate": "npx @better-auth/cli@latest generate --config src/auth.ts --output src/db/better-auth.schema.ts --yes"

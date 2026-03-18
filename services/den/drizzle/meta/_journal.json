@@ -57,6 +57,13 @@
       "when": 1773455400000,
       "tag": "0007_desktop_auth_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1773811200000,
+      "tag": "0008_desktop_auth_transactions",
+      "breakpoints": true
     }
   ]
 }
