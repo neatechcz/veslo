@@ -348,12 +348,11 @@ const writeSidebarDockedVisibility = (value: SidebarDockedVisibility) => {
 
 const availableChatWidthForLayout = (rootWidth: number, state: SidebarLayoutState) => {
   if (!Number.isFinite(rootWidth)) return 0;
-  if (state.mode !== "wide") return Math.max(0, rootWidth);
   return Math.max(
     0,
     rootWidth -
-      (state.docked.left ? LEFT_SIDEBAR_DOCKED_WIDTH : 0) -
-      (state.docked.right ? RIGHT_SIDEBAR_DOCKED_WIDTH : 0),
+      (state.dockedPreference.left ? LEFT_SIDEBAR_DOCKED_WIDTH : 0) -
+      (state.dockedPreference.right ? RIGHT_SIDEBAR_DOCKED_WIDTH : 0),
   );
 };
 
