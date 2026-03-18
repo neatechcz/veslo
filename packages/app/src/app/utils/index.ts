@@ -492,12 +492,45 @@ export function removePart(list: MessageWithParts[], messageID: string, partID: 
 }
 
 export function normalizeSessionStatus(status: unknown) {
+  if (typeof status === "string") {
+    const normalized = status.trim().toLowerCase();
+    if (normalized === "busy" || normalized === "running") return "running";
+    if (normalized === "retry" || normalized === "retrying") return "retry";
+    return "idle";
+  }
+
   if (!status || typeof status !== "object") return "idle";
   const record = status as Record<string, unknown>;
-  if (record.type === "busy") return "running";
-  if (record.type === "retry") return "retry";
-  if (record.type === "idle") return "idle";
+  if (typeof record.type === "string") {
+    return normalizeSessionStatus(record.type);
+  }
+  if ("status" in record && record.status !== status) {
+    return normalizeSessionStatus(record.status);
+  }
   return "idle";
+}
+
+export function extractSessionId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+
+  const record = value as Record<string, unknown>;
+  const direct =
+    (typeof record.sessionID === "string" ? record.sessionID : null) ??
+    (typeof record.sessionId === "string" ? record.sessionId : null);
+  const directTrimmed = direct?.trim();
+  if (directTrimmed) return directTrimmed;
+
+  if (record.info && typeof record.info === "object") {
+    const nested = extractSessionId(record.info);
+    if (nested) return nested;
+  }
+
+  if (record.part && typeof record.part === "object") {
+    const nested = extractSessionId(record.part);
+    if (nested) return nested;
+  }
+
+  return null;
 }
 
 export function modelFromUserMessage(info: MessageInfo): ModelRef | null {

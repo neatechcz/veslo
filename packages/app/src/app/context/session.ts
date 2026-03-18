@@ -19,6 +19,7 @@ import type {
 } from "../types";
 import {
   addOpencodeCacheHint,
+  extractSessionId,
   normalizeDirectoryQueryPath,
   modelFromUserMessage,
   normalizeDirectoryPath,
@@ -1265,7 +1266,7 @@ export function createSessionStore(options: {
     if (event.type === "session.status") {
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
-        const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
+        const sessionID = extractSessionId(record);
         if (sessionID && isKnownSessionId(sessionID)) {
           const normalized = normalizeSessionStatus(record.status);
           setStore("sessionStatus", sessionID, normalized);
@@ -1279,7 +1280,7 @@ export function createSessionStore(options: {
     if (event.type === "session.idle") {
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
-        const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
+        const sessionID = extractSessionId(record);
         if (sessionID && isKnownSessionId(sessionID)) {
           setStore("sessionStatus", sessionID, "idle");
           const c = options.client();
@@ -1302,7 +1303,7 @@ export function createSessionStore(options: {
     if (event.type === "session.error") {
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
-        const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
+        const sessionID = extractSessionId(record);
         if (sessionID) {
           setStore("sessionStatus", sessionID, "idle");
         }
@@ -1363,7 +1364,7 @@ export function createSessionStore(options: {
     if (event.type === "message.removed") {
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
-        const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
+        const sessionID = extractSessionId(record);
         const messageID = typeof record.messageID === "string" ? record.messageID : null;
         if (sessionID && messageID) {
           setStore("messages", sessionID, (current = []) => removeMessageInfo(current, messageID));
@@ -1478,7 +1479,7 @@ export function createSessionStore(options: {
     if (event.type === "todo.updated") {
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
-        const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
+        const sessionID = extractSessionId(record);
         if (sessionID && isKnownSessionId(sessionID) && Array.isArray(record.todos)) {
           setStore("todos", sessionID, record.todos as TodoItem[]);
         }
@@ -1532,7 +1533,7 @@ export function createSessionStore(options: {
     const keyForEvent = (event: OpencodeEvent) => {
       if (event.type === "session.status" || event.type === "session.idle") {
         const record = event.properties as Record<string, unknown> | undefined;
-        const sessionID = typeof record?.sessionID === "string" ? record.sessionID : "";
+        const sessionID = record ? (extractSessionId(record) ?? "") : "";
         return sessionID ? `${event.type}:${sessionID}` : undefined;
       }
       if (event.type === "message.part.updated") {
@@ -1544,7 +1545,7 @@ export function createSessionStore(options: {
       }
       if (event.type === "todo.updated") {
         const record = event.properties as Record<string, unknown> | undefined;
-        const sessionID = typeof record?.sessionID === "string" ? record.sessionID : "";
+        const sessionID = record ? (extractSessionId(record) ?? "") : "";
         return sessionID ? `todo.updated:${sessionID}` : undefined;
       }
       return undefined;

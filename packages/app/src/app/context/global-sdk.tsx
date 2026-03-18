@@ -10,6 +10,7 @@ import {
   type ParentProps,
 } from "solid-js";
 
+import { extractSessionId } from "../utils";
 import { usePlatform } from "./platform";
 import { useServer } from "./server";
 
@@ -80,9 +81,17 @@ export function GlobalSDKProvider(props: ParentProps) {
     let last = 0;
 
     const keyForEvent = (directory: string, payload: Event) => {
-      if (payload.type === "session.status") return `session.status:${directory}:${payload.properties.sessionID}`;
+      if (payload.type === "session.status") {
+        const sessionID = extractSessionId(payload.properties);
+        if (!sessionID) return undefined;
+        return `session.status:${directory}:${sessionID}`;
+      }
       if (payload.type === "lsp.updated") return `lsp.updated:${directory}`;
-      if (payload.type === "todo.updated") return `todo.updated:${directory}:${payload.properties.sessionID}`;
+      if (payload.type === "todo.updated") {
+        const sessionID = extractSessionId(payload.properties);
+        if (!sessionID) return undefined;
+        return `todo.updated:${directory}:${sessionID}`;
+      }
       if (payload.type === "mcp.tools.changed") return `mcp.tools.changed:${directory}:${payload.properties.server}`;
       if (payload.type === "message.part.updated") {
         const part = payload.properties.part;
