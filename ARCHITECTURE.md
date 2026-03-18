@@ -218,6 +218,34 @@ Core methods:
 - `client.session.abort()`
 - `client.session.summarize()`
 
+### Auto-Compaction
+
+Veslo automatically compacts long conversations to prevent context overflow.
+Compaction calls `client.session.summarize()` to condense earlier messages.
+
+#### When it triggers
+
+Auto-compaction fires when a session transitions from "running" to "idle" AND
+the latest assistant message's input tokens have reached 90% of the model's
+context window (`model.limit.context`).
+
+#### Model-specific overrides
+
+Some models need earlier compaction despite large context windows:
+
+| Model prefix | Compaction limit | Reason |
+|-------------|-----------------|--------|
+| `gpt-5.4` | 128,000 tokens | Quality degrades at high context usage |
+
+For all other models, the standard 90% of `limit.context` applies.
+
+#### Configuration
+
+- Auto-compaction is enabled by default (`autoCompactContext` signal).
+- Users can disable it. Manual compaction via `/compact` remains available.
+- Implementation: `packages/app/src/app/app.tsx` — `shouldAutoCompact()`,
+  `resolveCompactionThreshold()`, and the trigger effect.
+
 ### Files + Search
 
 Veslo's file browser and "what changed" UI are powered by:

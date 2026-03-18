@@ -1783,6 +1783,57 @@ export default function App() {
     }
   }
 
+  /** Fraction of context window that triggers auto-compaction. */
+  const COMPACTION_THRESHOLD_RATIO = 0.90;
+
+  /**
+   * Model-specific overrides for the compaction context limit.
+   * GPT-5.4 has a 1M+ context window but degrades in quality at high usage;
+   * compact early at 127K instead.
+   * Uses prefix matching: "gpt-5.4" also covers "gpt-5.4-2026-03-05".
+   */
+  const COMPACTION_TOKEN_OVERRIDES: Array<{ prefix: string; limit: number }> = [
+    { prefix: "gpt-5.4", limit: 128_000 },
+  ];
+
+  function resolveCompactionThreshold(
+    model: ModelRef,
+    allProviders: ProviderListItem[],
+  ): number | null {
+    const override = COMPACTION_TOKEN_OVERRIDES.find(
+      (entry) => model.modelID === entry.prefix || model.modelID.startsWith(entry.prefix + "-"),
+    );
+    if (override) return override.limit;
+
+    const provider = allProviders.find((p) => p.id === model.providerID);
+    if (!provider) return null;
+    const modelData = provider.models[model.modelID];
+    if (!modelData?.limit?.context) return null;
+
+    return modelData.limit.context;
+  }
+
+  function shouldAutoCompact(
+    sessionMessages: MessageWithParts[],
+    model: ModelRef,
+    allProviders: ProviderListItem[],
+  ): boolean {
+    for (let i = sessionMessages.length - 1; i >= 0; i--) {
+      const info = sessionMessages[i].info;
+      if (info.role !== "assistant") continue;
+
+      const inputTokens = info.tokens?.input;
+      if (typeof inputTokens !== "number" || inputTokens <= 0) continue;
+
+      const contextLimit = resolveCompactionThreshold(model, allProviders);
+      if (!contextLimit || contextLimit <= 0) return false;
+
+      return inputTokens / contextLimit >= COMPACTION_THRESHOLD_RATIO;
+    }
+
+    return false;
+  }
+
   const triggerAutoCompaction = async (sessionID: string) => {
     if (!autoCompactContext()) return;
     if (autoCompactingSessionId() === sessionID) return;
@@ -1808,6 +1859,13 @@ export default function App() {
     if (!autoCompactContext()) return;
     if (status !== "idle") return;
     if (!previous || previous === "idle") return;
+
+    // Only compact when context usage reaches 90% of the model's limit
+    const needed = untrack(() =>
+      shouldAutoCompact(messages(), selectedSessionModel(), providers()),
+    );
+    if (!needed) return;
+
     void triggerAutoCompaction(sessionID);
   });
 
@@ -2820,12 +2878,6 @@ export default function App() {
   const [autoCompactContext, setAutoCompactContext] = createSignal(true);
   const [modelVariant, setModelVariant] = createSignal<string | null>(null);
   const [autoCompactingSessionId, setAutoCompactingSessionId] = createSignal<string | null>(null);
-
-  createEffect(() => {
-    if (!autoCompactContext()) {
-      setAutoCompactContext(true);
-    }
-  });
 
   const MODEL_VARIANT_OPTIONS = [
     { value: "none", labelKey: "session.thinking_option_none" },
