@@ -96,6 +96,15 @@ import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import type { SidebarSectionState } from "../components/session/sidebar";
+import { LeftSidebarToggleIcon, RightSidebarToggleIcon } from "../components/session/sidebar-toggle-icons";
+import {
+  applyAvailableWidth,
+  createInitialSidebarLayoutState,
+  toggleSidebarFromButton,
+  type SidebarDockedVisibility,
+  type SidebarLayoutState,
+  type SidebarSide,
+} from "../components/session/sidebar-layout-model";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
 import ArtifactsPanel from "../components/session/artifacts-panel";
@@ -299,11 +308,54 @@ const STREAM_SCROLL_MIN_INTERVAL_MS = 90;
 const STREAM_RENDER_BATCH_MS = 220;
 const MAIN_THREAD_LAG_INTERVAL_MS = 200;
 const MAIN_THREAD_LAG_WARN_MS = 180;
+const LEFT_SIDEBAR_DOCKED_WIDTH = 260;
+const RIGHT_SIDEBAR_DOCKED_WIDTH = 280;
+const SIDEBAR_DOCKED_VISIBILITY_KEY = "veslo.session.sidebar.docked.v1";
+const DEFAULT_SIDEBAR_DOCKED_VISIBILITY: SidebarDockedVisibility = {
+  left: true,
+  right: true,
+};
 const interpolate = (template: string, values: Record<string, string | number>) =>
   Object.entries(values).reduce(
     (result, [key, value]) => result.replaceAll(`{${key}}`, String(value)),
     template,
   );
+
+const readSidebarDockedVisibility = (): SidebarDockedVisibility => {
+  if (typeof window === "undefined") return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
+  try {
+    const raw = window.localStorage.getItem(SIDEBAR_DOCKED_VISIBILITY_KEY);
+    if (!raw) return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
+    const parsed = JSON.parse(raw) as Partial<SidebarDockedVisibility> | null;
+    if (!parsed || typeof parsed !== "object") return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
+    return {
+      left: typeof parsed.left === "boolean" ? parsed.left : DEFAULT_SIDEBAR_DOCKED_VISIBILITY.left,
+      right: typeof parsed.right === "boolean" ? parsed.right : DEFAULT_SIDEBAR_DOCKED_VISIBILITY.right,
+    };
+  } catch {
+    return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
+  }
+};
+
+const writeSidebarDockedVisibility = (value: SidebarDockedVisibility) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SIDEBAR_DOCKED_VISIBILITY_KEY, JSON.stringify(value));
+  } catch {
+    // ignore
+  }
+};
+
+const availableChatWidthForLayout = (rootWidth: number, state: SidebarLayoutState) => {
+  if (!Number.isFinite(rootWidth)) return 0;
+  if (state.mode !== "wide") return Math.max(0, rootWidth);
+  return Math.max(
+    0,
+    rootWidth -
+      (state.docked.left ? LEFT_SIDEBAR_DOCKED_WIDTH : 0) -
+      (state.docked.right ? RIGHT_SIDEBAR_DOCKED_WIDTH : 0),
+  );
+};
 
 type CommandPaletteMode = "root" | "sessions";
 
@@ -314,10 +366,12 @@ export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
   let bottomVisibilityEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
+  let sessionLayoutRootEl: HTMLDivElement | undefined;
   let scrollMessageIntoViewById: ((messageId: string, behavior?: ScrollBehavior) => boolean) | null = null;
   const [isChatContainerReady, setIsChatContainerReady] = createSignal(false);
   let sessionMenuRef: HTMLDivElement | undefined;
   let searchInputEl: HTMLInputElement | undefined;
+  let sidebarLayoutResizeFrame: number | undefined;
   let scrollFrame: number | undefined;
   let pendingScrollBehavior: ScrollBehavior = "auto";
   let lastAutoScrollAt = 0;
@@ -355,12 +409,117 @@ export default function SessionView(props: SessionViewProps) {
   const [initialAnchorPending, setInitialAnchorPending] = createSignal(false);
 
   const [obsidianAvailable, setObsidianAvailable] = createSignal(false);
+  const [layoutRootWidth, setLayoutRootWidth] = createSignal(0);
+  const [sidebarLayoutState, setSidebarLayoutState] = createSignal<SidebarLayoutState>(
+    createInitialSidebarLayoutState(readSidebarDockedVisibility()),
+  );
 
   // In Session view the right sidebar is navigation-only; never pre-highlight a
   // dashboard tab here so first-run feels chat-first rather than Automations-first.
   const showRightSidebarSelection = createMemo(() => false);
   let commandPaletteInputEl: HTMLInputElement | undefined;
   const commandPaletteOptionRefs: HTMLButtonElement[] = [];
+  const leftDockedVisible = createMemo(
+    () => sidebarLayoutState().mode === "wide" && sidebarLayoutState().docked.left,
+  );
+  const rightDockedVisible = createMemo(
+    () => sidebarLayoutState().mode === "wide" && sidebarLayoutState().docked.right,
+  );
+  const overlayOpenSide = createMemo(() =>
+    sidebarLayoutState().mode === "narrow" ? sidebarLayoutState().overlay : null,
+  );
+  const leftSidebarToggleActive = createMemo(() =>
+    sidebarLayoutState().mode === "wide"
+      ? sidebarLayoutState().docked.left
+      : sidebarLayoutState().overlay === "left",
+  );
+  const rightSidebarToggleActive = createMemo(() =>
+    sidebarLayoutState().mode === "wide"
+      ? sidebarLayoutState().docked.right
+      : sidebarLayoutState().overlay === "right",
+  );
+
+  const applySidebarModeForRootWidth = (rootWidth: number) => {
+    if (rootWidth <= 0) return;
+    setSidebarLayoutState((current) =>
+      applyAvailableWidth(current, availableChatWidthForLayout(rootWidth, current)),
+    );
+  };
+
+  const queueSidebarRootMeasurement = () => {
+    if (sidebarLayoutResizeFrame !== undefined) return;
+    sidebarLayoutResizeFrame = window.requestAnimationFrame(() => {
+      sidebarLayoutResizeFrame = undefined;
+      const rootWidth = sessionLayoutRootEl?.clientWidth ?? 0;
+      setLayoutRootWidth(rootWidth);
+      applySidebarModeForRootWidth(rootWidth);
+    });
+  };
+
+  const closeSidebarOverlay = () => {
+    setSidebarLayoutState((current) => {
+      if (current.mode !== "narrow" || current.overlay === null) return current;
+      return {
+        ...current,
+        overlay: null,
+      };
+    });
+  };
+
+  const toggleSidebarMenu = (side: SidebarSide) => {
+    const measuredRootWidth = layoutRootWidth() || sessionLayoutRootEl?.clientWidth || 0;
+    setSidebarLayoutState((current) => {
+      const toggled = toggleSidebarFromButton(current, side);
+      if (current.mode === "wide" && toggled.mode === "wide") {
+        writeSidebarDockedVisibility(toggled.dockedPreference);
+      }
+      if (measuredRootWidth <= 0) return toggled;
+      return applyAvailableWidth(toggled, availableChatWidthForLayout(measuredRootWidth, toggled));
+    });
+  };
+
+  createEffect(() => {
+    const root = sessionLayoutRootEl;
+    if (!root) return;
+
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(() => {
+        queueSidebarRootMeasurement();
+      });
+      observer.observe(root);
+      queueSidebarRootMeasurement();
+      onCleanup(() => {
+        observer.disconnect();
+        if (sidebarLayoutResizeFrame !== undefined) {
+          window.cancelAnimationFrame(sidebarLayoutResizeFrame);
+          sidebarLayoutResizeFrame = undefined;
+        }
+      });
+      return;
+    }
+
+    const onResize = () => queueSidebarRootMeasurement();
+    window.addEventListener("resize", onResize);
+    queueSidebarRootMeasurement();
+    onCleanup(() => {
+      window.removeEventListener("resize", onResize);
+      if (sidebarLayoutResizeFrame !== undefined) {
+        window.cancelAnimationFrame(sidebarLayoutResizeFrame);
+        sidebarLayoutResizeFrame = undefined;
+      }
+    });
+  });
+
+  createEffect(() => {
+    if (!overlayOpenSide()) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeSidebarOverlay();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  });
 
   createEffect(() => {
     if (!isTauriRuntime()) {
@@ -3348,77 +3507,206 @@ export default function SessionView(props: SessionViewProps) {
   );
 
   const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
+  const leftSidebarContent = () => (
+    <>
+      <div class="flex-1 overflow-y-auto">
+        <Show when={showUpdatePill()}>
+          <button
+            type="button"
+            class={`group mb-3 w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)] ${updatePillButtonTone()}`}
+            onClick={handleUpdatePillClick}
+            title={updatePillTitle()}
+            aria-label={updatePillTitle()}
+          >
+            <Show
+              when={props.updateStatus?.state === "downloading"}
+              fallback={
+                <Circle
+                  size={8}
+                  class={`${updatePillDotTone()} shrink-0 ${props.updateStatus?.state === "available" ? "group-hover:animate-pulse" : ""}`}
+                />
+              }
+            >
+              <Loader2 size={13} class={`animate-spin shrink-0 ${updatePillDotTone()}`} />
+            </Show>
+            <span class="flex-1 text-left">{updatePillLabel()}</span>
+            <Show when={props.updateStatus?.version}>
+              {(version) => (
+                <span class={`ml-auto font-mono text-[10px] ${updatePillVersionTone()}`}>v{version()}</span>
+              )}
+            </Show>
+          </button>
+        </Show>
+        <WorkspaceSessionList
+          workspaceSessionGroups={props.workspaceSessionGroups}
+          activeWorkspaceId={props.activeWorkspaceId}
+          selectedSessionId={props.selectedSessionId}
+          sessionStatusById={props.sessionStatusById}
+          connectingWorkspaceId={props.connectingWorkspaceId}
+          workspaceConnectionStateById={props.workspaceConnectionStateById}
+          newTaskDisabled={props.newTaskDisabled}
+          importingWorkspaceConfig={props.importingWorkspaceConfig}
+          showRemoteActions={props.showRemoteActions}
+          soulStatusByWorkspaceId={props.soulStatusByWorkspaceId}
+          isPrivateWorkspacePath={props.isPrivateWorkspacePath}
+          onActivateWorkspace={props.activateWorkspace}
+          onOpenSession={openSessionFromList}
+          onDeleteSession={openDeleteSessionModalForSession}
+          onCreateTaskInWorkspace={createTaskInWorkspace}
+          onOpenRenameWorkspace={props.openRenameWorkspace}
+          onShareWorkspace={(workspaceId) => setShareWorkspaceId(workspaceId)}
+          onOpenSoul={openSoul}
+          onRevealWorkspace={revealWorkspaceInFinder}
+          onRecoverWorkspace={props.recoverWorkspace}
+          onTestWorkspaceConnection={props.testWorkspaceConnection}
+          onEditWorkspaceConnection={props.editWorkspaceConnection}
+          onForgetWorkspace={props.forgetWorkspace}
+          onOpenCreateWorkspace={props.openCreateWorkspace}
+          onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
+          onImportWorkspaceConfig={props.importWorkspaceConfig}
+          onQuickNewSession={props.openNewSessionWithDirectory}
+          onOpenSessionSearch={() => openCommandPalette("sessions")}
+        />
+      </div>
+      <SidebarStatusControls
+        clientConnected={props.clientConnected}
+        vesloServerStatus={props.vesloServerStatus}
+        authenticatedUser={props.authenticatedUser}
+        onOpenSettings={() => openSettings("general")}
+      />
+    </>
+  );
+
+  const rightSidebarContent = () => (
+    <div class="flex-1 overflow-y-auto space-y-5 pt-2">
+      <div class="space-y-1 mb-2">
+        <button
+          type="button"
+          class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
+            showRightSidebarSelection() && props.tab === "scheduled"
+              ? "bg-gray-4 text-gray-12"
+              : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
+          }`}
+          onClick={() => {
+            props.setTab("scheduled");
+            props.setView("dashboard");
+          }}
+        >
+          <History size={18} />
+          Automations
+        </button>
+        <button
+          type="button"
+          class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
+            showRightSidebarSelection() && props.tab === "soul"
+              ? "bg-gray-4 text-gray-12"
+              : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
+          }`}
+          onClick={() => openSoul()}
+        >
+          <HeartPulse size={18} class={soulNavIconClass()} />
+          Soul
+        </button>
+        <button
+          type="button"
+          class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
+            showRightSidebarSelection() && props.tab === "skills"
+              ? "bg-gray-4 text-gray-12"
+              : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
+          }`}
+          onClick={() => {
+            props.setTab("skills");
+            props.setView("dashboard");
+          }}
+        >
+          <Zap size={18} />
+          Skills
+        </button>
+        <button
+          type="button"
+          class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
+            showRightSidebarSelection() && (props.tab === "mcp" || props.tab === "plugins")
+              ? "bg-gray-4 text-gray-12"
+              : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
+          }`}
+          onClick={() => {
+            props.setTab("mcp");
+            props.setView("dashboard");
+          }}
+        >
+          <Box size={18} />
+          Extensions
+        </button>
+        <Show when={props.developerMode}>
+          <button
+            type="button"
+            class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
+              showRightSidebarSelection() && props.tab === "config"
+                ? "bg-gray-4 text-gray-12"
+                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
+            }`}
+            onClick={openConfig}
+          >
+            <SlidersHorizontal size={18} />
+            Advanced
+          </button>
+        </Show>
+      </div>
+
+      <ArtifactsPanel
+        id="sidebar-artifacts"
+        files={touchedFiles()}
+        workspaceRoot={props.activeWorkspaceRoot}
+        onRevealArtifact={revealArtifact}
+        onOpenInObsidian={openArtifactInObsidian}
+        obsidianAvailable={obsidianAvailable()}
+      />
+    </div>
+  );
 
   return (
-    <div class="flex h-screen w-full bg-dls-sidebar text-gray-12 font-sans overflow-hidden">
-      <aside class="w-[260px] hidden lg:flex flex-col bg-dls-sidebar border-r border-gray-6/70 p-3 pt-5">
-        <div class="flex-1 overflow-y-auto">
-          <Show when={showUpdatePill()}>
-            <button
-              type="button"
-              class={`group mb-3 w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)] ${updatePillButtonTone()}`}
-              onClick={handleUpdatePillClick}
-              title={updatePillTitle()}
-              aria-label={updatePillTitle()}
-            >
-              <Show
-                when={props.updateStatus?.state === "downloading"}
-                fallback={
-                  <Circle
-                    size={8}
-                    class={`${updatePillDotTone()} shrink-0 ${props.updateStatus?.state === "available" ? "group-hover:animate-pulse" : ""}`}
-                  />
-                }
-              >
-                <Loader2 size={13} class={`animate-spin shrink-0 ${updatePillDotTone()}`} />
-              </Show>
-              <span class="flex-1 text-left">{updatePillLabel()}</span>
-              <Show when={props.updateStatus?.version}>
-                {(version) => (
-                  <span class={`ml-auto font-mono text-[10px] ${updatePillVersionTone()}`}>v{version()}</span>
-                )}
-              </Show>
-            </button>
-          </Show>
-          <WorkspaceSessionList
-            workspaceSessionGroups={props.workspaceSessionGroups}
-            activeWorkspaceId={props.activeWorkspaceId}
-            selectedSessionId={props.selectedSessionId}
-            sessionStatusById={props.sessionStatusById}
-            connectingWorkspaceId={props.connectingWorkspaceId}
-            workspaceConnectionStateById={props.workspaceConnectionStateById}
-            newTaskDisabled={props.newTaskDisabled}
-            importingWorkspaceConfig={props.importingWorkspaceConfig}
-            showRemoteActions={props.showRemoteActions}
-            soulStatusByWorkspaceId={props.soulStatusByWorkspaceId}
-            isPrivateWorkspacePath={props.isPrivateWorkspacePath}
-            onActivateWorkspace={props.activateWorkspace}
-            onOpenSession={openSessionFromList}
-            onDeleteSession={openDeleteSessionModalForSession}
-            onCreateTaskInWorkspace={createTaskInWorkspace}
-            onOpenRenameWorkspace={props.openRenameWorkspace}
-            onShareWorkspace={(workspaceId) => setShareWorkspaceId(workspaceId)}
-            onOpenSoul={openSoul}
-            onRevealWorkspace={revealWorkspaceInFinder}
-            onRecoverWorkspace={props.recoverWorkspace}
-            onTestWorkspaceConnection={props.testWorkspaceConnection}
-            onEditWorkspaceConnection={props.editWorkspaceConnection}
-            onForgetWorkspace={props.forgetWorkspace}
-            onOpenCreateWorkspace={props.openCreateWorkspace}
-            onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
-            onImportWorkspaceConfig={props.importWorkspaceConfig}
-            onQuickNewSession={props.openNewSessionWithDirectory}
-            onOpenSessionSearch={() => openCommandPalette("sessions")}
-          />
+    <div
+      ref={(el) => {
+        sessionLayoutRootEl = el;
+      }}
+      class="flex h-screen w-full bg-dls-sidebar text-gray-12 font-sans overflow-hidden"
+    >
+      <div class="pointer-events-none fixed inset-x-0 top-2 z-[46] flex justify-center">
+        <div class="pointer-events-auto flex items-center gap-2 rounded-xl border border-gray-6/80 bg-gray-1/90 p-1.5 shadow-lg shadow-gray-12/10 backdrop-blur-md">
+          <button
+            type="button"
+            class={`h-9 w-9 flex items-center justify-center rounded-lg border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.22)] ${
+              leftSidebarToggleActive()
+                ? "border-gray-7 bg-gray-3 text-gray-12"
+                : "border-gray-6 bg-gray-2/80 text-gray-10 hover:bg-gray-3 hover:text-gray-12"
+            }`}
+            onClick={() => toggleSidebarMenu("left")}
+            aria-label="Toggle left menu"
+            title="Toggle left menu"
+          >
+            <LeftSidebarToggleIcon size={18} />
+          </button>
+          <button
+            type="button"
+            class={`h-9 w-9 flex items-center justify-center rounded-lg border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.22)] ${
+              rightSidebarToggleActive()
+                ? "border-gray-7 bg-gray-3 text-gray-12"
+                : "border-gray-6 bg-gray-2/80 text-gray-10 hover:bg-gray-3 hover:text-gray-12"
+            }`}
+            onClick={() => toggleSidebarMenu("right")}
+            aria-label="Toggle right menu"
+            title="Toggle right menu"
+          >
+            <RightSidebarToggleIcon size={18} />
+          </button>
         </div>
-        <SidebarStatusControls
-          clientConnected={props.clientConnected}
-          vesloServerStatus={props.vesloServerStatus}
-          authenticatedUser={props.authenticatedUser}
-          onOpenSettings={() => openSettings("general")}
-        />
+      </div>
 
-      </aside>
+      <Show when={leftDockedVisible()}>
+        <aside class="w-[260px] flex shrink-0 flex-col bg-dls-sidebar border-r border-gray-6/70 p-3 pt-12">
+          {leftSidebarContent()}
+        </aside>
+      </Show>
 
       <main class="flex-1 flex flex-col overflow-hidden bg-gray-1">
 
@@ -3789,92 +4077,37 @@ export default function SessionView(props: SessionViewProps) {
 
       </main>
 
-      <aside class="w-[280px] hidden xl:flex flex-col bg-dls-sidebar border-l border-gray-6/70 p-3">
-        <div class="flex-1 overflow-y-auto space-y-5 pt-2">
-          <div class="space-y-1 mb-2">
-          <button
-            type="button"
-            class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-              showRightSidebarSelection() && props.tab === "scheduled"
-                ? "bg-gray-4 text-gray-12"
-                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-            }`}
-            onClick={() => {
-              props.setTab("scheduled");
-              props.setView("dashboard");
-            }}
-          >
-            <History size={18} />
-            Automations
-          </button>
-          <button
-            type="button"
-            class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-              showRightSidebarSelection() && props.tab === "soul"
-                ? "bg-gray-4 text-gray-12"
-                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-            }`}
-            onClick={() => openSoul()}
-          >
-            <HeartPulse size={18} class={soulNavIconClass()} />
-            Soul
-          </button>
-          <button
-            type="button"
-            class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-              showRightSidebarSelection() && props.tab === "skills"
-                ? "bg-gray-4 text-gray-12"
-                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-            }`}
-            onClick={() => {
-              props.setTab("skills");
-              props.setView("dashboard");
-            }}
-          >
-            <Zap size={18} />
-            Skills
-          </button>
-          <button
-            type="button"
-            class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-              showRightSidebarSelection() && (props.tab === "mcp" || props.tab === "plugins")
-                ? "bg-gray-4 text-gray-12"
-                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-            }`}
-            onClick={() => {
-              props.setTab("mcp");
-              props.setView("dashboard");
-            }}
-          >
-            <Box size={18} />
-            Extensions
-          </button>
-          <Show when={props.developerMode}>
-            <button
-              type="button"
-              class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-                showRightSidebarSelection() && props.tab === "config"
-                  ? "bg-gray-4 text-gray-12"
-                  : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-              }`}
-              onClick={openConfig}
-            >
-              <SlidersHorizontal size={18} />
-              Advanced
-            </button>
-          </Show>
-          </div>
+      <Show when={rightDockedVisible()}>
+        <aside class="w-[280px] flex shrink-0 flex-col bg-dls-sidebar border-l border-gray-6/70 p-3 pt-12">
+          {rightSidebarContent()}
+        </aside>
+      </Show>
 
-          <ArtifactsPanel
-            id="sidebar-artifacts"
-            files={touchedFiles()}
-            workspaceRoot={props.activeWorkspaceRoot}
-            onRevealArtifact={revealArtifact}
-            onOpenInObsidian={openArtifactInObsidian}
-            obsidianAvailable={obsidianAvailable()}
-          />
-        </div>
-      </aside>
+      <Show when={overlayOpenSide() === "left"}>
+        <div
+          class="fixed inset-0 z-40 bg-gray-12/20 backdrop-blur-[1px]"
+          onClick={() => closeSidebarOverlay()}
+        />
+        <aside
+          class="fixed inset-y-0 left-0 z-[45] flex w-[min(260px,calc(100vw-32px))] max-w-[260px] flex-col bg-dls-sidebar border-r border-gray-6/80 p-3 pt-12 shadow-xl shadow-gray-12/20"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {leftSidebarContent()}
+        </aside>
+      </Show>
+
+      <Show when={overlayOpenSide() === "right"}>
+        <div
+          class="fixed inset-0 z-40 bg-gray-12/20 backdrop-blur-[1px]"
+          onClick={() => closeSidebarOverlay()}
+        />
+        <aside
+          class="fixed inset-y-0 right-0 z-[45] flex w-[min(280px,calc(100vw-32px))] max-w-[280px] flex-col bg-dls-sidebar border-l border-gray-6/80 p-3 pt-12 shadow-xl shadow-gray-12/20"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {rightSidebarContent()}
+        </aside>
+      </Show>
 
       <Show when={commandPaletteOpen()}>
         <div
