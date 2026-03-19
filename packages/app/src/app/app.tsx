@@ -132,6 +132,7 @@ import {
 import { currentLocale, isLanguage, setLocale, t, type Language } from "../i18n";
 import {
   isWindowsPlatform,
+  isMacPlatform,
   lastUserModelFromMessages,
   // normalizeDirectoryPath,
   parseModelRef,
@@ -163,6 +164,7 @@ import {
   orchestratorStatus,
   opencodeRouterInfo,
   setWindowDecorations,
+  setWindowTitleBarStyle,
   workspaceCopyIntoFolder,
   type OrchestratorStatus,
   type VesloServerInfo,
@@ -6417,6 +6419,15 @@ export default function App() {
         // ignore errors (e.g., window not ready)
       });
     }
+  });
+
+  // On macOS, keep native titlebar controls and surface app controls in overlay area.
+  createEffect(() => {
+    if (!isTauriRuntime() || !isMacPlatform()) return;
+    if (hideTitlebar()) return;
+    setWindowTitleBarStyle("overlay").catch(() => {
+      // ignore
+    });
   });
 
   createEffect(() => {

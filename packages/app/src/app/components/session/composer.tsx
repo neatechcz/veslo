@@ -1527,7 +1527,7 @@ export default function Composer(props: ComposerProps) {
       class={`sticky bottom-0 z-20 bg-gradient-to-t from-gray-1 via-gray-1 to-transparent px-8 ${props.compactTopSpacing ? "pt-0" : "pt-12"} pb-6`}
       style={{ contain: "layout style" }}
     >
-      <div class="max-w-[800px] mx-auto">
+      <div class="max-w-[325px] mx-auto">
         <div
           class={`bg-gray-1 border border-gray-6/80 rounded-xl overflow-visible transition-all relative group/input ${mentionOpen() || slashOpen() ? "rounded-t-none border-t-transparent" : "shadow-[0_8px_30px_rgba(0,0,0,0.08)]"
             }`}

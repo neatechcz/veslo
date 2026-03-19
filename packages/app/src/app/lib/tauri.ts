@@ -964,3 +964,15 @@ export async function opencodeRouterRestart(options: {
 export async function setWindowDecorations(decorations: boolean): Promise<void> {
   return invoke<void>("set_window_decorations", { decorations });
 }
+
+/**
+ * Set current window title bar style.
+ * Note: Tauri supports this on macOS only.
+ */
+export async function setWindowTitleBarStyle(
+  style: "visible" | "transparent" | "overlay",
+): Promise<void> {
+  if (!isTauriRuntime()) return;
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  await getCurrentWindow().setTitleBarStyle(style);
+}
