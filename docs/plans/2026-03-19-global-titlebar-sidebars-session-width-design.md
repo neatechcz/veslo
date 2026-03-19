@@ -122,6 +122,14 @@ Cons:
 - Keep associated wrappers (search strip alignment, run indicator rail, composer alignment) consistent with the same narrow content width.
 - This value is intentionally temporary for iterative tuning in follow-up feedback.
 
+## Docking vs Overlay Rule Update
+
+- The sidebar mode switch must be tied to **actual visible/docked sidebars**, not only stored docked preference.
+- Goal behavior:
+  - when there is practical room, opening left menu should dock it and shift center content right (no blocking blur overlay),
+  - overlay + backdrop should be used only when there is truly insufficient center interaction space.
+- Thresholds for narrow-mode fallback should be re-based to the new `325px` center target plus interaction padding (instead of legacy `760/784` values).
+
 ## Testing Strategy
 
 ### Unit tests

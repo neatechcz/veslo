@@ -85,13 +85,13 @@ test("initial global sidebar state defaults left visible", () => {
 **Step 2: Write failing hysteresis test**
 
 ```ts
-test("global model enters narrow below threshold and exits only at exit threshold", () => {
+test("global model enters narrow only below interactive-width threshold and exits with hysteresis", () => {
   let state = createInitialGlobalSidebarState({ left: true, right: true });
-  state = applyGlobalAvailableWidth(state, GLOBAL_CHAT_MIN_WIDTH - 1);
+  state = applyGlobalAvailableWidth(state, GLOBAL_CENTER_MIN_INTERACTIVE_WIDTH - 1);
   assert.equal(state.mode, "narrow");
-  state = applyGlobalAvailableWidth(state, GLOBAL_CHAT_MIN_WIDTH_EXIT - 1);
+  state = applyGlobalAvailableWidth(state, GLOBAL_CENTER_MIN_INTERACTIVE_WIDTH_EXIT - 1);
   assert.equal(state.mode, "narrow");
-  state = applyGlobalAvailableWidth(state, GLOBAL_CHAT_MIN_WIDTH_EXIT);
+  state = applyGlobalAvailableWidth(state, GLOBAL_CENTER_MIN_INTERACTIVE_WIDTH_EXIT);
   assert.equal(state.mode, "wide");
 });
 ```
@@ -101,7 +101,7 @@ test("global model enters narrow below threshold and exits only at exit threshol
 ```ts
 test("narrow mode keeps one overlay and blocks opposite toggle while open", () => {
   let state = createInitialGlobalSidebarState({ left: true, right: true });
-  state = applyGlobalAvailableWidth(state, GLOBAL_CHAT_MIN_WIDTH - 1);
+  state = applyGlobalAvailableWidth(state, GLOBAL_CENTER_MIN_INTERACTIVE_WIDTH - 1);
   state = toggleGlobalSidebarFromButton(state, "left");
   const unchanged = toggleGlobalSidebarFromButton(state, "right");
   assert.deepEqual(unchanged, state);
@@ -135,8 +135,8 @@ git commit -m "test: add global sidebar layout model specs"
 **Step 1: Add constants/types**
 
 ```ts
-export const GLOBAL_CHAT_MIN_WIDTH = 760;
-export const GLOBAL_CHAT_MIN_WIDTH_EXIT = 784;
+export const GLOBAL_CENTER_MIN_INTERACTIVE_WIDTH = 360;
+export const GLOBAL_CENTER_MIN_INTERACTIVE_WIDTH_EXIT = 392;
 export type GlobalSidebarSide = "left" | "right";
 export type GlobalLayoutMode = "wide" | "narrow";
 ```
@@ -150,6 +150,13 @@ export const createInitialGlobalSidebarState = (dockedPreference: { left: boolea
   dockedPreference: { ...dockedPreference },
   overlay: null as GlobalSidebarSide | null,
 });
+```
+
+**Step 2.5: Implement available-width calculation using actual docked visibility**
+
+```ts
+export const calculateGlobalAvailableWidth = (rootWidth: number, docked: { left: boolean; right: boolean }) =>
+  Math.max(0, rootWidth - (docked.left ? 260 : 0) - (docked.right ? 280 : 0));
 ```
 
 **Step 3: Implement toggle reducer rules**
@@ -403,6 +410,14 @@ const [globalSidebarState, setGlobalSidebarState] = createSignal(
 );
 ```
 
+**Step 1.5: Ensure mode decisions use candidate visible state, not only stored preference**
+
+```ts
+const next = toggleGlobalSidebarFromButton(current, side);
+const available = calculateGlobalAvailableWidth(rootWidth, next.docked);
+const resolved = applyGlobalAvailableWidth(next, available);
+```
+
 **Step 2: Wrap Session/Dashboard views in global shell**
 
 ```tsx
@@ -553,4 +568,3 @@ git log --oneline -n 12
 ```
 
 Expected: only intended files changed/committed; commit history reflects small TDD increments.
-
