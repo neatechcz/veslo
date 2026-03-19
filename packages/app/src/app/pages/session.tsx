@@ -431,6 +431,17 @@ export default function SessionView(props: SessionViewProps) {
   const rightDockedVisible = createMemo(
     () => sidebarLayoutState().mode === "wide" && sidebarLayoutState().docked.right,
   );
+  const useCompactCenterColumn = createMemo(() => {
+    const rootWidth = layoutRootWidth();
+    if (rootWidth <= 0) return false;
+    if (!leftDockedVisible() || !rightDockedVisible()) return false;
+    return availableChatWidthForLayout(rootWidth, sidebarLayoutState()) < 740;
+  });
+  const centerColumnWidthClass = (wideWidth: string) =>
+    createMemo(() => (useCompactCenterColumn() ? "max-w-[325px]" : wideWidth));
+  const searchBannerWidthClass = centerColumnWidthClass("max-w-[800px]");
+  const chatBodyWidthClass = centerColumnWidthClass("max-w-[650px]");
+  const railWidthClass = centerColumnWidthClass("max-w-[68ch]");
   const overlayOpenSide = createMemo(() =>
     sidebarLayoutState().mode === "narrow" ? sidebarLayoutState().overlay : null,
   );
@@ -3694,7 +3705,7 @@ export default function SessionView(props: SessionViewProps) {
 
         <Show when={searchOpen()}>
           <div class="border-b border-gray-5 bg-gray-2/70 px-6 py-2">
-            <div class="mx-auto flex w-full max-w-[325px] items-center gap-2 rounded-xl border border-gray-6 bg-gray-1 px-3 py-2">
+            <div class={`mx-auto flex w-full ${searchBannerWidthClass()} items-center gap-2 rounded-xl border border-gray-6 bg-gray-1 px-3 py-2`}>
               <Search size={14} class="text-gray-9" />
               <input
                 ref={(el) => (searchInputEl = el)}
@@ -3752,7 +3763,7 @@ export default function SessionView(props: SessionViewProps) {
 
         <Show when={props.showSkillReloadBanner}>
           <div class="border-b border-amber-6/50 bg-amber-2/70 px-6 py-3">
-            <div class="mx-auto flex w-full max-w-[325px] flex-col gap-3 rounded-2xl border border-amber-6/60 bg-amber-1/80 px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+            <div class={`mx-auto flex w-full ${searchBannerWidthClass()} flex-col gap-3 rounded-2xl border border-amber-6/60 bg-amber-1/80 px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between`}>
               <div class="min-w-0">
                 <div class="text-sm font-medium text-amber-11">{props.reloadBannerTitle}</div>
                 <div class="mt-0.5 text-xs text-amber-11/80">
@@ -3807,7 +3818,7 @@ export default function SessionView(props: SessionViewProps) {
                 setIsChatContainerReady(Boolean(el));
               }}
             >
-              <div class="max-w-[325px] mx-auto w-full">
+              <div class={`mx-auto w-full ${chatBodyWidthClass()}`}>
             <Show when={showWorkspaceSetupEmptyState()}>
               <div class="mx-auto max-w-xl rounded-3xl border border-gray-6 bg-gray-2/60 p-8 text-center shadow-sm">
                 <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-gray-6 bg-gray-1 text-gray-11">
@@ -3908,7 +3919,7 @@ export default function SessionView(props: SessionViewProps) {
             footer={
               showRunIndicator() ? (
                 <div class="flex justify-start pl-2">
-                  <div class="w-full max-w-[325px]">
+                  <div class={`w-full ${railWidthClass()}`}>
                     <div
                       class={`flex items-center gap-2 text-xs py-1 ${runPhase() === "error" ? "text-red-11" : "text-gray-9"}`}
                       role="status"
@@ -3957,7 +3968,7 @@ export default function SessionView(props: SessionViewProps) {
         </div>
 
       <Show when={todoCount() > 0}>
-        <div class="mx-auto w-full max-w-[325px] px-4">
+        <div class={`mx-auto w-full ${railWidthClass()} px-4`}>
           <div class="rounded-t-xl border border-b-0 border-gray-6/70 bg-gray-1/70 shadow-sm shadow-gray-12/5">
             <button
               type="button"
@@ -4030,6 +4041,7 @@ export default function SessionView(props: SessionViewProps) {
               busy={props.busy}
               isStreaming={showRunIndicator()}
               compactTopSpacing={todoCount() > 0}
+              compactWidth={useCompactCenterColumn()}
               onSend={handleSendPrompt}
               onStop={cancelRun}
               onDraftChange={handleDraftChange}
