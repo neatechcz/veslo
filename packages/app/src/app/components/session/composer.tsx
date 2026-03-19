@@ -7,6 +7,7 @@ import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, Slash
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { currentLocale, t } from "../../../i18n";
 import { extractFilesFromDataTransfer } from "../../utils/data-transfer-files";
+import { resolveShortComposerDisclaimer } from "./composer-disclaimer";
 import { resolveComposerWorkspaceLabel } from "./composer-workspace-label";
 import { nextAgentModeOnShiftTab } from "../../pages/session-shortcuts";
 
@@ -425,6 +426,8 @@ export default function Composer(props: ComposerProps) {
   const translate = (key: string) => t(key, currentLocale());
   let editorRef: HTMLDivElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
+  let disclaimerContainerRef: HTMLDivElement | undefined;
+  let disclaimerMeasureFullRef: HTMLSpanElement | undefined;
   let mentionSearchRun = 0;
   let suppressPromptSync = false;
   let pasteCounter = 0;
@@ -470,6 +473,22 @@ export default function Composer(props: ComposerProps) {
       remoteLabel: translate("session.remote_workspace_label"),
     }),
   );
+  const disclaimerFullText = createMemo(() => translate("session.composer_disclaimer").trim());
+  const disclaimerShortText = createMemo(() => {
+    const resolved = resolveShortComposerDisclaimer(disclaimerFullText());
+    return resolved || disclaimerFullText();
+  });
+  const [useShortDisclaimer, setUseShortDisclaimer] = createSignal(false);
+  const disclaimerText = createMemo(() => (useShortDisclaimer() ? disclaimerShortText() : disclaimerFullText()));
+
+  const updateDisclaimerLayout = () => {
+    const container = disclaimerContainerRef;
+    const measure = disclaimerMeasureFullRef;
+    if (!container || !measure) return;
+    const availableWidth = container.clientWidth;
+    if (availableWidth <= 0) return;
+    setUseShortDisclaimer(measure.offsetWidth > availableWidth);
+  };
 
   onCleanup(() => {
     for (const url of objectUrls) {
@@ -515,6 +534,23 @@ export default function Composer(props: ComposerProps) {
         });
       });
     }
+
+    let disclaimerResizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined" && disclaimerContainerRef) {
+      disclaimerResizeObserver = new ResizeObserver(() => updateDisclaimerLayout());
+      disclaimerResizeObserver.observe(disclaimerContainerRef);
+    }
+
+    queueMicrotask(updateDisclaimerLayout);
+    onCleanup(() => {
+      disclaimerResizeObserver?.disconnect();
+    });
+  });
+
+  createEffect(() => {
+    disclaimerFullText();
+    disclaimerShortText();
+    queueMicrotask(updateDisclaimerLayout);
   });
 
   const mentionGroups = createMemo<MentionGroup[]>(() => {
@@ -1767,9 +1803,9 @@ export default function Composer(props: ComposerProps) {
                       </Show>
 
                       <div class="ml-auto flex min-w-0 items-center gap-2 text-gray-10">
-                        <div class="max-w-[320px] min-w-0 flex-1">
-                          <span class="block text-[11px] leading-4 text-gray-9 truncate pr-4" title={translate("session.composer_disclaimer")}>
-                            {translate("session.composer_disclaimer")}
+                        <div ref={disclaimerContainerRef} class="max-w-[420px] min-w-0 flex-1">
+                          <span class="block text-[11px] leading-4 text-gray-9 truncate whitespace-nowrap" title={disclaimerFullText()}>
+                            {disclaimerText()}
                           </span>
                         </div>
                         <Show
@@ -1798,6 +1834,15 @@ export default function Composer(props: ComposerProps) {
                             <Square size={14} fill="currentColor" />
                           </button>
                         </Show>
+                      </div>
+
+                      <div
+                        aria-hidden="true"
+                        style="position: absolute; left: -9999px; top: -9999px; visibility: hidden; pointer-events: none;"
+                      >
+                        <span ref={disclaimerMeasureFullRef} class="text-[11px] leading-4 text-gray-9 whitespace-nowrap">
+                          {disclaimerFullText()}
+                        </span>
                       </div>
                     </div>
                   </div>

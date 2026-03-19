@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { resolveComposerWorkspaceLabel } from "./composer-workspace-label.js";
 
-test("shows folder path for local workspace when a non-temporary folder is active", () => {
+test("shows only the last directory name for local workspace paths", () => {
   const result = resolveComposerWorkspaceLabel({
     isRemoteWorkspace: false,
     localWorkspacePath: "/Users/vaclavsoukup/AI agent projects/Openwork",
@@ -12,7 +12,21 @@ test("shows folder path for local workspace when a non-temporary folder is activ
   });
 
   assert.deepEqual(result, {
-    label: "/Users/vaclavsoukup/AI agent projects/Openwork",
+    label: "Openwork",
+    usePathStyle: true,
+  });
+});
+
+test("handles Windows-style local workspace paths", () => {
+  const result = resolveComposerWorkspaceLabel({
+    isRemoteWorkspace: false,
+    localWorkspacePath: "C:\\Users\\vaclav\\Projects\\Openwork\\",
+    localLabel: "Local workspace",
+    remoteLabel: "Remote workspace",
+  });
+
+  assert.deepEqual(result, {
+    label: "Openwork",
     usePathStyle: true,
   });
 });

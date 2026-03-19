@@ -10,6 +10,14 @@ export type ComposerWorkspaceLabel = {
   usePathStyle: boolean;
 };
 
+const resolveLastPathSegment = (value: string): string => {
+  const normalized = value.trim().replace(/[\\/]+$/g, "");
+  if (!normalized) return "";
+
+  const segments = normalized.split(/[/\\]+/).filter(Boolean);
+  return segments.at(-1)?.trim() || normalized;
+};
+
 export const resolveComposerWorkspaceLabel = (
   input: ComposerWorkspaceLabelInput,
 ): ComposerWorkspaceLabel => {
@@ -22,8 +30,9 @@ export const resolveComposerWorkspaceLabel = (
 
   const localPath = input.localWorkspacePath?.trim() ?? "";
   if (localPath) {
+    const leafName = resolveLastPathSegment(localPath);
     return {
-      label: localPath,
+      label: leafName || localPath,
       usePathStyle: true,
     };
   }

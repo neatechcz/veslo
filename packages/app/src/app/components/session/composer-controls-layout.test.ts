@@ -25,13 +25,13 @@ test("composer uses a compact control rail below the editor", () => {
 
   assert.match(
     composerSource,
-    /class="block text-\[11px\] leading-4 text-gray-9 truncate pr-4"/,
-    "composer disclaimer should render as a block with extra right padding so last words stay clear of send/stop controls",
+    /class="block text-\[11px\] leading-4 text-gray-9 truncate whitespace-nowrap"/,
+    "composer disclaimer should render as a single-line block and use adaptive copy to avoid clipping",
   );
 
   assert.match(
     composerSource,
-    /class="inline-flex items-center rounded-lg border border-gray-6\/80 bg-gray-2 p-0\.5"[\s\S]*translate\("session\.choose_folder"\)[\s\S]*translate\("session\.composer_disclaimer"\)/,
+    /class="inline-flex items-center rounded-lg border border-gray-6\/80 bg-gray-2 p-0\.5"[\s\S]*translate\("session\.choose_folder"\)[\s\S]*disclaimerText\(\)/,
     "folder controls should sit between mode selection and disclaimer in the compact rail",
   );
 
