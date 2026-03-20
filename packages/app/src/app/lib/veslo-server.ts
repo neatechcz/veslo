@@ -2,6 +2,7 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 import type { ScheduledJob } from "./tauri";
 import { mergeVesloServerSettingsWithEnv } from "./cloud-policy";
+import { fetchWithTimeout } from "./http";
 
 export type VesloServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "veslo" | "opencode" };
@@ -1034,47 +1035,6 @@ function buildAuthHeaders(token?: string, hostToken?: string, extra?: Record<str
 const resolveFetch = () => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
 
 const DEFAULT_VESLO_SERVER_TIMEOUT_MS = 10_000;
-
-type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-
-async function fetchWithTimeout(
-  fetchImpl: FetchLike,
-  url: string,
-  init: RequestInit,
-  timeoutMs: number,
-) {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return fetchImpl(url, init);
-  }
-
-  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const signal = controller?.signal;
-  const initWithSignal = signal && !init.signal ? { ...init, signal } : init;
-
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      try {
-        controller?.abort();
-      } catch {
-        // ignore
-      }
-      reject(new Error("Request timed out."));
-    }, timeoutMs);
-  });
-
-  try {
-    return await Promise.race([fetchImpl(url, initWithSignal), timeoutPromise]);
-  } catch (error) {
-    const name = (error && typeof error === "object" && "name" in error ? (error as any).name : "") as string;
-    if (name === "AbortError") {
-      throw new Error("Request timed out.");
-    }
-    throw error;
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
-}
 
 async function requestJson<T>(
   baseUrl: string,

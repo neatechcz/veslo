@@ -2,6 +2,7 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 import { isTauriRuntime } from "../utils";
+import { fetchWithTimeout } from "./http";
 
 type FieldsResult<T> =
   | ({ data: T; error?: undefined } & { request: Request; response: Response })
@@ -34,45 +35,6 @@ function resolveRequestTimeoutMs(input: RequestInfo | URL, fallbackMs: number): 
     return Math.max(fallbackMs, MCP_AUTH_OPENCODE_REQUEST_TIMEOUT_MS);
   }
   return fallbackMs;
-}
-
-async function fetchWithTimeout(
-  fetchImpl: typeof globalThis.fetch,
-  input: RequestInfo | URL,
-  init: RequestInit | undefined,
-  timeoutMs: number,
-) {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return fetchImpl(input, init);
-  }
-
-  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const signal = controller?.signal;
-  const initWithSignal = signal && !init?.signal ? { ...(init ?? {}), signal } : init;
-
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      try {
-        controller?.abort();
-      } catch {
-        // ignore
-      }
-      reject(new Error("Request timed out."));
-    }, timeoutMs);
-  });
-
-  try {
-    return await Promise.race([fetchImpl(input, initWithSignal), timeoutPromise]);
-  } catch (error) {
-    const name = (error && typeof error === "object" && "name" in error ? (error as any).name : "") as string;
-    if (name === "AbortError") {
-      throw new Error("Request timed out.");
-    }
-    throw error;
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
 }
 
 const encodeBasicAuth = (auth?: OpencodeAuth) => {
