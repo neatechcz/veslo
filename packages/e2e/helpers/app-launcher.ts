@@ -106,7 +106,17 @@ export function stopApp(): void {
   }
 }
 
-/** Utility for HashRouter-based URL assertions. */
-export function hashUrl(path: string): string {
+/** Utility for HashRouter-based URL assertions (just the fragment). */
+export function hashFragment(path: string): string {
   return `#${path.startsWith('/') ? path : '/' + path}`;
+}
+
+/**
+ * Navigate to a hash route in the Tauri app.
+ * WebDriver's browser.url() requires a full URL, so we use
+ * window.location.hash to navigate within the HashRouter.
+ */
+export async function navigateToHash(path: string): Promise<void> {
+  const hash = path.startsWith('/') ? path : '/' + path;
+  await browser.execute((h: string) => { window.location.hash = h; }, hash);
 }

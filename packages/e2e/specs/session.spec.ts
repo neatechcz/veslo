@@ -1,9 +1,9 @@
 import { expect } from '@wdio/globals';
-import { hashUrl } from '../helpers/app-launcher.js';
+import { navigateToHash } from '../helpers/app-launcher.js';
 
 describe('Session management', () => {
   before(async () => {
-    await browser.url(hashUrl('/session'));
+    await navigateToHash('/session');
     await browser.waitUntil(
       async () => (await browser.getUrl()).includes('#/session'),
       { timeout: 5000 }
@@ -16,9 +16,8 @@ describe('Session management', () => {
     expect(await root.isDisplayed()).toBe(true);
   });
 
-  it('should show the "New task" button or equivalent session creator', async () => {
+  it('should show buttons in the UI', async () => {
     const buttons = await $$('button');
-    const buttonTexts = await Promise.all(buttons.map(b => b.getText()));
     expect(buttons.length).toBeGreaterThan(0);
   });
 

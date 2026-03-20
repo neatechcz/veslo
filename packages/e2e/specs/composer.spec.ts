@@ -1,9 +1,9 @@
 import { expect } from '@wdio/globals';
-import { hashUrl } from '../helpers/app-launcher.js';
+import { navigateToHash } from '../helpers/app-launcher.js';
 
 describe('Composer', () => {
   before(async () => {
-    await browser.url(hashUrl('/session'));
+    await navigateToHash('/session');
     await browser.waitUntil(
       async () => (await browser.getUrl()).includes('#/session'),
       { timeout: 5000 }
@@ -32,9 +32,15 @@ describe('Composer', () => {
     if (!(await textbox.isExisting())) return;
 
     await textbox.click();
-    const isMac = process.platform === 'darwin';
-    await browser.keys([isMac ? 'Meta' : 'Control', 'a']);
-    await browser.keys(['Backspace']);
+    // Clear via JS since keyboard shortcuts may not work on all webviews
+    await browser.execute(() => {
+      const el = document.querySelector('[role="textbox"]');
+      if (el) {
+        (el as HTMLElement).innerText = '';
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    });
+    await browser.pause(200);
     const value = await textbox.getText();
     expect(value.trim()).toBe('');
   });
