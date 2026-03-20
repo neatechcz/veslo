@@ -21,6 +21,7 @@ import {
   writeStartupPreference,
 } from "../utils";
 import { LANGUAGE_PREF_KEY } from "../constants";
+import { reportError } from "../lib/error-reporter";
 import { unwrap } from "../lib/opencode";
 import { readDenAuth, clearDenAuth, validateDenAuth } from "../lib/den-auth";
 import {
@@ -401,7 +402,7 @@ export function createWorkspaceStore(options: {
   };
 
   if (isTauriRuntime()) {
-    void buildPrivateWorkspaceRoot().catch(() => undefined);
+    void buildPrivateWorkspaceRoot().catch(e => reportError(e, "workspace.buildPrivateRoot"));
   }
 
   const updateWorkspaceConnectionState = (
@@ -759,7 +760,7 @@ export function createWorkspaceStore(options: {
             auth ?? undefined,
             { quiet: true, navigate: false },
           )
-            .catch(() => undefined)
+            .catch(e => reportError(e, "workspace.reconnect"))
             .finally(() => {
               reconnectingEngine = false;
             });
@@ -1408,8 +1409,8 @@ export function createWorkspaceStore(options: {
         return false;
       }
 
-      options.refreshSkills({ force: true }).catch(() => undefined);
-      options.refreshPlugins().catch(() => undefined);
+      options.refreshSkills({ force: true }).catch(e => reportError(e, "workspace.refreshSkills"));
+      options.refreshPlugins().catch(e => reportError(e, "workspace.refreshPlugins"));
       updateWorkspaceConnectionState(id, { status: "connected", message: null });
       wsDebug("activate:local:done", { id, ms: Date.now() - activateStart });
       return true;
@@ -1610,8 +1611,8 @@ export function createWorkspaceStore(options: {
         options.setPendingPermissions([]);
         options.setSessionStatusById({});
 
-        options.refreshSkills({ force: true }).catch(() => undefined);
-        options.refreshPlugins().catch(() => undefined);
+        options.refreshSkills({ force: true }).catch(e => reportError(e, "workspace.refreshSkills"));
+        options.refreshPlugins().catch(e => reportError(e, "workspace.refreshPlugins"));
         if (navigate && !options.selectedSessionId()) {
           options.setTab("scheduled");
           options.setView("session");
@@ -2717,7 +2718,7 @@ export function createWorkspaceStore(options: {
         .slice(0, 60);
       const dateStamp = new Date().toISOString().slice(0, 10);
       const fileName = `veslo-${nameBase || "worker"}-${dateStamp}.veslo-workspace`;
-      const downloads = await downloadDir().catch(() => null);
+      const downloads = await downloadDir().catch(e => { reportError(e, "workspace.downloadDir"); return null; });
       const defaultPath = downloads ? `${downloads}/${fileName}` : fileName;
 
       const outputPath = await saveFile({
@@ -3423,6 +3424,7 @@ export function createWorkspaceStore(options: {
     const line = `[${Date.now()}] ${msg}`;
     console.log("[boot]", msg);
     if (!wsDebugEnabled() || !isTauriRuntime()) return;
+    // Intentionally silent: localhost debug telemetry — failure is expected when no debug server is running
     try { fetch("http://127.0.0.1:9876", { method: "POST", body: line, mode: "no-cors" }).catch(() => {}); } catch { /* ignore */ }
   }
 

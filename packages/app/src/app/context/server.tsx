@@ -3,6 +3,7 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 import { isTauriRuntime } from "../utils";
+import { reportError } from "../lib/error-reporter";
 
 export function normalizeServerUrl(input: string) {
   const trimmed = input.trim();
@@ -120,7 +121,7 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
     return client.global
       .health()
       .then((result) => result.data?.healthy === true)
-      .catch(() => false);
+      .catch(e => { reportError(e, "server.healthCheck"); return false; });
   };
 
   createEffect(() => {

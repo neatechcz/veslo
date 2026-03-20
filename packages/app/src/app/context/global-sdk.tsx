@@ -11,6 +11,7 @@ import {
 } from "solid-js";
 
 import { extractSessionId } from "../utils";
+import { reportError } from "../lib/error-reporter";
 import { usePlatform } from "./platform";
 import { useServer } from "./server";
 
@@ -155,7 +156,7 @@ export function GlobalSDKProvider(props: ParentProps) {
       }
     })()
       .finally(stop)
-      .catch(() => undefined);
+      .catch(e => reportError(e, "sse.subscribe"));
 
     onCleanup(() => {
       abort.abort();

@@ -27,6 +27,7 @@ import { listen, type Event as TauriEvent } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parse } from "jsonc-parser";
 
+import { reportError } from "./lib/error-reporter";
 import ModelPickerModal from "./components/model-picker-modal";
 import ResetModal from "./components/reset-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
@@ -2070,7 +2071,7 @@ export default function App() {
     }
     
     await renameSession(sessionID, trimmed);
-    await refreshSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
+    await refreshSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(e => reportError(e, "sidebar.refreshSessions"));
   }
 
   async function deleteSessionById(sessionID: string, workspaceID?: string) {
@@ -3241,11 +3242,11 @@ export default function App() {
     // Remote->local switches commonly change engineBaseUrl, and refreshing every remote workspace
     // at the same time can trigger large /session responses and UI hangs.
     if (engineChanged && !workspacesChanged) {
-      void refreshLocalSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
+      void refreshLocalSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(e => reportError(e, "sidebar.refreshLocal"));
       return;
     }
 
-    void refreshAllSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
+    void refreshAllSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(e => reportError(e, "sidebar.refreshAll"));
   });
 
   createEffect(() => {
@@ -3255,7 +3256,7 @@ export default function App() {
     // Only auto-load once per workspace activation.
     // If a remote is offline, repeated retries here can create an endless refresh loop.
     if (status !== "idle") return;
-    refreshSidebarWorkspaceSessions(id).catch(() => undefined);
+    refreshSidebarWorkspaceSessions(id).catch(e => reportError(e, "sidebar.refreshSessions"));
   });
 
   createEffect(() => {
@@ -4011,7 +4012,7 @@ export default function App() {
             vesloHostUrl: derived,
             vesloToken: next.token ?? null,
           })
-          .catch(() => undefined);
+          .catch(e => reportError(e, "workspace.createRemoteFlow"));
       }
     }
     return ok;
@@ -4654,7 +4655,7 @@ export default function App() {
     const key = [status, hasClient ? "1" : "0", activeWorkspaceId, workspacesKey].join("::");
     if (key === lastSoulRefreshKey) return;
     lastSoulRefreshKey = key;
-    void refreshSoulData().catch(() => undefined);
+    void refreshSoulData().catch(e => reportError(e, "soul.refresh"));
   });
 
   createEffect(() => {
@@ -5796,7 +5797,7 @@ export default function App() {
       }));
 
       await selectSession(sessionID);
-      await refreshSidebarWorkspaceSessions(targetWorkspace.id).catch(() => undefined);
+      await refreshSidebarWorkspaceSessions(targetWorkspace.id).catch(e => reportError(e, "sidebar.refreshSessions"));
 
       if (sourceWorkspaceId && sourceWorkspaceId !== targetWorkspace.id) {
         await workspaceStore.forgetWorkspace(sourceWorkspaceId);
@@ -6037,7 +6038,7 @@ export default function App() {
           setNotionStatusDetail(t("mcp.connecting", currentLocale()));
         }
 
-        void refreshMcpServers().catch(() => undefined);
+        void refreshMcpServers().catch(e => reportError(e, "mcp.refreshServers"));
 
         const storedNotionSkillInstalled = window.localStorage.getItem("veslo.notionSkillInstalled");
         if (storedNotionSkillInstalled === "1") {
@@ -6063,7 +6064,7 @@ export default function App() {
 
       if (!launchUpdateCheckTriggered()) {
         setLaunchUpdateCheckTriggered(true);
-        checkForUpdates({ quiet: true }).catch(() => undefined);
+        checkForUpdates({ quiet: true }).catch(e => reportError(e, "updates.check"));
       }
 
       try {
@@ -6413,9 +6414,7 @@ export default function App() {
     }
     // Apply to window decorations (only in Tauri desktop environment)
     if (isTauriRuntime()) {
-      setWindowDecorations(!hide).catch(() => {
-        // ignore errors (e.g., window not ready)
-      });
+      setWindowDecorations(!hide).catch(e => reportError(e, "titlebar.setDecorations"));
     }
   });
 
@@ -6466,7 +6465,7 @@ export default function App() {
     if (state.state === "checking" || state.state === "downloading") return;
 
     setLaunchUpdateCheckTriggered(true);
-    checkForUpdates({ quiet: true }).catch(() => undefined);
+    checkForUpdates({ quiet: true }).catch(e => reportError(e, "updates.check"));
   });
 
   createEffect(() => {
@@ -6481,7 +6480,7 @@ export default function App() {
       const state = updateStatus();
       if (state.state === "checking" || state.state === "downloading") return;
       if (!shouldAutoCheckForUpdates()) return;
-      checkForUpdates({ quiet: true }).catch(() => undefined);
+      checkForUpdates({ quiet: true }).catch(e => reportError(e, "updates.check"));
     };
 
     const interval = window.setInterval(maybeRunAutoUpdateCheck, UPDATE_AUTO_CHECK_POLL_MS);
@@ -6496,7 +6495,7 @@ export default function App() {
     if (state.state !== "available") return;
     if (!pendingUpdate()) return;
 
-    downloadUpdate().catch(() => undefined);
+    downloadUpdate().catch(e => reportError(e, "updates.download"));
   });
 
   const headerConnectedVersion = createMemo(() => {
@@ -6858,7 +6857,7 @@ export default function App() {
       scheduledJobsBusy: scheduledJobsBusy(),
       scheduledJobsUpdatedAt: scheduledJobsUpdatedAt(),
       refreshScheduledJobs: (options?: { force?: boolean }) =>
-        refreshScheduledJobs(options).catch(() => undefined),
+        refreshScheduledJobs(options).catch(e => reportError(e, "scheduled.refresh")),
       deleteScheduledJob,
       soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
       activeSoulStatus: activeSoulStatus(),
@@ -6866,14 +6865,14 @@ export default function App() {
       soulStatusBusy: soulStatusBusy(),
       soulHeartbeatsBusy: soulHeartbeatsBusy(),
       soulError: soulError(),
-      refreshSoulData: (options?: { force?: boolean }) => refreshSoulData(options).catch(() => undefined),
+      refreshSoulData: (options?: { force?: boolean }) => refreshSoulData(options).catch(e => reportError(e, "soul.refresh")),
       runSoulPrompt,
       activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
       isRemoteWorkspace: workspaceStore.activeWorkspaceDisplay().workspaceType === "remote",
-      refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
-      refreshHubSkills: (options?: { force?: boolean }) => refreshHubSkills(options).catch(() => undefined),
+      refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(e => reportError(e, "skills.refresh")),
+      refreshHubSkills: (options?: { force?: boolean }) => refreshHubSkills(options).catch(e => reportError(e, "skills.refreshHub")),
       refreshPlugins: (scopeOverride?: PluginScope) =>
-        refreshPlugins(scopeOverride).catch(() => undefined),
+        refreshPlugins(scopeOverride).catch(e => reportError(e, "plugins.refresh")),
       skills: skills(),
       skillsStatus: skillsStatus(),
       hubSkills: hubSkills(),

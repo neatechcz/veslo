@@ -21,6 +21,7 @@ import type {
   StartupPreference,
 } from "../types";
 
+import { reportError } from "../lib/error-reporter";
 import {
   obsidianIsAvailable,
   openInObsidian,
@@ -3206,7 +3207,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const handleSendPrompt = (draft: ComposerDraft) => {
     startRun();
-    props.sendPromptAsync(draft).catch(() => undefined);
+    props.sendPromptAsync(draft).catch(e => reportError(e, "session.sendPrompt"));
   };
 
   const handleBrowserAutomationQuickstart = () => {

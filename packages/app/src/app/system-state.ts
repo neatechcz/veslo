@@ -6,6 +6,7 @@ import type { ProviderListItem } from "./types";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
+import { reportError } from "./lib/error-reporter";
 import type {
   Client,
   PluginScope,
@@ -333,9 +334,9 @@ export function createSystemState(options: {
         }
       }
 
-      await options.refreshPlugins("project").catch(() => undefined);
-      await options.refreshSkills({ force: true }).catch(() => undefined);
-      await options.refreshMcpServers?.().catch(() => undefined);
+      await options.refreshPlugins("project").catch(e => reportError(e, "reload.refreshPlugins"));
+      await options.refreshSkills({ force: true }).catch(e => reportError(e, "reload.refreshSkills"));
+      await options.refreshMcpServers?.().catch(e => reportError(e, "reload.refreshMcpServers"));
 
       if (options.notion) {
         let nextStatus = options.notion.status();
