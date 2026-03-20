@@ -974,5 +974,10 @@ export async function setWindowTitleBarStyle(
 ): Promise<void> {
   if (!isTauriRuntime()) return;
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
-  await getCurrentWindow().setTitleBarStyle(style);
+  try {
+    await getCurrentWindow().setTitleBarStyle(style);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[tauri.setWindowTitleBarStyle] Failed to set title bar style "${style}": ${message}`);
+  }
 }

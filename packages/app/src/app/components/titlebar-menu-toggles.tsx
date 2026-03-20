@@ -1,5 +1,6 @@
-import { isTauriRuntime, isWindowsPlatform } from "../utils";
+import { isMacPlatform, isTauriRuntime, isWindowsPlatform } from "../utils";
 import { LeftSidebarToggleIcon, RightSidebarToggleIcon } from "./session/sidebar-toggle-icons";
+import { resolveTitlebarMenuLayout } from "./titlebar-menu-layout";
 
 type TitlebarMenuTogglesProps = {
   leftActive: boolean;
@@ -9,10 +10,11 @@ type TitlebarMenuTogglesProps = {
 };
 
 export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
-  const tauri = isTauriRuntime();
-  const windows = isWindowsPlatform();
-  const leftOffsetClass = tauri ? (windows ? "ml-3" : "ml-[72px]") : "ml-2";
-  const rightOffsetClass = tauri ? (windows ? "mr-[140px]" : "mr-3") : "mr-2";
+  const layout = resolveTitlebarMenuLayout({
+    tauri: isTauriRuntime(),
+    windows: isWindowsPlatform(),
+    mac: isMacPlatform(),
+  });
 
   const buttonClass = (active: boolean) =>
     `h-9 w-9 flex items-center justify-center rounded-lg border shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.22)] ${
@@ -23,13 +25,9 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
 
   return (
     <div
-      class={
-        tauri
-          ? "pointer-events-none fixed inset-x-0 top-1 z-[60] flex items-center justify-between"
-          : "pointer-events-none fixed inset-y-0 left-0 right-0 z-[60] flex items-center justify-between"
-      }
+      class={layout.rootClass}
     >
-      <div class={`pointer-events-auto ${leftOffsetClass}`}>
+      <div class={layout.leftOffsetClass}>
         <button
           type="button"
           class={buttonClass(props.leftActive)}
@@ -41,7 +39,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
         </button>
       </div>
 
-      <div class={`pointer-events-auto ${rightOffsetClass}`}>
+      <div class={layout.rightOffsetClass}>
         <button
           type="button"
           class={buttonClass(props.rightActive)}

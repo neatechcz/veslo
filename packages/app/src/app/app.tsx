@@ -6424,9 +6424,17 @@ export default function App() {
   // On macOS, keep native titlebar controls and surface app controls in overlay area.
   createEffect(() => {
     if (!isTauriRuntime() || !isMacPlatform()) return;
-    if (hideTitlebar()) return;
-    setWindowTitleBarStyle("overlay").catch(() => {
-      // ignore
+    const titlebarHidden = hideTitlebar();
+    if (titlebarHidden) return;
+    setWindowTitleBarStyle("overlay").catch((error) => {
+      console.error("[app.titlebar] Failed to apply macOS overlay titlebar style", {
+        runtime: "tauri",
+        platform: "macOS",
+        hideTitlebar: titlebarHidden,
+        style: "overlay",
+        error: error instanceof Error ? error.message : String(error),
+        cause: error,
+      });
     });
   });
 
