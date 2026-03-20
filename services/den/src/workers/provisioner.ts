@@ -203,12 +203,8 @@ async function provisionWorkerOnRender(input: ProvisionInput): Promise<Provision
 
   const serviceName = slug(`${env.render.workerNamePrefix}-${input.name}-${input.workerId.slice(0, 8)}`).slice(0, 62)
   const runOrchestratorCommand = [
-    "runner=''",
-    "if command -v openwork >/dev/null 2>&1; then runner='openwork';",
-    "elif command -v openwork-orchestrator >/dev/null 2>&1; then runner='openwork-orchestrator';",
-    "elif command -v veslo >/dev/null 2>&1; then runner='veslo';",
-    "else echo 'No orchestrator CLI found (openwork/openwork-orchestrator/veslo)' >&2; exit 1; fi;",
-    "$runner serve --workspace /tmp/workspace --veslo-host 0.0.0.0 --veslo-port ${PORT:-10000} --opencode-host 127.0.0.1 --opencode-port 4096 --connect-host 127.0.0.1 --cors '*' --approval manual --no-veslo-code-router --verbose",
+    "if ! command -v veslo >/dev/null 2>&1; then echo 'No orchestrator CLI found (veslo)' >&2; exit 1; fi;",
+    "veslo serve --workspace /tmp/workspace --veslo-host 0.0.0.0 --veslo-port ${PORT:-10000} --opencode-host 127.0.0.1 --opencode-port 4096 --connect-host 127.0.0.1 --cors '*' --approval manual --no-veslo-code-router --verbose",
   ].join(" ")
   const startCommand = [
     "mkdir -p /tmp/workspace",
@@ -234,7 +230,7 @@ async function provisionWorkerOnRender(input: ProvisionInput): Promise<Provision
       region: env.render.workerRegion,
       healthCheckPath: "/health",
       envSpecificDetails: {
-        buildCommand: `npm install -g openwork-orchestrator@${env.render.workerVesloVersion} || npm install -g veslo-orchestrator@${env.render.workerVesloVersion}`,
+        buildCommand: `npm install -g veslo-orchestrator@${env.render.workerVesloVersion}`,
         startCommand,
       },
     },

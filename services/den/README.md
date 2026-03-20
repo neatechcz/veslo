@@ -46,7 +46,7 @@ cp .env.development .env
 - `RENDER_WORKER_ROOT_DIR` render `rootDir` for worker services
 - `RENDER_WORKER_PLAN` Render plan for worker services
 - `RENDER_WORKER_REGION` Render region for worker services
-- `RENDER_WORKER_VESLO_VERSION` orchestrator npm version installed in workers (`openwork-orchestrator` preferred; falls back to legacy `veslo-orchestrator`)
+- `RENDER_WORKER_VESLO_VERSION` orchestrator npm version installed in workers (`veslo-orchestrator`)
 - `RENDER_WORKER_NAME_PREFIX` service name prefix
 - `RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` optional domain suffix for worker custom URLs (e.g. `veslo.studio` -> `<worker-id>.veslo.studio`)
 - `RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` max time to wait for vanity URL health before falling back to Render URL
@@ -134,7 +134,7 @@ Optional GitHub Actions variable:
 
 - `DEN_RENDER_WORKER_REPO` (defaults to `https://github.com/<github.repository>` in workflow, or `https://github.com/neatechcz/veslo` fallback)
 - `DEN_RENDER_WORKER_PLAN` (defaults to `standard`)
-- `DEN_RENDER_WORKER_VESLO_VERSION` (defaults to `0.11.113` and is used for `openwork-orchestrator`, with legacy fallback to `veslo-orchestrator`)
+- `DEN_RENDER_WORKER_VESLO_VERSION` (defaults to `0.11.113` and is used for `veslo-orchestrator`)
 - `DEN_CORS_ORIGINS` (defaults to `https://app.veslo.neatech.com,https://api.veslo.neatech.com,<render-service-url>`)
 - `DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` (defaults to `veslo.studio`)
 - `DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` (defaults to `240000`)
