@@ -17,16 +17,15 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
   });
 
   const buttonClass = (active: boolean) =>
-    `h-9 w-9 flex items-center justify-center rounded-lg border shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.22)] ${
+    `h-6 w-6 flex items-center justify-center bg-transparent transition-colors focus:outline-none focus-visible:ring-0 ${
       active
-        ? "border-gray-7 bg-gray-3 text-gray-12"
-        : "border-gray-6 bg-gray-2/80 text-gray-10 hover:bg-gray-3 hover:text-gray-12"
+        ? "text-gray-12"
+        : "text-gray-9 hover:text-gray-12"
     }`;
 
   return (
-    <div
-      class={layout.rootClass}
-    >
+    <div class={layout.rootClass}>
+      {layout.dragRegionClass ? <div data-tauri-drag-region class={layout.dragRegionClass} /> : null}
       <div class={layout.leftOffsetClass}>
         <button
           type="button"
@@ -35,7 +34,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
           aria-label="Toggle left menu"
           title="Toggle left menu"
         >
-          <LeftSidebarToggleIcon size={18} />
+          <LeftSidebarToggleIcon size={13} />
         </button>
       </div>
 
@@ -47,7 +46,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
           aria-label="Toggle right menu"
           title="Toggle right menu"
         >
-          <RightSidebarToggleIcon size={18} />
+          <RightSidebarToggleIcon size={13} />
         </button>
       </div>
     </div>
