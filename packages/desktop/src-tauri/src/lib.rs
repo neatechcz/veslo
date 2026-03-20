@@ -55,7 +55,7 @@ use engine::manager::EngineManager;
 use opencode_router::manager::OpenCodeRouterManager;
 use veslo_server::manager::VesloServerManager;
 use orchestrator::manager::OrchestratorManager;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use workspace::watch::WorkspaceWatchState;
 
 fn stop_managed_services(app_handle: &tauri::AppHandle) {
@@ -75,6 +75,36 @@ fn stop_managed_services(app_handle: &tauri::AppHandle) {
 
 pub fn run() {
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            let deep_link_urls: Vec<String> = argv
+                .iter()
+                .filter_map(|arg| {
+                    let value = arg.trim();
+                    if value.is_empty() {
+                        return None;
+                    }
+                    let lower = value.to_ascii_lowercase();
+                    if lower.starts_with("veslo://")
+                        || lower.starts_with("https://")
+                        || lower.starts_with("http://")
+                    {
+                        Some(value.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if !deep_link_urls.is_empty() {
+                let _ = app.emit("deep-link://new-url", deep_link_urls);
+            }
+
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())

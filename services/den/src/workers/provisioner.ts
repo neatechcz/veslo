@@ -202,9 +202,13 @@ async function provisionWorkerOnRender(input: ProvisionInput): Promise<Provision
   assertRenderConfig()
 
   const serviceName = slug(`${env.render.workerNamePrefix}-${input.name}-${input.workerId.slice(0, 8)}`).slice(0, 62)
+  const runOrchestratorCommand = [
+    "if ! command -v veslo >/dev/null 2>&1; then echo 'No orchestrator CLI found (veslo)' >&2; exit 1; fi;",
+    "veslo serve --workspace /tmp/workspace --veslo-host 0.0.0.0 --veslo-port ${PORT:-10000} --opencode-host 127.0.0.1 --opencode-port 4096 --connect-host 127.0.0.1 --cors '*' --approval manual --no-veslo-code-router --verbose",
+  ].join(" ")
   const startCommand = [
     "mkdir -p /tmp/workspace",
-    "attempt=0; while [ $attempt -lt 3 ]; do attempt=$((attempt + 1)); veslo serve --workspace /tmp/workspace --veslo-host 0.0.0.0 --veslo-port ${PORT:-10000} --opencode-host 127.0.0.1 --opencode-port 4096 --connect-host 127.0.0.1 --cors '*' --approval manual --no-veslo-code-router --verbose && exit 0; echo \"veslo serve failed (attempt $attempt); retrying in 3s\"; sleep 3; done; exit 1",
+    `attempt=0; while [ $attempt -lt 3 ]; do attempt=$((attempt + 1)); ${runOrchestratorCommand} && exit 0; echo "orchestrator serve failed (attempt $attempt); retrying in 3s"; sleep 3; done; exit 1`,
   ].join(" && ")
 
   const payload = {

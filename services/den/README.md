@@ -31,21 +31,22 @@ cp .env.development .env
 - `DATABASE_URL` MySQL connection URL
 - `BETTER_AUTH_SECRET` 32+ char secret
 - `BETTER_AUTH_URL` base URL for auth callbacks
+- `WORKER_TOKEN_ENCRYPTION_KEY` optional key material for encrypting worker host/client tokens at rest (falls back to `BETTER_AUTH_SECRET` when unset)
 - `GITHUB_CLIENT_ID` optional OAuth app client ID for GitHub sign-in
 - `GITHUB_CLIENT_SECRET` optional OAuth app client secret for GitHub sign-in
 - `PORT` server port
-- `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS)
+- `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS). In production, wildcard `*` is rejected. Desktop CORS origins (`tauri://localhost`, `http://localhost:1420`, `http://localhost:1421`) are appended server-side to the Express CORS allowlist.
 - `PROVISIONER_MODE` `stub` or `render`
 - `WORKER_URL_TEMPLATE` template string with `{workerId}`
 - `RENDER_API_BASE` Render API base URL (default `https://api.render.com/v1`)
 - `RENDER_API_KEY` Render API key (required for `PROVISIONER_MODE=render`)
 - `RENDER_OWNER_ID` Render workspace owner id (required for `PROVISIONER_MODE=render`)
-- `RENDER_WORKER_REPO` repository URL used to create worker services
+- `RENDER_WORKER_REPO` repository URL used to create worker services (default `https://github.com/neatechcz/veslo`)
 - `RENDER_WORKER_BRANCH` branch used for worker services
 - `RENDER_WORKER_ROOT_DIR` render `rootDir` for worker services
 - `RENDER_WORKER_PLAN` Render plan for worker services
 - `RENDER_WORKER_REGION` Render region for worker services
-- `RENDER_WORKER_VESLO_VERSION` `veslo-orchestrator` npm version installed in workers
+- `RENDER_WORKER_VESLO_VERSION` orchestrator npm version installed in workers (`veslo-orchestrator`)
 - `RENDER_WORKER_NAME_PREFIX` service name prefix
 - `RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` optional domain suffix for worker custom URLs (e.g. `veslo.studio` -> `<worker-id>.veslo.studio`)
 - `RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` max time to wait for vanity URL health before falling back to Render URL
@@ -104,8 +105,13 @@ pnpm db:migrate
 - `POST /v1/desktop-auth/handoff`
   - Requires an authenticated browser session (Better Auth cookie). Returns a single-use, short-lived one-time code that the desktop app can exchange for credentials.
   - Respects `x-veslo-org-id` header to select the active organization.
+- `POST /v1/desktop-auth/start`
+  - Starts desktop browser authentication with PKCE.
+  - Accepts `{ intent, redirectUri, state, codeChallenge, codeChallengeMethod: "S256" }` and returns `{ sessionId, authorizeUrl, expiresAt }`.
 - `POST /v1/desktop-auth/exchange`
-  - Accepts `{ "code": "<one-time-code>" }` in the request body (no session cookie required). Returns `{ token, user, org }` with the user's identity and selected organization. The code is consumed on first use and cannot be replayed.
+  - Accepts `{ code, sessionId, state, codeVerifier }` for PKCE exchange (legacy `{ code }` still supported).
+  - Returns `{ tokenType, token, accessToken, expiresIn, user, org }`.
+  - The code is consumed on first use and cannot be replayed.
 
 ## CI deployment (dev == prod)
 
@@ -126,8 +132,9 @@ Optional GitHub Actions secrets (enable GitHub social sign-in):
 
 Optional GitHub Actions variable:
 
+- `DEN_RENDER_WORKER_REPO` (defaults to `https://github.com/<github.repository>` in workflow, or `https://github.com/neatechcz/veslo` fallback)
 - `DEN_RENDER_WORKER_PLAN` (defaults to `standard`)
-- `DEN_RENDER_WORKER_VESLO_VERSION` (defaults to `0.11.113`)
+- `DEN_RENDER_WORKER_VESLO_VERSION` (defaults to `0.11.113` and is used for `veslo-orchestrator`)
 - `DEN_CORS_ORIGINS` (defaults to `https://app.veslo.neatech.com,https://api.veslo.neatech.com,<render-service-url>`)
 - `DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` (defaults to `veslo.studio`)
 - `DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` (defaults to `240000`)

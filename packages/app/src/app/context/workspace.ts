@@ -1947,32 +1947,24 @@ export function createWorkspaceStore(options: {
     }
 
     const activeWorkspace = activeWorkspaceInfo();
-    const requiresDenAuth =
-      CLOUD_ONLY_MODE ||
-      startupPref === "server" ||
-      activeWorkspace?.workspaceType === "remote";
 
-    // Den auth is required for cloud/remote flows, but local host boot should work offline.
-    if (requiresDenAuth) {
-      const denAuth = readDenAuth();
-      bootTrace("denAuth required, present=", Boolean(denAuth));
-      if (!denAuth) {
-        bootTrace("→ setOnboardingStep('auth') and RETURN");
-        options.setOnboardingStep("auth");
-        return;
-      }
-      // Validate stored auth with Den server
-      bootTrace("validateDenAuth...");
-      const authValid = await validateDenAuth(denAuth);
-      bootTrace("validateDenAuth DONE, valid=", authValid);
-      if (!authValid) {
-        clearDenAuth();
-        bootTrace("→ auth invalid, setOnboardingStep('auth') and RETURN");
-        options.setOnboardingStep("auth");
-        return;
-      }
-    } else {
-      bootTrace("denAuth optional for local boot");
+    // Full login gate: every startup flow requires a valid DEN session.
+    const denAuth = readDenAuth();
+    bootTrace("denAuth required, present=", Boolean(denAuth));
+    if (!denAuth) {
+      bootTrace("→ setOnboardingStep('auth') and RETURN");
+      options.setOnboardingStep("auth");
+      return;
+    }
+    // Validate stored auth with Den server before allowing app use.
+    bootTrace("validateDenAuth...");
+    const authValid = await validateDenAuth(denAuth);
+    bootTrace("validateDenAuth DONE, valid=", authValid);
+    if (!authValid) {
+      clearDenAuth();
+      bootTrace("→ auth invalid, setOnboardingStep('auth') and RETURN");
+      options.setOnboardingStep("auth");
+      return;
     }
 
     if (CLOUD_ONLY_MODE) {

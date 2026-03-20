@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import {
   canDeleteWorker,
+  canRevealWorkerHostToken,
   hasRequiredOrgRole,
   pickActiveOrganization,
   wouldLeaveOrganizationWithoutOwner,
@@ -96,6 +97,36 @@ test("canDeleteWorker allows creator, owner, and platform admin", () => {
   }), true)
 
   assert.equal(canDeleteWorker({
+    actorUserId: "user-member",
+    actorRole: "member",
+    createdByUserId: "someone-else",
+    isPlatformAdmin: false,
+  }), false)
+})
+
+test("canRevealWorkerHostToken follows privileged access rules", () => {
+  assert.equal(canRevealWorkerHostToken({
+    actorUserId: "user-member",
+    actorRole: "member",
+    createdByUserId: "user-member",
+    isPlatformAdmin: false,
+  }), true)
+
+  assert.equal(canRevealWorkerHostToken({
+    actorUserId: "user-owner",
+    actorRole: "owner",
+    createdByUserId: "someone-else",
+    isPlatformAdmin: false,
+  }), true)
+
+  assert.equal(canRevealWorkerHostToken({
+    actorUserId: "user-admin",
+    actorRole: null,
+    createdByUserId: "someone-else",
+    isPlatformAdmin: true,
+  }), true)
+
+  assert.equal(canRevealWorkerHostToken({
     actorUserId: "user-member",
     actorRole: "member",
     createdByUserId: "someone-else",

@@ -4,10 +4,12 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1),
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.string().min(1),
+  WORKER_TOKEN_ENCRYPTION_KEY: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
   PORT: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
+  DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: z.string().optional(),
   PROVISIONER_MODE: z.enum(["stub", "render"]).optional(),
   WORKER_URL_TEMPLATE: z.string().optional(),
   RENDER_API_BASE: z.string().optional(),
@@ -54,24 +56,31 @@ const corsOrigins = parsed.CORS_ORIGINS?.split(",")
   .filter(Boolean)
 
 const polarFeatureGateEnabled = (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true"
+const nodeEnv = (process.env.NODE_ENV ?? "development").toLowerCase()
+
+if (nodeEnv === "production" && (corsOrigins ?? []).includes("*")) {
+  throw new Error("CORS_ORIGINS cannot contain '*' in production for DEN")
+}
 
 export const env = {
   databaseUrl: parsed.DATABASE_URL,
   betterAuthSecret: parsed.BETTER_AUTH_SECRET,
   betterAuthUrl: parsed.BETTER_AUTH_URL,
+  workerTokenEncryptionKey: parsed.WORKER_TOKEN_ENCRYPTION_KEY?.trim() || null,
   github: {
     clientId: parsed.GITHUB_CLIENT_ID?.trim() || undefined,
     clientSecret: parsed.GITHUB_CLIENT_SECRET?.trim() || undefined,
   },
   port: Number(parsed.PORT ?? "8788"),
   corsOrigins: corsOrigins ?? [],
+  desktopAuthRequireEmailVerified: (parsed.DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED ?? "false").toLowerCase() === "true",
   provisionerMode: parsed.PROVISIONER_MODE ?? "stub",
   workerUrlTemplate: parsed.WORKER_URL_TEMPLATE,
   render: {
     apiBase: parsed.RENDER_API_BASE ?? "https://api.render.com/v1",
     apiKey: parsed.RENDER_API_KEY,
     ownerId: parsed.RENDER_OWNER_ID,
-    workerRepo: parsed.RENDER_WORKER_REPO ?? "https://github.com/neatech/veslo",
+    workerRepo: parsed.RENDER_WORKER_REPO ?? "https://github.com/neatechcz/veslo",
     workerBranch: parsed.RENDER_WORKER_BRANCH ?? "dev",
     workerRootDir: parsed.RENDER_WORKER_ROOT_DIR ?? "services/den-worker-runtime",
     workerPlan: parsed.RENDER_WORKER_PLAN ?? "standard",

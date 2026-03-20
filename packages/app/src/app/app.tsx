@@ -151,7 +151,12 @@ import {
   exchangeHandoffCode,
   readDenAuth,
   writeDenAuth,
+  readDenKeepSignedIn,
+  writeDenKeepSignedIn,
   getDenApiBase,
+  startDesktopBrowserAuth,
+  readDesktopAuthExchangeProof,
+  clearDesktopAuthExchangeProof,
 } from "./lib/den-auth";
 import { currentLocale, isLanguage, setLocale, t, type Language } from "../i18n";
 import {
@@ -342,7 +347,17 @@ export default function App() {
   const [onboardingStep, setOnboardingStep] =
     createSignal<OnboardingStep>(initialOnboardingStep());
   const [rememberStartupChoice, setRememberStartupChoice] = createSignal(false);
+  const [denKeepSignedIn, setDenKeepSignedIn] = createSignal(readDenKeepSignedIn());
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
+
+  const setDenKeepSignedInPreference = (value: boolean) => {
+    writeDenKeepSignedIn(value);
+    setDenKeepSignedIn(value);
+  };
+
+  const toggleDenKeepSignedIn = () => {
+    setDenKeepSignedInPreference(!denKeepSignedIn());
+  };
 
   const [engineSource, setEngineSource] = createSignal<"path" | "sidecar" | "custom">(
     isTauriRuntime() ? "sidecar" : "path"
@@ -2827,8 +2842,8 @@ export default function App() {
   const [authenticatedUser, setAuthenticatedUser] = createSignal<string | null>(null);
 
   const queueAuthCompleteDeepLink = (rawUrl: string): boolean => {
-    const code = parseAuthCompleteDeepLink(rawUrl);
-    if (!code) {
+    const payload = parseAuthCompleteDeepLink(rawUrl);
+    if (!payload) {
       return false;
     }
 
@@ -2836,15 +2851,31 @@ export default function App() {
       return true;
     }
 
+    const exchangeProof = readDesktopAuthExchangeProof(payload.sessionId);
     setAuthCompleteExchangeBusy(true);
-    exchangeHandoffCode(code).then((result) => {
+    setError(null);
+    exchangeHandoffCode(payload.code, exchangeProof).then((result) => {
       setAuthCompleteExchangeBusy(false);
       if (result.ok) {
         writeDenAuth(result.state);
-        setOnboardingStep("local");
+        clearDesktopAuthExchangeProof(payload.sessionId);
+        setError(null);
         setView("onboarding");
+        setBooting(true);
+        const rebootstrapTimeout = setTimeout(() => {
+          console.warn("[boot] post-auth bootstrap timed out after 15s - forcing boot complete");
+          setBooting(false);
+        }, 15_000);
+        void workspaceStore.bootstrapOnboarding().finally(() => {
+          clearTimeout(rebootstrapTimeout);
+          setBooting(false);
+        });
       } else {
         console.error("[den-auth] exchange failed:", result.error);
+        if (exchangeProof) {
+          clearDesktopAuthExchangeProof(payload.sessionId);
+        }
+        setError(`Sign in failed: ${result.error}`);
         setOnboardingStep("auth");
         setView("onboarding");
       }
@@ -5750,7 +5781,14 @@ export default function App() {
     themeMode: themeMode(),
     setThemeMode,
     onSignInWithBrowser: async () => {
-      const url = `${getDenApiBase()}/?desktopOnboarding=1`;
+      setError(null);
+      let url = `${getDenApiBase()}/?desktopOnboarding=1`;
+      const startResult = await startDesktopBrowserAuth("signin");
+      if (startResult.ok) {
+        url = startResult.authorizeUrl;
+      } else {
+        console.warn("[den-auth] /start failed, falling back to legacy onboarding URL:", startResult.error);
+      }
       if (isTauriRuntime()) {
         const { openUrl } = await import("@tauri-apps/plugin-opener");
         await openUrl(url);
@@ -5759,6 +5797,8 @@ export default function App() {
       }
     },
     authExchangeBusy: authCompleteExchangeBusy(),
+    keepSignedIn: denKeepSignedIn(),
+    onKeepSignedInChange: setDenKeepSignedInPreference,
   });
 
   const dashboardProps = () => {
@@ -5992,6 +6032,8 @@ export default function App() {
       },
       themeMode: themeMode(),
       setThemeMode,
+      denKeepSignedIn: denKeepSignedIn(),
+      toggleDenKeepSignedIn,
       pendingPermissions: pendingPermissions(),
       events: events(),
       workspaceDebugEvents: workspaceStore.workspaceDebugEvents(),
@@ -6241,7 +6283,7 @@ export default function App() {
     const rawPath = location.pathname.trim();
     const path = rawPath.toLowerCase();
 
-    if (onboardingStep() === "language" && !path.startsWith("/onboarding")) {
+    if ((onboardingStep() === "language" || onboardingStep() === "auth") && !path.startsWith("/onboarding")) {
       navigate("/onboarding", { replace: true });
       return;
     }
@@ -6314,7 +6356,7 @@ export default function App() {
     }
 
     if (path.startsWith("/onboarding")) {
-      if (onboardingStep() === "language") {
+      if (onboardingStep() === "language" || onboardingStep() === "auth") {
         return;
       }
       navigate("/session", { replace: true });

@@ -87,6 +87,10 @@ jobs:
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
+          DEN_RENDER_CONTROL_PLANE_REPO: ${{ vars.DEN_RENDER_CONTROL_PLANE_REPO }}
+          DEN_RENDER_CONTROL_PLANE_BRANCH: ${{ vars.DEN_RENDER_CONTROL_PLANE_BRANCH }}
+          DEN_RENDER_CONTROL_PLANE_ROOT_DIR: ${{ vars.DEN_RENDER_CONTROL_PLANE_ROOT_DIR }}
+          DEN_RENDER_WORKER_REPO: ${{ vars.DEN_RENDER_WORKER_REPO }}
           DEN_RENDER_WORKER_PLAN: ${{ vars.DEN_RENDER_WORKER_PLAN }}
           DEN_RENDER_WORKER_VESLO_VERSION: ${{ vars.DEN_RENDER_WORKER_VESLO_VERSION }}
           DEN_CORS_ORIGINS: ${{ vars.DEN_CORS_ORIGINS }}
@@ -116,8 +120,15 @@ jobs:
           api_key = os.environ["RENDER_API_KEY"]
           service_id = os.environ["RENDER_DEN_CONTROL_PLANE_SERVICE_ID"]
           owner_id = os.environ["RENDER_OWNER_ID"]
+          debug_logs = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
           veslo_version = os.environ.get("DEN_RENDER_WORKER_VESLO_VERSION") or "0.11.113"
           worker_plan = os.environ.get("DEN_RENDER_WORKER_PLAN") or "standard"
+          default_repo = f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'neatechcz/veslo')}"
+          default_branch = os.environ.get("GITHUB_REF_NAME") or "dev"
+          control_plane_repo = os.environ.get("DEN_RENDER_CONTROL_PLANE_REPO") or default_repo
+          control_plane_branch = os.environ.get("DEN_RENDER_CONTROL_PLANE_BRANCH") or default_branch
+          control_plane_root_dir = os.environ.get("DEN_RENDER_CONTROL_PLANE_ROOT_DIR") or "services/den"
+          worker_repo = os.environ.get("DEN_RENDER_WORKER_REPO") or f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'neatechcz/veslo')}"
           configured_cors_origins = os.environ.get("DEN_CORS_ORIGINS") or ""
           worker_public_domain_suffix = os.environ.get("DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX") or "veslo.studio"
           custom_domain_ready_timeout_ms = os.environ.get("DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS") or "240000"
@@ -201,7 +212,32 @@ jobs:
                   raise RuntimeError(f"{method} {path} failed ({err.code}): {text[:600]}")
 
           _, service = request("GET", f"/services/{service_id}")
+          source_patch = {}
+          if service.get("repo") != control_plane_repo:
+              source_patch["repo"] = control_plane_repo
+          if service.get("branch") != control_plane_branch:
+              source_patch["branch"] = control_plane_branch
+          if service.get("rootDir") != control_plane_root_dir:
+              source_patch["rootDir"] = control_plane_root_dir
+
+          if source_patch:
+              print("Updating Render control-plane source:", json.dumps(source_patch))
+              request("PATCH", f"/services/{service_id}", source_patch)
+              _, service = request("GET", f"/services/{service_id}")
+
           service_url = (service.get("serviceDetails") or {}).get("url")
+          print(
+              "Render service source:",
+              json.dumps(
+                  {
+                      "name": service.get("name"),
+                      "repo": service.get("repo"),
+                      "branch": service.get("branch"),
+                      "rootDir": service.get("rootDir"),
+                      "url": service_url,
+                  }
+              ),
+          )
           if not service_url:
               raise RuntimeError(f"Render service {service_id} has no public URL")
 
@@ -225,7 +261,7 @@ jobs:
               {"key": "RENDER_API_BASE", "value": "https://api.render.com/v1"},
               {"key": "RENDER_API_KEY", "value": api_key},
               {"key": "RENDER_OWNER_ID", "value": owner_id},
-              {"key": "RENDER_WORKER_REPO", "value": "https://github.com/neatech/veslo"},
+              {"key": "RENDER_WORKER_REPO", "value": worker_repo},
               {"key": "RENDER_WORKER_BRANCH", "value": "dev"},
               {"key": "RENDER_WORKER_ROOT_DIR", "value": "services/den-worker-runtime"},
               {"key": "RENDER_WORKER_PLAN", "value": worker_plan},
@@ -283,8 +319,95 @@ jobs:
               if latest and latest.get("id") == deploy_id and latest.get("status") in terminal:
                   status = latest.get("status")
                   if status != "live":
+                      _, deploy_detail = request("GET", f"/services/{service_id}/deploys/{deploy_id}")
+                      _, service_events = request("GET", f"/services/{service_id}/events?limit=50")
+                      logs_query = urllib.parse.urlencode(
+                          {
+                              "ownerId": owner_id,
+                              "resource": [service_id],
+                              "type": ["app", "build"],
+                              "direction": "backward",
+                              "limit": "80",
+                          },
+                          doseq=True,
+                      )
+                      _, recent_logs = request("GET", f"/logs?{logs_query}")
+                      related_events = []
+                      for row in service_events or []:
+                          event = row.get("event") if isinstance(row, dict) else None
+                          details = event.get("details") if isinstance(event, dict) else None
+                          if not isinstance(details, dict):
+                              continue
+                          if details.get("deployId") != deploy_id:
+                              continue
+                          related_events.append(
+                              {
+                                  "type": event.get("type"),
+                                  "timestamp": event.get("timestamp"),
+                                  "details": details,
+                              }
+                          )
+                          if len(related_events) >= 10:
+                              break
+                      log_lines = []
+                      for entry in (recent_logs or {}).get("logs", []):
+                          if not isinstance(entry, dict):
+                              continue
+                          message = entry.get("message")
+                          if not isinstance(message, str) or not message.strip():
+                              continue
+                          log_lines.append(
+                              {
+                                  "timestamp": entry.get("timestamp"),
+                                  "message": message[:300],
+                              }
+                          )
+                          if len(log_lines) >= 20:
+                              break
+                      print(
+                          "Render deploy failure detail:",
+                          json.dumps(
+                              {
+                                  "deploy": deploy_detail.get("deploy"),
+                                  "commit": deploy_detail.get("commit"),
+                                  "trigger": deploy_detail.get("trigger"),
+                                  "imageRef": deploy_detail.get("imageRef"),
+                                  "events": related_events,
+                              }
+                          )[:2000],
+                      )
+                      print("Render recent logs:", json.dumps(log_lines))
                       raise RuntimeError(f"Render deploy {deploy_id} ended with {status}")
                   print(f"Render deploy {deploy_id} is live at {service_url}")
+                  if debug_logs:
+                      logs_query = urllib.parse.urlencode(
+                          {
+                              "ownerId": owner_id,
+                              "resource": [service_id],
+                              "type": ["app", "build"],
+                              "direction": "backward",
+                              "limit": "120",
+                          },
+                          doseq=True,
+                      )
+                      _, recent_logs = request("GET", f"/logs?{logs_query}")
+                      runtime_lines = []
+                      for entry in (recent_logs or {}).get("logs", []):
+                          if not isinstance(entry, dict):
+                              continue
+                          message = entry.get("message")
+                          if not isinstance(message, str) or not message.strip():
+                              continue
+                          runtime_lines.append(
+                              {
+                                  "timestamp": entry.get("timestamp"),
+                                  "level": entry.get("level"),
+                                  "message": message[:400],
+                              }
+                          )
+                          if len(runtime_lines) >= 40:
+                              break
+                      print("Render recent runtime logs (workflow_dispatch):", json.dumps(runtime_lines))
                   break
               time.sleep(10)
           else:

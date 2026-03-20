@@ -1,4 +1,5 @@
 import { env } from "../env.js"
+import { shouldUseEmailCustomerFallback } from "./access-gating.js"
 
 type PolarCustomerState = {
   granted_benefits?: Array<{
@@ -127,6 +128,7 @@ export type CloudWorkerBillingStatus = {
 type CloudAccessInput = {
   userId: string
   email: string
+  emailVerified: boolean
   name: string
 }
 
@@ -326,15 +328,17 @@ async function evaluateCloudWorkerAccess(
     }
   }
 
-  const customer = await getCustomerByEmail(input.email)
-  if (customer?.id) {
-    const emailState = await getCustomerStateById(customer.id)
-    if (hasRequiredBenefit(emailState)) {
-      await linkCustomerExternalId(customer, input.userId).catch(() => undefined)
-      return {
-        featureGateEnabled: true,
-        hasActivePlan: true,
-        checkoutUrl: null,
+  if (shouldUseEmailCustomerFallback(input)) {
+    const customer = await getCustomerByEmail(input.email)
+    if (customer?.id) {
+      const emailState = await getCustomerStateById(customer.id)
+      if (hasRequiredBenefit(emailState)) {
+        await linkCustomerExternalId(customer, input.userId).catch(() => undefined)
+        return {
+          featureGateEnabled: true,
+          hasActivePlan: true,
+          checkoutUrl: null,
+        }
       }
     }
   }

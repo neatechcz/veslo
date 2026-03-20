@@ -172,6 +172,9 @@
       <div id="onboard-success" class="onboard-card success-card hidden">
         <h1>Signed in!</h1>
         <p>Returning to the app…</p>
+        <p id="onboard-success-hint" class="subtitle hidden" style="margin-top: 10px">
+          If the app did not open, <a id="onboard-open-app" href="#" style="color: #1B29FF">open Veslo</a>.
+        </p>
       </div>
 
       <!-- Busy -->
@@ -235,7 +238,12 @@
 
       /* ======== Desktop Onboarding ======== */
       function initOnboarding() {
-        let mode = "sign-in"; // default to sign-in for returning users
+        const search = new URLSearchParams(window.location.search);
+        const onboardingSessionId = (search.get("sid") || "").trim();
+        const onboardingTransactionId = (search.get("tid") || "").trim();
+        const onboardingState = (search.get("state") || "").trim();
+        const requestedIntent = (search.get("intent") || "").trim().toLowerCase();
+        let mode = requestedIntent === "signup" ? "sign-up" : "sign-in"; // default to sign-in for returning users
         let bearerToken = "";
 
         const form = document.getElementById("auth-form");
@@ -251,6 +259,8 @@
 
         const formCard = document.getElementById("onboard-form");
         const successCard = document.getElementById("onboard-success");
+        const openAppHint = document.getElementById("onboard-success-hint");
+        const openAppLink = document.getElementById("onboard-open-app");
         const busyCard = document.getElementById("onboard-busy");
 
         function updateUI() {
@@ -272,6 +282,12 @@
             toggleBtn.textContent = "Create account";
           }
           errorEl.classList.add("hidden");
+          if (openAppHint) {
+            openAppHint.classList.add("hidden");
+          }
+          if (openAppLink) {
+            openAppLink.href = "#";
+          }
         }
 
         toggleBtn.addEventListener("click", () => {
@@ -337,10 +353,61 @@
               headers["Authorization"] = "Bearer " + bearerToken;
             }
 
+            if (onboardingTransactionId && onboardingState) {
+              const authorizeResponse = await fetch("/v2/desktop-auth/authorize", {
+                method: "POST",
+                credentials: "include",
+                headers,
+                redirect: "manual",
+                body: JSON.stringify({
+                  transactionId: onboardingTransactionId,
+                  state: onboardingState,
+                }),
+              });
+
+              const redirectUrl = authorizeResponse.headers.get("location");
+              if (authorizeResponse.status !== 302 || !redirectUrl) {
+                const text = await authorizeResponse.text().catch(() => "");
+                let errorMessage = "Authorization redirect failed";
+                try {
+                  const parsed = text ? JSON.parse(text) : null;
+                  if (parsed && typeof parsed.error === "string") {
+                    errorMessage = parsed.error;
+                  }
+                } catch {
+                  if (text.trim()) {
+                    errorMessage = text.trim();
+                  }
+                }
+                busyCard.classList.add("hidden");
+                formCard.classList.remove("hidden");
+                showError(errorMessage);
+                updateUI();
+                return;
+              }
+
+              busyCard.classList.add("hidden");
+              successCard.classList.remove("hidden");
+              if (openAppLink) {
+                openAppLink.href = redirectUrl;
+              }
+              if (openAppHint) {
+                openAppHint.classList.remove("hidden");
+              }
+              window.location.assign(redirectUrl);
+              return;
+            }
+
+            const body = {};
+            if (onboardingSessionId) {
+              body.sessionId = onboardingSessionId;
+            }
+
             const res = await fetch("/v1/desktop-auth/handoff", {
               method: "POST",
               credentials: "include",
               headers,
+              body: JSON.stringify(body),
             });
 
             const data = await res.json().catch(() => null);
@@ -355,7 +422,22 @@
             // Success — redirect to deep link
             busyCard.classList.add("hidden");
             successCard.classList.remove("hidden");
-            window.location.href = "veslo://auth-complete?code=" + encodeURIComponent(data.code);
+            const fallbackParams = new URLSearchParams();
+            fallbackParams.set("code", String(data.code));
+            if (typeof data?.sessionId === "string" && data.sessionId) {
+              fallbackParams.set("sessionId", data.sessionId);
+            }
+            const fallbackRedirect = "veslo://auth-complete?" + fallbackParams.toString();
+            const redirectUrl = typeof data?.redirectUrl === "string" && data.redirectUrl
+              ? data.redirectUrl
+              : fallbackRedirect;
+            if (openAppLink) {
+              openAppLink.href = redirectUrl;
+            }
+            if (openAppHint) {
+              openAppHint.classList.remove("hidden");
+            }
+            window.location.assign(redirectUrl);
           } catch (err) {
             busyCard.classList.add("hidden");
             formCard.classList.remove("hidden");

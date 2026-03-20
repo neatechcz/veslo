@@ -87,6 +87,15 @@ export function canDeleteWorker(input: {
   return input.createdByUserId === input.actorUserId
 }
 
+export function canRevealWorkerHostToken(input: {
+  actorUserId: string
+  actorRole: (typeof OrgRole)[number] | null
+  createdByUserId: string | null
+  isPlatformAdmin: boolean
+}) {
+  return canDeleteWorker(input)
+}
+
 export function wouldLeaveOrganizationWithoutOwner(input: {
   ownerCount: number
   targetRole: (typeof OrgRole)[number]

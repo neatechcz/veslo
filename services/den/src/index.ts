@@ -7,20 +7,27 @@ import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 import { sql } from "drizzle-orm"
 import { auth } from "./auth.js"
 import { db } from "./db/index.js"
+import { shouldWidenVarcharColumn } from "./db/schema-reconcile.js"
 import { env } from "./env.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
+import { desktopAuthV2Router } from "./http/desktop-auth-v2.js"
 import { orgsRouter } from "./http/orgs.js"
 import { workersRouter } from "./http/workers.js"
 
 const app = express()
 const currentFile = fileURLToPath(import.meta.url)
 const publicDir = path.resolve(path.dirname(currentFile), "../public")
+const desktopCorsOrigins = ["tauri://localhost", "http://localhost:1420", "http://localhost:1421"] as const
+const corsOrigins =
+  env.corsOrigins.length > 0
+    ? Array.from(new Set([...env.corsOrigins, ...desktopCorsOrigins]))
+    : []
 
-if (env.corsOrigins.length > 0) {
+if (corsOrigins.length > 0) {
   app.use(
     cors({
-      origin: env.corsOrigins,
+      origin: corsOrigins,
       credentials: true,
       methods: ["GET", "POST", "PATCH", "DELETE"],
     }),
@@ -50,9 +57,136 @@ app.get("/v1/me", asyncRoute(async (req, res) => {
 }))
 
 app.use("/v1/desktop-auth", desktopAuthRouter)
+app.use("/v2/desktop-auth", desktopAuthV2Router)
 app.use("/v1/orgs", orgsRouter)
 app.use("/v1/workers", workersRouter)
 app.use(errorMiddleware)
+
+const identifierPattern = /^[a-zA-Z0-9_]+$/
+
+function quoteIdentifier(value: string) {
+  if (!identifierPattern.test(value)) {
+    throw new Error(`Invalid SQL identifier: ${value}`)
+  }
+  return `\`${value}\``
+}
+
+function extractRows(value: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(value)) {
+    return value as Array<Record<string, unknown>>
+  }
+
+  if (value && typeof value === "object") {
+    const maybeRows = (value as { rows?: unknown }).rows
+    if (Array.isArray(maybeRows)) {
+      return maybeRows as Array<Record<string, unknown>>
+    }
+  }
+
+  return []
+}
+
+function readRowValueCaseInsensitive(row: Record<string, unknown>, key: string) {
+  const lowered = key.toLowerCase()
+  for (const [rowKey, rowValue] of Object.entries(row)) {
+    if (rowKey.toLowerCase() === lowered) {
+      return rowValue
+    }
+  }
+  return undefined
+}
+
+function toNullableNumber(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+async function ensureIndex(table: string, indexName: string, columns: string[], unique = false) {
+  const existing = await db.execute(sql`
+    SELECT 1
+    FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ${table}
+      AND INDEX_NAME = ${indexName}
+    LIMIT 1
+  `)
+
+  if (extractRows(existing).length > 0) {
+    return
+  }
+
+  const columnList = columns.map((column) => quoteIdentifier(column)).join(", ")
+  const createKeyword = unique ? "CREATE UNIQUE INDEX" : "CREATE INDEX"
+  await db.execute(
+    sql.raw(`${createKeyword} ${quoteIdentifier(indexName)} ON ${quoteIdentifier(table)} (${columnList})`),
+  )
+}
+
+async function ensureColumn(table: string, columnName: string, columnDefinition: string) {
+  const existing = await db.execute(sql`
+    SELECT 1
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ${table}
+      AND COLUMN_NAME = ${columnName}
+    LIMIT 1
+  `)
+
+  if (extractRows(existing).length > 0) {
+    return
+  }
+
+  await db.execute(
+    sql.raw(
+      `ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN ${quoteIdentifier(columnName)} ${columnDefinition}`,
+    ),
+  )
+}
+
+async function ensureVarcharColumnMinimumLength(
+  table: string,
+  columnName: string,
+  minimumLength: number,
+  nullable: boolean,
+) {
+  const metadataResult = await db.execute(sql`
+    SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ${table}
+      AND COLUMN_NAME = ${columnName}
+    LIMIT 1
+  `)
+
+  const metadataRow = extractRows(metadataResult)[0]
+  if (!metadataRow) {
+    return
+  }
+
+  const columnMetadata = {
+    dataType: typeof readRowValueCaseInsensitive(metadataRow, "DATA_TYPE") === "string"
+      ? String(readRowValueCaseInsensitive(metadataRow, "DATA_TYPE"))
+      : null,
+    maxLength: toNullableNumber(readRowValueCaseInsensitive(metadataRow, "CHARACTER_MAXIMUM_LENGTH")),
+  }
+
+  if (!shouldWidenVarcharColumn(columnMetadata, minimumLength)) {
+    return
+  }
+
+  const nullableClause = nullable ? "NULL" : "NOT NULL"
+  await db.execute(
+    sql.raw(
+      `ALTER TABLE ${quoteIdentifier(table)} MODIFY COLUMN ${quoteIdentifier(columnName)} varchar(${minimumLength}) ${nullableClause}`,
+    ),
+  )
+}
 
 async function ensureTables() {
   try {
@@ -84,7 +218,7 @@ async function ensureTables() {
         CONSTRAINT \`session_token\` UNIQUE(\`token\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`session_user_id\` ON \`session\` (\`user_id\`)`)
+    await ensureIndex("session", "session_user_id", ["user_id"])
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`account\` (
         \`id\` varchar(36) NOT NULL,
@@ -103,7 +237,7 @@ async function ensureTables() {
         CONSTRAINT \`account_id\` PRIMARY KEY(\`id\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`account_user_id\` ON \`account\` (\`user_id\`)`)
+    await ensureIndex("account", "account_user_id", ["user_id"])
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`verification\` (
         \`id\` varchar(36) NOT NULL,
@@ -115,81 +249,16 @@ async function ensureTables() {
         CONSTRAINT \`verification_id\` PRIMARY KEY(\`id\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`verification_identifier\` ON \`verification\` (\`identifier\`)`)
+    await ensureIndex("verification", "verification_identifier", ["identifier"])
 
-    // Check if auth tables have wrong column names (camelCase from migration 0000)
-    let needsAuthFix = false
+    // Detect legacy auth schema (camelCase columns from early migrations) and fail closed.
     try {
       await db.execute(sql`SELECT \`user_id\` FROM \`account\` LIMIT 0`)
-    } catch {
-      needsAuthFix = true
-    }
-    if (needsAuthFix) {
-      console.log("[den] auth tables have camelCase columns, recreating with snake_case...")
-      await db.execute(sql`DROP TABLE IF EXISTS \`account\``)
-      await db.execute(sql`DROP TABLE IF EXISTS \`session\``)
-      await db.execute(sql`DROP TABLE IF EXISTS \`verification\``)
-      await db.execute(sql`DROP TABLE IF EXISTS \`user\``)
-      await db.execute(sql`
-        CREATE TABLE \`user\` (
-          \`id\` varchar(36) NOT NULL,
-          \`name\` varchar(255) NOT NULL,
-          \`email\` varchar(255) NOT NULL,
-          \`email_verified\` boolean NOT NULL DEFAULT false,
-          \`image\` text,
-          \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
-          \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-          CONSTRAINT \`user_id\` PRIMARY KEY(\`id\`),
-          CONSTRAINT \`user_email\` UNIQUE(\`email\`)
-        )
-      `)
-      await db.execute(sql`
-        CREATE TABLE \`session\` (
-          \`id\` varchar(36) NOT NULL,
-          \`expires_at\` timestamp(3) NOT NULL,
-          \`token\` varchar(255) NOT NULL,
-          \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
-          \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-          \`ip_address\` text,
-          \`user_agent\` text,
-          \`user_id\` varchar(36) NOT NULL,
-          CONSTRAINT \`session_id\` PRIMARY KEY(\`id\`),
-          CONSTRAINT \`session_token\` UNIQUE(\`token\`)
-        )
-      `)
-      await db.execute(sql`CREATE INDEX \`session_user_id\` ON \`session\` (\`user_id\`)`)
-      await db.execute(sql`
-        CREATE TABLE \`account\` (
-          \`id\` varchar(36) NOT NULL,
-          \`account_id\` text NOT NULL,
-          \`provider_id\` text NOT NULL,
-          \`user_id\` varchar(36) NOT NULL,
-          \`access_token\` text,
-          \`refresh_token\` text,
-          \`id_token\` text,
-          \`access_token_expires_at\` timestamp(3),
-          \`refresh_token_expires_at\` timestamp(3),
-          \`scope\` text,
-          \`password\` text,
-          \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
-          \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-          CONSTRAINT \`account_id\` PRIMARY KEY(\`id\`)
-        )
-      `)
-      await db.execute(sql`CREATE INDEX \`account_user_id\` ON \`account\` (\`user_id\`)`)
-      await db.execute(sql`
-        CREATE TABLE \`verification\` (
-          \`id\` varchar(36) NOT NULL,
-          \`identifier\` varchar(255) NOT NULL,
-          \`value\` text NOT NULL,
-          \`expires_at\` timestamp(3) NOT NULL,
-          \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
-          \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-          CONSTRAINT \`verification_id\` PRIMARY KEY(\`id\`)
-        )
-      `)
-      await db.execute(sql`CREATE INDEX \`verification_identifier\` ON \`verification\` (\`identifier\`)`)
-      console.log("[den] auth tables recreated with correct column names")
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown_error"
+      throw new Error(
+        `Detected incompatible Better Auth schema (missing account.user_id). Run 'pnpm --dir services/den db:migrate' before starting DEN. Original error: ${message}`,
+      )
     }
 
     // Application tables
@@ -205,7 +274,7 @@ async function ensureTables() {
         CONSTRAINT \`org_slug\` UNIQUE(\`slug\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`org_owner_user_id\` ON \`org\` (\`owner_user_id\`)`)
+    await ensureIndex("org", "org_owner_user_id", ["owner_user_id"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`org_membership\` (
@@ -217,8 +286,8 @@ async function ensureTables() {
         CONSTRAINT \`org_membership_id\` PRIMARY KEY(\`id\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`org_membership_org_id\` ON \`org_membership\` (\`org_id\`)`)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`org_membership_user_id\` ON \`org_membership\` (\`user_id\`)`)
+    await ensureIndex("org_membership", "org_membership_org_id", ["org_id"])
+    await ensureIndex("org_membership", "org_membership_user_id", ["user_id"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`platform_role\` (
@@ -240,6 +309,7 @@ async function ensureTables() {
         \`description\` varchar(1024),
         \`destination\` enum('local','cloud') NOT NULL,
         \`status\` enum('provisioning','healthy','failed','stopped') NOT NULL,
+        \`failure_reason\` varchar(2048),
         \`image_version\` varchar(128),
         \`workspace_path\` varchar(1024),
         \`sandbox_backend\` varchar(64),
@@ -248,9 +318,11 @@ async function ensureTables() {
         CONSTRAINT \`worker_id\` PRIMARY KEY(\`id\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_org_id\` ON \`worker\` (\`org_id\`)`)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_created_by_user_id\` ON \`worker\` (\`created_by_user_id\`)`)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_status\` ON \`worker\` (\`status\`)`)
+    await ensureIndex("worker", "worker_org_id", ["org_id"])
+    await ensureColumn("worker", "created_by_user_id", "varchar(64)")
+    await ensureIndex("worker", "worker_created_by_user_id", ["created_by_user_id"])
+    await ensureIndex("worker", "worker_status", ["status"])
+    await ensureColumn("worker", "failure_reason", "varchar(2048)")
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`worker_instance\` (
@@ -265,21 +337,22 @@ async function ensureTables() {
         CONSTRAINT \`worker_instance_id\` PRIMARY KEY(\`id\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_instance_worker_id\` ON \`worker_instance\` (\`worker_id\`)`)
+    await ensureIndex("worker_instance", "worker_instance_worker_id", ["worker_id"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`worker_token\` (
         \`id\` varchar(64) NOT NULL,
         \`worker_id\` varchar(64) NOT NULL,
         \`scope\` enum('client','host') NOT NULL,
-        \`token\` varchar(128) NOT NULL,
+        \`token\` varchar(512) NOT NULL,
         \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
         \`revoked_at\` timestamp(3),
         CONSTRAINT \`worker_token_id\` PRIMARY KEY(\`id\`),
         CONSTRAINT \`worker_token_token\` UNIQUE(\`token\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_token_worker_id\` ON \`worker_token\` (\`worker_id\`)`)
+    await ensureIndex("worker_token", "worker_token_worker_id", ["worker_id"])
+    await ensureVarcharColumnMinimumLength("worker_token", "token", 512, false)
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`worker_bundle\` (
@@ -291,7 +364,7 @@ async function ensureTables() {
         CONSTRAINT \`worker_bundle_id\` PRIMARY KEY(\`id\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`worker_bundle_worker_id\` ON \`worker_bundle\` (\`worker_id\`)`)
+    await ensureIndex("worker_bundle", "worker_bundle_worker_id", ["worker_id"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`audit_event\` (
@@ -305,13 +378,14 @@ async function ensureTables() {
         CONSTRAINT \`audit_event_id\` PRIMARY KEY(\`id\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`audit_event_org_id\` ON \`audit_event\` (\`org_id\`)`)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`audit_event_worker_id\` ON \`audit_event\` (\`worker_id\`)`)
+    await ensureIndex("audit_event", "audit_event_org_id", ["org_id"])
+    await ensureIndex("audit_event", "audit_event_worker_id", ["worker_id"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`desktop_auth_handoff\` (
         \`id\` varchar(64) NOT NULL,
         \`code\` varchar(255) NOT NULL,
+        \`session_id\` varchar(64),
         \`user_id\` varchar(64) NOT NULL,
         \`org_id\` varchar(64) NOT NULL,
         \`expires_at\` timestamp(3) NOT NULL,
@@ -321,16 +395,102 @@ async function ensureTables() {
         CONSTRAINT \`desktop_auth_handoff_code\` UNIQUE(\`code\`)
       )
     `)
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS \`desktop_auth_handoff_user_id\` ON \`desktop_auth_handoff\` (\`user_id\`)`)
+    await ensureColumn("desktop_auth_handoff", "session_id", "varchar(64)")
+    await ensureIndex("desktop_auth_handoff", "desktop_auth_handoff_user_id", ["user_id"])
+    await ensureIndex("desktop_auth_handoff", "desktop_auth_handoff_session_id", ["session_id"])
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`desktop_auth_session\` (
+        \`id\` varchar(64) NOT NULL,
+        \`intent\` enum('signin','signup') NOT NULL,
+        \`state_hash\` varchar(128) NOT NULL,
+        \`code_challenge\` varchar(255) NOT NULL,
+        \`code_challenge_method\` varchar(16) NOT NULL,
+        \`redirect_uri\` varchar(512) NOT NULL,
+        \`status\` enum('started','browser_authed','exchanged','expired','cancelled') NOT NULL,
+        \`user_id\` varchar(64),
+        \`org_id\` varchar(64),
+        \`browser_ip\` text,
+        \`browser_user_agent\` text,
+        \`expires_at\` timestamp(3) NOT NULL,
+        \`exchanged_at\` timestamp(3),
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        CONSTRAINT \`desktop_auth_session_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await ensureIndex("desktop_auth_session", "desktop_auth_session_status_expires", ["status", "expires_at"])
+    await ensureIndex("desktop_auth_session", "desktop_auth_session_user_id", ["user_id"])
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`desktop_auth_transaction\` (
+        \`id\` varchar(64) NOT NULL,
+        \`transaction_id\` varchar(64) NOT NULL,
+        \`intent\` enum('signin','signup') NOT NULL,
+        \`state_hash\` varchar(128) NOT NULL,
+        \`code_challenge\` varchar(255) NOT NULL,
+        \`code_challenge_method\` varchar(16) NOT NULL,
+        \`redirect_uri\` varchar(512) NOT NULL,
+        \`status\` enum('started','browser_authed','exchanged','expired','cancelled') NOT NULL,
+        \`user_id\` varchar(64),
+        \`org_id\` varchar(64),
+        \`browser_ip\` text,
+        \`browser_user_agent\` text,
+        \`authorization_code_hash\` varchar(128),
+        \`manual_code_hash\` varchar(128),
+        \`code_issued_at\` timestamp(3),
+        \`exchanged_at\` timestamp(3),
+        \`expires_at\` timestamp(3) NOT NULL,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT \`desktop_auth_transaction_id\` PRIMARY KEY(\`id\`),
+        CONSTRAINT \`desktop_auth_transaction_transaction_id\` UNIQUE(\`transaction_id\`)
+      )
+    `)
+    await ensureColumn("desktop_auth_transaction", "browser_ip", "text")
+    await ensureColumn("desktop_auth_transaction", "browser_user_agent", "text")
+    await ensureColumn("desktop_auth_transaction", "authorization_code_hash", "varchar(128)")
+    await ensureColumn("desktop_auth_transaction", "manual_code_hash", "varchar(128)")
+    await ensureColumn("desktop_auth_transaction", "code_issued_at", "timestamp(3)")
+    await ensureColumn("desktop_auth_transaction", "exchanged_at", "timestamp(3)")
+    await ensureColumn(
+      "desktop_auth_transaction",
+      "updated_at",
+      "timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)",
+    )
+    await ensureIndex(
+      "desktop_auth_transaction",
+      "desktop_auth_transaction_transaction_id",
+      ["transaction_id"],
+      true,
+    )
+    await ensureIndex(
+      "desktop_auth_transaction",
+      "desktop_auth_transaction_status_expires",
+      ["status", "expires_at"],
+    )
+    await ensureIndex(
+      "desktop_auth_transaction",
+      "desktop_auth_transaction_authorization_code_hash",
+      ["authorization_code_hash"],
+    )
+    await ensureIndex("desktop_auth_transaction", "desktop_auth_transaction_manual_code_hash", ["manual_code_hash"])
 
     console.log("[den] all tables ensured")
   } catch (err) {
-    console.warn("[den] table ensure warning:", err)
+    console.error("[den] table ensure failed:", err)
+    throw err
   }
 }
 
-ensureTables().then(() => {
+async function bootstrap() {
+  await ensureTables()
   app.listen(env.port, () => {
     console.log(`den listening on ${env.port} (provisioner=${env.provisionerMode})`)
   })
+}
+
+void bootstrap().catch((error) => {
+  const message = error instanceof Error ? error.stack ?? error.message : String(error)
+  console.error(`[den] bootstrap failed: ${message}`)
+  process.exit(1)
 })
