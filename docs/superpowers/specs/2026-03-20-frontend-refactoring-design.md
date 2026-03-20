@@ -7,13 +7,13 @@
 ## Problem
 
 Two files concentrate too much responsibility, making changes risky and slow:
-- `packages/app/src/app/app.tsx` (7,524 lines, 61 createEffect calls) — routing, deep-links, auth, sync, model persistence, bundle import, compaction
+- `packages/app/src/app/app.tsx` (7,524 lines, ~59 createEffect calls) — routing, deep-links, auth, sync, model persistence, bundle import, compaction
 - `packages/app/src/app/context/workspace.ts` (3,864 lines, 40+ constructor params) — workspace CRUD, engine lifecycle, remote provisioning, config import/export, sandbox, bootstrap
 
 Cross-cutting fragility:
-- 45 silent `.catch(() => undefined)` calls suppress errors without logging
-- 3+ duplicated `fetchWithTimeout()` implementations across modules
-- `utils/index.ts` (1,210 lines, 40+ unrelated functions) is a junk drawer
+- 36 silent error-catch patterns (30x `.catch(() => undefined)`, 2x `.catch(() => null)`, 2x `.catch(() => false)`, 1x `.catch(() => {})`, 1x empty `catch {}`) suppress errors without logging
+- 2 duplicated `fetchWithTimeout()` implementations (opencode.ts, veslo-server.ts) plus 3 bare fetch() calls
+- `packages/app/src/app/utils/index.ts` (1,210 lines, 40+ unrelated functions) is a junk drawer
 
 ## Constraints
 
@@ -43,7 +43,7 @@ Cross-cutting fragility:
 
 ### 1A. `packages/app/src/app/lib/error-reporter.ts` (~50 lines)
 
-**Purpose:** Replace 45 silent `.catch(() => undefined)` patterns with observable error reporting.
+**Purpose:** Replace 36 silent error-catch patterns with observable error reporting.
 
 **Exports:**
 ```typescript
@@ -63,10 +63,25 @@ export function reportError(
 - Default severity: `'warning'` for background refreshes, `'error'` for user-facing operations
 
 **Integration with existing `safe-run.ts`:**
-- Update `safeAsync`, `safeSync`, `fireAndForget` to call `reportError` internally
-- No API change to safe-run.ts — existing callers unaffected
+Update `safeAsync`, `safeSync`, `fireAndForget` to call `reportError` internally instead of raw `console.warn`. No API change — existing callers unaffected. Concrete example:
+```typescript
+// safe-run.ts after integration:
+export async function safeAsync<T>(
+  fn: () => Promise<T>,
+  fallback: T,
+  label?: string,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    reportError(error, `safeAsync:${label ?? 'unknown'}`, 'warning');
+    return fallback;
+  }
+}
+```
+This replaces the existing `if (isDev) console.warn(...)` pattern, ensuring reportError is the single error output channel. No duplicate logging — safe-run delegates to reportError, which handles the dev/prod branching.
 
-**Migration pattern for all 45 catch sites:**
+**Migration pattern for all 36 catch sites:**
 ```typescript
 // Before:
 refreshSidebarWorkspaceSessions().catch(() => undefined)
@@ -75,7 +90,17 @@ refreshSidebarWorkspaceSessions().catch(() => undefined)
 refreshSidebarWorkspaceSessions().catch(e => reportError(e, "sidebar.refreshSessions"))
 ```
 
-**Files affected:** app.tsx (~19 sites), workspace.ts (~5 sites), server.tsx (~1 site), plus ~20 other scattered sites.
+**Exact catch site inventory (36 total):**
+- `app.tsx`: 19 sites (sidebar refresh, soul data, MCP servers, skills, updates, scheduled jobs, plugins)
+- `workspace.ts`: 6 sites (private workspace root, session fetch, skills refresh, plugins refresh, telemetry)
+- `system-state.ts`: 3 sites (plugins, skills, MCP refresh after reload)
+- `index.tsx`: 2 sites (Tauri initialization)
+- `global-sdk.tsx`: 1 site (SSE subscription)
+- `server.tsx`: 1 site (health check polling)
+- `session.tsx`: 1 site (sendPromptAsync fire-and-forget)
+- `identities.tsx`: 1 site (Telegram router fetch)
+- `session-navigation.test.ts`: 1 site (test helper — leave as-is)
+- `workspace.ts:3426`: 1 site (localhost telemetry — intentionally silent, add comment explaining why)
 
 ### 1B. `packages/app/src/app/lib/http.ts` (~80 lines)
 
@@ -135,10 +160,12 @@ After Phase 2, app.tsx drops from 7,524 to ~2,500 lines. It retains: routing she
 | `setupTauriDeepLinkListener()` | 6069-6092 | Returns cleanup function for Tauri onOpenUrl |
 | `parseWebDeepLinks()` | 6094-6106 | Parse window.location on mount |
 
-**What stays in app.tsx:**
-- Signals: `pendingRemoteConnectDeepLink`, `pendingSharedBundleInvite`
-- Queue functions: `queueRemoteConnectDeepLink()`, `queueSharedBundleDeepLink()`, `queueAuthCompleteDeepLink()` — these write to signals and depend on app state (`booting()`)
-- Effects that consume pending deep-links — they wire into workspace/auth flows
+**What stays in app.tsx (split responsibility pattern):**
+- **Signals** (reactive state, owned by app.tsx): `pendingRemoteConnectDeepLink`, `pendingSharedBundleInvite`
+- **Queue functions** (write to signals, depend on app state): `queueRemoteConnectDeepLink()`, `queueSharedBundleDeepLink()`, `queueAuthCompleteDeepLink()` — these read `booting()` and write to the above signals
+- **Effects** (consume pending signals, trigger flows): stay in app.tsx because they wire into workspace/auth flows
+
+**Design principle:** Parsing (pure, stateless) moves to `lib/deep-links.ts`. Queuing (writes to app-level signals) stays in app.tsx. This keeps the reactive state ownership clear — deep-links.ts never imports from app.tsx.
 
 **Interface:**
 ```typescript
@@ -189,8 +216,12 @@ export function buildImportPayloadFromBundle(
   bundle: SharedBundleV1,
   workspacePath: string
 ): ImportPayload;
+// waitForSharedBundleImportTarget requires app-level signals (vesloServerClient,
+// vesloServerWorkspaceId, vesloServerStatus). These are passed as params — the
+// function does NOT import from app.tsx or use closures over app signals.
 export function waitForSharedBundleImportTarget(
   vesloClient: VesloServerClient,
+  workspaceId: string,
   opts: { maxAttempts: number; delayMs: number; signal?: AbortSignal }
 ): Promise<VesloWorkspaceInfo>;
 ```
@@ -207,7 +238,7 @@ export function waitForSharedBundleImportTarget(
 | `formatConfigWithDefaultModel()` | 2835-2854 | Inject model into opencode config |
 
 **What stays in app.tsx:**
-- All 5 effects that load/persist models (lines 6114-6367) — they call extracted functions
+- All 5 effects that load/persist models (lines 6114-6367) — these effects coordinate multiple concerns (session selection, config format, localStorage, error handling) and remain in app.tsx. They call the extracted pure functions for data transformation only.
 - Signals: `defaultModel`, `sessionModelOverrideById`, `sessionModelById`, `legacyDefaultModel`
 - localStorage key constants
 
@@ -239,8 +270,12 @@ export function formatConfigWithDefaultModel(config: unknown, modelRef: string):
 - Provider list memo and the `refreshProviderState()` effect
 - Den auth exchange (lines 3789-3870) — stays because it's deeply tied to onboarding state
 
+**State management pattern:** Extracted functions do NOT write to app signals directly. They return results; app.tsx updates its own signals. For functions that need progress callbacks (busy/error), those are passed as explicit parameters.
+
 **Interface:**
 ```typescript
+// Extracted functions accept client + return results.
+// App.tsx wraps each call: setBusy(true) → call → setBusy(false), setError(e).
 export function startProviderAuth(
   client: OpencodeClient,
   providerId: string,
@@ -261,7 +296,26 @@ export function saveAndTestProviderApiKey(
   opts?: { testModel?: string }
 ): Promise<{ success: boolean; error?: string }>;
 
-// ... etc for each function
+export function disconnectProvider(
+  client: OpencodeClient,
+  providerId: string
+): Promise<void>;
+
+export function connectLmStudioProvider(
+  client: OpencodeClient,
+  baseUrl: string,
+  opts: {
+    onBusy: (busy: boolean) => void;
+    onError: (error: string | null) => void;
+    onModels: (models: string[]) => void;
+  }
+): Promise<void>;
+
+export function runProviderConnectionTest(
+  client: OpencodeClient,
+  providerId: string,
+  model: string
+): Promise<{ success: boolean; error?: string }>;
 ```
 
 ### 2E. `packages/app/src/app/lib/auto-compaction.ts` (~120 lines)
@@ -308,6 +362,65 @@ export function triggerAutoCompaction(
 ## Phase 3: `workspace.ts` Decomposition
 
 After Phase 3, workspace.ts drops from 3,864 to ~1,800 lines. It retains: workspace CRUD, activation orchestration, connection management, authorization, and bootstrap/onboarding.
+
+### Dependency Injection Pattern
+
+The current `createWorkspaceStore()` is a single function with 40+ constructor params that creates all internal signals. The sub-stores (engine, remote, config) are NOT independent modules — they are created INSIDE `createWorkspaceStore()` as composition units.
+
+**How it works:**
+1. `createWorkspaceStore()` creates its own signals first (workspaces, activeWorkspaceId, projectDir, etc.)
+2. It then calls `createEngineStore(deps)`, `createRemoteStore(deps)`, `createConfigStore(deps)` with closures over those signals
+3. Sub-stores create their own internal signals (engine, sandboxPhase, exportingConfig, etc.)
+4. `createWorkspaceStore()` exposes sub-store methods on its return object, either directly or via delegation
+
+**Concrete pattern:**
+```typescript
+export function createWorkspaceStore(options: WorkspaceStoreOptions) {
+  // 1. Create workspace-level signals
+  const [workspaces, setWorkspaces] = createSignal<WorkspaceInfo[]>([]);
+  const [activeWorkspaceId, syncActiveWorkspaceId] = createSignal<string>();
+  // ...
+
+  // 2. Create sub-stores with closures over workspace signals
+  const engineStore = createEngineStore({
+    getActiveWorkspacePath: () => activeWorkspacePath(),
+    getActiveWorkspaceRoot: () => activeWorkspaceRoot(),
+    getEngineSource: options.engineSource,
+    setError: options.setError,
+    setBusy: options.setBusy,
+    // ...
+  });
+
+  const remoteStore = createRemoteStore({
+    getWorkspaces: workspaces,
+    setWorkspaces,
+    engineStore,
+    connectToServer,
+    // ...
+  });
+
+  // 3. Keep core workspace functions here
+  function activateWorkspace(...) { ... }
+  function connectToServer(...) { ... }
+
+  // 4. Return combined interface
+  return {
+    // Workspace core
+    activateWorkspace,
+    createLocalWorkspace,
+    // Engine (delegated)
+    ...engineStore,
+    // Remote (delegated)
+    ...remoteStore,
+    // Config (delegated)
+    ...configStore,
+  };
+}
+```
+
+**This avoids circular imports** — sub-stores never import from workspace.ts. They receive dependencies via their typed `deps` parameter. The workspace store is the composition root.
+
+**Extraction order matters:** 3C (config-store) first because it has the fewest cross-dependencies. Then 3A (engine-store). Then 3B (remote-store) last because it depends on engine-store.
 
 ### 3A. `packages/app/src/app/stores/engine-store.ts` (~400 lines)
 
@@ -448,24 +561,26 @@ export function createConfigStore(deps: ConfigStoreDeps): {
 
 ---
 
-## Phase 4: `utils/index.ts` Split
+## Phase 4: `packages/app/src/app/utils/index.ts` Split
 
-The 1,210-line file splits into domain modules. A barrel re-export preserves all existing import paths.
+The 1,210-line file at `packages/app/src/app/utils/index.ts` splits into domain modules within the same directory. A barrel re-export preserves all existing import paths.
+
+**Important:** All new files are created at `packages/app/src/app/utils/` (NOT `packages/app/src/utils/`).
 
 ### Target modules:
 
-| Module | Functions (examples) | Approx Lines |
-|--------|---------------------|-------------|
-| `utils/models.ts` | `formatModelRef`, `parseModelRef`, `formatModelLabel`, `resolveModelSortGroup` | ~150 |
-| `utils/persistence.ts` | `readStartupPreference`, `writeStartupPreference`, `clearStartupPreference`, legacy key migration | ~100 |
-| `utils/paths.ts` | `normalizePath`, `normalizeDirectoryPath`, `isTauriRuntime`, platform detection | ~80 |
-| `utils/messages.ts` | `upsertSession`, `upsertMessage`, `removePart`, `updatePart` | ~200 |
-| `utils/tools.ts` | `getToolInput`, `buildToolTitle`, `buildToolDetail`, tool categorization | ~200 |
-| `utils/files.ts` | File extraction, data transfer helpers | ~100 |
-| `utils/format.ts` | `safeStringify`, `formatDuration`, `formatRelativeTime` | ~80 |
-| `utils/index.ts` | Re-exports from all above | ~30 |
+| Module | Full Path | Functions (examples) | Approx Lines |
+|--------|-----------|---------------------|-------------|
+| `models.ts` | `packages/app/src/app/utils/models.ts` | `formatModelRef`, `parseModelRef`, `formatModelLabel`, `resolveModelSortGroup` | ~150 |
+| `persistence.ts` | `packages/app/src/app/utils/persistence.ts` | `readStartupPreference`, `writeStartupPreference`, `clearStartupPreference`, legacy key migration | ~100 |
+| `paths.ts` | `packages/app/src/app/utils/paths.ts` | `normalizePath`, `normalizeDirectoryPath`, `isTauriRuntime`, platform detection | ~80 |
+| `messages.ts` | `packages/app/src/app/utils/messages.ts` | `upsertSession`, `upsertMessage`, `removePart`, `updatePart` | ~200 |
+| `tools.ts` | `packages/app/src/app/utils/tools.ts` | `getToolInput`, `buildToolTitle`, `buildToolDetail`, tool categorization | ~200 |
+| `files.ts` | `packages/app/src/app/utils/files.ts` | File extraction, data transfer helpers | ~100 |
+| `format.ts` | `packages/app/src/app/utils/format.ts` | `safeStringify`, `formatDuration`, `formatRelativeTime` | ~80 |
+| `index.ts` | `packages/app/src/app/utils/index.ts` | Re-exports from all above | ~30 |
 
-**Safety measure:** `utils/index.ts` becomes a barrel file (`export * from './models'`, etc.). Zero import changes in any consumer. Consumers can be updated to import from specific modules later.
+**Safety measure:** `packages/app/src/app/utils/index.ts` becomes a barrel file (`export * from './models'`, etc.). Zero import changes in any consumer. All existing `import { ... } from "./utils"` or `from "../utils"` paths continue to resolve correctly. Consumers can be updated to import from specific modules later.
 
 ---
 
@@ -477,10 +592,52 @@ Every extraction step follows this exact sequence:
 2. **Extract:** Move functions to new file, update imports, no logic changes
 3. **Verify build:** `pnpm build` — must succeed with zero new warnings
 4. **Verify tests:** `pnpm test:unit` — same pass/fail counts as baseline
-5. **Smoke test:** Launch app (`pnpm dev`), verify: app loads, session opens, workspace switches, settings accessible
+5. **Smoke test:** Per-extraction checklist (see below)
 6. **Commit:** One commit per extraction with descriptive message
 
 **If any step fails:** Revert the extraction, investigate, fix, retry.
+
+### Per-Extraction Smoke Tests
+
+| Step | Smoke Test Focus |
+|------|-----------------|
+| 1A (error-reporter) | App loads. Open dev console → trigger a background refresh (switch workspace) → verify error context appears in console instead of silent swallow |
+| 1B (http.ts) | App loads. Create a session (tests SDK fetch path). Settings → provider page loads (tests Veslo fetch path) |
+| 2A (deep-links) | App loads. Open app with a deep-link URL (or paste a veslo:// URL in web mode) → verify it queues correctly |
+| 2B (shared-bundles) | App loads. If test bundle URL available, verify import flow. Otherwise: app loads without errors |
+| 2C (model-persistence) | App loads. Switch models in session → close/reopen → model persisted. Switch workspaces → per-workspace model preserved |
+| 2D (provider-auth) | App loads. Settings → Providers → test OAuth redirect and API key entry |
+| 2E (auto-compaction) | App loads. Create session with high token usage → verify compaction triggers when session goes idle |
+| 3A-3C (workspace stores) | Full workspace lifecycle: create workspace, switch workspaces, open project folder, settings → authorized dirs |
+| 4 (utils split) | App loads. Session works. No import resolution errors in console |
+
+## Dependency Graph
+
+Steps can be parallelized where there are no arrows between them. In practice, since this is incremental, execute sequentially.
+
+```
+1A (error-reporter) ──────────────────────────────┐
+1B (http.ts) ─────────────┬───────────────────────┤
+                          │                       │
+                          ├── 2B (shared-bundles)  │
+                          │                       │
+2C (model-persistence) ───┤                       │
+2E (auto-compaction) ─────┤   (all Phase 2 uses   │
+2A (deep-links) ──────────┤    error-reporter)    │
+2D (provider-auth) ───────┤                       │
+                          │                       │
+4  (utils split) ─────────┤  (independent)        │
+                          │                       │
+3C (config-store) ────────┤                       │
+3A (engine-store) ────────┤                       │
+3B (remote-store) ────────┘── depends on 3A       │
+```
+
+**Key dependencies:**
+- 1A enables all later steps (every extraction uses reportError)
+- 1B enables 2B (shared-bundles uses fetchJson)
+- 3B depends on 3A (remote-store receives engine-store as a dep)
+- All other steps are independent of each other
 
 ---
 
@@ -514,8 +671,9 @@ Every extraction step follows this exact sequence:
 After all 11 steps:
 - `app.tsx` drops from 7,524 to ~2,500 lines
 - `workspace.ts` drops from 3,864 to ~1,800 lines
-- `utils/index.ts` drops from 1,210 to ~30 lines (barrel)
-- Zero silent error catches remain
-- Zero duplicated fetchWithTimeout implementations
+- `packages/app/src/app/utils/index.ts` drops from 1,210 to ~30 lines (barrel)
+- Zero silent error catches remain (36 → 0, except 1 intentional telemetry catch with explanatory comment)
+- Zero duplicated fetchWithTimeout implementations (2 → 1 shared in lib/http.ts)
 - All existing tests pass
 - App behavior unchanged
+- Re-run baseline metrics (`wc -l`, `grep createEffect`, `grep '.catch(() =>'`) to confirm targets met
