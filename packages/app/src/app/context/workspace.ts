@@ -33,11 +33,10 @@ import {
   type VesloServerSettings,
   type VesloWorkspaceInfo,
 } from "../lib/veslo-server";
-import { appDataDir, downloadDir, homeDir } from "@tauri-apps/api/path";
+import { appDataDir, homeDir } from "@tauri-apps/api/path";
 import {
   engineDoctor,
   engineInfo,
-  opencodeDbMigrate,
   engineInstall,
   engineStart,
   engineStop,
@@ -46,17 +45,12 @@ import {
   orchestratorInstanceDispose,
   orchestratorStartDetached,
   orchestratorWorkspaceActivate,
-  pickFile,
   pickDirectory,
-  saveFile,
   workspaceBootstrap,
   workspaceCreate,
   workspaceCreateRemote,
-  workspaceExportConfig,
   workspaceForget,
-  workspaceImportConfig,
   workspaceVesloRead,
-  workspaceVesloWrite,
   workspaceSetActive,
   workspaceUpdateDisplayName,
   workspaceUpdateRemote,
@@ -76,7 +70,9 @@ import {
 } from "../utils/workspace-switch-timeouts";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { createWorkspaceActivateGuard } from "./workspace-activate-guard";
+import { createConfigStore } from "../stores/config-store";
 
+export type { MigrationRepairResult } from "../stores/config-store";
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
 
 export type WorkspaceDebugEvent = {
@@ -105,10 +101,6 @@ export type SandboxCreateProgressState = {
 
 export type SandboxCreatePhase = "idle" | "preflight" | "provisioning" | "finalizing";
 
-export type MigrationRepairResult = {
-  ok: boolean;
-  message: string;
-};
 
 export function createWorkspaceStore(options: {
   startupPreference: () => StartupPreference | null;
@@ -335,7 +327,6 @@ export function createWorkspaceStore(options: {
   };
 
   const [authorizedDirs, setAuthorizedDirs] = createSignal<string[]>([]);
-  const [newAuthorizedDir, setNewAuthorizedDir] = createSignal("");
 
   const [workspaceConfig, setWorkspaceConfig] = createSignal<WorkspaceVesloConfig | null>(null);
   const [workspaceConfigLoaded, setWorkspaceConfigLoaded] = createSignal(false);
@@ -345,10 +336,6 @@ export function createWorkspaceStore(options: {
   const [workspaceConnectionStateById, setWorkspaceConnectionStateById] = createSignal<
     Record<string, WorkspaceConnectionState>
   >({});
-  const [exportingWorkspaceConfig, setExportingWorkspaceConfig] = createSignal(false);
-  const [importingWorkspaceConfig, setImportingWorkspaceConfig] = createSignal(false);
-  const [migrationRepairBusy, setMigrationRepairBusy] = createSignal(false);
-  const [migrationRepairResult, setMigrationRepairResult] = createSignal<MigrationRepairResult | null>(null);
 
   const activeWorkspaceInfo = createMemo(() => workspaces().find((w) => w.id === activeWorkspaceId()) ?? null);
   const activeWorkspaceDisplay = createMemo<WorkspaceDisplay>(() => {
@@ -2685,237 +2672,6 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function exportWorkspaceConfig(workspaceId?: string) {
-    if (exportingWorkspaceConfig()) return;
-    if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
-      return;
-    }
-
-    const targetId = workspaceId?.trim() || activeWorkspaceInfo()?.id || "";
-    if (!targetId) {
-      options.setError("Select a worker to export");
-      return;
-    }
-    const target = workspaces().find((ws) => ws.id === targetId) ?? null;
-    if (!target) {
-      options.setError("Unknown worker");
-      return;
-    }
-    if (target.workspaceType === "remote") {
-      options.setError("Export is only supported for local workers");
-      return;
-    }
-
-    setExportingWorkspaceConfig(true);
-    options.setError(null);
-
-    try {
-      const nameBase = (target.displayName || target.name || "worker")
-        .toLowerCase()
-        .replace(/[^a-z0-9-_]+/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, 60);
-      const dateStamp = new Date().toISOString().slice(0, 10);
-      const fileName = `veslo-${nameBase || "worker"}-${dateStamp}.veslo-workspace`;
-      const downloads = await downloadDir().catch(e => { reportError(e, "workspace.downloadDir"); return null; });
-      const defaultPath = downloads ? `${downloads}/${fileName}` : fileName;
-
-      const outputPath = await saveFile({
-        title: "Export worker config",
-        defaultPath,
-        filters: [{ name: "Veslo Worker", extensions: ["veslo-workspace", "zip"] }],
-      });
-
-      if (!outputPath) {
-        return;
-      }
-
-      await workspaceExportConfig({
-        workspaceId: target.id,
-        outputPath,
-      });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-    } finally {
-      setExportingWorkspaceConfig(false);
-    }
-  }
-
-  async function importWorkspaceConfig() {
-    if (importingWorkspaceConfig()) return;
-    if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
-      return;
-    }
-
-    setImportingWorkspaceConfig(true);
-    options.setError(null);
-
-    try {
-      const selection = await pickFile({
-        title: "Import worker config",
-        filters: [{ name: "Veslo Worker", extensions: ["veslo-workspace", "zip"] }],
-      });
-      const filePath =
-        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
-      if (!filePath) return;
-
-      const target = await pickDirectory({
-        title: "Choose a worker folder",
-      });
-      const folder =
-        typeof target === "string" ? target : Array.isArray(target) ? target[0] : null;
-      if (!folder) return;
-
-      const resolvedFolder = await resolveWorkspacePath(folder);
-      if (!resolvedFolder) {
-        options.setError(t("app.error.choose_folder", currentLocale()));
-        return;
-      }
-
-      const ws = await workspaceImportConfig({
-        archivePath: filePath,
-        targetDir: resolvedFolder,
-      });
-
-      setWorkspaces(ws.workspaces);
-      syncActiveWorkspaceId(ws.activeId);
-      setCreateWorkspaceOpen(false);
-      setCreateRemoteWorkspaceOpen(false);
-      markOnboardingComplete();
-
-      const opened = await activateFreshLocalWorkspace(ws.activeId ?? null, resolvedFolder);
-      if (!opened) {
-        return;
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-    } finally {
-      setImportingWorkspaceConfig(false);
-    }
-  }
-
-  function canRepairOpencodeMigration() {
-    if (CLOUD_ONLY_MODE) return false;
-    if (!isTauriRuntime()) return false;
-    const workspace = activeWorkspaceInfo();
-    if (!workspace || workspace.workspaceType !== "local") return false;
-    return Boolean(activeWorkspacePath().trim());
-  }
-
-  async function repairOpencodeMigration(optionsOverride?: { navigate?: boolean }) {
-    if (CLOUD_ONLY_MODE) {
-      const message = cloudOnlyMessage("cloud_only_local_disabled", "Local migration repair is disabled.");
-      setMigrationRepairResult({ ok: false, message });
-      options.setError(message);
-      return false;
-    }
-
-    if (!isTauriRuntime()) {
-      const message = t("app.migration.desktop_required", currentLocale());
-      setMigrationRepairResult({ ok: false, message });
-      options.setError(message);
-      return false;
-    }
-
-    if (migrationRepairBusy()) return false;
-
-    const workspace = activeWorkspaceInfo();
-    if (!workspace || workspace.workspaceType !== "local") {
-      const message = t("app.migration.local_only", currentLocale());
-      setMigrationRepairResult({ ok: false, message });
-      options.setError(message);
-      return false;
-    }
-
-    const root = activeWorkspacePath().trim();
-    if (!root) {
-      const message = t("app.migration.workspace_required", currentLocale());
-      setMigrationRepairResult({ ok: false, message });
-      options.setError(message);
-      return false;
-    }
-
-    setMigrationRepairBusy(true);
-    setMigrationRepairResult(null);
-    options.setError(null);
-    options.setBusy(true);
-    options.setBusyLabel("status.repairing_migration");
-    options.setBusyStartedAt(Date.now());
-
-    try {
-      if (engine()?.running) {
-        const info = await engineStop();
-        setEngine(info);
-      }
-
-      const source = options.engineSource();
-      const result = await opencodeDbMigrate({
-        projectDir: root,
-        preferSidecar: source === "sidecar",
-        opencodeBinPath: source === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
-      });
-
-      if (!result.ok) {
-        const output = formatExecOutput(result);
-        if (isDbMigrateUnsupported(output)) {
-          const message = t("app.migration.unsupported", currentLocale());
-          setMigrationRepairResult({ ok: false, message });
-          options.setError(message);
-          return false;
-        }
-
-        const fallback = t("app.migration.failed", currentLocale());
-        const message = output ? `${fallback}\n\n${output}` : fallback;
-        setMigrationRepairResult({ ok: false, message });
-        options.setError(addOpencodeCacheHint(message));
-        return false;
-      }
-
-      const started = await startHost({
-        workspacePath: root,
-        navigate: optionsOverride?.navigate ?? false,
-      });
-      if (!started) {
-        const message = t("app.migration.restart_failed", currentLocale());
-        setMigrationRepairResult({ ok: false, message });
-        return false;
-      }
-
-      setMigrationRepairResult({ ok: true, message: t("app.migration.success", currentLocale()) });
-      return true;
-    } catch (error) {
-      const message = addOpencodeCacheHint(error instanceof Error ? error.message : safeStringify(error));
-      setMigrationRepairResult({ ok: false, message });
-      options.setError(message);
-      return false;
-    } finally {
-      setMigrationRepairBusy(false);
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
-    }
-  }
-
-  async function onRepairOpencodeMigration() {
-    if (CLOUD_ONLY_MODE) {
-      options.setStartupPreference("server");
-      options.setOnboardingStep("server");
-      blockLocalAction("cloud_only_local_disabled", "Local migration repair is disabled.");
-      return;
-    }
-
-    options.setStartupPreference("local");
-    options.setOnboardingStep("connecting");
-    const ok = await repairOpencodeMigration({ navigate: true });
-    if (!ok) {
-      options.setOnboardingStep("local");
-    }
-  }
-
   async function startHost(optionsOverride?: { workspacePath?: string; navigate?: boolean }) {
     if (CLOUD_ONLY_MODE) {
       return blockLocalAction("cloud_only_host_mode_removed", "Local host mode has been removed.");
@@ -2971,7 +2727,7 @@ export function createWorkspaceStore(options: {
     }
 
     options.setError(null);
-    setMigrationRepairResult(null);
+    configStore.setMigrationRepairResult(null);
     options.setBusy(true);
     options.setBusyLabel("status.starting_engine");
     options.setBusyStartedAt(Date.now());
@@ -3302,104 +3058,39 @@ export function createWorkspaceStore(options: {
   const resolveWelcomeOnboardingStep = (): OnboardingStep =>
     hasPersistedLanguagePreference() ? "welcome" : "language";
 
-  async function persistAuthorizedRoots(nextRoots: string[]) {
-    if (!isTauriRuntime()) return;
-    if (activeWorkspaceInfo()?.workspaceType === "remote") return;
-    const root = activeWorkspacePath().trim();
-    if (!root) return;
-
-    const existing = workspaceConfig();
-    const cfg: WorkspaceVesloConfig = {
-      version: existing?.version ?? 1,
-      workspace: existing?.workspace ?? null,
-      authorizedRoots: nextRoots,
-      reload: existing?.reload ?? null,
-    };
-
-    await workspaceVesloWrite({ workspacePath: root, config: cfg });
-    setWorkspaceConfig(cfg);
-  }
-
-  async function persistReloadSettings(next: { auto?: boolean; resume?: boolean }) {
-    if (!isTauriRuntime()) return;
-    if (activeWorkspaceInfo()?.workspaceType === "remote") return;
-    const root = activeWorkspacePath().trim();
-    if (!root) return;
-
-    const existing = workspaceConfig();
-    const cfg: WorkspaceVesloConfig = {
-      version: existing?.version ?? 1,
-      workspace: existing?.workspace ?? null,
-      authorizedRoots: Array.isArray(existing?.authorizedRoots) ? existing!.authorizedRoots : authorizedDirs(),
-      reload: {
-        auto: Boolean(next.auto),
-        resume: Boolean(next.resume),
-      },
-    };
-
-    await workspaceVesloWrite({ workspacePath: root, config: cfg });
-    setWorkspaceConfig(cfg);
-  }
-
-  async function addAuthorizedDir() {
-    if (activeWorkspaceInfo()?.workspaceType === "remote") return;
-    const next = newAuthorizedDir().trim();
-    if (!next) return;
-
-    const roots = normalizeRoots([...authorizedDirs(), next]);
-    setAuthorizedDirs(roots);
-    setNewAuthorizedDir("");
-
-    try {
-      await persistAuthorizedRoots(roots);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-    }
-  }
-
-  async function addAuthorizedDirFromPicker(optionsOverride?: { persistToWorkspace?: boolean }) {
-    if (!isTauriRuntime()) return;
-    if (activeWorkspaceInfo()?.workspaceType === "remote") return;
-
-    try {
-      const selection = await pickDirectory({ title: t("onboarding.authorize_folder", currentLocale()) });
-      const folder =
-        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
-      if (!folder) return;
-
-      const roots = normalizeRoots([...authorizedDirs(), folder]);
-      setAuthorizedDirs(roots);
-
-      if (optionsOverride?.persistToWorkspace) {
-        await persistAuthorizedRoots(roots);
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-    }
-  }
-
-  async function removeAuthorizedDir(dir: string) {
-    if (activeWorkspaceInfo()?.workspaceType === "remote") return;
-    const roots = normalizeRoots(authorizedDirs().filter((root) => root !== dir));
-    setAuthorizedDirs(roots);
-
-    try {
-      await persistAuthorizedRoots(roots);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-    }
-  }
-
-  function removeAuthorizedDirAtIndex(index: number) {
-    const roots = authorizedDirs();
-    const target = roots[index];
-    if (target) {
-      void removeAuthorizedDir(target);
-    }
-  }
+  const configStore = createConfigStore({
+    getActiveWorkspacePath: () => activeWorkspacePath(),
+    getActiveWorkspaceInfo: activeWorkspaceInfo,
+    getWorkspaces: workspaces,
+    setWorkspaces,
+    getWorkspaceConfig: workspaceConfig,
+    setWorkspaceConfig,
+    getAuthorizedDirs: authorizedDirs,
+    setAuthorizedDirs,
+    getEngine: engine,
+    setEngine,
+    syncActiveWorkspaceId,
+    setCreateWorkspaceOpen,
+    setCreateRemoteWorkspaceOpen,
+    markOnboardingComplete,
+    activateFreshLocalWorkspace,
+    startHost,
+    engineSource: options.engineSource,
+    engineCustomBinPath: options.engineCustomBinPath,
+    engineStop,
+    setError: options.setError,
+    setBusy: options.setBusy,
+    setBusyLabel: options.setBusyLabel,
+    setBusyStartedAt: options.setBusyStartedAt,
+    setStartupPreference: options.setStartupPreference,
+    setOnboardingStep: options.setOnboardingStep,
+    blockLocalAction,
+    normalizeRoots,
+    resolveWorkspacePath,
+    formatExecOutput,
+    isDbMigrateUnsupported,
+    cloudOnlyMessage,
+  });
 
   /** Race a promise against a timeout; resolves to undefined on timeout. */
   function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T | undefined> {
@@ -3793,17 +3484,17 @@ export function createWorkspaceStore(options: {
     workspaces,
     activeWorkspaceId,
     authorizedDirs,
-    newAuthorizedDir,
+    newAuthorizedDir: configStore.newAuthorizedDir,
     workspaceConfig,
     workspaceConfigLoaded,
     createWorkspaceOpen,
     createRemoteWorkspaceOpen,
     connectingWorkspaceId,
     workspaceConnectionStateById,
-    exportingWorkspaceConfig,
-    importingWorkspaceConfig,
-    migrationRepairBusy,
-    migrationRepairResult,
+    exportingWorkspaceConfig: configStore.exportingWorkspaceConfig,
+    importingWorkspaceConfig: configStore.importingWorkspaceConfig,
+    migrationRepairBusy: configStore.migrationRepairBusy,
+    migrationRepairResult: configStore.migrationRepairResult,
     activeWorkspaceDisplay,
     activeWorkspacePath,
     activeWorkspaceRoot,
@@ -3811,7 +3502,7 @@ export function createWorkspaceStore(options: {
     setCreateRemoteWorkspaceOpen,
     setProjectDir,
     setAuthorizedDirs,
-    setNewAuthorizedDir,
+    setNewAuthorizedDir: configStore.setNewAuthorizedDir,
     setWorkspaceConfig,
     setWorkspaceConfigLoaded,
     setWorkspaces,
@@ -3833,10 +3524,10 @@ export function createWorkspaceStore(options: {
     recoverWorkspace,
     stopSandbox,
     pickWorkspaceFolder,
-    exportWorkspaceConfig,
-    importWorkspaceConfig,
-    canRepairOpencodeMigration,
-    repairOpencodeMigration,
+    exportWorkspaceConfig: configStore.exportWorkspaceConfig,
+    importWorkspaceConfig: configStore.importWorkspaceConfig,
+    canRepairOpencodeMigration: configStore.canRepairOpencodeMigration,
+    repairOpencodeMigration: configStore.repairOpencodeMigration,
     startHost,
     stopHost,
     reloadWorkspaceEngine,
@@ -3844,17 +3535,17 @@ export function createWorkspaceStore(options: {
     onSelectStartup,
     onBackToWelcome,
     onStartHost,
-    onRepairOpencodeMigration,
+    onRepairOpencodeMigration: configStore.onRepairOpencodeMigration,
     onAttachHost,
     onConnectClient,
     onConfirmLanguage,
     onRememberStartupToggle,
     onInstallEngine,
-    addAuthorizedDir,
-    addAuthorizedDirFromPicker,
-    removeAuthorizedDir,
-    removeAuthorizedDirAtIndex,
-    persistReloadSettings,
+    addAuthorizedDir: configStore.addAuthorizedDir,
+    addAuthorizedDirFromPicker: configStore.addAuthorizedDirFromPicker,
+    removeAuthorizedDir: configStore.removeAuthorizedDir,
+    removeAuthorizedDirAtIndex: configStore.removeAuthorizedDirAtIndex,
+    persistReloadSettings: configStore.persistReloadSettings,
     setEngineInstallLogs,
     refreshSandboxDoctor,
     sandboxCreateProgress,
