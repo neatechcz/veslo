@@ -40,8 +40,8 @@ export const resolveTitlebarMenuLayout = ({
   if (windows) {
     return {
       rootClass: TAURI_OVERLAY_ROOT_CLASS,
-      leftOffsetClass: "pointer-events-auto relative z-10 mt-1 ml-2.5",
-      rightOffsetClass: "pointer-events-auto relative z-10 mt-1 mr-[136px]",
+      leftOffsetClass: "pointer-events-auto relative z-10 mt-0.5 ml-2.5",
+      rightOffsetClass: "pointer-events-auto relative z-10 mt-0.5 mr-[132px]",
       dragRegionClass: TAURI_DRAG_REGION_CLASS,
     };
   }
@@ -49,16 +49,16 @@ export const resolveTitlebarMenuLayout = ({
   if (mac) {
     return {
       rootClass: TAURI_OVERLAY_ROOT_CLASS,
-      leftOffsetClass: "pointer-events-auto relative z-10 mt-1 ml-[66px]",
-      rightOffsetClass: "pointer-events-auto relative z-10 mt-1 mr-2",
+      leftOffsetClass: "pointer-events-auto relative z-10 mt-0.5 ml-[60px]",
+      rightOffsetClass: "pointer-events-auto relative z-10 mt-0.5 mr-1.5",
       dragRegionClass: TAURI_DRAG_REGION_CLASS,
     };
   }
 
   return {
     rootClass: TAURI_OVERLAY_ROOT_CLASS,
-    leftOffsetClass: "pointer-events-auto relative z-10 mt-2 ml-[72px]",
-    rightOffsetClass: "pointer-events-auto relative z-10 mt-2 mr-3",
+    leftOffsetClass: "pointer-events-auto relative z-10 mt-0.5 ml-[60px]",
+    rightOffsetClass: "pointer-events-auto relative z-10 mt-0.5 mr-1.5",
     dragRegionClass: TAURI_DRAG_REGION_CLASS,
   };
 };

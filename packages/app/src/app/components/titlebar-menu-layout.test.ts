@@ -9,8 +9,8 @@ import {
 test("macOS Tauri titlebar menu uses overlay-aligned spacing", () => {
   assert.deepEqual(resolveTitlebarMenuLayout({ tauri: true, windows: false, mac: true }), {
     rootClass: "pointer-events-none fixed inset-x-0 top-0 z-[60] flex items-start justify-between",
-    leftOffsetClass: "pointer-events-auto relative z-10 mt-1 ml-[66px]",
-    rightOffsetClass: "pointer-events-auto relative z-10 mt-1 mr-2",
+    leftOffsetClass: "pointer-events-auto relative z-10 mt-0.5 ml-[60px]",
+    rightOffsetClass: "pointer-events-auto relative z-10 mt-0.5 mr-1.5",
     dragRegionClass: "pointer-events-auto fixed inset-x-0 top-0 z-[59] h-9",
   });
 });
@@ -18,8 +18,8 @@ test("macOS Tauri titlebar menu uses overlay-aligned spacing", () => {
 test("Windows Tauri titlebar menu keeps right-side safe spacing", () => {
   assert.deepEqual(resolveTitlebarMenuLayout({ tauri: true, windows: true, mac: false }), {
     rootClass: "pointer-events-none fixed inset-x-0 top-0 z-[60] flex items-start justify-between",
-    leftOffsetClass: "pointer-events-auto relative z-10 mt-1 ml-2.5",
-    rightOffsetClass: "pointer-events-auto relative z-10 mt-1 mr-[136px]",
+    leftOffsetClass: "pointer-events-auto relative z-10 mt-0.5 ml-2.5",
+    rightOffsetClass: "pointer-events-auto relative z-10 mt-0.5 mr-[132px]",
     dragRegionClass: "pointer-events-auto fixed inset-x-0 top-0 z-[59] h-9",
   });
 });

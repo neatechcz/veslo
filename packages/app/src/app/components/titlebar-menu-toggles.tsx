@@ -18,10 +18,10 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
   });
 
   const buttonClass = (active: boolean) =>
-    `h-5 w-5 flex items-center justify-center bg-transparent transition-colors focus:outline-none focus-visible:ring-0 ${
+    `h-6 w-6 flex items-center justify-center rounded-md transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-gray-7 ${
       active
-        ? "text-gray-12"
-        : "text-gray-9 hover:text-gray-12"
+        ? "text-gray-12 bg-gray-4/80 hover:bg-gray-5/80 active:bg-gray-6/80"
+        : "text-gray-10 hover:text-gray-12 hover:bg-gray-3/80 active:bg-gray-4/80"
     }`;
 
   const handleDragStripMouseDown = (event: MouseEvent) => {
@@ -51,7 +51,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
           aria-label="Toggle left menu"
           title="Toggle left menu"
         >
-          <LeftSidebarToggleIcon size={11} />
+          <LeftSidebarToggleIcon size={13} />
         </button>
       </div>
 
@@ -63,7 +63,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
           aria-label="Toggle right menu"
           title="Toggle right menu"
         >
-          <RightSidebarToggleIcon size={11} />
+          <RightSidebarToggleIcon size={13} />
         </button>
       </div>
       </div>
