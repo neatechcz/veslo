@@ -1,5 +1,5 @@
 ---
-title: "Create an OpenWork instance"
+title: "Create a Veslo instance"
 description: "Agent playbook for spinning up a shareable instance"
 ---
 
@@ -7,7 +7,7 @@ This playbook is optimized for agents or operators who need a repeatable setup.
 
 ## Goal
 
-Produce one working OpenWork instance with:
+Produce one working Veslo instance with:
 
 - at least one worker
 - a stable connect URL + token
@@ -16,31 +16,31 @@ Produce one working OpenWork instance with:
 
 ## Path A: Desktop app
 
-1. Install and open OpenWork.
+1. Install and open Veslo.
 2. Create worker `agency-core`.
 3. Open **Automations** and add one scheduled task.
 4. Open worker menu -> **Share** and copy:
-   - `OpenWork worker URL`
+   - `Veslo worker URL`
    - `Access token`
-   - `OpenWork invite link`
+   - `Veslo invite link`
 
-## Path B: CLI (`openwrk`)
+## Path B: CLI (`veslo`)
 
 ```bash
-npm install -g openwrk
-openwrk start --workspace /path/to/agency-core --approval auto
+npm install -g veslo
+veslo start --workspace /path/to/agency-core --approval auto
 ```
 
-Then capture pairing details printed by `openwrk`:
+Then capture pairing details printed by `veslo`:
 
-- OpenWork URL
+- Veslo URL
 - client token
 - host token (owner actions)
 
 ## Instance acceptance checks
 
 - `GET /health` responds.
-- Worker appears in OpenWork UI.
+- Worker appears in Veslo UI.
 - You can run one prompt and see output.
 - Automation fires once on schedule.
 - Teammate can connect using invite link or URL + token.

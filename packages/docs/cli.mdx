@@ -1,42 +1,42 @@
 ---
 title: "CLI"
-description: "Run OpenWork with openwrk and related CLIs"
+description: "Run Veslo with veslo and related CLIs"
 ---
 
 Use the CLI stack when you want automation without the desktop app.
 
 ## Main commands
 
-- `openwrk`: headless orchestrator (OpenCode + OpenWork server + router)
-- `openwork-server`: filesystem-backed remote API server
+- `veslo`: headless orchestrator (OpenCode + Veslo server + router)
+- `veslo-server`: filesystem-backed remote API server
 - `opencode-router`: Slack/Telegram bridge with directory routing
 
-## openwrk (recommended)
+## veslo (recommended)
 
 ```bash
-npm install -g openwrk
-openwrk start --workspace /path/to/workspace --approval auto
+npm install -g veslo
+veslo start --workspace /path/to/workspace --approval auto
 ```
 
 Useful follow-ups:
 
 ```bash
-openwrk status --openwork-url http://127.0.0.1:8787 --opencode-url http://127.0.0.1:4096
-openwrk approvals list --openwork-url http://127.0.0.1:8787 --host-token <token>
+veslo status --veslo-url http://127.0.0.1:8787 --opencode-url http://127.0.0.1:4096
+veslo approvals list --veslo-url http://127.0.0.1:8787 --host-token <token>
 ```
 
-## openwork-server
+## veslo-server
 
 ```bash
-npm install -g openwork-server
-openwork-server --workspace /path/to/workspace --approval auto
+npm install -g veslo-server
+veslo-server --workspace /path/to/workspace --approval auto
 ```
 
 Key env vars:
 
-- `OPENWORK_TOKEN`
-- `OPENWORK_HOST_TOKEN`
-- `OPENWORK_APPROVAL_MODE`
+- `VESLO_TOKEN`
+- `VESLO_HOST_TOKEN`
+- `VESLO_APPROVAL_MODE`
 
 ## opencode-router
 

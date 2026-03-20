@@ -79,9 +79,9 @@ But what you can do is:
 
 ### Veslo Server
 
-* Runs standalone via `openwork-server` CLI.
+* Runs standalone via `veslo-server` CLI.
 * Provides filesystem-backed config surfaces (skills, plugins, MCP, commands).
-* Sidecar lifecycle is described in `packages/app/pr/openwork-server.md`.
+* Sidecar lifecycle is described in `packages/app/pr/openwork-server.md` (legacy filename).
 * Serves the same filesystem-backed surfaces for local-first clients and future remote-capable clients.
 
 ### Veslo-managed Private Workspaces
@@ -119,4 +119,4 @@ But what you can do is:
 * `VISION.md`
 * `PRINCIPLES.md`
 * `ARCHITECTURE.md`
-* `packages/app/pr/openwork-server.md`
+* `packages/app/pr/openwork-server.md` (legacy filename)

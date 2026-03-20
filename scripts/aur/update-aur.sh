@@ -29,10 +29,10 @@ if [[ "$TAG" != v* ]]; then
 fi
 
 VERSION="${TAG#v}"
-ASSET_NAME_AMD64="${AUR_ASSET_NAME:-openwork-desktop-linux-amd64.deb}"
-ASSET_NAME_ARM64="openwork-desktop-linux-arm64.deb"
-ASSET_URL_AMD64="https://github.com/different-ai/openwork/releases/download/${TAG}/${ASSET_NAME_AMD64}"
-ASSET_URL_ARM64="https://github.com/different-ai/openwork/releases/download/${TAG}/${ASSET_NAME_ARM64}"
+ASSET_NAME_AMD64="${AUR_ASSET_NAME:-veslo-desktop-linux-amd64.deb}"
+ASSET_NAME_ARM64="veslo-desktop-linux-arm64.deb"
+ASSET_URL_AMD64="https://github.com/neatechcz/veslo/releases/download/${TAG}/${ASSET_NAME_AMD64}"
+ASSET_URL_ARM64="https://github.com/neatechcz/veslo/releases/download/${TAG}/${ASSET_NAME_ARM64}"
 
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
