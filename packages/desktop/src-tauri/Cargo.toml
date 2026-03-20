@@ -5,6 +5,9 @@ description = "Veslo"
 authors = ["Neatech"]
 edition = "2021"
 
+[features]
+e2e = ["tauri-plugin-webdriver"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -26,6 +29,7 @@ local-ip-address = "0.5"
 walkdir = "2.5"
 zip = "0.6"
 include_dir = "0.7"
+tauri-plugin-webdriver = { version = "0.2", optional = true }
 
 [profile.release]
 panic = "abort"

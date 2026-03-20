@@ -21,6 +21,8 @@
     "test:session-switch": "pnpm --filter @neatech/veslo-ui test:session-switch",
     "test:fs-engine": "pnpm --filter @neatech/veslo-ui test:fs-engine",
     "test:e2e": "pnpm --filter @neatech/veslo-ui test:e2e",
+    "test:e2e:ui": "pnpm --filter @neatech/veslo-e2e test",
+    "test:e2e:ui:update-baselines": "pnpm --filter @neatech/veslo-e2e test:update-baselines",
     "test:orchestrator": "pnpm --filter veslo-orchestrator test:router",
     "bump:calver": "pnpm --filter @neatech/veslo-ui bump:calver",
     "bump:patch": "pnpm --filter @neatech/veslo-ui bump:patch",

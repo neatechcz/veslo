@@ -1,6 +1,4 @@
 import { createEffect, createMemo, createSignal } from "solid-js";
-import { listen, type Event as TauriEvent } from "@tauri-apps/api/event";
-
 import type {
   Client,
   StartupPreference,
@@ -21,47 +19,33 @@ import {
   writeStartupPreference,
 } from "../utils";
 import { LANGUAGE_PREF_KEY } from "../constants";
+import { reportError } from "../lib/error-reporter";
 import { unwrap } from "../lib/opencode";
 import { readDenAuth, clearDenAuth, validateDenAuth } from "../lib/den-auth";
 import {
   buildVesloWorkspaceBaseUrl,
   createVesloServerClient,
   normalizeVesloServerUrl,
-  VesloServerError,
   type VesloServerClient,
   type VesloServerSettings,
   type VesloWorkspaceInfo,
 } from "../lib/veslo-server";
-import { appDataDir, downloadDir, homeDir } from "@tauri-apps/api/path";
+import { appDataDir, homeDir } from "@tauri-apps/api/path";
 import {
-  engineDoctor,
   engineInfo,
-  opencodeDbMigrate,
-  engineInstall,
   engineStart,
   engineStop,
-  sandboxDoctor,
-  sandboxStop,
   orchestratorInstanceDispose,
-  orchestratorStartDetached,
   orchestratorWorkspaceActivate,
-  pickFile,
   pickDirectory,
-  saveFile,
   workspaceBootstrap,
   workspaceCreate,
-  workspaceCreateRemote,
-  workspaceExportConfig,
   workspaceForget,
-  workspaceImportConfig,
   workspaceVesloRead,
-  workspaceVesloWrite,
   workspaceSetActive,
   workspaceUpdateDisplayName,
   workspaceUpdateRemote,
-  type EngineDoctorResult,
   type EngineInfo,
-  type SandboxDoctorResult,
   type WorkspaceInfo,
 } from "../lib/tauri";
 import { waitForHealthy, createClient, type OpencodeAuth } from "../lib/opencode";
@@ -75,7 +59,11 @@ import {
 } from "../utils/workspace-switch-timeouts";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { createWorkspaceActivateGuard } from "./workspace-activate-guard";
+import { createConfigStore } from "../stores/config-store";
+import { createEngineStore } from "../stores/engine-store";
+import { createRemoteStore } from "../stores/remote-store";
 
+export type { MigrationRepairResult } from "../stores/config-store";
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
 
 export type WorkspaceDebugEvent = {
@@ -104,10 +92,6 @@ export type SandboxCreateProgressState = {
 
 export type SandboxCreatePhase = "idle" | "preflight" | "provisioning" | "finalizing";
 
-export type MigrationRepairResult = {
-  ok: boolean;
-  message: string;
-};
 
 export function createWorkspaceStore(options: {
   startupPreference: () => StartupPreference | null;
@@ -199,7 +183,18 @@ export function createWorkspaceStore(options: {
 
   const wsActivateGuard = createWorkspaceActivateGuard();
   const connectInFlightByKey = new Map<string, Promise<boolean>>();
-  let createRemoteInFlight: Promise<boolean> | null = null;
+
+  // Late-bound reference for the remote store — populated after createRemoteStore().
+  const remoteStoreRef: {
+    resolveVesloHost: (...args: any[]) => Promise<any>;
+    createRemoteWorkspaceFlow: (...args: any[]) => Promise<boolean>;
+    clearSandboxCreateProgress: () => void;
+  } = {
+    resolveVesloHost: () => { throw new Error("remoteStore not initialized"); },
+    createRemoteWorkspaceFlow: () => { throw new Error("remoteStore not initialized"); },
+    clearSandboxCreateProgress: () => {},
+  };
+
   const DEFAULT_CONNECT_HEALTH_TIMEOUT_MS = 12_000;
   const LOCAL_BOOT_CONNECT_HEALTH_TIMEOUT_MS = 180_000;
   const CONNECT_PROVIDER_LIST_TIMEOUT_MS = 12_000;
@@ -267,63 +262,12 @@ export function createWorkspaceStore(options: {
     return DB_MIGRATE_UNSUPPORTED_PATTERNS.some((pattern) => pattern.test(normalized));
   };
 
-  const [engine, setEngine] = createSignal<EngineInfo | null>(null);
-  const [engineAuth, setEngineAuth] = createSignal<OpencodeAuth | null>(null);
-  const [engineDoctorResult, setEngineDoctorResult] = createSignal<EngineDoctorResult | null>(null);
-  const [engineDoctorCheckedAt, setEngineDoctorCheckedAt] = createSignal<number | null>(null);
-  const [engineInstallLogs, setEngineInstallLogs] = createSignal<string | null>(null);
-  const [sandboxDoctorResult, setSandboxDoctorResult] = createSignal<SandboxDoctorResult | null>(null);
-  const [sandboxDoctorCheckedAt, setSandboxDoctorCheckedAt] = createSignal<number | null>(null);
-  const [sandboxDoctorBusy, setSandboxDoctorBusy] = createSignal(false);
-  const [sandboxPreflightBusy, setSandboxPreflightBusy] = createSignal(false);
-  const [sandboxCreatePhase, setSandboxCreatePhase] = createSignal<SandboxCreatePhase>("idle");
-
-  const [sandboxCreateProgress, setSandboxCreateProgress] = createSignal<SandboxCreateProgressState | null>(null);
-  const clearSandboxCreateProgress = () => setSandboxCreateProgress(null);
-
-  const pushSandboxCreateLog = (line: string) => {
-    const value = String(line ?? "").trim();
-    if (!value) return;
-    setSandboxCreateProgress((prev) => {
-      if (!prev) return prev;
-      const nextLogs = prev.logs.length ? prev.logs.slice(-119) : [];
-      // Avoid rapid duplicates.
-      const last = nextLogs[nextLogs.length - 1] ?? "";
-      if (last !== value) nextLogs.push(value);
-      return { ...prev, logs: nextLogs };
-    });
-  };
-
-  const setSandboxStep = (key: SandboxCreateProgressStep["key"], patch: Partial<SandboxCreateProgressStep>) => {
-    setSandboxCreateProgress((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        steps: prev.steps.map((step) => (step.key === key ? { ...step, ...patch } : step)),
-      };
-    });
-  };
-
-  const setSandboxStage = (stage: string) => {
-    const value = String(stage ?? "").trim();
-    if (!value) return;
-    setSandboxCreateProgress((prev) => (prev ? { ...prev, stage: value } : prev));
-  };
-
-  const setSandboxError = (message: string) => {
-    const value = String(message ?? "").trim() || "Sandbox failed to start";
-    setSandboxCreateProgress((prev) => (prev ? { ...prev, error: value } : prev));
-  };
-
   const makeRunId = () => {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
       return crypto.randomUUID();
     }
     return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   };
-  let lastEngineReconnectAt = 0;
-  let reconnectingEngine = false;
-
   const [projectDir, setProjectDir] = createSignal("");
   const [workspaces, setWorkspaces] = createSignal<WorkspaceInfo[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = createSignal<string>("starter");
@@ -334,7 +278,6 @@ export function createWorkspaceStore(options: {
   };
 
   const [authorizedDirs, setAuthorizedDirs] = createSignal<string[]>([]);
-  const [newAuthorizedDir, setNewAuthorizedDir] = createSignal("");
 
   const [workspaceConfig, setWorkspaceConfig] = createSignal<WorkspaceVesloConfig | null>(null);
   const [workspaceConfigLoaded, setWorkspaceConfigLoaded] = createSignal(false);
@@ -344,10 +287,6 @@ export function createWorkspaceStore(options: {
   const [workspaceConnectionStateById, setWorkspaceConnectionStateById] = createSignal<
     Record<string, WorkspaceConnectionState>
   >({});
-  const [exportingWorkspaceConfig, setExportingWorkspaceConfig] = createSignal(false);
-  const [importingWorkspaceConfig, setImportingWorkspaceConfig] = createSignal(false);
-  const [migrationRepairBusy, setMigrationRepairBusy] = createSignal(false);
-  const [migrationRepairResult, setMigrationRepairResult] = createSignal<MigrationRepairResult | null>(null);
 
   const activeWorkspaceInfo = createMemo(() => workspaces().find((w) => w.id === activeWorkspaceId()) ?? null);
   const activeWorkspaceDisplay = createMemo<WorkspaceDisplay>(() => {
@@ -401,7 +340,7 @@ export function createWorkspaceStore(options: {
   };
 
   if (isTauriRuntime()) {
-    void buildPrivateWorkspaceRoot().catch(() => undefined);
+    void buildPrivateWorkspaceRoot().catch(e => reportError(e, "workspace.buildPrivateRoot"));
   }
 
   const updateWorkspaceConnectionState = (
@@ -449,149 +388,6 @@ export function createWorkspaceStore(options: {
       return changed ? next : prev;
     });
   });
-
-  const resolveVesloHost = async (input: {
-    hostUrl: string;
-    token?: string | null;
-    workspaceId?: string | null;
-    directoryHint?: string | null;
-  }) => {
-    let normalizedHostUrl = normalizeVesloServerUrl(input.hostUrl) ?? "";
-    if (!normalizedHostUrl) {
-      return { kind: "fallback" as const };
-    }
-
-    let inferredWorkspaceId: string | null = null;
-    try {
-      const url = new URL(normalizedHostUrl);
-      const segments = url.pathname.split("/").filter(Boolean);
-      const last = segments[segments.length - 1] ?? "";
-      const prev = segments[segments.length - 2] ?? "";
-      const alreadyMounted = prev === "w" && Boolean(last);
-      if (alreadyMounted) {
-        inferredWorkspaceId = decodeURIComponent(last);
-        const baseSegments = segments.slice(0, -2);
-        url.pathname = `/${baseSegments.join("/")}`;
-        normalizedHostUrl = url.toString().replace(/\/+$/, "");
-      }
-    } catch {
-      // ignore
-    }
-
-    const requestedWorkspaceId = (input.workspaceId?.trim() || inferredWorkspaceId || "").trim();
-    const workspaceBaseUrl = buildVesloWorkspaceBaseUrl(normalizedHostUrl, requestedWorkspaceId) ?? normalizedHostUrl;
-
-    const client = createVesloServerClient({ baseUrl: workspaceBaseUrl, token: input.token ?? undefined });
-
-    const trimmedToken = input.token?.trim() ?? "";
-    const fallbackDirectory = input.directoryHint?.trim() ?? "";
-    const tokenlessFallback = () => ({
-      kind: "veslo" as const,
-      hostUrl: normalizedHostUrl,
-      workspace: requestedWorkspaceId
-        ? ({
-            id: requestedWorkspaceId,
-            name: requestedWorkspaceId,
-            path: fallbackDirectory,
-            workspaceType: "remote",
-          } as VesloWorkspaceInfo)
-        : null,
-      opencodeBaseUrl: `${workspaceBaseUrl.replace(/\/+$/, "")}/opencode`,
-      directory: fallbackDirectory,
-      auth: undefined as OpencodeAuth | undefined,
-    });
-
-    const canReachDirectOpencode = async () => {
-      try {
-        const directClient = createClient(
-          `${workspaceBaseUrl.replace(/\/+$/, "")}/opencode`,
-          fallbackDirectory || undefined,
-        );
-        await waitForHealthy(directClient, { timeoutMs: 6_000 });
-        return true;
-      } catch {
-        return false;
-      }
-    };
-
-    try {
-      const health = await client.health();
-      if (!health?.ok) {
-        return { kind: "fallback" as const };
-      }
-    } catch (error) {
-      if (error instanceof VesloServerError && (error.status === 401 || error.status === 403)) {
-        if (!trimmedToken) {
-          if (await canReachDirectOpencode()) {
-            return tokenlessFallback();
-          }
-          throw new Error("Access token required for Veslo server.");
-        }
-        throw new Error("Veslo server rejected the access token.");
-      }
-      return { kind: "fallback" as const };
-    }
-    let response: Awaited<ReturnType<typeof client.listWorkspaces>>;
-    try {
-      response = await client.listWorkspaces();
-    } catch (error) {
-      if (!trimmedToken) {
-        if (await canReachDirectOpencode()) {
-          return tokenlessFallback();
-        }
-        if (error instanceof VesloServerError && (error.status === 401 || error.status === 403)) {
-          throw new Error("Access token required for Veslo server.");
-        }
-      }
-      throw error;
-    }
-    const items = Array.isArray(response.items) ? response.items : [];
-    const hint = normalizeDirectoryPath(input.directoryHint ?? "");
-    const selectByHint = (entry: VesloWorkspaceInfo) => {
-      if (!hint) return false;
-      const entryPath = normalizeDirectoryPath(
-        (entry.opencode?.directory as string | undefined) ?? (entry.path as string | undefined) ?? "",
-      );
-      return Boolean(entryPath && entryPath === hint);
-    };
-    const selectById = (entry: VesloWorkspaceInfo) => Boolean(requestedWorkspaceId && entry?.id === requestedWorkspaceId);
-
-    const workspaceById = requestedWorkspaceId
-      ? (items.find((item) => item?.id && selectById(item as any)) as VesloWorkspaceInfo | undefined)
-      : undefined;
-    if (requestedWorkspaceId && !workspaceById) {
-      throw new Error("Veslo worker not found on that host.");
-    }
-
-    const workspaceByHint = hint
-      ? (items.find((item) => item?.id && selectByHint(item as any)) as VesloWorkspaceInfo | undefined)
-      : undefined;
-
-    const workspace = (workspaceById ?? workspaceByHint ?? items[0]) as VesloWorkspaceInfo | undefined;
-    if (!workspace?.id) {
-      throw new Error("Veslo server did not return a worker.");
-    }
-    const opencodeUpstreamBaseUrl = workspace.opencode?.baseUrl?.trim() ?? workspace.baseUrl?.trim() ?? "";
-    if (!opencodeUpstreamBaseUrl) {
-      throw new Error("Veslo server did not provide an OpenCode URL.");
-    }
-
-    const workspaceScopedBaseUrl =
-      buildVesloWorkspaceBaseUrl(normalizedHostUrl, workspace.id) ?? workspaceBaseUrl;
-    const opencodeBaseUrl = `${workspaceScopedBaseUrl.replace(/\/+$/, "")}/opencode`;
-    const opencodeAuth: OpencodeAuth | undefined = trimmedToken
-      ? { token: trimmedToken, mode: "veslo" }
-      : undefined;
-
-    return {
-      kind: "veslo" as const,
-      hostUrl: normalizedHostUrl,
-      workspace,
-      opencodeBaseUrl,
-      directory: workspace.opencode?.directory?.trim() ?? workspace.directory?.trim() ?? "",
-      auth: opencodeAuth,
-    };
-  };
 
   const resolveEngineRuntime = () => options.engineRuntime?.() ?? "veslo-orchestrator";
 
@@ -672,7 +468,7 @@ export function createWorkspaceStore(options: {
 
       const token = workspace.vesloToken?.trim() || options.vesloServerSettings().token || undefined;
       try {
-        const resolved = await resolveVesloHost({
+        const resolved = await remoteStoreRef.resolveVesloHost({
           hostUrl,
           token,
           workspaceId: workspace.vesloWorkspaceId ?? null,
@@ -711,109 +507,6 @@ export function createWorkspaceStore(options: {
       const message = error instanceof Error ? error.message : safeStringify(error);
       updateWorkspaceConnectionState(id, { status: "error", message });
       return false;
-    }
-  }
-
-  async function refreshEngine() {
-    if (!isTauriRuntime()) return;
-
-    try {
-      const info = await engineInfo();
-      setEngine(info);
-
-      const isRemoteWorkspace = activeWorkspaceInfo()?.workspaceType === "remote";
-      const syncLocalState = !isRemoteWorkspace;
-
-      const username = info.opencodeUsername?.trim() ?? "";
-      const password = info.opencodePassword?.trim() ?? "";
-      const auth = username && password ? { username, password } : null;
-      setEngineAuth(auth);
-
-      if (info.projectDir && syncLocalState) {
-        setProjectDir(info.projectDir);
-      }
-      if (info.baseUrl && syncLocalState) {
-        options.setBaseUrl(info.baseUrl);
-      }
-
-      if (
-        syncLocalState &&
-        info.running &&
-        info.baseUrl &&
-        !options.client() &&
-        !reconnectingEngine
-      ) {
-        const now = Date.now();
-        if (now - lastEngineReconnectAt > 10_000) {
-          lastEngineReconnectAt = now;
-          reconnectingEngine = true;
-          connectToServer(
-            info.baseUrl,
-            (activeWorkspaceRoot().trim() || info.projectDir || undefined),
-            {
-              workspaceId: activeWorkspaceId().trim() || undefined,
-              workspaceType: "local",
-              targetRoot: activeWorkspaceRoot().trim() || undefined,
-              reason: "engine-refresh",
-            },
-            auth ?? undefined,
-            { quiet: true, navigate: false },
-          )
-            .catch(() => undefined)
-            .finally(() => {
-              reconnectingEngine = false;
-            });
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  async function refreshEngineDoctor() {
-    if (!isTauriRuntime()) return;
-
-    try {
-      const source = options.engineSource();
-      const result = await engineDoctor({
-        preferSidecar: source === "sidecar",
-        opencodeBinPath: source === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
-      });
-      setEngineDoctorResult(result);
-      setEngineDoctorCheckedAt(Date.now());
-    } catch (e) {
-      setEngineDoctorResult(null);
-      setEngineDoctorCheckedAt(Date.now());
-      setEngineInstallLogs(e instanceof Error ? e.message : safeStringify(e));
-    }
-  }
-
-  async function refreshSandboxDoctor() {
-    if (!isTauriRuntime()) {
-      setSandboxDoctorResult(null);
-      setSandboxDoctorCheckedAt(Date.now());
-      return null;
-    }
-    if (sandboxDoctorBusy()) return sandboxDoctorResult();
-    setSandboxDoctorBusy(true);
-    try {
-      const result = await sandboxDoctor();
-      setSandboxDoctorResult(result);
-      return result;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      const fallback: SandboxDoctorResult = {
-        installed: false,
-        daemonRunning: false,
-        permissionOk: false,
-        ready: false,
-        error: message,
-      };
-      setSandboxDoctorResult(fallback);
-      return fallback;
-    } finally {
-      setSandboxDoctorCheckedAt(Date.now());
-      setSandboxDoctorBusy(false);
     }
   }
 
@@ -916,7 +609,7 @@ export function createWorkspaceStore(options: {
           let resolvedAuth: OpencodeAuth | undefined = undefined;
 
           try {
-            const resolved = await resolveVesloHost({
+            const resolved = await remoteStoreRef.resolveVesloHost({
               hostUrl,
               token,
               workspaceId: next.vesloWorkspaceId ?? null,
@@ -1131,7 +824,7 @@ export function createWorkspaceStore(options: {
     // createLocalWorkspace() prematurely updates projectDir before
     // activateWorkspace runs, so projectDir() may already equal nextRoot
     // even though the engine is still on the previous workspace.
-    const actualEngineDir = engine()?.projectDir?.trim() ?? "";
+    const actualEngineDir = engineStore.engine()?.projectDir?.trim() ?? "";
     const workspaceChanged =
       oldWorkspacePath !== nextRoot ||
       (actualEngineDir !== "" && actualEngineDir !== nextRoot);
@@ -1207,8 +900,8 @@ export function createWorkspaceStore(options: {
       wsDebug("activate:remote->local:reconnect", {
         id,
         nextPath: next.path,
-        engine: engine()?.baseUrl ?? null,
-        engineRunning: Boolean(engine()?.running),
+        engine: engineStore.engine()?.baseUrl ?? null,
+        engineRunning: Boolean(engineStore.engine()?.running),
       });
       options.setSelectedSessionId(null);
       options.setMessages([]);
@@ -1219,7 +912,7 @@ export function createWorkspaceStore(options: {
       // If a local host engine is already running (common when bouncing between remote/local),
       // reuse it instead of restarting to keep switching snappy.
       let connectedToLocalHost = false;
-      const existingEngine = engine();
+      const existingEngine = engineStore.engine();
       const runtime = existingEngine?.runtime ?? resolveEngineRuntime();
       const canReuseHost =
         isTauriRuntime() &&
@@ -1247,12 +940,12 @@ export function createWorkspaceStore(options: {
             engineInfo(),
             { timeoutMs: ENGINE_INFO_TIMEOUT_MS, label: "engine_info" },
           );
-          setEngine(nextInfo);
+          engineStore.setEngine(nextInfo);
 
           const username = nextInfo.opencodeUsername?.trim() ?? "";
           const password = nextInfo.opencodePassword?.trim() ?? "";
           const auth = username && password ? { username, password } : undefined;
-          setEngineAuth(auth ?? null);
+          engineStore.setEngineAuth(auth ?? null);
 
           if (nextInfo.baseUrl) {
             connectedToLocalHost = await connectToServer(
@@ -1281,7 +974,7 @@ export function createWorkspaceStore(options: {
       if (!connectedToLocalHost) {
         const startHostAt = Date.now();
         const ok = await withTimeoutOrThrow(
-          startHost({ workspacePath: next.path, navigate: false }),
+          engineStore.startHost({ workspacePath: next.path, navigate: false }),
           { timeoutMs: START_HOST_TIMEOUT_MS, label: "startHost" },
         );
         wsDebug("activate:remote->local:startHost:done", { ok, ms: Date.now() - startHostAt });
@@ -1323,12 +1016,12 @@ export function createWorkspaceStore(options: {
             engineInfo(),
             { timeoutMs: ENGINE_INFO_TIMEOUT_MS, label: "engine_info" },
           );
-          setEngine(newInfo);
+          engineStore.setEngine(newInfo);
 
           const username = newInfo.opencodeUsername?.trim() ?? "";
           const password = newInfo.opencodePassword?.trim() ?? "";
           const auth = username && password ? { username, password } : undefined;
-          setEngineAuth(auth ?? null);
+          engineStore.setEngineAuth(auth ?? null);
 
           if (newInfo.baseUrl) {
             const ok = await connectToServer(
@@ -1360,13 +1053,13 @@ export function createWorkspaceStore(options: {
                 workspacePaths: resolveWorkspacePaths(),
               }),
           });
-          setEngine(info);
-          setEngine(newInfo);
+          engineStore.setEngine(info);
+          engineStore.setEngine(newInfo);
 
           const username = newInfo.opencodeUsername?.trim() ?? "";
           const password = newInfo.opencodePassword?.trim() ?? "";
           const auth = username && password ? { username, password } : undefined;
-          setEngineAuth(auth ?? null);
+          engineStore.setEngineAuth(auth ?? null);
 
           // Reconnect to server
           if (newInfo.baseUrl) {
@@ -1408,8 +1101,8 @@ export function createWorkspaceStore(options: {
         return false;
       }
 
-      options.refreshSkills({ force: true }).catch(() => undefined);
-      options.refreshPlugins().catch(() => undefined);
+      options.refreshSkills({ force: true }).catch(e => reportError(e, "workspace.refreshSkills"));
+      options.refreshPlugins().catch(e => reportError(e, "workspace.refreshPlugins"));
       updateWorkspaceConnectionState(id, { status: "connected", message: null });
       wsDebug("activate:local:done", { id, ms: Date.now() - activateStart });
       return true;
@@ -1610,8 +1303,8 @@ export function createWorkspaceStore(options: {
         options.setPendingPermissions([]);
         options.setSessionStatusById({});
 
-        options.refreshSkills({ force: true }).catch(() => undefined);
-        options.refreshPlugins().catch(() => undefined);
+        options.refreshSkills({ force: true }).catch(e => reportError(e, "workspace.refreshSkills"));
+        options.refreshPlugins().catch(e => reportError(e, "workspace.refreshPlugins"));
         if (navigate && !options.selectedSessionId()) {
           options.setTab("scheduled");
           options.setView("session");
@@ -1685,7 +1378,7 @@ export function createWorkspaceStore(options: {
     const hasClient = Boolean(options.client());
     const ok = hasClient
       ? await activateWorkspace(workspaceId)
-      : await startHost({ workspacePath, navigate: false });
+      : await engineStore.startHost({ workspacePath, navigate: false });
     if (!ok) return false;
     await openEmptySession(activeWorkspaceRoot().trim() || workspacePath);
     return true;
@@ -1720,8 +1413,7 @@ export function createWorkspaceStore(options: {
     options.setBusyLabel("status.creating_workspace");
     options.setBusyStartedAt(Date.now());
     options.setError(null);
-    clearSandboxCreateProgress();
-    setSandboxPreflightBusy(false);
+    remoteStoreRef.clearSandboxCreateProgress();
 
     try {
       const resolvedFolder = await resolveWorkspacePath(folder);
@@ -1855,615 +1547,9 @@ export function createWorkspaceStore(options: {
       return false;
     }
 
-    const started = await startHost({ workspacePath: workspace.path, navigate: false });
+    const started = await engineStore.startHost({ workspacePath: workspace.path, navigate: false });
     if (!started) return false;
     return Boolean(options.client());
-  }
-
-  async function createSandboxFlow(
-    preset: WorkspacePreset,
-    folder: string | null,
-    input?: { onReady?: () => Promise<void> | void },
-  ): Promise<boolean> {
-    if (CLOUD_ONLY_MODE) {
-      return blockLocalAction("cloud_only_local_disabled", "Local sandbox provisioning is disabled.");
-    }
-
-    if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
-      return false;
-    }
-
-    if (!folder) {
-      options.setError(t("app.error.choose_folder", currentLocale()));
-      return false;
-    }
-
-    const runId = makeRunId();
-    const startedAt = Date.now();
-    setSandboxCreatePhase("preflight");
-    setSandboxPreflightBusy(true);
-    options.setError(null);
-    clearSandboxCreateProgress();
-
-    const doctor = await refreshSandboxDoctor();
-    setSandboxPreflightBusy(false);
-    setSandboxCreatePhase("provisioning");
-    setSandboxCreateProgress({
-      runId,
-      startedAt,
-      stage: "Checking Docker...",
-      error: null,
-      logs: [],
-      steps: [
-        { key: "docker", label: "Docker ready", status: "active", detail: null },
-        { key: "workspace", label: "Prepare worker", status: "pending", detail: null },
-        { key: "sandbox", label: "Start sandbox services", status: "pending", detail: null },
-        { key: "health", label: "Wait for Veslo", status: "pending", detail: null },
-        { key: "connect", label: "Connect in Veslo", status: "pending", detail: null },
-      ],
-    });
-
-    if (doctor?.debug) {
-      const selectedBin = doctor.debug.selectedBin?.trim();
-      if (selectedBin) {
-        pushSandboxCreateLog(`Docker binary: ${selectedBin}`);
-      }
-      const candidates = (doctor.debug.candidates ?? []).filter((item) => item?.trim());
-      if (candidates.length) {
-        pushSandboxCreateLog(`Docker candidates: ${candidates.join(", ")}`);
-      }
-      const versionDebug = doctor.debug.versionCommand;
-      if (versionDebug) {
-        pushSandboxCreateLog(`docker --version exit=${versionDebug.status}`);
-        if (versionDebug.stderr?.trim()) pushSandboxCreateLog(`docker --version stderr: ${versionDebug.stderr.trim()}`);
-      }
-      const infoDebug = doctor.debug.infoCommand;
-      if (infoDebug) {
-        pushSandboxCreateLog(`docker info exit=${infoDebug.status}`);
-        if (infoDebug.stderr?.trim()) pushSandboxCreateLog(`docker info stderr: ${infoDebug.stderr.trim()}`);
-      }
-    }
-    if (!doctor?.ready) {
-      const detail =
-        doctor?.error?.trim() ||
-        "Docker is required for sandboxes. Install Docker Desktop, start it, then retry.";
-      options.setError(detail);
-      setSandboxStep("docker", { status: "error", detail });
-      setSandboxError(detail);
-      setSandboxStage("Docker not ready");
-      setSandboxCreatePhase("idle");
-      return false;
-    }
-    setSandboxStep("docker", { status: "done", detail: doctor.serverVersion ?? null });
-    setSandboxStage("Preparing worker...");
-
-    try {
-      const resolvedFolder = await resolveWorkspacePath(folder);
-      if (!resolvedFolder) {
-        options.setError(t("app.error.choose_folder", currentLocale()));
-        setSandboxStep("workspace", { status: "error", detail: "No folder selected" });
-        setSandboxError("No folder selected");
-        return false;
-      }
-
-      const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Worker";
-
-      setSandboxStep("workspace", { status: "active", detail: name });
-      pushSandboxCreateLog(`Worker: ${resolvedFolder}`);
-
-      // Ensure the workspace folder has baseline Veslo/OpenCode files.
-      const created = await workspaceCreate({ folderPath: resolvedFolder, name, preset });
-      setWorkspaces(created.workspaces);
-      syncActiveWorkspaceId(created.activeId);
-      setSandboxStep("workspace", { status: "done", detail: null });
-
-      // Remove the local workspace entry to avoid duplicate Local+Remote rows.
-      const localId = created.activeId;
-      if (localId) {
-        pushSandboxCreateLog("Removing local worker row (will re-add as remote sandbox)...");
-        const forgotten = await workspaceForget(localId);
-        setWorkspaces(forgotten.workspaces);
-        syncActiveWorkspaceId(forgotten.activeId);
-      }
-
-      setSandboxStep("sandbox", { status: "active", detail: null });
-      setSandboxStage("Starting sandbox services...");
-
-      let stopListen: (() => void) | null = null;
-      try {
-        stopListen = await listen(
-          "veslo://sandbox-create-progress",
-          (event: TauriEvent<{ runId?: string; stage?: string; message?: string; payload?: any }>) => {
-            const payload = event.payload ?? {};
-            if ((payload.runId ?? "").trim() !== runId) return;
-            const stage = String(payload.stage ?? "").trim();
-            const message = String(payload.message ?? "").trim();
-            if (message) {
-              setSandboxStage(message);
-              pushSandboxCreateLog(message);
-            }
-
-            if (stage === "docker.container") {
-              const state = String(payload.payload?.containerState ?? "").trim();
-              if (state) {
-                setSandboxStep("sandbox", { status: "active", detail: `Container: ${state}` });
-              }
-            }
-
-            if (stage === "docker.config") {
-              const selected = String(payload.payload?.vesloDockerBin ?? "").trim();
-              if (selected) {
-                pushSandboxCreateLog(`VESLO_DOCKER_BIN=${selected}`);
-              }
-              const candidates = Array.isArray(payload.payload?.candidates)
-                ? payload.payload.candidates.filter((item: unknown) => String(item ?? "").trim())
-                : [];
-              if (candidates.length) {
-                pushSandboxCreateLog(`Docker probe paths: ${candidates.join(", ")}`);
-              }
-            }
-
-            if (stage === "docker.inspect") {
-              const inspectError = String(payload.payload?.error ?? "").trim();
-              if (inspectError) {
-                setSandboxStep("sandbox", { status: "active", detail: "Docker inspect warning" });
-                pushSandboxCreateLog(`docker inspect warning: ${inspectError}`);
-              }
-            }
-
-            if (stage === "veslo.waiting") {
-              const elapsedMs = Number(payload.payload?.elapsedMs ?? 0);
-              const seconds = elapsedMs > 0 ? Math.max(1, Math.floor(elapsedMs / 1000)) : 0;
-              setSandboxStep("health", { status: "active", detail: seconds ? `${seconds}s` : null });
-              const probeError = String(payload.payload?.containerProbeError ?? "").trim();
-              if (probeError) {
-                pushSandboxCreateLog(`Container probe: ${probeError}`);
-              }
-            }
-
-            if (stage === "veslo.healthy") {
-              setSandboxStep("sandbox", { status: "done" });
-              setSandboxStep("health", { status: "done", detail: null });
-            }
-
-            if (stage === "error") {
-              const err = String(payload.payload?.error ?? "").trim() || message || "Sandbox failed to start";
-              setSandboxStep("sandbox", { status: "error", detail: err });
-              setSandboxStep("health", { status: "error", detail: err });
-              setSandboxError(err);
-            }
-          },
-        );
-
-        const host = await orchestratorStartDetached({
-          workspacePath: resolvedFolder,
-          sandboxBackend: "docker",
-          runId,
-        });
-        setSandboxStep("sandbox", { status: "done", detail: host.sandboxContainerName ?? null });
-        setSandboxStep("health", { status: "done" });
-        setSandboxStage("Connecting to sandbox...");
-
-        setSandboxStep("connect", { status: "active", detail: null });
-
-        markOnboardingComplete();
-
-        const ok = await createRemoteWorkspaceFlow({
-          vesloHostUrl: host.vesloUrl,
-          vesloToken: host.token,
-          directory: resolvedFolder,
-          displayName: name,
-          sandboxBackend: host.sandboxBackend ?? "docker",
-          sandboxRunId: host.sandboxRunId ?? runId,
-          sandboxContainerName: host.sandboxContainerName ?? null,
-          manageBusy: false,
-          closeModal: false,
-        });
-        if (!ok) {
-          const fallback = "Failed to connect to sandbox";
-          pushSandboxCreateLog(fallback);
-          setSandboxStep("connect", { status: "error", detail: fallback });
-          setSandboxError(fallback);
-          return false;
-        }
-
-        if (input?.onReady) {
-          setSandboxCreatePhase("finalizing");
-          setSandboxStage("Finalizing worker...");
-          setSandboxStep("connect", { status: "active", detail: "Applying setup" });
-          pushSandboxCreateLog("Applying final worker setup...");
-          await input.onReady();
-        }
-
-        setSandboxStep("connect", { status: "done", detail: null });
-        setSandboxStage("Sandbox ready.");
-        setCreateWorkspaceOpen(false);
-        await openEmptySession(activeWorkspaceRoot().trim() || resolvedFolder);
-        clearSandboxCreateProgress();
-        return true;
-      } finally {
-        stopListen?.();
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-      setSandboxError(message);
-      setSandboxStage("Sandbox failed");
-      return false;
-    } finally {
-      setSandboxPreflightBusy(false);
-      setSandboxCreatePhase("idle");
-    }
-  }
-
-  async function createRemoteWorkspaceFlow(input: {
-    vesloHostUrl?: string | null;
-    vesloToken?: string | null;
-    directory?: string | null;
-    displayName?: string | null;
-    manageBusy?: boolean;
-    closeModal?: boolean;
-
-    // Sandbox lifecycle metadata (desktop-managed)
-    sandboxBackend?: "docker" | null;
-    sandboxRunId?: string | null;
-    sandboxContainerName?: string | null;
-  }) {
-    if (createRemoteInFlight) {
-      wsDebug("create-remote:dedupe", {
-        hostUrl: input.vesloHostUrl ?? null,
-        directory: input.directory ?? null,
-      });
-      return createRemoteInFlight;
-    }
-
-    const run = (async () => {
-    const hostUrl = normalizeVesloServerUrl(input.vesloHostUrl ?? "") ?? "";
-    const token = input.vesloToken?.trim() ?? "";
-    const directory = input.directory?.trim() ?? "";
-    const displayName = input.displayName?.trim() || null;
-
-    if (!hostUrl) {
-      options.setError(t("app.error.remote_base_url_required", currentLocale()));
-      return false;
-    }
-
-    options.setError(null);
-    console.log("[workspace] create remote request", {
-      hostUrl: hostUrl || null,
-      directory: directory || null,
-      displayName,
-    });
-
-    options.setStartupPreference("server");
-
-    let remoteType: "veslo" = "veslo";
-    let resolvedBaseUrl = "";
-    let resolvedDirectory = directory;
-    let vesloWorkspace: VesloWorkspaceInfo | null = null;
-    let resolvedAuth: OpencodeAuth | undefined = undefined;
-    let resolvedHostUrl = hostUrl;
-
-    options.updateVesloServerSettings({
-      ...options.vesloServerSettings(),
-      urlOverride: hostUrl,
-      token: token || undefined,
-    });
-
-    try {
-      let resolved: Awaited<ReturnType<typeof resolveVesloHost>> | null = null;
-      try {
-        resolved = await resolveVesloHost({
-          hostUrl,
-          token,
-          directoryHint: directory || null,
-        });
-      } catch (error) {
-        // Sandbox workers can report healthy before listWorkspaces is fully ready.
-        // Fall back to host-level OpenCode URL so the worker can still be registered.
-        if (input.sandboxBackend !== "docker") {
-          throw error;
-        }
-        wsDebug("sandbox:veslo-resolve-fallback:error", {
-          hostUrl,
-          message: error instanceof Error ? error.message : safeStringify(error),
-        });
-      }
-
-      if (resolved?.kind === "veslo") {
-        resolvedBaseUrl = resolved.opencodeBaseUrl;
-        resolvedDirectory = resolved.directory || directory;
-        vesloWorkspace = resolved.workspace;
-        resolvedHostUrl = resolved.hostUrl;
-        resolvedAuth = resolved.auth;
-      } else if (input.sandboxBackend === "docker") {
-        resolvedHostUrl = hostUrl;
-        resolvedBaseUrl = `${hostUrl.replace(/\/+$/, "")}/opencode`;
-        resolvedDirectory = directory || resolvedDirectory;
-        resolvedAuth = token ? { token, mode: "veslo" } : undefined;
-        wsDebug("sandbox:veslo-resolve-fallback:host", {
-          hostUrl: resolvedHostUrl,
-          baseUrl: resolvedBaseUrl,
-          directory: resolvedDirectory,
-        });
-      } else {
-        options.setError("Veslo server unavailable. Check the URL and token.");
-        return false;
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      options.setError(addOpencodeCacheHint(message));
-      return false;
-    }
-
-    if (!resolvedBaseUrl) {
-      options.setError(t("app.error.remote_base_url_required", currentLocale()));
-      return false;
-    }
-
-    const ok = await connectToServer(
-      resolvedBaseUrl,
-      resolvedDirectory || undefined,
-      {
-        workspaceType: "remote",
-        targetRoot: resolvedDirectory ?? "",
-        reason: "workspace-create-remote",
-      },
-      resolvedAuth,
-    );
-
-    if (!ok) {
-      return false;
-    }
-
-    const finalDirectory = options.clientDirectory().trim() || resolvedDirectory || "";
-
-    const manageBusy = input.manageBusy ?? true;
-    if (manageBusy) {
-      options.setBusy(true);
-      options.setBusyLabel("status.creating_workspace");
-      options.setBusyStartedAt(Date.now());
-    }
-
-    try {
-      if (isTauriRuntime()) {
-        const ws = await workspaceCreateRemote({
-          baseUrl: resolvedBaseUrl.replace(/\/+$/, ""),
-          directory: finalDirectory ? finalDirectory : null,
-          displayName,
-          remoteType,
-          vesloHostUrl: remoteType === "veslo" ? resolvedHostUrl : null,
-          vesloToken: remoteType === "veslo" ? (token || null) : null,
-          vesloWorkspaceId: remoteType === "veslo" ? vesloWorkspace?.id ?? null : null,
-          vesloWorkspaceName: remoteType === "veslo" ? vesloWorkspace?.name ?? null : null,
-          sandboxBackend: input.sandboxBackend ?? null,
-          sandboxRunId: input.sandboxRunId ?? null,
-          sandboxContainerName: input.sandboxContainerName ?? null,
-        });
-        setWorkspaces(ws.workspaces);
-        syncActiveWorkspaceId(ws.activeId);
-        console.log("[workspace] create remote complete:", ws.activeId ?? "none");
-      } else {
-        const workspaceId = `remote:${resolvedBaseUrl}:${finalDirectory}`;
-        const nextWorkspace: WorkspaceInfo = {
-          id: workspaceId,
-          name: displayName ?? vesloWorkspace?.name ?? resolvedHostUrl ?? resolvedBaseUrl,
-          path: "",
-          preset: "remote",
-          workspaceType: "remote",
-          remoteType,
-          baseUrl: resolvedBaseUrl,
-          directory: finalDirectory || null,
-          displayName,
-          vesloHostUrl: remoteType === "veslo" ? resolvedHostUrl : null,
-          vesloToken: remoteType === "veslo" ? (token || null) : null,
-          vesloWorkspaceId: remoteType === "veslo" ? vesloWorkspace?.id ?? null : null,
-          vesloWorkspaceName: remoteType === "veslo" ? vesloWorkspace?.name ?? null : null,
-          sandboxBackend: input.sandboxBackend ?? null,
-          sandboxRunId: input.sandboxRunId ?? null,
-          sandboxContainerName: input.sandboxContainerName ?? null,
-        };
-
-        setWorkspaces((prev) => {
-          const withoutMatch = prev.filter((workspace) => workspace.id !== workspaceId);
-          return [...withoutMatch, nextWorkspace];
-        });
-        syncActiveWorkspaceId(workspaceId);
-        console.log("[workspace] create remote complete:", workspaceId);
-      }
-
-      setProjectDir(finalDirectory);
-      setWorkspaceConfig(null);
-      setWorkspaceConfigLoaded(true);
-      setAuthorizedDirs([]);
-
-      const closeModal = input.closeModal ?? true;
-      if (closeModal) {
-        setCreateWorkspaceOpen(false);
-        setCreateRemoteWorkspaceOpen(false);
-      }
-      const activeId = activeWorkspaceId();
-      if (activeId) {
-        updateWorkspaceConnectionState(activeId, { status: "connected", message: null });
-      }
-      await openEmptySession(activeWorkspaceRoot().trim() || finalDirectory);
-      return true;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      console.log("[workspace] create remote failed:", message);
-      options.setError(addOpencodeCacheHint(message));
-      return false;
-    } finally {
-      if (manageBusy) {
-        options.setBusy(false);
-        options.setBusyLabel(null);
-        options.setBusyStartedAt(null);
-      }
-    }
-    })();
-
-    createRemoteInFlight = run;
-    try {
-      return await run;
-    } finally {
-      if (createRemoteInFlight === run) {
-        createRemoteInFlight = null;
-      }
-    }
-  }
-
-  async function updateRemoteWorkspaceFlow(
-    workspaceId: string,
-    input: {
-      vesloHostUrl?: string | null;
-      vesloToken?: string | null;
-      directory?: string | null;
-      displayName?: string | null;
-    },
-  ) {
-    const id = workspaceId.trim();
-    if (!id) return false;
-    const workspace = workspaces().find((item) => item.id === id) ?? null;
-    if (!workspace || workspace.workspaceType !== "remote") return false;
-
-    const remoteType = normalizeRemoteType(workspace.remoteType);
-    if (remoteType !== "veslo") {
-      options.setError("Only Veslo remote workers can be edited.");
-      return false;
-    }
-
-    const hostUrl =
-      normalizeVesloServerUrl(
-        input.vesloHostUrl ?? workspace.vesloHostUrl ?? workspace.baseUrl ?? "",
-      ) ?? "";
-    const token =
-      input.vesloToken?.trim() ??
-      workspace.vesloToken?.trim() ??
-      options.vesloServerSettings().token ??
-      "";
-    const directory = input.directory?.trim() ?? "";
-    const displayName = input.displayName?.trim() || null;
-
-    if (!hostUrl) {
-      options.setError(t("app.error.remote_base_url_required", currentLocale()));
-      return false;
-    }
-
-    options.setError(null);
-    options.setStartupPreference("server");
-
-    let resolvedBaseUrl = "";
-    let resolvedDirectory = directory;
-    let vesloWorkspace: VesloWorkspaceInfo | null = null;
-    let resolvedAuth: OpencodeAuth | undefined = undefined;
-    let resolvedHostUrl = hostUrl;
-
-    options.updateVesloServerSettings({
-      ...options.vesloServerSettings(),
-      urlOverride: hostUrl,
-      token: token || undefined,
-    });
-
-    try {
-      const resolved = await resolveVesloHost({
-        hostUrl,
-        token,
-        workspaceId: workspace.vesloWorkspaceId ?? null,
-        directoryHint: directory || null,
-      });
-      if (resolved.kind !== "veslo") {
-        options.setError("Veslo server unavailable. Check the URL and token.");
-        return false;
-      }
-      resolvedBaseUrl = resolved.opencodeBaseUrl;
-      resolvedDirectory = resolved.directory || directory;
-      vesloWorkspace = resolved.workspace;
-      resolvedHostUrl = resolved.hostUrl;
-      resolvedAuth = resolved.auth;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : safeStringify(error);
-      options.setError(addOpencodeCacheHint(message));
-      return false;
-    }
-
-    if (!resolvedBaseUrl) {
-      options.setError(t("app.error.remote_base_url_required", currentLocale()));
-      return false;
-    }
-
-    const isActive = activeWorkspaceId() === id;
-    const finalDirectory = resolvedDirectory || "";
-
-    if (isActive) {
-      updateWorkspaceConnectionState(id, { status: "connecting", message: null });
-      const ok = await connectToServer(
-        resolvedBaseUrl,
-        finalDirectory || undefined,
-        {
-          workspaceId: id,
-          workspaceType: "remote",
-          targetRoot: finalDirectory ?? "",
-          reason: "workspace-edit-remote",
-        },
-        resolvedAuth,
-      );
-      if (!ok) {
-        updateWorkspaceConnectionState(id, {
-          status: "error",
-          message: "Failed to connect to worker.",
-        });
-        return false;
-      }
-    }
-
-    if (isTauriRuntime()) {
-      try {
-        const ws = await workspaceUpdateRemote({
-          workspaceId: id,
-          remoteType: "veslo",
-          baseUrl: resolvedBaseUrl,
-          directory: finalDirectory ? finalDirectory : null,
-          displayName,
-          vesloHostUrl: resolvedHostUrl,
-          vesloToken: token ? token : null,
-          vesloWorkspaceId: vesloWorkspace?.id ?? workspace.vesloWorkspaceId ?? null,
-          vesloWorkspaceName: vesloWorkspace?.name ?? workspace.vesloWorkspaceName ?? null,
-        });
-        setWorkspaces(ws.workspaces);
-        syncActiveWorkspaceId(ws.activeId);
-      } catch {
-        // ignore
-      }
-    } else {
-      setWorkspaces((prev) =>
-        prev.map((item) =>
-          item.id === id
-            ? {
-                ...item,
-                remoteType: "veslo",
-                baseUrl: resolvedBaseUrl,
-                directory: finalDirectory ? finalDirectory : null,
-                displayName,
-                vesloHostUrl: resolvedHostUrl,
-                vesloToken: token ? token : null,
-                vesloWorkspaceId: vesloWorkspace?.id ?? item.vesloWorkspaceId ?? null,
-                vesloWorkspaceName: vesloWorkspace?.name ?? item.vesloWorkspaceName ?? null,
-              }
-            : item,
-        ),
-      );
-    }
-
-    if (isActive) {
-      setProjectDir(finalDirectory);
-      setWorkspaceConfig(null);
-      setWorkspaceConfigLoaded(true);
-      setAuthorizedDirs([]);
-      updateWorkspaceConnectionState(id, { status: "connected", message: null });
-    }
-
-    return true;
   }
 
   async function forgetWorkspace(workspaceId: string) {
@@ -2498,169 +1584,6 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function recoverWorkspace(workspaceId: string) {
-    const id = workspaceId.trim();
-    if (!id) return false;
-    if (connectingWorkspaceId() === id) return false;
-
-    const workspace = workspaces().find((item) => item.id === id) ?? null;
-    if (!workspace) return false;
-
-    const reconnect = async () => {
-      if (activeWorkspaceId() === id) {
-        return await activateWorkspace(id);
-      }
-      return await testWorkspaceConnection(id);
-    };
-
-    const myVersion = wsActivateGuard.enter(id);
-    setConnectingWorkspaceId(id);
-    options.setError(null);
-
-    try {
-      updateWorkspaceConnectionState(id, { status: "connecting", message: null });
-
-      if (workspace.workspaceType !== "remote") {
-        return Boolean(await reconnect());
-      }
-
-      const isSandboxWorkspace =
-        workspace.sandboxBackend === "docker" || Boolean(workspace.sandboxContainerName?.trim());
-
-      if (!isSandboxWorkspace) {
-        return Boolean(await reconnect());
-      }
-
-      if (!isTauriRuntime()) {
-        options.setError(t("app.error.tauri_required", currentLocale()));
-        updateWorkspaceConnectionState(id, {
-          status: "error",
-          message: t("app.error.tauri_required", currentLocale()),
-        });
-        return false;
-      }
-
-      const workspacePath = workspace.directory?.trim() || workspace.path?.trim() || "";
-      if (!workspacePath) {
-        const message = "Worker folder is missing. Open Edit connection and try again.";
-        options.setError(message);
-        updateWorkspaceConnectionState(id, { status: "error", message });
-        return false;
-      }
-
-      const doctor = await refreshSandboxDoctor();
-      if (!doctor?.ready) {
-        const detail =
-          doctor?.error?.trim() ||
-          "Docker needs to be running before we can get this worker back online.";
-        throw new Error(detail);
-      }
-
-      const host = await orchestratorStartDetached({
-        workspacePath,
-        sandboxBackend: "docker",
-        runId: workspace.sandboxRunId?.trim() || null,
-        vesloToken:
-          workspace.vesloToken?.trim() || options.vesloServerSettings().token?.trim() || null,
-      });
-
-      const resolved = await resolveVesloHost({
-        hostUrl: host.vesloUrl,
-        token: host.token,
-        directoryHint: workspacePath,
-      });
-
-      if (resolved.kind !== "veslo") {
-        throw new Error("Worker is still warming up. Try again in a few seconds.");
-      }
-
-      const updated = await workspaceUpdateRemote({
-        workspaceId: id,
-        remoteType: "veslo",
-        baseUrl: resolved.opencodeBaseUrl,
-        directory: resolved.directory || workspacePath,
-        vesloHostUrl: resolved.hostUrl,
-        vesloToken: host.token,
-        vesloWorkspaceId: resolved.workspace?.id ?? workspace.vesloWorkspaceId ?? null,
-        vesloWorkspaceName: resolved.workspace?.name ?? workspace.vesloWorkspaceName ?? null,
-        sandboxBackend: host.sandboxBackend ?? "docker",
-        sandboxRunId: host.sandboxRunId ?? workspace.sandboxRunId ?? null,
-        sandboxContainerName: host.sandboxContainerName ?? workspace.sandboxContainerName ?? null,
-      });
-
-      setWorkspaces(updated.workspaces);
-      syncActiveWorkspaceId(updated.activeId);
-
-      const ok = await reconnect();
-      if (!ok) {
-        const message = "Worker restarted, but reconnect failed. Try again in a few seconds.";
-        updateWorkspaceConnectionState(id, { status: "error", message });
-        options.setError(message);
-        return false;
-      }
-
-      updateWorkspaceConnectionState(id, { status: "connected", message: null });
-      return true;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      const hint = addOpencodeCacheHint(message);
-      options.setError(hint);
-      updateWorkspaceConnectionState(id, { status: "error", message: hint });
-      return false;
-    } finally {
-      wsActivateGuard.exit(myVersion, setConnectingWorkspaceId);
-    }
-  }
-
-  async function stopSandbox(workspaceId: string) {
-    if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
-      return;
-    }
-
-    const id = workspaceId.trim();
-    if (!id) return;
-
-    const workspace = workspaces().find((entry) => entry.id === id) ?? null;
-    const containerName = workspace?.sandboxContainerName?.trim() ?? "";
-    if (!containerName) {
-      options.setError("Sandbox container name missing.");
-      return;
-    }
-
-    options.setBusy(true);
-    options.setBusyLabel("Stopping sandbox...");
-    options.setBusyStartedAt(Date.now());
-    options.setError(null);
-
-    try {
-      const result = await sandboxStop(containerName);
-      if (!result.ok) {
-        const details = [result.stderr?.trim(), result.stdout?.trim()]
-          .filter(Boolean)
-          .join("\n")
-          .trim();
-        throw new Error(details || `Failed to stop sandbox (status ${result.status})`);
-      }
-
-      // If the user stopped the active workspace, proactively disconnect the client.
-      if (activeWorkspaceId() === id) {
-        options.setClient(null);
-        options.setConnectedVersion(null);
-        options.setSseConnected(false);
-      }
-
-      updateWorkspaceConnectionState(id, { status: "error", message: "Sandbox stopped." });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-    } finally {
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
-    }
-  }
-
   async function pickWorkspaceFolder(defaultPath?: string | null) {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
@@ -2681,348 +1604,6 @@ export function createWorkspaceStore(options: {
       const message = e instanceof Error ? e.message : safeStringify(e);
       options.setError(addOpencodeCacheHint(message));
       return null;
-    }
-  }
-
-  async function exportWorkspaceConfig(workspaceId?: string) {
-    if (exportingWorkspaceConfig()) return;
-    if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
-      return;
-    }
-
-    const targetId = workspaceId?.trim() || activeWorkspaceInfo()?.id || "";
-    if (!targetId) {
-      options.setError("Select a worker to export");
-      return;
-    }
-    const target = workspaces().find((ws) => ws.id === targetId) ?? null;
-    if (!target) {
-      options.setError("Unknown worker");
-      return;
-    }
-    if (target.workspaceType === "remote") {
-      options.setError("Export is only supported for local workers");
-      return;
-    }
-
-    setExportingWorkspaceConfig(true);
-    options.setError(null);
-
-    try {
-      const nameBase = (target.displayName || target.name || "worker")
-        .toLowerCase()
-        .replace(/[^a-z0-9-_]+/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, 60);
-      const dateStamp = new Date().toISOString().slice(0, 10);
-      const fileName = `veslo-${nameBase || "worker"}-${dateStamp}.veslo-workspace`;
-      const downloads = await downloadDir().catch(() => null);
-      const defaultPath = downloads ? `${downloads}/${fileName}` : fileName;
-
-      const outputPath = await saveFile({
-        title: "Export worker config",
-        defaultPath,
-        filters: [{ name: "Veslo Worker", extensions: ["veslo-workspace", "zip"] }],
-      });
-
-      if (!outputPath) {
-        return;
-      }
-
-      await workspaceExportConfig({
-        workspaceId: target.id,
-        outputPath,
-      });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-    } finally {
-      setExportingWorkspaceConfig(false);
-    }
-  }
-
-  async function importWorkspaceConfig() {
-    if (importingWorkspaceConfig()) return;
-    if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
-      return;
-    }
-
-    setImportingWorkspaceConfig(true);
-    options.setError(null);
-
-    try {
-      const selection = await pickFile({
-        title: "Import worker config",
-        filters: [{ name: "Veslo Worker", extensions: ["veslo-workspace", "zip"] }],
-      });
-      const filePath =
-        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
-      if (!filePath) return;
-
-      const target = await pickDirectory({
-        title: "Choose a worker folder",
-      });
-      const folder =
-        typeof target === "string" ? target : Array.isArray(target) ? target[0] : null;
-      if (!folder) return;
-
-      const resolvedFolder = await resolveWorkspacePath(folder);
-      if (!resolvedFolder) {
-        options.setError(t("app.error.choose_folder", currentLocale()));
-        return;
-      }
-
-      const ws = await workspaceImportConfig({
-        archivePath: filePath,
-        targetDir: resolvedFolder,
-      });
-
-      setWorkspaces(ws.workspaces);
-      syncActiveWorkspaceId(ws.activeId);
-      setCreateWorkspaceOpen(false);
-      setCreateRemoteWorkspaceOpen(false);
-      markOnboardingComplete();
-
-      const opened = await activateFreshLocalWorkspace(ws.activeId ?? null, resolvedFolder);
-      if (!opened) {
-        return;
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-    } finally {
-      setImportingWorkspaceConfig(false);
-    }
-  }
-
-  function canRepairOpencodeMigration() {
-    if (CLOUD_ONLY_MODE) return false;
-    if (!isTauriRuntime()) return false;
-    const workspace = activeWorkspaceInfo();
-    if (!workspace || workspace.workspaceType !== "local") return false;
-    return Boolean(activeWorkspacePath().trim());
-  }
-
-  async function repairOpencodeMigration(optionsOverride?: { navigate?: boolean }) {
-    if (CLOUD_ONLY_MODE) {
-      const message = cloudOnlyMessage("cloud_only_local_disabled", "Local migration repair is disabled.");
-      setMigrationRepairResult({ ok: false, message });
-      options.setError(message);
-      return false;
-    }
-
-    if (!isTauriRuntime()) {
-      const message = t("app.migration.desktop_required", currentLocale());
-      setMigrationRepairResult({ ok: false, message });
-      options.setError(message);
-      return false;
-    }
-
-    if (migrationRepairBusy()) return false;
-
-    const workspace = activeWorkspaceInfo();
-    if (!workspace || workspace.workspaceType !== "local") {
-      const message = t("app.migration.local_only", currentLocale());
-      setMigrationRepairResult({ ok: false, message });
-      options.setError(message);
-      return false;
-    }
-
-    const root = activeWorkspacePath().trim();
-    if (!root) {
-      const message = t("app.migration.workspace_required", currentLocale());
-      setMigrationRepairResult({ ok: false, message });
-      options.setError(message);
-      return false;
-    }
-
-    setMigrationRepairBusy(true);
-    setMigrationRepairResult(null);
-    options.setError(null);
-    options.setBusy(true);
-    options.setBusyLabel("status.repairing_migration");
-    options.setBusyStartedAt(Date.now());
-
-    try {
-      if (engine()?.running) {
-        const info = await engineStop();
-        setEngine(info);
-      }
-
-      const source = options.engineSource();
-      const result = await opencodeDbMigrate({
-        projectDir: root,
-        preferSidecar: source === "sidecar",
-        opencodeBinPath: source === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
-      });
-
-      if (!result.ok) {
-        const output = formatExecOutput(result);
-        if (isDbMigrateUnsupported(output)) {
-          const message = t("app.migration.unsupported", currentLocale());
-          setMigrationRepairResult({ ok: false, message });
-          options.setError(message);
-          return false;
-        }
-
-        const fallback = t("app.migration.failed", currentLocale());
-        const message = output ? `${fallback}\n\n${output}` : fallback;
-        setMigrationRepairResult({ ok: false, message });
-        options.setError(addOpencodeCacheHint(message));
-        return false;
-      }
-
-      const started = await startHost({
-        workspacePath: root,
-        navigate: optionsOverride?.navigate ?? false,
-      });
-      if (!started) {
-        const message = t("app.migration.restart_failed", currentLocale());
-        setMigrationRepairResult({ ok: false, message });
-        return false;
-      }
-
-      setMigrationRepairResult({ ok: true, message: t("app.migration.success", currentLocale()) });
-      return true;
-    } catch (error) {
-      const message = addOpencodeCacheHint(error instanceof Error ? error.message : safeStringify(error));
-      setMigrationRepairResult({ ok: false, message });
-      options.setError(message);
-      return false;
-    } finally {
-      setMigrationRepairBusy(false);
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
-    }
-  }
-
-  async function onRepairOpencodeMigration() {
-    if (CLOUD_ONLY_MODE) {
-      options.setStartupPreference("server");
-      options.setOnboardingStep("server");
-      blockLocalAction("cloud_only_local_disabled", "Local migration repair is disabled.");
-      return;
-    }
-
-    options.setStartupPreference("local");
-    options.setOnboardingStep("connecting");
-    const ok = await repairOpencodeMigration({ navigate: true });
-    if (!ok) {
-      options.setOnboardingStep("local");
-    }
-  }
-
-  async function startHost(optionsOverride?: { workspacePath?: string; navigate?: boolean }) {
-    if (CLOUD_ONLY_MODE) {
-      return blockLocalAction("cloud_only_host_mode_removed", "Local host mode has been removed.");
-    }
-
-    if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
-      return false;
-    }
-
-    const overrideWorkspacePath = optionsOverride?.workspacePath?.trim() ?? "";
-    if (activeWorkspaceInfo()?.workspaceType === "remote" && !overrideWorkspacePath) {
-      options.setError(t("app.error.host_requires_local", currentLocale()));
-      return false;
-    }
-
-    const dir = (overrideWorkspacePath || activeWorkspacePath() || projectDir()).trim();
-    if (!dir) {
-      options.setError(t("app.error.pick_workspace_folder", currentLocale()));
-      return false;
-    }
-
-      try {
-        const source = options.engineSource();
-        const result = await engineDoctor({
-          preferSidecar: source === "sidecar",
-          opencodeBinPath: source === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
-        });
-        setEngineDoctorResult(result);
-        setEngineDoctorCheckedAt(Date.now());
-
-      if (!result.found) {
-        options.setError(
-          options.isWindowsPlatform()
-            ? "OpenCode CLI not found. Install OpenCode for Windows or bundle opencode.exe with Veslo, then restart. If it is installed, ensure `opencode.exe` is on PATH (try `opencode --version` in PowerShell)."
-            : "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`, then retry.",
-        );
-        return false;
-      }
-
-      if (!result.supportsServe) {
-        const serveDetails = [result.serveHelpStdout, result.serveHelpStderr]
-          .filter((value) => value && value.trim())
-          .join("\n\n");
-        const suffix = serveDetails ? `\n\nServe output:\n${serveDetails}` : "";
-        options.setError(
-          `OpenCode CLI is installed, but \`opencode serve\` is unavailable. Update OpenCode and retry.${suffix}`
-        );
-        return false;
-      }
-    } catch (e) {
-      setEngineInstallLogs(e instanceof Error ? e.message : safeStringify(e));
-    }
-
-    options.setError(null);
-    setMigrationRepairResult(null);
-    options.setBusy(true);
-    options.setBusyLabel("status.starting_engine");
-    options.setBusyStartedAt(Date.now());
-
-    try {
-      setProjectDir(dir);
-      if (!authorizedDirs().length) {
-        setAuthorizedDirs([dir]);
-      }
-
-      const info = await engineStart(dir, {
-        preferSidecar: options.engineSource() === "sidecar",
-        opencodeBinPath:
-          options.engineSource() === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
-        runtime: resolveEngineRuntime(),
-        workspacePaths: resolveWorkspacePaths(),
-      });
-      setEngine(info);
-
-      const username = info.opencodeUsername?.trim() ?? "";
-      const password = info.opencodePassword?.trim() ?? "";
-      const auth = username && password ? { username, password } : undefined;
-      setEngineAuth(auth ?? null);
-
-      if (info.baseUrl) {
-        const activeLocalWorkspace =
-          activeWorkspaceInfo()?.workspaceType === "local" ? activeWorkspaceInfo() : null;
-        const ok = await connectToServer(
-          info.baseUrl,
-          dir,
-          {
-            workspaceId: activeLocalWorkspace?.id,
-            workspaceType: "local",
-            targetRoot: dir,
-            reason: "host-start",
-          },
-          auth,
-          { navigate: optionsOverride?.navigate ?? true },
-        );
-        if (!ok) return false;
-      }
-
-      markOnboardingComplete();
-      return true;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-      return false;
-    } finally {
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
     }
   }
 
@@ -3062,187 +1643,6 @@ export function createWorkspaceStore(options: {
       )
     );
     return true;
-  }
-
-  async function stopHost() {
-    options.setError(null);
-    options.setBusy(true);
-    options.setBusyLabel("status.disconnecting");
-    options.setBusyStartedAt(Date.now());
-
-    try {
-      if (isTauriRuntime()) {
-        const info = await engineStop();
-        setEngine(info);
-      }
-
-      setEngineAuth(null);
-
-      options.setClient(null);
-      options.setConnectedVersion(null);
-      options.setSelectedSessionId(null);
-      options.setMessages([]);
-      options.setTodos([]);
-      options.setPendingPermissions([]);
-      options.setSessionStatusById({});
-      options.setSseConnected(false);
-
-      options.setStartupPreference(null);
-      options.setOnboardingStep(resolveWelcomeOnboardingStep());
-
-      options.setView("session");
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-    } finally {
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
-    }
-  }
-
-  async function reloadWorkspaceEngine() {
-    if (CLOUD_ONLY_MODE) {
-      return blockLocalAction("cloud_only_local_disabled", "Reload is only available for remote workers.");
-    }
-
-    if (!isTauriRuntime()) {
-      options.setError("Reloading the engine requires the desktop app.");
-      return false;
-    }
-
-    if (activeWorkspaceDisplay().workspaceType !== "local") {
-      options.setError("Reload is only available for local workers.");
-      return false;
-    }
-
-    const root = activeWorkspacePath().trim();
-    if (!root) {
-      options.setError("Pick a worker folder first.");
-      return false;
-    }
-
-    options.setError(null);
-    options.setBusy(true);
-    options.setBusyLabel("status.reloading_engine");
-    options.setBusyStartedAt(Date.now());
-
-    try {
-      const runtime = engine()?.runtime ?? resolveEngineRuntime();
-      if (runtime === "veslo-orchestrator") {
-        await orchestratorInstanceDispose(root);
-        await activateOrchestratorWorkspace({
-          workspacePath: root,
-          name: activeWorkspaceInfo()?.displayName?.trim() || activeWorkspaceInfo()?.name?.trim() || null,
-        });
-
-        const nextInfo = await engineInfo();
-        setEngine(nextInfo);
-
-        const username = nextInfo.opencodeUsername?.trim() ?? "";
-        const password = nextInfo.opencodePassword?.trim() ?? "";
-        const auth = username && password ? { username, password } : undefined;
-        setEngineAuth(auth ?? null);
-
-        if (nextInfo.baseUrl) {
-          const ok = await connectToServer(
-            nextInfo.baseUrl,
-            root,
-            {
-              workspaceId:
-                activeWorkspaceInfo()?.workspaceType === "local"
-                  ? activeWorkspaceInfo()?.id
-                  : undefined,
-              workspaceType: "local",
-              targetRoot: root,
-              reason: "engine-reload-orchestrator",
-            },
-            auth,
-          );
-          if (!ok) {
-            options.setError("Failed to reconnect after reload");
-            return false;
-          }
-        }
-
-        return true;
-      }
-
-      const info = await engineStop();
-      setEngine(info);
-
-      const nextInfo = await engineStart(root, {
-        preferSidecar: options.engineSource() === "sidecar",
-        opencodeBinPath:
-          options.engineSource() === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
-        runtime,
-        workspacePaths: resolveWorkspacePaths(),
-      });
-      setEngine(nextInfo);
-
-      const username = nextInfo.opencodeUsername?.trim() ?? "";
-      const password = nextInfo.opencodePassword?.trim() ?? "";
-      const auth = username && password ? { username, password } : undefined;
-      setEngineAuth(auth ?? null);
-
-      if (nextInfo.baseUrl) {
-        const ok = await connectToServer(
-          nextInfo.baseUrl,
-          root,
-          {
-            workspaceId:
-              activeWorkspaceInfo()?.workspaceType === "local"
-                ? activeWorkspaceInfo()?.id
-                : undefined,
-            workspaceType: "local",
-            targetRoot: root,
-            reason: "engine-reload",
-          },
-          auth,
-        );
-        if (!ok) {
-          options.setError("Failed to reconnect after reload");
-          return false;
-        }
-      }
-
-      return true;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-      return false;
-    } finally {
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
-    }
-  }
-
-  async function onInstallEngine() {
-    options.setError(null);
-    setEngineInstallLogs(null);
-    options.setBusy(true);
-    options.setBusyLabel("status.installing_opencode");
-    options.setBusyStartedAt(Date.now());
-
-    try {
-      const result = await engineInstall();
-      const combined = `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`.trim();
-      setEngineInstallLogs(combined || null);
-
-      if (!result.ok) {
-        options.setError(result.stderr.trim() || t("app.error.install_failed", currentLocale()));
-      }
-
-      await refreshEngineDoctor();
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-    } finally {
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
-    }
   }
 
   function normalizeRoots(list: string[]) {
@@ -3301,104 +1701,138 @@ export function createWorkspaceStore(options: {
   const resolveWelcomeOnboardingStep = (): OnboardingStep =>
     hasPersistedLanguagePreference() ? "welcome" : "language";
 
-  async function persistAuthorizedRoots(nextRoots: string[]) {
-    if (!isTauriRuntime()) return;
-    if (activeWorkspaceInfo()?.workspaceType === "remote") return;
-    const root = activeWorkspacePath().trim();
-    if (!root) return;
+  const engineStore = createEngineStore({
+    activeWorkspacePath: () => activeWorkspacePath(),
+    activeWorkspaceRoot: () => activeWorkspaceRoot(),
+    activeWorkspaceInfo: () => activeWorkspaceInfo(),
+    activeWorkspaceId: () => activeWorkspaceId(),
+    activeWorkspaceDisplay: () => activeWorkspaceDisplay(),
+    projectDir,
+    setProjectDir,
+    authorizedDirs,
+    setAuthorizedDirs,
+    engineSource: options.engineSource,
+    engineCustomBinPath: options.engineCustomBinPath,
+    isWindowsPlatform: options.isWindowsPlatform,
+    setError: options.setError,
+    setBusy: options.setBusy,
+    setBusyLabel: options.setBusyLabel,
+    setBusyStartedAt: options.setBusyStartedAt,
+    setBaseUrl: options.setBaseUrl,
+    setClient: options.setClient,
+    setConnectedVersion: options.setConnectedVersion,
+    setSelectedSessionId: options.setSelectedSessionId,
+    setMessages: options.setMessages,
+    setTodos: options.setTodos,
+    setPendingPermissions: options.setPendingPermissions,
+    setSessionStatusById: options.setSessionStatusById,
+    setSseConnected: options.setSseConnected,
+    setStartupPreference: options.setStartupPreference,
+    setOnboardingStep: options.setOnboardingStep,
+    setView: options.setView,
+    client: options.client,
+    onEngineStable: options.onEngineStable,
+    connectToServer,
+    resolveEngineRuntime,
+    resolveWorkspacePaths,
+    activateOrchestratorWorkspace,
+    blockLocalAction,
+    markOnboardingComplete,
+    resolveWelcomeOnboardingStep,
+    setMigrationRepairResult: (value: any) => configStoreRef.setMigrationRepairResult(value),
+  });
 
-    const existing = workspaceConfig();
-    const cfg: WorkspaceVesloConfig = {
-      version: existing?.version ?? 1,
-      workspace: existing?.workspace ?? null,
-      authorizedRoots: nextRoots,
-      reload: existing?.reload ?? null,
-    };
+  // Use a ref object so the engine store can call configStore methods that
+  // are only available after configStore is created (avoids temporal dead zone).
+  const configStoreRef: { setMigrationRepairResult: (value: any) => void } = {
+    setMigrationRepairResult: () => {},
+  };
 
-    await workspaceVesloWrite({ workspacePath: root, config: cfg });
-    setWorkspaceConfig(cfg);
-  }
+  const configStore = createConfigStore({
+    getActiveWorkspacePath: () => activeWorkspacePath(),
+    getActiveWorkspaceInfo: activeWorkspaceInfo,
+    getWorkspaces: workspaces,
+    setWorkspaces,
+    getWorkspaceConfig: workspaceConfig,
+    setWorkspaceConfig,
+    getAuthorizedDirs: authorizedDirs,
+    setAuthorizedDirs,
+    getEngine: engineStore.engine,
+    setEngine: engineStore.setEngine,
+    syncActiveWorkspaceId,
+    setCreateWorkspaceOpen,
+    setCreateRemoteWorkspaceOpen,
+    markOnboardingComplete,
+    activateFreshLocalWorkspace,
+    startHost: engineStore.startHost,
+    engineSource: options.engineSource,
+    engineCustomBinPath: options.engineCustomBinPath,
+    engineStop,
+    setError: options.setError,
+    setBusy: options.setBusy,
+    setBusyLabel: options.setBusyLabel,
+    setBusyStartedAt: options.setBusyStartedAt,
+    setStartupPreference: options.setStartupPreference,
+    setOnboardingStep: options.setOnboardingStep,
+    blockLocalAction,
+    normalizeRoots,
+    resolveWorkspacePath,
+    formatExecOutput,
+    isDbMigrateUnsupported,
+    cloudOnlyMessage,
+  });
 
-  async function persistReloadSettings(next: { auto?: boolean; resume?: boolean }) {
-    if (!isTauriRuntime()) return;
-    if (activeWorkspaceInfo()?.workspaceType === "remote") return;
-    const root = activeWorkspacePath().trim();
-    if (!root) return;
+  // Wire up the lazy reference now that configStore is available.
+  configStoreRef.setMigrationRepairResult = configStore.setMigrationRepairResult;
 
-    const existing = workspaceConfig();
-    const cfg: WorkspaceVesloConfig = {
-      version: existing?.version ?? 1,
-      workspace: existing?.workspace ?? null,
-      authorizedRoots: Array.isArray(existing?.authorizedRoots) ? existing!.authorizedRoots : authorizedDirs(),
-      reload: {
-        auto: Boolean(next.auto),
-        resume: Boolean(next.resume),
-      },
-    };
+  const remoteStore = createRemoteStore({
+    getWorkspaces: workspaces,
+    setWorkspaces,
+    getActiveWorkspaceId: () => activeWorkspaceId(),
+    getActiveWorkspaceInfo: () => activeWorkspaceInfo(),
+    getActiveWorkspaceRoot: () => activeWorkspaceRoot(),
+    getActiveWorkspacePath: () => activeWorkspacePath(),
+    getProjectDir: projectDir,
+    setProjectDir,
+    syncActiveWorkspaceId,
+    updateWorkspaceConnectionState,
+    getConnectingWorkspaceId: connectingWorkspaceId,
+    setConnectingWorkspaceId,
+    setWorkspaceConfig,
+    setWorkspaceConfigLoaded,
+    setAuthorizedDirs,
+    setCreateWorkspaceOpen,
+    setCreateRemoteWorkspaceOpen,
+    getVesloServerSettings: options.vesloServerSettings,
+    updateVesloServerSettings: options.updateVesloServerSettings,
+    getClientDirectory: options.clientDirectory,
+    engineStore: {
+      refreshSandboxDoctor: engineStore.refreshSandboxDoctor,
+    },
+    connectToServer,
+    activateWorkspace,
+    testWorkspaceConnection,
+    openEmptySession,
+    setError: options.setError,
+    setBusy: options.setBusy,
+    setBusyLabel: options.setBusyLabel,
+    setBusyStartedAt: options.setBusyStartedAt,
+    setStartupPreference: options.setStartupPreference,
+    setClient: options.setClient,
+    setConnectedVersion: options.setConnectedVersion,
+    setSseConnected: options.setSseConnected,
+    wsActivateGuard,
+    markOnboardingComplete,
+    blockLocalAction,
+    resolveWorkspacePath,
+    wsDebug,
+    makeRunId,
+  });
 
-    await workspaceVesloWrite({ workspacePath: root, config: cfg });
-    setWorkspaceConfig(cfg);
-  }
-
-  async function addAuthorizedDir() {
-    if (activeWorkspaceInfo()?.workspaceType === "remote") return;
-    const next = newAuthorizedDir().trim();
-    if (!next) return;
-
-    const roots = normalizeRoots([...authorizedDirs(), next]);
-    setAuthorizedDirs(roots);
-    setNewAuthorizedDir("");
-
-    try {
-      await persistAuthorizedRoots(roots);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-    }
-  }
-
-  async function addAuthorizedDirFromPicker(optionsOverride?: { persistToWorkspace?: boolean }) {
-    if (!isTauriRuntime()) return;
-    if (activeWorkspaceInfo()?.workspaceType === "remote") return;
-
-    try {
-      const selection = await pickDirectory({ title: t("onboarding.authorize_folder", currentLocale()) });
-      const folder =
-        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
-      if (!folder) return;
-
-      const roots = normalizeRoots([...authorizedDirs(), folder]);
-      setAuthorizedDirs(roots);
-
-      if (optionsOverride?.persistToWorkspace) {
-        await persistAuthorizedRoots(roots);
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-    }
-  }
-
-  async function removeAuthorizedDir(dir: string) {
-    if (activeWorkspaceInfo()?.workspaceType === "remote") return;
-    const roots = normalizeRoots(authorizedDirs().filter((root) => root !== dir));
-    setAuthorizedDirs(roots);
-
-    try {
-      await persistAuthorizedRoots(roots);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-    }
-  }
-
-  function removeAuthorizedDirAtIndex(index: number) {
-    const roots = authorizedDirs();
-    const target = roots[index];
-    if (target) {
-      void removeAuthorizedDir(target);
-    }
-  }
+  // Wire up the late-bound remote store reference.
+  remoteStoreRef.resolveVesloHost = remoteStore.resolveVesloHost;
+  remoteStoreRef.createRemoteWorkspaceFlow = remoteStore.createRemoteWorkspaceFlow;
+  remoteStoreRef.clearSandboxCreateProgress = remoteStore.clearSandboxCreateProgress;
 
   /** Race a promise against a timeout; resolves to undefined on timeout. */
   function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T | undefined> {
@@ -3423,6 +1857,7 @@ export function createWorkspaceStore(options: {
     const line = `[${Date.now()}] ${msg}`;
     console.log("[boot]", msg);
     if (!wsDebugEnabled() || !isTauriRuntime()) return;
+    // Intentionally silent: localhost debug telemetry — failure is expected when no debug server is running
     try { fetch("http://127.0.0.1:9876", { method: "POST", body: line, mode: "no-cors" }).catch(() => {}); } catch { /* ignore */ }
   }
 
@@ -3458,10 +1893,10 @@ export function createWorkspaceStore(options: {
     }
 
     bootTrace("refreshEngine...");
-    await withTimeout(refreshEngine(), 10_000, "refreshEngine");
+    await withTimeout(engineStore.refreshEngine(), 10_000, "refreshEngine");
     bootTrace("refreshEngine DONE");
     bootTrace("refreshEngineDoctor...");
-    await withTimeout(refreshEngineDoctor(), 10_000, "refreshEngineDoctor");
+    await withTimeout(engineStore.refreshEngineDoctor(), 10_000, "refreshEngineDoctor");
     bootTrace("refreshEngineDoctor DONE");
 
     if (isTauriRuntime()) {
@@ -3499,7 +1934,7 @@ export function createWorkspaceStore(options: {
       }
     }
 
-    const info = engine();
+    const info = engineStore.engine();
     if (info?.baseUrl) {
       options.setBaseUrl(info.baseUrl);
     }
@@ -3583,7 +2018,7 @@ export function createWorkspaceStore(options: {
 
       if (cloudHostUrl) {
         options.setOnboardingStep("connecting");
-        const ok = await createRemoteWorkspaceFlow({
+        const ok = await remoteStoreRef.createRemoteWorkspaceFlow({
           vesloHostUrl: cloudHostUrl,
           vesloToken: cloudToken || null,
           directory: cloudDirectory,
@@ -3637,7 +2072,7 @@ export function createWorkspaceStore(options: {
             targetRoot: activeWorkspacePath().trim() || undefined,
             reason: "bootstrap-local",
           },
-          engineAuth() ?? undefined,
+          engineStore.engineAuth() ?? undefined,
         );
         bootTrace("connectToServer ok=", ok);
         if (!ok) {
@@ -3651,7 +2086,7 @@ export function createWorkspaceStore(options: {
 
       bootTrace("startHost...");
       options.setOnboardingStep("connecting");
-      const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
+      const ok = await engineStore.startHost({ workspacePath: activeWorkspacePath().trim() });
       bootTrace("startHost ok=", ok);
       if (!ok) {
         options.setOnboardingStep("local");
@@ -3699,7 +2134,7 @@ export function createWorkspaceStore(options: {
 
     options.setStartupPreference("local");
     options.setOnboardingStep("connecting");
-    const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
+    const ok = await engineStore.startHost({ workspacePath: activeWorkspacePath().trim() });
     if (!ok) {
       options.setOnboardingStep("local");
     }
@@ -3716,8 +2151,8 @@ export function createWorkspaceStore(options: {
     options.setStartupPreference("local");
     options.setOnboardingStep("connecting");
     const ok = await connectToServer(
-      engine()?.baseUrl ?? "",
-      (activeWorkspacePath().trim() || engine()?.projectDir || undefined),
+      engineStore.engine()?.baseUrl ?? "",
+      (activeWorkspacePath().trim() || engineStore.engine()?.projectDir || undefined),
       {
         workspaceId:
           activeWorkspaceInfo()?.workspaceType === "local"
@@ -3739,7 +2174,7 @@ export function createWorkspaceStore(options: {
     options.setStartupPreference("server");
     options.setOnboardingStep("connecting");
     const settings = options.vesloServerSettings();
-    const ok = await createRemoteWorkspaceFlow({
+    const ok = await remoteStoreRef.createRemoteWorkspaceFlow({
       vesloHostUrl: settings.urlOverride ?? null,
       vesloToken: settings.token ?? null,
       directory: options.clientDirectory().trim() ? options.clientDirectory().trim() : null,
@@ -3778,30 +2213,30 @@ export function createWorkspaceStore(options: {
   }
 
   return {
-    engine,
-    engineDoctorResult,
-    engineDoctorCheckedAt,
-    engineInstallLogs,
-    sandboxDoctorResult,
-    sandboxDoctorCheckedAt,
-    sandboxDoctorBusy,
-    sandboxPreflightBusy,
-    sandboxCreatePhase,
+    engine: engineStore.engine,
+    engineDoctorResult: engineStore.engineDoctorResult,
+    engineDoctorCheckedAt: engineStore.engineDoctorCheckedAt,
+    engineInstallLogs: engineStore.engineInstallLogs,
+    sandboxDoctorResult: engineStore.sandboxDoctorResult,
+    sandboxDoctorCheckedAt: engineStore.sandboxDoctorCheckedAt,
+    sandboxDoctorBusy: engineStore.sandboxDoctorBusy,
+    sandboxPreflightBusy: remoteStore.sandboxPreflightBusy,
+    sandboxCreatePhase: remoteStore.sandboxCreatePhase,
     projectDir,
     workspaces,
     activeWorkspaceId,
     authorizedDirs,
-    newAuthorizedDir,
+    newAuthorizedDir: configStore.newAuthorizedDir,
     workspaceConfig,
     workspaceConfigLoaded,
     createWorkspaceOpen,
     createRemoteWorkspaceOpen,
     connectingWorkspaceId,
     workspaceConnectionStateById,
-    exportingWorkspaceConfig,
-    importingWorkspaceConfig,
-    migrationRepairBusy,
-    migrationRepairResult,
+    exportingWorkspaceConfig: configStore.exportingWorkspaceConfig,
+    importingWorkspaceConfig: configStore.importingWorkspaceConfig,
+    migrationRepairBusy: configStore.migrationRepairBusy,
+    migrationRepairResult: configStore.migrationRepairResult,
     activeWorkspaceDisplay,
     activeWorkspacePath,
     activeWorkspaceRoot,
@@ -3809,54 +2244,54 @@ export function createWorkspaceStore(options: {
     setCreateRemoteWorkspaceOpen,
     setProjectDir,
     setAuthorizedDirs,
-    setNewAuthorizedDir,
+    setNewAuthorizedDir: configStore.setNewAuthorizedDir,
     setWorkspaceConfig,
     setWorkspaceConfigLoaded,
     setWorkspaces,
     syncActiveWorkspaceId: syncActiveWorkspaceId,
-    refreshEngine,
-    refreshEngineDoctor,
+    refreshEngine: engineStore.refreshEngine,
+    refreshEngineDoctor: engineStore.refreshEngineDoctor,
     activateWorkspace,
     testWorkspaceConnection,
     connectToServer,
     createWorkspaceFlow,
     createScratchWorkspace,
-    createSandboxFlow,
-    createRemoteWorkspaceFlow,
-    updateRemoteWorkspaceFlow,
+    createSandboxFlow: remoteStore.createSandboxFlow,
+    createRemoteWorkspaceFlow: remoteStore.createRemoteWorkspaceFlow,
+    updateRemoteWorkspaceFlow: remoteStore.updateRemoteWorkspaceFlow,
     updateWorkspaceDisplayName,
     ensureLocalWorkspaceActive,
     ensureWorkspaceForFolder,
     forgetWorkspace,
-    recoverWorkspace,
-    stopSandbox,
+    recoverWorkspace: remoteStore.recoverWorkspace,
+    stopSandbox: remoteStore.stopSandbox,
     pickWorkspaceFolder,
-    exportWorkspaceConfig,
-    importWorkspaceConfig,
-    canRepairOpencodeMigration,
-    repairOpencodeMigration,
-    startHost,
-    stopHost,
-    reloadWorkspaceEngine,
+    exportWorkspaceConfig: configStore.exportWorkspaceConfig,
+    importWorkspaceConfig: configStore.importWorkspaceConfig,
+    canRepairOpencodeMigration: configStore.canRepairOpencodeMigration,
+    repairOpencodeMigration: configStore.repairOpencodeMigration,
+    startHost: engineStore.startHost,
+    stopHost: engineStore.stopHost,
+    reloadWorkspaceEngine: engineStore.reloadWorkspaceEngine,
     bootstrapOnboarding,
     onSelectStartup,
     onBackToWelcome,
     onStartHost,
-    onRepairOpencodeMigration,
+    onRepairOpencodeMigration: configStore.onRepairOpencodeMigration,
     onAttachHost,
     onConnectClient,
     onConfirmLanguage,
     onRememberStartupToggle,
-    onInstallEngine,
-    addAuthorizedDir,
-    addAuthorizedDirFromPicker,
-    removeAuthorizedDir,
-    removeAuthorizedDirAtIndex,
-    persistReloadSettings,
-    setEngineInstallLogs,
-    refreshSandboxDoctor,
-    sandboxCreateProgress,
-    clearSandboxCreateProgress,
+    onInstallEngine: engineStore.onInstallEngine,
+    addAuthorizedDir: configStore.addAuthorizedDir,
+    addAuthorizedDirFromPicker: configStore.addAuthorizedDirFromPicker,
+    removeAuthorizedDir: configStore.removeAuthorizedDir,
+    removeAuthorizedDirAtIndex: configStore.removeAuthorizedDirAtIndex,
+    persistReloadSettings: configStore.persistReloadSettings,
+    setEngineInstallLogs: engineStore.setEngineInstallLogs,
+    refreshSandboxDoctor: engineStore.refreshSandboxDoctor,
+    sandboxCreateProgress: remoteStore.sandboxCreateProgress,
+    clearSandboxCreateProgress: remoteStore.clearSandboxCreateProgress,
     workspaceDebugEvents,
     clearWorkspaceDebugEvents,
     isPrivateWorkspacePath,

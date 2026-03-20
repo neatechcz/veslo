@@ -1,0 +1,70 @@
+name: E2E UI Tests
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-ui:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/desktop/src-tauri
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb
+          version: "1.0"
+
+      # Sidecar download — adapt the full platform-aware download logic
+      # from build-desktop.yml when enabling this workflow.
+      # For now, prepare:sidecar handles what it can.
+      - name: Prepare sidecars
+        run: pnpm --filter @neatech/veslo run prepare:sidecar
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Tauri (debug, no bundle, e2e feature)
+        run: pnpm tauri build --debug --no-bundle -- --features e2e
+        working-directory: packages/desktop
+
+      - name: Run E2E UI tests (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm test:e2e:ui
+
+      - name: Run E2E UI tests (macOS / Windows)
+        if: runner.os != 'Linux'
+        run: pnpm test:e2e:ui
+
+      - name: Upload visual diffs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-diffs-${{ matrix.os }}
+          path: packages/e2e/__snapshots__/**/diff/

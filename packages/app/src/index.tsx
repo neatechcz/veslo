@@ -7,6 +7,7 @@ import "./app/index.css";
 import AppEntry from "./app/entry";
 import { PlatformProvider, type Platform } from "./app/context/platform";
 import { isTauriRuntime } from "./app/utils";
+import { reportError } from "./app/lib/error-reporter";
 import { initLocale } from "./i18n";
 
 bootstrapTheme();
@@ -26,7 +27,7 @@ const platform: Platform = {
     if (isTauriRuntime()) {
       void import("@tauri-apps/plugin-opener")
         .then(({ openUrl }) => openUrl(url))
-        .catch(() => undefined);
+        .catch(e => reportError(e, "init.tauriSetup"));
       return;
     }
 
@@ -68,7 +69,7 @@ const platform: Platform = {
           notification.close();
         };
       })
-      .catch(() => undefined);
+      .catch(e => reportError(e, "init.tauriSetup"));
   },
   storage: (name) => {
     const prefix = name ? `${name}:` : "";

@@ -10,6 +10,7 @@ import {
 } from "lucide-solid";
 
 import Button from "../components/button";
+import { reportError } from "../lib/error-reporter";
 import {
   buildVesloWorkspaceBaseUrl,
   VesloServerError,
@@ -434,7 +435,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         client.opencodeRouterHealth(),
         client.getOpenCodeRouterTelegramIdentities(id),
         client.getOpenCodeRouterSlackIdentities(id),
-        client.getOpenCodeRouterTelegram(id).catch(() => null),
+        client.getOpenCodeRouterTelegram(id).catch(e => { reportError(e, "identities.telegramRouter"); return null; }),
       ]);
 
       setTelegramBotUsername(getTelegramUsernameFromResult(telegramInfo));

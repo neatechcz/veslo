@@ -1,16 +1,14 @@
 /**
  * Safe execution utilities for error handling.
  *
- * Replaces bare `catch {}` blocks with structured handling that
- * at least logs errors in development, while keeping the same
- * "swallow and continue" behavior in production.
+ * Wraps operations with structured error handling that delegates
+ * to reportError for consistent logging across dev and prod.
  */
 
-const isDev = typeof import.meta !== "undefined" && import.meta.env?.DEV;
+import { reportError } from "./error-reporter";
 
 /**
  * Run an async function, returning the result or a fallback on error.
- * Logs errors in development mode.
  *
  * @example
  * const sessions = await safeAsync(() => loadSessions(), []);
@@ -23,16 +21,13 @@ export async function safeAsync<T>(
   try {
     return await fn();
   } catch (error) {
-    if (isDev) {
-      console.warn(`[safeAsync]${label ? ` ${label}:` : ""}`, error);
-    }
+    reportError(error, `safeAsync:${label ?? "unknown"}`, "warning");
     return fallback;
   }
 }
 
 /**
  * Run a synchronous function, returning the result or a fallback on error.
- * Logs errors in development mode.
  *
  * @example
  * const parsed = safeSync(() => JSON.parse(raw), null);
@@ -45,15 +40,13 @@ export function safeSync<T>(
   try {
     return fn();
   } catch (error) {
-    if (isDev) {
-      console.warn(`[safeSync]${label ? ` ${label}:` : ""}`, error);
-    }
+    reportError(error, `safeSync:${label ?? "unknown"}`, "warning");
     return fallback;
   }
 }
 
 /**
- * Fire-and-forget an async operation. Logs errors in development.
+ * Fire-and-forget an async operation. Logs errors via reportError.
  * Use for cleanup, best-effort writes, etc.
  *
  * @example
@@ -64,8 +57,6 @@ export function fireAndForget(
   label?: string,
 ): void {
   fn().catch((error) => {
-    if (isDev) {
-      console.warn(`[fireAndForget]${label ? ` ${label}:` : ""}`, error);
-    }
+    reportError(error, `fireAndForget:${label ?? "unknown"}`, "warning");
   });
 }

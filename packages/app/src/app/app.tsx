@@ -14,7 +14,6 @@ import { useLocation, useNavigate } from "@solidjs/router";
 import type {
   Agent,
   Part,
-  ProviderAuthAuthorization,
   Session,
   TextPartInput,
   FilePartInput,
@@ -27,6 +26,31 @@ import { listen, type Event as TauriEvent } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parse } from "jsonc-parser";
 
+import { reportError } from "./lib/error-reporter";
+import {
+  COMPACTION_THRESHOLD_RATIO,
+  resolveCompactionThreshold,
+  shouldAutoCompact,
+} from "./lib/auto-compaction";
+import {
+  parseSessionModelOverrides,
+  serializeSessionModelOverrides,
+  parseDefaultModelFromConfig,
+  formatConfigWithDefaultModel,
+} from "./lib/model-persistence";
+import {
+  parseSharedBundleDeepLink,
+  stripSharedBundleQuery,
+  parseRemoteConnectDeepLink,
+  stripRemoteConnectQuery,
+  type SharedBundleDeepLink,
+  type SharedBundleImportIntent,
+} from "./lib/deep-links";
+import {
+  type SharedBundleV1,
+  fetchSharedBundle,
+  buildImportPayloadFromBundle,
+} from "./lib/shared-bundles";
 import ModelPickerModal from "./components/model-picker-modal";
 import ResetModal from "./components/reset-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
@@ -196,20 +220,20 @@ import {
   type VesloServerDiagnostics,
   type VesloServerStatus,
   type VesloServerSettings,
-  type VesloWorkspaceExport,
   VesloServerError,
 } from "./lib/veslo-server";
 import { CLOUD_ONLY_MODE, resolveVesloCloudEnvironment } from "./lib/cloud-policy";
 import { isRemoteUiEnabled } from "./lib/runtime-policy";
 import {
-  extractOpenAiCompatibleModelIds,
-  LM_STUDIO_DEFAULT_BASE_URL,
-  LM_STUDIO_PROVIDER_ID,
-  LM_STUDIO_PROVIDER_NAME,
-  LM_STUDIO_PROVIDER_NPM,
-  resolveLmStudioBaseUrl,
   resolveEffectiveConnectedProviderIds,
 } from "./utils/providers";
+import {
+  createProviderAuthModule,
+  describeProviderError,
+  assertNoClientError,
+  type ProviderAuthMethod,
+  type ProviderOAuthStartResult,
+} from "./lib/provider-auth";
 
 type RemoteWorkspaceDefaults = {
   vesloHostUrl?: string | null;
@@ -217,405 +241,6 @@ type RemoteWorkspaceDefaults = {
   directory?: string | null;
   displayName?: string | null;
 };
-
-type SharedSkillItem = {
-  name: string;
-  description?: string;
-  content: string;
-  trigger?: string;
-};
-
-type SharedSkillBundleV1 = {
-  schemaVersion: 1;
-  type: "skill";
-  name: string;
-  description?: string;
-  trigger?: string;
-  content: string;
-};
-
-type SharedSkillsSetBundleV1 = {
-  schemaVersion: 1;
-  type: "skills-set";
-  name: string;
-  description?: string;
-  skills: SharedSkillItem[];
-};
-
-type SharedWorkspaceProfileBundleV1 = {
-  schemaVersion: 1;
-  type: "workspace-profile";
-  name: string;
-  description?: string;
-  workspace: VesloWorkspaceExport;
-};
-
-type SharedBundleV1 =
-  | SharedSkillBundleV1
-  | SharedSkillsSetBundleV1
-  | SharedWorkspaceProfileBundleV1;
-
-type SharedBundleImportIntent = "new_worker" | "import_current";
-
-type SharedBundleDeepLink = {
-  bundleUrl: string;
-  intent: SharedBundleImportIntent;
-  source?: string;
-  orgId?: string;
-  label?: string;
-};
-
-function normalizeSharedBundleImportIntent(value: string | null | undefined): SharedBundleImportIntent {
-  const normalized = (value ?? "").trim().toLowerCase();
-  if (normalized === "new_worker" || normalized === "new-worker" || normalized === "newworker") {
-    return "new_worker";
-  }
-  return "import_current";
-}
-
-function readRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
-
-function readSkillItem(value: unknown): SharedSkillItem | null {
-  const record = readRecord(value);
-  if (!record) return null;
-  const name = typeof record.name === "string" ? record.name.trim() : "";
-  const content = typeof record.content === "string" ? record.content : "";
-  if (!name || !content) return null;
-  return {
-    name,
-    description: typeof record.description === "string" ? record.description : undefined,
-    trigger: typeof record.trigger === "string" ? record.trigger : undefined,
-    content,
-  };
-}
-
-function parseSharedBundle(value: unknown): SharedBundleV1 {
-  const record = readRecord(value);
-  if (!record) {
-    throw new Error("Invalid shared bundle payload.");
-  }
-
-  const schemaVersion = typeof record.schemaVersion === "number" ? record.schemaVersion : null;
-  const type = typeof record.type === "string" ? record.type.trim() : "";
-  const name = typeof record.name === "string" ? record.name.trim() : "";
-
-  if (schemaVersion !== 1) {
-    throw new Error("Unsupported bundle schema version.");
-  }
-
-  if (type === "skill") {
-    const content = typeof record.content === "string" ? record.content : "";
-    if (!name || !content) {
-      throw new Error("Invalid skill bundle payload.");
-    }
-    return {
-      schemaVersion: 1,
-      type: "skill",
-      name,
-      description: typeof record.description === "string" ? record.description : undefined,
-      trigger: typeof record.trigger === "string" ? record.trigger : undefined,
-      content,
-    };
-  }
-
-  if (type === "skills-set") {
-    const skills = Array.isArray(record.skills)
-      ? record.skills.map(readSkillItem).filter((item): item is SharedSkillItem => Boolean(item))
-      : [];
-    if (!skills.length) {
-      throw new Error("Skills set bundle has no importable skills.");
-    }
-    return {
-      schemaVersion: 1,
-      type: "skills-set",
-      name: name || "Shared skills",
-      description: typeof record.description === "string" ? record.description : undefined,
-      skills,
-    };
-  }
-
-  if (type === "workspace-profile") {
-    const workspace = readRecord(record.workspace);
-    if (!workspace) {
-      throw new Error("Workspace profile bundle is missing workspace payload.");
-    }
-    return {
-      schemaVersion: 1,
-      type: "workspace-profile",
-      name: name || "Shared workspace profile",
-      description: typeof record.description === "string" ? record.description : undefined,
-      workspace: workspace as VesloWorkspaceExport,
-    };
-  }
-
-  throw new Error(`Unsupported bundle type: ${type || "unknown"}`);
-}
-
-async function fetchSharedBundle(bundleUrl: string): Promise<SharedBundleV1> {
-  let targetUrl: URL;
-  try {
-    targetUrl = new URL(bundleUrl);
-  } catch {
-    throw new Error("Invalid shared bundle URL.");
-  }
-
-  if (targetUrl.protocol !== "https:" && targetUrl.protocol !== "http:") {
-    throw new Error("Shared bundle URL must use http(s).");
-  }
-
-  if (!targetUrl.searchParams.has("format")) {
-    targetUrl.searchParams.set("format", "json");
-  }
-
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 15_000);
-
-  try {
-    const response = await fetch(targetUrl.toString(), {
-      method: "GET",
-      headers: { Accept: "application/json" },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      const details = (await response.text()).trim();
-      const suffix = details ? `: ${details}` : "";
-      throw new Error(`Failed to fetch bundle (${response.status})${suffix}`);
-    }
-    return parseSharedBundle(await response.json());
-  } finally {
-    window.clearTimeout(timeout);
-  }
-}
-
-function buildImportPayloadFromBundle(bundle: SharedBundleV1): {
-  payload: Record<string, unknown>;
-  importedSkillsCount: number;
-} {
-  if (bundle.type === "skill") {
-    return {
-      payload: {
-        mode: { skills: "merge" },
-        skills: [
-          {
-            name: bundle.name,
-            description: bundle.description,
-            trigger: bundle.trigger,
-            content: bundle.content,
-          },
-        ],
-      },
-      importedSkillsCount: 1,
-    };
-  }
-
-  if (bundle.type === "skills-set") {
-    return {
-      payload: {
-        mode: { skills: "merge" },
-        skills: bundle.skills.map((skill) => ({
-          name: skill.name,
-          description: skill.description,
-          trigger: skill.trigger,
-          content: skill.content,
-        })),
-      },
-      importedSkillsCount: bundle.skills.length,
-    };
-  }
-
-  const workspace = bundle.workspace;
-  const payload: Record<string, unknown> = {
-    mode: {
-      opencode: "merge",
-      veslo: "merge",
-      skills: "merge",
-      commands: "merge",
-    },
-  };
-  if (workspace.opencode && typeof workspace.opencode === "object") payload.opencode = workspace.opencode;
-  if (workspace.veslo && typeof workspace.veslo === "object") payload.veslo = workspace.veslo;
-  if (Array.isArray(workspace.skills) && workspace.skills.length) payload.skills = workspace.skills;
-  if (Array.isArray(workspace.commands) && workspace.commands.length) payload.commands = workspace.commands;
-
-  const importedSkillsCount = Array.isArray(workspace.skills) ? workspace.skills.length : 0;
-  return { payload, importedSkillsCount };
-}
-
-function parseSharedBundleDeepLink(rawUrl: string): SharedBundleDeepLink | null {
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return null;
-  }
-
-  const protocol = url.protocol.toLowerCase();
-  if (protocol !== "veslo:" && protocol !== "https:" && protocol !== "http:") {
-    return null;
-  }
-
-  const routeHost = url.hostname.toLowerCase();
-  const routePath = url.pathname.replace(/^\/+/, "").toLowerCase();
-  const routeSegments = routePath.split("/").filter(Boolean);
-  const routeTail = routeSegments[routeSegments.length - 1] ?? "";
-  const looksLikeImportRoute =
-    routeHost === "import-bundle" ||
-    routePath === "import-bundle" ||
-    routeTail === "import-bundle";
-
-  const rawBundleUrl =
-    url.searchParams.get("veslo_bundle") ??
-    url.searchParams.get("ow_bundle") ??
-    url.searchParams.get("bundleUrl") ??
-    "";
-
-  if (!looksLikeImportRoute && !rawBundleUrl.trim()) {
-    return null;
-  }
-
-  try {
-    const parsedBundleUrl = new URL(rawBundleUrl.trim());
-    if (parsedBundleUrl.protocol !== "https:" && parsedBundleUrl.protocol !== "http:") {
-      return null;
-    }
-    const intent = normalizeSharedBundleImportIntent(
-      url.searchParams.get("veslo_intent") ??
-        url.searchParams.get("ow_intent") ??
-        url.searchParams.get("intent"),
-    );
-    const source = (
-      url.searchParams.get("veslo_source") ??
-      url.searchParams.get("ow_source") ??
-      url.searchParams.get("source") ??
-      ""
-    ).trim();
-    const orgId = (url.searchParams.get("veslo_org") ?? url.searchParams.get("ow_org") ?? "").trim();
-    const label = (url.searchParams.get("veslo_label") ?? url.searchParams.get("ow_label") ?? "").trim();
-    return {
-      bundleUrl: parsedBundleUrl.toString(),
-      intent,
-      source: source || undefined,
-      orgId: orgId || undefined,
-      label: label || undefined,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function stripSharedBundleQuery(rawUrl: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return null;
-  }
-
-  let changed = false;
-  for (const key of [
-    "veslo_bundle",
-    "ow_bundle",
-    "bundleUrl",
-    "veslo_intent",
-    "ow_intent",
-    "intent",
-    "veslo_source",
-    "ow_source",
-    "source",
-    "veslo_org",
-    "ow_org",
-    "veslo_label",
-    "ow_label",
-  ]) {
-    if (url.searchParams.has(key)) {
-      url.searchParams.delete(key);
-      changed = true;
-    }
-  }
-
-  if (!changed) {
-    return null;
-  }
-
-  const search = url.searchParams.toString();
-  return `${url.pathname}${search ? `?${search}` : ""}${url.hash}`;
-}
-
-function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefaults | null {
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return null;
-  }
-
-  const protocol = url.protocol.toLowerCase();
-  if (protocol !== "veslo:" && protocol !== "https:" && protocol !== "http:") {
-    return null;
-  }
-
-  const routeHost = url.hostname.toLowerCase();
-  const routePath = url.pathname.replace(/^\/+/, "").toLowerCase();
-  const routeSegments = routePath.split("/").filter(Boolean);
-  const routeTail = routeSegments[routeSegments.length - 1] ?? "";
-  if (routeHost !== "connect-remote" && routePath !== "connect-remote" && routeTail !== "connect-remote") {
-    return null;
-  }
-
-  const hostUrlRaw = url.searchParams.get("vesloHostUrl") ?? url.searchParams.get("vesloUrl") ?? "";
-  const tokenRaw = url.searchParams.get("vesloToken") ?? url.searchParams.get("accessToken") ?? "";
-  const normalizedHostUrl = normalizeVesloServerUrl(hostUrlRaw);
-  const token = tokenRaw.trim();
-  if (!normalizedHostUrl || !token) {
-    return null;
-  }
-
-  const workerName = url.searchParams.get("workerName")?.trim() ?? "";
-  const workerId = url.searchParams.get("workerId")?.trim() ?? "";
-  const displayName = workerName || (workerId ? `Worker ${workerId.slice(0, 8)}` : "");
-
-  return {
-    vesloHostUrl: normalizedHostUrl,
-    vesloToken: token,
-    directory: null,
-    displayName: displayName || null,
-  };
-}
-
-function stripRemoteConnectQuery(rawUrl: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return null;
-  }
-
-  let changed = false;
-  for (const key of [
-    "vesloHostUrl",
-    "vesloUrl",
-    "vesloToken",
-    "accessToken",
-    "workerId",
-    "workerName",
-    "source",
-  ]) {
-    if (url.searchParams.has(key)) {
-      url.searchParams.delete(key);
-      changed = true;
-    }
-  }
-
-  if (!changed) {
-    return null;
-  }
-
-  const search = url.searchParams.toString();
-  return `${url.pathname}${search ? `?${search}` : ""}${url.hash}`;
-}
 
 export default function App() {
   const envVesloWorkspaceId =
@@ -637,12 +262,6 @@ export default function App() {
       // ignore
     }
   };
-  type ProviderAuthMethod = { type: "oauth" | "api"; label: string };
-  type ProviderOAuthStartResult = {
-    methodIndex: number;
-    authorization: ProviderAuthAuthorization;
-  };
-
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -1483,86 +1102,6 @@ export default function App() {
     return parts;
   };
 
-  const assertNoClientError = (result: unknown) => {
-    const maybe = result as { error?: unknown } | null | undefined;
-    if (!maybe || maybe.error === undefined) return;
-    throw new Error(describeProviderError(maybe.error, "Request failed"));
-  };
-
-  const describeProviderError = (error: unknown, fallback: string) => {
-    const readString = (value: unknown, max = 700) => {
-      if (typeof value !== "string") return null;
-      const trimmed = value.trim();
-      if (!trimmed) return null;
-      if (trimmed.length <= max) return trimmed;
-      return `${trimmed.slice(0, Math.max(0, max - 3))}...`;
-    };
-
-    const records: Record<string, unknown>[] = [];
-    const root = error && typeof error === "object" ? (error as Record<string, unknown>) : null;
-    if (root) {
-      records.push(root);
-      if (root.data && typeof root.data === "object") records.push(root.data as Record<string, unknown>);
-      if (root.cause && typeof root.cause === "object") {
-        const cause = root.cause as Record<string, unknown>;
-        records.push(cause);
-        if (cause.data && typeof cause.data === "object") records.push(cause.data as Record<string, unknown>);
-      }
-    }
-
-    const firstString = (keys: string[]) => {
-      for (const record of records) {
-        for (const key of keys) {
-          const value = readString(record[key]);
-          if (value) return value;
-        }
-      }
-      return null;
-    };
-
-    const firstNumber = (keys: string[]) => {
-      for (const record of records) {
-        for (const key of keys) {
-          const value = record[key];
-          if (typeof value === "number" && Number.isFinite(value)) return value;
-        }
-      }
-      return null;
-    };
-
-    const status = firstNumber(["statusCode", "status"]);
-    const provider = firstString(["providerID", "providerId", "provider"]);
-    const code = firstString(["code", "errorCode"]);
-    const response = firstString(["responseBody", "body", "response"]);
-    const raw =
-      (error instanceof Error ? readString(error.message) : null) ||
-      firstString(["message", "detail", "reason", "error"]) ||
-      (typeof error === "string" ? readString(error) : null);
-
-    const generic = raw && /^unknown\s+error$/i.test(raw);
-    const heading = (() => {
-      if (status === 401 || status === 403) return "Authentication failed";
-      if (status === 429) return "Rate limit exceeded";
-      if (provider) return `Provider error (${provider})`;
-      return fallback;
-    })();
-
-    const lines = [heading];
-    if (raw && !generic && raw !== heading) lines.push(raw);
-    if (status && !heading.includes(String(status))) lines.push(`Status: ${status}`);
-    if (provider && !heading.includes(provider)) lines.push(`Provider: ${provider}`);
-    if (code) lines.push(`Code: ${code}`);
-    if (response) lines.push(`Response: ${response}`);
-    if (lines.length > 1) return lines.join("\n");
-
-    if (raw && !generic) return raw;
-    if (error && typeof error === "object") {
-      const serialized = safeStringify(error);
-      if (serialized && serialized !== "{}") return serialized;
-    }
-    return fallback;
-  };
-
   async function sendPrompt(draft?: ComposerDraft) {
     const hasExplicitDraft = Boolean(draft);
     const fallbackDraft = composerDraft();
@@ -1781,57 +1320,6 @@ export default function App() {
       });
       throw error;
     }
-  }
-
-  /** Fraction of context window that triggers auto-compaction. */
-  const COMPACTION_THRESHOLD_RATIO = 0.90;
-
-  /**
-   * Model-specific overrides for the compaction context limit.
-   * GPT-5.4 has a 1M+ context window but degrades in quality at high usage;
-   * compact early at 127K instead.
-   * Uses prefix matching: "gpt-5.4" also covers "gpt-5.4-2026-03-05".
-   */
-  const COMPACTION_TOKEN_OVERRIDES: Array<{ prefix: string; limit: number }> = [
-    { prefix: "gpt-5.4", limit: 128_000 },
-  ];
-
-  function resolveCompactionThreshold(
-    model: ModelRef,
-    allProviders: ProviderListItem[],
-  ): number | null {
-    const override = COMPACTION_TOKEN_OVERRIDES.find(
-      (entry) => model.modelID === entry.prefix || model.modelID.startsWith(entry.prefix + "-"),
-    );
-    if (override) return override.limit;
-
-    const provider = allProviders.find((p) => p.id === model.providerID);
-    if (!provider) return null;
-    const modelData = provider.models[model.modelID];
-    if (!modelData?.limit?.context) return null;
-
-    return modelData.limit.context;
-  }
-
-  function shouldAutoCompact(
-    sessionMessages: MessageWithParts[],
-    model: ModelRef,
-    allProviders: ProviderListItem[],
-  ): boolean {
-    for (let i = sessionMessages.length - 1; i >= 0; i--) {
-      const info = sessionMessages[i].info;
-      if (info.role !== "assistant") continue;
-
-      const inputTokens = info.tokens?.input;
-      if (typeof inputTokens !== "number" || inputTokens <= 0) continue;
-
-      const contextLimit = resolveCompactionThreshold(model, allProviders);
-      if (!contextLimit || contextLimit <= 0) return false;
-
-      return inputTokens / contextLimit >= COMPACTION_THRESHOLD_RATIO;
-    }
-
-    return false;
   }
 
   const triggerAutoCompaction = async (sessionID: string) => {
@@ -2070,7 +1558,7 @@ export default function App() {
     }
     
     await renameSession(sessionID, trimmed);
-    await refreshSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
+    await refreshSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(e => reportError(e, "sidebar.refreshSessions"));
   }
 
   async function deleteSessionById(sessionID: string, workspaceID?: string) {
@@ -2175,421 +1663,41 @@ export default function App() {
     });
   }
 
-  const buildProviderAuthMethods = (
-    methods: Record<string, ProviderAuthMethod[]>,
-    availableProviders: ProviderListItem[],
-  ) => {
-    const merged = { ...methods } as Record<string, ProviderAuthMethod[]>;
-    const lmStudioExisting = merged[LM_STUDIO_PROVIDER_ID] ?? [];
-    if (!lmStudioExisting.some((method) => method.type === "api")) {
-      merged[LM_STUDIO_PROVIDER_ID] = [...lmStudioExisting, { type: "api", label: "Local URL (no key)" }];
-    }
-
-    for (const provider of availableProviders ?? []) {
-      const id = provider.id?.trim();
-      if (!id || id === "opencode") continue;
-      if (id === LM_STUDIO_PROVIDER_ID) {
-        continue;
-      }
-      if (!Array.isArray(provider.env) || provider.env.length === 0) continue;
-      const existing = merged[id] ?? [];
-      if (existing.some((method) => method.type === "api")) continue;
-      merged[id] = [...existing, { type: "api", label: "API key" }];
-    }
-    return merged;
-  };
-
-  const loadProviderAuthMethods = async () => {
-    const c = client();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-    const methods = unwrap(await c.provider.auth());
-    return buildProviderAuthMethods(methods as Record<string, ProviderAuthMethod[]>, providers());
-  };
-
-  async function startProviderAuth(providerId?: string): Promise<ProviderOAuthStartResult> {
-    setProviderAuthError(null);
-    const c = client();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-    try {
-      const cachedMethods = providerAuthMethods();
-      const authMethods = Object.keys(cachedMethods).length
-        ? cachedMethods
-        : await loadProviderAuthMethods();
-      const providerIds = Object.keys(authMethods).sort();
-      if (!providerIds.length) {
-        throw new Error("No providers available");
-      }
-
-      const resolved = providerId?.trim() ?? "";
-      if (!resolved) {
-        throw new Error("Provider ID is required");
-      }
-
-      const methods = authMethods[resolved];
-      if (!methods || !methods.length) {
-        throw new Error(`Unknown provider: ${resolved}`);
-      }
-
-      const oauthIndex = methods.findIndex((method) => method.type === "oauth");
-      if (oauthIndex === -1) {
-        throw new Error(`No OAuth flow available for ${resolved}. Use an API key instead.`);
-      }
-
-      const auth = unwrap(await c.provider.oauth.authorize({ providerID: resolved, method: oauthIndex }));
-      return {
-        methodIndex: oauthIndex,
-        authorization: auth,
-      };
-    } catch (error) {
-      const message = describeProviderError(error, "Failed to connect provider");
-      setProviderAuthError(message);
-      throw error instanceof Error ? error : new Error(message);
-    }
-  }
-
-  async function completeProviderAuthOAuth(providerId: string, methodIndex: number, code?: string) {
-    setProviderAuthError(null);
-    const c = client();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-
-    const resolved = providerId?.trim();
-    if (!resolved) {
-      throw new Error("Provider ID is required");
-    }
-
-    if (!Number.isInteger(methodIndex) || methodIndex < 0) {
-      throw new Error("OAuth method is required");
-    }
-
-    try {
-      const trimmedCode = code?.trim();
-      const result = await c.provider.oauth.callback({
-        providerID: resolved,
-        method: methodIndex,
-        code: trimmedCode || undefined,
+  // Provider auth module – delegates to lib/provider-auth.ts
+  // The module is created lazily (after globalSync / workspaceStore are ready).
+  let _providerAuth: ReturnType<typeof createProviderAuthModule> | null = null;
+  const getProviderAuth = () => {
+    if (!_providerAuth) {
+      _providerAuth = createProviderAuthModule({
+        getClient: client,
+        getProviders: providers,
+        getProviderDefaults: providerDefaults,
+        getProviderAuthMethods: providerAuthMethods,
+        getWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
+        setProviderAuthError,
+        globalSyncSetProvider: (data) => globalSync.set("provider", data as Parameters<typeof globalSync.set>[1]),
+        globalSyncSetProviderMerged: (data, mergedConnected) =>
+          globalSync.set("provider", { ...(data as Record<string, unknown>), connected: mergedConnected } as Parameters<typeof globalSync.set>[1]),
+        unwrap,
+        isTauriRuntime,
+        readOpencodeConfig,
+        writeOpencodeConfig,
       });
-      assertNoClientError(result);
-      const updated = unwrap(await c.provider.list());
-      globalSync.set("provider", updated);
-      return `Connected ${resolved}`;
-    } catch (error) {
-      const message = describeProviderError(error, "Failed to complete OAuth");
-      setProviderAuthError(message);
-      throw error instanceof Error ? error : new Error(message);
     }
-  }
-
-  const resolveProviderConnectionTestModelID = (providerId: string) => {
-    const provider = providers().find((item) => item.id === providerId);
-    if (!provider) {
-      throw new Error(`Unknown provider: ${providerId}`);
-    }
-
-    const configuredDefault = providerDefaults()[providerId];
-    if (configuredDefault && provider.models?.[configuredDefault]) {
-      return configuredDefault;
-    }
-
-    const firstModel = Object.keys(provider.models ?? {})[0];
-    if (firstModel) {
-      return firstModel;
-    }
-
-    throw new Error(`No models available for ${providerId}`);
+    return _providerAuth;
   };
 
-  const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, label: string) => {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(new Error(`Timed out during ${label}.`));
-      }, timeoutMs);
-    });
-
-    try {
-      return await Promise.race([promise, timeoutPromise]);
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-    }
-  };
-
-  const runProviderConnectionTest = async (c: Client, providerId: string) => {
-    const modelID = resolveProviderConnectionTestModelID(providerId);
-    const directory = workspaceStore.activeWorkspaceRoot().trim();
-    const created = unwrap(
-      await c.session.create({
-        directory: directory || undefined,
-        title: `[Veslo] Connection test · ${providerId}`,
-      }),
-    );
-    const sessionID = created.id;
-
-    try {
-      unwrap(
-        await withTimeout(
-          c.session.prompt({
-            sessionID,
-            model: { providerID: providerId, modelID },
-            parts: [{ type: "text", text: "Connection test. Reply with OK." } as TextPartInput],
-          }),
-          30_000,
-          "provider connection test",
-        ),
-      );
-    } finally {
-      try {
-        await c.session.abort({ sessionID });
-      } catch {
-        // ignore
-      }
-      try {
-        await c.session.delete({ sessionID });
-      } catch {
-        // ignore
-      }
-    }
-  };
-
-  const refreshProviderState = async (c: Client, forceConnectedProviderId?: string) => {
-    const updated = unwrap(await c.provider.list());
-    if (!forceConnectedProviderId) {
-      globalSync.set("provider", updated);
-      return;
-    }
-
-    const mergedConnected = Array.from(
-      new Set([...(updated.connected ?? []), forceConnectedProviderId]),
-    );
-    globalSync.set("provider", {
-      ...updated,
-      connected: mergedConnected,
-    });
-  };
-
-  const saveAndTestProviderApiKey = async (providerId: string, apiKey: string) => {
-    const c = client();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-
-    const resolvedProviderId = providerId.trim();
-    if (!resolvedProviderId) {
-      throw new Error("Provider ID is required");
-    }
-
-    const trimmed = apiKey.trim();
-    if (!trimmed) {
-      throw new Error("API key is required");
-    }
-
-    await c.auth.set({
-      providerID: resolvedProviderId,
-      auth: { type: "api", key: trimmed },
-    });
-    // Dispose the instance to force provider state recomputation.
-    // The provider state is memoized on first use and is not invalidated by auth.set(),
-    // so newly-added providers (e.g. Google) stay absent from the runtime list until reset.
-    unwrap(await c.instance.dispose());
-    // Refresh provider state before the connection test so that the newly-added provider
-    // is available when resolveProviderConnectionTestModelID looks it up.
-    await refreshProviderState(c);
-    await runProviderConnectionTest(c, resolvedProviderId);
-    await refreshProviderState(c, resolvedProviderId);
-
-    return `Connected ${resolvedProviderId}`;
-  };
-
-  async function submitProviderApiKey(providerId: string, apiKey: string) {
-    setProviderAuthError(null);
-    try {
-      return await saveAndTestProviderApiKey(providerId, apiKey);
-    } catch (error) {
-      const message = describeProviderError(error, "Connection test failed");
-      setProviderAuthError(message);
-      throw error instanceof Error ? error : new Error(message);
-    }
-  }
-
-  async function testProviderApiKey(providerId: string, apiKey: string) {
-    setProviderAuthError(null);
-    try {
-      return await saveAndTestProviderApiKey(providerId, apiKey);
-    } catch (error) {
-      const message = describeProviderError(error, "Connection test failed");
-      setProviderAuthError(message);
-      throw error instanceof Error ? error : new Error(message);
-    }
-  }
-
-  async function disconnectProvider(providerId: string) {
-    setProviderAuthError(null);
-    const c = client();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-
-    const resolved = providerId.trim();
-    if (!resolved) {
-      throw new Error("Provider ID is required");
-    }
-
-    const removeProviderAuth = async () => {
-      const rawClient = (c as unknown as { client?: { delete?: (options: { url: string }) => Promise<unknown> } })
-        .client;
-      if (rawClient?.delete) {
-        await rawClient.delete({ url: `/auth/${encodeURIComponent(resolved)}` });
-        return;
-      }
-      await c.auth.set({ providerID: resolved, auth: null as never });
-    };
-
-    try {
-      await removeProviderAuth();
-      unwrap(await c.instance.dispose());
-      await refreshProviderState(c);
-      return `Disconnected ${resolved}`;
-    } catch (error) {
-      const message = describeProviderError(error, "Failed to disconnect provider");
-      setProviderAuthError(message);
-      throw error instanceof Error ? error : new Error(message);
-    }
-  }
-
-  async function connectLmStudioProvider(baseUrlInput?: string) {
-    setProviderAuthError(null);
-    const c = client();
-    if (!c) {
-      throw new Error("Not connected to a server");
-    }
-
-    if (!isTauriRuntime()) {
-      throw new Error("LM Studio setup is currently supported in the desktop app only.");
-    }
-
-    const workspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
-    if (!workspaceRoot) {
-      throw new Error("Pick a workspace folder first.");
-    }
-
-    const configFile = await readOpencodeConfig("project", workspaceRoot);
-    const parsed = (() => {
-      const raw = configFile?.content?.trim() ?? "";
-      if (!raw) return {} as Record<string, unknown>;
-      const next = parse(raw);
-      if (!next || typeof next !== "object" || Array.isArray(next)) {
-        return {} as Record<string, unknown>;
-      }
-      return next as Record<string, unknown>;
-    })();
-
-    const providerRootRaw =
-      parsed.provider && typeof parsed.provider === "object" && !Array.isArray(parsed.provider)
-        ? (parsed.provider as Record<string, unknown>)
-        : {};
-    const lmstudioRaw =
-      providerRootRaw[LM_STUDIO_PROVIDER_ID] &&
-      typeof providerRootRaw[LM_STUDIO_PROVIDER_ID] === "object" &&
-      !Array.isArray(providerRootRaw[LM_STUDIO_PROVIDER_ID])
-        ? (providerRootRaw[LM_STUDIO_PROVIDER_ID] as Record<string, unknown>)
-        : {};
-    const optionsRaw =
-      lmstudioRaw.options && typeof lmstudioRaw.options === "object" && !Array.isArray(lmstudioRaw.options)
-        ? (lmstudioRaw.options as Record<string, unknown>)
-        : {};
-    const existingModelsRaw =
-      lmstudioRaw.models && typeof lmstudioRaw.models === "object" && !Array.isArray(lmstudioRaw.models)
-        ? (lmstudioRaw.models as Record<string, unknown>)
-        : {};
-
-    const configuredBaseUrl = typeof optionsRaw.baseURL === "string" ? optionsRaw.baseURL : "";
-    const candidateBaseUrl = resolveLmStudioBaseUrl(baseUrlInput, configuredBaseUrl || LM_STUDIO_DEFAULT_BASE_URL);
-
-    let baseURL = candidateBaseUrl;
-    try {
-      const parsed = new URL(candidateBaseUrl);
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        throw new Error("invalid protocol");
-      }
-      baseURL = parsed.toString().replace(/\/+$/, "");
-    } catch {
-      throw new Error("LM Studio URL must be a valid http(s) URL (for example http://127.0.0.1:1234/v1).");
-    }
-
-    const modelsUrl = `${baseURL}/models`;
-
-    const timeoutController = new AbortController();
-    const timeoutId = setTimeout(() => timeoutController.abort(), 10_000);
-    let payload: unknown;
-
-    try {
-      const response = await fetch(modelsUrl, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-        signal: timeoutController.signal,
-      });
-      if (!response.ok) {
-        throw new Error(`LM Studio request failed (${response.status}).`);
-      }
-      payload = await response.json();
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new Error("LM Studio did not respond in time.");
-      }
-      throw error instanceof Error
-        ? error
-        : new Error("Failed to connect to LM Studio.");
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    const modelIds = extractOpenAiCompatibleModelIds(payload);
-    if (!modelIds.length) {
-      throw new Error("LM Studio responded, but no local models were found. Load a model in LM Studio and retry.");
-    }
-
-    const models = Object.fromEntries(
-      modelIds.map((modelId) => {
-        const existingModelRaw =
-          existingModelsRaw[modelId] &&
-          typeof existingModelsRaw[modelId] === "object" &&
-          !Array.isArray(existingModelsRaw[modelId])
-            ? (existingModelsRaw[modelId] as Record<string, unknown>)
-            : {};
-        const existingName = typeof existingModelRaw.name === "string" ? existingModelRaw.name.trim() : "";
-        return [modelId, { ...existingModelRaw, name: existingName || `${modelId} (local)` }];
-      }),
-    );
-
-    parsed.provider = {
-      ...providerRootRaw,
-      [LM_STUDIO_PROVIDER_ID]: {
-        ...lmstudioRaw,
-        npm: LM_STUDIO_PROVIDER_NPM,
-        name: LM_STUDIO_PROVIDER_NAME,
-        options: {
-          ...optionsRaw,
-          baseURL,
-        },
-        models,
-      },
-    };
-
-    const serialized = JSON.stringify(parsed, null, 2);
-    const writeResult = await writeOpencodeConfig("project", workspaceRoot, `${serialized}\n`);
-    if (!writeResult.ok) {
-      throw new Error(writeResult.stderr || writeResult.stdout || "Failed to update opencode.json");
-    }
-
-    unwrap(await c.instance.dispose());
-    await refreshProviderState(c, LM_STUDIO_PROVIDER_ID);
-    return `Connected LM Studio (${modelIds.length} model${modelIds.length === 1 ? "" : "s"})`;
-  }
+  const loadProviderAuthMethods = () => getProviderAuth().loadProviderAuthMethods();
+  const startProviderAuth = (providerId?: string) => getProviderAuth().startProviderAuth(providerId);
+  const completeProviderAuthOAuth = (providerId: string, methodIndex: number, code?: string) =>
+    getProviderAuth().completeProviderAuthOAuth(providerId, methodIndex, code);
+  const submitProviderApiKey = (providerId: string, apiKey: string) =>
+    getProviderAuth().submitProviderApiKey(providerId, apiKey);
+  const testProviderApiKey = (providerId: string, apiKey: string) =>
+    getProviderAuth().testProviderApiKey(providerId, apiKey);
+  const disconnectProvider = (providerId: string) => getProviderAuth().disconnectProvider(providerId);
+  const connectLmStudioProvider = (baseUrlInput?: string) =>
+    getProviderAuth().connectLmStudioProvider(baseUrlInput);
 
   async function openProviderAuthModal() {
     setProviderAuthBusy(true);
@@ -2781,77 +1889,6 @@ export default function App() {
   const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
   const sessionModelOverridesKey = (workspaceId: string) =>
     `${SESSION_MODEL_PREF_KEY}.${workspaceId}`;
-
-  const parseSessionModelOverrides = (raw: string | null) => {
-    if (!raw) return {} as Record<string, ModelRef>;
-    try {
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return {} as Record<string, ModelRef>;
-      }
-      const next: Record<string, ModelRef> = {};
-      for (const [sessionId, value] of Object.entries(parsed)) {
-        if (typeof value === "string") {
-          const model = parseModelRef(value);
-          if (model) next[sessionId] = model;
-          continue;
-        }
-        if (!value || typeof value !== "object") continue;
-        const record = value as Record<string, unknown>;
-        if (typeof record.providerID === "string" && typeof record.modelID === "string") {
-          next[sessionId] = {
-            providerID: record.providerID,
-            modelID: record.modelID,
-          };
-        }
-      }
-      return next;
-    } catch {
-      return {} as Record<string, ModelRef>;
-    }
-  };
-
-  const serializeSessionModelOverrides = (overrides: Record<string, ModelRef>) => {
-    const entries = Object.entries(overrides);
-    if (!entries.length) return null;
-    const payload: Record<string, string> = {};
-    for (const [sessionId, model] of entries) {
-      payload[sessionId] = formatModelRef(model);
-    }
-    return JSON.stringify(payload);
-  };
-
-  const parseDefaultModelFromConfig = (content: string | null) => {
-    if (!content) return null;
-    try {
-      const parsed = parse(content) as Record<string, unknown> | undefined;
-      const rawModel = typeof parsed?.model === "string" ? parsed.model : null;
-      return parseModelRef(rawModel);
-    } catch {
-      return null;
-    }
-  };
-
-  const formatConfigWithDefaultModel = (content: string | null, model: ModelRef) => {
-    let config: Record<string, unknown> = {};
-    if (content?.trim()) {
-      try {
-        const parsed = parse(content) as Record<string, unknown> | undefined;
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          config = { ...parsed };
-        }
-      } catch {
-        config = {};
-      }
-    }
-
-    if (!config["$schema"]) {
-      config["$schema"] = "https://opencode.ai/config.json";
-    }
-
-    config.model = formatModelRef(model);
-    return `${JSON.stringify(config, null, 2)}\n`;
-  };
 
   const getConfigSnapshot = (content: string | null) => {
     if (!content?.trim()) return "";
@@ -3241,11 +2278,11 @@ export default function App() {
     // Remote->local switches commonly change engineBaseUrl, and refreshing every remote workspace
     // at the same time can trigger large /session responses and UI hangs.
     if (engineChanged && !workspacesChanged) {
-      void refreshLocalSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
+      void refreshLocalSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(e => reportError(e, "sidebar.refreshLocal"));
       return;
     }
 
-    void refreshAllSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
+    void refreshAllSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(e => reportError(e, "sidebar.refreshAll"));
   });
 
   createEffect(() => {
@@ -3255,7 +2292,7 @@ export default function App() {
     // Only auto-load once per workspace activation.
     // If a remote is offline, repeated retries here can create an endless refresh loop.
     if (status !== "idle") return;
-    refreshSidebarWorkspaceSessions(id).catch(() => undefined);
+    refreshSidebarWorkspaceSessions(id).catch(e => reportError(e, "sidebar.refreshSessions"));
   });
 
   createEffect(() => {
@@ -4011,7 +3048,7 @@ export default function App() {
             vesloHostUrl: derived,
             vesloToken: next.token ?? null,
           })
-          .catch(() => undefined);
+          .catch(e => reportError(e, "workspace.createRemoteFlow"));
       }
     }
     return ok;
@@ -4654,7 +3691,7 @@ export default function App() {
     const key = [status, hasClient ? "1" : "0", activeWorkspaceId, workspacesKey].join("::");
     if (key === lastSoulRefreshKey) return;
     lastSoulRefreshKey = key;
-    void refreshSoulData().catch(() => undefined);
+    void refreshSoulData().catch(e => reportError(e, "soul.refresh"));
   });
 
   createEffect(() => {
@@ -5796,7 +4833,7 @@ export default function App() {
       }));
 
       await selectSession(sessionID);
-      await refreshSidebarWorkspaceSessions(targetWorkspace.id).catch(() => undefined);
+      await refreshSidebarWorkspaceSessions(targetWorkspace.id).catch(e => reportError(e, "sidebar.refreshSessions"));
 
       if (sourceWorkspaceId && sourceWorkspaceId !== targetWorkspace.id) {
         await workspaceStore.forgetWorkspace(sourceWorkspaceId);
@@ -6037,7 +5074,7 @@ export default function App() {
           setNotionStatusDetail(t("mcp.connecting", currentLocale()));
         }
 
-        void refreshMcpServers().catch(() => undefined);
+        void refreshMcpServers().catch(e => reportError(e, "mcp.refreshServers"));
 
         const storedNotionSkillInstalled = window.localStorage.getItem("veslo.notionSkillInstalled");
         if (storedNotionSkillInstalled === "1") {
@@ -6063,7 +5100,7 @@ export default function App() {
 
       if (!launchUpdateCheckTriggered()) {
         setLaunchUpdateCheckTriggered(true);
-        checkForUpdates({ quiet: true }).catch(() => undefined);
+        checkForUpdates({ quiet: true }).catch(e => reportError(e, "updates.check"));
       }
 
       try {
@@ -6413,9 +5450,7 @@ export default function App() {
     }
     // Apply to window decorations (only in Tauri desktop environment)
     if (isTauriRuntime()) {
-      setWindowDecorations(!hide).catch(() => {
-        // ignore errors (e.g., window not ready)
-      });
+      setWindowDecorations(!hide).catch(e => reportError(e, "titlebar.setDecorations"));
     }
   });
 
@@ -6466,7 +5501,7 @@ export default function App() {
     if (state.state === "checking" || state.state === "downloading") return;
 
     setLaunchUpdateCheckTriggered(true);
-    checkForUpdates({ quiet: true }).catch(() => undefined);
+    checkForUpdates({ quiet: true }).catch(e => reportError(e, "updates.check"));
   });
 
   createEffect(() => {
@@ -6481,7 +5516,7 @@ export default function App() {
       const state = updateStatus();
       if (state.state === "checking" || state.state === "downloading") return;
       if (!shouldAutoCheckForUpdates()) return;
-      checkForUpdates({ quiet: true }).catch(() => undefined);
+      checkForUpdates({ quiet: true }).catch(e => reportError(e, "updates.check"));
     };
 
     const interval = window.setInterval(maybeRunAutoUpdateCheck, UPDATE_AUTO_CHECK_POLL_MS);
@@ -6496,7 +5531,7 @@ export default function App() {
     if (state.state !== "available") return;
     if (!pendingUpdate()) return;
 
-    downloadUpdate().catch(() => undefined);
+    downloadUpdate().catch(e => reportError(e, "updates.download"));
   });
 
   const headerConnectedVersion = createMemo(() => {
@@ -6858,7 +5893,7 @@ export default function App() {
       scheduledJobsBusy: scheduledJobsBusy(),
       scheduledJobsUpdatedAt: scheduledJobsUpdatedAt(),
       refreshScheduledJobs: (options?: { force?: boolean }) =>
-        refreshScheduledJobs(options).catch(() => undefined),
+        refreshScheduledJobs(options).catch(e => reportError(e, "scheduled.refresh")),
       deleteScheduledJob,
       soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
       activeSoulStatus: activeSoulStatus(),
@@ -6866,14 +5901,14 @@ export default function App() {
       soulStatusBusy: soulStatusBusy(),
       soulHeartbeatsBusy: soulHeartbeatsBusy(),
       soulError: soulError(),
-      refreshSoulData: (options?: { force?: boolean }) => refreshSoulData(options).catch(() => undefined),
+      refreshSoulData: (options?: { force?: boolean }) => refreshSoulData(options).catch(e => reportError(e, "soul.refresh")),
       runSoulPrompt,
       activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
       isRemoteWorkspace: workspaceStore.activeWorkspaceDisplay().workspaceType === "remote",
-      refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
-      refreshHubSkills: (options?: { force?: boolean }) => refreshHubSkills(options).catch(() => undefined),
+      refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(e => reportError(e, "skills.refresh")),
+      refreshHubSkills: (options?: { force?: boolean }) => refreshHubSkills(options).catch(e => reportError(e, "skills.refreshHub")),
       refreshPlugins: (scopeOverride?: PluginScope) =>
-        refreshPlugins(scopeOverride).catch(() => undefined),
+        refreshPlugins(scopeOverride).catch(e => reportError(e, "plugins.refresh")),
       skills: skills(),
       skillsStatus: skillsStatus(),
       hubSkills: hubSkills(),
