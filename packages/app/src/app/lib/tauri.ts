@@ -981,3 +981,18 @@ export async function setWindowTitleBarStyle(
     throw new Error(`[tauri.setWindowTitleBarStyle] Failed to set title bar style "${style}": ${message}`);
   }
 }
+
+/**
+ * Start dragging the current native window.
+ * Intended as a reliability fallback for custom drag regions.
+ */
+export async function startWindowDragging(): Promise<void> {
+  if (!isTauriRuntime()) return;
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  try {
+    await getCurrentWindow().startDragging();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[tauri.startWindowDragging] Failed to start drag: ${message}`);
+  }
+}

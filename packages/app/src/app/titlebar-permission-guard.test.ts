@@ -19,4 +19,10 @@ test("default Tauri capability includes title bar style permission", () => {
     1,
     "title bar style permission should appear exactly once",
   );
+  assert.equal(
+    capability.permissions?.filter((permission) => permission === "core:window:allow-start-dragging")
+      .length,
+    1,
+    "start dragging permission should appear exactly once",
+  );
 });

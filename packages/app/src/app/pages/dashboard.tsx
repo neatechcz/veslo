@@ -18,6 +18,7 @@ import type {
 import type { McpDirectoryInfo } from "../constants";
 import {
   formatRelativeTime,
+  isMacPlatform,
   getWorkspaceTaskLoadErrorDisplay,
   isTauriRuntime,
   isWindowsPlatform,
@@ -55,6 +56,7 @@ import ProviderAuthModal, { type ProviderOAuthStartResult } from "../components/
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
+import { resolveTitlebarContentInsetClass } from "../components/titlebar-menu-layout";
 import {
   createSessionWithWorkspaceActivation,
   openSessionWithWorkspaceActivation,
@@ -1124,8 +1126,16 @@ export default function DashboardView(props: DashboardViewProps) {
     openSettings("advanced");
   };
 
+  const titlebarContentInsetClass = createMemo(() =>
+    resolveTitlebarContentInsetClass({
+      tauri: isTauriRuntime(),
+      mac: isMacPlatform(),
+      hideTitlebar: props.hideTitlebar,
+    }),
+  );
+
   return (
-    <div class="flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden">
+    <div class={`flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden ${titlebarContentInsetClass()}`}>
       <TitlebarMenuToggles
         leftActive={leftSidebarVisible()}
         rightActive={rightSidebarVisible()}
