@@ -35,12 +35,9 @@ import {
 } from "../lib/veslo-server";
 import { appDataDir, homeDir } from "@tauri-apps/api/path";
 import {
-  engineDoctor,
   engineInfo,
-  engineInstall,
   engineStart,
   engineStop,
-  sandboxDoctor,
   sandboxStop,
   orchestratorInstanceDispose,
   orchestratorStartDetached,
@@ -54,9 +51,7 @@ import {
   workspaceSetActive,
   workspaceUpdateDisplayName,
   workspaceUpdateRemote,
-  type EngineDoctorResult,
   type EngineInfo,
-  type SandboxDoctorResult,
   type WorkspaceInfo,
 } from "../lib/tauri";
 import { waitForHealthy, createClient, type OpencodeAuth } from "../lib/opencode";
@@ -71,6 +66,7 @@ import {
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { createWorkspaceActivateGuard } from "./workspace-activate-guard";
 import { createConfigStore } from "../stores/config-store";
+import { createEngineStore } from "../stores/engine-store";
 
 export type { MigrationRepairResult } from "../stores/config-store";
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
@@ -260,14 +256,6 @@ export function createWorkspaceStore(options: {
     return DB_MIGRATE_UNSUPPORTED_PATTERNS.some((pattern) => pattern.test(normalized));
   };
 
-  const [engine, setEngine] = createSignal<EngineInfo | null>(null);
-  const [engineAuth, setEngineAuth] = createSignal<OpencodeAuth | null>(null);
-  const [engineDoctorResult, setEngineDoctorResult] = createSignal<EngineDoctorResult | null>(null);
-  const [engineDoctorCheckedAt, setEngineDoctorCheckedAt] = createSignal<number | null>(null);
-  const [engineInstallLogs, setEngineInstallLogs] = createSignal<string | null>(null);
-  const [sandboxDoctorResult, setSandboxDoctorResult] = createSignal<SandboxDoctorResult | null>(null);
-  const [sandboxDoctorCheckedAt, setSandboxDoctorCheckedAt] = createSignal<number | null>(null);
-  const [sandboxDoctorBusy, setSandboxDoctorBusy] = createSignal(false);
   const [sandboxPreflightBusy, setSandboxPreflightBusy] = createSignal(false);
   const [sandboxCreatePhase, setSandboxCreatePhase] = createSignal<SandboxCreatePhase>("idle");
 
@@ -314,9 +302,6 @@ export function createWorkspaceStore(options: {
     }
     return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   };
-  let lastEngineReconnectAt = 0;
-  let reconnectingEngine = false;
-
   const [projectDir, setProjectDir] = createSignal("");
   const [workspaces, setWorkspaces] = createSignal<WorkspaceInfo[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = createSignal<string>("starter");
@@ -702,109 +687,6 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function refreshEngine() {
-    if (!isTauriRuntime()) return;
-
-    try {
-      const info = await engineInfo();
-      setEngine(info);
-
-      const isRemoteWorkspace = activeWorkspaceInfo()?.workspaceType === "remote";
-      const syncLocalState = !isRemoteWorkspace;
-
-      const username = info.opencodeUsername?.trim() ?? "";
-      const password = info.opencodePassword?.trim() ?? "";
-      const auth = username && password ? { username, password } : null;
-      setEngineAuth(auth);
-
-      if (info.projectDir && syncLocalState) {
-        setProjectDir(info.projectDir);
-      }
-      if (info.baseUrl && syncLocalState) {
-        options.setBaseUrl(info.baseUrl);
-      }
-
-      if (
-        syncLocalState &&
-        info.running &&
-        info.baseUrl &&
-        !options.client() &&
-        !reconnectingEngine
-      ) {
-        const now = Date.now();
-        if (now - lastEngineReconnectAt > 10_000) {
-          lastEngineReconnectAt = now;
-          reconnectingEngine = true;
-          connectToServer(
-            info.baseUrl,
-            (activeWorkspaceRoot().trim() || info.projectDir || undefined),
-            {
-              workspaceId: activeWorkspaceId().trim() || undefined,
-              workspaceType: "local",
-              targetRoot: activeWorkspaceRoot().trim() || undefined,
-              reason: "engine-refresh",
-            },
-            auth ?? undefined,
-            { quiet: true, navigate: false },
-          )
-            .catch(e => reportError(e, "workspace.reconnect"))
-            .finally(() => {
-              reconnectingEngine = false;
-            });
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  async function refreshEngineDoctor() {
-    if (!isTauriRuntime()) return;
-
-    try {
-      const source = options.engineSource();
-      const result = await engineDoctor({
-        preferSidecar: source === "sidecar",
-        opencodeBinPath: source === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
-      });
-      setEngineDoctorResult(result);
-      setEngineDoctorCheckedAt(Date.now());
-    } catch (e) {
-      setEngineDoctorResult(null);
-      setEngineDoctorCheckedAt(Date.now());
-      setEngineInstallLogs(e instanceof Error ? e.message : safeStringify(e));
-    }
-  }
-
-  async function refreshSandboxDoctor() {
-    if (!isTauriRuntime()) {
-      setSandboxDoctorResult(null);
-      setSandboxDoctorCheckedAt(Date.now());
-      return null;
-    }
-    if (sandboxDoctorBusy()) return sandboxDoctorResult();
-    setSandboxDoctorBusy(true);
-    try {
-      const result = await sandboxDoctor();
-      setSandboxDoctorResult(result);
-      return result;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      const fallback: SandboxDoctorResult = {
-        installed: false,
-        daemonRunning: false,
-        permissionOk: false,
-        ready: false,
-        error: message,
-      };
-      setSandboxDoctorResult(fallback);
-      return fallback;
-    } finally {
-      setSandboxDoctorCheckedAt(Date.now());
-      setSandboxDoctorBusy(false);
-    }
-  }
-
   async function activateWorkspace(workspaceId: string) {
     const id = workspaceId.trim();
     if (!id) return false;
@@ -1119,7 +1001,7 @@ export function createWorkspaceStore(options: {
     // createLocalWorkspace() prematurely updates projectDir before
     // activateWorkspace runs, so projectDir() may already equal nextRoot
     // even though the engine is still on the previous workspace.
-    const actualEngineDir = engine()?.projectDir?.trim() ?? "";
+    const actualEngineDir = engineStore.engine()?.projectDir?.trim() ?? "";
     const workspaceChanged =
       oldWorkspacePath !== nextRoot ||
       (actualEngineDir !== "" && actualEngineDir !== nextRoot);
@@ -1195,8 +1077,8 @@ export function createWorkspaceStore(options: {
       wsDebug("activate:remote->local:reconnect", {
         id,
         nextPath: next.path,
-        engine: engine()?.baseUrl ?? null,
-        engineRunning: Boolean(engine()?.running),
+        engine: engineStore.engine()?.baseUrl ?? null,
+        engineRunning: Boolean(engineStore.engine()?.running),
       });
       options.setSelectedSessionId(null);
       options.setMessages([]);
@@ -1207,7 +1089,7 @@ export function createWorkspaceStore(options: {
       // If a local host engine is already running (common when bouncing between remote/local),
       // reuse it instead of restarting to keep switching snappy.
       let connectedToLocalHost = false;
-      const existingEngine = engine();
+      const existingEngine = engineStore.engine();
       const runtime = existingEngine?.runtime ?? resolveEngineRuntime();
       const canReuseHost =
         isTauriRuntime() &&
@@ -1235,12 +1117,12 @@ export function createWorkspaceStore(options: {
             engineInfo(),
             { timeoutMs: ENGINE_INFO_TIMEOUT_MS, label: "engine_info" },
           );
-          setEngine(nextInfo);
+          engineStore.setEngine(nextInfo);
 
           const username = nextInfo.opencodeUsername?.trim() ?? "";
           const password = nextInfo.opencodePassword?.trim() ?? "";
           const auth = username && password ? { username, password } : undefined;
-          setEngineAuth(auth ?? null);
+          engineStore.setEngineAuth(auth ?? null);
 
           if (nextInfo.baseUrl) {
             connectedToLocalHost = await connectToServer(
@@ -1269,7 +1151,7 @@ export function createWorkspaceStore(options: {
       if (!connectedToLocalHost) {
         const startHostAt = Date.now();
         const ok = await withTimeoutOrThrow(
-          startHost({ workspacePath: next.path, navigate: false }),
+          engineStore.startHost({ workspacePath: next.path, navigate: false }),
           { timeoutMs: START_HOST_TIMEOUT_MS, label: "startHost" },
         );
         wsDebug("activate:remote->local:startHost:done", { ok, ms: Date.now() - startHostAt });
@@ -1311,12 +1193,12 @@ export function createWorkspaceStore(options: {
             engineInfo(),
             { timeoutMs: ENGINE_INFO_TIMEOUT_MS, label: "engine_info" },
           );
-          setEngine(newInfo);
+          engineStore.setEngine(newInfo);
 
           const username = newInfo.opencodeUsername?.trim() ?? "";
           const password = newInfo.opencodePassword?.trim() ?? "";
           const auth = username && password ? { username, password } : undefined;
-          setEngineAuth(auth ?? null);
+          engineStore.setEngineAuth(auth ?? null);
 
           if (newInfo.baseUrl) {
             const ok = await connectToServer(
@@ -1348,13 +1230,13 @@ export function createWorkspaceStore(options: {
                 workspacePaths: resolveWorkspacePaths(),
               }),
           });
-          setEngine(info);
-          setEngine(newInfo);
+          engineStore.setEngine(info);
+          engineStore.setEngine(newInfo);
 
           const username = newInfo.opencodeUsername?.trim() ?? "";
           const password = newInfo.opencodePassword?.trim() ?? "";
           const auth = username && password ? { username, password } : undefined;
-          setEngineAuth(auth ?? null);
+          engineStore.setEngineAuth(auth ?? null);
 
           // Reconnect to server
           if (newInfo.baseUrl) {
@@ -1673,7 +1555,7 @@ export function createWorkspaceStore(options: {
     const hasClient = Boolean(options.client());
     const ok = hasClient
       ? await activateWorkspace(workspaceId)
-      : await startHost({ workspacePath, navigate: false });
+      : await engineStore.startHost({ workspacePath, navigate: false });
     if (!ok) return false;
     await openEmptySession(activeWorkspaceRoot().trim() || workspacePath);
     return true;
@@ -1843,7 +1725,7 @@ export function createWorkspaceStore(options: {
       return false;
     }
 
-    const started = await startHost({ workspacePath: workspace.path, navigate: false });
+    const started = await engineStore.startHost({ workspacePath: workspace.path, navigate: false });
     if (!started) return false;
     return Boolean(options.client());
   }
@@ -1874,7 +1756,7 @@ export function createWorkspaceStore(options: {
     options.setError(null);
     clearSandboxCreateProgress();
 
-    const doctor = await refreshSandboxDoctor();
+    const doctor = await engineStore.refreshSandboxDoctor();
     setSandboxPreflightBusy(false);
     setSandboxCreatePhase("provisioning");
     setSandboxCreateProgress({
@@ -2536,7 +2418,7 @@ export function createWorkspaceStore(options: {
         return false;
       }
 
-      const doctor = await refreshSandboxDoctor();
+      const doctor = await engineStore.refreshSandboxDoctor();
       if (!doctor?.ready) {
         const detail =
           doctor?.error?.trim() ||
@@ -2672,117 +2554,6 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function startHost(optionsOverride?: { workspacePath?: string; navigate?: boolean }) {
-    if (CLOUD_ONLY_MODE) {
-      return blockLocalAction("cloud_only_host_mode_removed", "Local host mode has been removed.");
-    }
-
-    if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
-      return false;
-    }
-
-    const overrideWorkspacePath = optionsOverride?.workspacePath?.trim() ?? "";
-    if (activeWorkspaceInfo()?.workspaceType === "remote" && !overrideWorkspacePath) {
-      options.setError(t("app.error.host_requires_local", currentLocale()));
-      return false;
-    }
-
-    const dir = (overrideWorkspacePath || activeWorkspacePath() || projectDir()).trim();
-    if (!dir) {
-      options.setError(t("app.error.pick_workspace_folder", currentLocale()));
-      return false;
-    }
-
-      try {
-        const source = options.engineSource();
-        const result = await engineDoctor({
-          preferSidecar: source === "sidecar",
-          opencodeBinPath: source === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
-        });
-        setEngineDoctorResult(result);
-        setEngineDoctorCheckedAt(Date.now());
-
-      if (!result.found) {
-        options.setError(
-          options.isWindowsPlatform()
-            ? "OpenCode CLI not found. Install OpenCode for Windows or bundle opencode.exe with Veslo, then restart. If it is installed, ensure `opencode.exe` is on PATH (try `opencode --version` in PowerShell)."
-            : "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`, then retry.",
-        );
-        return false;
-      }
-
-      if (!result.supportsServe) {
-        const serveDetails = [result.serveHelpStdout, result.serveHelpStderr]
-          .filter((value) => value && value.trim())
-          .join("\n\n");
-        const suffix = serveDetails ? `\n\nServe output:\n${serveDetails}` : "";
-        options.setError(
-          `OpenCode CLI is installed, but \`opencode serve\` is unavailable. Update OpenCode and retry.${suffix}`
-        );
-        return false;
-      }
-    } catch (e) {
-      setEngineInstallLogs(e instanceof Error ? e.message : safeStringify(e));
-    }
-
-    options.setError(null);
-    configStore.setMigrationRepairResult(null);
-    options.setBusy(true);
-    options.setBusyLabel("status.starting_engine");
-    options.setBusyStartedAt(Date.now());
-
-    try {
-      setProjectDir(dir);
-      if (!authorizedDirs().length) {
-        setAuthorizedDirs([dir]);
-      }
-
-      const info = await engineStart(dir, {
-        preferSidecar: options.engineSource() === "sidecar",
-        opencodeBinPath:
-          options.engineSource() === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
-        runtime: resolveEngineRuntime(),
-        workspacePaths: resolveWorkspacePaths(),
-      });
-      setEngine(info);
-
-      const username = info.opencodeUsername?.trim() ?? "";
-      const password = info.opencodePassword?.trim() ?? "";
-      const auth = username && password ? { username, password } : undefined;
-      setEngineAuth(auth ?? null);
-
-      if (info.baseUrl) {
-        const activeLocalWorkspace =
-          activeWorkspaceInfo()?.workspaceType === "local" ? activeWorkspaceInfo() : null;
-        const ok = await connectToServer(
-          info.baseUrl,
-          dir,
-          {
-            workspaceId: activeLocalWorkspace?.id,
-            workspaceType: "local",
-            targetRoot: dir,
-            reason: "host-start",
-          },
-          auth,
-          { navigate: optionsOverride?.navigate ?? true },
-        );
-        if (!ok) return false;
-      }
-
-      markOnboardingComplete();
-      return true;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-      return false;
-    } finally {
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
-    }
-  }
-
   async function updateWorkspaceDisplayName(workspaceId: string, displayName: string | null) {
     const id = workspaceId.trim();
     if (!id) return false;
@@ -2819,187 +2590,6 @@ export function createWorkspaceStore(options: {
       )
     );
     return true;
-  }
-
-  async function stopHost() {
-    options.setError(null);
-    options.setBusy(true);
-    options.setBusyLabel("status.disconnecting");
-    options.setBusyStartedAt(Date.now());
-
-    try {
-      if (isTauriRuntime()) {
-        const info = await engineStop();
-        setEngine(info);
-      }
-
-      setEngineAuth(null);
-
-      options.setClient(null);
-      options.setConnectedVersion(null);
-      options.setSelectedSessionId(null);
-      options.setMessages([]);
-      options.setTodos([]);
-      options.setPendingPermissions([]);
-      options.setSessionStatusById({});
-      options.setSseConnected(false);
-
-      options.setStartupPreference(null);
-      options.setOnboardingStep(resolveWelcomeOnboardingStep());
-
-      options.setView("session");
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-    } finally {
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
-    }
-  }
-
-  async function reloadWorkspaceEngine() {
-    if (CLOUD_ONLY_MODE) {
-      return blockLocalAction("cloud_only_local_disabled", "Reload is only available for remote workers.");
-    }
-
-    if (!isTauriRuntime()) {
-      options.setError("Reloading the engine requires the desktop app.");
-      return false;
-    }
-
-    if (activeWorkspaceDisplay().workspaceType !== "local") {
-      options.setError("Reload is only available for local workers.");
-      return false;
-    }
-
-    const root = activeWorkspacePath().trim();
-    if (!root) {
-      options.setError("Pick a worker folder first.");
-      return false;
-    }
-
-    options.setError(null);
-    options.setBusy(true);
-    options.setBusyLabel("status.reloading_engine");
-    options.setBusyStartedAt(Date.now());
-
-    try {
-      const runtime = engine()?.runtime ?? resolveEngineRuntime();
-      if (runtime === "veslo-orchestrator") {
-        await orchestratorInstanceDispose(root);
-        await activateOrchestratorWorkspace({
-          workspacePath: root,
-          name: activeWorkspaceInfo()?.displayName?.trim() || activeWorkspaceInfo()?.name?.trim() || null,
-        });
-
-        const nextInfo = await engineInfo();
-        setEngine(nextInfo);
-
-        const username = nextInfo.opencodeUsername?.trim() ?? "";
-        const password = nextInfo.opencodePassword?.trim() ?? "";
-        const auth = username && password ? { username, password } : undefined;
-        setEngineAuth(auth ?? null);
-
-        if (nextInfo.baseUrl) {
-          const ok = await connectToServer(
-            nextInfo.baseUrl,
-            root,
-            {
-              workspaceId:
-                activeWorkspaceInfo()?.workspaceType === "local"
-                  ? activeWorkspaceInfo()?.id
-                  : undefined,
-              workspaceType: "local",
-              targetRoot: root,
-              reason: "engine-reload-orchestrator",
-            },
-            auth,
-          );
-          if (!ok) {
-            options.setError("Failed to reconnect after reload");
-            return false;
-          }
-        }
-
-        return true;
-      }
-
-      const info = await engineStop();
-      setEngine(info);
-
-      const nextInfo = await engineStart(root, {
-        preferSidecar: options.engineSource() === "sidecar",
-        opencodeBinPath:
-          options.engineSource() === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
-        runtime,
-        workspacePaths: resolveWorkspacePaths(),
-      });
-      setEngine(nextInfo);
-
-      const username = nextInfo.opencodeUsername?.trim() ?? "";
-      const password = nextInfo.opencodePassword?.trim() ?? "";
-      const auth = username && password ? { username, password } : undefined;
-      setEngineAuth(auth ?? null);
-
-      if (nextInfo.baseUrl) {
-        const ok = await connectToServer(
-          nextInfo.baseUrl,
-          root,
-          {
-            workspaceId:
-              activeWorkspaceInfo()?.workspaceType === "local"
-                ? activeWorkspaceInfo()?.id
-                : undefined,
-            workspaceType: "local",
-            targetRoot: root,
-            reason: "engine-reload",
-          },
-          auth,
-        );
-        if (!ok) {
-          options.setError("Failed to reconnect after reload");
-          return false;
-        }
-      }
-
-      return true;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-      return false;
-    } finally {
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
-    }
-  }
-
-  async function onInstallEngine() {
-    options.setError(null);
-    setEngineInstallLogs(null);
-    options.setBusy(true);
-    options.setBusyLabel("status.installing_opencode");
-    options.setBusyStartedAt(Date.now());
-
-    try {
-      const result = await engineInstall();
-      const combined = `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`.trim();
-      setEngineInstallLogs(combined || null);
-
-      if (!result.ok) {
-        options.setError(result.stderr.trim() || t("app.error.install_failed", currentLocale()));
-      }
-
-      await refreshEngineDoctor();
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
-    } finally {
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
-    }
   }
 
   function normalizeRoots(list: string[]) {
@@ -3058,6 +2648,53 @@ export function createWorkspaceStore(options: {
   const resolveWelcomeOnboardingStep = (): OnboardingStep =>
     hasPersistedLanguagePreference() ? "welcome" : "language";
 
+  const engineStore = createEngineStore({
+    activeWorkspacePath: () => activeWorkspacePath(),
+    activeWorkspaceRoot: () => activeWorkspaceRoot(),
+    activeWorkspaceInfo: () => activeWorkspaceInfo(),
+    activeWorkspaceId: () => activeWorkspaceId(),
+    activeWorkspaceDisplay: () => activeWorkspaceDisplay(),
+    projectDir,
+    setProjectDir,
+    authorizedDirs,
+    setAuthorizedDirs,
+    engineSource: options.engineSource,
+    engineCustomBinPath: options.engineCustomBinPath,
+    isWindowsPlatform: options.isWindowsPlatform,
+    setError: options.setError,
+    setBusy: options.setBusy,
+    setBusyLabel: options.setBusyLabel,
+    setBusyStartedAt: options.setBusyStartedAt,
+    setBaseUrl: options.setBaseUrl,
+    setClient: options.setClient,
+    setConnectedVersion: options.setConnectedVersion,
+    setSelectedSessionId: options.setSelectedSessionId,
+    setMessages: options.setMessages,
+    setTodos: options.setTodos,
+    setPendingPermissions: options.setPendingPermissions,
+    setSessionStatusById: options.setSessionStatusById,
+    setSseConnected: options.setSseConnected,
+    setStartupPreference: options.setStartupPreference,
+    setOnboardingStep: options.setOnboardingStep,
+    setView: options.setView,
+    client: options.client,
+    onEngineStable: options.onEngineStable,
+    connectToServer,
+    resolveEngineRuntime,
+    resolveWorkspacePaths,
+    activateOrchestratorWorkspace,
+    blockLocalAction,
+    markOnboardingComplete,
+    resolveWelcomeOnboardingStep,
+    setMigrationRepairResult: (value: any) => configStoreRef.setMigrationRepairResult(value),
+  });
+
+  // Use a ref object so the engine store can call configStore methods that
+  // are only available after configStore is created (avoids temporal dead zone).
+  const configStoreRef: { setMigrationRepairResult: (value: any) => void } = {
+    setMigrationRepairResult: () => {},
+  };
+
   const configStore = createConfigStore({
     getActiveWorkspacePath: () => activeWorkspacePath(),
     getActiveWorkspaceInfo: activeWorkspaceInfo,
@@ -3067,14 +2704,14 @@ export function createWorkspaceStore(options: {
     setWorkspaceConfig,
     getAuthorizedDirs: authorizedDirs,
     setAuthorizedDirs,
-    getEngine: engine,
-    setEngine,
+    getEngine: engineStore.engine,
+    setEngine: engineStore.setEngine,
     syncActiveWorkspaceId,
     setCreateWorkspaceOpen,
     setCreateRemoteWorkspaceOpen,
     markOnboardingComplete,
     activateFreshLocalWorkspace,
-    startHost,
+    startHost: engineStore.startHost,
     engineSource: options.engineSource,
     engineCustomBinPath: options.engineCustomBinPath,
     engineStop,
@@ -3091,6 +2728,9 @@ export function createWorkspaceStore(options: {
     isDbMigrateUnsupported,
     cloudOnlyMessage,
   });
+
+  // Wire up the lazy reference now that configStore is available.
+  configStoreRef.setMigrationRepairResult = configStore.setMigrationRepairResult;
 
   /** Race a promise against a timeout; resolves to undefined on timeout. */
   function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T | undefined> {
@@ -3151,10 +2791,10 @@ export function createWorkspaceStore(options: {
     }
 
     bootTrace("refreshEngine...");
-    await withTimeout(refreshEngine(), 10_000, "refreshEngine");
+    await withTimeout(engineStore.refreshEngine(), 10_000, "refreshEngine");
     bootTrace("refreshEngine DONE");
     bootTrace("refreshEngineDoctor...");
-    await withTimeout(refreshEngineDoctor(), 10_000, "refreshEngineDoctor");
+    await withTimeout(engineStore.refreshEngineDoctor(), 10_000, "refreshEngineDoctor");
     bootTrace("refreshEngineDoctor DONE");
 
     if (isTauriRuntime()) {
@@ -3192,7 +2832,7 @@ export function createWorkspaceStore(options: {
       }
     }
 
-    const info = engine();
+    const info = engineStore.engine();
     if (info?.baseUrl) {
       options.setBaseUrl(info.baseUrl);
     }
@@ -3330,7 +2970,7 @@ export function createWorkspaceStore(options: {
             targetRoot: activeWorkspacePath().trim() || undefined,
             reason: "bootstrap-local",
           },
-          engineAuth() ?? undefined,
+          engineStore.engineAuth() ?? undefined,
         );
         bootTrace("connectToServer ok=", ok);
         if (!ok) {
@@ -3344,7 +2984,7 @@ export function createWorkspaceStore(options: {
 
       bootTrace("startHost...");
       options.setOnboardingStep("connecting");
-      const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
+      const ok = await engineStore.startHost({ workspacePath: activeWorkspacePath().trim() });
       bootTrace("startHost ok=", ok);
       if (!ok) {
         options.setOnboardingStep("local");
@@ -3392,7 +3032,7 @@ export function createWorkspaceStore(options: {
 
     options.setStartupPreference("local");
     options.setOnboardingStep("connecting");
-    const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
+    const ok = await engineStore.startHost({ workspacePath: activeWorkspacePath().trim() });
     if (!ok) {
       options.setOnboardingStep("local");
     }
@@ -3409,8 +3049,8 @@ export function createWorkspaceStore(options: {
     options.setStartupPreference("local");
     options.setOnboardingStep("connecting");
     const ok = await connectToServer(
-      engine()?.baseUrl ?? "",
-      (activeWorkspacePath().trim() || engine()?.projectDir || undefined),
+      engineStore.engine()?.baseUrl ?? "",
+      (activeWorkspacePath().trim() || engineStore.engine()?.projectDir || undefined),
       {
         workspaceId:
           activeWorkspaceInfo()?.workspaceType === "local"
@@ -3471,13 +3111,13 @@ export function createWorkspaceStore(options: {
   }
 
   return {
-    engine,
-    engineDoctorResult,
-    engineDoctorCheckedAt,
-    engineInstallLogs,
-    sandboxDoctorResult,
-    sandboxDoctorCheckedAt,
-    sandboxDoctorBusy,
+    engine: engineStore.engine,
+    engineDoctorResult: engineStore.engineDoctorResult,
+    engineDoctorCheckedAt: engineStore.engineDoctorCheckedAt,
+    engineInstallLogs: engineStore.engineInstallLogs,
+    sandboxDoctorResult: engineStore.sandboxDoctorResult,
+    sandboxDoctorCheckedAt: engineStore.sandboxDoctorCheckedAt,
+    sandboxDoctorBusy: engineStore.sandboxDoctorBusy,
     sandboxPreflightBusy,
     sandboxCreatePhase,
     projectDir,
@@ -3507,8 +3147,8 @@ export function createWorkspaceStore(options: {
     setWorkspaceConfigLoaded,
     setWorkspaces,
     syncActiveWorkspaceId: syncActiveWorkspaceId,
-    refreshEngine,
-    refreshEngineDoctor,
+    refreshEngine: engineStore.refreshEngine,
+    refreshEngineDoctor: engineStore.refreshEngineDoctor,
     activateWorkspace,
     testWorkspaceConnection,
     connectToServer,
@@ -3528,9 +3168,9 @@ export function createWorkspaceStore(options: {
     importWorkspaceConfig: configStore.importWorkspaceConfig,
     canRepairOpencodeMigration: configStore.canRepairOpencodeMigration,
     repairOpencodeMigration: configStore.repairOpencodeMigration,
-    startHost,
-    stopHost,
-    reloadWorkspaceEngine,
+    startHost: engineStore.startHost,
+    stopHost: engineStore.stopHost,
+    reloadWorkspaceEngine: engineStore.reloadWorkspaceEngine,
     bootstrapOnboarding,
     onSelectStartup,
     onBackToWelcome,
@@ -3540,14 +3180,14 @@ export function createWorkspaceStore(options: {
     onConnectClient,
     onConfirmLanguage,
     onRememberStartupToggle,
-    onInstallEngine,
+    onInstallEngine: engineStore.onInstallEngine,
     addAuthorizedDir: configStore.addAuthorizedDir,
     addAuthorizedDirFromPicker: configStore.addAuthorizedDirFromPicker,
     removeAuthorizedDir: configStore.removeAuthorizedDir,
     removeAuthorizedDirAtIndex: configStore.removeAuthorizedDirAtIndex,
     persistReloadSettings: configStore.persistReloadSettings,
-    setEngineInstallLogs,
-    refreshSandboxDoctor,
+    setEngineInstallLogs: engineStore.setEngineInstallLogs,
+    refreshSandboxDoctor: engineStore.refreshSandboxDoctor,
     sandboxCreateProgress,
     clearSandboxCreateProgress,
     workspaceDebugEvents,
