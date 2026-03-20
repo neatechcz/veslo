@@ -18,6 +18,7 @@ import type {
 import type { McpDirectoryInfo } from "../constants";
 import {
   formatRelativeTime,
+  isMacPlatform,
   getWorkspaceTaskLoadErrorDisplay,
   isTauriRuntime,
   isWindowsPlatform,
@@ -54,6 +55,8 @@ import SidebarStatusControls from "../components/sidebar-status-controls";
 import ProviderAuthModal, { type ProviderOAuthStartResult } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
+import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
+import { resolveTitlebarContentInsetClass } from "../components/titlebar-menu-layout";
 import {
   createSessionWithWorkspaceActivation,
   openSessionWithWorkspaceActivation,
@@ -319,6 +322,49 @@ export type DashboardViewProps = {
   connectNotion: () => void;
 };
 
+type SidebarDockedVisibility = {
+  left: boolean;
+  right: boolean;
+};
+
+const SIDEBAR_DOCKED_VISIBILITY_KEY = "veslo.global.sidebar.docked.v1";
+const LEGACY_SIDEBAR_DOCKED_VISIBILITY_KEY = "veslo.session.sidebar.docked.v1";
+const DEFAULT_SIDEBAR_DOCKED_VISIBILITY: SidebarDockedVisibility = {
+  left: true,
+  right: true,
+};
+
+const readSidebarDockedVisibility = (): SidebarDockedVisibility => {
+  if (typeof window === "undefined") return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
+  try {
+    const raw = window.localStorage.getItem(SIDEBAR_DOCKED_VISIBILITY_KEY);
+    const legacyRaw = !raw ? window.localStorage.getItem(LEGACY_SIDEBAR_DOCKED_VISIBILITY_KEY) : null;
+    const value = raw ?? legacyRaw;
+    if (!value) return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
+    const parsed = JSON.parse(value) as Partial<SidebarDockedVisibility> | null;
+    if (!parsed || typeof parsed !== "object") return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
+    const normalized = {
+      left: typeof parsed.left === "boolean" ? parsed.left : DEFAULT_SIDEBAR_DOCKED_VISIBILITY.left,
+      right: typeof parsed.right === "boolean" ? parsed.right : DEFAULT_SIDEBAR_DOCKED_VISIBILITY.right,
+    };
+    if (!raw && legacyRaw) {
+      window.localStorage.setItem(SIDEBAR_DOCKED_VISIBILITY_KEY, JSON.stringify(normalized));
+    }
+    return normalized;
+  } catch {
+    return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
+  }
+};
+
+const writeSidebarDockedVisibility = (value: SidebarDockedVisibility) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SIDEBAR_DOCKED_VISIBILITY_KEY, JSON.stringify(value));
+  } catch {
+    // ignore
+  }
+};
+
 type SharedSkillItem = {
   name: string;
   description?: string;
@@ -412,6 +458,23 @@ export default function DashboardView(props: DashboardViewProps) {
   const [refreshInProgress, setRefreshInProgress] = createSignal(false);
   const [providerAuthActionBusy, setProviderAuthActionBusy] = createSignal(false);
   const [shareWorkspaceId, setShareWorkspaceId] = createSignal<string | null>(null);
+  const [sidebarDockedVisibility, setSidebarDockedVisibility] = createSignal(
+    readSidebarDockedVisibility(),
+  );
+
+  const leftSidebarVisible = createMemo(() => sidebarDockedVisibility().left);
+  const rightSidebarVisible = createMemo(() => sidebarDockedVisibility().right);
+
+  const toggleSidebarMenu = (side: "left" | "right") => {
+    setSidebarDockedVisibility((current) => {
+      const next: SidebarDockedVisibility =
+        side === "left"
+          ? { left: !current.left, right: current.right }
+          : { left: current.left, right: !current.right };
+      writeSidebarDockedVisibility(next);
+      return next;
+    });
+  };
 
   const handleProviderAuthSelect = async (providerId: string): Promise<ProviderOAuthStartResult> => {
     if (providerAuthActionBusy()) {
@@ -1065,9 +1128,25 @@ export default function DashboardView(props: DashboardViewProps) {
     openSettings("advanced");
   };
 
+  const titlebarContentInsetClass = createMemo(() =>
+    resolveTitlebarContentInsetClass({
+      tauri: isTauriRuntime(),
+      mac: isMacPlatform(),
+      hideTitlebar: props.hideTitlebar,
+    }),
+  );
+
   return (
-    <div class="flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden">
-      <aside class="w-64 hidden md:flex flex-col bg-dls-sidebar border-r border-dls-border p-4">
+    <div class={`flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden ${titlebarContentInsetClass()}`}>
+      <TitlebarMenuToggles
+        leftActive={leftSidebarVisible()}
+        rightActive={rightSidebarVisible()}
+        onToggleLeft={() => toggleSidebarMenu("left")}
+        onToggleRight={() => toggleSidebarMenu("right")}
+      />
+
+      <Show when={leftSidebarVisible()}>
+        <aside class="w-64 hidden md:flex flex-col bg-dls-sidebar border-r border-dls-border p-4">
         <div class="flex-1 overflow-y-auto">
           <Show when={showUpdatePill()}>
             <button
@@ -1130,7 +1209,8 @@ export default function DashboardView(props: DashboardViewProps) {
           onOpenSettings={() => openSettings("general")}
         />
 
-      </aside>
+        </aside>
+      </Show>
 
       <main class="flex-1 flex flex-col overflow-hidden bg-dls-surface">
         <div class="flex-1 overflow-y-auto">
@@ -1555,7 +1635,8 @@ export default function DashboardView(props: DashboardViewProps) {
         </nav>
       </main>
 
-      <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
+      <Show when={rightSidebarVisible()}>
+        <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
         <div class="space-y-1 pt-2">
           {navItem("scheduled", "Automations", <History size={18} />)}
           {navItem("soul", "Soul", <HeartPulse size={18} class={soulNavIconClass()} />)}
@@ -1563,7 +1644,8 @@ export default function DashboardView(props: DashboardViewProps) {
           {navItem("mcp", "Extensions", <Box size={18} />)}
           <Show when={props.developerMode}>{navItem("config", "Advanced", <SlidersHorizontal size={18} />)}</Show>
         </div>
-      </aside>
+        </aside>
+      </Show>
 
     </div>
   );

@@ -18,6 +18,20 @@ export function isWindowsPlatform() {
   return /windows/i.test(platform) || /windows/i.test(ua);
 }
 
+export function isMacPlatform() {
+  if (typeof navigator === "undefined") return false;
+
+  const ua = typeof navigator.userAgent === "string" ? navigator.userAgent : "";
+  const platform =
+    typeof (navigator as any).userAgentData?.platform === "string"
+      ? (navigator as any).userAgentData.platform
+      : typeof navigator.platform === "string"
+        ? navigator.platform
+        : "";
+
+  return /mac/i.test(platform) || /macintosh/i.test(ua);
+}
+
 export function normalizeDirectoryQueryPath(input?: string | null) {
   const trimmed = (input ?? "").trim();
   if (!trimmed) return "";
