@@ -3527,7 +3527,7 @@ export default function SessionView(props: SessionViewProps) {
   const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
   const leftSidebarContent = () => (
     <>
-      <div class="flex-1 overflow-y-auto">
+      <div class="flex min-h-0 flex-1 flex-col">
         <Show when={showUpdatePill()}>
           <button
             type="button"
@@ -3555,36 +3555,38 @@ export default function SessionView(props: SessionViewProps) {
             </Show>
           </button>
         </Show>
-        <WorkspaceSessionList
-          workspaceSessionGroups={props.workspaceSessionGroups}
-          activeWorkspaceId={props.activeWorkspaceId}
-          selectedSessionId={props.selectedSessionId}
-          sessionStatusById={props.sessionStatusById}
-          connectingWorkspaceId={props.connectingWorkspaceId}
-          workspaceConnectionStateById={props.workspaceConnectionStateById}
-          newTaskDisabled={props.newTaskDisabled}
-          importingWorkspaceConfig={props.importingWorkspaceConfig}
-          showRemoteActions={props.showRemoteActions}
-          soulStatusByWorkspaceId={props.soulStatusByWorkspaceId}
-          isPrivateWorkspacePath={props.isPrivateWorkspacePath}
-          onActivateWorkspace={props.activateWorkspace}
-          onOpenSession={openSessionFromList}
-          onDeleteSession={openDeleteSessionModalForSession}
-          onCreateTaskInWorkspace={createTaskInWorkspace}
-          onOpenRenameWorkspace={props.openRenameWorkspace}
-          onShareWorkspace={(workspaceId) => setShareWorkspaceId(workspaceId)}
-          onOpenSoul={openSoul}
-          onRevealWorkspace={revealWorkspaceInFinder}
-          onRecoverWorkspace={props.recoverWorkspace}
-          onTestWorkspaceConnection={props.testWorkspaceConnection}
-          onEditWorkspaceConnection={props.editWorkspaceConnection}
-          onForgetWorkspace={props.forgetWorkspace}
-          onOpenCreateWorkspace={props.openCreateWorkspace}
-          onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
-          onImportWorkspaceConfig={props.importWorkspaceConfig}
-          onQuickNewSession={props.openNewSessionWithDirectory}
-          onOpenSessionSearch={() => openCommandPalette("sessions")}
-        />
+        <div class="min-h-0 flex-1">
+          <WorkspaceSessionList
+            workspaceSessionGroups={props.workspaceSessionGroups}
+            activeWorkspaceId={props.activeWorkspaceId}
+            selectedSessionId={props.selectedSessionId}
+            sessionStatusById={props.sessionStatusById}
+            connectingWorkspaceId={props.connectingWorkspaceId}
+            workspaceConnectionStateById={props.workspaceConnectionStateById}
+            newTaskDisabled={props.newTaskDisabled}
+            importingWorkspaceConfig={props.importingWorkspaceConfig}
+            showRemoteActions={props.showRemoteActions}
+            soulStatusByWorkspaceId={props.soulStatusByWorkspaceId}
+            isPrivateWorkspacePath={props.isPrivateWorkspacePath}
+            onActivateWorkspace={props.activateWorkspace}
+            onOpenSession={openSessionFromList}
+            onDeleteSession={openDeleteSessionModalForSession}
+            onCreateTaskInWorkspace={createTaskInWorkspace}
+            onOpenRenameWorkspace={props.openRenameWorkspace}
+            onShareWorkspace={(workspaceId) => setShareWorkspaceId(workspaceId)}
+            onOpenSoul={openSoul}
+            onRevealWorkspace={revealWorkspaceInFinder}
+            onRecoverWorkspace={props.recoverWorkspace}
+            onTestWorkspaceConnection={props.testWorkspaceConnection}
+            onEditWorkspaceConnection={props.editWorkspaceConnection}
+            onForgetWorkspace={props.forgetWorkspace}
+            onOpenCreateWorkspace={props.openCreateWorkspace}
+            onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
+            onImportWorkspaceConfig={props.importWorkspaceConfig}
+            onQuickNewSession={props.openNewSessionWithDirectory}
+            onOpenSessionSearch={() => openCommandPalette("sessions")}
+          />
+        </div>
       </div>
       <SidebarStatusControls
         clientConnected={props.clientConnected}
