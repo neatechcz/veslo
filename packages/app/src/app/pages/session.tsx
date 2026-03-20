@@ -97,7 +97,7 @@ import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import type { SidebarSectionState } from "../components/session/sidebar";
-import { LeftSidebarToggleIcon, RightSidebarToggleIcon } from "../components/session/sidebar-toggle-icons";
+import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
 import {
   applyAvailableWidth,
   createInitialSidebarLayoutState,
@@ -311,7 +311,8 @@ const MAIN_THREAD_LAG_INTERVAL_MS = 200;
 const MAIN_THREAD_LAG_WARN_MS = 180;
 const LEFT_SIDEBAR_DOCKED_WIDTH = 260;
 const RIGHT_SIDEBAR_DOCKED_WIDTH = 280;
-const SIDEBAR_DOCKED_VISIBILITY_KEY = "veslo.session.sidebar.docked.v1";
+const SIDEBAR_DOCKED_VISIBILITY_KEY = "veslo.global.sidebar.docked.v1";
+const LEGACY_SIDEBAR_DOCKED_VISIBILITY_KEY = "veslo.session.sidebar.docked.v1";
 const DEFAULT_SIDEBAR_DOCKED_VISIBILITY: SidebarDockedVisibility = {
   left: true,
   right: true,
@@ -326,13 +327,19 @@ const readSidebarDockedVisibility = (): SidebarDockedVisibility => {
   if (typeof window === "undefined") return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
   try {
     const raw = window.localStorage.getItem(SIDEBAR_DOCKED_VISIBILITY_KEY);
-    if (!raw) return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
-    const parsed = JSON.parse(raw) as Partial<SidebarDockedVisibility> | null;
+    const legacyRaw = !raw ? window.localStorage.getItem(LEGACY_SIDEBAR_DOCKED_VISIBILITY_KEY) : null;
+    const value = raw ?? legacyRaw;
+    if (!value) return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
+    const parsed = JSON.parse(value) as Partial<SidebarDockedVisibility> | null;
     if (!parsed || typeof parsed !== "object") return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
-    return {
+    const normalized = {
       left: typeof parsed.left === "boolean" ? parsed.left : DEFAULT_SIDEBAR_DOCKED_VISIBILITY.left,
       right: typeof parsed.right === "boolean" ? parsed.right : DEFAULT_SIDEBAR_DOCKED_VISIBILITY.right,
     };
+    if (!raw && legacyRaw) {
+      window.localStorage.setItem(SIDEBAR_DOCKED_VISIBILITY_KEY, JSON.stringify(normalized));
+    }
+    return normalized;
   } catch {
     return { ...DEFAULT_SIDEBAR_DOCKED_VISIBILITY };
   }
@@ -352,8 +359,8 @@ const availableChatWidthForLayout = (rootWidth: number, state: SidebarLayoutStat
   return Math.max(
     0,
     rootWidth -
-      (state.dockedPreference.left ? LEFT_SIDEBAR_DOCKED_WIDTH : 0) -
-      (state.dockedPreference.right ? RIGHT_SIDEBAR_DOCKED_WIDTH : 0),
+      (state.docked.left ? LEFT_SIDEBAR_DOCKED_WIDTH : 0) -
+      (state.docked.right ? RIGHT_SIDEBAR_DOCKED_WIDTH : 0),
   );
 };
 
@@ -425,6 +432,17 @@ export default function SessionView(props: SessionViewProps) {
   const rightDockedVisible = createMemo(
     () => sidebarLayoutState().mode === "wide" && sidebarLayoutState().docked.right,
   );
+  const useCompactCenterColumn = createMemo(() => {
+    const rootWidth = layoutRootWidth();
+    if (rootWidth <= 0) return false;
+    if (!leftDockedVisible() || !rightDockedVisible()) return false;
+    return availableChatWidthForLayout(rootWidth, sidebarLayoutState()) < 740;
+  });
+  const centerColumnWidthClass = (wideWidth: string) =>
+    createMemo(() => (useCompactCenterColumn() ? "max-w-[325px]" : wideWidth));
+  const searchBannerWidthClass = centerColumnWidthClass("max-w-[800px]");
+  const chatBodyWidthClass = centerColumnWidthClass("max-w-[650px]");
+  const railWidthClass = centerColumnWidthClass("max-w-[68ch]");
   const overlayOpenSide = createMemo(() =>
     sidebarLayoutState().mode === "narrow" ? sidebarLayoutState().overlay : null,
   );
@@ -3673,36 +3691,12 @@ export default function SessionView(props: SessionViewProps) {
       }}
       class="flex h-screen w-full bg-dls-sidebar text-gray-12 font-sans overflow-hidden"
     >
-      <div class="pointer-events-none fixed inset-x-0 top-2 z-[46] flex justify-center">
-        <div class="pointer-events-auto flex items-center gap-2 rounded-xl border border-gray-6/80 bg-gray-1/90 p-1.5 shadow-lg shadow-gray-12/10 backdrop-blur-md">
-          <button
-            type="button"
-            class={`h-9 w-9 flex items-center justify-center rounded-lg border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.22)] ${
-              leftSidebarToggleActive()
-                ? "border-gray-7 bg-gray-3 text-gray-12"
-                : "border-gray-6 bg-gray-2/80 text-gray-10 hover:bg-gray-3 hover:text-gray-12"
-            }`}
-            onClick={() => toggleSidebarMenu("left")}
-            aria-label="Toggle left menu"
-            title="Toggle left menu"
-          >
-            <LeftSidebarToggleIcon size={18} />
-          </button>
-          <button
-            type="button"
-            class={`h-9 w-9 flex items-center justify-center rounded-lg border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.22)] ${
-              rightSidebarToggleActive()
-                ? "border-gray-7 bg-gray-3 text-gray-12"
-                : "border-gray-6 bg-gray-2/80 text-gray-10 hover:bg-gray-3 hover:text-gray-12"
-            }`}
-            onClick={() => toggleSidebarMenu("right")}
-            aria-label="Toggle right menu"
-            title="Toggle right menu"
-          >
-            <RightSidebarToggleIcon size={18} />
-          </button>
-        </div>
-      </div>
+      <TitlebarMenuToggles
+        leftActive={leftSidebarToggleActive()}
+        rightActive={rightSidebarToggleActive()}
+        onToggleLeft={() => toggleSidebarMenu("left")}
+        onToggleRight={() => toggleSidebarMenu("right")}
+      />
 
       <Show when={leftDockedVisible()}>
         <aside class="w-[260px] flex shrink-0 flex-col bg-dls-sidebar border-r border-gray-6/70 p-3 pt-12">
@@ -3714,7 +3708,7 @@ export default function SessionView(props: SessionViewProps) {
 
         <Show when={searchOpen()}>
           <div class="border-b border-gray-5 bg-gray-2/70 px-6 py-2">
-            <div class="mx-auto flex w-full max-w-[800px] items-center gap-2 rounded-xl border border-gray-6 bg-gray-1 px-3 py-2">
+            <div class={`mx-auto flex w-full ${searchBannerWidthClass()} items-center gap-2 rounded-xl border border-gray-6 bg-gray-1 px-3 py-2`}>
               <Search size={14} class="text-gray-9" />
               <input
                 ref={(el) => (searchInputEl = el)}
@@ -3772,7 +3766,7 @@ export default function SessionView(props: SessionViewProps) {
 
         <Show when={props.showSkillReloadBanner}>
           <div class="border-b border-amber-6/50 bg-amber-2/70 px-6 py-3">
-            <div class="mx-auto flex w-full max-w-[800px] flex-col gap-3 rounded-2xl border border-amber-6/60 bg-amber-1/80 px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+            <div class={`mx-auto flex w-full ${searchBannerWidthClass()} flex-col gap-3 rounded-2xl border border-amber-6/60 bg-amber-1/80 px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between`}>
               <div class="min-w-0">
                 <div class="text-sm font-medium text-amber-11">{props.reloadBannerTitle}</div>
                 <div class="mt-0.5 text-xs text-amber-11/80">
@@ -3827,7 +3821,7 @@ export default function SessionView(props: SessionViewProps) {
                 setIsChatContainerReady(Boolean(el));
               }}
             >
-              <div class="max-w-[650px] mx-auto w-full">
+              <div class={`mx-auto w-full ${chatBodyWidthClass()}`}>
             <Show when={showWorkspaceSetupEmptyState()}>
               <div class="mx-auto max-w-xl rounded-3xl border border-gray-6 bg-gray-2/60 p-8 text-center shadow-sm">
                 <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-gray-6 bg-gray-1 text-gray-11">
@@ -3928,7 +3922,7 @@ export default function SessionView(props: SessionViewProps) {
             footer={
               showRunIndicator() ? (
                 <div class="flex justify-start pl-2">
-                  <div class="w-full max-w-[68ch]">
+                  <div class={`w-full ${railWidthClass()}`}>
                     <div
                       class={`flex items-center gap-2 text-xs py-1 ${runPhase() === "error" ? "text-red-11" : "text-gray-9"}`}
                       role="status"
@@ -3977,7 +3971,7 @@ export default function SessionView(props: SessionViewProps) {
         </div>
 
       <Show when={todoCount() > 0}>
-        <div class="mx-auto w-full max-w-[68ch] px-4">
+        <div class={`mx-auto w-full ${railWidthClass()} px-4`}>
           <div class="rounded-t-xl border border-b-0 border-gray-6/70 bg-gray-1/70 shadow-sm shadow-gray-12/5">
             <button
               type="button"
@@ -4050,6 +4044,7 @@ export default function SessionView(props: SessionViewProps) {
               busy={props.busy}
               isStreaming={showRunIndicator()}
               compactTopSpacing={todoCount() > 0}
+              compactWidth={useCompactCenterColumn()}
               onSend={handleSendPrompt}
               onStop={cancelRun}
               onDraftChange={handleDraftChange}

@@ -964,3 +964,35 @@ export async function opencodeRouterRestart(options: {
 export async function setWindowDecorations(decorations: boolean): Promise<void> {
   return invoke<void>("set_window_decorations", { decorations });
 }
+
+/**
+ * Set current window title bar style.
+ * Note: Tauri supports this on macOS only.
+ */
+export async function setWindowTitleBarStyle(
+  style: "visible" | "transparent" | "overlay",
+): Promise<void> {
+  if (!isTauriRuntime()) return;
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  try {
+    await getCurrentWindow().setTitleBarStyle(style);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[tauri.setWindowTitleBarStyle] Failed to set title bar style "${style}": ${message}`);
+  }
+}
+
+/**
+ * Start dragging the current native window.
+ * Intended as a reliability fallback for custom drag regions.
+ */
+export async function startWindowDragging(): Promise<void> {
+  if (!isTauriRuntime()) return;
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  try {
+    await getCurrentWindow().startDragging();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[tauri.startWindowDragging] Failed to start drag: ${message}`);
+  }
+}

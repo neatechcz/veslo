@@ -161,6 +161,7 @@ import {
 import { currentLocale, isLanguage, setLocale, t, type Language } from "../i18n";
 import {
   isWindowsPlatform,
+  isMacPlatform,
   lastUserModelFromMessages,
   // normalizeDirectoryPath,
   parseModelRef,
@@ -192,6 +193,7 @@ import {
   orchestratorStatus,
   opencodeRouterInfo,
   setWindowDecorations,
+  setWindowTitleBarStyle,
   workspaceCopyIntoFolder,
   type OrchestratorStatus,
   type VesloServerInfo,
@@ -5483,6 +5485,23 @@ export default function App() {
     if (isTauriRuntime()) {
       setWindowDecorations(!hide).catch(e => reportError(e, "titlebar.setDecorations"));
     }
+  });
+
+  // On macOS, keep native titlebar controls and surface app controls in overlay area.
+  createEffect(() => {
+    if (!isTauriRuntime() || !isMacPlatform()) return;
+    const titlebarHidden = hideTitlebar();
+    if (titlebarHidden) return;
+    setWindowTitleBarStyle("overlay").catch((error) => {
+      console.error("[app.titlebar] Failed to apply macOS overlay titlebar style", {
+        runtime: "tauri",
+        platform: "macOS",
+        hideTitlebar: titlebarHidden,
+        style: "overlay",
+        error: error instanceof Error ? error.message : String(error),
+        cause: error,
+      });
+    });
   });
 
   createEffect(() => {

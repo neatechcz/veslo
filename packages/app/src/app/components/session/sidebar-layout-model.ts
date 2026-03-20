@@ -13,8 +13,9 @@ export type SidebarLayoutState = {
   overlay: SidebarSide | null;
 };
 
-export const SESSION_CHAT_MIN_WIDTH = 760;
-export const SESSION_CHAT_MIN_WIDTH_EXIT = 784;
+// Match the narrower chat-column direction while keeping a small hysteresis buffer.
+export const SESSION_CHAT_MIN_WIDTH = 360;
+export const SESSION_CHAT_MIN_WIDTH_EXIT = 392;
 
 const hiddenDockedVisibility: SidebarDockedVisibility = {
   left: false,
