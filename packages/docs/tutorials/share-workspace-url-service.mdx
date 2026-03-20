@@ -17,15 +17,15 @@ Share full workspace as a URL that:
 
 1. Stores an encrypted workspace bundle in share service.
 2. Produces a short-lived import URL.
-3. Opens OpenWork and imports into a selected local folder.
+3. Opens Veslo and imports into a selected local folder.
 4. Applies worker URL/token defaults if provided.
 
 ## Proposed flow
 
 1. User clicks **Share workspace URL**.
-2. OpenWork exports workspace config payload.
+2. Veslo exports workspace config payload.
 3. Payload uploads to share service with TTL + access scope.
-4. OpenWork returns URL like `/share/workspace/<id>?sig=...`.
+4. Veslo returns URL like `/share/workspace/<id>?sig=...`.
 5. Recipient opens link and confirms import target.
 
 ## Operational requirements

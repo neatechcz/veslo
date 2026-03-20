@@ -9,19 +9,19 @@ Runtime requirement: Bun 1.3+ (`bun --version`).
 One-command install (recommended):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/different-ai/openwork/dev/packages/opencode-router/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/neatechcz/veslo/dev/packages/opencode-router/install.sh | bash
 ```
 
 Install from npm:
 
 ```bash
-npm install -g opencode-router
+npm install -g veslo-code-router
 ```
 
 Quick run without global install:
 
 ```bash
-npx --yes opencode-router --help
+npx --yes veslo-code-router --help
 ```
 
 Then configure identities and start.
@@ -105,7 +105,7 @@ opencode-router bindings list
 
 The router can expose a small local HTTP server for health/config and simple message dispatch.
 
-- `OPENCODE_ROUTER_HEALTH_PORT` controls the port (OpenWork defaults to a random free port when using `openwork`).
+- `OPENCODE_ROUTER_HEALTH_PORT` controls the port (Veslo defaults to a random free port when using `veslo`).
 - `PORT` is also accepted as a convenience if the above are unset.
 - `OPENCODE_ROUTER_HEALTH_HOST` controls bind host (default: `127.0.0.1`).
 
@@ -166,8 +166,8 @@ opencode-router send --channel slack --identity default --to D123 --file ./repor
 
 ## Defaults
 
-- SQLite at `~/.openwork/opencode-router/opencode-router.db` unless overridden.
-- Config stored at `~/.openwork/opencode-router/opencode-router.json` (created by `opencode-router` or `pnpm -C packages/opencode-router setup`).
+- SQLite at `~/.veslo/opencode-router/opencode-router.db` unless overridden.
+- Config stored at `~/.veslo/opencode-router/opencode-router.json` (created by `opencode-router` or `pnpm -C packages/opencode-router setup`).
 - Group chats are disabled unless `GROUPS_ENABLED=true`.
 
 ## Tests

@@ -1,26 +1,26 @@
 ---
 title: "Quickstart"
-description: "Install OpenWork and run your first worker"
+description: "Install Veslo and run your first worker"
 ---
 
 ## Get started in four steps
 
-### Step 1: Install OpenWork
+### Step 1: Install Veslo
 
 <AccordionGroup>
   <Accordion icon="download" title="Desktop app (recommended)">
     Download the latest release from:
-    `https://openwork.software/download`
+    `https://veslo.neatech.com/download`
 
     Start with macOS if you want the fastest path.
   </Accordion>
-  <Accordion icon="terminal" title="CLI host (openwrk)">
+  <Accordion icon="terminal" title="CLI host (veslo)">
     ```bash
-    npm install -g openwrk
-    openwrk start --workspace /path/to/workspace --approval auto
+    npm install -g veslo
+    veslo start --workspace /path/to/workspace --approval auto
     ```
 
-    This runs OpenCode + OpenWork server + optional router without desktop UI.
+    This runs OpenCode + Veslo server + optional router without desktop UI.
   </Accordion>
 </AccordionGroup>
 
@@ -51,10 +51,10 @@ description: "Install OpenWork and run your first worker"
 ### Step 4: Share with your team
 
 <Accordion icon="share-2" title="Use worker URL + token, or invite link">
-  Open worker actions in OpenWork and share:
-  - `OpenWork worker URL`
+  Open worker actions in Veslo and share:
+  - `Veslo worker URL`
   - `Access token`
-  - `OpenWork invite link` (prefills URL + token)
+  - `Veslo invite link` (prefills URL + token)
 
   The invite link is best for fast teammate onboarding.
 </Accordion>
@@ -62,9 +62,9 @@ description: "Install OpenWork and run your first worker"
 ## CLI example
 
 ```bash
-npm install -g openwrk
-openwrk start --workspace /path/to/workspace --approval auto
-openwrk status --openwork-url http://127.0.0.1:8787 --opencode-url http://127.0.0.1:4096
+npm install -g veslo
+veslo start --workspace /path/to/workspace --approval auto
+veslo status --veslo-url http://127.0.0.1:8787 --opencode-url http://127.0.0.1:4096
 ```
 
 ## Next steps

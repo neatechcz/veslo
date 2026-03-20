@@ -2,4 +2,4 @@
 
 Render worker services use this directory as `rootDir`.
 
-The control plane installs `openwork-orchestrator` and launches workers with the `openwork` command.
+The control plane installs `veslo-orchestrator` and launches workers with the `veslo` command.
