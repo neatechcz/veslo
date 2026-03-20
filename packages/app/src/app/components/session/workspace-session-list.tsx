@@ -312,7 +312,7 @@ export default function WorkspaceSessionList(props: Props) {
   );
 
   return (
-    <>
+    <div class="flex h-full min-h-0 flex-col">
       <div class="relative mb-3" ref={(el) => (addWorkspaceMenuRef = el)}>
         <button
           type="button"
@@ -415,25 +415,26 @@ export default function WorkspaceSessionList(props: Props) {
         </Show>
       </div>
 
-      <div class="space-y-2.5 mb-3">
-        <Show when={hasVisibleRows()} fallback={emptyState}>
-          <Show when={sidebarMode() === "by-project"} fallback={
-            <For each={recentRows()}>
-              {(row) => {
-                const workspace = () => row.workspace;
-                const session = () => row.session;
-                const isSelected = () => props.selectedSessionId === session().id;
-                const isSessionActive = () => (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
-                const isConnecting = () => isConnectingWorkspace(workspace().id);
-                const canRecover = () => canRecoverWorkspace(workspace());
-                const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
-                const soulEnabled = () => Boolean(soulStatus()?.enabled);
-                const taskLoadError = () => taskLoadErrorFor(workspace(), row.error);
-                const anchorKey = `recent:${row.rowKey}`;
-                const isConnectionActionBusy = () => isConnectionActionBusyFor(workspace().id);
+      <div class="min-h-0 flex-1 overflow-y-auto">
+        <div class="space-y-2.5 mb-3">
+          <Show when={hasVisibleRows()} fallback={emptyState}>
+            <Show when={sidebarMode() === "by-project"} fallback={
+              <For each={recentRows()}>
+                {(row) => {
+                  const workspace = () => row.workspace;
+                  const session = () => row.session;
+                  const isSelected = () => props.selectedSessionId === session().id;
+                  const isSessionActive = () => (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
+                  const isConnecting = () => isConnectingWorkspace(workspace().id);
+                  const canRecover = () => canRecoverWorkspace(workspace());
+                  const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
+                  const soulEnabled = () => Boolean(soulStatus()?.enabled);
+                  const taskLoadError = () => taskLoadErrorFor(workspace(), row.error);
+                  const anchorKey = `recent:${row.rowKey}`;
+                  const isConnectionActionBusy = () => isConnectionActionBusyFor(workspace().id);
 
-                return (
-                  <div class="relative group/session-row">
+                  return (
+                    <div class="relative group/session-row">
                     <button
                       type="button"
                       class={`w-full flex items-center min-h-11 px-3 rounded-xl text-left transition-colors pr-20 ${
@@ -525,13 +526,13 @@ export default function WorkspaceSessionList(props: Props) {
                       canRecover(),
                       isConnectionActionBusy(),
                     )}
-                  </div>
-                );
-              }}
-            </For>
-          }>
-            <For each={projectGroups()}>
-              {(project) => {
+                    </div>
+                  );
+                }}
+              </For>
+            }>
+              <For each={projectGroups()}>
+                {(project) => {
                 const workspace = () => project.workspace;
                 const isActiveWorkspace = () => props.activeWorkspaceId === workspace().id;
                 const isConnecting = () => isConnectingWorkspace(workspace().id);
@@ -700,13 +701,14 @@ export default function WorkspaceSessionList(props: Props) {
                       canRecover(),
                       isConnectionActionBusy(),
                     )}
-                  </div>
-                );
-              }}
-            </For>
+                    </div>
+                  );
+                }}
+              </For>
+            </Show>
           </Show>
-        </Show>
+        </div>
       </div>
-    </>
+    </div>
   );
 }

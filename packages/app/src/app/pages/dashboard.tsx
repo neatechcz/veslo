@@ -1068,7 +1068,7 @@ export default function DashboardView(props: DashboardViewProps) {
   return (
     <div class="flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden">
       <aside class="w-64 hidden md:flex flex-col bg-dls-sidebar border-r border-dls-border p-4">
-        <div class="flex-1 overflow-y-auto">
+        <div class="flex min-h-0 flex-1 flex-col">
           <Show when={showUpdatePill()}>
             <button
               type="button"
@@ -1096,32 +1096,34 @@ export default function DashboardView(props: DashboardViewProps) {
               </Show>
             </button>
           </Show>
-          <WorkspaceSessionList
-            workspaceSessionGroups={props.workspaceSessionGroups}
-            activeWorkspaceId={props.activeWorkspaceId}
-            selectedSessionId={props.selectedSessionId}
-            connectingWorkspaceId={props.connectingWorkspaceId}
-            workspaceConnectionStateById={props.workspaceConnectionStateById}
-            newTaskDisabled={props.newTaskDisabled}
-            importingWorkspaceConfig={props.importingWorkspaceConfig}
-            soulStatusByWorkspaceId={props.soulStatusByWorkspaceId}
-            isPrivateWorkspacePath={props.isPrivateWorkspacePath}
-            onActivateWorkspace={props.activateWorkspace}
-            onOpenSession={openSessionFromList}
-            onCreateTaskInWorkspace={createTaskInWorkspace}
-            onOpenRenameWorkspace={props.openRenameWorkspace}
-            onShareWorkspace={(workspaceId) => setShareWorkspaceId(workspaceId)}
-            onOpenSoul={openSoulForWorkspace}
-            onRevealWorkspace={revealWorkspaceInFinder}
-            onRecoverWorkspace={props.recoverWorkspace}
-            onTestWorkspaceConnection={props.testWorkspaceConnection}
-            onEditWorkspaceConnection={props.editWorkspaceConnection}
-            onForgetWorkspace={props.forgetWorkspace}
-            onOpenCreateWorkspace={props.openCreateWorkspace}
-            onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
-            onImportWorkspaceConfig={props.importWorkspaceConfig}
-            onQuickNewSession={props.openNewSessionWithDirectory}
-          />
+          <div class="min-h-0 flex-1">
+            <WorkspaceSessionList
+              workspaceSessionGroups={props.workspaceSessionGroups}
+              activeWorkspaceId={props.activeWorkspaceId}
+              selectedSessionId={props.selectedSessionId}
+              connectingWorkspaceId={props.connectingWorkspaceId}
+              workspaceConnectionStateById={props.workspaceConnectionStateById}
+              newTaskDisabled={props.newTaskDisabled}
+              importingWorkspaceConfig={props.importingWorkspaceConfig}
+              soulStatusByWorkspaceId={props.soulStatusByWorkspaceId}
+              isPrivateWorkspacePath={props.isPrivateWorkspacePath}
+              onActivateWorkspace={props.activateWorkspace}
+              onOpenSession={openSessionFromList}
+              onCreateTaskInWorkspace={createTaskInWorkspace}
+              onOpenRenameWorkspace={props.openRenameWorkspace}
+              onShareWorkspace={(workspaceId) => setShareWorkspaceId(workspaceId)}
+              onOpenSoul={openSoulForWorkspace}
+              onRevealWorkspace={revealWorkspaceInFinder}
+              onRecoverWorkspace={props.recoverWorkspace}
+              onTestWorkspaceConnection={props.testWorkspaceConnection}
+              onEditWorkspaceConnection={props.editWorkspaceConnection}
+              onForgetWorkspace={props.forgetWorkspace}
+              onOpenCreateWorkspace={props.openCreateWorkspace}
+              onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
+              onImportWorkspaceConfig={props.importWorkspaceConfig}
+              onQuickNewSession={props.openNewSessionWithDirectory}
+            />
+          </div>
         </div>
         <SidebarStatusControls
           clientConnected={props.clientConnected}
