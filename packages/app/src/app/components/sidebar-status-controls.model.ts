@@ -25,5 +25,13 @@ export function getUnifiedStatusMeta(clientConnected: boolean, vesloServerStatus
 
 export function formatConnectedUserLabel(value?: string | null) {
   const normalized = String(value ?? "").trim();
-  return normalized || "Unknown";
+  return normalized || "Not signed in";
+}
+
+export function resolveConnectedUserLabel(primaryValue?: string | null, persistedValue?: string | null) {
+  const primary = String(primaryValue ?? "").trim();
+  if (primary) return primary;
+
+  const persisted = String(persistedValue ?? "").trim();
+  return persisted || "Not signed in";
 }

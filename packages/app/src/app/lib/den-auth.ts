@@ -7,6 +7,7 @@ const DEN_API_BASE_OVERRIDE_STORAGE_KEY = "veslo.den.apiBaseOverride";
 const DEN_DESKTOP_AUTH_PENDING_STORAGE_KEY = "veslo.den.desktopAuthPending";
 const DEFAULT_DEN_API_BASE = "https://den-control-plane-veslo.onrender.com";
 const DEN_START_TIMEOUT_MS = 12_000;
+const DEN_STATUS_TIMEOUT_MS = 8_000;
 const DEN_EXCHANGE_TIMEOUT_MS = 12_000;
 const DEN_VALIDATE_TIMEOUT_MS = 8_000;
 const DESKTOP_AUTH_STATE_BYTES = 32;
@@ -86,10 +87,41 @@ export type DesktopAuthStartResult =
   | { ok: true; authorizeUrl: string; sessionId: string }
   | { ok: false; error: string };
 
+export type DesktopAuthStatusResult =
+  | {
+      ok: true;
+      status: "pending" | "authorized" | "expired" | "cancelled" | "exchanged";
+      sessionId: string;
+      code: string | null;
+      expiresAt: string | null;
+    }
+  | { ok: false; error: string; statusCode: number | null };
+
 export type AuthCompleteDeepLinkPayload = {
   code: string;
   sessionId: string | null;
 };
+
+export function resolvePreferredDenUserLabel(
+  user?: Partial<DenAuthState["user"]> | null,
+): string | null {
+  const email = typeof user?.email === "string" ? user.email.trim() : "";
+  if (email) return email;
+
+  const name = typeof user?.name === "string" ? user.name.trim() : "";
+  if (name) return name;
+
+  const id = typeof user?.id === "string" ? user.id.trim() : "";
+  return id || null;
+}
+
+export function resolveAuthenticatedDenUserLabel(
+  auth?: Pick<DenAuthState, "user"> | null,
+): string | null {
+  const label = resolvePreferredDenUserLabel(auth?.user);
+  if (label) return label;
+  return auth ? "Signed in" : null;
+}
 
 function localStorageAccess(): Storage | null {
   if (typeof window === "undefined") return null;
@@ -331,6 +363,44 @@ export function clearDenAuth(): void {
   clearDenAuthFromStorage(sessionStorageAccess());
 }
 
+async function readDenSessionUser(
+  denApiBase: string,
+  token: string,
+): Promise<DenAuthState["user"] | null> {
+  const response = await fetchWithTimeout(
+    resolveFetch(),
+    `${denApiBase.replace(/\/+$/, "")}/v1/me`,
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    },
+    DEN_VALIDATE_TIMEOUT_MS,
+  );
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json()) as {
+    user?: { id?: unknown; name?: unknown; email?: unknown };
+  };
+  const userId = typeof payload?.user?.id === "string" ? payload.user.id.trim() : "";
+  if (!userId) {
+    return null;
+  }
+
+  const userName = typeof payload?.user?.name === "string" ? payload.user.name.trim() : "";
+  const userEmail = typeof payload?.user?.email === "string" ? payload.user.email.trim() : "";
+  return {
+    id: userId,
+    name: userName || undefined,
+    email: userEmail || undefined,
+  };
+}
+
 function bytesToBase64Url(bytes: Uint8Array): string {
   if (typeof btoa === "function") {
     let binary = "";
@@ -447,7 +517,7 @@ export async function startDesktopBrowserAuth(intent: "signin" | "signup" = "sig
 
     const response = await fetchWithTimeout(
       resolveFetch(),
-      `${denApiBase}/v1/desktop-auth/start`,
+      `${denApiBase}/v2/desktop-auth/start`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -476,7 +546,12 @@ export async function startDesktopBrowserAuth(intent: "signin" | "signup" = "sig
     }
 
     const authorizeUrl = typeof payload?.authorizeUrl === "string" ? payload.authorizeUrl.trim() : "";
-    const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId.trim() : "";
+    const sessionId =
+      typeof payload?.transactionId === "string"
+        ? payload.transactionId.trim()
+        : typeof payload?.sessionId === "string"
+          ? payload.sessionId.trim()
+          : "";
     const expiresAtRaw = typeof payload?.expiresAt === "string" ? payload.expiresAt : "";
     if (!authorizeUrl || !sessionId) {
       return { ok: false, error: "Invalid start response" };
@@ -503,6 +578,71 @@ export async function startDesktopBrowserAuth(intent: "signin" | "signup" = "sig
   }
 }
 
+export async function getDesktopBrowserAuthStatus(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<DesktopAuthStatusResult> {
+  const denApiBase = getDenApiBase();
+  const trimmedSessionId = sessionId.trim();
+  if (!trimmedSessionId) {
+    return { ok: false, error: "Missing desktop auth transaction ID.", statusCode: null };
+  }
+
+  try {
+    const response = await fetchWithTimeout(
+      resolveFetch(),
+      `${denApiBase}/v2/desktop-auth/status?transactionId=${encodeURIComponent(trimmedSessionId)}`,
+      {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        signal,
+      },
+      DEN_STATUS_TIMEOUT_MS,
+    );
+
+    const text = await response.text().catch(() => "");
+    let payload: Record<string, unknown> | null = null;
+    try {
+      payload = text ? (JSON.parse(text) as Record<string, unknown>) : null;
+    } catch {
+      payload = null;
+    }
+
+    if (!response.ok) {
+      const message = typeof payload?.error === "string" ? payload.error : `Status failed (${response.status})`;
+      return { ok: false, error: message, statusCode: response.status };
+    }
+
+    const status = typeof payload?.status === "string" ? payload.status.trim().toLowerCase() : "";
+    if (
+      status !== "pending" &&
+      status !== "authorized" &&
+      status !== "expired" &&
+      status !== "cancelled" &&
+      status !== "exchanged"
+    ) {
+      return { ok: false, error: "Invalid status response", statusCode: response.status };
+    }
+
+    return {
+      ok: true,
+      status,
+      sessionId:
+        typeof payload?.transactionId === "string" && payload.transactionId.trim()
+          ? payload.transactionId.trim()
+          : trimmedSessionId,
+      code: typeof payload?.code === "string" && payload.code.trim() ? payload.code.trim() : null,
+      expiresAt: typeof payload?.expiresAt === "string" && payload.expiresAt.trim() ? payload.expiresAt.trim() : null,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Network error",
+      statusCode: null,
+    };
+  }
+}
+
 export async function exchangeHandoffCode(
   code: string,
   exchangeProof?: DesktopAuthExchangeProof | null,
@@ -510,15 +650,17 @@ export async function exchangeHandoffCode(
   const denApiBase = getDenApiBase();
   try {
     const body: Record<string, string> = { code };
+    let exchangePath = "/v1/desktop-auth/exchange";
     if (exchangeProof?.sessionId && exchangeProof.state && exchangeProof.codeVerifier) {
-      body.sessionId = exchangeProof.sessionId;
+      exchangePath = "/v2/desktop-auth/exchange";
+      body.transactionId = exchangeProof.sessionId;
       body.state = exchangeProof.state;
       body.codeVerifier = exchangeProof.codeVerifier;
     }
 
     const response = await fetchWithTimeout(
       resolveFetch(),
-      `${denApiBase}/v1/desktop-auth/exchange`,
+      `${denApiBase}${exchangePath}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -570,6 +712,17 @@ export async function exchangeHandoffCode(
       },
     };
 
+    if (!state.user.email) {
+      try {
+        const resolvedUser = await readDenSessionUser(denApiBase, state.token);
+        if (resolvedUser) {
+          state.user = resolvedUser;
+        }
+      } catch {
+        // keep exchange payload fallback
+      }
+    }
+
     return { ok: true, state };
   } catch (err) {
     if (err instanceof Error && err.message === "Failed to fetch") {
@@ -620,6 +773,9 @@ export function parseAuthCompleteDeepLink(rawUrl: string): AuthCompleteDeepLinkP
   const code = url.searchParams.get("code")?.trim() ?? "";
   if (!code) return null;
 
-  const sessionId = url.searchParams.get("sessionId")?.trim() ?? "";
+  const sessionId =
+    url.searchParams.get("transactionId")?.trim() ??
+    url.searchParams.get("sessionId")?.trim() ??
+    "";
   return { code, sessionId: sessionId || null };
 }

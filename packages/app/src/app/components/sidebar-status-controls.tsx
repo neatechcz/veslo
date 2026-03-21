@@ -2,9 +2,10 @@ import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-j
 import { Server, Settings, User } from "lucide-solid";
 
 import type { VesloServerStatus } from "../lib/veslo-server";
+import { readDenAuth, resolveAuthenticatedDenUserLabel } from "../lib/den-auth";
 import {
-  formatConnectedUserLabel,
   getUnifiedStatusMeta,
+  resolveConnectedUserLabel,
   getVesloStatusMeta,
 } from "./sidebar-status-controls.model";
 
@@ -38,7 +39,10 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
   const vesloStatusMeta = createMemo(() => getVesloStatusMeta(props.vesloServerStatus));
 
   const unifiedStatusMeta = createMemo(() => getUnifiedStatusMeta(props.clientConnected, props.vesloServerStatus));
-  const authenticatedUserLabel = createMemo(() => formatConnectedUserLabel(props.authenticatedUser));
+  const persistedAuthenticatedUserLabel = createMemo(() => resolveAuthenticatedDenUserLabel(readDenAuth()));
+  const authenticatedUserLabel = createMemo(() =>
+    resolveConnectedUserLabel(props.authenticatedUser, persistedAuthenticatedUserLabel())
+  );
 
   return (
     <div class="mt-3 border-t border-gray-6/70 pt-3">

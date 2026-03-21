@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   formatConnectedUserLabel,
   getUnifiedStatusMeta,
+  resolveConnectedUserLabel,
   getVesloStatusMeta,
 } from "./sidebar-status-controls.model";
 
@@ -25,6 +26,13 @@ test("veslo status label maps connected, limited and unavailable", () => {
 
 test("connected user label trims whitespace and falls back when missing", () => {
   assert.equal(formatConnectedUserLabel("  alice  "), "alice");
-  assert.equal(formatConnectedUserLabel(" "), "Unknown");
-  assert.equal(formatConnectedUserLabel(null), "Unknown");
+  assert.equal(formatConnectedUserLabel(" "), "Not signed in");
+  assert.equal(formatConnectedUserLabel(null), "Not signed in");
+});
+
+test("connected user label falls back to persisted auth when the reactive prop is blank", () => {
+  assert.equal(resolveConnectedUserLabel("michal.sara@neatech.cz", "stale@example.com"), "michal.sara@neatech.cz");
+  assert.equal(resolveConnectedUserLabel(" ", "michal.sara@neatech.cz"), "michal.sara@neatech.cz");
+  assert.equal(resolveConnectedUserLabel(null, "  Michal Sara  "), "Michal Sara");
+  assert.equal(resolveConnectedUserLabel(null, null), "Not signed in");
 });

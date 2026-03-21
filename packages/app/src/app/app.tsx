@@ -149,7 +149,10 @@ import { computeWorkspaceSwitchOverlayHoldMs } from "./utils/workspace-switch-ov
 import {
   parseAuthCompleteDeepLink,
   exchangeHandoffCode,
+  getDesktopBrowserAuthStatus,
   readDenAuth,
+  resolveAuthenticatedDenUserLabel,
+  resolvePreferredDenUserLabel,
   writeDenAuth,
   readDenKeepSignedIn,
   writeDenKeepSignedIn,
@@ -2842,25 +2845,58 @@ export default function App() {
 
   const [authCompleteExchangeBusy, setAuthCompleteExchangeBusy] = createSignal(false);
   const [authenticatedUser, setAuthenticatedUser] = createSignal<string | null>(null);
+  let desktopAuthStatusPollController: AbortController | null = null;
 
-  const queueAuthCompleteDeepLink = (rawUrl: string): boolean => {
-    const payload = parseAuthCompleteDeepLink(rawUrl);
-    if (!payload) {
-      return false;
+  const cancelDesktopAuthStatusPolling = () => {
+    if (!desktopAuthStatusPollController) return;
+    try {
+      desktopAuthStatusPollController.abort();
+    } catch {
+      // ignore
     }
+    desktopAuthStatusPollController = null;
+  };
 
+  const sleepDesktopAuthPoll = (ms: number, signal?: AbortSignal) =>
+    new Promise<void>((resolve, reject) => {
+      const timeoutId = window.setTimeout(() => {
+        cleanup();
+        resolve();
+      }, ms);
+
+      const onAbort = () => {
+        cleanup();
+        reject(new DOMException("Aborted", "AbortError"));
+      };
+
+      const cleanup = () => {
+        window.clearTimeout(timeoutId);
+        signal?.removeEventListener("abort", onAbort);
+      };
+
+      if (signal) {
+        if (signal.aborted) {
+          cleanup();
+          reject(new DOMException("Aborted", "AbortError"));
+          return;
+        }
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    });
+
+  const finishDesktopBrowserAuth = (code: string, exchangeProof?: ReturnType<typeof readDesktopAuthExchangeProof>) => {
     if (authCompleteExchangeBusy()) {
-      return true;
+      return;
     }
 
-    const exchangeProof = readDesktopAuthExchangeProof(payload.sessionId);
+    cancelDesktopAuthStatusPolling();
     setAuthCompleteExchangeBusy(true);
     setError(null);
-    exchangeHandoffCode(payload.code, exchangeProof).then((result) => {
+    exchangeHandoffCode(code, exchangeProof).then((result) => {
       setAuthCompleteExchangeBusy(false);
       if (result.ok) {
         writeDenAuth(result.state);
-        clearDesktopAuthExchangeProof(payload.sessionId);
+        clearDesktopAuthExchangeProof(exchangeProof?.sessionId);
         setError(null);
         setView("onboarding");
         setBooting(true);
@@ -2875,24 +2911,116 @@ export default function App() {
       } else {
         console.error("[den-auth] exchange failed:", result.error);
         if (exchangeProof) {
-          clearDesktopAuthExchangeProof(payload.sessionId);
+          clearDesktopAuthExchangeProof(exchangeProof.sessionId);
         }
         setError(`Sign in failed: ${result.error}`);
         setOnboardingStep("auth");
         setView("onboarding");
       }
     });
+  };
+
+  const startDesktopAuthStatusPolling = (sessionId: string) => {
+    const initialProof = readDesktopAuthExchangeProof(sessionId);
+    if (!initialProof) {
+      return;
+    }
+
+    cancelDesktopAuthStatusPolling();
+    const controller = new AbortController();
+    desktopAuthStatusPollController = controller;
+
+    void (async () => {
+      let consecutiveFailures = 0;
+
+      while (!controller.signal.aborted) {
+        const latestProof = readDesktopAuthExchangeProof(sessionId);
+        if (!latestProof) {
+          return;
+        }
+
+        if (authCompleteExchangeBusy()) {
+          return;
+        }
+
+        const statusResult = await getDesktopBrowserAuthStatus(sessionId, controller.signal);
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        if (!statusResult.ok) {
+          if (statusResult.statusCode === 404) {
+            return;
+          }
+          consecutiveFailures += 1;
+          if (consecutiveFailures >= 3) {
+            console.warn("[den-auth] desktop auth polling stopped after repeated failures:", statusResult.error);
+            return;
+          }
+        } else {
+          consecutiveFailures = 0;
+          if (statusResult.status === "authorized" && statusResult.code) {
+            finishDesktopBrowserAuth(statusResult.code, latestProof);
+            return;
+          }
+
+          if (
+            statusResult.status === "expired" ||
+            statusResult.status === "cancelled" ||
+            statusResult.status === "exchanged"
+          ) {
+            return;
+          }
+        }
+
+        try {
+          await sleepDesktopAuthPoll(1_250, controller.signal);
+        } catch (error) {
+          const name = error instanceof DOMException ? error.name : "";
+          if (name === "AbortError") {
+            return;
+          }
+          throw error;
+        }
+      }
+    })().catch((error) => {
+      if (controller.signal.aborted) {
+        return;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn("[den-auth] desktop auth polling failed:", message);
+    });
+  };
+
+  const queueAuthCompleteDeepLink = (rawUrl: string): boolean => {
+    const payload = parseAuthCompleteDeepLink(rawUrl);
+    if (!payload) {
+      return false;
+    }
+
+    if (authCompleteExchangeBusy()) {
+      return true;
+    }
+
+    const exchangeProof = readDesktopAuthExchangeProof(payload.sessionId);
+    finishDesktopBrowserAuth(payload.code, exchangeProof);
 
     return true;
   };
 
+  onMount(() => {
+    const pendingExchangeProof = readDesktopAuthExchangeProof();
+    if (pendingExchangeProof) {
+      startDesktopAuthStatusPolling(pendingExchangeProof.sessionId);
+    }
+  });
+
+  onCleanup(() => {
+    cancelDesktopAuthStatusPolling();
+  });
+
   const resolveDenUserLabel = (auth: ReturnType<typeof readDenAuth>) => {
-    const userName = auth?.user?.name?.trim() ?? "";
-    if (userName) return userName;
-    const userEmail = auth?.user?.email?.trim() ?? "";
-    if (userEmail) return userEmail;
-    const userId = auth?.user?.id?.trim() ?? "";
-    return userId || null;
+    return resolveAuthenticatedDenUserLabel(auth);
   };
 
   createEffect(() => {
@@ -2920,7 +3048,11 @@ export default function App() {
         const userName = typeof payload?.user?.name === "string" ? payload.user.name.trim() : "";
         const userEmail = typeof payload?.user?.email === "string" ? payload.user.email.trim() : "";
         if (canceled) return;
-        setAuthenticatedUser(userName || userEmail || userId);
+        setAuthenticatedUser(resolvePreferredDenUserLabel({
+          id: userId,
+          name: userName || undefined,
+          email: userEmail || undefined,
+        }));
         writeDenAuth({
           ...auth,
           user: {
@@ -5805,6 +5937,7 @@ export default function App() {
       const startResult = await startDesktopBrowserAuth("signin");
       if (startResult.ok) {
         url = startResult.authorizeUrl;
+        startDesktopAuthStatusPolling(startResult.sessionId);
       } else {
         console.warn("[den-auth] /start failed, falling back to legacy onboarding URL:", startResult.error);
       }
