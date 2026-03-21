@@ -8,6 +8,7 @@ import {
   DesktopAuthTransactionTable,
 } from "../db/schema.js"
 import { env } from "../env.js"
+import { asyncRoute } from "./errors.js"
 import { requireSession } from "./session.js"
 import {
   resolveMembershipOrganizations,
@@ -264,7 +265,7 @@ function parseExchangeBody(rawBody: unknown):
   return { ok: true, code, codeVerifier, transactionId, state }
 }
 
-desktopAuthV2Router.post("/start", async (req, res) => {
+desktopAuthV2Router.post("/start", asyncRoute(async (req, res) => {
   const parsed = parseStartBody(req.body)
   if (!parsed.ok) {
     res.status(parsed.status).json({ error: parsed.error })
@@ -307,9 +308,9 @@ desktopAuthV2Router.post("/start", async (req, res) => {
     authorizeUrl: buildDesktopAuthorizeUrl(transactionId, parsed.intent, parsed.state),
     expiresAt: expiresAt.toISOString(),
   })
-})
+}))
 
-desktopAuthV2Router.post("/authorize", async (req, res) => {
+desktopAuthV2Router.post("/authorize", asyncRoute(async (req, res) => {
   const parsed = parseAuthorizeBody(req.body)
   if (!parsed.ok) {
     res.status(parsed.status).json({ error: parsed.error })
@@ -419,9 +420,9 @@ desktopAuthV2Router.post("/authorize", async (req, res) => {
   )
 
   sendAuthorizeSuccess(req, res, redirectUrl)
-})
+}))
 
-desktopAuthV2Router.get("/status", async (req, res) => {
+desktopAuthV2Router.get("/status", asyncRoute(async (req, res) => {
   const transactionId = readTrimmedString(req.query.transactionId)
   if (!transactionId) {
     res.status(400).json({ error: "missing_transaction_id" })
@@ -482,9 +483,9 @@ desktopAuthV2Router.get("/status", async (req, res) => {
     code: handoff?.code ?? null,
     expiresAt: transaction.expires_at.toISOString(),
   })
-})
+}))
 
-desktopAuthV2Router.post("/exchange", async (req, res) => {
+desktopAuthV2Router.post("/exchange", asyncRoute(async (req, res) => {
   const parsed = parseExchangeBody(req.body)
   if (!parsed.ok) {
     res.status(parsed.status).json({ error: parsed.error })
@@ -654,4 +655,4 @@ desktopAuthV2Router.post("/exchange", async (req, res) => {
       ? { id: org.id, name: org.name, slug: org.slug, role: org.role }
       : { id: exchangeResult.orgId },
   })
-})
+}))

@@ -4,6 +4,7 @@ import { and, eq, gt, isNotNull, isNull, lt, or } from "drizzle-orm"
 import { db } from "../db/index.js"
 import { AuthSessionTable, DesktopAuthHandoffTable, DesktopAuthSessionTable } from "../db/schema.js"
 import { env } from "../env.js"
+import { asyncRoute } from "./errors.js"
 import { requireSession } from "./session.js"
 import { resolveMembershipOrganizations, readRequestedOrganizationId, serializeOrganization } from "./org-auth.js"
 import { pickActiveOrganization } from "./access.js"
@@ -147,7 +148,7 @@ async function runDesktopAuthCleanup() {
   await cleanupStaleDesktopSessions()
 }
 
-desktopAuthRouter.post("/start", async (req, res) => {
+desktopAuthRouter.post("/start", asyncRoute(async (req, res) => {
   const parsed = parseStartBody(req.body)
   if (!parsed.ok) {
     res.status(parsed.status).json({ error: parsed.error })
@@ -185,9 +186,9 @@ desktopAuthRouter.post("/start", async (req, res) => {
     authorizeUrl: buildDesktopAuthorizeUrl(sessionId, parsed.intent),
     expiresAt: expiresAt.toISOString(),
   })
-})
+}))
 
-desktopAuthRouter.post("/handoff", async (req, res) => {
+desktopAuthRouter.post("/handoff", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
   if (!session) return
 
@@ -283,9 +284,9 @@ desktopAuthRouter.post("/handoff", async (req, res) => {
   }
 
   res.json({ code: record.code })
-})
+}))
 
-desktopAuthRouter.post("/exchange", async (req, res) => {
+desktopAuthRouter.post("/exchange", asyncRoute(async (req, res) => {
   const body = isRecord(req.body) ? req.body : {}
   const code = readTrimmedString(body.code)
   if (!code) {
@@ -470,4 +471,4 @@ desktopAuthRouter.post("/exchange", async (req, res) => {
       ? { id: org.id, name: org.name, slug: org.slug, role: org.role }
       : { id: exchangeResult.orgId },
   })
-})
+}))
