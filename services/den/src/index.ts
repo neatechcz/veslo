@@ -396,6 +396,11 @@ async function ensureTables() {
       )
     `)
     await ensureColumn("desktop_auth_handoff", "session_id", "varchar(64)")
+    await ensureVarcharColumnMinimumLength("desktop_auth_handoff", "id", 64, false)
+    await ensureVarcharColumnMinimumLength("desktop_auth_handoff", "code", 255, false)
+    await ensureVarcharColumnMinimumLength("desktop_auth_handoff", "session_id", 64, true)
+    await ensureVarcharColumnMinimumLength("desktop_auth_handoff", "user_id", 64, false)
+    await ensureVarcharColumnMinimumLength("desktop_auth_handoff", "org_id", 64, false)
     await ensureIndex("desktop_auth_handoff", "desktop_auth_handoff_user_id", ["user_id"])
     await ensureIndex("desktop_auth_handoff", "desktop_auth_handoff_session_id", ["session_id"])
 
