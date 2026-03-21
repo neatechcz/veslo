@@ -8,6 +8,7 @@ import { asyncRoute } from "./errors.js"
 import { requireSession } from "./session.js"
 import { resolveMembershipOrganizations, readRequestedOrganizationId, serializeOrganization } from "./org-auth.js"
 import { pickActiveOrganization } from "./access.js"
+import { insertDesktopAuthHandoffRecord } from "./desktop-auth-handoff-recovery.js"
 import {
   createHandoffCode,
   consumeHandoffCode,
@@ -263,16 +264,7 @@ desktopAuthRouter.post("/handoff", asyncRoute(async (req, res) => {
 
   const record = createHandoffCode(session.user.id, picked.organization.id, requestedSessionId)
 
-  await db.insert(DesktopAuthHandoffTable).values({
-    id: record.id,
-    code: record.code,
-    session_id: record.sessionId,
-    user_id: record.userId,
-    org_id: record.orgId,
-    expires_at: record.expiresAt,
-    consumed_at: null,
-    created_at: record.createdAt,
-  })
+  await insertDesktopAuthHandoffRecord(record)
 
   if (requestedSessionId) {
     res.json({

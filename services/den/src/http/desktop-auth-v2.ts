@@ -10,6 +10,7 @@ import {
 import { env } from "../env.js"
 import { asyncRoute } from "./errors.js"
 import { requireSession } from "./session.js"
+import { insertDesktopAuthHandoffRecord } from "./desktop-auth-handoff-recovery.js"
 import {
   resolveMembershipOrganizations,
   readRequestedOrganizationId,
@@ -401,15 +402,9 @@ desktopAuthV2Router.post("/authorize", asyncRoute(async (req, res) => {
     return
   }
 
-  await db.insert(DesktopAuthHandoffTable).values({
-    id: handoffRecord.id,
-    code: handoffRecord.code,
-    session_id: parsed.transactionId,
-    user_id: handoffRecord.userId,
-    org_id: handoffRecord.orgId,
-    expires_at: handoffRecord.expiresAt,
-    consumed_at: null,
-    created_at: handoffRecord.createdAt,
+  await insertDesktopAuthHandoffRecord({
+    ...handoffRecord,
+    sessionId: parsed.transactionId,
   })
 
   const redirectUrl = buildRedirectUrl(
