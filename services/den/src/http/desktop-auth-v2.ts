@@ -115,6 +115,24 @@ function buildTransactionId(): string {
   return `dat_${crypto.randomUUID().replaceAll("-", "")}`
 }
 
+function readAuthorizeTransport(req: express.Request): "json" | "redirect" {
+  const requestedTransport = req.header("x-veslo-desktop-auth-transport")
+  if (typeof requestedTransport === "string" && requestedTransport.trim().toLowerCase() === "json") {
+    return "json"
+  }
+
+  return "redirect"
+}
+
+function sendAuthorizeSuccess(req: express.Request, res: express.Response, redirectUrl: string) {
+  if (readAuthorizeTransport(req) === "json") {
+    res.status(200).json({ redirectUrl })
+    return
+  }
+
+  res.redirect(302, redirectUrl)
+}
+
 function mapTransactionStatus(
   status: "started" | "browser_authed" | "exchanged" | "expired" | "cancelled",
 ): "pending" | "authorized" | "exchanged" | "expired" | "cancelled" {
@@ -400,7 +418,7 @@ desktopAuthV2Router.post("/authorize", async (req, res) => {
     parsed.transactionId,
   )
 
-  res.redirect(302, redirectUrl)
+  sendAuthorizeSuccess(req, res, redirectUrl)
 })
 
 desktopAuthV2Router.get("/status", async (req, res) => {

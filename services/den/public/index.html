@@ -357,7 +357,10 @@
               const authorizeResponse = await fetch("/v2/desktop-auth/authorize", {
                 method: "POST",
                 credentials: "include",
-                headers,
+                headers: {
+                  ...headers,
+                  "x-veslo-desktop-auth-transport": "json",
+                },
                 redirect: "manual",
                 body: JSON.stringify({
                   transactionId: onboardingTransactionId,
@@ -365,24 +368,32 @@
                 }),
               });
 
-              const redirectUrl = authorizeResponse.headers.get("location");
-              if (authorizeResponse.status !== 302 || !redirectUrl) {
-                const text = await authorizeResponse.text().catch(() => "");
+              const text = await authorizeResponse.text().catch(() => "");
+              let redirectUrl = authorizeResponse.headers.get("location") || "";
+              let parsed = null;
+              try {
+                parsed = text ? JSON.parse(text) : null;
+              } catch {
+                parsed = null;
+              }
+
+              if (authorizeResponse.status === 200 && !redirectUrl) {
+                redirectUrl = typeof parsed?.redirectUrl === "string" ? parsed.redirectUrl.trim() : "";
+              }
+
+              if ((authorizeResponse.status !== 200 && authorizeResponse.status !== 302) || !redirectUrl) {
                 let errorMessage = "Authorization redirect failed";
-                try {
-                  const parsed = text ? JSON.parse(text) : null;
-                  if (parsed && typeof parsed.error === "string") {
-                    errorMessage = parsed.error;
-                  }
-                } catch {
+                if (parsed && typeof parsed.error === "string") {
+                  errorMessage = parsed.error;
+                } else {
                   if (text.trim()) {
                     errorMessage = text.trim();
                   }
                 }
                 busyCard.classList.add("hidden");
                 formCard.classList.remove("hidden");
-                showError(errorMessage);
                 updateUI();
+                showError(errorMessage);
                 return;
               }
 
@@ -414,8 +425,8 @@
             if (!res.ok || !data?.code) {
               busyCard.classList.add("hidden");
               formCard.classList.remove("hidden");
-              showError(data?.error || "Handoff failed");
               updateUI();
+              showError(data?.error || "Handoff failed");
               return;
             }
 
@@ -441,8 +452,8 @@
           } catch (err) {
             busyCard.classList.add("hidden");
             formCard.classList.remove("hidden");
-            showError(err.message || "Network error during handoff");
             updateUI();
+            showError(err.message || "Network error during handoff");
           }
         }
 
