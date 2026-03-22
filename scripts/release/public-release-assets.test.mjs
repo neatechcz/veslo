@@ -9,6 +9,9 @@ import {
   publicUpdaterEndpoint,
 } from "./public-release-assets.mjs";
 
+const OLD_UPDATER_PUBKEY =
+  "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUwNDdCNTAwMTcxNUUxQTQKUldTazRSVVhBTFZIVUpNRi9OQnNRaElZY1NUWUQxS1ZJOTFUeUdPd2d6ZnFmMW5QV2xJQ1hXTTkK";
+
 test("uses veslo-updates as the default public release repo", () => {
   assert.equal(DEFAULT_PUBLIC_RELEASE_REPO, "neatechcz/veslo-updates");
 });
@@ -37,6 +40,13 @@ test("desktop updater config points at the public release repo", () => {
   const tauriConfig = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
 
   assert.deepEqual(tauriConfig.plugins.updater.endpoints, [publicUpdaterEndpoint()]);
+});
+
+test("desktop updater config no longer uses the previous updater public key", () => {
+  const tauriConfigPath = resolve(import.meta.dirname, "../../packages/desktop/src-tauri/tauri.conf.json");
+  const tauriConfig = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
+
+  assert.notEqual(tauriConfig.plugins.updater.pubkey, OLD_UPDATER_PUBKEY);
 });
 
 test("release workflow mirrors desktop artifacts to veslo-updates", () => {
