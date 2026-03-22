@@ -115,10 +115,15 @@ const updatePackageJson = async (nextVersion) => {
   tauriData.opencodeRouterVersion = nextVersion;
   orchestratorData.version = nextVersion;
 
-  // Ensure veslo-orchestrator uses the same veslo-server/opencode-router versions.
+  // Ensure veslo-orchestrator uses the same veslo-server/veslo-code-router versions.
   orchestratorData.dependencies = orchestratorData.dependencies ?? {};
   orchestratorData.dependencies["veslo-server"] = nextVersion;
-  orchestratorData.dependencies["opencode-router"] = nextVersion;
+  if ("veslo-code-router" in orchestratorData.dependencies) {
+    orchestratorData.dependencies["veslo-code-router"] = nextVersion;
+  }
+  if ("opencode-router" in orchestratorData.dependencies) {
+    delete orchestratorData.dependencies["opencode-router"];
+  }
 
   serverData.version = nextVersion;
   opencodeRouterData.version = nextVersion;

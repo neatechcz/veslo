@@ -39,6 +39,7 @@ const versions = {
   },
   opencodeRouterVersionPinned: desktopPkg.opencodeRouterVersion ?? null,
   orchestratorVesloServerRange: orchestratorPkg.dependencies?.["veslo-server"] ?? null,
+  orchestratorVesloCodeRouterRange: orchestratorPkg.dependencies?.["veslo-code-router"] ?? null,
 };
 
 const checks = [];
@@ -129,6 +130,22 @@ if (!vesloServerRange) {
     "Veslo-server dependency matches server version",
     versions.server && vesloServerRange === versions.server,
     `${vesloServerRange} vs ${versions.server ?? "?"}`,
+  );
+}
+
+const vesloCodeRouterRange = versions.orchestratorVesloCodeRouterRange ?? "";
+const vesloCodeRouterPinned = calverPattern.test(vesloCodeRouterRange);
+if (!vesloCodeRouterRange) {
+  addWarning("veslo-orchestrator is missing a veslo-code-router dependency.");
+} else if (!vesloCodeRouterPinned) {
+  addWarning(
+    `veslo-orchestrator veslo-code-router dependency is not pinned (${vesloCodeRouterRange}).`,
+  );
+} else {
+  addCheck(
+    "Veslo-code-router dependency matches router version",
+    versions.opencodeRouter && vesloCodeRouterRange === versions.opencodeRouter,
+    `${vesloCodeRouterRange} vs ${versions.opencodeRouter ?? "?"}`,
   );
 }
 

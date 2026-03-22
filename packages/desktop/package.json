@@ -1,9 +1,9 @@
 {
   "name": "@neatech/veslo",
   "private": true,
-  "version": "2026.3.1",
+  "version": "2026.3.2",
   "opencodeVersion": "1.2.25",
-  "opencodeRouterVersion": "2026.3.1",
+  "opencodeRouterVersion": "2026.3.2",
   "type": "module",
   "scripts": {
     "dev": "VESLO_DATA_DIR=\"$HOME/.veslo/veslo-orchestrator-dev\" tauri dev --config src-tauri/tauri.dev.conf.json --config \"{\\\"build\\\":{\\\"devUrl\\\":\\\"http://localhost:${PORT:-5173}\\\"}}\"",
