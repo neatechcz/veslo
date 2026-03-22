@@ -646,7 +646,6 @@ jobs:
 
       - name: Verify versions.json bundled (macOS)
         if: success() && matrix.os_type == 'macos'
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -675,17 +674,7 @@ jobs:
             --dir "$tmp_dir"
 
           tar -xzf "$tmp_dir/veslo-desktop-darwin-${asset_arch}.app.tar.gz" -C "$tmp_dir"
-
-          app_path="$tmp_dir/Veslo.app"
-          manifest_path="$app_path/Contents/MacOS/versions.json"
-
-          if [ ! -f "$manifest_path" ]; then
-            echo "ERROR: versions.json missing from app bundle: $manifest_path" >&2
-            echo "Hint: ensure packages/desktop/src-tauri/tauri.conf.json bundles sidecars/versions.json" >&2
-            exit 1
-          fi
-
-          echo "Found bundled versions.json at $manifest_path"
+          node scripts/release/verify-bundled-versions.mjs "$tmp_dir" "${{ matrix.target }}"
 
   mirror-public-release:
     name: Mirror desktop release to public repo
