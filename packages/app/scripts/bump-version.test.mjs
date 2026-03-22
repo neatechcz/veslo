@@ -54,6 +54,11 @@ test("bump-version keeps orchestrator pinned to veslo-code-router instead of ope
     );
     writeJson(join(fixtureRoot, "packages/desktop/src-tauri/tauri.conf.json"), {
       version: "2026.3.1",
+      bundle: {
+        windows: {
+          wix: {},
+        },
+      },
     });
 
     execFileSync("node", [scriptPath, "--set", "2026.3.2"], {
@@ -64,10 +69,14 @@ test("bump-version keeps orchestrator pinned to veslo-code-router instead of ope
     const orchestratorPkg = JSON.parse(
       readFileSync(join(fixtureRoot, "packages/orchestrator/package.json"), "utf8"),
     );
+    const tauriConfig = JSON.parse(
+      readFileSync(join(fixtureRoot, "packages/desktop/src-tauri/tauri.conf.json"), "utf8"),
+    );
 
     assert.equal(orchestratorPkg.dependencies["veslo-server"], "2026.3.2");
     assert.equal(orchestratorPkg.dependencies["veslo-code-router"], "2026.3.2");
     assert.equal("opencode-router" in orchestratorPkg.dependencies, false);
+    assert.equal(tauriConfig.bundle.windows.wix.version, "26.3.2");
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }

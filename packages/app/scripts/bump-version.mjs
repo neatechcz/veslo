@@ -2,6 +2,8 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { deriveWindowsWixVersion } from "../../../scripts/release/windows-version.mjs";
+
 const ROOT = process.cwd();
 const REPO_ROOT = path.resolve(ROOT, "../..");
 const args = process.argv.slice(2);
@@ -159,6 +161,10 @@ const updateTauriConfig = async (nextVersion) => {
   const filePath = path.join(REPO_ROOT, "packages", "desktop", "src-tauri", "tauri.conf.json");
   const data = JSON.parse(await readFile(filePath, "utf8"));
   data.version = nextVersion;
+  data.bundle = data.bundle ?? {};
+  data.bundle.windows = data.bundle.windows ?? {};
+  data.bundle.windows.wix = data.bundle.windows.wix ?? {};
+  data.bundle.windows.wix.version = deriveWindowsWixVersion(nextVersion);
   if (!isDryRun) {
     await writeFile(filePath, JSON.stringify(data, null, 2) + "\n");
   }

@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { deriveWindowsWixVersion } from "./windows-version.mjs";
+
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const args = process.argv.slice(2);
 const outputJson = args.includes("--json");
@@ -29,6 +31,7 @@ const versions = {
   app: appPkg.version ?? null,
   desktop: desktopPkg.version ?? null,
   tauri: tauriConfig.version ?? null,
+  windowsMsi: tauriConfig.bundle?.windows?.wix?.version ?? null,
   cargo: cargoVersion ?? null,
   server: serverPkg.version ?? null,
   orchestrator: orchestratorPkg.version ?? null,
@@ -100,6 +103,14 @@ addCheck(
   versions.desktop && versions.cargo && versions.desktop === versions.cargo,
   `${versions.desktop ?? "?"} vs ${versions.cargo ?? "?"}`,
 );
+if (versions.app) {
+  const expectedWindowsMsi = deriveWindowsWixVersion(versions.app);
+  addCheck(
+    "Windows MSI version matches derived CalVer mapping",
+    versions.windowsMsi === expectedWindowsMsi,
+    `${versions.windowsMsi ?? "?"} vs ${expectedWindowsMsi}`,
+  );
+}
 addCheck(
   "OpenCodeRouter version pinned in desktop",
   versions.opencodeRouter && versions.opencodeRouterVersionPinned && versions.opencodeRouter === versions.opencodeRouterVersionPinned,
