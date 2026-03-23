@@ -20,6 +20,7 @@ use commands::command_files::{
     opencode_command_delete, opencode_command_list, opencode_command_write,
 };
 use commands::config::{read_opencode_config, write_opencode_config};
+use commands::den_auth::{den_auth_snapshot_read, den_auth_snapshot_write};
 use commands::engine::{
     engine_doctor, engine_info, engine_install, engine_restart, engine_start, engine_stop,
 };
@@ -178,6 +179,8 @@ pub fn run() {
             open_in_obsidian,
             write_obsidian_mirror_file,
             read_obsidian_mirror_file,
+            den_auth_snapshot_read,
+            den_auth_snapshot_write,
             reset_veslo_state,
             reset_opencode_cache,
             opencode_db_migrate,

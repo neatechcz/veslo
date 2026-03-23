@@ -425,7 +425,7 @@ const buildRangeFromOffsets = (root: HTMLElement, start: number, end: number) =>
 
 export default function Composer(props: ComposerProps) {
   const translate = (key: string) => t(key, currentLocale());
-  const composerWidthClass = createMemo(() => (props.compactWidth ? "max-w-[325px]" : "max-w-[800px]"));
+  const composerWidthClass = createMemo(() => "max-w-[960px]");
   let editorRef: HTMLDivElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
   let disclaimerContainerRef: HTMLDivElement | undefined;

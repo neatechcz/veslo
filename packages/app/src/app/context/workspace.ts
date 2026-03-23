@@ -59,6 +59,7 @@ import {
 } from "../utils/workspace-switch-timeouts";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { createWorkspaceActivateGuard } from "./workspace-activate-guard";
+import { createOnboardingLanguageGate } from "./onboarding-language-gate";
 import { createConfigStore } from "../stores/config-store";
 import { createEngineStore } from "../stores/engine-store";
 import { createRemoteStore } from "../stores/remote-store";
@@ -1698,6 +1699,8 @@ export function createWorkspaceStore(options: {
     }
   };
 
+  const languageGate = createOnboardingLanguageGate(hasPersistedLanguagePreference);
+
   const resolveWelcomeOnboardingStep = (): OnboardingStep =>
     hasPersistedLanguagePreference() ? "welcome" : "language";
 
@@ -1939,8 +1942,15 @@ export function createWorkspaceStore(options: {
       options.setBaseUrl(info.baseUrl);
     }
 
-    bootTrace("language check...", "hasPersistedLanguage=", hasPersistedLanguagePreference());
-    if (!hasPersistedLanguagePreference()) {
+    const shouldPromptLanguage = languageGate.shouldPrompt();
+    bootTrace(
+      "language check...",
+      "hasPersistedLanguage=",
+      hasPersistedLanguagePreference(),
+      "shouldPromptLanguage=",
+      shouldPromptLanguage,
+    );
+    if (shouldPromptLanguage) {
       bootTrace("→ setOnboardingStep('language') and RETURN");
       options.setOnboardingStep("language");
       return;
@@ -2181,6 +2191,7 @@ export function createWorkspaceStore(options: {
   }
 
   async function onConfirmLanguage() {
+    languageGate.markConfirmed();
     await bootstrapOnboarding();
   }
 

@@ -113,6 +113,7 @@ import {
   createSessionWithWorkspaceActivation,
   openSessionWithWorkspaceActivation,
 } from "./session-navigation";
+import { availableChatWidthForLayout } from "./session-layout-width";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -146,6 +147,7 @@ export type SessionViewProps = {
   authenticatedUser: string | null;
   vesloServerStatus: VesloServerStatus;
   startupPreference: StartupPreference | null;
+  hideTitlebar: boolean;
   vesloServerClient: VesloServerClient | null;
   vesloServerSettings: VesloServerSettings;
   vesloServerHostInfo: VesloServerInfo | null;
@@ -309,8 +311,6 @@ const STREAM_SCROLL_MIN_INTERVAL_MS = 90;
 const STREAM_RENDER_BATCH_MS = 220;
 const MAIN_THREAD_LAG_INTERVAL_MS = 200;
 const MAIN_THREAD_LAG_WARN_MS = 180;
-const LEFT_SIDEBAR_DOCKED_WIDTH = 260;
-const RIGHT_SIDEBAR_DOCKED_WIDTH = 280;
 const SIDEBAR_DOCKED_VISIBILITY_KEY = "veslo.global.sidebar.docked.v1";
 const LEGACY_SIDEBAR_DOCKED_VISIBILITY_KEY = "veslo.session.sidebar.docked.v1";
 const DEFAULT_SIDEBAR_DOCKED_VISIBILITY: SidebarDockedVisibility = {
@@ -352,16 +352,6 @@ const writeSidebarDockedVisibility = (value: SidebarDockedVisibility) => {
   } catch {
     // ignore
   }
-};
-
-const availableChatWidthForLayout = (rootWidth: number, state: SidebarLayoutState) => {
-  if (!Number.isFinite(rootWidth)) return 0;
-  return Math.max(
-    0,
-    rootWidth -
-      (state.docked.left ? LEFT_SIDEBAR_DOCKED_WIDTH : 0) -
-      (state.docked.right ? RIGHT_SIDEBAR_DOCKED_WIDTH : 0),
-  );
 };
 
 type CommandPaletteMode = "root" | "sessions";
@@ -439,9 +429,9 @@ export default function SessionView(props: SessionViewProps) {
     return availableChatWidthForLayout(rootWidth, sidebarLayoutState()) < 740;
   });
   const centerColumnWidthClass = (wideWidth: string) =>
-    createMemo(() => (useCompactCenterColumn() ? "max-w-[325px]" : wideWidth));
+    createMemo(() => (useCompactCenterColumn() ? "max-w-full" : wideWidth));
   const searchBannerWidthClass = centerColumnWidthClass("max-w-[800px]");
-  const chatBodyWidthClass = centerColumnWidthClass("max-w-[650px]");
+  const chatBodyWidthClass = centerColumnWidthClass("max-w-[960px]");
   const railWidthClass = centerColumnWidthClass("max-w-[68ch]");
   const overlayOpenSide = createMemo(() =>
     sidebarLayoutState().mode === "narrow" ? sidebarLayoutState().overlay : null,
@@ -3694,6 +3684,7 @@ export default function SessionView(props: SessionViewProps) {
       <TitlebarMenuToggles
         leftActive={leftSidebarToggleActive()}
         rightActive={rightSidebarToggleActive()}
+        hideTitlebar={props.hideTitlebar}
         onToggleLeft={() => toggleSidebarMenu("left")}
         onToggleRight={() => toggleSidebarMenu("right")}
       />

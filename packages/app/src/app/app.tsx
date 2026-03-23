@@ -150,6 +150,7 @@ import {
   parseAuthCompleteDeepLink,
   exchangeHandoffCode,
   getDesktopBrowserAuthStatus,
+  hydrateDenAuthFromDesktopSnapshot,
   readDenAuth,
   resolveAuthenticatedDenUserLabel,
   resolvePreferredDenUserLabel,
@@ -218,6 +219,7 @@ import {
   stripVesloBundleInviteFromUrl,
   stripVesloConnectInviteFromUrl,
   createVesloServerClient,
+  deriveLocalVesloServerUrlFromOpencodeBaseUrl,
   hydrateVesloServerSettingsFromEnv,
   normalizeVesloServerUrl,
   readVesloServerSettings,
@@ -391,20 +393,29 @@ export default function App() {
   const [vesloAuditError, setVesloAuditError] = createSignal<string | null>(null);
   const [devtoolsWorkspaceId, setDevtoolsWorkspaceId] = createSignal<string | null>(null);
 
+  const vesloServerLocalFallbackBaseUrl = createMemo(() => {
+    if (!isTauriRuntime()) return "";
+    if (startupPreference() === "server") return "";
+    return deriveLocalVesloServerUrlFromOpencodeBaseUrl(baseUrl()) ?? "";
+  });
+
   const vesloServerBaseUrl = createMemo(() => {
     const pref = startupPreference();
     const hostInfo = vesloServerHostInfo();
+    const localFallbackUrl = vesloServerLocalFallbackBaseUrl();
     const settingsUrl = normalizeVesloServerUrl(vesloServerSettings().urlOverride ?? "") ?? "";
+    const preferredLocalUrl = hostInfo?.baseUrl ?? localFallbackUrl;
 
-    if (pref === "local") return hostInfo?.baseUrl ?? "";
+    if (pref === "local") return preferredLocalUrl;
     if (pref === "server") return settingsUrl;
-    return hostInfo?.baseUrl ?? settingsUrl;
+    return preferredLocalUrl || settingsUrl;
   });
 
   const vesloServerAuth = createMemo(
     () => {
       const pref = startupPreference();
       const hostInfo = vesloServerHostInfo();
+      const localFallbackUrl = vesloServerLocalFallbackBaseUrl();
       const settingsToken = vesloServerSettings().token?.trim() ?? "";
       const clientToken = hostInfo?.clientToken?.trim() ?? "";
       const hostToken = hostInfo?.hostToken?.trim() ?? "";
@@ -417,6 +428,9 @@ export default function App() {
       }
       if (hostInfo?.baseUrl) {
         return { token: clientToken || undefined, hostToken: hostToken || undefined };
+      }
+      if (localFallbackUrl) {
+        return { token: undefined, hostToken: undefined };
       }
       return { token: settingsToken || undefined, hostToken: undefined };
     },
@@ -539,17 +553,19 @@ export default function App() {
     const pref = startupPreference();
     const info = vesloServerHostInfo();
     const hostUrl = info?.connectUrl ?? info?.lanUrl ?? info?.mdnsUrl ?? info?.baseUrl ?? "";
+    const localFallbackUrl = vesloServerLocalFallbackBaseUrl();
+    const resolvedLocalUrl = hostUrl || localFallbackUrl;
     const settingsUrl = normalizeVesloServerUrl(vesloServerSettings().urlOverride ?? "") ?? "";
 
     if (pref === "local") {
-      setVesloServerUrl(hostUrl);
+      setVesloServerUrl(resolvedLocalUrl);
       return;
     }
     if (pref === "server") {
       setVesloServerUrl(settingsUrl);
       return;
     }
-    setVesloServerUrl(hostUrl || settingsUrl);
+    setVesloServerUrl(resolvedLocalUrl || settingsUrl);
   });
 
   const checkVesloServer = async (url: string, token?: string, hostToken?: string) => {
@@ -5307,6 +5323,19 @@ export default function App() {
       }
     }
 
+    if (isTauriRuntime()) {
+      try {
+        await Promise.race([
+          hydrateDenAuthFromDesktopSnapshot().catch(() => {}),
+          new Promise<void>((resolve) => {
+            window.setTimeout(resolve, 1500);
+          }),
+        ]);
+      } catch {
+        // ignore desktop auth snapshot hydration failures
+      }
+    }
+
     void workspaceStore.bootstrapOnboarding().finally(() => {
       startupGuard.complete();
       setBooting(false);
@@ -6294,6 +6323,7 @@ export default function App() {
     authenticatedUser: authenticatedUser(),
     vesloServerStatus: vesloServerStatus(),
     startupPreference: startupPreference(),
+    hideTitlebar: hideTitlebar(),
     vesloServerClient: vesloServerClient(),
     vesloServerSettings: vesloServerSettings(),
     vesloServerHostInfo: vesloServerHostInfo(),
