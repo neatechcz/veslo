@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  clearDenAuth,
   exchangeHandoffCode,
   getDesktopBrowserAuthStatus,
+  hydrateDenAuthFromDesktopSnapshot,
   parseAuthCompleteDeepLink,
+  readDenAuth,
+  readDenKeepSignedIn,
   readDesktopAuthExchangeProof,
   resolveAuthenticatedDenUserLabel,
   resolvePreferredDenUserLabel,
   startDesktopBrowserAuth,
+  writeDenKeepSignedIn,
 } from "./den-auth.js";
 
 class MemoryStorage implements Storage {
@@ -39,15 +44,24 @@ class MemoryStorage implements Storage {
   }
 }
 
-function installDomStorage() {
+function installDomStorage(options?: {
+  tauriInvoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
+}) {
   const localStorage = new MemoryStorage();
   const sessionStorage = new MemoryStorage();
   const previousWindow = globalThis.window;
+  const tauriInternals =
+    typeof options?.tauriInvoke === "function"
+      ? {
+          invoke: options.tauriInvoke,
+        }
+      : null;
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
       localStorage,
       sessionStorage,
+      __TAURI_INTERNALS__: tauriInternals,
     },
   });
   return {
@@ -439,4 +453,82 @@ test("parseAuthCompleteDeepLink accepts transactionId callbacks from v2 redirect
     parseAuthCompleteDeepLink("veslo://auth-complete?code=abc123&transactionId=dat_789&state=state-1"),
     { code: "abc123", sessionId: "dat_789" },
   );
+});
+
+test("hydrateDenAuthFromDesktopSnapshot imports persisted auth before onboarding", async () => {
+  const authState = {
+    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    token: "token_from_snapshot",
+    orgId: "org_123",
+    user: { id: "user_123", email: "snapshot@example.com" },
+    org: { id: "org_123", slug: "snapshot-org" },
+  };
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  const storage = installDomStorage({
+    tauriInvoke: async (command, args) => {
+      calls.push({ command, args });
+      if (command === "den_auth_snapshot_read") {
+        return {
+          authJson: JSON.stringify(authState),
+          keepSignedIn: true,
+          source: "legacy-webkit",
+        };
+      }
+      if (command === "den_auth_snapshot_write") {
+        return null;
+      }
+      throw new Error(`Unexpected invoke command: ${command}`);
+    },
+  });
+
+  try {
+    clearDenAuth();
+    writeDenKeepSignedIn(true);
+    storage.localStorage.removeItem("veslo.den.keepSignedIn");
+
+    const imported = await hydrateDenAuthFromDesktopSnapshot();
+    assert.equal(imported, true);
+    assert.deepEqual(readDenAuth(), authState);
+    assert.equal(readDenKeepSignedIn(), true);
+    assert.equal(
+      calls.some((item) => item.command === "den_auth_snapshot_read"),
+      true,
+    );
+  } finally {
+    storage.restore();
+  }
+});
+
+test("hydrateDenAuthFromDesktopSnapshot skips import when keepSignedIn is false in desktop snapshot", async () => {
+  const authState = {
+    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    token: "token_from_snapshot",
+    orgId: "org_456",
+    user: { id: "user_456" },
+    org: { id: "org_456" },
+  };
+  const storage = installDomStorage({
+    tauriInvoke: async (command) => {
+      if (command === "den_auth_snapshot_read") {
+        return {
+          authJson: JSON.stringify(authState),
+          keepSignedIn: false,
+          source: "legacy-webkit",
+        };
+      }
+      if (command === "den_auth_snapshot_write") {
+        return null;
+      }
+      throw new Error(`Unexpected invoke command: ${command}`);
+    },
+  });
+
+  try {
+    const imported = await hydrateDenAuthFromDesktopSnapshot();
+    assert.equal(imported, false);
+    assert.equal(readDenAuth(), null);
+    assert.equal(readDenKeepSignedIn(), false);
+  } finally {
+    storage.restore();
+  }
 });

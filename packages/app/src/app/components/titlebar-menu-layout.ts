@@ -2,6 +2,7 @@ export type TitlebarMenuLayoutInputs = {
   tauri: boolean;
   windows: boolean;
   mac: boolean;
+  hideTitlebar: boolean;
 };
 
 export type TitlebarContentInsetInputs = {
@@ -27,6 +28,7 @@ export const resolveTitlebarMenuLayout = ({
   tauri,
   windows,
   mac,
+  hideTitlebar,
 }: TitlebarMenuLayoutInputs): TitlebarMenuLayout => {
   if (!tauri) {
     return {
@@ -42,7 +44,7 @@ export const resolveTitlebarMenuLayout = ({
       rootClass: TAURI_OVERLAY_ROOT_CLASS,
       leftOffsetClass: "pointer-events-auto relative z-10 mt-1 ml-2.5",
       rightOffsetClass: "pointer-events-auto relative z-10 mt-1 mr-[136px]",
-      dragRegionClass: TAURI_DRAG_REGION_CLASS,
+      dragRegionClass: hideTitlebar ? TAURI_DRAG_REGION_CLASS : null,
     };
   }
 
@@ -51,7 +53,7 @@ export const resolveTitlebarMenuLayout = ({
       rootClass: TAURI_OVERLAY_ROOT_CLASS,
       leftOffsetClass: "pointer-events-auto relative z-10 mt-1 ml-[66px]",
       rightOffsetClass: "pointer-events-auto relative z-10 mt-1 mr-2",
-      dragRegionClass: TAURI_DRAG_REGION_CLASS,
+      dragRegionClass: hideTitlebar ? TAURI_DRAG_REGION_CLASS : null,
     };
   }
 
@@ -59,7 +61,7 @@ export const resolveTitlebarMenuLayout = ({
     rootClass: TAURI_OVERLAY_ROOT_CLASS,
     leftOffsetClass: "pointer-events-auto relative z-10 mt-2 ml-[72px]",
     rightOffsetClass: "pointer-events-auto relative z-10 mt-2 mr-3",
-    dragRegionClass: TAURI_DRAG_REGION_CLASS,
+    dragRegionClass: hideTitlebar ? TAURI_DRAG_REGION_CLASS : null,
   };
 };
 

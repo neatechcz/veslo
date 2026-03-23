@@ -944,7 +944,7 @@ export default function MessageList(props: MessageListProps) {
                   class={`w-full relative ${
                     block.isUser
                       ? "max-w-[80%] px-5 py-3 rounded-[24px] bg-gray-3 text-gray-12 text-[14px] leading-relaxed font-medium"
-                      : "max-w-[650px] text-[14px] leading-[1.5] text-gray-12 group"
+                      : "max-w-[960px] text-[14px] leading-[1.5] text-gray-12 group"
                   } ${searchOutlineClass}`}
                 >
                   <StepsContainer
@@ -977,7 +977,7 @@ export default function MessageList(props: MessageListProps) {
                 data-message-id={block.messageId}
                 style={blockPerfStyle(blockIndex)}
               >
-                <div class={`w-full relative max-w-[650px] ${searchOutlineClass}`}>
+                <div class={`w-full relative max-w-[960px] ${searchOutlineClass}`}>
                   <div
                     class="inline-flex max-w-full items-start gap-2 rounded-[18px] border border-red-7/20 bg-red-1/35 px-3 py-2 text-[13px] leading-5 text-red-12 shadow-sm"
                     role="alert"
@@ -1001,7 +1001,7 @@ export default function MessageList(props: MessageListProps) {
                 class={`w-full relative ${
                   block.isUser
                     ? "max-w-[80%] px-5 py-3 rounded-[24px] bg-gray-3 text-gray-12 text-[14px] leading-relaxed font-medium"
-                    : "max-w-[650px] text-[14px] leading-[1.5] text-gray-12 antialiased group"
+                    : "max-w-[960px] text-[14px] leading-[1.5] text-gray-12 antialiased group"
                 } ${searchOutlineClass}`}
               >
                 <Show when={attachmentsForMessage(block.message).length > 0}>

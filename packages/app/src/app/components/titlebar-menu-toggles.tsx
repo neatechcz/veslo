@@ -6,6 +6,7 @@ import { resolveTitlebarMenuLayout } from "./titlebar-menu-layout";
 type TitlebarMenuTogglesProps = {
   leftActive: boolean;
   rightActive: boolean;
+  hideTitlebar: boolean;
   onToggleLeft: () => void;
   onToggleRight: () => void;
 };
@@ -15,6 +16,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
     tauri: isTauriRuntime(),
     windows: isWindowsPlatform(),
     mac: isMacPlatform(),
+    hideTitlebar: props.hideTitlebar,
   });
 
   const buttonClass = (active: boolean) =>

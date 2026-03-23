@@ -5,6 +5,8 @@ const DEN_AUTH_STORAGE_KEY = "veslo.den.auth";
 const DEN_KEEP_SIGNED_IN_STORAGE_KEY = "veslo.den.keepSignedIn";
 const DEN_API_BASE_OVERRIDE_STORAGE_KEY = "veslo.den.apiBaseOverride";
 const DEN_DESKTOP_AUTH_PENDING_STORAGE_KEY = "veslo.den.desktopAuthPending";
+const DEN_AUTH_SNAPSHOT_READ_COMMAND = "den_auth_snapshot_read";
+const DEN_AUTH_SNAPSHOT_WRITE_COMMAND = "den_auth_snapshot_write";
 const DEFAULT_DEN_API_BASE = "https://den-control-plane-veslo.onrender.com";
 const DEN_START_TIMEOUT_MS = 12_000;
 const DEN_STATUS_TIMEOUT_MS = 8_000;
@@ -101,6 +103,16 @@ export type AuthCompleteDeepLinkPayload = {
   code: string;
   sessionId: string | null;
 };
+
+type DenDesktopSnapshot = {
+  authJson?: string | null;
+  keepSignedIn?: boolean | null;
+  source?: string | null;
+};
+
+type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
+
+let desktopSnapshotWriteQueue: Promise<void> = Promise.resolve();
 
 export function resolvePreferredDenUserLabel(
   user?: Partial<DenAuthState["user"]> | null,
@@ -228,22 +240,25 @@ export function getDenApiBase(): string {
   return readDenApiBaseOverride() ?? getDefaultDenApiBase();
 }
 
+function parseDenAuthCandidate(candidate: unknown): DenAuthState | null {
+  if (
+    typeof candidate === "object" &&
+    candidate !== null &&
+    "denApiBase" in candidate &&
+    "token" in candidate &&
+    "orgId" in candidate
+  ) {
+    return candidate as DenAuthState;
+  }
+  return null;
+}
+
 function readDenAuthFromStorage(store: Storage | null): DenAuthState | null {
   if (!store) return null;
   try {
     const raw = store.getItem(DEN_AUTH_STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as unknown;
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "denApiBase" in parsed &&
-      "token" in parsed &&
-      "orgId" in parsed
-    ) {
-      return parsed as DenAuthState;
-    }
-    return null;
+    return parseDenAuthCandidate(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -266,6 +281,90 @@ function clearDenAuthFromStorage(store: Storage | null): void {
   } catch {
     // ignore
   }
+}
+
+async function invokeDesktopCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  const runtimeInvoke = (typeof window !== "undefined"
+    ? (window as unknown as { __TAURI_INTERNALS__?: { invoke?: TauriInvoke } }).__TAURI_INTERNALS__
+        ?.invoke
+    : null) as TauriInvoke | null;
+  if (runtimeInvoke) {
+    return runtimeInvoke<T>(command, args);
+  }
+
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<T>(command, args);
+}
+
+function queueDesktopSnapshotWrite(auth: DenAuthState | null, keepSignedIn: boolean): void {
+  if (!isTauriRuntime()) return;
+  const payloadAuth = auth ? JSON.stringify(auth) : null;
+  desktopSnapshotWriteQueue = desktopSnapshotWriteQueue
+    .catch(() => {})
+    .then(async () => {
+      try {
+        await invokeDesktopCommand(DEN_AUTH_SNAPSHOT_WRITE_COMMAND, {
+          authJson: payloadAuth,
+          keepSignedIn,
+        });
+      } catch {
+        // ignore desktop snapshot write failures
+      }
+    });
+}
+
+function syncDesktopSnapshotFromCurrentState(): void {
+  if (!isTauriRuntime()) return;
+  queueDesktopSnapshotWrite(readDenAuth(), readDenKeepSignedIn());
+}
+
+function parseSnapshotAuth(snapshot?: DenDesktopSnapshot | null): DenAuthState | null {
+  const raw = typeof snapshot?.authJson === "string" ? snapshot.authJson.trim() : "";
+  if (!raw) return null;
+  try {
+    return parseDenAuthCandidate(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+export async function hydrateDenAuthFromDesktopSnapshot(): Promise<boolean> {
+  if (!isTauriRuntime()) return false;
+
+  const localStore = localStorageAccess();
+  const sessionStore = sessionStorageAccess();
+  if (!localStore) return false;
+
+  const localAuth = readDenAuthFromStorage(localStore);
+  const sessionAuth = readDenAuthFromStorage(sessionStore);
+  if (localAuth || sessionAuth) {
+    syncDesktopSnapshotFromCurrentState();
+    return false;
+  }
+
+  let snapshot: DenDesktopSnapshot | null = null;
+  try {
+    snapshot = await invokeDesktopCommand<DenDesktopSnapshot | null>(DEN_AUTH_SNAPSHOT_READ_COMMAND);
+  } catch {
+    return false;
+  }
+
+  if (!snapshot || snapshot.keepSignedIn === false) {
+    if (snapshot?.keepSignedIn === false) {
+      writeDenKeepSignedIn(false);
+      clearDenAuth();
+    }
+    return false;
+  }
+
+  const state = parseSnapshotAuth(snapshot);
+  if (!state) {
+    return false;
+  }
+
+  writeDenKeepSignedIn(true);
+  writeDenAuth(state);
+  return true;
 }
 
 export function readDenKeepSignedIn(): boolean {
@@ -294,22 +393,21 @@ export function writeDenKeepSignedIn(value: boolean): void {
   }
 
   const existingAuth = readDenAuthFromStorage(localStore) ?? readDenAuthFromStorage(sessionStore);
-  if (!existingAuth) return;
-
-  if (keepSignedIn) {
-    if (writeDenAuthToStorage(localStore, existingAuth)) {
-      clearDenAuthFromStorage(sessionStore);
+  if (existingAuth) {
+    if (keepSignedIn) {
+      if (writeDenAuthToStorage(localStore, existingAuth)) {
+        clearDenAuthFromStorage(sessionStore);
+      }
+    } else {
+      const wroteSession = writeDenAuthToStorage(sessionStore, existingAuth);
+      if (wroteSession) {
+        clearDenAuthFromStorage(localStore);
+      } else {
+        writeDenAuthToStorage(localStore, existingAuth);
+      }
     }
-    return;
   }
-
-  const wroteSession = writeDenAuthToStorage(sessionStore, existingAuth);
-  if (wroteSession) {
-    clearDenAuthFromStorage(localStore);
-    return;
-  }
-
-  writeDenAuthToStorage(localStore, existingAuth);
+  syncDesktopSnapshotFromCurrentState();
 }
 
 export function readDenAuth(): DenAuthState | null {
@@ -343,24 +441,25 @@ export function writeDenAuth(state: DenAuthState): void {
     const wroteLocal = writeDenAuthToStorage(localStore, state);
     if (wroteLocal) {
       clearDenAuthFromStorage(sessionStore);
-      return;
+    } else {
+      writeDenAuthToStorage(sessionStore, state);
     }
-    writeDenAuthToStorage(sessionStore, state);
-    return;
+  } else {
+    const wroteSession = writeDenAuthToStorage(sessionStore, state);
+    if (wroteSession) {
+      clearDenAuthFromStorage(localStore);
+    } else {
+      writeDenAuthToStorage(localStore, state);
+    }
   }
 
-  const wroteSession = writeDenAuthToStorage(sessionStore, state);
-  if (wroteSession) {
-    clearDenAuthFromStorage(localStore);
-    return;
-  }
-
-  writeDenAuthToStorage(localStore, state);
+  syncDesktopSnapshotFromCurrentState();
 }
 
 export function clearDenAuth(): void {
   clearDenAuthFromStorage(localStorageAccess());
   clearDenAuthFromStorage(sessionStorageAccess());
+  syncDesktopSnapshotFromCurrentState();
 }
 
 async function readDenSessionUser(

@@ -1141,6 +1141,7 @@ export default function DashboardView(props: DashboardViewProps) {
       <TitlebarMenuToggles
         leftActive={leftSidebarVisible()}
         rightActive={rightSidebarVisible()}
+        hideTitlebar={props.hideTitlebar}
         onToggleLeft={() => toggleSidebarMenu("left")}
         onToggleRight={() => toggleSidebarMenu("right")}
       />
