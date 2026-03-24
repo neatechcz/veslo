@@ -2088,7 +2088,15 @@ export function createWorkspaceStore(options: {
 
       bootTrace("startHost...");
       options.setOnboardingStep("connecting");
-      const ok = await engineStore.startHost({ workspacePath: activeWorkspacePath().trim() });
+      let ok = false;
+      try {
+        ok = await withTimeoutOrThrow(
+          engineStore.startHost({ workspacePath: activeWorkspacePath().trim() }),
+          { timeoutMs: START_HOST_TIMEOUT_MS, label: "bootstrap_startHost" },
+        );
+      } catch (e) {
+        bootTrace("startHost timed out or failed:", e instanceof Error ? e.message : String(e));
+      }
       bootTrace("startHost ok=", ok);
       if (!ok) {
         options.setOnboardingStep("local");
