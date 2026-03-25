@@ -183,6 +183,7 @@ export type SessionViewProps = {
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
   openRenameWorkspace: (workspaceId: string) => void;
   selectSession: (sessionId: string) => Promise<void> | void;
+  setPendingSessionLoad: (value: { sessionTitle: string; workspaceName: string } | null) => void;
   messages: MessageWithParts[];
   todos: TodoItem[];
   busyLabel: string | null;
@@ -3272,6 +3273,15 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
+    // Show loading overlay immediately when switching to a different session.
+    if (sessionId !== props.selectedSessionId) {
+      const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
+      const session = group?.sessions.find((s) => s.id === sessionId);
+      const workspaceName = group?.workspace.displayName ?? group?.workspace.name ?? "";
+      const sessionTitle = session?.title ?? "";
+      props.setPendingSessionLoad({ sessionTitle, workspaceName });
+    }
+
     void openSessionWithWorkspaceActivation({
       activeWorkspaceId: props.activeWorkspaceId,
       getActiveWorkspaceId: () => props.activeWorkspaceId,

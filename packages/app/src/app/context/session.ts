@@ -144,6 +144,7 @@ export function createSessionStore(options: {
   setSseConnected: (connected: boolean) => void;
   markReloadRequired?: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
   onHotReloadApplied?: () => void;
+  onSessionLoadComplete?: () => void;
 }) {
 
   const sessionDebugEnabled = () => options.developerMode();
@@ -992,6 +993,7 @@ export function createSessionStore(options: {
     } finally {
       setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
       selectGuard.cleanup(sessionID, run);
+      options.onSessionLoadComplete?.();
     }
   }
 
