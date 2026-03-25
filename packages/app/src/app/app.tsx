@@ -6648,14 +6648,14 @@ export default function App() {
       </Switch>
 
       <WorkspaceSwitchOverlay
-        open={workspaceSwitchOpen()}
+        open={workspaceSwitchOpen() && !pendingSessionLoad()}
         workspace={workspaceSwitchWorkspace()}
         statusKey={workspaceSwitchStatusKey()}
       />
 
       <Show when={pendingSessionLoad()}>
         {(pending) => (
-          <div class="fixed inset-0 z-[65] overflow-hidden bg-gray-1 text-gray-12">
+          <div class="fixed inset-0 z-[65] overflow-hidden bg-gray-1/90 backdrop-blur-[1px] text-gray-12">
             <div class="absolute inset-0">
               <div class="absolute inset-0 bg-[radial-gradient(circle_at_top,_var(--tw-gradient-stops))] from-gray-2 via-gray-1 to-gray-1 opacity-80" />
               <div
