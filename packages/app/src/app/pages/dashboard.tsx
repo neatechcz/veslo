@@ -74,6 +74,7 @@ import {
   SlidersHorizontal,
   Zap,
 } from "lucide-solid";
+import { currentLocale, t } from "../../i18n";
 import type { Language } from "../../i18n";
 
 export type DashboardViewProps = {
@@ -396,21 +397,21 @@ export default function DashboardView(props: DashboardViewProps) {
   const title = createMemo(() => {
     switch (props.tab) {
       case "scheduled":
-        return "Automations";
+        return t("nav.automations", currentLocale());
       case "soul":
-        return "Soul";
+        return t("nav.soul", currentLocale());
       case "skills":
-        return "Skills";
+        return t("nav.skills", currentLocale());
       case "plugins":
-        return "Extensions";
+        return t("nav.extensions", currentLocale());
       case "mcp":
-        return "Extensions";
+        return t("nav.extensions", currentLocale());
       case "config":
-        return "Advanced";
+        return t("nav.advanced", currentLocale());
       case "settings":
-        return "Settings";
+        return t("dashboard.settings", currentLocale());
       default:
-        return "Automations";
+        return t("nav.automations", currentLocale());
     }
   });
 
@@ -596,8 +597,8 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
 
-  const navItem = (t: DashboardTab, label: string, icon: any) => {
-    const active = () => props.tab === t || (t === "mcp" && props.tab === "plugins");
+  const navItem = (tab: DashboardTab, label: string, icon: any) => {
+    const active = () => props.tab === tab || (tab === "mcp" && props.tab === "plugins");
     return (
       <button
         type="button"
@@ -606,7 +607,7 @@ export default function DashboardView(props: DashboardViewProps) {
             ? "bg-dls-active text-dls-text"
             : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
         }`}
-        onClick={() => props.setTab(t)}
+        onClick={() => props.setTab(tab)}
       >
         {icon}
         {label}
@@ -1641,11 +1642,11 @@ export default function DashboardView(props: DashboardViewProps) {
       <Show when={rightSidebarVisible()}>
         <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
         <div class="space-y-1 pt-2">
-          {navItem("scheduled", "Automations", <History size={18} />)}
-          {navItem("soul", "Soul", <HeartPulse size={18} class={soulNavIconClass()} />)}
-          {navItem("skills", "Skills", <Zap size={18} />)}
-          {navItem("mcp", "Extensions", <Box size={18} />)}
-          <Show when={props.developerMode}>{navItem("config", "Advanced", <SlidersHorizontal size={18} />)}</Show>
+          {navItem("scheduled", t("nav.automations", currentLocale()), <History size={18} />)}
+          {navItem("soul", t("nav.soul", currentLocale()), <HeartPulse size={18} class={soulNavIconClass()} />)}
+          {navItem("skills", t("nav.skills", currentLocale()), <Zap size={18} />)}
+          {navItem("mcp", t("nav.extensions", currentLocale()), <Box size={18} />)}
+          <Show when={props.developerMode}>{navItem("config", t("nav.advanced", currentLocale()), <SlidersHorizontal size={18} />)}</Show>
         </div>
         </aside>
       </Show>

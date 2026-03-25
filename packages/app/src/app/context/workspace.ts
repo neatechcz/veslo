@@ -93,6 +93,11 @@ export type SandboxCreateProgressState = {
 
 export type SandboxCreatePhase = "idle" | "preflight" | "provisioning" | "finalizing";
 
+function _wsLog(msg: string, data?: unknown) {
+  const line = `[${new Date().toISOString()}] ${msg}${data !== undefined ? " " + (typeof data === "string" ? data : JSON.stringify(data)) : ""}`;
+  console.log(line);
+  try { (window as any).__wsActivateLog = ((window as any).__wsActivateLog || "") + line + "\n"; } catch {}
+}
 
 export function createWorkspaceStore(options: {
   startupPreference: () => StartupPreference | null;
@@ -838,6 +843,7 @@ export function createWorkspaceStore(options: {
       prevProjectDir: oldWorkspacePath,
       actualEngineDir,
     });
+    _wsLog("[workspace:activate] STEP 1 — syncActiveWorkspaceId + setProjectDir", { id, nextRoot, workspaceChanged, wasLocalConnection, actualEngineDir });
 
     syncActiveWorkspaceId(id);
     setProjectDir(nextRoot);
@@ -849,11 +855,13 @@ export function createWorkspaceStore(options: {
         setAuthorizedDirs([]);
       } else {
         setWorkspaceConfigLoaded(false);
+        _wsLog("[workspace:activate] STEP 2 — workspaceVesloRead...", { path: next.path });
         try {
           const cfg = await withTimeoutOrThrow(
             workspaceVesloRead({ workspacePath: next.path }),
             { timeoutMs: WORKSPACE_IO_TIMEOUT_MS, label: "workspace_veslo_read" },
           );
+          _wsLog("[workspace:activate] STEP 2 — workspaceVesloRead DONE");
           setWorkspaceConfig(cfg);
           setWorkspaceConfigLoaded(true);
 
@@ -863,20 +871,23 @@ export function createWorkspaceStore(options: {
           } else {
             setAuthorizedDirs([next.path]);
           }
-        } catch {
+        } catch (e) {
+          _wsLog("[workspace:activate] STEP 2 — workspaceVesloRead FAILED", e instanceof Error ? e.message : String(e));
           setWorkspaceConfig(null);
           setWorkspaceConfigLoaded(true);
           setAuthorizedDirs([next.path]);
         }
       }
 
+      _wsLog("[workspace:activate] STEP 3 — workspaceSetActive...", { id });
       try {
         await withTimeoutOrThrow(
           workspaceSetActive(id),
           { timeoutMs: WORKSPACE_SET_ACTIVE_TIMEOUT_MS, label: "workspace_set_active" },
         );
-      } catch {
-        // ignore
+        _wsLog("[workspace:activate] STEP 3 — workspaceSetActive DONE");
+      } catch (e) {
+        _wsLog("[workspace:activate] STEP 3 — workspaceSetActive FAILED", e instanceof Error ? e.message : String(e));
       }
     } else if (!isRemote) {
       if (!authorizedDirs().includes(next.path)) {
@@ -893,11 +904,19 @@ export function createWorkspaceStore(options: {
     //
     // Without this, we end up keeping the remote client while `startupPreference` flips to
     // "local", and subsequent session/file actions behave inconsistently.
+    _wsLog("[workspace:activate] STEP 4 — branch decision", {
+      isRemote,
+      hasClient: Boolean(options.client()),
+      wasLocalConnection,
+      workspaceChanged,
+    });
+
     if (!isRemote && options.client() && !wasLocalConnection) {
       if (isSuperseded()) {
         wsDebug("activate:superseded:before-remote-to-local", { id });
         return false;
       }
+      _wsLog("[workspace:activate] STEP 4a — remote→local reconnect path");
       wsDebug("activate:remote->local:reconnect", {
         id,
         nextPath: next.path,
@@ -929,18 +948,22 @@ export function createWorkspaceStore(options: {
       if (canReuseHost && runtime === "veslo-orchestrator") {
         try {
           const reuseStart = Date.now();
+          _wsLog("[workspace:activate] STEP 4a.1 — activateOrchestratorWorkspace...", { path: next.path });
           await activateOrchestratorWorkspace({
             workspacePath: next.path,
             name: next.displayName?.trim() || next.name?.trim() || null,
           });
+          _wsLog("[workspace:activate] STEP 4a.2 — activateVesloHostWorkspace...");
           await activateVesloHostWorkspaceWithTimeout(
             () => activateVesloHostWorkspace(next.path),
           );
+          _wsLog("[workspace:activate] STEP 4a.3 — engineInfo...");
 
           const nextInfo = await withTimeoutOrThrow(
             engineInfo(),
             { timeoutMs: ENGINE_INFO_TIMEOUT_MS, label: "engine_info" },
           );
+          _wsLog("[workspace:activate] STEP 4a.3 — engineInfo DONE");
           engineStore.setEngine(nextInfo);
 
           const username = nextInfo.opencodeUsername?.trim() ?? "";
@@ -949,6 +972,7 @@ export function createWorkspaceStore(options: {
           engineStore.setEngineAuth(auth ?? null);
 
           if (nextInfo.baseUrl) {
+            _wsLog("[workspace:activate] STEP 4a.4 — connectToServer...", { baseUrl: nextInfo.baseUrl });
             connectedToLocalHost = await connectToServer(
               nextInfo.baseUrl,
               next.path,
@@ -973,11 +997,13 @@ export function createWorkspaceStore(options: {
       }
 
       if (!connectedToLocalHost) {
+        _wsLog("[workspace:activate] STEP 4a.5 — startHost (no reuse)...", { path: next.path });
         const startHostAt = Date.now();
         const ok = await withTimeoutOrThrow(
           engineStore.startHost({ workspacePath: next.path, navigate: false }),
           { timeoutMs: START_HOST_TIMEOUT_MS, label: "startHost" },
         );
+        _wsLog("[workspace:activate] STEP 4a.5 — startHost DONE", { ok, ms: Date.now() - startHostAt });
         wsDebug("activate:remote->local:startHost:done", { ok, ms: Date.now() - startHostAt });
         if (!ok) {
           updateWorkspaceConnectionState(id, {
@@ -996,6 +1022,7 @@ export function createWorkspaceStore(options: {
         wsDebug("activate:superseded:before-engine-restart", { id });
         return false;
       }
+      _wsLog("[workspace:activate] STEP 5 — local→local engine restart", { id, path: next.path });
       wsDebug("activate:local->local:restartEngine", { id, nextPath: next.path });
       options.setError(null);
       options.setBusy(true);
@@ -1004,19 +1031,24 @@ export function createWorkspaceStore(options: {
 
       try {
         const runtime = resolveEngineRuntime();
+        _wsLog("[workspace:activate] STEP 5 — runtime =", runtime);
         if (runtime === "veslo-orchestrator") {
+          _wsLog("[workspace:activate] STEP 5.1 — activateOrchestratorWorkspace...");
           await activateOrchestratorWorkspace({
             workspacePath: next.path,
             name: next.displayName?.trim() || next.name?.trim() || null,
           });
+          _wsLog("[workspace:activate] STEP 5.2 — activateVesloHostWorkspace...");
           await activateVesloHostWorkspaceWithTimeout(
             () => activateVesloHostWorkspace(next.path),
           );
+          _wsLog("[workspace:activate] STEP 5.3 — engineInfo...");
 
           const newInfo = await withTimeoutOrThrow(
             engineInfo(),
             { timeoutMs: ENGINE_INFO_TIMEOUT_MS, label: "engine_info" },
           );
+          _wsLog("[workspace:activate] STEP 5.3 — engineInfo DONE");
           engineStore.setEngine(newInfo);
 
           const username = newInfo.opencodeUsername?.trim() ?? "";
@@ -1025,6 +1057,7 @@ export function createWorkspaceStore(options: {
           engineStore.setEngineAuth(auth ?? null);
 
           if (newInfo.baseUrl) {
+            _wsLog("[workspace:activate] STEP 5.4 — connectToServer...");
             const ok = await connectToServer(
               newInfo.baseUrl,
               next.path,
@@ -1043,6 +1076,7 @@ export function createWorkspaceStore(options: {
             }
           }
         } else {
+          _wsLog("[workspace:activate] STEP 5.1b — runWorkspaceEngineRestartWithTimeouts (non-orchestrator)...");
           const { stopResult: info, startResult: newInfo } = await runWorkspaceEngineRestartWithTimeouts({
             stop: () => engineStop(),
             start: () =>
@@ -1094,6 +1128,7 @@ export function createWorkspaceStore(options: {
     }
 
       if (engineRestartFailed) {
+        _wsLog("[workspace:activate] STEP 6 — engineRestartFailed!", { id, ms: Date.now() - activateStart });
         updateWorkspaceConnectionState(id, {
           status: "error",
           message: "Failed to switch worker",
@@ -1102,6 +1137,7 @@ export function createWorkspaceStore(options: {
         return false;
       }
 
+      _wsLog("[workspace:activate] STEP 6 — SUCCESS, refreshing skills/plugins", { id, ms: Date.now() - activateStart });
       options.refreshSkills({ force: true }).catch(e => reportError(e, "workspace.refreshSkills"));
       options.refreshPlugins().catch(e => reportError(e, "workspace.refreshPlugins"));
       updateWorkspaceConnectionState(id, { status: "connected", message: null });
@@ -1111,6 +1147,7 @@ export function createWorkspaceStore(options: {
       if (activateTimeoutId !== null) {
         clearTimeout(activateTimeoutId);
       }
+      _wsLog("[workspace:activate] FINALLY — clearing connectingWorkspaceId", { id, ms: Date.now() - activateStart });
       wsActivateGuard.exit(myVersion, setConnectingWorkspaceId);
       wsDebug("activate:finally", { id, ms: Date.now() - activateStart });
     }
@@ -2063,6 +2100,7 @@ export function createWorkspaceStore(options: {
       options.setStartupPreference("local");
 
       if (info?.running && info.baseUrl) {
+        _wsLog("[workspace:bootstrap] engine already running, connectToServer...", { baseUrl: info.baseUrl, projectDir: info.projectDir });
         bootTrace("engine running, connectToServer...");
         options.setOnboardingStep("connecting");
         const ok = await connectToServer(
@@ -2086,6 +2124,7 @@ export function createWorkspaceStore(options: {
         return;
       }
 
+      _wsLog("[workspace:bootstrap] startHost...", { workspacePath: activeWorkspacePath().trim() });
       bootTrace("startHost...");
       options.setOnboardingStep("connecting");
       let ok = false;
@@ -2095,8 +2134,10 @@ export function createWorkspaceStore(options: {
           { timeoutMs: START_HOST_TIMEOUT_MS, label: "bootstrap_startHost" },
         );
       } catch (e) {
+        _wsLog("[workspace:bootstrap] startHost FAILED/TIMED OUT:", e instanceof Error ? e.message : String(e));
         bootTrace("startHost timed out or failed:", e instanceof Error ? e.message : String(e));
       }
+      _wsLog("[workspace:bootstrap] startHost ok=", ok);
       bootTrace("startHost ok=", ok);
       if (!ok) {
         options.setOnboardingStep("local");

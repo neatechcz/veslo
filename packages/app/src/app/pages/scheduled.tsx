@@ -3,6 +3,7 @@ import { For, Show, createMemo, createSignal } from "solid-js";
 import type { ScheduledJob } from "../types";
 import { usePlatform } from "../context/platform";
 import { formatRelativeTime, isTauriRuntime } from "../utils";
+import { currentLocale, t } from "../../i18n";
 
 import Button from "../components/button";
 import {
@@ -45,10 +46,11 @@ export type ScheduledTasksViewProps = {
   canReloadWorkspace: boolean;
 };
 
-const toRelative = (value?: string | null) => {
-  if (!value) return "Never";
+const toRelative = (value?: string | null, locale?: string) => {
+  const neverLabel = locale ? t("scheduled.never", locale as any) : "Never";
+  if (!value) return neverLabel;
   const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return "Never";
+  if (!Number.isFinite(parsed)) return neverLabel;
   return formatRelativeTime(parsed);
 };
 
@@ -79,30 +81,40 @@ const parseCronNumbers = (value: string) => {
   return Array.from(values).sort((a, b) => a - b);
 };
 
-const humanizeCron = (cron: string) => {
+const humanizeCron = (cron: string, locale?: string) => {
+  const tr = (key: string, replacements?: Record<string, string>) => {
+    let val = locale ? t(key, locale as any) : t(key);
+    if (replacements) {
+      for (const [k, v] of Object.entries(replacements)) {
+        val = val.replace(`{${k}}`, v);
+      }
+    }
+    return val;
+  };
+
   const parts = cron.trim().split(/\s+/);
-  if (parts.length < 5) return "Custom schedule";
+  if (parts.length < 5) return tr("scheduled.custom_schedule");
   const [minuteRaw, hourRaw, dom, mon, dowRaw] = parts;
-  if (!minuteRaw || !hourRaw || !dom || !mon || !dowRaw) return "Custom schedule";
+  if (!minuteRaw || !hourRaw || !dom || !mon || !dowRaw) return tr("scheduled.custom_schedule");
 
   // Every N hours
   if (minuteRaw === "0" && hourRaw.startsWith("*/") && dom === "*" && mon === "*" && dowRaw === "*") {
     const interval = Number.parseInt(hourRaw.slice(2), 10);
     if (Number.isFinite(interval) && interval > 0) {
-      return interval === 1 ? "Every hour" : `Every ${interval} hours`;
+      return interval === 1 ? tr("scheduled.every_hour") : tr("scheduled.every_n_hours", { n: String(interval) });
     }
   }
 
   // Daily / weekly at a fixed time
   const hour = Number.parseInt(hourRaw, 10);
   const minute = Number.parseInt(minuteRaw, 10);
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return "Custom schedule";
-  if (dom !== "*" || mon !== "*") return "Custom schedule";
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return tr("scheduled.custom_schedule");
+  if (dom !== "*" || mon !== "*") return tr("scheduled.custom_schedule");
 
   const timeLabel = `${pad2(hour)}:${pad2(minute)}`;
 
   if (dowRaw === "*") {
-    return `Every day at ${timeLabel}`;
+    return tr("scheduled.every_day_at", { time: timeLabel });
   }
 
   const days = parseCronNumbers(dowRaw);
@@ -112,50 +124,52 @@ const humanizeCron = (cron: string) => {
   const weekendDays = [0, 6];
 
   const includesAll = allDays.every((d) => normalized.has(d));
-  if (includesAll) return `Every day at ${timeLabel}`;
+  if (includesAll) return tr("scheduled.every_day_at", { time: timeLabel });
 
   const includesWeekdays = weekdayDays.every((d) => normalized.has(d)) && !weekendDays.some((d) => normalized.has(d));
-  if (includesWeekdays) return `Weekdays at ${timeLabel}`;
+  if (includesWeekdays) return tr("scheduled.weekdays_at", { time: timeLabel });
 
   const includesWeekends = weekendDays.every((d) => normalized.has(d)) && !weekdayDays.some((d) => normalized.has(d));
-  if (includesWeekends) return `Weekends at ${timeLabel}`;
+  if (includesWeekends) return tr("scheduled.weekends_at", { time: timeLabel });
 
-  const labels: Record<number, string> = {
-    0: "Sun",
-    1: "Mon",
-    2: "Tue",
-    3: "Wed",
-    4: "Thu",
-    5: "Fri",
-    6: "Sat",
+  const dayKeys: Record<number, string> = {
+    0: "scheduled.day_sun",
+    1: "scheduled.day_mon",
+    2: "scheduled.day_tue",
+    3: "scheduled.day_wed",
+    4: "scheduled.day_thu",
+    5: "scheduled.day_fri",
+    6: "scheduled.day_sat",
   };
   const list = Array.from(normalized)
     .filter((d) => d >= 0 && d <= 6)
     .sort((a, b) => a - b)
-    .map((d) => labels[d] ?? String(d))
+    .map((d) => tr(dayKeys[d] ?? ""))
     .join(", ");
-  if (!list) return `At ${timeLabel}`;
-  return `${list} at ${timeLabel}`;
+  if (!list) return tr("scheduled.at_time", { time: timeLabel });
+  return `${list} ${tr("scheduled.at_time", { time: timeLabel }).toLowerCase()}`;
 };
 
-const taskSummary = (job: ScheduledJob) => {
+const taskSummary = (job: ScheduledJob, locale?: string) => {
+  const tr = (key: string) => (locale ? t(key, locale as any) : t(key));
   const run = job.run;
   if (run?.command) {
     const args = run.arguments ? ` ${run.arguments}` : "";
-    return { label: "Command", value: `${run.command}${args}`, mono: true };
+    return { label: tr("scheduled.command_label"), value: `${run.command}${args}`, mono: true };
   }
   const prompt = run?.prompt ?? job.prompt;
   if (prompt) {
-    return { label: "Prompt", value: prompt, mono: false };
+    return { label: tr("scheduled.prompt_label"), value: prompt, mono: false };
   }
-  return { label: "Task", value: "No prompt or command found.", mono: false };
+  return { label: tr("scheduled.task_label"), value: tr("scheduled.no_prompt_found"), mono: false };
 };
 
-const statusLabel = (status?: string | null) => {
-  if (!status) return "Not run yet";
-  if (status === "running") return "Running";
-  if (status === "success") return "Success";
-  if (status === "failed") return "Failed";
+const statusLabel = (status?: string | null, locale?: string) => {
+  const tr = (key: string) => (locale ? t(key, locale as any) : t(key));
+  if (!status) return tr("scheduled.not_run_yet");
+  if (status === "running") return tr("scheduled.status_running");
+  if (status === "success") return tr("scheduled.status_success");
+  if (status === "failed") return tr("scheduled.status_failed");
   return status;
 };
 
@@ -236,13 +250,13 @@ const automationTemplates = [
 ];
 
 const dayOptions = [
-  { id: "mo", label: "Mo", cron: "1" },
-  { id: "tu", label: "Tu", cron: "2" },
-  { id: "we", label: "We", cron: "3" },
-  { id: "th", label: "Th", cron: "4" },
-  { id: "fr", label: "Fr", cron: "5" },
-  { id: "sa", label: "Sa", cron: "6" },
-  { id: "su", label: "Su", cron: "0" },
+  { id: "mo", labelKey: "scheduled.day_mo", cron: "1" },
+  { id: "tu", labelKey: "scheduled.day_tu", cron: "2" },
+  { id: "we", labelKey: "scheduled.day_we", cron: "3" },
+  { id: "th", labelKey: "scheduled.day_th", cron: "4" },
+  { id: "fr", labelKey: "scheduled.day_fr", cron: "5" },
+  { id: "sa", labelKey: "scheduled.day_sa", cron: "6" },
+  { id: "su", labelKey: "scheduled.day_su", cron: "0" },
 ];
 
 const normalizeSentence = (value: string) => {
@@ -326,9 +340,11 @@ const AutomationJobCard = (props: {
   onDelete: () => void;
   onRun: () => void;
 }) => {
-  const summary = () => taskSummary(props.job);
+  const locale = () => currentLocale();
+  const tr = (key: string) => t(key, locale());
+  const summary = () => taskSummary(props.job, locale());
   const status = () => props.job.lastRunStatus;
-  const scheduleLabel = () => humanizeCron(props.job.schedule);
+  const scheduleLabel = () => humanizeCron(props.job.schedule, locale());
   return (
     <div class="flex flex-col gap-4 rounded-2xl border border-gray-4 bg-gray-1 p-5 shadow-sm">
       <div class="flex flex-wrap items-start justify-between gap-4">
@@ -348,7 +364,7 @@ const AutomationJobCard = (props: {
                   status()
                 )}`}
               >
-                {statusLabel(status())}
+                {statusLabel(status(), locale())}
               </span>
             </div>
             <div class="mt-1 text-xs text-gray-9">{scheduleLabel()}</div>
@@ -366,7 +382,7 @@ const AutomationJobCard = (props: {
             }`}
           >
             <Play size={12} />
-            Run
+            {tr("scheduled.run")}
           </button>
           <button
             type="button"
@@ -379,7 +395,7 @@ const AutomationJobCard = (props: {
             }`}
           >
             <Trash2 size={12} />
-            Delete
+            {tr("scheduled.delete")}
           </button>
         </div>
       </div>
@@ -394,12 +410,12 @@ const AutomationJobCard = (props: {
           </div>
         </div>
         <div class="rounded-xl border border-gray-4 bg-gray-2/60 px-3 py-3 space-y-2">
-          <div class="text-[10px] uppercase tracking-wide text-gray-8">Run context</div>
+          <div class="text-[10px] uppercase tracking-wide text-gray-8">{tr("scheduled.run_context")}</div>
           <div class="space-y-2 text-xs text-gray-9">
             <div class="flex items-center gap-2">
               <FolderOpen size={14} class="text-gray-8" />
               <span class="font-mono text-gray-12 break-all">
-                {props.job.workdir ?? "Default"}
+                {props.job.workdir ?? tr("scheduled.default")}
               </span>
             </div>
             <Show when={props.job.run?.attachUrl ?? props.job.attachUrl}>
@@ -411,7 +427,7 @@ const AutomationJobCard = (props: {
               </div>
             </Show>
             <Show when={props.job.source}>
-              <div class="text-[11px] text-gray-8">Source: {props.job.source}</div>
+              <div class="text-[11px] text-gray-8">{tr("scheduled.source_label")} {props.job.source}</div>
             </Show>
           </div>
         </div>
@@ -420,14 +436,14 @@ const AutomationJobCard = (props: {
       <div class="flex flex-wrap items-center gap-4 text-xs text-gray-9">
         <div class="flex items-center gap-1">
           <Clock size={12} />
-          Last run {toRelative(props.job.lastRunAt)}
+          {tr("scheduled.last_run")} {toRelative(props.job.lastRunAt, locale())}
         </div>
-        <div>Created {toRelative(props.job.createdAt)}</div>
+        <div>{tr("scheduled.created")} {toRelative(props.job.createdAt, locale())}</div>
         <Show when={props.job.run?.agent}>
-          <div>Agent {props.job.run?.agent}</div>
+          <div>{tr("scheduled.agent")} {props.job.run?.agent}</div>
         </Show>
         <Show when={props.job.run?.model}>
-          <div>Model {props.job.run?.model}</div>
+          <div>{tr("scheduled.model")} {props.job.run?.model}</div>
         </Show>
       </div>
     </div>
@@ -436,6 +452,8 @@ const AutomationJobCard = (props: {
 
 export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const platform = usePlatform();
+  const locale = () => currentLocale();
+  const tr = (key: string) => t(key, locale());
   const [installingScheduler, setInstallingScheduler] = createSignal(false);
   const [schedulerInstallRequested, setSchedulerInstallRequested] = createSignal(false);
   const supported = createMemo(() => {
@@ -456,36 +474,36 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const automationDisabled = createMemo(() => props.newTaskDisabled || schedulerGateActive());
   const supportNote = createMemo(() => {
     if (props.source === "remote") {
-      return props.sourceReady ? null : "Veslo server unavailable. Connect to sync scheduled tasks.";
+      return props.sourceReady ? null : tr("scheduled.support_remote");
     }
-    if (!isTauriRuntime()) return "Scheduled tasks require the desktop app.";
-    if (props.isWindows) return "Scheduler is not supported on Windows yet.";
+    if (!isTauriRuntime()) return tr("scheduled.support_desktop");
+    if (props.isWindows) return tr("scheduled.support_windows");
     if (!props.schedulerInstalled || schedulerInstallRequested()) return null;
     return null;
   });
   const sourceDescription = createMemo(() =>
     props.source === "remote"
-      ? "Automations that run on a schedule from the connected Veslo server."
-      : "Automations that run on a schedule from this device."
+      ? tr("scheduled.source_remote_desc")
+      : tr("scheduled.source_local_desc")
   );
   const sourceLabel = createMemo(() =>
-    props.source === "remote" ? "From Veslo server" : "From local scheduler"
+    props.source === "remote" ? tr("scheduled.from_veslo") : tr("scheduled.from_local")
   );
-  const schedulerLabel = createMemo(() => (props.source === "remote" ? "Veslo server" : "Local"));
+  const schedulerLabel = createMemo(() => (props.source === "remote" ? tr("scheduled.scheduler_veslo") : tr("scheduled.scheduler_local")));
   const schedulerHint = createMemo(() =>
-    props.source === "remote" ? "Remote instance" : "Launchd or systemd"
+    props.source === "remote" ? tr("scheduled.hint_remote") : tr("scheduled.hint_local")
   );
   const schedulerUnavailableHint = createMemo(() =>
-    props.source === "remote" ? "Veslo server unavailable" : "Desktop-only"
+    props.source === "remote" ? tr("scheduled.unavailable_remote") : tr("scheduled.unavailable_local")
   );
   const deleteDescription = createMemo(() =>
     props.source === "remote"
-      ? "This removes the schedule and deletes the job definition from the connected Veslo server."
-      : "This removes the schedule and deletes the job definition from your machine."
+      ? tr("scheduled.delete_desc_remote")
+      : tr("scheduled.delete_desc_local")
   );
 
   const lastUpdatedLabel = createMemo(() => {
-    if (!props.lastUpdatedAt) return "Not synced yet";
+    if (!props.lastUpdatedAt) return tr("scheduled.not_synced");
     return formatRelativeTime(props.lastUpdatedAt);
   });
 
@@ -643,7 +661,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
           onClick={openSchedulerDocs}
           class="text-xs font-medium text-gray-9 transition-colors hover:text-gray-12"
         >
-          Learn more
+          {tr("scheduled.learn_more")}
         </button>
         <button
           type="button"
@@ -656,7 +674,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
           }`}
         >
           <RefreshCw size={14} />
-          {props.busy ? "Refreshing" : "Refresh"}
+          {props.busy ? tr("scheduled.refreshing") : tr("scheduled.refresh")}
         </button>
         <button
           type="button"
@@ -669,7 +687,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
           }`}
         >
           <Plus size={14} />
-          New automation
+          {tr("scheduled.new_automation")}
         </button>
       </div>
 
@@ -678,9 +696,9 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
           <Terminal size={28} class="text-gray-9" />
         </div>
         <div class="flex items-center justify-center gap-2">
-          <h2 class="text-2xl font-semibold text-gray-12">Automations</h2>
+          <h2 class="text-2xl font-semibold text-gray-12">{tr("scheduled.title")}</h2>
           <span class="rounded border border-gray-4 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-tight text-gray-8">
-            Beta
+            {tr("scheduled.beta")}
           </span>
         </div>
         <p class="mt-2 text-sm text-gray-9">{sourceDescription()}</p>
@@ -696,13 +714,13 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
               <div>
                 <div class="text-sm font-semibold text-gray-12">
                   {schedulerGateMode() === "reload"
-                    ? "Reload Veslo to activate automations"
-                    : "Install the scheduler to unlock automations"}
+                    ? tr("scheduled.reload_to_activate")
+                    : tr("scheduled.install_to_unlock")}
                 </div>
                 <div class="mt-1 text-xs text-gray-9">
                   {schedulerGateMode() === "reload"
-                    ? "OpenCode loads plugins at startup. Reload Veslo to activate opencode-scheduler."
-                    : "Automations run through the opencode-scheduler plugin. Add it to this workspace to enable scheduling."}
+                    ? tr("scheduled.reload_hint")
+                    : tr("scheduled.install_hint")}
                 </div>
               </div>
             </div>
@@ -712,21 +730,21 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                 onClick={handleInstallScheduler}
                 disabled={!props.canEditPlugins || installingScheduler()}
               >
-                {installingScheduler() ? "Installing..." : "Install scheduler"}
+                {installingScheduler() ? tr("scheduled.installing") : tr("scheduled.install_scheduler")}
               </Button>
               <Button
                 variant="outline"
                 onClick={() => void props.reloadWorkspaceEngine()}
                 disabled={!props.canReloadWorkspace || props.reloadBusy || !props.schedulerInstalled}
               >
-                {props.reloadBusy ? "Reloading..." : "Reload Veslo"}
+                {props.reloadBusy ? tr("scheduled.reloading") : tr("scheduled.reload_veslo")}
               </Button>
               <button
                 type="button"
                 onClick={openSchedulerDocs}
                 class="text-xs font-medium text-gray-9 transition-colors hover:text-gray-12"
               >
-                View docs
+                {tr("scheduled.view_docs")}
               </button>
             </div>
           </div>
@@ -756,7 +774,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
         fallback={
           <div class={`space-y-4 ${schedulerGateActive() ? "opacity-60 pointer-events-none" : ""}`}>
             <div class="text-center text-sm text-gray-9">
-              No automations yet. Pick a template or create your own automation prompt.
+              {tr("scheduled.no_automations")}
             </div>
             <div class="grid w-full max-w-5xl mx-auto grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               <For each={automationTemplates}>
@@ -776,7 +794,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
               onClick={openSchedulerDocs}
               class="mx-auto block text-xs text-gray-9 transition-colors hover:text-gray-12"
             >
-              Explore more
+              {tr("scheduled.explore_more")}
             </button>
           </div>
         }
@@ -802,7 +820,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
             <div class="p-6 space-y-4">
               <div class="flex items-start justify-between gap-4">
                 <div>
-                  <h3 class="text-lg font-semibold text-gray-12">Delete automation?</h3>
+                  <h3 class="text-lg font-semibold text-gray-12">{tr("scheduled.delete_title")}</h3>
                   <p class="text-sm text-gray-9 mt-1">{deleteDescription()}</p>
                 </div>
               </div>
@@ -811,10 +829,10 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
               </div>
               <div class="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleteBusy()}>
-                  Cancel
+                  {tr("scheduled.cancel")}
                 </Button>
                 <Button variant="danger" onClick={confirmDelete} disabled={deleteBusy()}>
-                  {deleteBusy() ? "Deleting" : "Delete"}
+                  {deleteBusy() ? tr("scheduled.deleting") : tr("scheduled.delete")}
                 </Button>
               </div>
             </div>
@@ -828,10 +846,9 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
             <div class="p-8 space-y-6">
               <div class="flex items-start justify-between gap-4">
                 <div>
-                  <h2 class="text-xl font-semibold text-gray-12">Create automation</h2>
+                  <h2 class="text-xl font-semibold text-gray-12">{tr("scheduled.create_title")}</h2>
                   <p class="text-xs text-gray-9 mt-2">
-                    Automations are scheduled by running a prompt in a new thread. We’ll prefill
-                    a prompt for you to send.
+                    {tr("scheduled.create_description")}
                   </p>
                 </div>
                 <button
@@ -846,7 +863,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
               <div class="space-y-6">
                 <div>
                   <label class="mb-2 block text-[11px] font-bold uppercase tracking-wider text-gray-8">
-                    Name
+                    {tr("scheduled.label_name")}
                   </label>
                   <input
                     type="text"
@@ -857,19 +874,19 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                 </div>
                 <div>
                   <label class="mb-2 block text-[11px] font-bold uppercase tracking-wider text-gray-8">
-                    Projects
+                    {tr("scheduled.label_projects")}
                   </label>
                   <input
                     type="text"
                     value={automationProject()}
                     onInput={(event) => setAutomationProject(event.currentTarget.value)}
-                    placeholder="Choose a folder"
+                    placeholder={tr("scheduled.placeholder_folder")}
                     class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:outline-none focus:ring-1 focus:ring-blue-9/20 focus:border-blue-7"
                   />
                 </div>
                 <div>
                   <label class="mb-2 block text-[11px] font-bold uppercase tracking-wider text-gray-8">
-                    Prompt
+                    {tr("scheduled.label_prompt")}
                   </label>
                   <div class="rounded-xl border border-gray-6 bg-gray-2 p-3">
                     <textarea
@@ -883,7 +900,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                 <div>
                   <div class="mb-2 flex items-center justify-between">
                     <label class="block text-[11px] font-bold uppercase tracking-wider text-gray-8">
-                      Schedule
+                      {tr("scheduled.label_schedule")}
                     </label>
                     <div class="flex rounded-lg bg-gray-3 p-0.5">
                       <button
@@ -895,7 +912,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                             : "text-gray-9"
                         }`}
                       >
-                        Daily
+                        {tr("scheduled.mode_daily")}
                       </button>
                       <button
                         type="button"
@@ -906,7 +923,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                             : "text-gray-9"
                         }`}
                       >
-                        Interval
+                        {tr("scheduled.mode_interval")}
                       </button>
                     </div>
                   </div>
@@ -915,7 +932,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                     fallback={
                       <div class="flex flex-wrap items-center gap-3">
                         <div class="flex items-center gap-2 rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12">
-                          <span>Every</span>
+                          <span>{tr("scheduled.every")}</span>
                           <input
                             type="number"
                             min={1}
@@ -924,7 +941,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                             onInput={(event) => updateIntervalHours(event.currentTarget.value)}
                             class="w-16 bg-transparent text-right focus:outline-none"
                           />
-                          <span>hours</span>
+                          <span>{tr("scheduled.hours")}</span>
                         </div>
                       </div>
                     }
@@ -951,7 +968,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                                   : "bg-gray-3 text-gray-9"
                               }`}
                             >
-                              {day.label}
+                              {tr(day.labelKey)}
                             </button>
                           )}
                         </For>
@@ -960,7 +977,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                   </Show>
                   <Show when={cronExpression()}>
                     <div class="mt-2 text-[11px] text-gray-8">
-                      Cron: <span class="font-mono text-gray-12">{cronExpression()}</span>
+                      {tr("scheduled.cron_label")} <span class="font-mono text-gray-12">{cronExpression()}</span>
                     </div>
                   </Show>
                 </div>
@@ -972,7 +989,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                 onClick={openSchedulerDocs}
                 class="text-xs font-medium text-gray-9 transition-colors hover:text-gray-12"
               >
-                View scheduler docs
+                {tr("scheduled.view_scheduler_docs")}
               </button>
               <div class="flex items-center gap-3">
                 <button
@@ -980,7 +997,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                   onClick={() => setCreateModalOpen(false)}
                   class="px-4 py-2 text-xs font-medium text-gray-8 transition-colors hover:text-gray-12"
                 >
-                  Cancel
+                  {tr("scheduled.cancel")}
                 </button>
                 <button
                 type="button"
@@ -992,7 +1009,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                     : "bg-gray-12 text-gray-1 hover:bg-gray-11"
                 }`}
               >
-                Create
+                {tr("scheduled.create")}
                 </button>
               </div>
             </div>
