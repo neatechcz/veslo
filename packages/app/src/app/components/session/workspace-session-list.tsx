@@ -545,8 +545,8 @@ export default function WorkspaceSessionList(props: Props) {
                 const collapsed = () => isProjectCollapsed(collapsedProjects(), project.key);
 
                 return (
-                  <div class="relative group">
-                    <div class="flex items-start gap-2">
+                  <div class="group">
+                    <div class="relative flex items-start gap-2">
                       <button
                         type="button"
                         class={`min-w-0 flex-1 rounded-lg px-1.5 py-1 text-left transition-colors ${
@@ -635,6 +635,13 @@ export default function WorkspaceSessionList(props: Props) {
                           <MoreHorizontal size={14} />
                         </button>
                       </div>
+                    {workspaceMenu(
+                      workspace(),
+                      anchorKey,
+                      soulEnabled(),
+                      canRecover(),
+                      isConnectionActionBusy(),
+                    )}
                     </div>
 
                     <Show when={!collapsed()}>
@@ -693,14 +700,6 @@ export default function WorkspaceSessionList(props: Props) {
                         </For>
                       </div>
                     </Show>
-
-                    {workspaceMenu(
-                      workspace(),
-                      anchorKey,
-                      soulEnabled(),
-                      canRecover(),
-                      isConnectionActionBusy(),
-                    )}
                     </div>
                   );
                 }}
