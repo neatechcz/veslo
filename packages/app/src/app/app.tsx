@@ -1612,11 +1612,17 @@ export default function App() {
     const workspace = workspaceId
       ? workspaceStore.workspaces().find((item) => item.id === workspaceId)
       : null;
-    const root = workspace
+    const workspaceRoot = workspace
       ? workspace.workspaceType === "local"
         ? workspace.path?.trim() ?? ""
         : workspace.directory?.trim() ?? ""
       : workspaceStore.activeWorkspaceRoot().trim();
+
+    // Session may have been moved to a different directory via chooseFolderForCurrentSession.
+    // Use the override directory so the engine deletes from the correct .opencode/sessions/.
+    const overrideDir = sessionDirectoryOverrideById()[trimmed] ?? "";
+    const root = normalizeDirectoryPath(overrideDir) || workspaceRoot;
+
     const params = root ? { sessionID: trimmed, directory: root } : { sessionID: trimmed };
     unwrap(await c.session.delete(params));
 
@@ -4885,7 +4891,7 @@ export default function App() {
         time: session.time,
         directory: session.directory,
       };
-      const wsId = workspaceStore.activeWorkspaceId().trim();
+      const wsId = (workspaceStore.connectingWorkspaceId() ?? workspaceStore.activeWorkspaceId()).trim();
       if (wsId) {
         const currentSessions = sidebarSessionsByWorkspaceId()[wsId] || [];
         setSidebarSessionsByWorkspaceId((prev) => ({

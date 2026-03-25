@@ -63,6 +63,12 @@ pub fn workspace_forget(
         return Err("workspaceId is required".to_string());
     }
 
+    let forgotten_workspace = state
+        .workspaces
+        .iter()
+        .find(|w| w.id == id)
+        .cloned();
+
     let before = state.workspaces.len();
     state.workspaces.retain(|w| w.id != id);
     if before == state.workspaces.len() {
@@ -80,6 +86,32 @@ pub fn workspace_forget(
     save_workspace_state(&app, &state)?;
     let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
     update_workspace_watch(&app, watch_state, active_workspace)?;
+
+    // Cleanup .opencode/ directory and opencode.jsonc for local workspaces
+    if let Some(ref ws) = forgotten_workspace {
+        if ws.workspace_type == WorkspaceType::Local {
+            let ws_root = PathBuf::from(&ws.path);
+            let opencode_dir = ws_root.join(".opencode");
+            if opencode_dir.is_dir() {
+                if let Err(e) = fs::remove_dir_all(&opencode_dir) {
+                    println!(
+                        "[workspace] warning: failed to remove {}: {e}",
+                        opencode_dir.display()
+                    );
+                }
+            }
+            let opencode_jsonc = ws_root.join("opencode.jsonc");
+            if opencode_jsonc.is_file() {
+                if let Err(e) = fs::remove_file(&opencode_jsonc) {
+                    println!(
+                        "[workspace] warning: failed to remove {}: {e}",
+                        opencode_jsonc.display()
+                    );
+                }
+            }
+        }
+    }
+
     println!("[workspace] forget complete");
 
     Ok(WorkspaceList {
