@@ -197,11 +197,20 @@ fn seed_enterprise_creator_skills(root: &PathBuf, skill_root: &PathBuf) -> Resul
         }
     }
 
-    let agent = ureq::AgentBuilder::new().redirects(5).build();
-    let response = agent
-        .get(ENTERPRISE_ARCHIVE_URL)
-        .call()
-        .map_err(|e| format!("Failed to download enterprise archive: {e}"))?;
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(15))
+        .redirects(5)
+        .build();
+    let response = match agent.get(ENTERPRISE_ARCHIVE_URL).call() {
+        Ok(resp) => resp,
+        Err(e) => {
+            // Write the marker so we don't retry on every bootstrap for every
+            // workspace.  The download can be re-attempted by deleting the
+            // marker file manually.
+            let _ = fs::write(&marker_path, format!("failed: {e}\n"));
+            return Err(format!("Failed to download enterprise archive: {e}"));
+        }
+    };
 
     let mut buffer = Vec::new();
     response
