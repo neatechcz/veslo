@@ -178,7 +178,7 @@ Incremental adoption loop
 }
 
 const ENTERPRISE_ARCHIVE_URL: &str =
-    "https://github.com/neatech/veslo-enterprise/archive/refs/heads/main.zip";
+    "https://github.com/different-ai/openwork-enterprise/archive/refs/heads/main.zip";
 const ENTERPRISE_SEED_MARKER: &str = ".veslo-enterprise-creators";
 
 fn seed_enterprise_creator_skills(root: &PathBuf, skill_root: &PathBuf) -> Result<(), String> {
