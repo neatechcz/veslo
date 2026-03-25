@@ -784,7 +784,10 @@ export function createSessionStore(options: {
     for (const sessionID of overrideIds) {
       if (merged.has(sessionID)) continue;
       try {
-        const fetched = unwrap(await c.session.get({ sessionID, directory: queryDirectory }));
+        // Fetch by ID without directory filter — the session may still be
+        // registered under the old directory in the engine while the local
+        // override already points to the new workspace root.
+        const fetched = unwrap(await c.session.get({ sessionID }));
         merged.set(sessionID, applySessionDirectoryOverride(fetched));
       } catch {
         // ignore stale local overrides; delete path is handled by app state
@@ -1286,7 +1289,7 @@ export function createSessionStore(options: {
           const c = options.client();
           if (c) {
             try {
-              const latest = unwrap(await c.session.get({ sessionID }));
+              const latest = applySessionDirectoryOverride(unwrap(await c.session.get({ sessionID })));
               setStore("sessions", (current) => upsertSession(current, latest));
             } catch {
               // ignore

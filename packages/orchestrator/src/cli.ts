@@ -4077,14 +4077,29 @@ async function runRouterDaemon(args: ParsedArgs) {
     readFlag(args.flags, "opencode-workdir") ?? process.env.VESLO_OPENCODE_WORKDIR;
   const activeWorkspace = state.workspaces.find((entry) => entry.id === state.activeId && entry.workspaceType === "local");
   const opencodeWorkdir = opencodeWorkdirFlag ?? activeWorkspace?.path ?? process.cwd();
-  const resolvedWorkdir = await ensureWorkspace(opencodeWorkdir);
-  const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkdir));
-  await ensureOpencodeManagedTools(opencodeConfigDir);
+  let currentWorkdir = await ensureWorkspace(opencodeWorkdir);
+  let currentConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(currentWorkdir));
+  await ensureOpencodeManagedTools(currentConfigDir);
   logger.info(
     "Daemon starting",
-    { runId, logFormat, workdir: resolvedWorkdir, host, port },
+    { runId, logFormat, workdir: currentWorkdir, host, port },
     "veslo-orchestrator",
   );
+
+  const switchWorkdir = async (newPath: string): Promise<boolean> => {
+    const resolved = await ensureWorkspace(newPath);
+    if (resolved === currentWorkdir) return false;
+    if (opencodeChild) {
+      logger.info("Stopping engine for workspace switch", { from: currentWorkdir, to: resolved }, "opencode");
+      await stopChild(opencodeChild);
+      opencodeChild = null;
+      state.opencode = undefined;
+    }
+    currentWorkdir = resolved;
+    currentConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(currentWorkdir));
+    await ensureOpencodeManagedTools(currentConfigDir);
+    return true;
+  };
 
   const sidecar = resolveSidecarConfig(args.flags, cliVersion);
   const allowExternal = readBool(args.flags, "allow-external", false, "VESLO_ALLOW_EXTERNAL");
@@ -4137,7 +4152,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     if (existing && isProcessAlive(existing.pid)) {
       const client = createOpencodeClient({
         baseUrl: existing.baseUrl,
-        directory: resolvedWorkdir,
+        directory: currentWorkdir,
         headers: authHeaders,
       });
       try {
@@ -4160,8 +4175,8 @@ async function runRouterDaemon(args: ParsedArgs) {
     logVerbose(`opencode version: ${opencodeActualVersion ?? "unknown"}`);
     const child = await startOpencode({
       bin: opencodeBinary.bin,
-      workspace: resolvedWorkdir,
-      configDir: opencodeConfigDir,
+      workspace: currentWorkdir,
+      configDir: currentConfigDir,
       hotReload: opencodeHotReload,
       bindHost: opencodeHost,
       port: opencodePort,
@@ -4177,7 +4192,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     const baseUrl = `http://${opencodeHost}:${opencodePort}`;
     const client = createOpencodeClient({
       baseUrl,
-      directory: resolvedWorkdir,
+      directory: currentWorkdir,
       headers: authHeaders,
     });
     logger.info("Waiting for health", { url: baseUrl }, "opencode");
@@ -4338,6 +4353,19 @@ async function runRouterDaemon(args: ParsedArgs) {
         state.activeId = workspace.id;
         workspace.lastUsedAt = nowMs();
         await saveRouterState(statePath, state);
+        if (workspace.workspaceType === "local" && workspace.path) {
+          const didSwitch = await switchWorkdir(workspace.path);
+          if (didSwitch) {
+            try {
+              await ensureOpencode();
+              logger.info("Engine restarted for workspace switch", { workspaceId: workspace.id, workdir: currentWorkdir }, "opencode");
+            } catch (err) {
+              logger.error("Engine restart failed after workspace switch", { workspaceId: workspace.id, error: String(err) }, "opencode");
+              send(500, { error: "engine restart failed", activeId: state.activeId });
+              return;
+            }
+          }
+        }
         send(200, { activeId: state.activeId, workspace });
         return;
       }

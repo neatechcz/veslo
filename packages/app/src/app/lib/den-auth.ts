@@ -834,7 +834,9 @@ export async function exchangeHandoffCode(
   }
 }
 
-export async function validateDenAuth(state: DenAuthState): Promise<boolean> {
+export type DenAuthValidationResult = "valid" | "invalid" | "unreachable";
+
+export async function validateDenAuth(state: DenAuthState): Promise<DenAuthValidationResult> {
   try {
     const response = await fetchWithTimeout(
       resolveFetch(),
@@ -844,9 +846,13 @@ export async function validateDenAuth(state: DenAuthState): Promise<boolean> {
       },
       DEN_VALIDATE_TIMEOUT_MS,
     );
-    return response.ok;
+    if (response.ok) return "valid";
+    if (response.status === 401 || response.status === 403) return "invalid";
+    // Server error (5xx etc.) — token may still be valid
+    return "unreachable";
   } catch {
-    return false;
+    // Network error / timeout — don't treat as invalid token
+    return "unreachable";
   }
 }
 

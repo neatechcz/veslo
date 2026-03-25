@@ -2208,8 +2208,11 @@ export default function App() {
       for (const sessionID of overrideIds) {
         if (merged.has(sessionID)) continue;
         try {
+          // Fetch by ID without directory filter — the session may still be
+          // registered under the old directory in the engine while the local
+          // override already points to the new workspace root.
           const fetched = applySessionDirectoryOverride(
-            unwrap(await c.session.get({ sessionID, directory: queryDirectory })),
+            unwrap(await c.session.get({ sessionID })),
           );
           merged.set(sessionID, fetched);
         } catch {
@@ -4989,17 +4992,32 @@ export default function App() {
         return false;
       }
 
+      // Snapshot the session BEFORE activating the target workspace.
+      // ensureLocalWorkspaceActive → connectToServer → loadSessions scopes
+      // to the target directory and won't include this session (it was
+      // created in the temp workspace). Without the snapshot, the session
+      // data would be lost after activation.
+      const sessionSnapshot = sessions().find((s) => s.id === sessionID) ?? null;
+
       const targetWorkspace = await workspaceStore.ensureWorkspaceForFolder(selectedDirectory);
       if (!targetWorkspace?.id) return false;
       const ready = await workspaceStore.ensureLocalWorkspaceActive(targetWorkspace.id);
       if (!ready) return false;
 
       persistSessionDirectoryOverride(sessionID, targetWorkspace.path);
-      setSessions(
-        sessions().map((session) =>
-          session.id === sessionID ? { ...session, directory: targetWorkspace.path } : session
-        ),
-      );
+
+      // Ensure the session is in sessions() with the correct directory so
+      // the route effect (which validates session existence) doesn't
+      // redirect away when goToSession changes the URL.
+      const currentSessions = sessions();
+      const existingIdx = currentSessions.findIndex((s) => s.id === sessionID);
+      if (existingIdx >= 0) {
+        const copy = [...currentSessions];
+        copy[existingIdx] = { ...copy[existingIdx], directory: targetWorkspace.path };
+        setSessions(copy);
+      } else if (sessionSnapshot) {
+        setSessions([{ ...sessionSnapshot, directory: targetWorkspace.path }, ...currentSessions]);
+      }
 
       const sessionMap = readSessionByWorkspace();
       const nextSessionMap = { ...sessionMap, [targetWorkspace.id]: sessionID };
@@ -5008,19 +5026,56 @@ export default function App() {
       }
       writeSessionByWorkspace(nextSessionMap);
 
-      setSidebarSessionsByWorkspaceId((prev) => ({
-        ...prev,
-        [sourceWorkspaceId]: (prev[sourceWorkspaceId] ?? []).filter((session) => session.id !== sessionID),
-      }));
+      // Optimistically move the session in the sidebar so the user sees
+      // immediate feedback. Uses the snapshot captured before activation.
+      setSidebarSessionsByWorkspaceId((prev) => {
+        const sourceList = (prev[sourceWorkspaceId] ?? []).filter((s) => s.id !== sessionID);
+        const movedItem: SidebarSessionItem = {
+          id: sessionID,
+          title: sessionSnapshot?.title ?? "",
+          slug: sessionSnapshot?.slug,
+          time: sessionSnapshot?.time,
+          directory: targetWorkspace.path,
+        };
+        return {
+          ...prev,
+          [sourceWorkspaceId]: sourceList,
+          [targetWorkspace.id]: [movedItem, ...(prev[targetWorkspace.id] ?? [])],
+        };
+      });
 
+      // Navigate and load messages before forgetWorkspace (which may
+      // trigger disruptive reactive effects).
+      goToSession(sessionID, { replace: true });
       await selectSession(sessionID);
-      await refreshSidebarWorkspaceSessions(targetWorkspace.id).catch(e => reportError(e, "sidebar.refreshSessions"));
+
+      // Refresh sidebar from API, then clean up the old private workspace.
+      await refreshSidebarWorkspaceSessions(targetWorkspace.id).catch((e) =>
+        reportError(e, "sidebar.refreshSessions"),
+      );
 
       if (sourceWorkspaceId && sourceWorkspaceId !== targetWorkspace.id) {
         await workspaceStore.forgetWorkspace(sourceWorkspaceId);
       }
 
-      goToSession(sessionID, { replace: true });
+      // forgetWorkspace → setWorkspaces() triggers a reactive sidebar
+      // refresh (fire-and-forget). That refresh uses the directory override
+      // to find the session, so it should include it. As a safety net,
+      // re-ensure the session appears in case the async refresh hasn't
+      // completed or failed to find it.
+      setSidebarSessionsByWorkspaceId((prev) => {
+        const existing = prev[targetWorkspace.id] ?? [];
+        if (existing.some((s) => s.id === sessionID)) return prev;
+        const item: SidebarSessionItem = {
+          id: sessionID,
+          title: sessionSnapshot?.title ?? "",
+          slug: sessionSnapshot?.slug,
+          time: sessionSnapshot?.time,
+          directory: targetWorkspace.path,
+        };
+        return { ...prev, [targetWorkspace.id]: [item, ...existing] };
+      });
+
       return true;
     }
   };
@@ -5812,7 +5867,11 @@ export default function App() {
     if (typeof window === "undefined") return;
     const connecting = Boolean(workspaceStore.connectingWorkspaceId());
     const shouldShowForSwitch = connecting && workspaceSwitchDelayElapsed();
-    const visibleSinceMs = workspaceSwitchVisibleSinceMs();
+
+    // Read visibleSinceMs without tracking — otherwise setting it to null
+    // re-triggers this effect, which cancels the hold-open timer via onCleanup
+    // before it can fire, leaving holdOpen stuck at true forever.
+    const visibleSinceMs = untrack(workspaceSwitchVisibleSinceMs);
 
     if (shouldShowForSwitch) {
       setWorkspaceSwitchHoldOpen(false);

@@ -826,10 +826,9 @@ export function createWorkspaceStore(options: {
     options.setStartupPreference("local");
     const nextRoot = isRemote ? next.directory?.trim() ?? "" : next.path;
     const oldWorkspacePath = projectDir();
-    // Compare against the actual engine directory, not just projectDir().
-    // createLocalWorkspace() prematurely updates projectDir before
-    // activateWorkspace runs, so projectDir() may already equal nextRoot
-    // even though the engine is still on the previous workspace.
+    // Compare against the actual engine directory as a safety net.
+    // projectDir() reflects the intended workspace; actualEngineDir is
+    // what the engine is actually running on.
     const actualEngineDir = engineStore.engine()?.projectDir?.trim() ?? "";
     const workspaceChanged =
       oldWorkspacePath !== nextRoot ||
@@ -1473,10 +1472,6 @@ export function createWorkspaceStore(options: {
       }
 
       const active = ws.workspaces.find((w) => w.id === ws.activeId) ?? null;
-      if (active) {
-        setProjectDir(active.path);
-        setAuthorizedDirs([active.path]);
-      }
 
       if (flowOptions?.closeModal !== false) {
         setCreateWorkspaceOpen(false);
@@ -2005,13 +2000,16 @@ export function createWorkspaceStore(options: {
     }
     // Validate stored auth with Den server before allowing app use.
     bootTrace("validateDenAuth...");
-    const authValid = await validateDenAuth(denAuth);
-    bootTrace("validateDenAuth DONE, valid=", authValid);
-    if (!authValid) {
+    const authResult = await validateDenAuth(denAuth);
+    bootTrace("validateDenAuth DONE, result=", authResult);
+    if (authResult === "invalid") {
       clearDenAuth();
-      bootTrace("→ auth invalid, setOnboardingStep('auth') and RETURN");
+      bootTrace("→ auth invalid (401/403), setOnboardingStep('auth') and RETURN");
       options.setOnboardingStep("auth");
       return;
+    }
+    if (authResult === "unreachable") {
+      bootTrace("→ auth server unreachable, proceeding with cached token");
     }
 
     if (CLOUD_ONLY_MODE) {
