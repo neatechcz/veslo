@@ -621,10 +621,7 @@ async function proxyOpencodeRequest(input: {
   headers.delete("host");
   headers.delete("origin");
 
-  // Per-request directory override (e.g. from sessions moved via "Choose folder")
-  // takes priority over the workspace-level default.
-  const queryDir = input.url.searchParams.get("directory")?.trim() || null;
-  const directory = queryDir ?? (workspace ? resolveOpencodeDirectory(workspace) : null);
+  const directory = workspace ? resolveOpencodeDirectory(workspace) : null;
   if (directory && !headers.has("x-opencode-directory")) {
     headers.set("x-opencode-directory", directory);
   }

@@ -201,9 +201,6 @@ import {
   setWindowDecorations,
   setWindowTitleBarStyle,
   workspaceCopyIntoFolder,
-  workspaceVesloRead,
-  workspaceVesloWrite,
-  opencodeDbUpdateSessionDirectory,
   type OrchestratorStatus,
   type VesloServerInfo,
   type OpenCodeRouterInfo,
@@ -1215,10 +1212,6 @@ export default function App() {
         ? ({ reasoning_effort: reasoningEffort } as const)
         : undefined;
 
-      // Resolve the session directory override so moved sessions operate in the
-      // correct folder, not the original private-workspace path.
-      const sessionDirOverride = sessionDirectoryOverrideById()[sessionID] ?? undefined;
-
       if (resolvedDraft.mode === "shell") {
         await shellInSession(c, sessionID, content);
       } else if (resolvedDraft.command || compactCommand) {
@@ -1252,7 +1245,6 @@ export default function App() {
             variant: requestVariant,
             ...(promptOverrides ?? {}),
             parts: files.length ? files : undefined,
-            directory: sessionDirOverride,
           }),
         );
 
@@ -1264,7 +1256,6 @@ export default function App() {
           variant: requestVariant,
           ...(promptOverrides ?? {}),
           parts,
-          directory: sessionDirOverride,
         });
         assertNoClientError(result);
 
@@ -1352,7 +1343,7 @@ export default function App() {
 
     try {
       await compactSessionTyped(c, sessionID, model, {
-        directory: sessionDirectoryOverrideById()[sessionID] ?? (workspaceProjectDir().trim() || undefined),
+        directory: workspaceProjectDir().trim() || undefined,
       });
       finishPerf(developerMode(), "session.compact", "done", startedAt, {
         sessionID,
@@ -5010,48 +5001,12 @@ export default function App() {
         return false;
       }
 
-      // Fix stale authorizedRoots copied from the private workspace.
-      // The copied veslo.json still points to the old private-workspaces path;
-      // replace it with the actual target directory before the engine starts.
-      try {
-        const copiedConfig = await workspaceVesloRead({ workspacePath: selectedDirectory });
-        if (copiedConfig) {
-          const oldRoots = Array.isArray(copiedConfig.authorizedRoots) ? copiedConfig.authorizedRoots : [];
-          const fixedRoots = oldRoots
-            .map((r) => (r === sourceRoot ? selectedDirectory : r))
-            .filter((r, i, arr) => arr.indexOf(r) === i);
-          if (!fixedRoots.includes(selectedDirectory)) fixedRoots.push(selectedDirectory);
-          await workspaceVesloWrite({
-            workspacePath: selectedDirectory,
-            config: { ...copiedConfig, authorizedRoots: fixedRoots },
-          });
-        }
-      } catch {
-        // veslo.json may not exist yet — ensureWorkspaceForFolder will create it
-      }
-
       // Snapshot the session BEFORE activating the target workspace.
       // ensureLocalWorkspaceActive → connectToServer → loadSessions scopes
       // to the target directory and won't include this session (it was
       // created in the temp workspace). Without the snapshot, the session
       // data would be lost after activation.
       const sessionSnapshot = sessions().find((s) => s.id === sessionID) ?? null;
-
-      // Update session directory in the OpenCode SQLite database BEFORE
-      // activating the new workspace.  ensureLocalWorkspaceActive restarts the
-      // engine, so the restarted engine will read the corrected directory from
-      // the DB and won't generate stale external_directory permission prompts.
-      if (isTauriRuntime()) {
-        try {
-          await opencodeDbUpdateSessionDirectory({
-            sessionId: sessionID,
-            oldDirectory: sourceRoot,
-            directory: selectedDirectory,
-          });
-        } catch {
-          // Non-fatal: the session will still work, just with a permission prompt.
-        }
-      }
 
       const targetWorkspace = await workspaceStore.ensureWorkspaceForFolder(selectedDirectory);
       if (!targetWorkspace?.id) return false;
@@ -5100,14 +5055,7 @@ export default function App() {
 
       // Navigate and load messages before forgetWorkspace (which may
       // trigger disruptive reactive effects).
-      // Yield a microtask so the reactive session/client state from
-      // ensureLocalWorkspaceActive has settled before selecting.
-      await Promise.resolve();
       goToSession(sessionID, { replace: true });
-      // Yield again so the route effect (triggered by goToSession) runs
-      // first — then our explicit selectSession call won't be deduped
-      // against a stale in-flight load.
-      await new Promise((r) => setTimeout(r, 100));
       await selectSession(sessionID);
 
       // Refresh sidebar from API, then clean up the old private workspace.
