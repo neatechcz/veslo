@@ -34,8 +34,8 @@ cp .env.development .env
 - `WORKER_TOKEN_ENCRYPTION_KEY` optional key material for encrypting worker host/client tokens at rest (falls back to `BETTER_AUTH_SECRET` when unset)
 - `GITHUB_CLIENT_ID` optional OAuth app client ID for GitHub sign-in
 - `GITHUB_CLIENT_SECRET` optional OAuth app client secret for GitHub sign-in
-- `RESEND_API_KEY` optional Resend API key used to send Better Auth verification and password reset emails
-- `AUTH_EMAIL_FROM` optional sender address for auth emails, for example `Veslo <auth@veslo.neatech.com>`
+- `RESEND_API_KEY` optional Resend API key used to send Better Auth verification and password reset emails. Blank or unset values disable email verification and password reset delivery.
+- `AUTH_EMAIL_FROM` optional sender address for auth emails, for example `Veslo <auth@veslo.neatech.com>`. Blank or unset values disable email verification and password reset delivery.
 - `PORT` server port
 - `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS). In production, wildcard `*` is rejected. Desktop CORS origins (`tauri://localhost`, `http://localhost:1420`, `http://localhost:1421`) are appended server-side to the Express CORS allowlist.
 - `PROVISIONER_MODE` `stub` or `render`
@@ -70,7 +70,7 @@ cp .env.development .env
 
 ## Auth setup (Better Auth)
 
-Set `RESEND_API_KEY` and `AUTH_EMAIL_FROM` to enable email verification and password reset delivery through Resend.
+Set `RESEND_API_KEY` and `AUTH_EMAIL_FROM` to enable email verification and password reset delivery through Resend. Blank or unset values disable email verification and password reset delivery.
 
 Generate Better Auth schema (Drizzle):
 

@@ -116,3 +116,7 @@ export const env = {
     returnUrl: parsed.POLAR_RETURN_URL,
   },
 }
+
+export function isAuthEmailConfigured() {
+  return Boolean(env.email.resendApiKey && env.email.from)
+}

@@ -36,6 +36,13 @@ async function sendAuthEmail(input: AuthEmailInput) {
   }
 }
 
+export function fireAndForgetAuthEmail(promise: Promise<unknown>, label: string) {
+  return promise.catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error(`[auth-mailer] failed to send ${label}: ${message}`)
+  })
+}
+
 export async function sendVerificationAuthEmail(input: { to: string; url: string }) {
   return sendAuthEmail({
     to: input.to,
