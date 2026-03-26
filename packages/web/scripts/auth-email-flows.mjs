@@ -1,0 +1,30 @@
+import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const source = readFileSync(resolve(here, "../components/cloud-control.tsx"), "utf8");
+
+assert.ok(existsSync(resolve(here, "../app/forgot-password/page.tsx")), "forgot-password page must exist");
+assert.ok(existsSync(resolve(here, "../app/reset-password/page.tsx")), "reset-password page must exist");
+assert.ok(existsSync(resolve(here, "../app/verify-email/page.tsx")), "verify-email page must exist");
+
+assert.ok(
+  source.includes("emailVerified"),
+  "cloud-control.tsx must track email verification state on the signed-in user",
+);
+assert.ok(
+  source.includes("/api/auth/send-verification-email"),
+  "cloud-control.tsx must support resend verification",
+);
+assert.ok(
+  source.includes("/forgot-password"),
+  "cloud-control.tsx must expose a forgot-password entry point",
+);
+assert.ok(
+  source.includes("email_verification_required"),
+  "cloud-control.tsx must handle verified-email gating responses",
+);
+
+console.log("auth-email-flows: all assertions passed");

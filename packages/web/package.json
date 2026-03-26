@@ -8,7 +8,8 @@
     "start": "next start --hostname 0.0.0.0 --port 3005",
     "lint": "next lint",
     "test:font-source": "node scripts/web-font-source.mjs",
-    "test:desktop-auth-mode": "node scripts/desktop-auth-mode.mjs"
+    "test:desktop-auth-mode": "node scripts/desktop-auth-mode.mjs",
+    "test:auth-email-flows": "node scripts/auth-email-flows.mjs"
   },
   "dependencies": {
     "next": "14.2.5",
