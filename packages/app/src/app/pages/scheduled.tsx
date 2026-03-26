@@ -187,64 +187,76 @@ const statusIconTone = (status?: string | null) => {
   return "border-gray-6 text-gray-9";
 };
 
-const automationTemplates = [
+type AutomationTemplate = {
+  icon: any;
+  nameKey: string;
+  descriptionKey: string;
+  promptKey: string;
+  tone?: string;
+  scheduleMode: "daily" | "interval";
+  scheduleTime?: string;
+  scheduleDays?: string[];
+  intervalHours?: number;
+};
+
+const automationTemplates: AutomationTemplate[] = [
   {
     icon: Calendar,
-    name: "Daily planning brief",
-    description: "Build a focused plan from your tasks and calendar.",
-    prompt: "Review my pending tasks and calendar, then draft a practical plan for today with top priorities and one follow-up reminder.",
+    nameKey: "scheduled.template_daily_planning_name",
+    descriptionKey: "scheduled.template_daily_planning_description",
+    promptKey: "scheduled.template_daily_planning_prompt",
     tone: "text-blue-9",
-    scheduleMode: "daily" as const,
+    scheduleMode: "daily",
     scheduleTime: "08:30",
     scheduleDays: ["mo", "tu", "we", "th", "fr"],
   },
   {
     icon: BookOpen,
-    name: "Inbox zero helper",
-    description: "Summarize unread messages and draft short replies.",
-    prompt: "Summarize unread inbox messages, suggest priority order, and draft concise reply options for the top conversations.",
+    nameKey: "scheduled.template_inbox_zero_name",
+    descriptionKey: "scheduled.template_inbox_zero_description",
+    promptKey: "scheduled.template_inbox_zero_prompt",
     tone: "text-teal-9",
-    scheduleMode: "daily" as const,
+    scheduleMode: "daily",
     scheduleTime: "17:30",
     scheduleDays: ["mo", "tu", "we", "th", "fr"],
   },
   {
     icon: MessageSquare,
-    name: "Meeting prep notes",
-    description: "Generate prep bullets for tomorrow's meetings.",
-    prompt: "Prepare meeting briefs for tomorrow with context, talking points, and questions to unblock decisions.",
+    nameKey: "scheduled.template_meeting_prep_name",
+    descriptionKey: "scheduled.template_meeting_prep_description",
+    promptKey: "scheduled.template_meeting_prep_prompt",
     tone: "text-indigo-9",
-    scheduleMode: "daily" as const,
+    scheduleMode: "daily",
     scheduleTime: "18:00",
     scheduleDays: ["mo", "tu", "we", "th", "fr"],
   },
   {
     icon: TrendingUp,
-    name: "Weekly wins recap",
-    description: "Create a Friday recap of wins, blockers, and next steps.",
-    prompt: "Summarize the week into wins, blockers, and clear next steps I can share with the team.",
+    nameKey: "scheduled.template_weekly_wins_name",
+    descriptionKey: "scheduled.template_weekly_wins_description",
+    promptKey: "scheduled.template_weekly_wins_prompt",
     tone: "text-emerald-9",
-    scheduleMode: "daily" as const,
+    scheduleMode: "daily",
     scheduleTime: "16:00",
     scheduleDays: ["fr"],
   },
   {
     icon: Trophy,
-    name: "Learning digest",
-    description: "Turn saved links and notes into a weekly digest.",
-    prompt: "Collect my saved links and notes, then draft a weekly learning digest with key ideas and follow-up actions.",
+    nameKey: "scheduled.template_learning_digest_name",
+    descriptionKey: "scheduled.template_learning_digest_description",
+    promptKey: "scheduled.template_learning_digest_prompt",
     tone: "text-amber-9",
-    scheduleMode: "daily" as const,
+    scheduleMode: "daily",
     scheduleTime: "10:00",
     scheduleDays: ["su"],
   },
   {
     icon: Brain,
-    name: "Habit check-in",
-    description: "Run a quick accountability check through the day.",
-    prompt: "Ask me for a quick progress check-in, capture blockers, and suggest one concrete next action.",
+    nameKey: "scheduled.template_habit_check_name",
+    descriptionKey: "scheduled.template_habit_check_description",
+    promptKey: "scheduled.template_habit_check_prompt",
     tone: "text-pink-9",
-    scheduleMode: "interval" as const,
+    scheduleMode: "interval",
     intervalHours: 6,
   },
 ];
@@ -290,20 +302,32 @@ const buildCronFromInterval = (hours: number) => {
   return `0 */${interval} * * *`;
 };
 
-const buildAutomationPrompt = (options: {
-  name: string;
-  prompt: string;
-  schedule: string;
-  workdir: string;
-}) => {
+const buildAutomationPrompt = (
+  options: {
+    name: string;
+    prompt: string;
+    schedule: string;
+    workdir: string;
+  },
+  tr: (key: string, replacements?: Record<string, string>) => string,
+) => {
   const name = options.name.trim();
   const schedule = options.schedule.trim();
   const prompt = normalizeSentence(options.prompt);
   if (!schedule || !prompt) return "";
   const workdir = options.workdir.trim();
-  const nameSegment = name ? ` named "${name}"` : "";
-  const workdirSegment = workdir ? ` Run from ${workdir}.` : "";
-  return `Schedule a job${nameSegment} with cron "${schedule}" to ${prompt}${workdirSegment}`.trim();
+  const nameSegment = name
+    ? tr("scheduled.create_prompt_name_segment", { name })
+    : "";
+  const workdirSegment = workdir
+    ? tr("scheduled.create_prompt_workdir_segment", { workdir })
+    : "";
+  return tr("scheduled.create_prompt_template", {
+    nameSegment,
+    schedule,
+    prompt,
+    workdirSegment,
+  }).trim();
 };
 
 const AutomationCard = (props: {
@@ -453,7 +477,14 @@ const AutomationJobCard = (props: {
 export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const platform = usePlatform();
   const locale = () => currentLocale();
-  const tr = (key: string) => t(key, locale());
+  const tr = (key: string, replacements?: Record<string, string>) => {
+    let value = t(key, locale());
+    if (!replacements) return value;
+    for (const [name, replacement] of Object.entries(replacements)) {
+      value = value.replace(`{${name}}`, replacement);
+    }
+    return value;
+  };
   const [installingScheduler, setInstallingScheduler] = createSignal(false);
   const [schedulerInstallRequested, setSchedulerInstallRequested] = createSignal(false);
   const supported = createMemo(() => {
@@ -511,11 +542,9 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const [deleteBusy, setDeleteBusy] = createSignal(false);
   const [deleteError, setDeleteError] = createSignal<string | null>(null);
   const [createModalOpen, setCreateModalOpen] = createSignal(false);
-  const [automationName, setAutomationName] = createSignal("Daily bug scan");
+  const [automationName, setAutomationName] = createSignal(tr("scheduled.default_name"));
   const [automationProject, setAutomationProject] = createSignal(props.activeWorkspaceRoot);
-  const [automationPrompt, setAutomationPrompt] = createSignal(
-    "Scan recent commits and flag riskier diffs."
-  );
+  const [automationPrompt, setAutomationPrompt] = createSignal(tr("scheduled.default_prompt"));
   const [scheduleMode, setScheduleMode] = createSignal<"daily" | "interval">("daily");
   const [scheduleTime, setScheduleTime] = createSignal("09:00");
   const [scheduleDays, setScheduleDays] = createSignal(["mo", "tu", "we", "th", "fr"]);
@@ -531,7 +560,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
       setDeleteTarget(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setDeleteError(message || "Failed to delete job.");
+      setDeleteError(message || tr("scheduled.delete_failed"));
     } finally {
       setDeleteBusy(false);
     }
@@ -545,12 +574,15 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   });
 
   const createPromptValue = createMemo(() =>
-    buildAutomationPrompt({
-      name: automationName(),
-      prompt: automationPrompt(),
-      schedule: cronExpression(),
-      workdir: automationProject(),
-    })
+    buildAutomationPrompt(
+      {
+        name: automationName(),
+        prompt: automationPrompt(),
+        schedule: cronExpression(),
+        workdir: automationProject(),
+      },
+      tr,
+    )
   );
 
   const canCreateAutomation = createMemo(() => !!createPromptValue());
@@ -579,14 +611,14 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     setCreateModalOpen(true);
   };
 
-  const openCreateModalFromTemplate = (template: (typeof automationTemplates)[number]) => {
+  const openCreateModalFromTemplate = (template: AutomationTemplate) => {
     if (automationDisabled()) return;
     const root = props.activeWorkspaceRoot.trim();
     if (root) {
       setAutomationProject(root);
     }
-    setAutomationName(template.name);
-    setAutomationPrompt(template.prompt);
+    setAutomationName(tr(template.nameKey));
+    setAutomationPrompt(tr(template.promptKey));
     setScheduleMode(template.scheduleMode);
     if (template.scheduleMode === "interval") {
       setIntervalHours(template.intervalHours ?? 6);
@@ -609,12 +641,21 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const runAutomationNow = (job: ScheduledJob) => {
     const run = job.run;
     const workdir = (job.workdir ?? props.activeWorkspaceRoot ?? "").trim();
-    const schedule = humanizeCron(job.schedule);
+    const schedule = humanizeCron(job.schedule, locale());
 
     if (run?.prompt || job.prompt) {
       const promptBody = (run?.prompt ?? job.prompt ?? "").trim();
-      const workdirHint = workdir ? `\n\nRun from ${workdir}.` : "";
-      props.setPrompt(`Run this automation now: ${job.name}.\nSchedule: ${schedule}.\n\n${promptBody}${workdirHint}`.trim());
+      const workdirHint = workdir
+        ? tr("scheduled.run_now_workdir_hint", { workdir })
+        : "";
+      props.setPrompt(
+        tr("scheduled.run_now_with_prompt", {
+          name: job.name,
+          schedule,
+          prompt: promptBody,
+          workdirHint,
+        }).trim()
+      );
       props.createSessionAndOpen();
       return;
     }
@@ -622,15 +663,22 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     if (run?.command) {
       const args = run.arguments ? ` ${run.arguments}` : "";
       const cmd = `${run.command}${args}`.trim();
-      const workdirHint = workdir ? `\n\nRun from ${workdir}.` : "";
+      const workdirHint = workdir
+        ? tr("scheduled.run_now_workdir_hint", { workdir })
+        : "";
       props.setPrompt(
-        `Run this automation now: ${job.name}.\nSchedule: ${schedule}.\n\nRun the following command:\n${cmd}${workdirHint}`.trim()
+        tr("scheduled.run_now_with_command", {
+          name: job.name,
+          schedule,
+          command: cmd,
+          workdirHint,
+        }).trim()
       );
       props.createSessionAndOpen();
       return;
     }
 
-    props.setPrompt(`Run this automation now: ${job.name}.\nSchedule: ${schedule}.`);
+    props.setPrompt(tr("scheduled.run_now_simple", { name: job.name, schedule }));
     props.createSessionAndOpen();
   };
 
@@ -781,7 +829,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                 {(card) => (
                   <AutomationCard
                     icon={card.icon}
-                    description={card.description}
+                    description={tr(card.descriptionKey)}
                     tone={card.tone}
                     onClick={() => openCreateModalFromTemplate(card)}
                     disabled={automationDisabled()}

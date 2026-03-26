@@ -52,7 +52,14 @@ export type SkillsViewProps = {
 
 export default function SkillsView(props: SkillsViewProps) {
   // Translation helper that uses current language from i18n
-  const translate = (key: string) => t(key, currentLocale());
+  const translate = (key: string, replacements?: Record<string, string>) => {
+    let value = t(key, currentLocale());
+    if (!replacements) return value;
+    for (const [name, replacement] of Object.entries(replacements)) {
+      value = value.replace(`{${name}}`, replacement);
+    }
+    return value;
+  };
 
   const skillCreatorInstalled = createMemo(() =>
     props.skills.some((skill) => skill.name === "skill-creator")
@@ -95,7 +102,9 @@ export default function SkillsView(props: SkillsViewProps) {
     onCleanup(() => window.clearTimeout(id));
   });
 
-  const maskError = (value: unknown) => (value instanceof Error ? value.message : "Something went wrong");
+  const maskError = (value: unknown) => (
+    value instanceof Error ? value.message : translate("skills.unknown_error")
+  );
 
   const stripFrontmatter = (content: string) => {
     const raw = String(content ?? "");
@@ -169,7 +178,7 @@ export default function SkillsView(props: SkillsViewProps) {
   const installFromHub = async (skill: HubSkillCard) => {
     if (props.busy || installingHubSkill()) return;
     setInstallingHubSkill(skill.name);
-    setToast(`Installing ${skill.name}…`);
+    setToast(translate("skills.installing_named", { name: skill.name }));
     try {
       const result = await props.installHubSkill(skill.name);
       setToast(result.message);
@@ -257,7 +266,7 @@ export default function SkillsView(props: SkillsViewProps) {
 
     try {
       const skill = await props.readSkill(target.name);
-      if (!skill) throw new Error("Failed to load skill");
+      if (!skill) throw new Error(translate("skills.failed_load_skill"));
 
       const payload: SkillBundleV1 = {
         schemaVersion: 1,
@@ -318,7 +327,7 @@ export default function SkillsView(props: SkillsViewProps) {
   const previewInstallLink = async () => {
     const raw = installLinkUrl().trim();
     if (!raw) {
-      setInstallLinkError("Paste a link to preview");
+      setInstallLinkError(translate("skills.preview_link_required"));
       return;
     }
     if (installLinkBusy()) return;
@@ -339,7 +348,7 @@ export default function SkillsView(props: SkillsViewProps) {
         if (!response.ok) {
           const text = (await response.text()).trim();
           const suffix = text ? `: ${text}` : "";
-          throw new Error(`Failed to fetch bundle (${response.status})${suffix}`);
+          throw new Error(`${translate("skills.bundle_fetch_failed", { status: String(response.status) })}${suffix}`);
         }
         const json = (await response.json()) as Record<string, unknown>;
         const schemaVersion = typeof json.schemaVersion === "number" ? json.schemaVersion : null;
@@ -347,10 +356,10 @@ export default function SkillsView(props: SkillsViewProps) {
         const name = typeof json.name === "string" ? json.name.trim() : "";
         const content = typeof json.content === "string" ? json.content : "";
         if (schemaVersion !== 1 || type !== "skill") {
-          throw new Error("This link is not an Veslo skill bundle");
+          throw new Error(translate("skills.bundle_invalid"));
         }
-        if (!name) throw new Error("Bundle is missing a skill name");
-        if (!content) throw new Error("Bundle is missing skill content");
+        if (!name) throw new Error(translate("skills.bundle_missing_name"));
+        if (!content) throw new Error(translate("skills.bundle_missing_content"));
         setInstallLinkBundle({
           schemaVersion: 1,
           type: "skill",
@@ -392,7 +401,7 @@ export default function SkillsView(props: SkillsViewProps) {
         }),
       );
       props.refreshSkills({ force: true });
-      setToast(`Installed ${finalName}`);
+      setToast(translate("skills.installed_named", { name: finalName }));
       closeInstallFromLink();
     } catch (e) {
       setInstallLinkError(maskError(e));
@@ -428,12 +437,12 @@ export default function SkillsView(props: SkillsViewProps) {
     try {
       const result = await props.readSkill(skill.name);
       if (!result) {
-        setSelectedError("Failed to load skill.");
+        setSelectedError(translate("skills.failed_load_skill"));
         return;
       }
       setSelectedContent(result.content);
     } catch (e) {
-      setSelectedError(e instanceof Error ? e.message : "Failed to load skill.");
+      setSelectedError(e instanceof Error ? e.message : translate("skills.failed_load_skill"));
     } finally {
       setSelectedLoading(false);
     }
@@ -462,7 +471,7 @@ export default function SkillsView(props: SkillsViewProps) {
       );
       setSelectedDirty(false);
     } catch (e) {
-      setSelectedError(e instanceof Error ? e.message : "Failed to save skill.");
+      setSelectedError(e instanceof Error ? e.message : translate("skills.failed_save_skill"));
     }
   };
 
@@ -472,7 +481,7 @@ export default function SkillsView(props: SkillsViewProps) {
       (!props.canInstallSkillCreator && !props.canUseDesktopTools)
   );
 
-  const workspaceLabel = createMemo(() => props.workspaceName.trim() || "Worker");
+  const workspaceLabel = createMemo(() => props.workspaceName.trim() || translate("skills.worker_fallback"));
 
   const canCreateInChat = createMemo(
     () => !props.busy && (props.canInstallSkillCreator || props.canUseDesktopTools)
@@ -674,7 +683,7 @@ export default function SkillsView(props: SkillsViewProps) {
                         openShareLink(skill);
                       }}
                       disabled={props.busy}
-                      title="Share"
+                      title={translate("skills.share_action")}
                     >
                       <Share2 size={14} />
                     </button>
@@ -687,7 +696,7 @@ export default function SkillsView(props: SkillsViewProps) {
                         void openSkill(skill);
                       }}
                       disabled={props.busy}
-                      title="Edit"
+                      title={translate("common.edit")}
                     >
                       <Edit2 size={14} />
                     </button>
@@ -729,7 +738,7 @@ export default function SkillsView(props: SkillsViewProps) {
                 ? "text-dls-secondary"
                 : "text-dls-secondary hover:text-dls-text"
             }`}
-            title="Refresh hub catalog"
+            title={translate("skills.refresh_hub_catalog")}
           >
             <RefreshCw size={14} />
             {translate("skills.refresh_hub")}
@@ -772,7 +781,7 @@ export default function SkillsView(props: SkillsViewProps) {
                         <Show when={skill.trigger}>
                           <span
                             class="inline-block max-w-full rounded-md border border-dls-border bg-dls-hover px-2 py-1 truncate"
-                            title={`Trigger: ${skill.trigger}`}
+                            title={translate("skills.trigger_title", { trigger: skill.trigger })}
                           >
                             {translate("skills.trigger_label")} {skill.trigger}
                           </span>
@@ -793,7 +802,7 @@ export default function SkillsView(props: SkillsViewProps) {
                       void installFromHub(skill);
                     }}
                     disabled={props.busy || installingHubSkill() === skill.name}
-                    title={`Install ${skill.name}`}
+                    title={translate("skills.install_named", { name: skill.name })}
                   >
                     <Show
                       when={installingHubSkill() === skill.name}

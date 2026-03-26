@@ -53,7 +53,7 @@ export const resolveTitlebarMenuLayout = ({
       rootClass: TAURI_OVERLAY_ROOT_CLASS,
       leftOffsetClass: "pointer-events-auto relative z-10 mt-1 ml-[66px]",
       rightOffsetClass: "pointer-events-auto relative z-10 mt-1 mr-2",
-      dragRegionClass: hideTitlebar ? TAURI_DRAG_REGION_CLASS : null,
+      dragRegionClass: TAURI_DRAG_REGION_CLASS,
     };
   }
 

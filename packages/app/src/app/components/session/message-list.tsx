@@ -9,6 +9,7 @@ import { groupMessageParts, isUserVisiblePart, summarizeStep } from "../../utils
 import PartView from "../part-view";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { getTaskPartSubagentInfo, isVesloInternalSubagentType } from "../../lib/internal-subagents";
+import { currentLocale, t } from "../../../i18n";
 
 export type MessageListProps = {
   messages: MessageWithParts[];
@@ -113,12 +114,16 @@ function summarizeExploration(parts: Part[]): ExplorationSummary {
   };
 }
 
-function formatExplorationSummary(summary: ExplorationSummary) {
+function formatExplorationSummary(
+  summary: ExplorationSummary,
+  formatCount: (kind: "file" | "search" | "list", count: number) => string,
+  emptyLabel: string,
+) {
   const items: string[] = [];
-  if (summary.files > 0) items.push(`${summary.files} file${summary.files === 1 ? "" : "s"}`);
-  if (summary.searches > 0) items.push(`${summary.searches} search${summary.searches === 1 ? "" : "es"}`);
-  if (summary.lists > 0) items.push(`${summary.lists} list${summary.lists === 1 ? "" : "s"}`);
-  return items.length > 0 ? items.join(" · ") : "context activity";
+  if (summary.files > 0) items.push(formatCount("file", summary.files));
+  if (summary.searches > 0) items.push(formatCount("search", summary.searches));
+  if (summary.lists > 0) items.push(formatCount("list", summary.lists));
+  return items.length > 0 ? items.join(" · ") : emptyLabel;
 }
 
 function explorationStatus(parts: Part[]) {
@@ -210,6 +215,45 @@ function getTaskStepInfo(part: Part): TaskStepInfo {
 }
 
 export default function MessageList(props: MessageListProps) {
+  const tr = (key: string, replacements?: Record<string, string>) => {
+    let value = t(key, currentLocale());
+    if (!replacements) return value;
+    for (const [name, replacement] of Object.entries(replacements)) {
+      value = value.replace(`{${name}}`, replacement);
+    }
+    return value;
+  };
+
+  const plural = (count: number, oneKey: string, otherKey: string) =>
+    tr(count === 1 ? oneKey : otherKey, { count: String(count) });
+
+  const timelineCountLabel = (kind: "step" | "thought_update" | "file" | "search" | "list", count: number) => {
+    switch (kind) {
+      case "step":
+        return plural(count, "session.timeline_step_one", "session.timeline_step_other");
+      case "thought_update":
+        return plural(count, "session.timeline_thought_update_one", "session.timeline_thought_update_other");
+      case "file":
+        return plural(count, "session.timeline_file_one", "session.timeline_file_other");
+      case "search":
+        return plural(count, "session.timeline_search_one", "session.timeline_search_other");
+      case "list":
+        return plural(count, "session.timeline_list_one", "session.timeline_list_other");
+      default:
+        return String(count);
+    }
+  };
+
+  const localizeThinkingTitle = (title: string) => {
+    const thinkingLabel = tr("session.timeline_thinking");
+    if (title === "Thinking") return thinkingLabel;
+    if (title.startsWith("Thinking: ")) {
+      const detail = title.slice("Thinking: ".length).trim();
+      return detail ? `${thinkingLabel}: ${detail}` : thinkingLabel;
+    }
+    return title;
+  };
+
   const [copyingId, setCopyingId] = createSignal<string | null>(null);
   let previousMessagePartCountById = new Map<string, number>();
   let copyTimeout: number | undefined;
@@ -537,6 +581,11 @@ export default function MessageList(props: MessageListProps) {
   /** Compact single-line step row */
   const StepRow = (rowProps: { part: Part; isUser: boolean; groupMode?: StepGroupMode }) => {
     const summary = createMemo(() => summarizeStep(rowProps.part));
+    const title = createMemo(() =>
+      rowProps.part.type === "reasoning"
+        ? localizeThinkingTitle(summary().title)
+        : summary().title
+    );
     const category = createMemo(() => summary().toolCategory ?? "tool");
     const status = createMemo(() => summary().status);
     const task = createMemo(() => getTaskStepInfo(rowProps.part));
@@ -549,7 +598,7 @@ export default function MessageList(props: MessageListProps) {
               rowProps.groupMode === "exploration" ? "opacity-85" : ""
             }`}
           >
-            <div class="text-[12px] font-medium text-gray-12">{summary().title}</div>
+            <div class="text-[12px] font-medium text-gray-12">{title()}</div>
             <Show when={summary().detail}>
               {(detail) => (
                 <p class="mt-1 text-[12px] leading-relaxed text-gray-10 whitespace-pre-wrap break-words">
@@ -576,7 +625,7 @@ export default function MessageList(props: MessageListProps) {
         </div>
         {/* Title */}
         <span class="text-[13px] leading-4 text-gray-12 font-medium truncate shrink-0 max-w-[200px]">
-          {summary().title}
+          {title()}
         </span>
         {/* Skill badge */}
         <Show when={summary().isSkill}>
@@ -682,16 +731,21 @@ export default function MessageList(props: MessageListProps) {
     const executionSummary = () => {
       const tools = toolCallCount();
       const reasoning = reasoningCount();
+      const stepsLabel = timelineCountLabel("step", tools);
+      const thoughtLabel = timelineCountLabel("thought_update", reasoning);
       if (tools > 0 && reasoning > 0) {
-        return `${tools} step${tools === 1 ? "" : "s"} with ${reasoning} thought update${reasoning === 1 ? "" : "s"}`;
+        return tr("session.timeline_summary_steps_with_thought_updates", {
+          steps: stepsLabel,
+          thoughts: thoughtLabel,
+        });
       }
       if (tools > 0) {
-        return `${tools} step${tools === 1 ? "" : "s"}`;
+        return stepsLabel;
       }
       if (reasoning > 0) {
-        return `${reasoning} thought update${reasoning === 1 ? "" : "s"}`;
+        return thoughtLabel;
       }
-      return "updates";
+      return tr("session.timeline_updates");
     };
 
     const compactPathToken = (value: string) => {
@@ -822,14 +876,20 @@ export default function MessageList(props: MessageListProps) {
 
     const collapsedLabel = () => {
       if (explorationOnly()) {
-        return explorationState() === "exploring" ? "Exploring" : "Explored";
+        return explorationState() === "exploring"
+          ? tr("session.timeline_exploring")
+          : tr("session.timeline_explored");
       }
-      return expanded() ? "Hide timeline" : "Execution timeline";
+      return expanded() ? tr("session.timeline_hide") : tr("session.timeline_execution");
     };
 
     const collapsedSummary = () => {
       if (explorationOnly()) {
-        return formatExplorationSummary(explorationSummary());
+        return formatExplorationSummary(
+          explorationSummary(),
+          (kind, count) => timelineCountLabel(kind, count),
+          tr("session.timeline_context_activity"),
+        );
       }
       return executionSummary();
     };
@@ -842,12 +902,18 @@ export default function MessageList(props: MessageListProps) {
 
     const groupHeaderLabel = (group: StepTimelineGroup) => {
       if (group.mode !== "exploration") return "";
-      return explorationStatus(group.parts) === "exploring" ? "Exploring" : "Explored";
+      return explorationStatus(group.parts) === "exploring"
+        ? tr("session.timeline_exploring")
+        : tr("session.timeline_explored");
     };
 
     const groupHeaderSummary = (group: StepTimelineGroup) => {
       if (group.mode !== "exploration") return "";
-      return formatExplorationSummary(summarizeExploration(group.parts));
+      return formatExplorationSummary(
+        summarizeExploration(group.parts),
+        (kind, count) => timelineCountLabel(kind, count),
+        tr("session.timeline_context_activity"),
+      );
     };
 
     return (
@@ -904,7 +970,7 @@ export default function MessageList(props: MessageListProps) {
                     <div class="mb-1 flex items-center gap-2 text-[11px] text-gray-9">
                       <span
                         class={`font-medium ${
-                          groupHeaderLabel(group) === "Exploring" ? "text-blue-11" : "text-gray-10"
+                          explorationStatus(group.parts) === "exploring" ? "text-blue-11" : "text-gray-10"
                         }`}
                       >
                         {groupHeaderLabel(group)}

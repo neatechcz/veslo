@@ -16,3 +16,15 @@ test("session loading overlay text is localized", () => {
   assert.ok("session.opening_conversation" in cs);
   assert.equal(appSource.includes("Otevírám konverzaci"), false);
 });
+
+test("right menu pages avoid hardcoded English copy", () => {
+  const skillsSource = readFileSync(resolve(__dirname, "pages/skills.tsx"), "utf8");
+  const scheduledSource = readFileSync(resolve(__dirname, "pages/scheduled.tsx"), "utf8");
+
+  assert.equal(skillsSource.includes("Paste a link to preview"), false);
+  assert.equal(skillsSource.includes("Failed to load skill."), false);
+  assert.equal(skillsSource.includes("Failed to save skill."), false);
+  assert.equal(scheduledSource.includes("Daily planning brief"), false);
+  assert.equal(scheduledSource.includes("Schedule a job"), false);
+  assert.equal(scheduledSource.includes("Run this automation now"), false);
+});

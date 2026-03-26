@@ -28,6 +28,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
 
   const handleDragStripMouseDown = (event: MouseEvent) => {
     if (event.button !== 0) return;
+    if (!props.hideTitlebar) return;
     // Keep explicit startDragging fallback to avoid drag regressions if
     // browser hit-testing around data-tauri-drag-region changes.
     void startWindowDragging().catch(() => {
