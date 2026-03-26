@@ -9,20 +9,60 @@ const serviceRoot = path.resolve(path.dirname(currentFile), "..")
 
 const workersSource = readFileSync(path.join(serviceRoot, "src", "http", "workers.ts"), "utf8")
 const orgsSource = readFileSync(path.join(serviceRoot, "src", "http", "orgs.ts"), "utf8")
-const billingSection = workersSource.slice(workersSource.indexOf('workersRouter.post("/billing/subscription"'))
+
+function extractSection(source: string, startMarker: string, endMarker?: string) {
+  const start = source.indexOf(startMarker)
+  assert.notEqual(start, -1, `missing section start: ${startMarker}`)
+
+  const end = endMarker ? source.indexOf(endMarker, start + startMarker.length) : source.length
+  assert.notEqual(end, -1, `missing section end: ${endMarker}`)
+
+  return source.slice(start, end)
+}
+
+const createWorkerSection = extractSection(
+  workersSource,
+  'workersRouter.post("/",',
+  'workersRouter.get("/billing"',
+)
+
+const billingSection = extractSection(
+  workersSource,
+  'workersRouter.post("/billing/subscription"',
+  'workersRouter.get("/:id"',
+)
+
+const addMemberSection = extractSection(
+  orgsSource,
+  'orgsRouter.post("/:orgId/members"',
+  'orgsRouter.patch("/:orgId/members/:memberId"',
+)
+
+const updateMemberSection = extractSection(
+  orgsSource,
+  'orgsRouter.patch("/:orgId/members/:memberId"',
+  'orgsRouter.delete("/:orgId/members/:memberId"',
+)
+
+const deleteMemberSection = extractSection(
+  orgsSource,
+  'orgsRouter.delete("/:orgId/members/:memberId"',
+)
 
 test("cloud worker creation requires verified email before paywall checks", () => {
-  assert.equal(workersSource.includes('if (parsed.data.destination === "cloud")'), true)
-  assert.equal(workersSource.includes("requireVerifiedEmail(res, context.session)"), true)
+  assert.equal(createWorkerSection.includes('if (parsed.data.destination === "cloud")'), true)
+  assert.equal(createWorkerSection.includes("requireVerifiedEmail(res, context.session)"), true)
   assert.equal(
-    workersSource.indexOf("requireVerifiedEmail(res, context.session)") <
-      workersSource.indexOf("requireCloudWorkerAccess({"),
+    createWorkerSection.indexOf("requireVerifiedEmail(res, context.session)") <
+      createWorkerSection.indexOf("requireCloudWorkerAccess({"),
     true,
   )
 })
 
 test("org membership writes require verified email", () => {
-  assert.equal(orgsSource.match(/requireVerifiedEmail\(res, context\.session\)/g)?.length ?? 0, 3)
+  assert.equal(addMemberSection.includes("requireVerifiedEmail(res, context.session)"), true)
+  assert.equal(updateMemberSection.includes("requireVerifiedEmail(res, context.session)"), true)
+  assert.equal(deleteMemberSection.includes("requireVerifiedEmail(res, context.session)"), true)
 })
 
 test("billing subscription mutation requires verified email", () => {
