@@ -39,6 +39,7 @@ test("requireVerifiedEmail responds with a stable 403 payload for unverified ses
   } satisfies SessionContext)
 
   assert.equal(result, false)
+  assert.equal(res.statusCode, 403)
   assert.deepEqual(res.jsonBody, {
     error: "email_verification_required",
     message: "Verify your email to continue.",
