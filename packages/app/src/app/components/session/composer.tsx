@@ -1004,12 +1004,13 @@ export default function Composer(props: ComposerProps) {
     emitDraftChange();
   };
 
-  const canNavigateHistory = () => {
+  const canNavigateHistory = (direction: "up" | "down", event: KeyboardEvent) => {
     if (!editorRef) return false;
+    if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return false;
     const offsets = getSelectionOffsets(editorRef);
     if (!offsets || offsets.start !== offsets.end) return false;
     const total = readEditorText(editorRef).length;
-    return offsets.start === 0 || offsets.start === total;
+    return direction === "up" ? offsets.start === 0 : offsets.start === total;
   };
 
   const applyHistoryDraft = (draft: ComposerDraft | null) => {
@@ -1447,12 +1448,16 @@ export default function Composer(props: ComposerProps) {
       return;
     }
 
-    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-      if (canNavigateHistory()) {
-        event.preventDefault();
-        navigateHistory(event.key === "ArrowUp" ? "up" : "down");
-        return;
-      }
+    if (event.key === "ArrowUp" && canNavigateHistory("up", event)) {
+      event.preventDefault();
+      navigateHistory("up");
+      return;
+    }
+
+    if (event.key === "ArrowDown" && canNavigateHistory("down", event)) {
+      event.preventDefault();
+      navigateHistory("down");
+      return;
     }
 
     if (event.key === "Enter") {
