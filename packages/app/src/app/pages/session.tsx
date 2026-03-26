@@ -3267,14 +3267,18 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const isSandboxWorkspace = createMemo(() => Boolean((props.activeWorkspaceDisplay as any)?.sandboxContainerName?.trim()));
+  let pendingSessionLoadAttempt = 0;
 
   const handleDraftChange = (draft: ComposerDraft) => {
     props.setComposerDraft(draft);
   };
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
+    const attempt = ++pendingSessionLoadAttempt;
+    const shouldShowOverlay = sessionId !== props.selectedSessionId;
+
     // Show loading overlay immediately when switching to a different session.
-    if (sessionId !== props.selectedSessionId) {
+    if (shouldShowOverlay) {
       const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
       const session = group?.sessions.find((s) => s.id === sessionId);
       const workspaceName = group?.workspace.displayName ?? group?.workspace.name ?? "";
@@ -3290,7 +3294,19 @@ export default function SessionView(props: SessionViewProps) {
       activateWorkspace: props.activateWorkspace,
       // Route-driven selection: navigate first and let the route effect own selectSession.
       openSession: (nextSessionId) => props.setView("session", nextSessionId),
-    });
+    })
+      .then((result) => {
+        if (!shouldShowOverlay) return;
+        if (attempt !== pendingSessionLoadAttempt) return;
+        if (result === "blocked") {
+          props.setPendingSessionLoad(null);
+        }
+      })
+      .catch(() => {
+        if (!shouldShowOverlay) return;
+        if (attempt !== pendingSessionLoadAttempt) return;
+        props.setPendingSessionLoad(null);
+      });
   };
 
   const createTaskInWorkspace = (workspaceId: string) => {

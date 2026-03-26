@@ -108,6 +108,7 @@ export default {
   "session.recents_notice": "These tasks run locally and aren't synced across devices.",
   "session.ready_to_work_title": "Ready to work",
   "session.ready_to_work_description": "Describe a task. I'll show progress and ask for permissions when needed.",
+  "session.opening_conversation": "Opening conversation",
   "session.document_label": "Document",
   "session.standard_label": "Standard",
   "session.no_artifacts_fallback": "No artifacts yet.",

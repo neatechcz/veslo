@@ -31,7 +31,7 @@ test("opens immediately when session is in active workspace", async () => {
     openSession: (id) => opened.push(id),
   });
 
-  assert.equal(result, true);
+  assert.equal(result, "opened");
   assert.deepEqual(activated, []);
   assert.deepEqual(opened, ["sess-1"]);
 });
@@ -51,7 +51,7 @@ test("does not open session when cross-workspace activation fails", async () => 
     openSession: (id) => opened.push(id),
   });
 
-  assert.equal(result, false);
+  assert.equal(result, "blocked");
   assert.deepEqual(activated, ["ws-other"]);
   assert.deepEqual(opened, []);
 });
@@ -71,7 +71,7 @@ test("opens session after successful cross-workspace activation", async () => {
     openSession: (id) => opened.push(id),
   });
 
-  assert.equal(result, true);
+  assert.equal(result, "opened");
   assert.deepEqual(activated, ["ws-other"]);
   assert.deepEqual(opened, ["sess-3"]);
 });
@@ -112,8 +112,8 @@ test("serializes rapid cross-workspace session clicks and only opens the latest 
   const firstResult = await first;
   const secondResult = await second;
 
-  assert.equal(firstResult, false);
-  assert.equal(secondResult, true);
+  assert.equal(firstResult, "superseded");
+  assert.equal(secondResult, "opened");
   assert.equal(maxConcurrent, 1);
   assert.deepEqual(activationEvents, ["start:ws-two", "end:ws-two"]);
   assert.deepEqual(opened, ["sess-2"]);
@@ -188,7 +188,7 @@ test("rapid back-and-forth between two workspaces completes without hanging", as
     return true;
   };
 
-  const clicks: Promise<boolean>[] = [];
+  const clicks: Promise<"opened" | "blocked" | "superseded">[] = [];
 
   // Simulate 10 rapid back-and-forth clicks between ws-A and ws-B
   for (let i = 0; i < 10; i++) {
@@ -217,7 +217,7 @@ test("rapid back-and-forth between two workspaces completes without hanging", as
   ]);
 
   // Only the last click should have actually opened a session
-  assert.equal(results[results.length - 1], true, "last click should succeed");
+  assert.equal(results[results.length - 1], "opened", "last click should succeed");
   assert.ok(opened.length >= 1, "at least one session must be opened");
   assert.equal(opened[opened.length - 1], "sess-9", "the last opened session should be the final click");
 });
@@ -243,7 +243,7 @@ test("rapid back-and-forth with slow activations does not deadlock", async () =>
     return true;
   };
 
-  const clicks: Promise<boolean>[] = [];
+  const clicks: Promise<"opened" | "blocked" | "superseded">[] = [];
 
   // 7 rapid back-and-forth clicks (odd count so last click ends on ws-B,
   // which differs from the starting ws-A and requires activation)
@@ -277,7 +277,7 @@ test("rapid back-and-forth with slow activations does not deadlock", async () =>
   assert.ok(activationStarts.length >= 1, "at least one activation must run");
 
   // Last click must succeed
-  assert.equal(results[results.length - 1], true);
+  assert.equal(results[results.length - 1], "opened");
   assert.ok(opened.length >= 1);
   assert.equal(opened[opened.length - 1], "sess-6");
 });
@@ -295,7 +295,7 @@ test("rapid switching among three workspaces (regular + temp folder) settles", a
     return true;
   };
 
-  const clicks: Promise<boolean>[] = [];
+  const clicks: Promise<"opened" | "blocked" | "superseded">[] = [];
 
   // 12 rapid clicks cycling through 3 workspaces
   for (let i = 0; i < 12; i++) {
@@ -321,7 +321,7 @@ test("rapid switching among three workspaces (regular + temp folder) settles", a
     }),
   ]);
 
-  assert.equal(results[results.length - 1], true);
+  assert.equal(results[results.length - 1], "opened");
   assert.ok(opened.length >= 1);
   assert.equal(opened[opened.length - 1], "sess-11");
 });
@@ -385,7 +385,7 @@ test("activation failure during rapid switching does not leave queue stuck", asy
     return true;
   };
 
-  const clicks: Promise<boolean>[] = [];
+  const clicks: Promise<"opened" | "blocked" | "superseded">[] = [];
 
   for (let i = 0; i < 8; i++) {
     const targetWs = i % 2 === 0 ? "ws-B" : "ws-A";
@@ -429,7 +429,7 @@ test("activation throwing error during rapid switching does not leave queue stuc
     return true;
   };
 
-  const clicks: Promise<boolean>[] = [];
+  const clicks: Promise<"opened" | "blocked" | "superseded">[] = [];
 
   for (let i = 0; i < 10; i++) {
     const targetWs = i % 2 === 0 ? "ws-B" : "ws-A";
@@ -441,7 +441,7 @@ test("activation throwing error during rapid switching does not leave queue stuc
         sessionId: `sess-${i}`,
         activateWorkspace,
         openSession: (id) => opened.push(id),
-      }).catch(() => false),
+      }).catch(() => "blocked"),
     );
   }
 

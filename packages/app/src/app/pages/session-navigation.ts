@@ -7,6 +7,8 @@ export type OpenSessionWithWorkspaceActivationInput = {
   openSession: (sessionId: string) => void;
 };
 
+export type OpenSessionWithWorkspaceActivationResult = "opened" | "blocked" | "superseded";
+
 export type CreateSessionWithWorkspaceActivationInput = {
   activeWorkspaceId: string;
   getActiveWorkspaceId?: () => string;
@@ -24,26 +26,26 @@ let createSessionNavigationToken = 0;
 
 export async function openSessionWithWorkspaceActivation(
   input: OpenSessionWithWorkspaceActivationInput,
-): Promise<boolean> {
+): Promise<OpenSessionWithWorkspaceActivationResult> {
   const sessionId = input.sessionId.trim();
   const workspaceId = input.workspaceId.trim();
   const activeWorkspaceId = input.activeWorkspaceId.trim();
   const getActiveWorkspaceId = () => input.getActiveWorkspaceId?.().trim() || activeWorkspaceId;
-  if (!sessionId || !workspaceId) return false;
+  if (!sessionId || !workspaceId) return "blocked";
 
   const token = ++openSessionNavigationToken;
 
   const run = async () => {
-    if (token !== openSessionNavigationToken) return false;
+    if (token !== openSessionNavigationToken) return "superseded";
 
     if (workspaceId !== getActiveWorkspaceId()) {
       const activated = await Promise.resolve(input.activateWorkspace(workspaceId));
-      if (!activated) return false;
+      if (!activated) return "blocked";
     }
 
-    if (token !== openSessionNavigationToken) return false;
+    if (token !== openSessionNavigationToken) return "superseded";
     input.openSession(sessionId);
-    return true;
+    return "opened";
   };
 
   const task = openSessionNavigationQueue.then(run, run);

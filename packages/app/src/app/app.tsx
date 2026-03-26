@@ -6695,7 +6695,7 @@ export default function App() {
                       />
                       <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-indigo-7/70" />
                     </span>
-                    <span>Otevírám konverzaci</span>
+                    <span>{t("session.opening_conversation", currentLocale())}</span>
                   </div>
                   <div class="h-1 w-56 overflow-hidden rounded-full bg-gray-4/50">
                     <div class="h-full w-1/2 rounded-full bg-gradient-to-r from-transparent via-indigo-6/50 to-transparent animate-progress-shimmer" />

@@ -108,6 +108,7 @@ export default {
   "session.recents_notice": "Tyto úkoly běží lokálně a nesynchronizují se mezi zařízeními.",
   "session.ready_to_work_title": "Připraveno k práci",
   "session.ready_to_work_description": "Popište úkol. Ukážu průběh a v případě potřeby si vyžádám oprávnění.",
+  "session.opening_conversation": "Otevírám konverzaci",
   "session.document_label": "Dokument",
   "session.standard_label": "Standardní",
   "session.no_artifacts_fallback": "Zatím žádné artefakty.",
