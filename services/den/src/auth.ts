@@ -3,6 +3,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle"
 import { bearer } from "better-auth/plugins/bearer"
 import { db } from "./db/index.js"
 import * as schema from "./db/schema.js"
+import { sendResetPasswordAuthEmail, sendVerificationAuthEmail } from "./email/auth-mailer.js"
 import { env } from "./env.js"
 import { ensureDefaultOrg } from "./orgs.js"
 
@@ -25,8 +26,19 @@ export const auth = betterAuth({
     schema,
   }),
   plugins: [bearer()],
+  emailVerification: {
+    sendOnSignUp: true,
+    autoSignInAfterVerification: false,
+    sendVerificationEmail: async ({ user, url }) => {
+      void sendVerificationAuthEmail({ to: user.email, url })
+    },
+  },
   emailAndPassword: {
     enabled: true,
+    requireEmailVerification: false,
+    sendResetPassword: async ({ user, url }) => {
+      void sendResetPasswordAuthEmail({ to: user.email, url })
+    },
   },
   databaseHooks: {
     user: {

@@ -7,6 +7,8 @@ const schema = z.object({
   WORKER_TOKEN_ENCRYPTION_KEY: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  AUTH_EMAIL_FROM: z.string().optional(),
   PORT: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
   DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: z.string().optional(),
@@ -70,6 +72,10 @@ export const env = {
   github: {
     clientId: parsed.GITHUB_CLIENT_ID?.trim() || undefined,
     clientSecret: parsed.GITHUB_CLIENT_SECRET?.trim() || undefined,
+  },
+  email: {
+    resendApiKey: parsed.RESEND_API_KEY?.trim() || undefined,
+    from: parsed.AUTH_EMAIL_FROM?.trim() || undefined,
   },
   port: Number(parsed.PORT ?? "8788"),
   corsOrigins: corsOrigins ?? [],
