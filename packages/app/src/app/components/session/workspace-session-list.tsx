@@ -437,7 +437,7 @@ export default function WorkspaceSessionList(props: Props) {
                     <div class="relative group/session-row">
                     <button
                       type="button"
-                      class={`w-full flex items-center min-h-11 px-3 rounded-xl text-left transition-colors pr-20 ${
+                      class={`w-full flex min-h-11 rounded-xl px-3 py-2 pr-14 text-left transition-colors ${
                         isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
                       }`}
                       onClick={() => props.onOpenSession(workspace().id, session().id)}
@@ -482,11 +482,11 @@ export default function WorkspaceSessionList(props: Props) {
                             </span>
                           </Show>
                         </div>
-                      </div>
 
-                      <span class="ml-2 text-[11px] text-gray-9 whitespace-nowrap">
-                        {formatRelativeTime(displayTimestamp(session()))}
-                      </span>
+                        <span class="mt-1 block max-w-full truncate text-[11px] text-gray-9">
+                          {formatRelativeTime(displayTimestamp(session()))}
+                        </span>
+                      </div>
                     </button>
 
                     <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100 transition-opacity">
