@@ -925,6 +925,18 @@ export async function opencodeMcpAuth(
   });
 }
 
+export async function opencodeDbUpdateSessionDirectory(input: {
+  sessionId: string;
+  oldDirectory: string;
+  directory: string;
+}): Promise<ExecResult> {
+  return invoke<ExecResult>("opencode_db_update_session_directory", {
+    sessionId: input.sessionId,
+    oldDirectory: input.oldDirectory,
+    directory: input.directory,
+  });
+}
+
 export async function opencodeRouterStop(): Promise<OpenCodeRouterInfo> {
   return invoke<OpenCodeRouterInfo>("opencodeRouter_stop");
 }

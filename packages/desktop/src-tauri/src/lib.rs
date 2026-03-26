@@ -26,7 +26,8 @@ use commands::engine::{
 };
 use commands::misc::{
     app_build_info, obsidian_is_available, open_in_obsidian, opencode_db_migrate,
-    opencode_mcp_auth, read_obsidian_mirror_file, reset_opencode_cache, reset_veslo_state,
+    opencode_db_update_session_directory, opencode_mcp_auth, read_obsidian_mirror_file,
+    reset_opencode_cache, reset_veslo_state,
     write_obsidian_mirror_file,
 };
 use commands::opencode_router::{
@@ -185,6 +186,7 @@ pub fn run() {
             reset_opencode_cache,
             opencode_db_migrate,
             opencode_mcp_auth,
+            opencode_db_update_session_directory,
             scheduler_list_jobs,
             scheduler_delete_job,
             set_window_decorations
