@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { buildAuthCallbackUrl } from "../lib/auth-urls";
 
 type Step = 1 | 2;
 type AuthMode = "sign-in" | "sign-up";
@@ -55,6 +56,7 @@ type AuthUser = {
   id: string;
   email: string;
   name: string | null;
+  emailVerified: boolean;
 };
 
 type OrganizationSummary = {
@@ -153,7 +155,6 @@ const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "Veslo User";
 const DESKTOP_ONBOARDING_PARAM = "desktopOnboarding";
 const VESLO_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_VESLO_APP_CONNECT_URL ?? "").trim();
-const VESLO_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_VESLO_AUTH_CALLBACK_URL ?? "https://app.veslo.neatech.com").trim();
 
 function getEmailDomain(email: string): string {
   const atIndex = email.lastIndexOf("@");
@@ -222,11 +223,7 @@ async function trackDenSignupInLoops(payload: DenSignupTrackPayload) {
 }
 
 function getGithubCallbackUrl(): string {
-  try {
-    return new URL("/", VESLO_AUTH_CALLBACK_BASE_URL || "https://app.veslo.neatech.com").toString();
-  } catch {
-    return "https://app.veslo.neatech.com/";
-  }
+  return buildAuthCallbackUrl("/");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -345,7 +342,8 @@ function getUser(payload: unknown): AuthUser | null {
   return {
     id: user.id,
     email: user.email,
-    name: typeof user.name === "string" ? user.name : null
+    name: typeof user.name === "string" ? user.name : null,
+    emailVerified: user.emailVerified === true
   };
 }
 
@@ -992,6 +990,9 @@ export function CloudControlPanel() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authInfo, setAuthInfo] = useState(getAuthInfoForMode("sign-up"));
   const [authError, setAuthError] = useState<string | null>(null);
+  const [verificationBusy, setVerificationBusy] = useState(false);
+  const [verificationInfo, setVerificationInfo] = useState<string | null>(null);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(() => {
     if (typeof window === "undefined") {
@@ -1772,7 +1773,8 @@ export function CloudControlPanel() {
           ? {
               name: DEFAULT_AUTH_NAME,
               email: trimmedEmail,
-              password
+              password,
+              callbackURL: buildAuthCallbackUrl("/verify-email")
             }
           : {
               email: trimmedEmail,
@@ -1849,6 +1851,39 @@ export function CloudControlPanel() {
       });
     } finally {
       setAuthBusy(false);
+    }
+  }
+
+  async function handleResendVerificationEmail() {
+    if (!user || user.emailVerified || verificationBusy) {
+      return;
+    }
+
+    setVerificationBusy(true);
+    setVerificationError(null);
+    setVerificationInfo(null);
+
+    try {
+      const { response, payload } = await requestJson("/api/auth/send-verification-email", {
+        method: "POST",
+        body: JSON.stringify({
+          email: user.email,
+          callbackURL: buildAuthCallbackUrl("/verify-email")
+        })
+      });
+
+      if (!response.ok) {
+        setVerificationError(getErrorMessage(payload, `Verification resend failed with ${response.status}.`));
+        return;
+      }
+
+      setVerificationInfo("Verification email sent. Check your inbox for the latest link.");
+      appendEvent("success", "Verification email sent", user.email);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown network error";
+      setVerificationError(message);
+    } finally {
+      setVerificationBusy(false);
     }
   }
 
@@ -1987,6 +2022,9 @@ export function CloudControlPanel() {
     setEmail("");
     setPassword("");
     setAuthInfo(getAuthInfoForMode("sign-up"));
+    setVerificationInfo(null);
+    setVerificationError(null);
+    setVerificationBusy(false);
     setLaunchStatus("Name your worker and click launch.");
     setEvents([]);
     resetPosthogUser();
@@ -2055,6 +2093,18 @@ export function CloudControlPanel() {
           void refreshBilling({ includeCheckout: true, quiet: true });
         }
 
+        return;
+      }
+
+      if (response.status === 403 && isRecord(payload) && payload.error === "email_verification_required") {
+        const message = "Verify your email before launching a worker. Use resend verification if the link expired.";
+        setLaunchError(message);
+        setLaunchStatus("Email verification is required before launch.");
+        appendEvent("warning", "Email verification required", message);
+        trackPosthogEvent("den_worker_launch_failed", {
+          status: response.status,
+          reason: "email_verification_required"
+        });
         return;
       }
 
@@ -2495,6 +2545,15 @@ export function CloudControlPanel() {
               </button>
             </div>
 
+            {authMode === "sign-in" ? (
+              <div className="ow-inline-row">
+                <p className="ow-caption">Locked out?</p>
+                <a href="/forgot-password" className="ow-link">
+                  Forgot password?
+                </a>
+              </div>
+            ) : null}
+
             <div className="ow-note-box">
               <p>{authInfo}</p>
               {authError ? <p className="ow-error-text">{authError}</p> : null}
@@ -2504,6 +2563,26 @@ export function CloudControlPanel() {
 
         {step === 2 ? (
           <div className="flex h-full flex-col gap-3">
+            {user && !user.emailVerified ? (
+              <div className="ow-note-box border-amber-200 bg-amber-50 text-amber-900">
+                <p className="font-medium">Your email is not verified yet.</p>
+                <p>Verify the inbox link before launching workers or changing billing.</p>
+                <div className="flex flex-wrap items-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    className="ow-btn-secondary ow-btn-compact"
+                    onClick={() => void handleResendVerificationEmail()}
+                    disabled={verificationBusy}
+                  >
+                    {verificationBusy ? "Sending..." : "Resend verification email"}
+                  </button>
+                  <span className="text-xs text-amber-800">
+                    {verificationInfo ?? verificationError ?? "A verification link is required to continue."}
+                  </span>
+                </div>
+              </div>
+            ) : null}
+
             <div className="mb-3 flex items-center justify-between rounded-[18px] border border-slate-200 bg-white p-2 lg:hidden">
               <div className="flex gap-2">
                 <button
