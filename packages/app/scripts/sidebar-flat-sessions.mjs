@@ -119,12 +119,12 @@ assert.equal(privateGroup.projectLabel, "", "private grouped project should rend
 assert.equal(privateGroup.projectTitle, "", "private grouped project should not expose a folder tooltip");
 assert.deepEqual(
   privateGroup.sessions.map((row) => row.session.id),
-  ["private-newest", "private-middle", "private-oldest"],
+  ["private-oldest", "private-newest", "private-middle"],
   "private grouped sessions should follow the same newest-first order as the Recent view",
 );
 assert.equal(
   privateGroup.workspace.id,
-  "private-a",
+  "private-b",
   "private grouped actions should target the workspace with the most recent session",
 );
 

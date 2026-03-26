@@ -51,8 +51,8 @@ export const resolveTitlebarMenuLayout = ({
   if (mac) {
     return {
       rootClass: TAURI_OVERLAY_ROOT_CLASS,
-      leftOffsetClass: "pointer-events-auto relative z-10 mt-1 ml-[66px]",
-      rightOffsetClass: "pointer-events-auto relative z-10 mt-1 mr-2",
+      leftOffsetClass: "pointer-events-auto relative z-10 mt-0.5 ml-[66px]",
+      rightOffsetClass: "pointer-events-auto relative z-10 mt-0.5 mr-2",
       dragRegionClass: TAURI_DRAG_REGION_CLASS,
     };
   }

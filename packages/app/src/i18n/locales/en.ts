@@ -924,6 +924,7 @@ export default {
   "session.loading_agents": "Loading agents...",
   "session.loading_commands": "Loading commands...",
   "session.loading_earlier_messages": "Loading earlier messages...",
+  "session.jump_to_latest": "Jump to latest",
   "session.local_workspace_label": "Local workspace",
   "session.new_session_label": "New session",
   "session.new_task_flyout": "New task",

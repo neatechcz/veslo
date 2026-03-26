@@ -45,3 +45,6 @@ vendor/opencode/
 
 # Triple-Agent Protocol solutions
 .solutions/
+
+# Local evidence artifacts
+evidence/

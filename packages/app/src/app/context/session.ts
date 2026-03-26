@@ -763,7 +763,7 @@ export function createSessionStore(options: {
 
     const start = Date.now();
     sessionDebug("sessions:load:start", { scopeRoot: scopeRoot ?? null, queryDirectory: queryDirectory ?? null });
-    const list = unwrap(await c.session.list({ directory: queryDirectory, roots: true }));
+    const list = unwrap(await c.session.list({ directory: queryDirectory, roots: false }));
     sessionDebug("sessions:load:raw", { count: list.length, ms: Date.now() - start });
 
     // Defensive client-side filter in case the server returns sessions spanning

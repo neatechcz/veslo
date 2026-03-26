@@ -8,6 +8,11 @@ export type FlatSessionRow = {
   session: WorkspaceSessionGroup["sessions"][number];
   status: WorkspaceSessionGroup["status"];
   error: string | null;
+  parentSessionId: string | null;
+  rootSessionId: string;
+  nestingLevel: number;
+  isSubagent: boolean;
+  treeActivityAt: number;
   createdAt: number;
   updatedAt: number;
   activityAt: number;
@@ -93,11 +98,11 @@ const isPrivateProjectRoot = (
 ) => workspace.workspaceType === "local" && isPrivateWorkspacePath(projectRoot);
 
 const compareRecentRows = (a: FlatSessionRow, b: FlatSessionRow) => {
+  const byActivity = b.activityAt - a.activityAt;
+  if (byActivity !== 0) return byActivity;
+
   const byCreated = b.createdAt - a.createdAt;
   if (byCreated !== 0) return byCreated;
-
-  const byUpdated = b.updatedAt - a.updatedAt;
-  if (byUpdated !== 0) return byUpdated;
 
   return a.session.id.localeCompare(b.session.id);
 };
@@ -122,6 +127,13 @@ const compareProjectGroups = (a: ProjectSessionGroup, b: ProjectSessionGroup) =>
   return a.workspace.id.localeCompare(b.workspace.id);
 };
 
+const parentSessionIdForSession = (
+  session: WorkspaceSessionGroup["sessions"][number],
+): string | null => {
+  const value = typeof session.parentID === "string" ? session.parentID.trim() : "";
+  return value || null;
+};
+
 const buildFlatSessionRow = (
   group: WorkspaceSessionGroup,
   session: WorkspaceSessionGroup["sessions"][number],
@@ -136,6 +148,11 @@ const buildFlatSessionRow = (
     session,
     status: group.status,
     error: group.error ?? null,
+    parentSessionId: parentSessionIdForSession(session),
+    rootSessionId: session.id,
+    nestingLevel: 0,
+    isSubagent: false,
+    treeActivityAt: activityTimestamp(session),
     createdAt: creationTimestamp(session),
     updatedAt: updatedTimestamp(session),
     activityAt: activityTimestamp(session),
@@ -146,44 +163,150 @@ const buildFlatSessionRow = (
   };
 };
 
+const collectFlatRows = (
+  workspaceSessionGroups: WorkspaceSessionGroup[],
+  isPrivateWorkspacePath: (folder: string | null | undefined) => boolean,
+): FlatSessionRow[] =>
+  workspaceSessionGroups.flatMap((group) =>
+    group.sessions.map((session) => buildFlatSessionRow(group, session, isPrivateWorkspacePath)),
+  );
+
+const buildHierarchicalRows = (
+  rows: FlatSessionRow[],
+  compareRows: (a: FlatSessionRow, b: FlatSessionRow) => number,
+): FlatSessionRow[] => {
+  if (!rows.length) return [];
+
+  const rowBySessionId = new Map(rows.map((row) => [row.session.id, row] as const));
+  const childrenByParentId = new Map<string, FlatSessionRow[]>();
+
+  for (const row of rows) {
+    const parentId = row.parentSessionId;
+    if (!parentId || !rowBySessionId.has(parentId)) continue;
+    const existing = childrenByParentId.get(parentId);
+    if (existing) {
+      existing.push(row);
+    } else {
+      childrenByParentId.set(parentId, [row]);
+    }
+  }
+
+  const resolving = new Set<string>();
+  const hierarchyCache = new Map<string, { rootSessionId: string; nestingLevel: number }>();
+  const resolveHierarchy = (sessionId: string): { rootSessionId: string; nestingLevel: number } => {
+    const cached = hierarchyCache.get(sessionId);
+    if (cached) return cached;
+    if (resolving.has(sessionId)) {
+      return { rootSessionId: sessionId, nestingLevel: 0 };
+    }
+
+    resolving.add(sessionId);
+    const row = rowBySessionId.get(sessionId);
+    let next: { rootSessionId: string; nestingLevel: number };
+    if (!row?.parentSessionId || !rowBySessionId.has(row.parentSessionId)) {
+      next = { rootSessionId: sessionId, nestingLevel: 0 };
+    } else {
+      const parent = resolveHierarchy(row.parentSessionId);
+      next = parent.rootSessionId === sessionId
+        ? { rootSessionId: sessionId, nestingLevel: 0 }
+        : { rootSessionId: parent.rootSessionId, nestingLevel: parent.nestingLevel + 1 };
+    }
+
+    resolving.delete(sessionId);
+    hierarchyCache.set(sessionId, next);
+    return next;
+  };
+
+  const treeActivityByRootId = new Map<string, number>();
+  for (const row of rows) {
+    const info = resolveHierarchy(row.session.id);
+    const latest = treeActivityByRootId.get(info.rootSessionId) ?? 0;
+    treeActivityByRootId.set(info.rootSessionId, Math.max(latest, row.activityAt));
+  }
+
+  for (const children of childrenByParentId.values()) {
+    children.sort(compareRows);
+  }
+
+  const compareRootRows = (a: FlatSessionRow, b: FlatSessionRow) => {
+    const aRoot = resolveHierarchy(a.session.id).rootSessionId;
+    const bRoot = resolveHierarchy(b.session.id).rootSessionId;
+    const byTreeActivity =
+      (treeActivityByRootId.get(bRoot) ?? b.activityAt) - (treeActivityByRootId.get(aRoot) ?? a.activityAt);
+    if (byTreeActivity !== 0) return byTreeActivity;
+    return compareRows(a, b);
+  };
+
+  const emittedSessionIds = new Set<string>();
+  const ordered: FlatSessionRow[] = [];
+  const appendRow = (row: FlatSessionRow) => {
+    if (emittedSessionIds.has(row.session.id)) return;
+    emittedSessionIds.add(row.session.id);
+
+    const info = resolveHierarchy(row.session.id);
+    ordered.push({
+      ...row,
+      rootSessionId: info.rootSessionId,
+      nestingLevel: info.nestingLevel,
+      isSubagent: info.nestingLevel > 0,
+      treeActivityAt: treeActivityByRootId.get(info.rootSessionId) ?? row.activityAt,
+    });
+
+    const children = childrenByParentId.get(row.session.id) ?? [];
+    for (const child of children) {
+      appendRow(child);
+    }
+  };
+
+  rows
+    .filter((row) => resolveHierarchy(row.session.id).nestingLevel === 0)
+    .sort(compareRootRows)
+    .forEach((row) => appendRow(row));
+
+  rows
+    .filter((row) => !emittedSessionIds.has(row.session.id))
+    .sort(compareRows)
+    .forEach((row) => appendRow(row));
+
+  return ordered;
+};
+
+const projectGroupKeyForRow = (row: FlatSessionRow) =>
+  row.isPrivateProject
+    ? PRIVATE_PROJECT_GROUP_KEY
+    : row.projectRoot || `workspace:${row.workspace.id}`;
+
 export const buildRecentRows = (
   workspaceSessionGroups: WorkspaceSessionGroup[],
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean = defaultPrivateWorkspacePath,
 ): FlatSessionRow[] => {
-  const rows = workspaceSessionGroups.flatMap((group) =>
-    group.sessions.map((session) => buildFlatSessionRow(group, session, isPrivateWorkspacePath)),
-  );
-
-  rows.sort(compareRecentRows);
-  return rows;
+  const rows = collectFlatRows(workspaceSessionGroups, isPrivateWorkspacePath);
+  return buildHierarchicalRows(rows, compareRecentRows);
 };
 
 export const buildProjectGroups = (
   workspaceSessionGroups: WorkspaceSessionGroup[],
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean = defaultPrivateWorkspacePath,
 ): ProjectSessionGroup[] => {
+  const rows = collectFlatRows(workspaceSessionGroups, isPrivateWorkspacePath);
+  const rowBySessionId = new Map(rows.map((row) => [row.session.id, row] as const));
   const groupedRows = new Map<string, FlatSessionRow[]>();
 
-  for (const group of workspaceSessionGroups) {
-    for (const session of group.sessions) {
-      const row = buildFlatSessionRow(group, session, isPrivateWorkspacePath);
-      const groupKey = row.isPrivateProject
-        ? PRIVATE_PROJECT_GROUP_KEY
-        : row.projectRoot || `workspace:${row.workspace.id}`;
-      const existing = groupedRows.get(groupKey);
-      if (existing) {
-        existing.push(row);
-      } else {
-        groupedRows.set(groupKey, [row]);
-      }
+  for (const row of buildHierarchicalRows(rows, compareProjectRows)) {
+    const root = rowBySessionId.get(row.rootSessionId) ?? row;
+    const groupKey = projectGroupKeyForRow(root);
+    const existing = groupedRows.get(groupKey);
+    if (existing) {
+      existing.push(row);
+    } else {
+      groupedRows.set(groupKey, [row]);
     }
   }
 
   return Array.from(groupedRows.entries())
     .map(([key, sessions]) => {
       const isPrivateProject = key === PRIVATE_PROJECT_GROUP_KEY;
-      sessions.sort(isPrivateProject ? compareRecentRows : compareProjectRows);
-      const leadSession = sessions[0];
+      const leadSession = sessions.find((row) => row.nestingLevel === 0) ?? sessions[0];
 
       return {
         key,
@@ -191,7 +314,7 @@ export const buildProjectGroups = (
         sessions,
         status: leadSession.status,
         error: leadSession.error,
-        activityAt: sessions.reduce((latest, row) => Math.max(latest, row.activityAt), 0),
+        activityAt: sessions.reduce((latest, row) => Math.max(latest, row.treeActivityAt), 0),
         projectRoot: isPrivateProject ? "" : leadSession.projectRoot,
         projectLabel: isPrivateProject ? "" : leadSession.projectLabel,
         projectTitle: isPrivateProject ? "" : leadSession.projectTitle,

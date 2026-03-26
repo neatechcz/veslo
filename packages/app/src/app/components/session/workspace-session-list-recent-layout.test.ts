@@ -5,29 +5,49 @@ import test from "node:test";
 const source = readFileSync(new URL("./workspace-session-list.tsx", import.meta.url), "utf8");
 
 test("recent rows avoid oversized right padding that squeezes labels", () => {
-  assert.doesNotMatch(
-    source,
-    /class=\{`w-full flex items-center min-h-11 px-3 rounded-xl text-left transition-colors pr-20 \$\{/,
-    "recent rows should not reserve an oversized right column that compresses title and metadata",
-  );
-
   assert.match(
     source,
-    /class=\{`w-full flex min-h-11 rounded-xl px-3 py-2 pr-14 text-left transition-colors \$\{/,
-    "recent rows should keep compact action padding while allowing labels to use most of the row width",
+    /class=\{`w-full flex items-center rounded-xl px-3 py-1\.5 text-left transition-colors \$\{/,
+    "recent rows should not reserve right-side width so text can use the full menu width by default",
   );
 });
 
-test("recent rows render timestamp as a full-width metadata line", () => {
+test("recent rows keep timestamp on the right and replace it with menu trigger on hover", () => {
   assert.match(
     source,
-    /<span class="mt-1 block max-w-full truncate text-\[11px\] text-gray-9">[\s\S]*formatRelativeTime\(displayTimestamp\(session\(\)\)\)/,
-    "timestamp should be rendered as its own line so it cannot cover row description text",
+    /class="pointer-events-none absolute right-2 top-\[60%\] -translate-y-1\/2 text-\[11px\] text-gray-9 whitespace-nowrap transition-opacity group-hover\/session-row:opacity-0 group-focus-within\/session-row:opacity-0"/,
+    "timestamp should be absolutely positioned on the far right and disappear on row hover/focus",
+  );
+
+  assert.match(
+    source,
+    /class="absolute right-2 top-\[60%\] -translate-y-1\/2 opacity-0 group-hover\/session-row:opacity-100 group-focus-within\/session-row:opacity-100 transition-opacity"/,
+    "row should expose a menu trigger exactly where timestamp disappears on hover",
   );
 
   assert.doesNotMatch(
     source,
-    /<span class="ml-2 text-\[11px\] text-gray-9 whitespace-nowrap">/,
-    "legacy right-aligned timestamp column should be removed from recent rows",
+    /<span class="mt-1 block max-w-full truncate text-\[11px\] text-gray-9">/,
+    "timestamp should not be rendered on its own line in recent rows",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /class=\{`w-full flex items-center rounded-xl px-3 py-1\.5 text-left transition-colors pr-10 \$\{/,
+    "recent row button should not reserve right padding in idle state",
+  );
+});
+
+test("left sidebar session list uses tighter vertical spacing", () => {
+  assert.match(
+    source,
+    /<div class="space-y-1\.5 mb-2">/,
+    "top-level session rows should be closer together",
+  );
+
+  assert.match(
+    source,
+    /<div class="pl-5 pt-0\.5 space-y-0\.5">/,
+    "project session rows should also use tighter spacing",
   );
 });

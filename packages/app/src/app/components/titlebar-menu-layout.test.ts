@@ -9,8 +9,8 @@ import {
 test("macOS Tauri titlebar menu keeps drag strip active in overlay mode", () => {
   assert.deepEqual(resolveTitlebarMenuLayout({ tauri: true, windows: false, mac: true, hideTitlebar: false }), {
     rootClass: "pointer-events-none fixed inset-x-0 top-0 z-[60] flex items-start justify-between",
-    leftOffsetClass: "pointer-events-auto relative z-10 mt-1 ml-[66px]",
-    rightOffsetClass: "pointer-events-auto relative z-10 mt-1 mr-2",
+    leftOffsetClass: "pointer-events-auto relative z-10 mt-0.5 ml-[66px]",
+    rightOffsetClass: "pointer-events-auto relative z-10 mt-0.5 mr-2",
     dragRegionClass: "pointer-events-auto fixed inset-x-0 top-0 z-[59] h-9",
   });
 });
@@ -27,8 +27,8 @@ test("Windows Tauri titlebar menu keeps right-side safe spacing", () => {
 test("Tauri titlebar menu exposes drag strip only when native titlebar is hidden", () => {
   assert.deepEqual(resolveTitlebarMenuLayout({ tauri: true, windows: false, mac: true, hideTitlebar: true }), {
     rootClass: "pointer-events-none fixed inset-x-0 top-0 z-[60] flex items-start justify-between",
-    leftOffsetClass: "pointer-events-auto relative z-10 mt-1 ml-[66px]",
-    rightOffsetClass: "pointer-events-auto relative z-10 mt-1 mr-2",
+    leftOffsetClass: "pointer-events-auto relative z-10 mt-0.5 ml-[66px]",
+    rightOffsetClass: "pointer-events-auto relative z-10 mt-0.5 mr-2",
     dragRegionClass: "pointer-events-auto fixed inset-x-0 top-0 z-[59] h-9",
   });
 });

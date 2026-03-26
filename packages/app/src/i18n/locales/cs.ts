@@ -920,6 +920,7 @@ export default {
   "session.loading_agents": "Načítám agenty...",
   "session.loading_commands": "Načítám příkazy...",
   "session.loading_earlier_messages": "Načítám dřívější zprávy...",
+  "session.jump_to_latest": "Přejít na nejnovější",
   "session.local_workspace_label": "Lokální worker",
   "session.new_session_label": "Nová relace",
   "session.new_task_flyout": "Nový úkol",

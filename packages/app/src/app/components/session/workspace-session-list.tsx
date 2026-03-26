@@ -113,6 +113,8 @@ export default function WorkspaceSessionList(props: Props) {
   };
   const toggleProjectCollapse = (projectKey: string) =>
     setCollapsedProjects((previous) => toggleProjectCollapsed(previous, projectKey));
+  const rowIndentStyle = (row: FlatSessionRow) =>
+    row.nestingLevel > 0 ? { "padding-left": `${12 + Math.min(row.nestingLevel, 6) * 14}px` } : undefined;
 
   const recentRows = createMemo<FlatSessionRow[]>(() =>
     buildRecentRows(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
@@ -415,8 +417,8 @@ export default function WorkspaceSessionList(props: Props) {
         </Show>
       </div>
 
-      <div class="min-h-0 flex-1 overflow-y-auto">
-        <div class="space-y-2.5 mb-3">
+      <div class="min-h-0 flex-1 overflow-y-auto -mr-3 pr-3">
+        <div class="space-y-1.5 mb-2">
           <Show when={hasVisibleRows()} fallback={emptyState}>
             <Show when={sidebarMode() === "by-project"} fallback={
               <For each={recentRows()}>
@@ -437,9 +439,10 @@ export default function WorkspaceSessionList(props: Props) {
                     <div class="relative group/session-row">
                     <button
                       type="button"
-                      class={`w-full flex min-h-11 rounded-xl px-3 py-2 pr-14 text-left transition-colors ${
+                      class={`w-full flex items-center rounded-xl px-3 py-1.5 text-left transition-colors ${
                         isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
                       }`}
+                      style={rowIndentStyle(row)}
                       onClick={() => props.onOpenSession(workspace().id, session().id)}
                     >
                       <div class="min-w-0 flex-1">
@@ -482,28 +485,14 @@ export default function WorkspaceSessionList(props: Props) {
                             </span>
                           </Show>
                         </div>
-
-                        <span class="mt-1 block max-w-full truncate text-[11px] text-gray-9">
-                          {formatRelativeTime(displayTimestamp(session()))}
-                        </span>
                       </div>
                     </button>
 
-                    <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100 transition-opacity">
-                      <Show when={props.onDeleteSession}>
-                        <button
-                          type="button"
-                          class="p-1 rounded-md text-gray-9 hover:text-red-11 hover:bg-red-3/60"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            props.onDeleteSession?.(workspace().id, session().id);
-                          }}
-                          aria-label={tr("session.delete_session_action")}
-                          title={tr("session.delete_session_action")}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </Show>
+                    <span class="pointer-events-none absolute right-2 top-[60%] -translate-y-1/2 text-[11px] text-gray-9 whitespace-nowrap transition-opacity group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0">
+                      {formatRelativeTime(displayTimestamp(session()))}
+                    </span>
+
+                    <div class="absolute right-2 top-[60%] -translate-y-1/2 opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100 transition-opacity">
                       <button
                         type="button"
                         class="p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"
@@ -645,7 +634,7 @@ export default function WorkspaceSessionList(props: Props) {
                     </div>
 
                     <Show when={!collapsed()}>
-                      <div class="pl-5 pt-1 space-y-1">
+                      <div class="pl-5 pt-0.5 space-y-0.5">
                         <For each={project.sessions}>
                           {(row) => {
                             const session = () => row.session;
@@ -657,9 +646,10 @@ export default function WorkspaceSessionList(props: Props) {
                               <div class="relative group/session-row">
                                 <button
                                   type="button"
-                                  class={`w-full flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors pr-10 ${
+                                  class={`w-full flex items-center gap-2 rounded-xl px-3 py-1.5 text-left transition-colors pr-10 ${
                                     isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
                                   }`}
+                                  style={rowIndentStyle(row)}
                                   onClick={() => props.onOpenSession(row.workspace.id, session().id)}
                                 >
                                   <div class="min-w-0 flex-1">

@@ -20,7 +20,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
   });
 
   const buttonClass = (active: boolean) =>
-    `h-5 w-5 flex items-center justify-center bg-transparent transition-colors focus:outline-none focus-visible:ring-0 ${
+    `h-6 w-6 flex items-center justify-center bg-transparent transition-colors focus:outline-none focus-visible:ring-0 ${
       active
         ? "text-gray-12"
         : "text-gray-9 hover:text-gray-12"
@@ -54,7 +54,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
           aria-label="Toggle left menu"
           title="Toggle left menu"
         >
-          <LeftSidebarToggleIcon size={11} />
+          <LeftSidebarToggleIcon size={18} />
         </button>
       </div>
 
@@ -66,7 +66,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
           aria-label="Toggle right menu"
           title="Toggle right menu"
         >
-          <RightSidebarToggleIcon size={11} />
+          <RightSidebarToggleIcon size={18} />
         </button>
       </div>
       </div>

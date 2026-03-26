@@ -34,6 +34,7 @@ import {
 
 import {
   Box,
+  ChevronDown,
   Check,
   Circle,
   Cpu,
@@ -2003,25 +2004,40 @@ export default function SessionView(props: SessionViewProps) {
     scheduleScrollToLatest(behavior);
   };
 
+  const isAtBottom = (element: HTMLElement) => {
+    const distanceToBottom = element.scrollHeight - (element.scrollTop + element.clientHeight);
+    return distanceToBottom <= 1;
+  };
+
   onMount(() => {
     const container = chatContainerEl;
     const sentinel = bottomVisibilityEl;
     if (!container || !sentinel) return;
 
+    const updateNearBottom = () => {
+      setNearBottom(isAtBottom(container));
+    };
+
+    updateNearBottom();
+    container.addEventListener("scroll", updateNearBottom, { passive: true });
+
     const observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[0];
-        setNearBottom(Boolean(entry?.isIntersecting));
+        setNearBottom(Boolean(entry?.isIntersecting) || isAtBottom(container));
       },
       {
         root: container,
-        rootMargin: "0px 0px 96px 0px",
+        rootMargin: "0px",
         threshold: 0,
       },
     );
 
     observer.observe(sentinel);
-    onCleanup(() => observer.disconnect());
+    onCleanup(() => {
+      container.removeEventListener("scroll", updateNearBottom);
+      observer.disconnect();
+    });
   });
 
   createEffect(
@@ -2284,6 +2300,9 @@ export default function SessionView(props: SessionViewProps) {
         const [mLen, tLen, pCount] = current;
         const [prevM, prevT, prevP] = previous;
         if (mLen > prevM || tLen > prevT || pCount > prevP) {
+          if (!initialAnchorPending() && nearBottom()) {
+            scheduleScrollToLatest("auto");
+          }
           if (showRunIndicator()) {
             setRunLastProgressAt(Date.now());
           }
@@ -3215,6 +3234,7 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const handleSendPrompt = (draft: ComposerDraft) => {
+    scheduleScrollToLatest("auto");
     startRun();
     props.sendPromptAsync(draft).catch(e => reportError(e, "session.sendPrompt"));
   };
@@ -3831,7 +3851,7 @@ export default function SessionView(props: SessionViewProps) {
         <div class="flex-1 flex overflow-hidden">
           <div class="flex-1 min-w-0 relative overflow-hidden bg-gray-1">
             <div
-              class={`h-full overflow-y-auto px-8 ${showWorkspaceSetupEmptyState() ? "pt-20 pb-20" : "pt-12 pb-56"} scroll-smooth bg-gray-1 ${initialAnchorPending() ? "invisible" : "visible"}`}
+              class={`h-full overflow-y-auto px-8 ${showWorkspaceSetupEmptyState() ? "pt-20 pb-20" : "pt-12 pb-32"} scroll-smooth bg-gray-1 ${initialAnchorPending() ? "invisible" : "visible"}`}
               style={{ contain: "layout paint style" }}
               ref={(el) => {
                 chatContainerEl = el;
@@ -3971,14 +3991,16 @@ export default function SessionView(props: SessionViewProps) {
            </div>
 
             <Show when={props.messages.length > 0 && !nearBottom()}>
-              <div class="absolute bottom-4 left-0 right-0 z-20 flex justify-center pointer-events-none">
+              <div class="absolute bottom-4 right-4 z-20 pointer-events-none">
                 <div class="pointer-events-auto flex items-center gap-2 rounded-full border border-gray-6 bg-gray-1/95 p-1 shadow-lg shadow-gray-12/5 backdrop-blur-md">
                   <button
                     type="button"
-                    class="rounded-full px-3 py-1.5 text-xs text-gray-11 hover:bg-gray-3 transition-colors"
+                    class="h-7 w-7 rounded-full p-0 text-gray-11 hover:bg-gray-3 transition-colors flex items-center justify-center"
                     onClick={() => jumpToLatest("smooth")}
+                    aria-label={tr("session.jump_to_latest")}
+                    title={tr("session.jump_to_latest")}
                   >
-                    Jump to latest
+                    <ChevronDown size={12} />
                   </button>
                 </div>
               </div>
