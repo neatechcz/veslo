@@ -1,9 +1,10 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::fs::{collect_copy_conflicts, copy_dir_recursive};
+use crate::paths::home_dir;
 use crate::types::{
     ExecResult, RemoteType, WorkspaceInfo, WorkspaceList, WorkspaceType, WorkspaceVesloConfig,
 };
@@ -18,6 +19,129 @@ use tauri::State;
 use walkdir::WalkDir;
 use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
+
+// ---------------------------------------------------------------------------
+// OpenCode session cleanup (used by workspace_forget)
+// ---------------------------------------------------------------------------
+
+/// Resolve the path to the global OpenCode SQLite database.
+fn opencode_db_path() -> Option<PathBuf> {
+    let data_home = std::env::var("XDG_DATA_HOME")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let home = home_dir().unwrap_or_default();
+            home.join(".local").join("share")
+        });
+    let db = data_home.join("opencode").join("opencode.db");
+    db.exists().then_some(db)
+}
+
+/// Try to delete all sessions for `directory` via the OpenCode HTTP API.
+/// Returns `true` if the cleanup succeeded (or there was nothing to clean).
+fn try_cleanup_sessions_via_http(base_url: &str, directory: &str) -> bool {
+    let trimmed = base_url.trim().trim_end_matches('/');
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(3))
+        .build();
+
+    // GET /session → list sessions
+    let list_url = format!("{trimmed}/session");
+    let response = match agent
+        .get(&list_url)
+        .set("x-opencode-directory", directory)
+        .set("Accept", "application/json")
+        .call()
+    {
+        Ok(r) => r,
+        Err(e) => {
+            println!("[workspace] session cleanup HTTP list failed: {e}");
+            return false;
+        }
+    };
+
+    let body: serde_json::Value = match response.into_json() {
+        Ok(v) => v,
+        Err(e) => {
+            println!("[workspace] session cleanup HTTP parse failed: {e}");
+            return false;
+        }
+    };
+
+    // The response is typically an array of session objects with "id" fields.
+    let sessions = match body.as_array() {
+        Some(arr) => arr.clone(),
+        None => {
+            // Some API versions wrap in { "sessions": [...] }
+            body.get("sessions")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default()
+        }
+    };
+
+    if sessions.is_empty() {
+        println!("[workspace] no sessions to cleanup for {directory}");
+        return true;
+    }
+
+    let mut all_ok = true;
+    for session in &sessions {
+        if let Some(id) = session.get("id").and_then(|v| v.as_str()) {
+            let delete_url = format!("{trimmed}/session/{id}");
+            if let Err(e) = agent
+                .delete(&delete_url)
+                .set("x-opencode-directory", directory)
+                .call()
+            {
+                println!("[workspace] session cleanup HTTP delete {id} failed: {e}");
+                all_ok = false;
+            }
+        }
+    }
+
+    if all_ok {
+        println!(
+            "[workspace] cleaned up {} session(s) via HTTP for {directory}",
+            sessions.len()
+        );
+    }
+    all_ok
+}
+
+/// Fallback: delete sessions directly from the global OpenCode SQLite database.
+fn try_cleanup_sessions_via_sqlite(directory: &str) -> Result<usize, String> {
+    let db_path = opencode_db_path().ok_or_else(|| "OpenCode DB not found".to_string())?;
+
+    let conn = rusqlite::Connection::open(&db_path)
+        .map_err(|e| format!("Failed to open OpenCode DB: {e}"))?;
+
+    // Enable foreign keys so cascade deletes work (message, part, todo, session_share).
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|e| format!("PRAGMA foreign_keys failed: {e}"))?;
+
+    let deleted = conn
+        .execute("DELETE FROM session WHERE directory = ?1", [directory])
+        .map_err(|e| format!("DELETE FROM session failed: {e}"))?;
+
+    println!("[workspace] cleaned up {deleted} session(s) via SQLite for {directory}");
+    Ok(deleted)
+}
+
+/// Clean up OpenCode sessions for a workspace directory.
+/// Tries HTTP API first, falls back to direct SQLite access.
+fn cleanup_opencode_sessions(base_url: Option<&str>, directory: &str) {
+    if let Some(url) = base_url {
+        if try_cleanup_sessions_via_http(url, directory) {
+            return;
+        }
+    }
+
+    if let Err(e) = try_cleanup_sessions_via_sqlite(directory) {
+        println!("[workspace] warning: failed to cleanup sessions from global DB: {e}");
+    }
+}
 
 #[tauri::command]
 pub fn workspace_bootstrap(
@@ -54,6 +178,7 @@ pub fn workspace_forget(
     app: tauri::AppHandle,
     workspace_id: String,
     watch_state: State<WorkspaceWatchState>,
+    engine_manager: State<crate::engine::manager::EngineManager>,
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] forget request: {workspace_id}");
     let mut state = load_workspace_state(&app)?;
@@ -87,9 +212,17 @@ pub fn workspace_forget(
     let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
     update_workspace_watch(&app, watch_state, active_workspace)?;
 
-    // Cleanup .opencode/ directory and opencode.jsonc for local workspaces
+    // Cleanup OpenCode sessions and local files for local workspaces
     if let Some(ref ws) = forgotten_workspace {
         if ws.workspace_type == WorkspaceType::Local {
+            // Clean up sessions from the global OpenCode DB before removing local state
+            let base_url = engine_manager
+                .inner
+                .lock()
+                .ok()
+                .and_then(|s| s.base_url.clone());
+            cleanup_opencode_sessions(base_url.as_deref(), &ws.path);
+
             let ws_root = PathBuf::from(&ws.path);
             let opencode_dir = ws_root.join(".opencode");
             if opencode_dir.is_dir() {
