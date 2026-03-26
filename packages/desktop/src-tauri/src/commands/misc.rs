@@ -699,3 +699,75 @@ pub fn opencode_mcp_auth(
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
     })
 }
+
+/// Update the `directory` column for a session in the OpenCode SQLite database
+/// and rewrite `path.cwd` inside every assistant message's JSON `data` blob so
+/// the engine won't generate stale `external_directory` permission prompts.
+///
+/// Used after "Choose folder" moves a session from a private workspace to a real folder.
+#[tauri::command]
+pub fn opencode_db_update_session_directory(
+    session_id: String,
+    old_directory: String,
+    directory: String,
+) -> Result<ExecResult, String> {
+    let session_id = session_id.trim().to_string();
+    let old_directory = old_directory.trim().to_string();
+    let directory = directory.trim().to_string();
+    if session_id.is_empty() {
+        return Err("session_id is required".to_string());
+    }
+    if directory.is_empty() {
+        return Err("directory is required".to_string());
+    }
+
+    let home = home_dir().ok_or("Cannot determine home directory")?;
+    let db_path = home.join(".local/share/opencode/opencode.db");
+    if !db_path.exists() {
+        return Err(format!("OpenCode database not found at {}", db_path.display()));
+    }
+
+    // Reject values containing single quotes to prevent SQL injection.
+    if session_id.contains('\'') || directory.contains('\'') || old_directory.contains('\'') {
+        return Err("Invalid characters in parameters".to_string());
+    }
+
+    // 1. Update session.directory
+    let session_query = format!(
+        "UPDATE session SET directory = '{}' WHERE id = '{}';",
+        directory, session_id
+    );
+
+    // 2. Replace old cwd path in message + part data JSON blobs for this session.
+    //    The old path appears in "path":{"cwd":"..."} and tool input filePaths.
+    let rewrite_queries = if !old_directory.is_empty() {
+        format!(
+            "UPDATE message SET data = replace(data, '{}', '{}') WHERE session_id = '{}'; \
+             UPDATE part SET data = replace(data, '{}', '{}') WHERE session_id = '{}';",
+            old_directory, directory, session_id,
+            old_directory, directory, session_id
+        )
+    } else {
+        String::new()
+    };
+
+    let combined = if rewrite_queries.is_empty() {
+        session_query
+    } else {
+        format!("{} {}", session_query, rewrite_queries)
+    };
+
+    let output = std::process::Command::new("sqlite3")
+        .arg(&db_path)
+        .arg(&combined)
+        .output()
+        .map_err(|e| format!("Failed to run sqlite3: {e}"))?;
+
+    let status = output.status.code().unwrap_or(-1);
+    Ok(ExecResult {
+        ok: output.status.success(),
+        status,
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    })
+}
