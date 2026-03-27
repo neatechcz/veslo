@@ -72,6 +72,13 @@ cp .env.development .env
 
 Set `RESEND_API_KEY` and `AUTH_EMAIL_FROM` to enable email verification and password reset delivery through Resend. Blank or unset values disable email verification and password reset delivery.
 
+The root onboarding page (`GET /?desktopOnboarding=1`) now supports the desktop browser auth flow end to end:
+
+- sign in and sign up
+- resend verification email
+- forgot-password reset requests
+- reset-password completion from emailed links
+
 Generate Better Auth schema (Drizzle):
 
 ```bash
