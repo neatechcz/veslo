@@ -549,12 +549,7 @@ export default function WorkspaceSessionList(props: Props) {
                         }`}
                         title={project.projectTitle}
                         aria-label={project.projectLabel ? `${tr("sidebar.open_project")} ${project.projectLabel}` : tr("sidebar.open_project")}
-                        onClick={() => {
-                          if (isConnectionActionBusy()) return;
-                          if (isActiveWorkspace()) return;
-                          void Promise.resolve(props.onActivateWorkspace(workspace().id));
-                        }}
-                        disabled={isConnectionActionBusy()}
+                        onClick={() => toggleProjectCollapse(project.key)}
                       >
                         <div class="flex items-center gap-2 min-w-0">
                           <Folder
