@@ -13,6 +13,7 @@ use crate::platform::command_for_program;
 use crate::types::{ExecResult, WorkspaceVesloConfig};
 use crate::veslo_server::manager::VesloServerManager;
 use crate::workspace::state::load_workspace_state;
+use rusqlite::{params, Connection};
 use tauri::{AppHandle, Manager, State};
 
 #[derive(serde::Serialize)]
@@ -125,9 +126,7 @@ fn validate_server_name(name: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
-fn read_workspace_veslo_config(
-    workspace_path: &Path,
-) -> Result<WorkspaceVesloConfig, String> {
+fn read_workspace_veslo_config(workspace_path: &Path) -> Result<WorkspaceVesloConfig, String> {
     let veslo_path = workspace_path.join(".opencode").join("veslo.json");
     if !veslo_path.exists() {
         let mut cfg = WorkspaceVesloConfig::default();
@@ -599,7 +598,11 @@ pub fn read_obsidian_mirror_file(
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_obsidian_mirror_relative_path, sanitize_obsidian_workspace_id};
+    use super::{
+        normalize_obsidian_mirror_relative_path, sanitize_obsidian_workspace_id,
+        update_session_directory_in_db,
+    };
+    use rusqlite::Connection;
 
     #[test]
     fn sanitize_workspace_id_collapses_separators() {
@@ -630,6 +633,70 @@ mod tests {
         let err = normalize_obsidian_mirror_relative_path("/etc/passwd")
             .expect_err("absolute path should be rejected");
         assert!(err.contains("worker-relative"));
+    }
+
+    #[test]
+    fn update_session_directory_allows_apostrophes() {
+        let mut conn = Connection::open_in_memory().expect("db");
+        conn.execute_batch(
+            "CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT NOT NULL);
+             CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
+             CREATE TABLE part (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);",
+        )
+        .expect("schema");
+
+        let session_id = "s1";
+        let old_dir = "/tmp/old";
+        let new_dir = "/tmp/o'connor";
+        conn.execute(
+            "INSERT INTO session (id, directory) VALUES (?1, ?2)",
+            [session_id, old_dir],
+        )
+        .expect("insert session");
+        conn.execute(
+            "INSERT INTO message (id, session_id, data) VALUES (?1, ?2, ?3)",
+            ["m1", session_id, "{\"path\":{\"cwd\":\"/tmp/old\"}}"],
+        )
+        .expect("insert message");
+        conn.execute(
+            "INSERT INTO part (id, session_id, data) VALUES (?1, ?2, ?3)",
+            [
+                "p1",
+                session_id,
+                "{\"tool\":{\"filePaths\":[\"/tmp/old/a.txt\"]}}",
+            ],
+        )
+        .expect("insert part");
+
+        update_session_directory_in_db(&mut conn, session_id, old_dir, new_dir)
+            .expect("update should succeed");
+
+        let session_dir: String = conn
+            .query_row(
+                "SELECT directory FROM session WHERE id = ?1",
+                [session_id],
+                |row| row.get(0),
+            )
+            .expect("query session");
+        assert_eq!(session_dir, new_dir);
+
+        let message_data: String = conn
+            .query_row(
+                "SELECT data FROM message WHERE session_id = ?1",
+                [session_id],
+                |row| row.get(0),
+            )
+            .expect("query message");
+        assert!(message_data.contains("/tmp/o'connor"));
+
+        let part_data: String = conn
+            .query_row(
+                "SELECT data FROM part WHERE session_id = ?1",
+                [session_id],
+                |row| row.get(0),
+            )
+            .expect("query part");
+        assert!(part_data.contains("/tmp/o'connor/a.txt"));
     }
 }
 
@@ -705,6 +772,39 @@ pub fn opencode_mcp_auth(
 /// the engine won't generate stale `external_directory` permission prompts.
 ///
 /// Used after "Choose folder" moves a session from a private workspace to a real folder.
+fn update_session_directory_in_db(
+    conn: &mut Connection,
+    session_id: &str,
+    old_directory: &str,
+    directory: &str,
+) -> rusqlite::Result<()> {
+    let tx = conn.transaction()?;
+
+    tx.execute(
+        "UPDATE session SET directory = ?1 WHERE id = ?2",
+        params![directory, session_id],
+    )?;
+
+    if !old_directory.is_empty() {
+        tx.execute(
+            "UPDATE message SET data = replace(data, ?1, ?2) WHERE session_id = ?3",
+            params![old_directory, directory, session_id],
+        )?;
+        tx.execute(
+            "UPDATE part SET data = replace(data, ?1, ?2) WHERE session_id = ?3",
+            params![old_directory, directory, session_id],
+        )?;
+    }
+
+    tx.commit()?;
+    Ok(())
+}
+
+/// Update the `directory` column for a session in the OpenCode SQLite database
+/// and rewrite `path.cwd` inside every assistant message's JSON `data` blob so
+/// the engine won't generate stale `external_directory` permission prompts.
+///
+/// Used after "Choose folder" moves a session from a private workspace to a real folder.
 #[tauri::command]
 pub fn opencode_db_update_session_directory(
     session_id: String,
@@ -724,50 +824,31 @@ pub fn opencode_db_update_session_directory(
     let home = home_dir().ok_or("Cannot determine home directory")?;
     let db_path = home.join(".local/share/opencode/opencode.db");
     if !db_path.exists() {
-        return Err(format!("OpenCode database not found at {}", db_path.display()));
+        return Err(format!(
+            "OpenCode database not found at {}",
+            db_path.display()
+        ));
     }
 
-    // Reject values containing single quotes to prevent SQL injection.
-    if session_id.contains('\'') || directory.contains('\'') || old_directory.contains('\'') {
-        return Err("Invalid characters in parameters".to_string());
-    }
-
-    // 1. Update session.directory
-    let session_query = format!(
-        "UPDATE session SET directory = '{}' WHERE id = '{}';",
-        directory, session_id
-    );
-
-    // 2. Replace old cwd path in message + part data JSON blobs for this session.
-    //    The old path appears in "path":{"cwd":"..."} and tool input filePaths.
-    let rewrite_queries = if !old_directory.is_empty() {
+    let mut conn = Connection::open(&db_path).map_err(|e| {
         format!(
-            "UPDATE message SET data = replace(data, '{}', '{}') WHERE session_id = '{}'; \
-             UPDATE part SET data = replace(data, '{}', '{}') WHERE session_id = '{}';",
-            old_directory, directory, session_id,
-            old_directory, directory, session_id
+            "Failed to open OpenCode database at {}: {e}",
+            db_path.display()
         )
-    } else {
-        String::new()
-    };
+    })?;
+    update_session_directory_in_db(&mut conn, &session_id, &old_directory, &directory).map_err(
+        |e| {
+            format!(
+                "Failed to update OpenCode database at {}: {e}",
+                db_path.display()
+            )
+        },
+    )?;
 
-    let combined = if rewrite_queries.is_empty() {
-        session_query
-    } else {
-        format!("{} {}", session_query, rewrite_queries)
-    };
-
-    let output = std::process::Command::new("sqlite3")
-        .arg(&db_path)
-        .arg(&combined)
-        .output()
-        .map_err(|e| format!("Failed to run sqlite3: {e}"))?;
-
-    let status = output.status.code().unwrap_or(-1);
     Ok(ExecResult {
-        ok: output.status.success(),
-        status,
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        ok: true,
+        status: 0,
+        stdout: String::new(),
+        stderr: String::new(),
     })
 }

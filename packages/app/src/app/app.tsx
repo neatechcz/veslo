@@ -5050,12 +5050,16 @@ export default function App() {
       // the DB and won't generate stale external_directory permission prompts.
       if (isTauriRuntime()) {
         try {
-          await opencodeDbUpdateSessionDirectory({
+          const dbUpdate = await opencodeDbUpdateSessionDirectory({
             sessionId: sessionID,
             oldDirectory: sourceRoot,
             directory: selectedDirectory,
           });
-        } catch {
+          if (!dbUpdate.ok) {
+            throw new Error(dbUpdate.stderr || "Failed to update OpenCode session directory.");
+          }
+        } catch (error) {
+          reportError(error, "workspace.move.updateSessionDirectory");
           // Non-fatal: the session will still work, just with a permission prompt.
         }
       }
