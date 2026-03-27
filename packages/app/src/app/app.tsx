@@ -38,6 +38,7 @@ import {
   serializeSessionModelOverrides,
   parseDefaultModelFromConfig,
   formatConfigWithDefaultModel,
+  resolveWorkspaceDefaultModel,
 } from "./lib/model-persistence";
 import {
   parseSharedBundleDeepLink,
@@ -5555,9 +5556,13 @@ export default function App() {
       }
 
       setDefaultModelExplicit(Boolean(configDefault));
-      const nextDefault = configDefault ?? legacyDefaultModel();
       const currentDefault = untrack(defaultModel);
-      if (nextDefault && !modelEquals(currentDefault, nextDefault)) {
+      const nextDefault = resolveWorkspaceDefaultModel({
+        configDefault,
+        currentDefault,
+        legacyDefault: legacyDefaultModel(),
+      });
+      if (!modelEquals(currentDefault, nextDefault)) {
         setDefaultModel(nextDefault);
       }
 

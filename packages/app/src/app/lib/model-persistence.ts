@@ -72,3 +72,15 @@ export const formatConfigWithDefaultModel = (content: string | null, model: Mode
   config.model = formatModelRef(model);
   return `${JSON.stringify(config, null, 2)}\n`;
 };
+
+type WorkspaceDefaultModelResolutionInput = {
+  configDefault: ModelRef | null;
+  currentDefault: ModelRef | null;
+  legacyDefault: ModelRef;
+};
+
+export const resolveWorkspaceDefaultModel = ({
+  configDefault,
+  currentDefault,
+  legacyDefault,
+}: WorkspaceDefaultModelResolutionInput): ModelRef => configDefault ?? currentDefault ?? legacyDefault;
