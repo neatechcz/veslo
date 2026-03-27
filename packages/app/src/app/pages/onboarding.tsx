@@ -236,8 +236,10 @@ export default function OnboardingView(props: OnboardingViewProps) {
               <div class="flex items-center justify-center">
                 <VesloLogo size={48} />
               </div>
-              <h2 class="text-2xl font-bold tracking-tight">Sign in to Openwork</h2>
-              <p class="text-gray-11 text-sm leading-relaxed">Sign in with your account to get started.</p>
+              <h2 class="text-2xl font-bold tracking-tight">Sign in to Veslo</h2>
+              <p class="text-gray-11 text-sm leading-relaxed">
+                Sign in with your account to continue setup. Email verification and password recovery happen in the browser.
+              </p>
             </div>
 
             <div class="space-y-4">
