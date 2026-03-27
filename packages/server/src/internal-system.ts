@@ -2,15 +2,21 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { exists, ensureDir } from "./utils.js";
 
-export const INTERNAL_SYSTEM_VERSION = "2026-03-18.2";
+export const INTERNAL_SYSTEM_VERSION = "2026-03-27.1";
 const INTERNAL_SYSTEM_SOURCE = "openwork-snapshot";
 const MANIFEST_SCHEMA_VERSION = 1;
-const ROUTING_BLOCK_VERSION = 2;
+const ROUTING_BLOCK_VERSION = 3;
 
 const DELEGATE_PLUGIN_FILE = "veslo-delegate.js";
 
 const ROUTING_BLOCK_START = "<!-- VESLO_INTERNAL_ROUTING_START -->";
 const ROUTING_BLOCK_END = "<!-- VESLO_INTERNAL_ROUTING_END -->";
+
+const INSTRUCTIONS_BLOCK_START = "<!-- VESLO_INSTRUCTIONS_START -->";
+const INSTRUCTIONS_BLOCK_END = "<!-- VESLO_INSTRUCTIONS_END -->";
+
+const AGENT_BLOCK_START = "<!-- VESLO_AGENT_INSTRUCTIONS_START -->";
+const AGENT_BLOCK_END = "<!-- VESLO_AGENT_INSTRUCTIONS_END -->";
 
 const INTERNAL_PACKS = ["docx", "pdf", "pptx", "xlsx", "skill-creator"] as const;
 const INTERNAL_AGENT_FILES = [
@@ -168,12 +174,73 @@ Execution behavior:
 ${ROUTING_BLOCK_END}`;
 }
 
-function upsertManagedBlock(existing: string, block: string): string {
-  const start = existing.indexOf(ROUTING_BLOCK_START);
+function managedVesloAgentInstructionsBlock() {
+  return `${AGENT_BLOCK_START}
+## Managed Agent Instructions (Veslo)
+
+This block is managed by Veslo. Keep it intact.
+
+### Task Mode Behavior
+- Plan before acting: for multi-step tasks, outline your approach first.
+- Work autonomously through the plan, reporting progress at milestones.
+- If a step fails, try alternative approaches before asking the user.
+- For ambiguous requests, ask one clarifying question rather than guessing.
+
+### Communication Style
+- Progressive disclosure: start with a simple answer, add technical details only if asked.
+- Explain what you're doing and why, in terms the user can understand.
+- Adapt to the user's technical level based on their language and questions.
+- For file operations, explain the impact before making changes.
+
+### Veslo Tools & Features
+- **delegate** — routes document tasks (DOCX, PDF, PPTX, XLSX) to specialized subagents.
+- **Skills** — reusable workflows in \`.opencode/skills/\`. Suggest creating one when work repeats.
+- **Scheduler** — recurring tasks (daily, weekly, interval). Mention when a task could be automated.
+- **Workspace** — user may have multiple workspaces; respect workspace boundaries.
+${AGENT_BLOCK_END}`;
+}
+
+function managedVesloInstructionsBlock() {
+  return `${INSTRUCTIONS_BLOCK_START}
+# Veslo
+
+This is Veslo — a desktop AI application. When the user says "you", they mean Veslo.
+
+## Identity
+- Introduce yourself as Veslo, not OpenCode.
+- Do not use CLI references (ctrl+p, /help, terminal) — the user works in a GUI.
+- Do not reference opencode.ai or github.com/anomalyco/opencode.
+
+## Tone
+- Professional, calm, clear.
+- Do not assume programming knowledge — explain simply.
+- Adjust response length to question complexity (not always <4 lines).
+- When working with files, explain what you are doing and why.
+
+## Veslo Features
+- **Skills** — reusable workflows in \`.opencode/skills/\`. If a task repeats, suggest creating a skill.
+- **Office files** — Veslo can process DOCX, PDF, PPTX, XLSX via internal agents.
+- **Workspace** — the user may have multiple workspaces and switch between them.
+- **Scheduler** — recurring tasks can be scheduled (daily, weekly, interval).
+
+## Safety
+- Explain consequences before destructive actions.
+- Never commit credentials, tokens, or API keys.
+- Store sensitive data only in gitignored files.
+${INSTRUCTIONS_BLOCK_END}`;
+}
+
+function upsertManagedBlock(
+  existing: string,
+  block: string,
+  startMarker: string,
+  endMarker: string,
+): string {
+  const start = existing.indexOf(startMarker);
   if (start >= 0) {
-    const end = existing.indexOf(ROUTING_BLOCK_END, start);
+    const end = existing.indexOf(endMarker, start);
     if (end >= 0) {
-      const afterEnd = end + ROUTING_BLOCK_END.length;
+      const afterEnd = end + endMarker.length;
       const before = existing.slice(0, start).replace(/\n+$/g, "");
       const after = existing.slice(afterEnd).replace(/^\n+/g, "");
       const compactBlock = block.trimEnd();
@@ -191,10 +258,27 @@ function upsertManagedBlock(existing: string, block: string): string {
   return `${trimmed}\n\n${block.trimEnd()}\n`;
 }
 
+async function ensureWorkspaceInstructions(workspaceRoot: string, stats: ProvisionStats) {
+  const path = join(workspaceRoot, "AGENTS.md");
+  const existing = (await exists(path)) ? await readFile(path, "utf8") : "";
+  const next = upsertManagedBlock(
+    existing,
+    managedVesloInstructionsBlock(),
+    INSTRUCTIONS_BLOCK_START,
+    INSTRUCTIONS_BLOCK_END,
+  );
+  await writeIfChanged(path, next, stats);
+}
+
 async function ensureVesloAgentRouting(workspaceRoot: string, stats: ProvisionStats) {
   const path = join(workspaceRoot, ".opencode", "agents", "veslo.md");
-  const existing = (await exists(path)) ? await readFile(path, "utf8") : "";
-  const next = upsertManagedBlock(existing, managedVesloRoutingBlock());
+  // veslo.md base content is written by Rust (seed_veslo_agent) at workspace creation.
+  // TS only upserts managed blocks — if the file doesn't exist, skip.
+  if (!(await exists(path))) return;
+
+  const raw = await readFile(path, "utf8");
+  let next = upsertManagedBlock(raw, managedVesloRoutingBlock(), ROUTING_BLOCK_START, ROUTING_BLOCK_END);
+  next = upsertManagedBlock(next, managedVesloAgentInstructionsBlock(), AGENT_BLOCK_START, AGENT_BLOCK_END);
   await writeIfChanged(path, next, stats);
 }
 
@@ -558,6 +642,7 @@ export async function provisionWorkspaceInternalSystem(workspaceRoot: string): P
   await writeInternalAgents(workspaceRoot, stats);
   await writeDelegatePlugin(workspaceRoot, stats);
   await ensureVesloAgentRouting(workspaceRoot, stats);
+  await ensureWorkspaceInstructions(workspaceRoot, stats);
   await writeInternalManifest(workspaceRoot, stats);
 
   return {
