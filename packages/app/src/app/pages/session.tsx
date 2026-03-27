@@ -224,6 +224,8 @@ export type SessionViewProps = {
   setComposerDraft: (draft: ComposerDraft) => void;
   prompt: string;
   setPrompt: (value: string) => void;
+  reconnectNotice: "reconnecting" | "reconnected" | null;
+  clearReconnectNotice: () => void;
   activePermission: PendingPermission | null;
   showTryNotionPrompt: boolean;
   onTryNotionPrompt: () => void;
@@ -2004,9 +2006,10 @@ export default function SessionView(props: SessionViewProps) {
     scheduleScrollToLatest(behavior);
   };
 
-  const isAtBottom = (element: HTMLElement) => {
-    const distanceToBottom = element.scrollHeight - (element.scrollTop + element.clientHeight);
-    return distanceToBottom <= 1;
+  const isAtLatest = (container: HTMLElement, sentinel: HTMLElement) => {
+    const containerRect = container.getBoundingClientRect();
+    const sentinelRect = sentinel.getBoundingClientRect();
+    return sentinelRect.bottom <= containerRect.bottom + 1;
   };
 
   onMount(() => {
@@ -2015,7 +2018,7 @@ export default function SessionView(props: SessionViewProps) {
     if (!container || !sentinel) return;
 
     const updateNearBottom = () => {
-      setNearBottom(isAtBottom(container));
+      setNearBottom(isAtLatest(container, sentinel));
     };
 
     updateNearBottom();
@@ -2024,7 +2027,7 @@ export default function SessionView(props: SessionViewProps) {
     const observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[0];
-        setNearBottom(Boolean(entry?.isIntersecting) || isAtBottom(container));
+        setNearBottom(Boolean(entry?.isIntersecting) || isAtLatest(container, sentinel));
       },
       {
         root: container,
@@ -2622,6 +2625,17 @@ export default function SessionView(props: SessionViewProps) {
       triggerFlyout(lastMsg ?? null, "sidebar-context", tr("session.file_modified_flyout"), "folder");
     }
     setPrevFileCount(count);
+  });
+
+  createEffect(() => {
+    const reconnectNotice = props.reconnectNotice;
+    if (!reconnectNotice) return;
+    setToastMessage(
+      reconnectNotice === "reconnecting"
+        ? tr("session.reconnecting_toast")
+        : tr("session.reconnected_toast"),
+    );
+    props.clearReconnectNotice();
   });
 
   createEffect(() => {

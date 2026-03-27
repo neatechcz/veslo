@@ -184,6 +184,13 @@ When signing in from the desktop app, authentication is delegated to the browser
    - attempt restart via `createOpencode()`
    - show reconnect guidance + diagnostics
 
+#### Reconnect auto-heal behavior
+
+- If SSE disconnects while at least one session is currently `running` or `retry`, Veslo auto-heals in the background and shows exactly one `Reconnecting...` notice.
+- After the stream is healthy again, Veslo performs catch-up sync only for sessions that were running when the outage began, then shows exactly one `Reconnected` notice.
+- If all sessions were idle when disconnect happened, Veslo does not show reconnect notices and does not start new work.
+- Reconnect logic must never call `session.prompt()` or trigger new runs.
+
 ### 4. Quick Task Flow
 
 1. User types goal.

@@ -204,6 +204,14 @@ The UI uses these events to drive:
 - permission prompts
 - session lifecycle changes
 
+#### SSE reconnect semantics
+
+- The session layer tracks outage episodes and snapshots which sessions were running (`running` / `retry`) when disconnect began.
+- During an outage with active work, Veslo emits one reconnecting notice (`Reconnecting...`) for the episode, even if multiple retry attempts occur.
+- On successful reconnection, Veslo runs catch-up sync only for snapshotted running sessions: `session.get()`, `session.messages()`, and `session.todo()`, then refreshes permission/question queues.
+- After catch-up completes, Veslo emits one recovered notice (`Reconnected`) and clears outage state.
+- Idle-only outages produce no reconnect notices and never trigger `session.prompt()` or any new session run.
+
 ### Sessions (Primary Primitive)
 
 Veslo maps a "Task Run" to an OpenCode **Session**.

@@ -34,6 +34,13 @@ import { getTaskPartSubagentInfo, sessionLooksLikeInternalSubagent } from "../li
 import { formatSessionError, truncateErrorField } from "../lib/session-error";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../types";
 import { createSelectSessionGuard } from "./select-session-guard";
+import {
+  beginOutageEpisode,
+  clearOutageEpisode,
+  type ReconnectNotice,
+  shouldShowReconnected,
+  shouldShowReconnecting,
+} from "./session-reconnect";
 
 export type SessionModelState = {
   overrides: Record<string, ModelRef>;
@@ -143,6 +150,7 @@ export function createSessionStore(options: {
   developerMode: () => boolean;
   setError: (message: string | null) => void;
   setSseConnected: (connected: boolean) => void;
+  onReconnectNotice?: (notice: ReconnectNotice) => void;
   markReloadRequired?: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
   onHotReloadApplied?: () => void;
   onSessionLoadComplete?: () => void;
@@ -1422,6 +1430,7 @@ export function createSessionStore(options: {
     let reconnectAttempt = 0;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let wasConnected = false;
+    let outageEpisode = clearOutageEpisode();
 
     let queue: Array<OpencodeEvent | undefined> = [];
     const coalesced = new Map<string, number>();
@@ -1512,6 +1521,87 @@ export function createSessionStore(options: {
       timer = setTimeout(flush, Math.max(0, interval - elapsed));
     };
 
+    const markOutageAndMaybeNotify = () => {
+      if (!outageEpisode.active) {
+        outageEpisode = beginOutageEpisode(store.sessionStatus);
+        recordPerfLog(sessionDebugEnabled(), "session.sse", "outage-started", {
+          runningSessions: outageEpisode.runningSessionIds.length,
+        });
+      }
+
+      if (shouldShowReconnecting(outageEpisode)) {
+        options.onReconnectNotice?.("reconnecting");
+        outageEpisode = { ...outageEpisode, shownReconnecting: true };
+      }
+    };
+
+    const runReconnectCatchup = async () => {
+      if (!outageEpisode.active) return;
+      if (!outageEpisode.hadRunningSessions) {
+        outageEpisode = clearOutageEpisode();
+        return;
+      }
+
+      const sessionIds = outageEpisode.runningSessionIds.slice();
+      recordPerfLog(sessionDebugEnabled(), "session.sse", "catchup-start", {
+        sessions: sessionIds.length,
+      });
+
+      for (const sessionID of sessionIds) {
+        if (!sessionID) continue;
+
+        try {
+          const fetched = unwrap(await c.session.get({ sessionID })) as Record<string, unknown>;
+          const normalized = normalizeSessionStatus(fetched?.status);
+          setStore("sessionStatus", sessionID, normalized);
+        } catch {
+          setStore("sessionStatus", sessionID, "idle");
+          continue;
+        }
+
+        try {
+          const limit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, messageLimitBySession()[sessionID] ?? 0);
+          const msgs = unwrap(
+            await withTimeout(c.session.messages({ sessionID, limit }), 12000, "session.messages"),
+          );
+          setMessagesForSession(sessionID, msgs);
+          setMessageLimitBySession((prev) => ({ ...prev, [sessionID]: limit }));
+          setMessageCompleteBySession((prev) => ({ ...prev, [sessionID]: msgs.length < limit }));
+        } catch {
+          // fail soft per session
+        }
+
+        try {
+          const list = unwrap(await withTimeout(c.session.todo({ sessionID }), 8000, "session.todo"));
+          setStore("todos", sessionID, list);
+        } catch {
+          // fail soft per session
+        }
+      }
+
+      try {
+        await withTimeout(refreshPendingPermissions(), 6000, "permission.list");
+      } catch {
+        // ignore
+      }
+
+      try {
+        await withTimeout(refreshPendingQuestions(), 6000, "question.list");
+      } catch {
+        // ignore
+      }
+
+      if (shouldShowReconnected(outageEpisode)) {
+        options.onReconnectNotice?.("reconnected");
+        outageEpisode = { ...outageEpisode, shownReconnected: true };
+      }
+
+      recordPerfLog(sessionDebugEnabled(), "session.sse", "catchup-complete", {
+        sessions: sessionIds.length,
+      });
+      outageEpisode = clearOutageEpisode();
+    };
+
     const connectSse = async (controller: AbortController) => {
       try {
         const sub = await c.event.subscribe(undefined, { signal: controller.signal });
@@ -1524,24 +1614,10 @@ export function createSessionStore(options: {
         reconnectAttempt = 0;
         recordPerfLog(sessionDebugEnabled(), "session.sse", "connected");
 
-        // After SSE reconnection, resync any sessions that the UI still shows
-        // as "running". Events emitted during the disconnect gap are lost, so
-        // a session may have gone idle without the client knowing.
+        // After SSE reconnection, resync running-at-outage sessions so missed
+        // updates while disconnected are reflected in the local store.
         if (isReconnection) {
-          void (async () => {
-            for (const session of store.sessions) {
-              const status = store.sessionStatus[session.id];
-              if (!status || status === "idle") continue;
-              try {
-                const fetched = unwrap(await c.session.get({ sessionID: session.id })) as Record<string, unknown>;
-                const normalized = normalizeSessionStatus(fetched?.status);
-                setStore("sessionStatus", session.id, normalized);
-              } catch {
-                // If we can't fetch, assume idle to avoid a permanently stuck indicator.
-                setStore("sessionStatus", session.id, "idle");
-              }
-            }
-          })();
+          await runReconnectCatchup();
         }
 
         for await (const raw of sub.stream) {
@@ -1597,9 +1673,9 @@ export function createSessionStore(options: {
         }
       } catch (e) {
         if (cancelled) return;
+        if (controller.signal.aborted) return;
 
         const message = e instanceof Error ? e.message : String(e);
-        if (message.toLowerCase().includes("abort")) return;
 
         // Mark SSE as disconnected and schedule reconnect
         options.setSseConnected(false);
@@ -1612,6 +1688,8 @@ export function createSessionStore(options: {
 
     const scheduleReconnect = (oldController: AbortController) => {
       if (cancelled) return;
+      if (reconnectTimer) return;
+      markOutageAndMaybeNotify();
       oldController.abort();
 
       // Exponential backoff: 1s, 2s, 4s, 8s, 16s, max 30s
@@ -1624,6 +1702,7 @@ export function createSessionStore(options: {
 
       reconnectTimer = setTimeout(() => {
         if (cancelled) return;
+        reconnectTimer = undefined;
         const newController = new AbortController();
         void connectSse(newController);
       }, delay);

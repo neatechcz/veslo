@@ -20,17 +20,17 @@ test("message growth keeps bottom pin active when user is already near the lates
   );
 });
 
-test("near-bottom detection uses strict scroll position math for arrow visibility", () => {
+test("near-bottom detection follows message sentinel visibility instead of raw scroll height", () => {
   assert.match(
     source,
-    /const isAtBottom = \(element: HTMLElement\) => \{\s*const distanceToBottom = element\.scrollHeight - \(element\.scrollTop \+ element\.clientHeight\);\s*return distanceToBottom <= 1;\s*\};/s,
-    "near-bottom should be computed from scroll metrics with strict threshold",
+    /const isAtLatest = \(container: HTMLElement, sentinel: HTMLElement\) => \{\s*const containerRect = container\.getBoundingClientRect\(\);\s*const sentinelRect = sentinel\.getBoundingClientRect\(\);\s*return sentinelRect\.bottom <= containerRect\.bottom \+ 1;\s*\};/s,
+    "near-bottom should be based on whether the latest-message sentinel is inside the visible viewport",
   );
 
   assert.match(
     source,
-    /container\.addEventListener\("scroll", updateNearBottom, \{ passive: true \}\);/s,
-    "near-bottom should be refreshed on scroll events",
+    /setNearBottom\(isAtLatest\(container, sentinel\)\);/s,
+    "near-bottom updates should use sentinel-based latest visibility",
   );
 });
 
@@ -65,5 +65,13 @@ test("jump-to-latest control is anchored to bottom-right and rendered as small d
     source,
     /<ChevronDown size=\{12\} \/>/,
     "jump-to-latest button should render a small down arrow icon",
+  );
+});
+
+test("session reconnect notice maps to one-shot localized reconnect toasts", () => {
+  assert.match(
+    source,
+    /const reconnectNotice = props\.reconnectNotice;\s*if \(!reconnectNotice\) return;\s*setToastMessage\(\s*reconnectNotice === "reconnecting"\s*\?\s*tr\("session\.reconnecting_toast"\)\s*:\s*tr\("session\.reconnected_toast"\),\s*\);\s*props\.clearReconnectNotice\(\);/s,
+    "session view should map reconnect notices to localized reconnecting/reconnected toast messages and clear the notice",
   );
 });

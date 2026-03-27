@@ -133,6 +133,8 @@ export default {
   "session.reveal": "Ukázat",
   "session.opened_toast": "Otevřeno ve výchozí aplikaci.",
   "session.revealed_toast": "Zobrazeno ve správci souborů.",
+  "session.reconnecting_toast": "Znovu se připojuji...",
+  "session.reconnected_toast": "Znovu připojeno",
   "session.artifact_path_missing": "Chybí cesta k artefaktu.",
   "session.desktop_only": "Otevření je dostupné jen v desktopové aplikaci.",
   "session.open_failed": "Nepodařilo se otevřít artefakt.",

@@ -133,6 +133,8 @@ export default {
   "session.reveal": "Reveal",
   "session.opened_toast": "Opened in default app.",
   "session.revealed_toast": "Revealed in file manager.",
+  "session.reconnecting_toast": "Reconnecting...",
+  "session.reconnected_toast": "Reconnected",
   "session.artifact_path_missing": "Artifact path missing.",
   "session.desktop_only": "Open is only available in the desktop app.",
   "session.open_failed": "Could not open artifact.",

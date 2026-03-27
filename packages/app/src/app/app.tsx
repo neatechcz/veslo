@@ -187,6 +187,7 @@ import {
 import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./context/session";
+import type { ReconnectNotice } from "./context/session-reconnect";
 import { createExtensionsStore } from "./context/extensions";
 import { useGlobalSync } from "./context/global-sync";
 import { createWorkspaceStore } from "./context/workspace";
@@ -797,6 +798,7 @@ export default function App() {
     null
   );
   const [sseConnected, setSseConnected] = createSignal(false);
+  const [sessionReconnectNotice, setSessionReconnectNotice] = createSignal<ReconnectNotice | null>(null);
 
   const [busy, setBusy] = createSignal(false);
   const [busyLabel, setBusyLabel] = createSignal<string | null>(null);
@@ -950,6 +952,7 @@ export default function App() {
     developerMode,
     setError,
     setSseConnected,
+    onReconnectNotice: (notice) => setSessionReconnectNotice(notice),
     markReloadRequired,
     onHotReloadApplied: () => {
       onHotReloadAppliedHandler?.();
@@ -6526,6 +6529,8 @@ export default function App() {
     busy: busy(),
     prompt: prompt(),
     setPrompt: setPrompt,
+    reconnectNotice: sessionReconnectNotice(),
+    clearReconnectNotice: () => setSessionReconnectNotice(null),
     composerDraft: composerDraft(),
     setComposerDraft: setComposerDraft,
     activePermission: activePermissionMemo(),
