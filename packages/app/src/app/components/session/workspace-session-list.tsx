@@ -1,11 +1,10 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { Folder, HeartPulse, List, Loader2, MoreHorizontal, Plus, Search, Trash2 } from "lucide-solid";
+import { Folder, HeartPulse, List, Loader2, MoreHorizontal, Plus, Search } from "lucide-solid";
 
 import type { VesloSoulStatus } from "../../lib/veslo-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
 import type { WorkspaceConnectionState, WorkspaceSessionGroup } from "../../types";
 import {
-  formatRelativeTime,
   getWorkspaceTaskLoadErrorDisplay,
   isWindowsPlatform,
 } from "../../utils";
@@ -13,6 +12,8 @@ import {
   buildProjectGroups,
   buildRecentRows,
   displayTimestamp,
+  formatSessionRelativeAge,
+  formatSessionTimestampTooltip,
   isProjectCollapsed,
   toggleProjectCollapsed,
   type FlatSessionRow,
@@ -439,7 +440,7 @@ export default function WorkspaceSessionList(props: Props) {
                     <div class="relative group/session-row">
                     <button
                       type="button"
-                      class={`w-full flex items-center rounded-xl px-3 py-1.5 text-left transition-colors ${
+                      class={`w-full flex items-center rounded-xl px-3 py-1.5 pr-16 text-left transition-colors ${
                         isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
                       }`}
                       style={rowIndentStyle(row)}
@@ -488,11 +489,14 @@ export default function WorkspaceSessionList(props: Props) {
                       </div>
                     </button>
 
-                    <span class="pointer-events-none absolute right-2 top-[60%] -translate-y-1/2 text-[11px] text-gray-9 whitespace-nowrap transition-opacity group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0">
-                      {formatRelativeTime(displayTimestamp(session()))}
+                    <span
+                      class="pointer-events-none absolute right-2 bottom-1.5 text-[11px] text-gray-9 whitespace-nowrap transition-opacity group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
+                      title={formatSessionTimestampTooltip(displayTimestamp(session()), currentLocale())}
+                    >
+                      {formatSessionRelativeAge(displayTimestamp(session()))}
                     </span>
 
-                    <div class="absolute right-2 top-[60%] -translate-y-1/2 opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100 transition-opacity">
+                    <div class="absolute right-2 bottom-1.5 opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100 transition-opacity">
                       <button
                         type="button"
                         class="p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"
@@ -641,12 +645,13 @@ export default function WorkspaceSessionList(props: Props) {
                             const isSelected = () => props.selectedSessionId === session().id;
                             const isSessionActive = () =>
                               (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
+                            const rowAnchorKey = `project-session:${row.rowKey}`;
 
                             return (
                               <div class="relative group/session-row">
                                 <button
                                   type="button"
-                                  class={`w-full flex items-center gap-2 rounded-xl px-3 py-1.5 text-left transition-colors pr-10 ${
+                                  class={`w-full flex items-center gap-2 rounded-xl px-3 py-1.5 pr-16 text-left transition-colors ${
                                     isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
                                   }`}
                                   style={rowIndentStyle(row)}
@@ -662,28 +667,40 @@ export default function WorkspaceSessionList(props: Props) {
                                       </span>
                                     </div>
                                   </div>
-
-                                  <span class="text-[11px] text-gray-9 whitespace-nowrap">
-                                    {formatRelativeTime(displayTimestamp(session()))}
-                                  </span>
                                 </button>
 
-                                <Show when={props.onDeleteSession}>
-                                  <div class="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100 transition-opacity">
-                                    <button
-                                      type="button"
-                                      class="p-1 rounded-md text-gray-9 hover:text-red-11 hover:bg-red-3/60"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        props.onDeleteSession?.(row.workspace.id, session().id);
-                                      }}
-                                      aria-label={tr("session.delete_session_action")}
-                                      title={tr("session.delete_session_action")}
-                                    >
-                                      <Trash2 size={14} />
-                                    </button>
-                                  </div>
-                                </Show>
+                                <span
+                                  class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-9 whitespace-nowrap transition-opacity group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
+                                  title={formatSessionTimestampTooltip(displayTimestamp(session()), currentLocale())}
+                                >
+                                  {formatSessionRelativeAge(displayTimestamp(session()))}
+                                </span>
+
+                                <div class="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100 transition-opacity">
+                                  <button
+                                    type="button"
+                                    class="p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setWorkspaceMenuTarget((current) =>
+                                        current?.anchorKey === rowAnchorKey
+                                          ? null
+                                          : { workspaceId: row.workspace.id, anchorKey: rowAnchorKey },
+                                      );
+                                    }}
+                                    aria-label={tr("sidebar.workspace_options")}
+                                  >
+                                    <MoreHorizontal size={14} />
+                                  </button>
+                                </div>
+
+                                {workspaceMenu(
+                                  row.workspace,
+                                  rowAnchorKey,
+                                  soulEnabled(),
+                                  canRecover(),
+                                  isConnectionActionBusy(),
+                                )}
                               </div>
                             );
                           }}
