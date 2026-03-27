@@ -60,6 +60,31 @@ export const activityTimestamp = (session: WorkspaceSessionGroup["sessions"][num
 export const displayTimestamp = (session: WorkspaceSessionGroup["sessions"][number]) =>
   activityTimestamp(session) || Date.now();
 
+const SECOND_MS = 1_000;
+const MINUTE_MS = 60 * SECOND_MS;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+export const formatSessionRelativeAge = (timestampMs: number, nowMs = Date.now()) => {
+  const delta = nowMs - timestampMs;
+
+  if (delta < 0) return "just now";
+  if (delta < MINUTE_MS) return `${Math.max(1, Math.round(delta / SECOND_MS))}s ago`;
+  if (delta < HOUR_MS) return `${Math.max(1, Math.round(delta / MINUTE_MS))}m ago`;
+  if (delta < DAY_MS) return `${Math.max(1, Math.round(delta / HOUR_MS))}h ago`;
+  return `${Math.max(1, Math.round(delta / DAY_MS))}d ago`;
+};
+
+export const formatSessionTimestampTooltip = (timestampMs: number, locale: string) => {
+  const date = new Date(timestampMs);
+  if (!Number.isFinite(date.getTime())) return "";
+  try {
+    return new Intl.DateTimeFormat(locale || undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
+  } catch {
+    return date.toLocaleString();
+  }
+};
+
 export const isProjectCollapsed = (collapsedProjects: CollapsedProjectMap, projectKey: string) =>
   Boolean(collapsedProjects[projectKey]);
 
@@ -117,14 +142,20 @@ const compareProjectRows = (a: FlatSessionRow, b: FlatSessionRow) => {
   return a.session.id.localeCompare(b.session.id);
 };
 
-const compareProjectGroups = (a: ProjectSessionGroup, b: ProjectSessionGroup) => {
-  const byActivity = b.activityAt - a.activityAt;
-  if (byActivity !== 0) return byActivity;
+const compareProjectGroups = (
+  a: ProjectSessionGroup,
+  b: ProjectSessionGroup,
+  workspaceOrderById: Map<string, number>,
+) => {
+  const aWorkspaceOrder = workspaceOrderById.get(a.workspace.id) ?? Number.MAX_SAFE_INTEGER;
+  const bWorkspaceOrder = workspaceOrderById.get(b.workspace.id) ?? Number.MAX_SAFE_INTEGER;
+  const byWorkspaceOrder = aWorkspaceOrder - bWorkspaceOrder;
+  if (byWorkspaceOrder !== 0) return byWorkspaceOrder;
 
   const byLabel = a.projectLabel.localeCompare(b.projectLabel);
   if (byLabel !== 0) return byLabel;
 
-  return a.workspace.id.localeCompare(b.workspace.id);
+  return a.key.localeCompare(b.key);
 };
 
 const parentSessionIdForSession = (
@@ -289,6 +320,9 @@ export const buildProjectGroups = (
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean = defaultPrivateWorkspacePath,
 ): ProjectSessionGroup[] => {
   const rows = collectFlatRows(workspaceSessionGroups, isPrivateWorkspacePath);
+  const workspaceOrderById = new Map(
+    workspaceSessionGroups.map((group, index) => [group.workspace.id, index] as const),
+  );
   const rowBySessionId = new Map(rows.map((row) => [row.session.id, row] as const));
   const groupedRows = new Map<string, FlatSessionRow[]>();
 
@@ -321,5 +355,5 @@ export const buildProjectGroups = (
         isPrivateProject,
       };
     })
-    .sort(compareProjectGroups);
+    .sort((a, b) => compareProjectGroups(a, b, workspaceOrderById));
 };

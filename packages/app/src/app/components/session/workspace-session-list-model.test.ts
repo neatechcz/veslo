@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   buildProjectGroups,
   buildRecentRows,
+  formatSessionRelativeAge,
+  formatSessionTimestampTooltip,
   isProjectCollapsed,
   toggleProjectCollapsed,
 } from "./workspace-session-list-model.js";
@@ -151,4 +153,67 @@ test("buildProjectGroups keeps subagents nested under their parent in by-project
     groups[0].sessions.map((row) => row.nestingLevel),
     [0, 1, 0],
   );
+});
+
+test("buildProjectGroups keeps directory groups in workspace insertion order", () => {
+  const workspaceA = {
+    id: "workspace-a",
+    name: "workspace-a",
+    path: "/tmp/workspace-a",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+  const workspaceB = {
+    id: "workspace-b",
+    name: "workspace-b",
+    path: "/tmp/workspace-b",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+
+  const groups = buildProjectGroups([
+    {
+      workspace: workspaceA,
+      sessions: [
+        {
+          id: "a-1",
+          title: "a-1",
+          directory: "/tmp/workspace-a",
+          time: { created: 100, updated: 120 },
+        },
+      ],
+      status: "ready",
+    },
+    {
+      workspace: workspaceB,
+      sessions: [
+        {
+          id: "b-1",
+          title: "b-1",
+          directory: "/tmp/workspace-b",
+          time: { created: 90, updated: 9_000 },
+        },
+      ],
+      status: "ready",
+    },
+  ]);
+
+  assert.deepEqual(
+    groups.map((group) => group.workspace.id),
+    ["workspace-a", "workspace-b"],
+  );
+});
+
+test("formatSessionRelativeAge uses compact d/h/m/s labels", () => {
+  const now = 10 * 24 * 60 * 60 * 1000;
+  assert.equal(formatSessionRelativeAge(now - 3 * 24 * 60 * 60 * 1000, now), "3d ago");
+  assert.equal(formatSessionRelativeAge(now - 2 * 60 * 60 * 1000, now), "2h ago");
+  assert.equal(formatSessionRelativeAge(now - 7 * 60 * 1000, now), "7m ago");
+  assert.equal(formatSessionRelativeAge(now - 12 * 1000, now), "12s ago");
+});
+
+test("formatSessionTimestampTooltip provides exact datetime text for hover tooltip", () => {
+  const text = formatSessionTimestampTooltip(0, "en-US");
+  assert.ok(text.length > 0);
+  assert.match(text, /1970/);
 });
