@@ -317,8 +317,10 @@ export default function PartView(props: Props) {
     const filePath = normalizeFilePath(href, props.workspaceRoot ?? "");
     if (!filePath) return;
 
+    const fileUrl = href.startsWith("file://") ? href : `file://${encodeURI(filePath)}`;
+
     if (!isTauriRuntime()) {
-      platform.openLink(href.startsWith("file://") ? href : `file://${filePath}`);
+      platform.openLink(fileUrl);
       return;
     }
 
@@ -326,7 +328,7 @@ export default function PartView(props: Props) {
       const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
       await revealItemInDir(filePath).catch(() => openPath(filePath));
     } catch {
-      platform.openLink(href.startsWith("file://") ? href : `file://${filePath}`);
+      platform.openLink(fileUrl);
     }
   };
 

@@ -14,6 +14,10 @@ const DELEGATE_PLUGIN_FILE: &str = "veslo-delegate.js";
 const ROUTING_BLOCK_START: &str = "<!-- VESLO_INTERNAL_ROUTING_START -->";
 const ROUTING_BLOCK_END: &str = "<!-- VESLO_INTERNAL_ROUTING_END -->";
 
+const AGENT_BLOCK_START: &str = "<!-- VESLO_AGENT_INSTRUCTIONS_START -->";
+const AGENT_BLOCK_END: &str = "<!-- VESLO_AGENT_INSTRUCTIONS_END -->";
+
+
 static INTERNAL_PACKS_DIR: Dir<'_> =
     include_dir!("$CARGO_MANIFEST_DIR/../../../internal/veslo-internal-packs");
 
@@ -63,6 +67,123 @@ const INTERNAL_AGENTS: &[&str] = &[
     "veslo-internal-skill-creator.md",
 ];
 
+fn upsert_managed_block(
+    existing: &str,
+    block: &str,
+    start_marker: &str,
+    end_marker: &str,
+) -> String {
+    if let Some(start_pos) = existing.find(start_marker) {
+        if let Some(end_relative) = existing[start_pos..].find(end_marker) {
+            let after_end = start_pos + end_relative + end_marker.len();
+            let before = existing[..start_pos].trim_end_matches('\n');
+            let after = existing[after_end..].trim_start_matches('\n');
+            let compact_block = block.trim_end();
+            if before.is_empty() && after.is_empty() {
+                return format!("{compact_block}\n");
+            }
+            let prefix = if !before.is_empty() {
+                format!("{before}\n\n")
+            } else {
+                String::new()
+            };
+            let suffix = if !after.is_empty() {
+                format!("\n\n{after}")
+            } else {
+                String::new()
+            };
+            return format!("{prefix}{compact_block}{suffix}\n");
+        }
+    }
+
+    let trimmed = existing.trim_end();
+    if trimmed.is_empty() {
+        return format!("{}\n", block.trim_end());
+    }
+    format!("{trimmed}\n\n{}\n", block.trim_end())
+}
+
+fn managed_veslo_routing_block() -> String {
+    format!(
+        "{start}\n\
+         ## Managed Internal Delegation (Veslo)\n\
+         \n\
+         This block is managed by Veslo. Keep it intact.\n\
+         \n\
+         Document and skill tasks are handled via the `delegate` tool, which routes work\n\
+         to specialized hidden subagents. Use it like any other tool — the model selects it\n\
+         based on context (file types, document references, skill creation requests).\n\
+         \n\
+         Execution behavior:\n\
+         - Internal subagent identities are implementation details; do not surface their names unless explicitly requested in developer/debug context.\n\
+         - Return normal progress/results in the parent session.\n\
+         {end}",
+        start = ROUTING_BLOCK_START,
+        end = ROUTING_BLOCK_END,
+    )
+}
+
+fn managed_veslo_agent_instructions_block() -> String {
+    format!(
+        "{start}\n\
+         ## Managed Agent Instructions (Veslo)\n\
+         \n\
+         This block is managed by Veslo. Keep it intact.\n\
+         \n\
+         ### Task Mode Behavior\n\
+         - Plan before acting: for multi-step tasks, outline your approach first.\n\
+         - Work autonomously through the plan, reporting progress at milestones.\n\
+         - If a step fails, try alternative approaches before asking the user.\n\
+         - For ambiguous requests, ask one clarifying question rather than guessing.\n\
+         \n\
+         ### Communication Style\n\
+         - Progressive disclosure: start with a simple answer, add technical details only if asked.\n\
+         - Explain what you're doing and why, in terms the user can understand.\n\
+         - Adapt to the user's technical level based on their language and questions.\n\
+         - For file operations, explain the impact before making changes.\n\
+         \n\
+         ### Veslo Tools & Features\n\
+         - **delegate** — routes document tasks (DOCX, PDF, PPTX, XLSX) to specialized subagents.\n\
+         - **Skills** — reusable workflows in `.opencode/skills/`. Suggest creating one when work repeats.\n\
+         - **Scheduler** — recurring tasks (daily, weekly, interval). Mention when a task could be automated.\n\
+         - **Workspace** — user may have multiple workspaces; respect workspace boundaries.\n\
+         {end}",
+        start = AGENT_BLOCK_START,
+        end = AGENT_BLOCK_END,
+    )
+}
+
+fn ensure_veslo_agent_routing(
+    workspace_root: &Path,
+    stats: &mut WriteStats,
+) -> Result<(), String> {
+    let path = workspace_root
+        .join(".opencode")
+        .join("agents")
+        .join("veslo.md");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let raw = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+
+    let mut next = upsert_managed_block(
+        &raw,
+        &managed_veslo_routing_block(),
+        ROUTING_BLOCK_START,
+        ROUTING_BLOCK_END,
+    );
+    next = upsert_managed_block(
+        &next,
+        &managed_veslo_agent_instructions_block(),
+        AGENT_BLOCK_START,
+        AGENT_BLOCK_END,
+    );
+
+    write_if_changed(&path, next.as_bytes(), stats)
+}
+
 pub fn provision_internal_workspace_assets(
     workspace_root: &Path,
 ) -> Result<ProvisionResult, String> {
@@ -104,9 +225,8 @@ pub fn provision_internal_workspace_assets(
     let plugin_path = plugins_root.join(DELEGATE_PLUGIN_FILE);
     write_if_changed(&plugin_path, delegate_plugin_source().as_bytes(), &mut stats)?;
 
-    // 4) Ensure veslo primary agent contains managed routing/delegation instructions
-    let veslo_agent_path = agents_root.join("veslo.md");
-    ensure_veslo_agent_routing(&veslo_agent_path, &mut stats)?;
+    // 4) Upsert managed blocks in veslo.md (routing + agent instructions)
+    ensure_veslo_agent_routing(workspace_root, &mut stats)?;
 
     // 5) Write deterministic manifest for versioned/idempotent upgrades
     let manifest = InternalManifest {
@@ -206,82 +326,6 @@ fn write_if_changed(path: &Path, contents: &[u8], stats: &mut WriteStats) -> Res
     fs::write(path, contents).map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
     stats.written += 1;
     Ok(())
-}
-
-fn ensure_veslo_agent_routing(
-    veslo_agent_path: &Path,
-    stats: &mut WriteStats,
-) -> Result<(), String> {
-    let existing = match fs::read_to_string(veslo_agent_path) {
-        Ok(value) => value,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(err) => {
-            return Err(format!(
-                "Failed to read managed agent {}: {err}",
-                veslo_agent_path.display()
-            ));
-        }
-    };
-
-    let block = managed_veslo_routing_block();
-    let updated = upsert_managed_block(&existing, &block);
-    write_if_changed(veslo_agent_path, updated.as_bytes(), stats)
-}
-
-fn upsert_managed_block(existing: &str, block: &str) -> String {
-    if let Some(start_index) = existing.find(ROUTING_BLOCK_START) {
-        if let Some(end_relative) = existing[start_index..].find(ROUTING_BLOCK_END) {
-            let end_index = start_index + end_relative + ROUTING_BLOCK_END.len();
-            let before = existing[..start_index].trim_end_matches('\n');
-            let after = existing[end_index..].trim_start_matches('\n');
-            let compact_block = block.trim_end_matches('\n');
-
-            if before.is_empty() && after.is_empty() {
-                return format!("{compact_block}\n");
-            }
-
-            let mut next = String::new();
-            if !before.is_empty() {
-                next.push_str(before);
-                next.push_str("\n\n");
-            }
-            next.push_str(compact_block);
-            if !after.is_empty() {
-                next.push_str("\n\n");
-                next.push_str(after);
-            }
-            next.push('\n');
-            return next;
-        }
-    }
-
-    if existing.trim().is_empty() {
-        return format!("{block}\n");
-    }
-
-    let mut next = existing.trim_end_matches('\n').to_string();
-    next.push_str("\n\n");
-    next.push_str(block.trim_end_matches('\n'));
-    next.push('\n');
-    next
-}
-
-fn managed_veslo_routing_block() -> String {
-    format!(
-        r#"{ROUTING_BLOCK_START}
-## Managed Internal Delegation (Veslo)
-
-This block is managed by Veslo. Keep it intact.
-
-Document and skill tasks are handled via the `delegate` tool, which routes work
-to specialized hidden subagents. Use it like any other tool — the model selects it
-based on context (file types, document references, skill creation requests).
-
-Execution behavior:
-- Internal subagent identities are implementation details; do not surface their names unless explicitly requested in developer/debug context.
-- Return normal progress/results in the parent session.
-{ROUTING_BLOCK_END}"#
-    )
 }
 
 fn delegate_plugin_source() -> String {
