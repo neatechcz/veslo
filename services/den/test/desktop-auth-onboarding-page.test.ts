@@ -53,3 +53,21 @@ test("desktop onboarding page requests JSON authorize transport and keeps author
     "onboarding page must not hide the authorize error immediately after showing it",
   )
 })
+
+test("desktop onboarding page exposes forgot-password and reset-password browser flows", () => {
+  assert.equal(onboardingPage.includes("Forgot password?"), true)
+  assert.equal(onboardingPage.includes("/api/auth/request-password-reset"), true)
+  assert.equal(onboardingPage.includes("/api/auth/reset-password"), true)
+  assert.equal(onboardingPage.includes('search.get("token")'), true)
+})
+
+test("desktop onboarding page exposes verification and resend affordances", () => {
+  assert.equal(onboardingPage.includes("/api/auth/send-verification-email"), true)
+  assert.equal(onboardingPage.includes("emailVerified"), true)
+  assert.equal(onboardingPage.includes('buildDesktopOnboardingUrl("verify-email")'), true)
+})
+
+test("desktop onboarding page uses Veslo auth copy", () => {
+  assert.equal(onboardingPage.includes("Sign in to Veslo"), true)
+  assert.equal(onboardingPage.includes("Openwork"), false)
+})
