@@ -3755,7 +3755,7 @@ export default function SessionView(props: SessionViewProps) {
         </aside>
       </Show>
 
-      <main class="flex-1 flex flex-col overflow-hidden bg-gray-1">
+      <main class="flex-1 flex flex-col overflow-hidden bg-gray-1 pt-12">
 
         <Show when={searchOpen()}>
           <div class="border-b border-gray-5 bg-gray-2/70 px-6 py-2">
@@ -3865,7 +3865,7 @@ export default function SessionView(props: SessionViewProps) {
         <div class="flex-1 flex overflow-hidden">
           <div class="flex-1 min-w-0 relative overflow-hidden bg-gray-1">
             <div
-              class={`h-full overflow-y-auto px-8 ${showWorkspaceSetupEmptyState() ? "pt-20 pb-20" : "pt-12 pb-32"} scroll-smooth bg-gray-1 ${initialAnchorPending() ? "invisible" : "visible"}`}
+              class={`h-full overflow-y-auto px-8 ${showWorkspaceSetupEmptyState() ? "pt-8 pb-20" : "pt-0 pb-32"} scroll-smooth bg-gray-1 ${initialAnchorPending() ? "invisible" : "visible"}`}
               style={{ contain: "layout paint style" }}
               ref={(el) => {
                 chatContainerEl = el;

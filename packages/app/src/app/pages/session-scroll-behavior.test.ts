@@ -68,6 +68,14 @@ test("jump-to-latest control is anchored to bottom-right and rendered as small d
   );
 });
 
+test("session main column reserves a top safe strip below titlebar toggles", () => {
+  assert.match(
+    source,
+    /<main class="flex-1 flex flex-col overflow-hidden bg-gray-1 pt-12">/,
+    "session main column should keep the titlebar overlay area clear so streamed text does not render underneath the top menu",
+  );
+});
+
 test("session reconnect notice maps to one-shot localized reconnect toasts", () => {
   assert.match(
     source,
