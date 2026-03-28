@@ -445,107 +445,109 @@ export default function WorkspaceSessionList(props: Props) {
         <div class="space-y-1.5 mb-2">
           <Show when={hasVisibleRows()} fallback={emptyState}>
             <Show when={sidebarMode() === "by-project"} fallback={
-              <For each={recentRows()}>
-                {(row) => {
-                  const workspace = () => row.workspace;
-                  const session = () => row.session;
-                  const isSelected = () => props.selectedSessionId === session().id;
-                  const isSessionActive = () => (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
-                  const isConnecting = () => isConnectingWorkspace(workspace().id);
-                  const canRecover = () => canRecoverWorkspace(workspace());
-                  const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
-                  const soulEnabled = () => Boolean(soulStatus()?.enabled);
-                  const taskLoadError = () => taskLoadErrorFor(workspace(), row.error);
-                  const anchorKey = `recent:${row.rowKey}`;
-                  const isConnectionActionBusy = () => isConnectionActionBusyFor(workspace().id);
+              <div class="space-y-0">
+                <For each={recentRows()}>
+                  {(row) => {
+                    const workspace = () => row.workspace;
+                    const session = () => row.session;
+                    const isSelected = () => props.selectedSessionId === session().id;
+                    const isSessionActive = () => (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
+                    const isConnecting = () => isConnectingWorkspace(workspace().id);
+                    const canRecover = () => canRecoverWorkspace(workspace());
+                    const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
+                    const soulEnabled = () => Boolean(soulStatus()?.enabled);
+                    const taskLoadError = () => taskLoadErrorFor(workspace(), row.error);
+                    const anchorKey = `recent:${row.rowKey}`;
+                    const isConnectionActionBusy = () => isConnectionActionBusyFor(workspace().id);
 
-                  return (
-                    <div class="relative group/session-row">
-                    <button
-                      type="button"
-                      class={`w-full flex items-center rounded-xl px-3 py-1.5 pr-16 text-left transition-colors ${
-                        isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
-                      }`}
-                      style={rowIndentStyle(row)}
-                      onClick={() => props.onOpenSession(workspace().id, session().id)}
-                    >
-                      <div class="min-w-0 flex-1">
-                        <div class="flex items-center gap-1.5 min-w-0">
-                          <Show when={isSessionActive()}>
-                            <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
-                          </Show>
-                          <span class="text-[13px] text-gray-11 truncate font-medium">{session().title}</span>
-                        </div>
-
-                        <div class="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-10 min-w-0">
-                          <Show when={row.projectLabel}>
-                            <span class="truncate">{row.projectLabel}</span>
-                          </Show>
-                          <Show when={row.projectLabel && workspace().workspaceType === "remote"}>
-                            <span aria-hidden>•</span>
-                          </Show>
-                          <Show when={workspace().workspaceType === "remote"}>
-                            <span>{workspaceKindLabel(workspace())}</span>
-                          </Show>
-                          <Show when={soulEnabled()}>
-                            <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
-                              <HeartPulse size={10} />
-                              {tr("sidebar.soul_badge")}
-                            </span>
-                          </Show>
-                          <Show when={isConnecting()}>
-                            <Loader2 size={11} class="animate-spin text-gray-10" />
-                          </Show>
-                          <Show when={row.status === "error"}>
-                            <span
-                              class={`text-[10px] px-1.5 py-0.5 rounded-full border ${
-                                taskLoadError().tone === "offline"
-                                  ? "border-amber-7 text-amber-11 bg-amber-3"
-                                  : "border-red-7 text-red-11 bg-red-3"
-                              }`}
-                              title={taskLoadError().title}
-                            >
-                              {taskLoadError().label}
-                            </span>
-                          </Show>
-                        </div>
-                      </div>
-                    </button>
-
-                    <span
-                      class="pointer-events-none absolute right-2 bottom-1.5 text-[11px] text-gray-9 whitespace-nowrap transition-opacity group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
-                      title={formatSessionTimestampTooltip(displayTimestamp(session()), currentLocale())}
-                    >
-                      {formatSessionRelativeAge(displayTimestamp(session()))}
-                    </span>
-
-                    <div class="absolute right-2 bottom-1.5 opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100 transition-opacity">
+                    return (
+                      <div class="relative group/session-row">
                       <button
                         type="button"
-                        class="p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setWorkspaceMenuTarget((current) =>
-                            current?.anchorKey === anchorKey ? null : { workspaceId: workspace().id, anchorKey },
-                          );
-                        }}
-                        aria-label={tr("sidebar.workspace_options")}
+                        class={`w-full flex items-center rounded-xl px-3 py-1 pr-16 text-left transition-colors ${
+                          isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
+                        }`}
+                        style={rowIndentStyle(row)}
+                        onClick={() => props.onOpenSession(workspace().id, session().id)}
                       >
-                        <MoreHorizontal size={14} />
-                      </button>
-                    </div>
+                        <div class="min-w-0 flex-1">
+                          <div class="flex items-center gap-1.5 min-w-0">
+                            <Show when={isSessionActive()}>
+                              <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
+                            </Show>
+                            <span class="text-[13px] text-gray-11 truncate font-medium">{session().title}</span>
+                          </div>
 
-                    {workspaceMenu(
-                      workspace(),
-                      anchorKey,
-                      soulEnabled(),
-                      canRecover(),
-                      isConnectionActionBusy(),
-                    )}
-                    </div>
-                  );
-                }}
-              </For>
+                          <div class="mt-px flex items-center gap-1 text-[11px] text-gray-10 min-w-0">
+                            <Show when={row.projectLabel}>
+                              <span class="truncate">{row.projectLabel}</span>
+                            </Show>
+                            <Show when={row.projectLabel && workspace().workspaceType === "remote"}>
+                              <span aria-hidden>•</span>
+                            </Show>
+                            <Show when={workspace().workspaceType === "remote"}>
+                              <span>{workspaceKindLabel(workspace())}</span>
+                            </Show>
+                            <Show when={soulEnabled()}>
+                              <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
+                                <HeartPulse size={10} />
+                                {tr("sidebar.soul_badge")}
+                              </span>
+                            </Show>
+                            <Show when={isConnecting()}>
+                              <Loader2 size={11} class="animate-spin text-gray-10" />
+                            </Show>
+                            <Show when={row.status === "error"}>
+                              <span
+                                class={`text-[10px] px-1.5 py-0.5 rounded-full border ${
+                                  taskLoadError().tone === "offline"
+                                    ? "border-amber-7 text-amber-11 bg-amber-3"
+                                    : "border-red-7 text-red-11 bg-red-3"
+                                }`}
+                                title={taskLoadError().title}
+                              >
+                                {taskLoadError().label}
+                              </span>
+                            </Show>
+                          </div>
+                        </div>
+                      </button>
+
+                      <span
+                        class="pointer-events-none absolute right-2 bottom-1 text-[11px] text-gray-9 whitespace-nowrap transition-opacity group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
+                        title={formatSessionTimestampTooltip(displayTimestamp(session()), currentLocale())}
+                      >
+                        {formatSessionRelativeAge(displayTimestamp(session()))}
+                      </span>
+
+                      <div class="absolute right-2 bottom-1 opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100 transition-opacity">
+                        <button
+                          type="button"
+                          class="p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setWorkspaceMenuTarget((current) =>
+                              current?.anchorKey === anchorKey ? null : { workspaceId: workspace().id, anchorKey },
+                            );
+                          }}
+                          aria-label={tr("sidebar.workspace_options")}
+                        >
+                          <MoreHorizontal size={14} />
+                        </button>
+                      </div>
+
+                      {workspaceMenu(
+                        workspace(),
+                        anchorKey,
+                        soulEnabled(),
+                        canRecover(),
+                        isConnectionActionBusy(),
+                      )}
+                      </div>
+                    );
+                  }}
+                </For>
+              </div>
             }>
               <For each={projectGroups()}>
                 {(project) => {
@@ -656,7 +658,7 @@ export default function WorkspaceSessionList(props: Props) {
                     </div>
 
                     <Show when={!collapsed()}>
-                      <div class="pl-5 pt-0.5 space-y-0.5">
+                      <div class="pl-5 pt-0.5 space-y-0">
                         <For each={project.sessions}>
                           {(row) => {
                             const session = () => row.session;
@@ -669,7 +671,7 @@ export default function WorkspaceSessionList(props: Props) {
                               <div class="relative group/session-row">
                                 <button
                                   type="button"
-                                  class={`w-full flex items-center gap-2 rounded-xl px-3 py-1.5 pr-16 text-left transition-colors ${
+                                  class={`w-full flex items-center gap-2 rounded-xl px-3 py-1 pr-16 text-left transition-colors ${
                                     isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
                                   }`}
                                   style={rowIndentStyle(row)}

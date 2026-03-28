@@ -8,8 +8,6 @@ import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { currentLocale, t } from "../../../i18n";
 import { extractFilesFromDataTransfer } from "../../utils/data-transfer-files";
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
-import { resolveShortComposerDisclaimer } from "./composer-disclaimer";
-import { resolveComposerWorkspaceLabel } from "./composer-workspace-label";
 import { nextAgentModeOnShiftTab } from "../../pages/session-shortcuts";
 
 type MentionOption = {
@@ -430,8 +428,6 @@ export default function Composer(props: ComposerProps) {
   const composerWidthClass = createMemo(() => "max-w-[960px]");
   let editorRef: HTMLDivElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
-  let disclaimerContainerRef: HTMLDivElement | undefined;
-  let disclaimerMeasureFullRef: HTMLSpanElement | undefined;
   let mentionSearchRun = 0;
   let suppressPromptSync = false;
   let pasteCounter = 0;
@@ -469,30 +465,6 @@ export default function Composer(props: ComposerProps) {
     { value: "plan", label: "Plan" },
     { value: "veslo", label: "Task" },
   ] as const;
-  const workspaceLabel = createMemo(() =>
-    resolveComposerWorkspaceLabel({
-      isRemoteWorkspace: props.isRemoteWorkspace,
-      localWorkspacePath: props.localWorkspacePath,
-      localLabel: translate("session.local_workspace_label"),
-      remoteLabel: translate("session.remote_workspace_label"),
-    }),
-  );
-  const disclaimerFullText = createMemo(() => translate("session.composer_disclaimer").trim());
-  const disclaimerShortText = createMemo(() => {
-    const resolved = resolveShortComposerDisclaimer(disclaimerFullText());
-    return resolved || disclaimerFullText();
-  });
-  const [useShortDisclaimer, setUseShortDisclaimer] = createSignal(false);
-  const disclaimerText = createMemo(() => (useShortDisclaimer() ? disclaimerShortText() : disclaimerFullText()));
-
-  const updateDisclaimerLayout = () => {
-    const container = disclaimerContainerRef;
-    const measure = disclaimerMeasureFullRef;
-    if (!container || !measure) return;
-    const availableWidth = container.clientWidth;
-    if (availableWidth <= 0) return;
-    setUseShortDisclaimer(measure.offsetWidth > availableWidth);
-  };
 
   onCleanup(() => {
     for (const url of objectUrls) {
@@ -539,22 +511,6 @@ export default function Composer(props: ComposerProps) {
       });
     }
 
-    let disclaimerResizeObserver: ResizeObserver | null = null;
-    if (typeof ResizeObserver !== "undefined" && disclaimerContainerRef) {
-      disclaimerResizeObserver = new ResizeObserver(() => updateDisclaimerLayout());
-      disclaimerResizeObserver.observe(disclaimerContainerRef);
-    }
-
-    queueMicrotask(updateDisclaimerLayout);
-    onCleanup(() => {
-      disclaimerResizeObserver?.disconnect();
-    });
-  });
-
-  createEffect(() => {
-    disclaimerFullText();
-    disclaimerShortText();
-    queueMicrotask(updateDisclaimerLayout);
   });
 
   const mentionGroups = createMemo<MentionGroup[]>(() => {
@@ -1541,7 +1497,7 @@ export default function Composer(props: ComposerProps) {
 
   return (
     <div
-      class={`sticky bottom-0 z-20 bg-gradient-to-t from-gray-1 via-gray-1 to-transparent px-8 ${props.compactTopSpacing ? "pt-0" : "pt-12"} pb-6`}
+      class={`sticky bottom-0 z-20 bg-gradient-to-t from-gray-1 via-gray-1 to-transparent px-8 ${props.compactTopSpacing ? "pt-0" : "pt-12"} pb-3`}
       style={{ contain: "layout style" }}
     >
       <div class={`mx-auto w-full ${composerWidthClass()}`}>
@@ -1739,92 +1695,76 @@ export default function Composer(props: ComposerProps) {
                       class="bg-transparent border-none p-0 pb-2 pr-2 text-gray-12 focus:ring-0 text-[15px] leading-relaxed resize-none min-h-[24px] max-h-40 overflow-y-auto outline-none"
                     />
 
-                    <div class="mt-3 flex flex-wrap items-center gap-2 pt-2">
-                      <div class="flex items-center gap-1.5">
-                        <input
-                          ref={fileInputRef}
-                          type="file"
-                          multiple
-                          class="hidden"
-                          disabled={attachmentsDisabled()}
-                          onChange={(event: Event) => {
-                            const target = event.currentTarget as HTMLInputElement;
-                            const files = Array.from(target.files ?? []);
-                            if (files.length) void addAttachments(files);
-                            target.value = "";
-                          }}
-                        />
-                        <button
-                          type="button"
-                          class={`p-1.5 hover:bg-gray-3 rounded-md text-gray-10 transition-colors ${attachmentsDisabled() ? "cursor-not-allowed" : ""
-                            }`}
-                          onClick={() => {
-                            if (attachmentsDisabled()) return;
-                            fileInputRef?.click();
-                          }}
-                          disabled={attachmentsDisabled()}
-                          title={
-                            attachmentsDisabled()
-                              ? props.attachmentsDisabledReason ?? translate("session.attachments_unavailable")
-                              : translate("session.attach_files")
-                          }
-                        >
-                          <Paperclip size={16} />
-                        </button>
-                      </div>
-
-                      <div class="inline-flex items-center rounded-lg border border-gray-6/80 bg-gray-2 p-0.5">
-                        <For each={modeOptions}>
-                          {(m) => {
-                            const active = () => selectedMode() === m.value;
-                            return (
-                              <button
-                                type="button"
-                                disabled={props.busy}
-                                class={`px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors ${active()
-                                  ? "bg-gray-4 text-gray-12 shadow-sm"
-                                  : "text-gray-10 hover:text-gray-11"
-                                  }`}
-                                onClick={() => props.onSelectAgent(m.value)}
-                              >
-                                {m.label}
-                              </button>
-                            );
-                          }}
-                        </For>
-                      </div>
-
-                      <Show
-                        when={props.canChooseSessionFolder}
-                        fallback={
-                          <div
-                            class={`max-w-[260px] min-w-0 text-gray-9 ${workspaceLabel().usePathStyle
-                              ? "truncate text-[11px] font-mono"
-                              : "truncate text-[10px] font-bold uppercase tracking-widest"
+                    <div class="mt-3 flex items-center justify-between gap-3 pt-2">
+                      <div class="flex min-w-0 flex-wrap items-center gap-2">
+                        <div class="flex items-center gap-1.5">
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            multiple
+                            class="hidden"
+                            disabled={attachmentsDisabled()}
+                            onChange={(event: Event) => {
+                              const target = event.currentTarget as HTMLInputElement;
+                              const files = Array.from(target.files ?? []);
+                              if (files.length) void addAttachments(files);
+                              target.value = "";
+                            }}
+                          />
+                          <button
+                            type="button"
+                            class={`p-1.5 hover:bg-gray-3 rounded-md text-gray-10 transition-colors ${attachmentsDisabled() ? "cursor-not-allowed" : ""
                               }`}
-                            title={workspaceLabel().label}
+                            onClick={() => {
+                              if (attachmentsDisabled()) return;
+                              fileInputRef?.click();
+                            }}
+                            disabled={attachmentsDisabled()}
+                            title={
+                              attachmentsDisabled()
+                                ? props.attachmentsDisabledReason ?? translate("session.attachments_unavailable")
+                                : translate("session.attach_files")
+                            }
                           >
-                            {workspaceLabel().label}
-                          </div>
-                        }
-                      >
-                        <button
-                          type="button"
-                          class="inline-flex shrink-0 items-center rounded-md border border-gray-6 bg-gray-2 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-11"
-                          onClick={() => {
-                            void props.onChooseSessionFolder();
-                          }}
-                        >
-                          {translate("session.choose_folder")}
-                        </button>
-                      </Show>
-
-                      <div class="ml-auto flex min-w-0 items-center gap-2 text-gray-10">
-                        <div ref={disclaimerContainerRef} class="max-w-[420px] min-w-0 flex-1">
-                          <span class="block text-[11px] leading-4 text-gray-9 truncate whitespace-nowrap" title={disclaimerFullText()}>
-                            {disclaimerText()}
-                          </span>
+                            <Paperclip size={16} />
+                          </button>
                         </div>
+
+                        <div class="inline-flex items-center rounded-lg border border-gray-6/80 bg-gray-2 p-0.5">
+                          <For each={modeOptions}>
+                            {(m) => {
+                              const active = () => selectedMode() === m.value;
+                              return (
+                                <button
+                                  type="button"
+                                  disabled={props.busy}
+                                  class={`px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors ${active()
+                                    ? "bg-gray-4 text-gray-12 shadow-sm"
+                                    : "text-gray-10 hover:text-gray-11"
+                                    }`}
+                                  onClick={() => props.onSelectAgent(m.value)}
+                                >
+                                  {m.label}
+                                </button>
+                              );
+                            }}
+                          </For>
+                        </div>
+
+                        <Show when={props.canChooseSessionFolder}>
+                          <button
+                            type="button"
+                            class="inline-flex shrink-0 items-center rounded-md border border-gray-6 bg-gray-2 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-11"
+                            onClick={() => {
+                              void props.onChooseSessionFolder();
+                            }}
+                          >
+                            {translate("session.choose_folder")}
+                          </button>
+                        </Show>
+                      </div>
+
+                      <div class="flex shrink-0 items-center gap-2">
                         <Show
                           when={props.isStreaming}
                           fallback={
@@ -1851,15 +1791,6 @@ export default function Composer(props: ComposerProps) {
                             <Square size={14} fill="currentColor" />
                           </button>
                         </Show>
-                      </div>
-
-                      <div
-                        aria-hidden="true"
-                        style="position: absolute; left: -9999px; top: -9999px; visibility: hidden; pointer-events: none;"
-                      >
-                        <span ref={disclaimerMeasureFullRef} class="text-[11px] leading-4 text-gray-9 whitespace-nowrap">
-                          {disclaimerFullText()}
-                        </span>
                       </div>
                     </div>
                   </div>

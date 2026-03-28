@@ -98,7 +98,7 @@ import {
   THINKING_PREF_KEY,
   VARIANT_PREF_KEY,
 } from "./constants";
-import { parseMcpServersFromContent, removeMcpFromConfig, validateMcpServerName } from "./mcp";
+import { parseMcpServersFromContent, quickConnectEntryKey, removeMcpFromConfig, validateMcpServerName } from "./mcp";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "./types";
 import type {
   Client,
@@ -4614,7 +4614,7 @@ export default function App() {
       return;
     }
 
-    const slug = entry.id ?? entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const slug = quickConnectEntryKey(entry);
 
     try {
       setMcpStatus(null);

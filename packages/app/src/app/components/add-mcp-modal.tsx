@@ -3,6 +3,7 @@ import { Loader2, Plus, X } from "lucide-solid";
 import Button from "./button";
 import TextInput from "./text-input";
 import type { McpDirectoryInfo } from "../constants";
+import { parseLocalCommandInput } from "../mcp";
 import { t, type Language } from "../../i18n";
 
 export type AddMcpModalProps = {
@@ -72,7 +73,7 @@ export default function AddMcpModal(props: AddMcpModalProps) {
         name: trimmedName,
         description: "",
         type: "local",
-        command: trimmedCommand.split(/\s+/),
+        command: parseLocalCommandInput(trimmedCommand),
         oauth: false,
       });
     }

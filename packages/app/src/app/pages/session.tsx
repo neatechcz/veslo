@@ -96,6 +96,7 @@ import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
 
 import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
+import { resolveComposerWorkspaceLabel } from "../components/session/composer-workspace-label";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import type { SidebarSectionState } from "../components/session/sidebar";
 import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
@@ -424,6 +425,32 @@ export default function SessionView(props: SessionViewProps) {
   const [sidebarLayoutState, setSidebarLayoutState] = createSignal<SidebarLayoutState>(
     createInitialSidebarLayoutState(readSidebarDockedVisibility()),
   );
+  const sessionTitlebarContext = createMemo(() => {
+    const rootPath = props.activeWorkspaceRoot.trim();
+    if (!rootPath && props.activeWorkspaceDisplay.workspaceType !== "remote") {
+      return null;
+    }
+
+    const label = resolveComposerWorkspaceLabel({
+      isRemoteWorkspace: props.activeWorkspaceDisplay.workspaceType === "remote",
+      localWorkspacePath: rootPath,
+      localLabel: tr("session.local_workspace_label"),
+      remoteLabel: tr("session.remote_workspace_label"),
+    });
+
+    if (!label.label.trim()) return null;
+
+    return (
+      <span
+        class={label.usePathStyle
+          ? "font-mono text-[12px] text-gray-10"
+          : "text-[10px] font-bold uppercase tracking-widest text-gray-10"}
+        title={label.label}
+      >
+        {label.label}
+      </span>
+    );
+  });
 
   // In Session view the right sidebar is navigation-only; never pre-highlight a
   // dashboard tab here so first-run feels chat-first rather than Automations-first.
@@ -3511,6 +3538,11 @@ export default function SessionView(props: SessionViewProps) {
     props.setView("dashboard");
   };
 
+  const openDashboardTab = (tab: DashboardTab) => {
+    props.setTab(tab);
+    props.setView("dashboard");
+  };
+
   const showUpdatePill = createMemo(() => {
     if (!isTauriRuntime()) return false;
     const state = props.updateStatus?.state;
@@ -3684,6 +3716,56 @@ export default function SessionView(props: SessionViewProps) {
             onOpenSessionSearch={() => openCommandPalette("sessions")}
           />
         </div>
+        <div class="mt-1.5 space-y-0 border-t border-gray-6/70 pt-1.5">
+          <button
+            type="button"
+            class={`w-full h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
+              showRightSidebarSelection() && props.tab === "scheduled"
+                ? "bg-gray-4 text-gray-12"
+                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
+            }`}
+            onClick={() => openDashboardTab("scheduled")}
+          >
+            <History size={18} />
+            Automations
+          </button>
+          <button
+            type="button"
+            class={`w-full h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
+              showRightSidebarSelection() && props.tab === "soul"
+                ? "bg-gray-4 text-gray-12"
+                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
+            }`}
+            onClick={() => openSoul()}
+          >
+            <HeartPulse size={18} class={soulNavIconClass()} />
+            Soul
+          </button>
+          <button
+            type="button"
+            class={`w-full h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
+              showRightSidebarSelection() && props.tab === "skills"
+                ? "bg-gray-4 text-gray-12"
+                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
+            }`}
+            onClick={() => openDashboardTab("skills")}
+          >
+            <Zap size={18} />
+            Skills
+          </button>
+          <button
+            type="button"
+            class={`w-full h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
+              showRightSidebarSelection() && (props.tab === "mcp" || props.tab === "plugins")
+                ? "bg-gray-4 text-gray-12"
+                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
+            }`}
+            onClick={() => openDashboardTab("mcp")}
+          >
+            <Box size={18} />
+            Extensions
+          </button>
+        </div>
       </div>
       <SidebarStatusControls
         clientConnected={props.clientConnected}
@@ -3696,65 +3778,8 @@ export default function SessionView(props: SessionViewProps) {
 
   const rightSidebarContent = () => (
     <div class="flex-1 overflow-y-auto space-y-5 pt-2">
-      <div class="space-y-1 mb-2">
-        <button
-          type="button"
-          class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-            showRightSidebarSelection() && props.tab === "scheduled"
-              ? "bg-gray-4 text-gray-12"
-              : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-          }`}
-          onClick={() => {
-            props.setTab("scheduled");
-            props.setView("dashboard");
-          }}
-        >
-          <History size={18} />
-          Automations
-        </button>
-        <button
-          type="button"
-          class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-            showRightSidebarSelection() && props.tab === "soul"
-              ? "bg-gray-4 text-gray-12"
-              : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-          }`}
-          onClick={() => openSoul()}
-        >
-          <HeartPulse size={18} class={soulNavIconClass()} />
-          Soul
-        </button>
-        <button
-          type="button"
-          class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-            showRightSidebarSelection() && props.tab === "skills"
-              ? "bg-gray-4 text-gray-12"
-              : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-          }`}
-          onClick={() => {
-            props.setTab("skills");
-            props.setView("dashboard");
-          }}
-        >
-          <Zap size={18} />
-          Skills
-        </button>
-        <button
-          type="button"
-          class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-            showRightSidebarSelection() && (props.tab === "mcp" || props.tab === "plugins")
-              ? "bg-gray-4 text-gray-12"
-              : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-          }`}
-          onClick={() => {
-            props.setTab("mcp");
-            props.setView("dashboard");
-          }}
-        >
-          <Box size={18} />
-          Extensions
-        </button>
-        <Show when={props.developerMode}>
+      <Show when={props.developerMode}>
+        <div class="space-y-1 mb-2">
           <button
             type="button"
             class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
@@ -3767,8 +3792,8 @@ export default function SessionView(props: SessionViewProps) {
             <SlidersHorizontal size={18} />
             Advanced
           </button>
-        </Show>
-      </div>
+        </div>
+      </Show>
 
       <ArtifactsPanel
         id="sidebar-artifacts"
@@ -3791,6 +3816,7 @@ export default function SessionView(props: SessionViewProps) {
       <TitlebarMenuToggles
         leftActive={leftSidebarToggleActive()}
         rightActive={rightSidebarToggleActive()}
+        centerContent={sessionTitlebarContext()}
         hideTitlebar={props.hideTitlebar}
         onToggleLeft={() => toggleSidebarMenu("left")}
         onToggleRight={() => toggleSidebarMenu("right")}
@@ -4149,37 +4175,46 @@ export default function SessionView(props: SessionViewProps) {
       <Show when={!showWorkspaceSetupEmptyState()}>
         <Show when={props.selectedSessionId ?? "__no-session"} keyed>
           {(_sessionKey) => (
-            <Composer
-              initialDraft={props.composerDraft}
-              prompt={props.composerDraft.text}
-              developerMode={props.developerMode}
-              busy={props.busy}
-              isStreaming={showRunIndicator()}
-              compactTopSpacing={todoCount() > 0}
-              compactWidth={useCompactCenterColumn()}
-              onSend={handleSendPrompt}
-              onStop={cancelRun}
-              onDraftChange={handleDraftChange}
-              selectedAgent={props.selectedSessionAgent}
-              onSelectAgent={(agent) => {
-                applySessionAgent(agent);
-              }}
-              showNotionBanner={props.showTryNotionPrompt}
-              onNotionBannerClick={props.onTryNotionPrompt}
-              toast={toastMessage()}
-              onToast={(message) => setToastMessage(message)}
-              listAgents={props.listAgents}
-              recentFiles={props.workingFiles}
-              searchFiles={props.searchFiles}
-              listCommands={props.listCommands}
-              isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
-              isSandboxWorkspace={isSandboxWorkspace()}
-              localWorkspacePath={props.activeWorkspaceRoot}
-              canChooseSessionFolder={props.canChooseSessionFolder}
-              onChooseSessionFolder={chooseFolderForSession}
-              attachmentsEnabled={attachmentsEnabled()}
-              attachmentsDisabledReason={attachmentsDisabledReason()}
-            />
+            <>
+              <Composer
+                initialDraft={props.composerDraft}
+                prompt={props.composerDraft.text}
+                developerMode={props.developerMode}
+                busy={props.busy}
+                isStreaming={showRunIndicator()}
+                compactTopSpacing={todoCount() > 0}
+                compactWidth={useCompactCenterColumn()}
+                onSend={handleSendPrompt}
+                onStop={cancelRun}
+                onDraftChange={handleDraftChange}
+                selectedAgent={props.selectedSessionAgent}
+                onSelectAgent={(agent) => {
+                  applySessionAgent(agent);
+                }}
+                showNotionBanner={props.showTryNotionPrompt}
+                onNotionBannerClick={props.onTryNotionPrompt}
+                toast={toastMessage()}
+                onToast={(message) => setToastMessage(message)}
+                listAgents={props.listAgents}
+                recentFiles={props.workingFiles}
+                searchFiles={props.searchFiles}
+                listCommands={props.listCommands}
+                isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
+                isSandboxWorkspace={isSandboxWorkspace()}
+                localWorkspacePath={props.activeWorkspaceRoot}
+                canChooseSessionFolder={props.canChooseSessionFolder}
+                onChooseSessionFolder={chooseFolderForSession}
+                attachmentsEnabled={attachmentsEnabled()}
+                attachmentsDisabledReason={attachmentsDisabledReason()}
+              />
+              <div class="sticky bottom-0 z-20 -mt-3 bg-gray-1 px-8 pb-3">
+                <div class={`mx-auto flex w-full ${chatBodyWidthClass()} justify-end`}>
+                  <span class="text-[11px] leading-4 text-gray-9 text-right">
+                    {tr("session.composer_disclaimer")}
+                  </span>
+                </div>
+              </div>
+            </>
           )}
         </Show>
       </Show>

@@ -32,6 +32,7 @@ import { unwrap } from "../lib/opencode";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { getTaskPartSubagentInfo, sessionLooksLikeInternalSubagent } from "../lib/internal-subagents";
 import { formatSessionError, truncateErrorField } from "../lib/session-error";
+import { detectChromeMcpCompletedError } from "../lib/chrome-mcp-error";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../types";
 import { createSelectSessionGuard } from "./select-session-guard";
 import {
@@ -214,6 +215,7 @@ export function createSessionStore(options: {
   const [messageLoadBusyBySession, setMessageLoadBusyBySession] = createSignal<Record<string, boolean>>({});
   const reloadDetectionSet = new Set<string>();
   const invalidToolDetectionSet = new Set<string>();
+  const chromeMcpFailureDetectionSet = new Set<string>();
   const syntheticContinueEventTimesBySession = new Map<string, number[]>();
   const syntheticContinueLoopLastWarnAtBySession = new Map<string, number>();
   const workspaceSessionIds = new Set<string>();
@@ -495,6 +497,26 @@ export function createSessionStore(options: {
     const tool = typeof record.tool === "string" && record.tool.trim() ? record.tool.trim() : "(unknown tool)";
     const hint = invalidToolNextStepHint(part);
     options.setError(`Invalid tool call: ${tool}.\n\n${hint}`);
+  };
+
+  const maybeHandleChromeMcpCompletedError = (part: Part) => {
+    if (!options.setError) return;
+    if (!part?.id || !part.messageID) return;
+
+    const key = `${part.messageID}:${part.id}`;
+    if (chromeMcpFailureDetectionSet.has(key)) return;
+
+    const detected = detectChromeMcpCompletedError(part);
+    if (!detected) return;
+
+    chromeMcpFailureDetectionSet.add(key);
+
+    // Keep run state consistent with a surfaced execution failure.
+    if (part.sessionID) {
+      setStore("sessionStatus", part.sessionID, "idle");
+      appendSessionErrorTurn(part.sessionID, addOpencodeCacheHint(detected));
+    }
+    options.setError(addOpencodeCacheHint(detected));
   };
 
   const isSyntheticContinueControlPart = (part: Part) => {
@@ -1371,6 +1393,7 @@ export function createSessionStore(options: {
           }
           maybeMarkReloadRequired(part);
           maybeHandleInvalidToolError(part);
+          maybeHandleChromeMcpCompletedError(resolvedPart);
         }
       }
     }
