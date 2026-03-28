@@ -563,8 +563,9 @@ export default function WorkspaceSessionList(props: Props) {
         <div class="space-y-1.5 mb-2">
           <Show when={hasVisibleRows()} fallback={emptyState}>
             <Show when={sidebarMode() === "by-project"} fallback={
-              <For each={recentRowsVisible()}>
-                {(row) => {
+              <>
+                <For each={recentRowsVisible()}>
+                  {(row) => {
                   const workspace = () => row.workspace;
                   const session = () => row.session;
                   const isSelected = () => props.selectedSessionId === session().id;
@@ -662,26 +663,27 @@ export default function WorkspaceSessionList(props: Props) {
                     )}
                     </div>
                   );
-                }}
-              </For>
-              <Show when={sidebarMode() === "recent"}>
-                <div ref={(el) => (recentSentinelRef = el)} class="h-0.5 w-full" />
-              </Show>
-              <Show when={sidebarMode() === "recent" && recentCanLoadMore()}>
-                <div class="pt-1">
-                  <button
-                    type="button"
-                    class="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-gray-6 bg-gray-1 px-2 py-1.5 text-xs text-gray-11 hover:bg-gray-2 disabled:opacity-60 disabled:cursor-not-allowed"
-                    disabled={recentLoadingMore()}
-                    onClick={() => {
-                      void loadMoreRecentRows();
-                    }}
-                  >
-                    <span aria-hidden>{tr("sidebar.more_ellipsis")}</span>
-                    <span>{recentLoadingMore() ? tr("sidebar.loading_more") : tr("sidebar.load_more")}</span>
-                  </button>
-                </div>
-              </Show>
+                  }}
+                </For>
+                <Show when={sidebarMode() === "recent"}>
+                  <div ref={(el) => (recentSentinelRef = el)} class="h-0.5 w-full" />
+                </Show>
+                <Show when={sidebarMode() === "recent" && recentCanLoadMore()}>
+                  <div class="pt-1">
+                    <button
+                      type="button"
+                      class="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-gray-6 bg-gray-1 px-2 py-1.5 text-xs text-gray-11 hover:bg-gray-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                      disabled={recentLoadingMore()}
+                      onClick={() => {
+                        void loadMoreRecentRows();
+                      }}
+                    >
+                      <span aria-hidden>{tr("sidebar.more_ellipsis")}</span>
+                      <span>{recentLoadingMore() ? tr("sidebar.loading_more") : tr("sidebar.load_more")}</span>
+                    </button>
+                  </div>
+                </Show>
+              </>
             }>
               <For each={projectGroups()}>
                 {(project) => {
