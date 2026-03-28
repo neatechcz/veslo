@@ -7,14 +7,14 @@ const composerSource = readFileSync(new URL("./composer.tsx", import.meta.url), 
 test("composer uses a compact control rail below the editor", () => {
   assert.match(
     composerSource,
-    /class="mt-3 flex flex-wrap items-center gap-2 pt-2"/,
-    "composer should group post-editor controls into one compact rail without an extra divider line",
+    /class="mt-3 flex items-center justify-between gap-3 pt-2"/,
+    "composer should split post-editor controls into left and right action groups",
   );
 
   assert.doesNotMatch(
     composerSource,
-    /class="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-6\/70 pt-2"/,
-    "composer should not render a separator line between editor and controls",
+    /class="mt-3 flex flex-wrap items-center gap-2 pt-2"/,
+    "composer should no longer use the old compact single-rail layout",
   );
 
   assert.match(
@@ -25,19 +25,25 @@ test("composer uses a compact control rail below the editor", () => {
 
   assert.match(
     composerSource,
-    /class="block text-\[11px\] leading-4 text-gray-9 truncate whitespace-nowrap"/,
-    "composer disclaimer should render as a single-line block and use adaptive copy to avoid clipping",
-  );
-
-  assert.match(
-    composerSource,
-    /class="inline-flex items-center rounded-lg border border-gray-6\/80 bg-gray-2 p-0\.5"[\s\S]*translate\("session\.choose_folder"\)[\s\S]*disclaimerText\(\)/,
-    "folder controls should sit between mode selection and disclaimer in the compact rail",
+    /class="flex shrink-0 items-center gap-2"/,
+    "composer should keep send/stop aligned to the right edge of the control row",
   );
 
   assert.doesNotMatch(
     composerSource,
-    /class="relative min-h-\[120px\]"/,
-    "composer should not force a tall min-height block that creates an empty row below controls",
+    /disclaimerText\(\)/,
+    "composer should no longer own the disclaimer text",
+  );
+
+  assert.doesNotMatch(
+    composerSource,
+    /workspaceLabel\(\)\.label/,
+    "composer should no longer own the current workspace label",
+  );
+
+  assert.doesNotMatch(
+    composerSource,
+    /class="block text-\[11px\] leading-4 text-gray-9 truncate whitespace-nowrap"/,
+    "composer disclaimer should no longer render inside the input rail",
   );
 });

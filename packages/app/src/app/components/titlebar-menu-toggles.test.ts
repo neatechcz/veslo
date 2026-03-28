@@ -29,3 +29,28 @@ test("titlebar menu toggles keep macOS-sized icon controls", () => {
     "titlebar toggles should not regress to undersized icon metrics",
   );
 });
+
+test("titlebar menu toggles expose brand and session context slots", () => {
+  assert.match(
+    source,
+    /Veslo by Neatech/,
+    "titlebar should render the Veslo brand next to the left toggle",
+  );
+
+  assert.match(
+    source,
+    /<div class=\{layout\.leftOffsetClass\}>[\s\S]*<LeftSidebarToggleIcon size=\{18\} \/>[\s\S]*Veslo by Neatech/,"titlebar should keep the brand in the left cluster beside the left toggle",
+  );
+
+  assert.match(
+    source,
+    /centerContent\??:/,
+    "titlebar should accept an optional center-content prop for session context",
+  );
+
+  assert.match(
+    source,
+    /props\.centerContent/,
+    "titlebar should render optional center content when provided by the page",
+  );
+});
