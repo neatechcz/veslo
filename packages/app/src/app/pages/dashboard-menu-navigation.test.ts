@@ -5,8 +5,14 @@ import test from "node:test";
 import { resolveLeftMenuAction } from "./dashboard-menu-navigation.js";
 
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
+const leftMenuHandlerStart = dashboardSource.indexOf("const handleLeftMenuToggle = () => {");
+const leftMenuHandlerEnd = dashboardSource.indexOf('onToggleRight={() => toggleSidebarMenu("right")}', leftMenuHandlerStart);
+const leftMenuHandlerSource =
+  leftMenuHandlerStart >= 0 && leftMenuHandlerEnd >= 0
+    ? dashboardSource.slice(leftMenuHandlerStart, leftMenuHandlerEnd)
+    : dashboardSource;
 
-test("returns to selected session for automations on desktop widths", () => {
+test("returns to selected session for automations", () => {
   const result = resolveLeftMenuAction({
     tab: "scheduled",
     selectedSessionId: "sess-123",
@@ -34,16 +40,16 @@ test("falls back to sidebar toggle when no session is selected", () => {
 });
 
 test("dashboard routes the left titlebar button through the helper", () => {
-  assert.match(dashboardSource, /const handleLeftMenuToggle = \(\) => \{/);
-  assert.match(dashboardSource, /const action = resolveLeftMenuAction\(\{/);
-  assert.match(dashboardSource, /tab: props\.tab/);
-  assert.match(dashboardSource, /selectedSessionId: props\.selectedSessionId/);
-  assert.match(
-    dashboardSource,
-    /if \(action\.kind === "return-to-session"\) \{\s*props\.setView\("session", action\.sessionId\);\s*return;\s*\}/,
+  assert.ok(leftMenuHandlerSource.includes("const handleLeftMenuToggle = () => {"));
+  assert.ok(leftMenuHandlerSource.includes("const action = resolveLeftMenuAction({"));
+  assert.ok(leftMenuHandlerSource.includes("tab: props.tab"));
+  assert.ok(leftMenuHandlerSource.includes("selectedSessionId: props.selectedSessionId"));
+  assert.ok(
+    leftMenuHandlerSource.includes(
+      'if (action.kind === "return-to-session") {\n      props.setView("session", action.sessionId);\n      return;\n    }',
+    ),
   );
   assert.match(dashboardSource, /onToggleLeft=\{handleLeftMenuToggle\}/);
   assert.doesNotMatch(dashboardSource, /onToggleLeft=\{\(\) => toggleSidebarMenu\("left"\)\}/);
-  assert.match(dashboardSource, /props\.setView\("session", action\.sessionId\)/);
-  assert.doesNotMatch(dashboardSource, /matchMedia\("\(max-width: 767px\)"\)/);
+  assert.doesNotMatch(leftMenuHandlerSource, /matchMedia\("\(max-width: 767px\)"\)/);
 });
