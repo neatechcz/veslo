@@ -1,3 +1,4 @@
+import { Show, type JSX } from "solid-js";
 import { startWindowDragging } from "../lib/tauri";
 import { isMacPlatform, isTauriRuntime, isWindowsPlatform } from "../utils";
 import { LeftSidebarToggleIcon, RightSidebarToggleIcon } from "./session/sidebar-toggle-icons";
@@ -7,6 +8,7 @@ type TitlebarMenuTogglesProps = {
   leftActive: boolean;
   rightActive: boolean;
   hideTitlebar: boolean;
+  centerContent?: JSX.Element;
   onToggleLeft: () => void;
   onToggleRight: () => void;
 };
@@ -46,29 +48,42 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
         />
       ) : null}
       <div class={layout.rootClass}>
-      <div class={layout.leftOffsetClass}>
-        <button
-          type="button"
-          class={buttonClass(props.leftActive)}
-          onClick={() => props.onToggleLeft()}
-          aria-label="Toggle left menu"
-          title="Toggle left menu"
-        >
-          <LeftSidebarToggleIcon size={18} />
-        </button>
-      </div>
+        <div class={layout.leftOffsetClass}>
+          <div class="flex items-center gap-2.5">
+            <button
+              type="button"
+              class={buttonClass(props.leftActive)}
+              onClick={() => props.onToggleLeft()}
+              aria-label="Toggle left menu"
+              title="Toggle left menu"
+            >
+              <LeftSidebarToggleIcon size={18} />
+            </button>
+            <span class="truncate text-[13px] font-medium leading-6 text-gray-12">
+              Veslo by Neatech
+            </span>
+          </div>
+        </div>
 
-      <div class={layout.rightOffsetClass}>
-        <button
-          type="button"
-          class={buttonClass(props.rightActive)}
-          onClick={() => props.onToggleRight()}
-          aria-label="Toggle right menu"
-          title="Toggle right menu"
-        >
-          <RightSidebarToggleIcon size={18} />
-        </button>
-      </div>
+        <Show when={props.centerContent}>
+          <div class={layout.centerContentClass}>
+            <div class="pointer-events-auto min-w-0 max-w-full truncate text-[12px] leading-6 text-gray-10">
+              {props.centerContent}
+            </div>
+          </div>
+        </Show>
+
+        <div class={layout.rightOffsetClass}>
+          <button
+            type="button"
+            class={buttonClass(props.rightActive)}
+            onClick={() => props.onToggleRight()}
+            aria-label="Toggle right menu"
+            title="Toggle right menu"
+          >
+            <RightSidebarToggleIcon size={18} />
+          </button>
+        </div>
       </div>
     </>
   );
