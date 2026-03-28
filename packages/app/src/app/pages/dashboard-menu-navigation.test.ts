@@ -60,16 +60,17 @@ test("falls back to sidebar toggle when no session is selected", () => {
 });
 
 test("dashboard routes the left titlebar button through the helper", () => {
-  assert.match(leftMenuHandlerSource, /const\s+leftMenuAction\s*=\s*resolveLeftMenuAction\s*\(\s*\{/s);
+  assert.match(leftMenuHandlerSource, /const\s+leftMenuAction\s*=\s*createMemo\s*\(\s*\(\)\s*=>\s*resolveLeftMenuAction\s*\(\s*\{/s);
+  assert.match(leftMenuHandlerSource, /const\s+leftMenuLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>\s*leftMenuAction\(\)\.kind\s*===\s*["']return-to-session["']/s);
+  assert.match(leftMenuHandlerSource, /const\s+leftMenuActive\s*=\s*createMemo\s*\(\s*\(\)\s*=>\s*leftMenuAction\(\)\.kind\s*===\s*["']return-to-session["']/s);
   assert.match(leftMenuHandlerSource, /handleLeftMenuToggle/);
   assert.match(leftMenuHandlerSource, /resolveLeftMenuAction\s*\(\s*\{/s);
   assert.match(leftMenuHandlerSource, /tab\s*:\s*props\.tab/);
   assert.match(leftMenuHandlerSource, /selectedSessionId\s*:\s*props\.selectedSessionId/);
-  assert.match(leftMenuHandlerSource, /props\.setView\s*\(\s*["']session["']\s*,\s*leftMenuAction\.sessionId\s*\)/);
-  assert.match(leftMenuHandlerSource, /const\s+leftMenuLabel\s*=\s*/);
-  assert.match(leftMenuHandlerSource, /const\s+leftMenuActive\s*=\s*/);
+  assert.match(leftMenuHandlerSource, /const\s+action\s*=\s*leftMenuAction\(\)\s*;/);
+  assert.match(leftMenuHandlerSource, /props\.setView\s*\(\s*["']session["']\s*,\s*action\.sessionId\s*\)/);
   const returnBranchMatch = leftMenuHandlerSource.match(
-    /if\s*\(\s*leftMenuAction\.kind\s*===\s*["']return-to-session["']\s*\)\s*\{[\s\S]*?return\s*;[\s\S]*?\}/s,
+    /if\s*\(\s*action\.kind\s*===\s*["']return-to-session["']\s*\)\s*\{[\s\S]*?return\s*;[\s\S]*?\}/s,
   );
 
   assert.ok(returnBranchMatch);
@@ -78,8 +79,8 @@ test("dashboard routes the left titlebar button through the helper", () => {
     /toggleSidebarMenu\s*\(\s*["']left["']\s*\)/,
   );
   assert.match(dashboardSource, /onToggleLeft\s*=\s*\{\s*handleLeftMenuToggle\s*\}/);
-  assert.match(dashboardSource, /leftActive=\{leftMenuActive\}/);
-  assert.match(dashboardSource, /leftLabel=\{leftMenuLabel\}/);
+  assert.match(dashboardSource, /leftActive=\{leftMenuActive\(\)\}/);
+  assert.match(dashboardSource, /leftLabel=\{leftMenuLabel\(\)\}/);
   assert.doesNotMatch(dashboardSource, /onToggleLeft\s*=\s*\{\s*\(\)\s*=>\s*toggleSidebarMenu\s*\(\s*["']left["']\s*\)\s*\}/);
   assert.doesNotMatch(leftMenuHandlerSource, /matchMedia\s*\(\s*["']\(max-width:\s*767px\)["']\s*\)/);
 });

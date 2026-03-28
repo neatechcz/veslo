@@ -1194,17 +1194,23 @@ export default function DashboardView(props: DashboardViewProps) {
     }),
   );
 
-  const leftMenuAction = resolveLeftMenuAction({
-    tab: props.tab,
-    selectedSessionId: props.selectedSessionId,
-  });
-  const leftMenuLabel =
-    leftMenuAction.kind === "return-to-session" ? "Return to session" : "Toggle left menu";
-  const leftMenuActive = leftMenuAction.kind === "return-to-session" ? false : leftSidebarVisible();
+  const leftMenuAction = createMemo(() =>
+    resolveLeftMenuAction({
+      tab: props.tab,
+      selectedSessionId: props.selectedSessionId,
+    }),
+  );
+  const leftMenuLabel = createMemo(() =>
+    leftMenuAction().kind === "return-to-session" ? "Return to session" : "Toggle left menu",
+  );
+  const leftMenuActive = createMemo(() =>
+    leftMenuAction().kind === "return-to-session" ? false : leftSidebarVisible(),
+  );
 
   const handleLeftMenuToggle = () => {
-    if (leftMenuAction.kind === "return-to-session") {
-      props.setView("session", leftMenuAction.sessionId);
+    const action = leftMenuAction();
+    if (action.kind === "return-to-session") {
+      props.setView("session", action.sessionId);
       return;
     }
 
@@ -1214,10 +1220,10 @@ export default function DashboardView(props: DashboardViewProps) {
   return (
     <div class={`flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden ${titlebarContentInsetClass()}`}>
       <TitlebarMenuToggles
-        leftActive={leftMenuActive}
+        leftActive={leftMenuActive()}
         rightActive={rightSidebarVisible()}
         hideTitlebar={props.hideTitlebar}
-        leftLabel={leftMenuLabel}
+        leftLabel={leftMenuLabel()}
         onToggleLeft={handleLeftMenuToggle}
         onToggleRight={() => toggleSidebarMenu("right")}
       />
