@@ -5,6 +5,7 @@ import path from "node:path";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 
 import { findFreePort, makeClient, parseArgs, spawnOpencodeServe, waitForHealthy } from "./_util.mjs";
+import { findUnexpectedToolFailure } from "./_tool-failures.mjs";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -249,13 +250,9 @@ try {
     while (Date.now() - start < 12_000) {
       const msgs = await client.session.messages({ sessionID: sessionId, limit: 50 });
       const parts = msgs.flatMap((m) => m.parts ?? []);
-      const toolErrors = parts.filter((p) => p?.type === "tool" && String(p?.state?.status ?? "").toLowerCase() === "error");
-      if (toolErrors.length > 0) {
-        const first = toolErrors[0];
-        const tool = typeof first.tool === "string" ? first.tool : "tool";
-        const title = typeof first.state?.title === "string" ? first.state.title : "";
-        const err = typeof first.state?.error === "string" ? first.state.error : "";
-        throw new Error(`Unexpected tool error (${tool}): ${title} ${err}`.trim());
+      const failure = findUnexpectedToolFailure(parts);
+      if (failure) {
+        throw new Error(failure);
       }
 
       const hasAssistantText = msgs.some(

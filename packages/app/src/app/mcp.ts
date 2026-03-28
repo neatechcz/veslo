@@ -1,8 +1,76 @@
 import { parse } from "jsonc-parser";
 import type { McpServerConfig, McpServerEntry } from "./types";
 import { readOpencodeConfig, writeOpencodeConfig } from "./lib/tauri";
+import type { McpDirectoryInfo } from "./constants";
 
 type McpConfigValue = Record<string, unknown> | null | undefined;
+
+const toSlug = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+export function quickConnectEntryKey(entry: Pick<McpDirectoryInfo, "id" | "name">): string {
+  const preferred = entry.id?.trim();
+  if (preferred) return preferred;
+  return toSlug(entry.name);
+}
+
+export function parseLocalCommandInput(input: string): string[] {
+  const text = input.trim();
+  if (!text) return [];
+
+  const tokens: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (quote) {
+      if (char === "\\") {
+        const next = text[index + 1];
+        if (next === quote || next === "\\") {
+          current += next;
+          index += 1;
+          continue;
+        }
+      }
+      if (char === quote) {
+        quote = null;
+        continue;
+      }
+      current += char;
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+
+    if (/\s/.test(char)) {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += char;
+  }
+
+  // Keep a conservative fallback when the user enters an unmatched quote.
+  if (quote) {
+    return text.split(/\s+/).filter(Boolean);
+  }
+
+  if (current) {
+    tokens.push(current);
+  }
+  return tokens;
+}
 
 export function validateMcpServerName(name: string): string {
   const trimmed = name.trim();

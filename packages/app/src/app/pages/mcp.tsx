@@ -4,6 +4,7 @@ import type { McpServerEntry, McpStatusMap } from "../types";
 import type { McpDirectoryInfo } from "../constants";
 import { formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
 import { readOpencodeConfig, type OpencodeConfigFile } from "../lib/tauri";
+import { quickConnectEntryKey } from "../mcp";
 
 import Button from "../components/button";
 import AddMcpModal from "../components/add-mcp-modal";
@@ -221,15 +222,13 @@ export default function McpView(props: McpViewProps) {
     }
   };
 
-  const toSlug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-
-  const quickConnectStatus = (name: string) => {
-    const slug = toSlug(name);
-    return props.mcpStatuses[slug];
+  const quickConnectStatus = (entry: McpDirectoryInfo) => {
+    const key = quickConnectEntryKey(entry);
+    return props.mcpStatuses[key];
   };
 
-  const isQuickConnectConnected = (name: string) => {
-    const status = quickConnectStatus(name);
+  const isQuickConnectConnected = (entry: McpDirectoryInfo) => {
+    const status = quickConnectStatus(entry);
     return status?.status === "connected";
   };
 
@@ -329,7 +328,7 @@ export default function McpView(props: McpViewProps) {
         <div class="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
           <For each={quickConnectList()}>
             {(entry) => {
-              const connected = () => isQuickConnectConnected(entry.name);
+              const connected = () => isQuickConnectConnected(entry);
               const connecting = () => props.mcpConnectingName === entry.name;
               const Icon = serviceIcon(entry.name);
 
@@ -371,7 +370,7 @@ export default function McpView(props: McpViewProps) {
                             {tr("mcp.connected_badge")}
                           </span>
                         </Show>
-                        <Show when={!connected() && quickConnectStatus(entry.name)}>
+                        <Show when={!connected() && quickConnectStatus(entry)}>
                           {(status) => (
                             <span class={`text-[10px] font-medium px-1.5 py-0.5 rounded-md ${statusBadgeStyle(status().status)}`}>
                               {friendlyStatus(status().status, locale())}

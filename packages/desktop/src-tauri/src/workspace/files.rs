@@ -19,6 +19,11 @@ pub fn merge_plugins(existing: Vec<String>, required: &[&str]) -> Vec<String> {
     }
     out
 }
+
+fn has_chrome_mcp_alias(mcp_obj: &serde_json::Map<String, serde_json::Value>) -> bool {
+    mcp_obj.contains_key("chrome-devtools") || mcp_obj.contains_key("control-chrome")
+}
+
 fn seed_veslo_agent(agent_root: &PathBuf) -> Result<(), String> {
     let agent_path = agent_root.join("veslo.md");
     if agent_path.exists() {
@@ -487,7 +492,7 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
                 _ => serde_json::Map::new(),
             };
 
-            if !mcp_obj.contains_key("chrome-devtools") {
+            if !has_chrome_mcp_alias(&mcp_obj) {
                 mcp_obj.insert(
                     "chrome-devtools".to_string(),
                     serde_json::json!({
@@ -525,4 +530,33 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn has_chrome_mcp_alias_matches_chrome_devtools_key() {
+        let mut mcp = serde_json::Map::new();
+        mcp.insert("chrome-devtools".to_string(), serde_json::json!({ "type": "local" }));
+
+        assert!(has_chrome_mcp_alias(&mcp));
+    }
+
+    #[test]
+    fn has_chrome_mcp_alias_matches_control_chrome_key() {
+        let mut mcp = serde_json::Map::new();
+        mcp.insert("control-chrome".to_string(), serde_json::json!({ "type": "local" }));
+
+        assert!(has_chrome_mcp_alias(&mcp));
+    }
+
+    #[test]
+    fn has_chrome_mcp_alias_is_false_without_known_aliases() {
+        let mut mcp = serde_json::Map::new();
+        mcp.insert("context7".to_string(), serde_json::json!({ "type": "remote" }));
+
+        assert!(!has_chrome_mcp_alias(&mcp));
+    }
 }
