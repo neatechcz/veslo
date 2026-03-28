@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createSessionFromDirectorySelection,
   createSessionWithWorkspaceActivation,
   openSessionWithWorkspaceActivation,
 } from "./session-navigation.js";
@@ -161,6 +162,111 @@ test("creates session after successful cross-workspace activation", async () => 
   assert.equal(result, true);
   assert.deepEqual(activated, ["ws-other"]);
   assert.deepEqual(created, ["created"]);
+});
+
+test("picker-driven directory session flow cancels cleanly when no folder is selected", async () => {
+  const ensured: string[] = [];
+  const activated: string[] = [];
+  const created: string[] = [];
+
+  const result = await createSessionFromDirectorySelection({
+    activeWorkspaceId: "ws-active",
+    pickDirectory: async () => null,
+    ensureWorkspaceForFolder: async (folder) => {
+      ensured.push(folder);
+      return { id: "ws-folder" };
+    },
+    activateWorkspace: async (id) => {
+      activated.push(id);
+      return true;
+    },
+    createSession: async () => {
+      created.push("created");
+      return "sess-created";
+    },
+  });
+
+  assert.equal(result, "cancelled");
+  assert.deepEqual(ensured, []);
+  assert.deepEqual(activated, []);
+  assert.deepEqual(created, []);
+});
+
+test("picker-driven directory session flow reuses the ensured workspace and creates a session", async () => {
+  const ensured: string[] = [];
+  const activated: string[] = [];
+  const created: string[] = [];
+  let currentActive = "ws-active";
+
+  const result = await createSessionFromDirectorySelection({
+    activeWorkspaceId: currentActive,
+    getActiveWorkspaceId: () => currentActive,
+    pickDirectory: async () => "/tmp/project-a",
+    ensureWorkspaceForFolder: async (folder) => {
+      ensured.push(folder);
+      return { id: "ws-project", path: folder };
+    },
+    activateWorkspace: async (id) => {
+      activated.push(id);
+      currentActive = id;
+      return true;
+    },
+    createSession: async () => {
+      created.push("created");
+      return "sess-new";
+    },
+  });
+
+  assert.equal(result, "created");
+  assert.deepEqual(ensured, ["/tmp/project-a"]);
+  assert.deepEqual(activated, ["ws-project"]);
+  assert.deepEqual(created, ["created"]);
+});
+
+test("picker-driven directory session flow stops when ensured workspace cannot activate", async () => {
+  const ensured: string[] = [];
+  const activated: string[] = [];
+  const created: string[] = [];
+
+  const result = await createSessionFromDirectorySelection({
+    activeWorkspaceId: "ws-active",
+    pickDirectory: async () => "/tmp/project-b",
+    ensureWorkspaceForFolder: async (folder) => {
+      ensured.push(folder);
+      return { id: "ws-project-b", path: folder };
+    },
+    activateWorkspace: async (id) => {
+      activated.push(id);
+      return false;
+    },
+    createSession: async () => {
+      created.push("created");
+      return "sess-should-not-exist";
+    },
+  });
+
+  assert.equal(result, "blocked");
+  assert.deepEqual(ensured, ["/tmp/project-b"]);
+  assert.deepEqual(activated, ["ws-project-b"]);
+  assert.deepEqual(created, []);
+});
+
+test("picker-driven directory session flow forwards the selected path unchanged to workspace resolution", async () => {
+  const ensured: string[] = [];
+
+  const result = await createSessionFromDirectorySelection({
+    activeWorkspaceId: "ws-active",
+    pickDirectory: async () => "  /tmp/project with spaces  ",
+    ensureWorkspaceForFolder: async (folder) => {
+      ensured.push(folder);
+      return null;
+    },
+    activateWorkspace: async () => true,
+    createSession: async () => "sess-should-not-exist",
+  });
+
+  assert.equal(result, "blocked");
+  assert.deepEqual(ensured, ["  /tmp/project with spaces  "]);
 });
 
 // ---------------------------------------------------------------------------

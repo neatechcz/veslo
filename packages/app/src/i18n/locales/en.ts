@@ -1038,6 +1038,7 @@ export default {
   "session.workspace_path_unavailable": "Worker path is unavailable.",
 
   // ==================== Sidebar ====================
+  "sidebar.add_directory_session": "Add directory and open session",
   "sidebar.by_project": "By project",
   "sidebar.connect_remote": "Connect remote",
   "sidebar.create_session_in_project": "Create session in this project",

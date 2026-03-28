@@ -53,6 +53,7 @@ import {
   fetchSharedBundle,
   buildImportPayloadFromBundle,
 } from "./lib/shared-bundles";
+import { createSessionFromDirectorySelection } from "./pages/session-navigation";
 import ModelPickerModal from "./components/model-picker-modal";
 import ResetModal from "./components/reset-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
@@ -5013,6 +5014,17 @@ export default function App() {
     await createSessionAndOpen();
   };
 
+  const openDirectorySessionFromPicker = async () => {
+    return await createSessionFromDirectorySelection({
+      activeWorkspaceId: workspaceStore.activeWorkspaceId(),
+      getActiveWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+      pickDirectory: () => workspaceStore.pickWorkspaceFolder(),
+      ensureWorkspaceForFolder: workspaceStore.ensureWorkspaceForFolder,
+      activateWorkspace: workspaceStore.activateWorkspace,
+      createSession: () => createSessionAndOpen(),
+    });
+  };
+
   const chooseFolderForCurrentSession = async () => {
     if (!isTauriRuntime()) return false;
 
@@ -6301,6 +6313,9 @@ export default function App() {
       },
       openCreateRemoteWorkspace,
       openNewSessionWithDirectory,
+      openDirectorySessionFromPicker: () => {
+        void openDirectorySessionFromPicker();
+      },
       importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
       importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
       exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
@@ -6519,6 +6534,9 @@ export default function App() {
     },
     openCreateRemoteWorkspace,
     openNewSessionWithDirectory,
+    openDirectorySessionFromPicker: () => {
+      void openDirectorySessionFromPicker();
+    },
     canChooseSessionFolder:
       (() => {
         if (!isTauriRuntime()) return false;

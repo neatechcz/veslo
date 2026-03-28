@@ -23,3 +23,23 @@ test("workspace session sidebar keeps controls pinned while only session rows sc
     "session rows should not wrap the scroll container that contains them",
   );
 });
+
+test("workspace session sidebar keeps the action icons in a right-aligned cluster", () => {
+  assert.match(
+    source,
+    /<div class="mb-3 flex items-center gap-2">[\s\S]*<div class="ml-auto flex items-center gap-2">/,
+    "view toggle row should reserve a right-aligned action cluster for search and add-directory actions",
+  );
+
+  assert.match(
+    source,
+    /FolderPlus/,
+    "workspace session list should import and render the add-directory icon",
+  );
+
+  assert.match(
+    source,
+    /onAddDirectorySession/,
+    "workspace session list should expose a dedicated callback for picker-driven directory sessions",
+  );
+});

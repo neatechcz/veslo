@@ -17,6 +17,19 @@ export type CreateSessionWithWorkspaceActivationInput = {
   createSession: () => Promise<string | undefined> | string | undefined | void;
 };
 
+export type CreateSessionFromDirectorySelectionInput = {
+  activeWorkspaceId: string;
+  getActiveWorkspaceId?: () => string;
+  pickDirectory: () => Promise<string | null> | string | null;
+  ensureWorkspaceForFolder: (
+    folder: string,
+  ) => Promise<{ id: string } | null> | { id: string } | null;
+  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  createSession: () => Promise<string | undefined> | string | undefined | void;
+};
+
+export type CreateSessionFromDirectorySelectionResult = "cancelled" | "blocked" | "created";
+
 // Keep cross-worker session navigation single-flight to avoid overlapping
 // activateWorkspace calls when users click between workers rapidly.
 let openSessionNavigationQueue: Promise<void> = Promise.resolve();
@@ -86,4 +99,25 @@ export async function createSessionWithWorkspaceActivation(
     () => undefined,
   );
   return await task;
+}
+
+export async function createSessionFromDirectorySelection(
+  input: CreateSessionFromDirectorySelectionInput,
+): Promise<CreateSessionFromDirectorySelectionResult> {
+  const selectedDirectory = await Promise.resolve(input.pickDirectory());
+  if (selectedDirectory == null || selectedDirectory.trim() === "") return "cancelled";
+
+  const workspace = await Promise.resolve(input.ensureWorkspaceForFolder(selectedDirectory));
+  const workspaceId = workspace?.id?.trim() ?? "";
+  if (!workspaceId) return "blocked";
+
+  const created = await createSessionWithWorkspaceActivation({
+    activeWorkspaceId: input.activeWorkspaceId,
+    getActiveWorkspaceId: input.getActiveWorkspaceId,
+    workspaceId,
+    activateWorkspace: input.activateWorkspace,
+    createSession: input.createSession,
+  });
+
+  return created ? "created" : "blocked";
 }

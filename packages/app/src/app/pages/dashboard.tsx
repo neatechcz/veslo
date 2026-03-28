@@ -154,6 +154,7 @@ export type DashboardViewProps = {
   openCreateWorkspace: () => void;
   openCreateRemoteWorkspace: () => void;
   openNewSessionWithDirectory: () => void;
+  openDirectorySessionFromPicker: () => void;
   importWorkspaceConfig: () => void;
   importingWorkspaceConfig: boolean;
   exportWorkspaceConfig: (workspaceId?: string) => void;
@@ -1262,6 +1263,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
               onImportWorkspaceConfig={props.importWorkspaceConfig}
               onQuickNewSession={props.openNewSessionWithDirectory}
+              onAddDirectorySession={props.openDirectorySessionFromPicker}
             />
           </div>
         </div>

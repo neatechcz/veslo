@@ -728,6 +728,9 @@ export default {
   "onboarding.authorize_folder": "授权文件夹",
   "onboarding.choose_workspace_folder": "选择工作区文件夹",
 
+  // ==================== Sidebar ====================
+  "sidebar.add_directory_session": "添加目录并打开会话",
+
   // ==================== Common ====================
   "common.alpha": "测试版",
   "common.change": "更改",

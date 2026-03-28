@@ -1034,6 +1034,7 @@ export default {
   "session.workspace_path_unavailable": "Cesta k workeru není k dispozici.",
 
   // ==================== Sidebar ====================
+  "sidebar.add_directory_session": "Přidat adresář a otevřít relaci",
   "sidebar.by_project": "Podle projektu",
   "sidebar.connect_remote": "Připojit vzdáleně",
   "sidebar.create_session_in_project": "Vytvořit relaci v tomto projektu",

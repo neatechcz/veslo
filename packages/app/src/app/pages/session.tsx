@@ -142,6 +142,7 @@ export type SessionViewProps = {
   openCreateWorkspace: () => void;
   openCreateRemoteWorkspace: () => void;
   openNewSessionWithDirectory: () => void;
+  openDirectorySessionFromPicker: () => void;
   canChooseSessionFolder: boolean;
   chooseFolderForCurrentSession: () => Promise<boolean>;
   showRemoteActions?: boolean;
@@ -3707,6 +3708,7 @@ export default function SessionView(props: SessionViewProps) {
             onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
             onImportWorkspaceConfig={props.importWorkspaceConfig}
             onQuickNewSession={props.openNewSessionWithDirectory}
+            onAddDirectorySession={props.openDirectorySessionFromPicker}
             onOpenSessionSearch={() => openCommandPalette("sessions")}
           />
         </div>

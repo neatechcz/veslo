@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { Folder, HeartPulse, List, Loader2, MoreHorizontal, Plus, Search } from "lucide-solid";
+import { Folder, FolderPlus, HeartPulse, List, Loader2, MoreHorizontal, Plus, Search } from "lucide-solid";
 
 import type { VesloSoulStatus } from "../../lib/veslo-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
@@ -57,6 +57,7 @@ type Props = {
   onImportWorkspaceConfig: () => void;
   onQuickNewSession?: () => void;
   onOpenSessionSearch?: () => void;
+  onAddDirectorySession?: () => void;
 };
 
 type WorkspaceMenuTarget = {
@@ -413,17 +414,31 @@ export default function WorkspaceSessionList(props: Props) {
             <List size={14} />
           </button>
         </div>
-        <Show when={props.onOpenSessionSearch}>
-          <button
-            type="button"
-            class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-9 shadow-sm transition-colors hover:bg-gray-3 hover:text-gray-11"
-            aria-label={tr("session.command_palette_search_sessions")}
-            title={tr("session.command_palette_search_sessions")}
-            onClick={() => props.onOpenSessionSearch?.()}
-          >
-            <Search size={14} />
-          </button>
-        </Show>
+        <div class="ml-auto flex items-center gap-2">
+          <Show when={props.onOpenSessionSearch}>
+            <button
+              type="button"
+              class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-9 shadow-sm transition-colors hover:bg-gray-3 hover:text-gray-11"
+              aria-label={tr("session.command_palette_search_sessions")}
+              title={tr("session.command_palette_search_sessions")}
+              onClick={() => props.onOpenSessionSearch?.()}
+            >
+              <Search size={14} />
+            </button>
+          </Show>
+          <Show when={props.onAddDirectorySession}>
+            <button
+              type="button"
+              class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-9 shadow-sm transition-colors hover:bg-gray-3 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
+              aria-label={tr("sidebar.add_directory_session")}
+              title={tr("sidebar.add_directory_session")}
+              disabled={props.newTaskDisabled}
+              onClick={() => props.onAddDirectorySession?.()}
+            >
+              <FolderPlus size={14} />
+            </button>
+          </Show>
+        </div>
       </div>
 
       <div class="min-h-0 flex-1 overflow-y-auto -mr-3 pr-3">
