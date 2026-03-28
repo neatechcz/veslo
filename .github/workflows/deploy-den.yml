@@ -32,6 +32,9 @@ jobs:
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
+          DEN_RESEND_API_KEY: ${{ secrets.DEN_RESEND_API_KEY }}
+          DEN_AUTH_EMAIL_FROM: ${{ vars.DEN_AUTH_EMAIL_FROM }}
+          DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: ${{ vars.DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED }}
           POLAR_ACCESS_TOKEN: ${{ secrets.POLAR_ACCESS_TOKEN }}
           POLAR_PRODUCT_ID: ${{ secrets.POLAR_PRODUCT_ID }}
           POLAR_BENEFIT_ID: ${{ secrets.POLAR_BENEFIT_ID }}
@@ -74,6 +77,25 @@ jobs:
             missing=1
           fi
 
+          if [ -n "$DEN_RESEND_API_KEY" ] && [ -z "$DEN_AUTH_EMAIL_FROM" ]; then
+            echo "::error::Missing required variable: DEN_AUTH_EMAIL_FROM (required when DEN_RESEND_API_KEY is set)"
+            missing=1
+          fi
+
+          if [ -n "$DEN_AUTH_EMAIL_FROM" ] && [ -z "$DEN_RESEND_API_KEY" ]; then
+            echo "::error::Missing required secret: DEN_RESEND_API_KEY (required when DEN_AUTH_EMAIL_FROM is set)"
+            missing=1
+          fi
+
+          desktop_auth_require_verified="${DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED:-false}"
+          desktop_auth_require_verified="$(echo "$desktop_auth_require_verified" | tr '[:upper:]' '[:lower:]')"
+          if [ "$desktop_auth_require_verified" = "true" ]; then
+            if [ -z "$DEN_RESEND_API_KEY" ] || [ -z "$DEN_AUTH_EMAIL_FROM" ]; then
+              echo "::error::DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true requires DEN_RESEND_API_KEY and DEN_AUTH_EMAIL_FROM"
+              missing=1
+            fi
+          fi
+
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
@@ -87,6 +109,9 @@ jobs:
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
+          DEN_RESEND_API_KEY: ${{ secrets.DEN_RESEND_API_KEY }}
+          DEN_AUTH_EMAIL_FROM: ${{ vars.DEN_AUTH_EMAIL_FROM }}
+          DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: ${{ vars.DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED }}
           DEN_RENDER_CONTROL_PLANE_REPO: ${{ vars.DEN_RENDER_CONTROL_PLANE_REPO }}
           DEN_RENDER_CONTROL_PLANE_BRANCH: ${{ vars.DEN_RENDER_CONTROL_PLANE_BRANCH }}
           DEN_RENDER_CONTROL_PLANE_ROOT_DIR: ${{ vars.DEN_RENDER_CONTROL_PLANE_ROOT_DIR }}
@@ -124,9 +149,13 @@ jobs:
           veslo_version = os.environ.get("DEN_RENDER_WORKER_VESLO_VERSION") or "0.11.113"
           worker_plan = os.environ.get("DEN_RENDER_WORKER_PLAN") or "standard"
           default_repo = f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'neatechcz/veslo')}"
-          default_branch = os.environ.get("GITHUB_REF_NAME") or "dev"
+          selected_branch = os.environ.get("GITHUB_REF_NAME") or "dev"
+          configured_control_plane_branch = os.environ.get("DEN_RENDER_CONTROL_PLANE_BRANCH") or ""
           control_plane_repo = os.environ.get("DEN_RENDER_CONTROL_PLANE_REPO") or default_repo
-          control_plane_branch = os.environ.get("DEN_RENDER_CONTROL_PLANE_BRANCH") or default_branch
+          if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+              control_plane_branch = selected_branch
+          else:
+              control_plane_branch = configured_control_plane_branch or selected_branch
           control_plane_root_dir = os.environ.get("DEN_RENDER_CONTROL_PLANE_ROOT_DIR") or "services/den"
           worker_repo = os.environ.get("DEN_RENDER_WORKER_REPO") or f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'neatechcz/veslo')}"
           configured_cors_origins = os.environ.get("DEN_CORS_ORIGINS") or ""
@@ -146,10 +175,25 @@ jobs:
           polar_benefit_id = os.environ.get("POLAR_BENEFIT_ID") or ""
           github_client_id = os.environ.get("DEN_GITHUB_CLIENT_ID") or ""
           github_client_secret = os.environ.get("DEN_GITHUB_CLIENT_SECRET") or ""
+          resend_api_key = os.environ.get("DEN_RESEND_API_KEY") or ""
+          auth_email_from = os.environ.get("DEN_AUTH_EMAIL_FROM") or ""
+          desktop_auth_require_email_verified = (
+              os.environ.get("DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED") or "false"
+          ).lower() == "true"
 
           if bool(github_client_id) != bool(github_client_secret):
               raise RuntimeError(
                   "DEN_GITHUB_CLIENT_ID and DEN_GITHUB_CLIENT_SECRET must either both be set or both be empty"
+              )
+
+          if bool(resend_api_key) != bool(auth_email_from):
+              raise RuntimeError(
+                  "DEN_RESEND_API_KEY and DEN_AUTH_EMAIL_FROM must either both be set or both be empty"
+              )
+
+          if desktop_auth_require_email_verified and (not resend_api_key or not auth_email_from):
+              raise RuntimeError(
+                  "DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true requires DEN_RESEND_API_KEY and DEN_AUTH_EMAIL_FROM"
               )
 
           def validate_redirect_url(name: str, value: str):
@@ -256,6 +300,9 @@ jobs:
               {"key": "BETTER_AUTH_URL", "value": service_url},
               {"key": "GITHUB_CLIENT_ID", "value": github_client_id},
               {"key": "GITHUB_CLIENT_SECRET", "value": github_client_secret},
+              {"key": "RESEND_API_KEY", "value": resend_api_key},
+              {"key": "AUTH_EMAIL_FROM", "value": auth_email_from},
+              {"key": "DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED", "value": "true" if desktop_auth_require_email_verified else "false"},
               {"key": "CORS_ORIGINS", "value": cors_origins},
               {"key": "PROVISIONER_MODE", "value": "render"},
               {"key": "RENDER_API_BASE", "value": "https://api.render.com/v1"},

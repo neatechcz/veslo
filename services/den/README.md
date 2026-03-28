@@ -124,9 +124,11 @@ pnpm db:migrate
   - Returns `{ tokenType, token, accessToken, expiresIn, user, org }`.
   - The code is consumed on first use and cannot be replayed.
 
-## CI deployment (dev == prod)
+## CI deployment (hosted Render)
 
-The workflow `.github/workflows/deploy-den.yml` updates Render env vars and deploys the service on every push to `dev` when this service changes.
+The workflow `.github/workflows/deploy-den.yml` updates Render env vars and deploys the hosted service on every push to `dev` or `main` when this service changes.
+
+For branch-based hosted testing, use GitHub Actions `workflow_dispatch` on the branch you want to test. Manual dispatch uses the selected branch/ref for the control-plane deploy so feature branches can be exercised on the real hosted Render instance without merging first.
 
 Required GitHub Actions secrets:
 
@@ -135,6 +137,7 @@ Required GitHub Actions secrets:
 - `RENDER_OWNER_ID`
 - `DEN_DATABASE_URL`
 - `DEN_BETTER_AUTH_SECRET`
+- `DEN_RESEND_API_KEY` when hosted verification or password reset emails should be enabled
 
 Optional GitHub Actions secrets (enable GitHub social sign-in):
 
@@ -157,7 +160,15 @@ Optional GitHub Actions variable:
 - `DEN_POLAR_API_BASE` (defaults to `https://api.polar.sh`)
 - `DEN_POLAR_SUCCESS_URL` (defaults to `https://app.veslo.neatech.com`)
 - `DEN_POLAR_RETURN_URL` (defaults to `DEN_POLAR_SUCCESS_URL`)
+- `DEN_AUTH_EMAIL_FROM` sender value for hosted auth emails, for example `Veslo <auth@veslo.neatech.com>`
+- `DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED` (`true`/`false`, defaults to `false`)
 
 Required additional secret when using vanity worker domains:
 
 - `VERCEL_TOKEN`
+
+For hosted auth-email testing:
+
+- set `DEN_RESEND_API_KEY` and `DEN_AUTH_EMAIL_FROM` to enable verification and password-reset email delivery on Render
+- set `DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true` only when you want the desktop handoff to hard-block unverified users
+- if `DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true`, both `DEN_RESEND_API_KEY` and `DEN_AUTH_EMAIL_FROM` must be configured or the deploy workflow will fail validation
