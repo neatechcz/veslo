@@ -26,7 +26,7 @@ test("returns to selected session for extensions too", () => {
 
 test("falls back to sidebar toggle when no session is selected", () => {
   const result = resolveLeftMenuAction({
-    tab: "skills",
+    tab: "scheduled",
     selectedSessionId: null,
   });
 
