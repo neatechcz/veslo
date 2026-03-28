@@ -61,6 +61,32 @@ describe("resolveSkillMatch", () => {
     expect(result.match?.name).toBe("company-research-czech");
   });
 
+  test("uses explicit-skill fallback when only one candidate is plausible", () => {
+    const skills: SkillItem[] = [
+      skill({
+        name: "czech-company-financials",
+        description: "Extract turnover, profit, and key financial data for Czech companies.",
+        trigger: "Use this skill when the user asks for Czech company financial data from justice.cz.",
+      }),
+      skill({
+        name: "workspace-guide",
+        description: "Guide users through workspace onboarding.",
+      }),
+      skill({
+        name: "get-started",
+        description: "Intro setup flow.",
+      }),
+    ];
+
+    const result = resolveSkillMatch({
+      text: "https://www.evoptima.com/en/homepage use company search skill for this",
+      skills,
+    });
+
+    expect(result.match?.name).toBe("czech-company-financials");
+    expect(result.match?.reasons.includes("explicit-skill-request-fallback")).toBe(true);
+  });
+
   test("does not auto-match when scores are low", () => {
     const skills: SkillItem[] = [
       skill({
@@ -75,6 +101,26 @@ describe("resolveSkillMatch", () => {
 
     const result = resolveSkillMatch({
       text: "write a haiku about spring weather",
+      skills,
+    });
+
+    expect(result.match).toBeNull();
+  });
+
+  test("does not force a match for explicit skill request without any overlap", () => {
+    const skills: SkillItem[] = [
+      skill({
+        name: "pdf-rotate",
+        description: "Rotate pages in PDF files.",
+      }),
+      skill({
+        name: "xlsx-formulas",
+        description: "Create and edit spreadsheet formulas.",
+      }),
+    ];
+
+    const result = resolveSkillMatch({
+      text: "use skill for this, write a short poem about spring",
       skills,
     });
 

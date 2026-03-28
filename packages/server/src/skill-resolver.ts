@@ -43,6 +43,8 @@ const SKILL_HINT_WORDS = new Set(["skill", "skills", "dovednost", "dovednosti"])
 
 const DEFAULT_MATCH_THRESHOLD = 0.58;
 const DEFAULT_AMBIGUITY_DELTA = 0.08;
+const EXPLICIT_SINGLE_CANDIDATE_FALLBACK_THRESHOLD = 0.15;
+const EXPLICIT_MULTI_CANDIDATE_FALLBACK_THRESHOLD = 0.24;
 
 function normalize(value: string): string {
   return value
@@ -102,6 +104,17 @@ function roundScore(score: number): number {
   return Math.round(score * 1000) / 1000;
 }
 
+function isExplicitSkillRequest(normalizedText: string): boolean {
+  const asksForSkill = /(?:^|[^a-z0-9])(skill|skills|dovednost|dovednosti)(?=$|[^a-z0-9])/i.test(
+    normalizedText,
+  );
+  if (!asksForSkill) return false;
+
+  return /(?:^|[^a-z0-9])(use|using|run|apply|invoke|load|pouzij|použij|spust|spustit|nacti|načti)(?=$|[^a-z0-9])/i.test(
+    normalizedText,
+  );
+}
+
 export function resolveSkillMatch(input: {
   text: string;
   skills: SkillItem[];
@@ -122,6 +135,7 @@ export function resolveSkillMatch(input: {
   const textHasSkillHint = [...SKILL_HINT_WORDS].some((word) =>
     new RegExp(`(?:^|[^a-z0-9])${escapeRegex(word)}(?=$|[^a-z0-9])`, "i").test(normalizedText),
   );
+  const explicitSkillRequest = isExplicitSkillRequest(normalizedText);
 
   const scored: SkillResolveCandidate[] = [];
 
@@ -229,6 +243,22 @@ export function resolveSkillMatch(input: {
     const ambiguous = second && best.score < 0.9 && best.score - second.score < ambiguityDelta;
     if (!ambiguous) {
       match = best;
+    }
+  }
+
+  if (!match && best && explicitSkillRequest) {
+    const secondScore = second?.score ?? 0;
+    const gap = best.score - secondScore;
+    const singleCandidateFallback =
+      candidates.length === 1 && best.score >= EXPLICIT_SINGLE_CANDIDATE_FALLBACK_THRESHOLD;
+    const multiCandidateFallback =
+      best.score >= EXPLICIT_MULTI_CANDIDATE_FALLBACK_THRESHOLD && gap >= ambiguityDelta;
+
+    if (singleCandidateFallback || multiCandidateFallback) {
+      match = {
+        ...best,
+        reasons: [...best.reasons, "explicit-skill-request-fallback"],
+      };
     }
   }
 
