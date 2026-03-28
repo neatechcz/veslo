@@ -3539,6 +3539,11 @@ export default function SessionView(props: SessionViewProps) {
     props.setView("dashboard");
   };
 
+  const openDashboardTab = (tab: DashboardTab) => {
+    props.setTab(tab);
+    props.setView("dashboard");
+  };
+
   const showUpdatePill = createMemo(() => {
     if (!isTauriRuntime()) return false;
     const state = props.updateStatus?.state;
@@ -3712,6 +3717,56 @@ export default function SessionView(props: SessionViewProps) {
             onOpenSessionSearch={() => openCommandPalette("sessions")}
           />
         </div>
+        <div class="mt-3 space-y-1 border-t border-gray-6/70 pt-3">
+          <button
+            type="button"
+            class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
+              showRightSidebarSelection() && props.tab === "scheduled"
+                ? "bg-gray-4 text-gray-12"
+                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
+            }`}
+            onClick={() => openDashboardTab("scheduled")}
+          >
+            <History size={18} />
+            Automations
+          </button>
+          <button
+            type="button"
+            class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
+              showRightSidebarSelection() && props.tab === "soul"
+                ? "bg-gray-4 text-gray-12"
+                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
+            }`}
+            onClick={() => openSoul()}
+          >
+            <HeartPulse size={18} class={soulNavIconClass()} />
+            Soul
+          </button>
+          <button
+            type="button"
+            class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
+              showRightSidebarSelection() && props.tab === "skills"
+                ? "bg-gray-4 text-gray-12"
+                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
+            }`}
+            onClick={() => openDashboardTab("skills")}
+          >
+            <Zap size={18} />
+            Skills
+          </button>
+          <button
+            type="button"
+            class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
+              showRightSidebarSelection() && (props.tab === "mcp" || props.tab === "plugins")
+                ? "bg-gray-4 text-gray-12"
+                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
+            }`}
+            onClick={() => openDashboardTab("mcp")}
+          >
+            <Box size={18} />
+            Extensions
+          </button>
+        </div>
       </div>
       <SidebarStatusControls
         clientConnected={props.clientConnected}
@@ -3724,65 +3779,8 @@ export default function SessionView(props: SessionViewProps) {
 
   const rightSidebarContent = () => (
     <div class="flex-1 overflow-y-auto space-y-5 pt-2">
-      <div class="space-y-1 mb-2">
-        <button
-          type="button"
-          class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-            showRightSidebarSelection() && props.tab === "scheduled"
-              ? "bg-gray-4 text-gray-12"
-              : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-          }`}
-          onClick={() => {
-            props.setTab("scheduled");
-            props.setView("dashboard");
-          }}
-        >
-          <History size={18} />
-          Automations
-        </button>
-        <button
-          type="button"
-          class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-            showRightSidebarSelection() && props.tab === "soul"
-              ? "bg-gray-4 text-gray-12"
-              : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-          }`}
-          onClick={() => openSoul()}
-        >
-          <HeartPulse size={18} class={soulNavIconClass()} />
-          Soul
-        </button>
-        <button
-          type="button"
-          class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-            showRightSidebarSelection() && props.tab === "skills"
-              ? "bg-gray-4 text-gray-12"
-              : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-          }`}
-          onClick={() => {
-            props.setTab("skills");
-            props.setView("dashboard");
-          }}
-        >
-          <Zap size={18} />
-          Skills
-        </button>
-        <button
-          type="button"
-          class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-            showRightSidebarSelection() && (props.tab === "mcp" || props.tab === "plugins")
-              ? "bg-gray-4 text-gray-12"
-              : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-          }`}
-          onClick={() => {
-            props.setTab("mcp");
-            props.setView("dashboard");
-          }}
-        >
-          <Box size={18} />
-          Extensions
-        </button>
-        <Show when={props.developerMode}>
+      <Show when={props.developerMode}>
+        <div class="space-y-1 mb-2">
           <button
             type="button"
             class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
@@ -3795,8 +3793,8 @@ export default function SessionView(props: SessionViewProps) {
             <SlidersHorizontal size={18} />
             Advanced
           </button>
-        </Show>
-      </div>
+        </div>
+      </Show>
 
       <ArtifactsPanel
         id="sidebar-artifacts"
