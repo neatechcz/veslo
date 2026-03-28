@@ -13,7 +13,7 @@ test("workspace session sidebar keeps controls pinned while only session rows sc
 
   assert.match(
     source,
-    /<div class="min-h-0 flex-1 overflow-y-auto -mr-3 pr-3">[\s\S]*<div class="space-y-(?:2\.5|1\.5) mb-(?:3|2)">/,
+    /<div class="min-h-0 flex-1 overflow-y-auto -mr-3 pr-3"[^>]*>[\s\S]*<div class="space-y-(?:2\.5|1\.5) mb-(?:3|2)">/,
     "session rows container should own vertical scroll and shift scrollbar toward the sidebar edge",
   );
 

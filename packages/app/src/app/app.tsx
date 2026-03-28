@@ -54,6 +54,12 @@ import {
   buildImportPayloadFromBundle,
 } from "./lib/shared-bundles";
 import { createSessionFromDirectorySelection } from "./pages/session-navigation";
+import {
+  SIDEBAR_SESSION_PAGE_SIZE,
+  deriveSidebarHasMore,
+  initialSidebarSessionLimit,
+  nextSidebarSessionLimit,
+} from "./pages/sidebar-session-pagination";
 import ModelPickerModal from "./components/model-picker-modal";
 import ResetModal from "./components/reset-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
@@ -2192,6 +2198,15 @@ export default function App() {
   const [sidebarSessionErrorByWorkspaceId, setSidebarSessionErrorByWorkspaceId] = createSignal<
     Record<string, string | null>
   >({});
+  const [sidebarSessionLimitByWorkspaceId, setSidebarSessionLimitByWorkspaceId] = createSignal<
+    Record<string, number>
+  >({});
+  const [sidebarSessionHasMoreByWorkspaceId, setSidebarSessionHasMoreByWorkspaceId] = createSignal<
+    Record<string, boolean>
+  >({});
+  const [sidebarSessionLoadingMoreByWorkspaceId, setSidebarSessionLoadingMoreByWorkspaceId] = createSignal<
+    Record<string, boolean>
+  >({});
 
   const pruneSidebarSessionState = (workspaceIds: Set<string>) => {
     setSidebarSessionsByWorkspaceId((prev) => {
@@ -2227,6 +2242,42 @@ export default function App() {
           continue;
         }
         next[id] = error;
+      }
+      return changed ? next : prev;
+    });
+    setSidebarSessionLimitByWorkspaceId((prev) => {
+      let changed = false;
+      const next: Record<string, number> = {};
+      for (const [id, limit] of Object.entries(prev)) {
+        if (!workspaceIds.has(id)) {
+          changed = true;
+          continue;
+        }
+        next[id] = limit;
+      }
+      return changed ? next : prev;
+    });
+    setSidebarSessionHasMoreByWorkspaceId((prev) => {
+      let changed = false;
+      const next: Record<string, boolean> = {};
+      for (const [id, hasMore] of Object.entries(prev)) {
+        if (!workspaceIds.has(id)) {
+          changed = true;
+          continue;
+        }
+        next[id] = hasMore;
+      }
+      return changed ? next : prev;
+    });
+    setSidebarSessionLoadingMoreByWorkspaceId((prev) => {
+      let changed = false;
+      const next: Record<string, boolean> = {};
+      for (const [id, loading] of Object.entries(prev)) {
+        if (!workspaceIds.has(id)) {
+          changed = true;
+          continue;
+        }
+        next[id] = loading;
       }
       return changed ? next : prev;
     });
@@ -2272,7 +2323,6 @@ export default function App() {
   };
 
   const sidebarRefreshSeqByWorkspaceId: Record<string, number> = {};
-  const SIDEBAR_SESSION_LIMIT = 200;
   const refreshSidebarWorkspaceSessions = async (workspaceId: string) => {
     const id = workspaceId.trim();
     if (!id) return;
@@ -2292,6 +2342,11 @@ export default function App() {
         if ((prev[id] ?? null) === null) return prev;
         changed = true;
         return { ...prev, [id]: null };
+      });
+      setSidebarSessionHasMoreByWorkspaceId((prev) => {
+        if ((prev[id] ?? false) === false) return prev;
+        changed = true;
+        return { ...prev, [id]: false };
       });
       if (changed) {
         wsDebug("sidebar:skip", { id, reason: "no-baseUrl" });
@@ -2324,11 +2379,12 @@ export default function App() {
       }
 
       const queryDirectory = normalizeDirectoryQueryPath(directory) || undefined;
+      const requestLimit = sidebarSessionLimitByWorkspaceId()[id] ?? initialSidebarSessionLimit();
 
       // Fetch sessions scoped to the workspace directory to avoid loading the
       // full global session list for every workspace.
       const list = unwrap(
-        await c.session.list({ directory: queryDirectory, roots: false, limit: SIDEBAR_SESSION_LIMIT }),
+        await c.session.list({ directory: queryDirectory, roots: false, limit: requestLimit }),
       );
       wsDebug("sidebar:list", {
         id,
@@ -2336,6 +2392,7 @@ export default function App() {
         directory: directory || null,
         queryDirectory: queryDirectory ?? null,
         count: list.length,
+        limit: requestLimit,
         ms: Date.now() - start,
       });
       if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
@@ -2385,6 +2442,10 @@ export default function App() {
         ...prev,
         [id]: items,
       }));
+      setSidebarSessionHasMoreByWorkspaceId((prev) => ({
+        ...prev,
+        [id]: deriveSidebarHasMore(list.length, requestLimit),
+      }));
       setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" }));
     } catch (error) {
       if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
@@ -2392,6 +2453,28 @@ export default function App() {
       wsDebug("sidebar:error", { id, message });
       setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "error" }));
       setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: message }));
+    }
+  };
+
+  const loadMoreWorkspaceSidebarSessions = async (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return;
+    if (sidebarSessionLoadingMoreByWorkspaceId()[id]) return;
+    if (sidebarSessionHasMoreByWorkspaceId()[id] === false) return;
+
+    setSidebarSessionLoadingMoreByWorkspaceId((prev) => ({ ...prev, [id]: true }));
+    setSidebarSessionLimitByWorkspaceId((prev) => ({
+      ...prev,
+      [id]: nextSidebarSessionLimit(
+        prev[id] ?? initialSidebarSessionLimit(),
+        SIDEBAR_SESSION_PAGE_SIZE,
+      ),
+    }));
+
+    try {
+      await refreshSidebarWorkspaceSessions(id);
+    } finally {
+      setSidebarSessionLoadingMoreByWorkspaceId((prev) => ({ ...prev, [id]: false }));
     }
   };
 
@@ -2509,9 +2592,11 @@ export default function App() {
       const sorted = sortSessionsByActivity(scopedSessions).filter((session) =>
         includeUserVisibleSession(session),
       );
+      const requestLimit = sidebarSessionLimitByWorkspaceId()[wsId] ?? initialSidebarSessionLimit();
+      const visibleRows = sorted.slice(0, requestLimit);
       setSidebarSessionsByWorkspaceId((prev) => ({
         ...prev,
-        [wsId]: sorted.map((s) => ({
+        [wsId]: visibleRows.map((s) => ({
           id: s.id,
           title: s.title,
           slug: s.slug,
@@ -2519,6 +2604,10 @@ export default function App() {
           time: s.time,
           directory: s.directory,
         })),
+      }));
+      setSidebarSessionHasMoreByWorkspaceId((prev) => ({
+        ...prev,
+        [wsId]: deriveSidebarHasMore(sorted.length, requestLimit),
       }));
     }
   });
@@ -2592,6 +2681,19 @@ export default function App() {
         error: errorById[workspace.id] ?? null,
       };
     });
+  });
+
+  const workspaceSessionPagingById = createMemo<Record<string, { hasMore: boolean; loadingMore: boolean }>>(() => {
+    const hasMoreById = sidebarSessionHasMoreByWorkspaceId();
+    const loadingById = sidebarSessionLoadingMoreByWorkspaceId();
+    const paging: Record<string, { hasMore: boolean; loadingMore: boolean }> = {};
+    for (const workspace of workspaceStore.workspaces()) {
+      paging[workspace.id] = {
+        hasMore: hasMoreById[workspace.id] ?? false,
+        loadingMore: loadingById[workspace.id] ?? false,
+      };
+    }
+    return paging;
   });
 
   createEffect(() => {
@@ -6399,6 +6501,8 @@ export default function App() {
       createWorkspaceFlow: workspaceStore.createWorkspaceFlow,
       pickWorkspaceFolder: workspaceStore.pickWorkspaceFolder,
       workspaceSessionGroups: sidebarWorkspaceGroups(),
+      workspaceSessionPagingById: workspaceSessionPagingById(),
+      loadMoreWorkspaceSidebarSessions,
       isPrivateWorkspacePath: workspaceStore.isPrivateWorkspacePath,
       selectedSessionId: activeSessionId(),
       openRenameWorkspace,
@@ -6676,6 +6780,8 @@ export default function App() {
     retryLastPrompt: retryLastPrompt,
     newTaskDisabled: newTaskDisabled(),
     workspaceSessionGroups: sidebarWorkspaceGroups(),
+    workspaceSessionPagingById: workspaceSessionPagingById(),
+    loadMoreWorkspaceSidebarSessions,
     isPrivateWorkspacePath: workspaceStore.isPrivateWorkspacePath,
     soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
     openRenameWorkspace,

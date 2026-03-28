@@ -160,6 +160,8 @@ export type DashboardViewProps = {
   exportWorkspaceConfig: (workspaceId?: string) => void;
   exportWorkspaceBusy: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
+  workspaceSessionPagingById: Record<string, { hasMore: boolean; loadingMore: boolean }>;
+  loadMoreWorkspaceSidebarSessions: (workspaceId: string) => Promise<void> | void;
   selectedSessionId: string | null;
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
   openRenameWorkspace: (workspaceId: string) => void;
@@ -1241,6 +1243,7 @@ export default function DashboardView(props: DashboardViewProps) {
           <div class="min-h-0 flex-1">
             <WorkspaceSessionList
               workspaceSessionGroups={props.workspaceSessionGroups}
+              workspaceSessionPagingById={props.workspaceSessionPagingById}
               activeWorkspaceId={props.activeWorkspaceId}
               selectedSessionId={props.selectedSessionId}
               connectingWorkspaceId={props.connectingWorkspaceId}
@@ -1265,6 +1268,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onImportWorkspaceConfig={props.importWorkspaceConfig}
               onQuickNewSession={props.openNewSessionWithDirectory}
               onAddDirectorySession={props.openDirectorySessionFromPicker}
+              onLoadMoreWorkspaceSessions={props.loadMoreWorkspaceSidebarSessions}
             />
           </div>
           <div class="mt-1.5 space-y-0 border-t border-gray-6/70 pt-1.5">
