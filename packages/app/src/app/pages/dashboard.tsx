@@ -66,6 +66,7 @@ import {
   createSessionWithWorkspaceActivation,
   openSessionWithWorkspaceActivation,
 } from "./session-navigation";
+import { resolveLeftMenuAction } from "./dashboard-menu-navigation";
 import {
   Box,
   ChevronDown,
@@ -485,6 +486,20 @@ export default function DashboardView(props: DashboardViewProps) {
       writeSidebarDockedVisibility(next);
       return next;
     });
+  };
+
+  const handleLeftMenuToggle = () => {
+    const action = resolveLeftMenuAction({
+      tab: props.tab,
+      selectedSessionId: props.selectedSessionId,
+      isNarrowViewport:
+        typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches,
+    });
+    if (action.kind === "return-to-session") {
+      props.setView("session", action.sessionId);
+      return;
+    }
+    toggleSidebarMenu("left");
   };
 
   const leftSidebarStyle = createMemo(() => ({ width: `${leftSidebarWidth()}px` }));
@@ -1201,7 +1216,7 @@ export default function DashboardView(props: DashboardViewProps) {
         leftActive={leftSidebarVisible()}
         rightActive={rightSidebarVisible()}
         hideTitlebar={props.hideTitlebar}
-        onToggleLeft={() => toggleSidebarMenu("left")}
+        onToggleLeft={handleLeftMenuToggle}
         onToggleRight={() => toggleSidebarMenu("right")}
       />
 

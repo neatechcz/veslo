@@ -671,10 +671,10 @@ export default function WorkspaceSessionList(props: Props) {
                   <div ref={(el) => (recentSentinelRef = el)} class="h-0.5 w-full" />
                 </Show>
                 <Show when={sidebarMode() === "recent" && recentCanLoadMore()}>
-                  <div class="pt-1">
+                  <div>
                     <button
                       type="button"
-                      class="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-gray-6 bg-gray-1 px-2 py-1.5 text-xs text-gray-11 hover:bg-gray-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                      class="w-full inline-flex items-center gap-1 rounded-xl px-3 py-1 text-left text-[11px] text-gray-9 transition-colors hover:bg-gray-3/70 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
                       disabled={recentLoadingMore()}
                       onClick={() => {
                         void loadMoreRecentRows();
@@ -885,10 +885,10 @@ export default function WorkspaceSessionList(props: Props) {
                           }}
                         </For>
                         <Show when={canLoadMoreProjectRows()}>
-                          <div class="pt-1 pr-1">
+                          <div>
                             <button
                               type="button"
-                              class="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-gray-6 bg-gray-1 px-2 py-1.5 text-xs text-gray-11 hover:bg-gray-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                              class="w-full inline-flex items-center gap-1 rounded-xl px-3 py-1 text-left text-[11px] text-gray-9 transition-colors hover:bg-gray-3/70 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
                               disabled={projectPaging().loadingMore}
                               onClick={() => {
                                 void loadMoreProjectRows();

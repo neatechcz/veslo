@@ -59,3 +59,17 @@ test("recent mode has sentinel + fallback load more button", () => {
     "recent mode should invoke load-more callback when local rows are exhausted",
   );
 });
+
+test("load-more controls use timestamp-sized row styling without button chrome", () => {
+  assert.match(
+    source,
+    /class="w-full inline-flex items-center gap-1 rounded-xl px-3 py-1 text-left text-\[11px\] text-gray-9 transition-colors hover:bg-gray-3\/70 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"/,
+    "load-more controls should be styled like regular session rows with timestamp-sized text",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /rounded-lg border border-gray-6 bg-gray-1 px-2 py-1\.5 text-xs text-gray-11/,
+    "load-more controls should not render bordered button styling",
+  );
+});
