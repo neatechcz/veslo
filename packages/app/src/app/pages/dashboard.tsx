@@ -1205,6 +1205,12 @@ export default function DashboardView(props: DashboardViewProps) {
               onQuickNewSession={props.openNewSessionWithDirectory}
             />
           </div>
+          <div class="mt-3 space-y-1 border-t border-gray-6/70 pt-3">
+            {navItem("scheduled", t("nav.automations", currentLocale()), <History size={18} />)}
+            {navItem("soul", t("nav.soul", currentLocale()), <HeartPulse size={18} class={soulNavIconClass()} />)}
+            {navItem("skills", t("nav.skills", currentLocale()), <Zap size={18} />)}
+            {navItem("mcp", t("nav.extensions", currentLocale()), <Box size={18} />)}
+          </div>
         </div>
         <SidebarStatusControls
           clientConnected={props.clientConnected}
@@ -1641,13 +1647,11 @@ export default function DashboardView(props: DashboardViewProps) {
 
       <Show when={rightSidebarVisible()}>
         <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
-        <div class="space-y-1 pt-2">
-          {navItem("scheduled", t("nav.automations", currentLocale()), <History size={18} />)}
-          {navItem("soul", t("nav.soul", currentLocale()), <HeartPulse size={18} class={soulNavIconClass()} />)}
-          {navItem("skills", t("nav.skills", currentLocale()), <Zap size={18} />)}
-          {navItem("mcp", t("nav.extensions", currentLocale()), <Box size={18} />)}
-          <Show when={props.developerMode}>{navItem("config", t("nav.advanced", currentLocale()), <SlidersHorizontal size={18} />)}</Show>
-        </div>
+          <Show when={props.developerMode}>
+            <div class="space-y-1 pt-2">
+              {navItem("config", t("nav.advanced", currentLocale()), <SlidersHorizontal size={18} />)}
+            </div>
+          </Show>
         </aside>
       </Show>
 
