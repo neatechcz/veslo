@@ -54,3 +54,29 @@ test("titlebar menu toggles expose brand and session context slots", () => {
     "titlebar should render optional center content when provided by the page",
   );
 });
+
+test("titlebar menu toggles support a custom left label and default to toggle text", () => {
+  assert.match(
+    source,
+    /leftLabel\?: string;/,
+    "titlebar should accept an optional left-button label prop",
+  );
+
+  assert.match(
+    source,
+    /const\s+leftLabel\s*=\s*props\.leftLabel\s*\?\?\s*["']Toggle left menu["'];/,
+    "titlebar should default the left label to Toggle left menu",
+  );
+
+  assert.match(
+    source,
+    /aria-label=\{leftLabel\}/,
+    "titlebar should use the resolved left label for the aria-label",
+  );
+
+  assert.match(
+    source,
+    /title=\{leftLabel\}/,
+    "titlebar should use the resolved left label for the title",
+  );
+});

@@ -6,7 +6,7 @@ import { resolveLeftMenuAction } from "./dashboard-menu-navigation.js";
 
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
 const leftMenuHandlerMatch = dashboardSource.match(
-  /const\s+handleLeftMenuToggle\s*=\s*\(\)\s*=>\s*\{[\s\S]*?onToggleRight\s*=\s*\{\s*\(\)\s*=>\s*toggleSidebarMenu\s*\(\s*["']right["']\s*\)\s*\}/s,
+  /const\s+leftMenuAction\s*=\s*resolveLeftMenuAction\s*\(\s*\{[\s\S]*?onToggleRight\s*=\s*\{\s*\(\)\s*=>\s*toggleSidebarMenu\s*\(\s*["']right["']\s*\)\s*\}/s,
 );
 const leftMenuHandlerSource = leftMenuHandlerMatch?.[0] ?? dashboardSource;
 const helperSourcePath = new URL("./dashboard-menu-navigation.ts", import.meta.url);
@@ -39,6 +39,17 @@ test("returns to selected session for plugins too", () => {
   assert.deepEqual(result, { kind: "return-to-session", sessionId: "sess-123" });
 });
 
+test("returns to selected session for the remaining dashboard tabs", () => {
+  for (const tab of ["soul", "skills", "config", "settings"] as const) {
+    const result = resolveLeftMenuAction({
+      tab,
+      selectedSessionId: "sess-123",
+    });
+
+    assert.deepEqual(result, { kind: "return-to-session", sessionId: "sess-123" });
+  }
+});
+
 test("falls back to sidebar toggle when no session is selected", () => {
   const result = resolveLeftMenuAction({
     tab: "scheduled",
@@ -49,13 +60,16 @@ test("falls back to sidebar toggle when no session is selected", () => {
 });
 
 test("dashboard routes the left titlebar button through the helper", () => {
+  assert.match(leftMenuHandlerSource, /const\s+leftMenuAction\s*=\s*resolveLeftMenuAction\s*\(\s*\{/s);
   assert.match(leftMenuHandlerSource, /handleLeftMenuToggle/);
   assert.match(leftMenuHandlerSource, /resolveLeftMenuAction\s*\(\s*\{/s);
   assert.match(leftMenuHandlerSource, /tab\s*:\s*props\.tab/);
   assert.match(leftMenuHandlerSource, /selectedSessionId\s*:\s*props\.selectedSessionId/);
-  assert.match(leftMenuHandlerSource, /props\.setView\s*\(\s*["']session["']\s*,\s*action\.sessionId\s*\)/);
+  assert.match(leftMenuHandlerSource, /props\.setView\s*\(\s*["']session["']\s*,\s*leftMenuAction\.sessionId\s*\)/);
+  assert.match(leftMenuHandlerSource, /const\s+leftMenuLabel\s*=\s*/);
+  assert.match(leftMenuHandlerSource, /const\s+leftMenuActive\s*=\s*/);
   const returnBranchMatch = leftMenuHandlerSource.match(
-    /if\s*\(\s*action\.kind\s*===\s*["']return-to-session["']\s*\)\s*\{[\s\S]*?return\s*;[\s\S]*?\}/s,
+    /if\s*\(\s*leftMenuAction\.kind\s*===\s*["']return-to-session["']\s*\)\s*\{[\s\S]*?return\s*;[\s\S]*?\}/s,
   );
 
   assert.ok(returnBranchMatch);
@@ -64,6 +78,8 @@ test("dashboard routes the left titlebar button through the helper", () => {
     /toggleSidebarMenu\s*\(\s*["']left["']\s*\)/,
   );
   assert.match(dashboardSource, /onToggleLeft\s*=\s*\{\s*handleLeftMenuToggle\s*\}/);
+  assert.match(dashboardSource, /leftActive=\{leftMenuActive\}/);
+  assert.match(dashboardSource, /leftLabel=\{leftMenuLabel\}/);
   assert.doesNotMatch(dashboardSource, /onToggleLeft\s*=\s*\{\s*\(\)\s*=>\s*toggleSidebarMenu\s*\(\s*["']left["']\s*\)\s*\}/);
   assert.doesNotMatch(leftMenuHandlerSource, /matchMedia\s*\(\s*["']\(max-width:\s*767px\)["']\s*\)/);
 });
