@@ -27,7 +27,7 @@ test("by-project mode uses per-project visible window with default 7 rows", () =
 
   assert.match(
     source,
-    /project\.sessions\.slice\(0, visibleCount\)/,
+    /project\.sessions\.slice\(0, visibleCount\(\)\)/,
     "by-project rows should render only the visible window slice",
   );
 });
@@ -55,7 +55,7 @@ test("recent mode has sentinel + fallback load more button", () => {
 
   assert.match(
     source,
-    /onLoadMoreWorkspaceSessions\?\.\(/,
+    /props\.onLoadMoreWorkspaceSessions\(workspaceId\)/,
     "recent mode should invoke load-more callback when local rows are exhausted",
   );
 });

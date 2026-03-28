@@ -20,6 +20,13 @@ import {
   type ProjectSessionGroup,
 } from "./workspace-session-list-model";
 import {
+  PROJECT_VISIBLE_DEFAULT,
+  RECENT_ESTIMATED_ROW_HEIGHT,
+  VIEW_LOAD_MORE_STEP,
+  computeInitialRecentVisibleCount,
+  nextProjectVisibleCount,
+} from "./workspace-session-list-windowing";
+import {
   readCollapsedProjectMap,
   readSidebarViewMode,
   writeCollapsedProjectMap,
@@ -91,10 +98,15 @@ export default function WorkspaceSessionList(props: Props) {
   const [collapsedProjects, setCollapsedProjects] = createSignal<Record<string, boolean>>(
     readCollapsedProjectMap(),
   );
+  const [projectVisibleByKey, setProjectVisibleByKey] = createSignal<Record<string, number>>({});
+  const [recentVisibleCount, setRecentVisibleCount] = createSignal(3);
+  const [recentLoadMoreBusy, setRecentLoadMoreBusy] = createSignal(false);
   const [workspaceMenuTarget, setWorkspaceMenuTarget] = createSignal<WorkspaceMenuTarget | null>(null);
   const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
   let workspaceMenuRef: HTMLDivElement | undefined;
   let addWorkspaceMenuRef: HTMLDivElement | undefined;
+  let scrollContainerRef: HTMLDivElement | undefined;
+  let recentSentinelRef: HTMLDivElement | undefined;
 
   const sidebarMode = createMemo(() => sidebarModeSignal());
   const setSidebarMode = (value: SidebarViewMode) => {
@@ -118,6 +130,62 @@ export default function WorkspaceSessionList(props: Props) {
     buildProjectGroups(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
   );
 
+  const recentRowsVisible = createMemo(() => recentRows().slice(0, recentVisibleCount()));
+
+  const recentHasHiddenRows = createMemo(() => recentRows().length > recentVisibleCount());
+
+  const recentHasMoreServerRows = createMemo(() =>
+    Object.values(props.workspaceSessionPagingById ?? {}).some((entry) => entry.hasMore),
+  );
+
+  const recentCanLoadMore = createMemo(() => recentHasHiddenRows() || recentHasMoreServerRows());
+
+  const recentLoadingMore = createMemo(() =>
+    recentLoadMoreBusy() || Object.values(props.workspaceSessionPagingById ?? {}).some((entry) => entry.loadingMore),
+  );
+
+  const syncRecentVisibleFromViewport = () => {
+    const containerHeight = scrollContainerRef?.clientHeight ?? 0;
+    const initialVisible = computeInitialRecentVisibleCount(containerHeight, RECENT_ESTIMATED_ROW_HEIGHT);
+    setRecentVisibleCount((current) => Math.max(current, initialVisible));
+  };
+
+  const nextWorkspaceToLoadForRecent = () => {
+    const paging = props.workspaceSessionPagingById ?? {};
+    const active = props.activeWorkspaceId.trim();
+    const workspaceIds = [
+      active,
+      ...Object.keys(paging).filter((workspaceId) => workspaceId !== active),
+    ];
+    return workspaceIds.find((workspaceId) => {
+      const entry = paging[workspaceId];
+      return Boolean(entry?.hasMore) && !entry.loadingMore;
+    }) ?? null;
+  };
+
+  const loadMoreRecentRows = async () => {
+    if (recentLoadMoreBusy()) return;
+    if (recentHasHiddenRows()) {
+      setRecentVisibleCount((current) =>
+        Math.min(recentRows().length, current + VIEW_LOAD_MORE_STEP),
+      );
+      return;
+    }
+    if (!recentHasMoreServerRows() || !props.onLoadMoreWorkspaceSessions) return;
+
+    const workspaceId = nextWorkspaceToLoadForRecent();
+    if (!workspaceId) return;
+    setRecentLoadMoreBusy(true);
+    try {
+      await Promise.resolve(props.onLoadMoreWorkspaceSessions(workspaceId));
+      setRecentVisibleCount((current) =>
+        Math.min(recentRows().length, current + VIEW_LOAD_MORE_STEP),
+      );
+    } finally {
+      setRecentLoadMoreBusy(false);
+    }
+  };
+
   createEffect(() => {
     const keys = new Set(projectGroups().map((group) => group.key));
     setCollapsedProjects((current) => {
@@ -134,6 +202,54 @@ export default function WorkspaceSessionList(props: Props) {
       writeCollapsedProjectMap(next);
       return next;
     });
+  });
+
+  createEffect(() => {
+    const nextGroups = projectGroups();
+    setProjectVisibleByKey((current) => {
+      const next: Record<string, number> = {};
+      let changed = false;
+      for (const group of nextGroups) {
+        const previousValue = current[group.key];
+        const normalized = Number.isFinite(previousValue) && (previousValue ?? 0) > 0
+          ? Math.floor(previousValue as number)
+          : PROJECT_VISIBLE_DEFAULT;
+        next[group.key] = normalized;
+        if (normalized !== previousValue) changed = true;
+      }
+      if (Object.keys(current).length !== Object.keys(next).length) changed = true;
+      return changed ? next : current;
+    });
+  });
+
+  createEffect(() => {
+    props.activeWorkspaceId;
+    setProjectVisibleByKey({});
+    setRecentVisibleCount(3);
+  });
+
+  createEffect(() => {
+    if (sidebarMode() !== "recent") return;
+    syncRecentVisibleFromViewport();
+  });
+
+  createEffect(() => {
+    if (sidebarMode() !== "recent") return;
+    const sentinel = recentSentinelRef;
+    const root = scrollContainerRef;
+    if (!sentinel || !root) return;
+
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      void loadMoreRecentRows();
+    }, {
+      root,
+      rootMargin: "120px 0px",
+      threshold: 0,
+    });
+
+    observer.observe(sentinel);
+    onCleanup(() => observer.disconnect());
   });
 
   const emptyError = createMemo(() => {
@@ -443,11 +559,11 @@ export default function WorkspaceSessionList(props: Props) {
         </div>
       </div>
 
-      <div class="min-h-0 flex-1 overflow-y-auto -mr-3 pr-3">
+      <div class="min-h-0 flex-1 overflow-y-auto -mr-3 pr-3" ref={(el) => (scrollContainerRef = el)}>
         <div class="space-y-1.5 mb-2">
           <Show when={hasVisibleRows()} fallback={emptyState}>
             <Show when={sidebarMode() === "by-project"} fallback={
-              <For each={recentRows()}>
+              <For each={recentRowsVisible()}>
                 {(row) => {
                   const workspace = () => row.workspace;
                   const session = () => row.session;
@@ -548,6 +664,24 @@ export default function WorkspaceSessionList(props: Props) {
                   );
                 }}
               </For>
+              <Show when={sidebarMode() === "recent"}>
+                <div ref={(el) => (recentSentinelRef = el)} class="h-0.5 w-full" />
+              </Show>
+              <Show when={sidebarMode() === "recent" && recentCanLoadMore()}>
+                <div class="pt-1">
+                  <button
+                    type="button"
+                    class="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-gray-6 bg-gray-1 px-2 py-1.5 text-xs text-gray-11 hover:bg-gray-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                    disabled={recentLoadingMore()}
+                    onClick={() => {
+                      void loadMoreRecentRows();
+                    }}
+                  >
+                    <span aria-hidden>{tr("sidebar.more_ellipsis")}</span>
+                    <span>{recentLoadingMore() ? tr("sidebar.loading_more") : tr("sidebar.load_more")}</span>
+                  </button>
+                </div>
+              </Show>
             }>
               <For each={projectGroups()}>
                 {(project) => {
@@ -561,6 +695,27 @@ export default function WorkspaceSessionList(props: Props) {
                 const isConnectionActionBusy = () => isConnectionActionBusyFor(workspace().id);
                 const anchorKey = `project:${workspace().id}`;
                 const collapsed = () => isProjectCollapsed(collapsedProjects(), project.key);
+                const projectPaging = () =>
+                  props.workspaceSessionPagingById?.[workspace().id] ?? { hasMore: false, loadingMore: false };
+                const visibleCount = () => projectVisibleByKey()[project.key] ?? PROJECT_VISIBLE_DEFAULT;
+                const visibleRows = () => project.sessions.slice(0, visibleCount());
+                const hasHiddenRows = () => project.sessions.length > visibleCount();
+                const canLoadMoreProjectRows = () => hasHiddenRows() || projectPaging().hasMore;
+                const loadMoreProjectRows = async () => {
+                  const nextVisible = nextProjectVisibleCount(visibleCount());
+                  setProjectVisibleByKey((current) => ({
+                    ...current,
+                    [project.key]: nextVisible,
+                  }));
+
+                  if (
+                    props.onLoadMoreWorkspaceSessions &&
+                    projectPaging().hasMore &&
+                    nextVisible > project.sessions.length
+                  ) {
+                    await Promise.resolve(props.onLoadMoreWorkspaceSessions(workspace().id));
+                  }
+                };
 
                 return (
                   <div class="group">
@@ -659,7 +814,7 @@ export default function WorkspaceSessionList(props: Props) {
 
                     <Show when={!collapsed()}>
                       <div class="pl-5 pt-0.5 space-y-0.5">
-                        <For each={project.sessions}>
+                        <For each={visibleRows()}>
                           {(row) => {
                             const session = () => row.session;
                             const isSelected = () => props.selectedSessionId === session().id;
@@ -725,6 +880,21 @@ export default function WorkspaceSessionList(props: Props) {
                             );
                           }}
                         </For>
+                        <Show when={canLoadMoreProjectRows()}>
+                          <div class="pt-1 pr-1">
+                            <button
+                              type="button"
+                              class="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-gray-6 bg-gray-1 px-2 py-1.5 text-xs text-gray-11 hover:bg-gray-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                              disabled={projectPaging().loadingMore}
+                              onClick={() => {
+                                void loadMoreProjectRows();
+                              }}
+                            >
+                              <span aria-hidden>{tr("sidebar.more_ellipsis")}</span>
+                              <span>{projectPaging().loadingMore ? tr("sidebar.loading_more") : tr("sidebar.load_more")}</span>
+                            </button>
+                          </div>
+                        </Show>
                       </div>
                     </Show>
                     </div>
