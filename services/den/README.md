@@ -172,3 +172,4 @@ For hosted auth-email testing:
 - set `DEN_RESEND_API_KEY` and `DEN_AUTH_EMAIL_FROM` to enable verification and password-reset email delivery on Render
 - set `DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true` only when you want the desktop handoff to hard-block unverified users
 - if `DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true`, both `DEN_RESEND_API_KEY` and `DEN_AUTH_EMAIL_FROM` must be configured or the deploy workflow will fail validation
+- if those GitHub repo inputs are blank, the deploy workflow preserves the current Render values for `RESEND_API_KEY`, `AUTH_EMAIL_FROM`, and `DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED` instead of clearing them

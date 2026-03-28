@@ -87,15 +87,6 @@ jobs:
             missing=1
           fi
 
-          desktop_auth_require_verified="${DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED:-false}"
-          desktop_auth_require_verified="$(echo "$desktop_auth_require_verified" | tr '[:upper:]' '[:lower:]')"
-          if [ "$desktop_auth_require_verified" = "true" ]; then
-            if [ -z "$DEN_RESEND_API_KEY" ] || [ -z "$DEN_AUTH_EMAIL_FROM" ]; then
-              echo "::error::DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true requires DEN_RESEND_API_KEY and DEN_AUTH_EMAIL_FROM"
-              missing=1
-            fi
-          fi
-
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
@@ -175,11 +166,12 @@ jobs:
           polar_benefit_id = os.environ.get("POLAR_BENEFIT_ID") or ""
           github_client_id = os.environ.get("DEN_GITHUB_CLIENT_ID") or ""
           github_client_secret = os.environ.get("DEN_GITHUB_CLIENT_SECRET") or ""
-          resend_api_key = os.environ.get("DEN_RESEND_API_KEY") or ""
-          auth_email_from = os.environ.get("DEN_AUTH_EMAIL_FROM") or ""
-          desktop_auth_require_email_verified = (
-              os.environ.get("DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED") or "false"
-          ).lower() == "true"
+          resend_api_key = (os.environ.get("DEN_RESEND_API_KEY") or "").strip()
+          auth_email_from = (os.environ.get("DEN_AUTH_EMAIL_FROM") or "").strip()
+          configured_desktop_auth_require_email_verified = (
+              (os.environ.get("DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED") or "").strip() or None
+          )
+          desktop_auth_require_email_verified = False
 
           if bool(github_client_id) != bool(github_client_secret):
               raise RuntimeError(
@@ -189,11 +181,6 @@ jobs:
           if bool(resend_api_key) != bool(auth_email_from):
               raise RuntimeError(
                   "DEN_RESEND_API_KEY and DEN_AUTH_EMAIL_FROM must either both be set or both be empty"
-              )
-
-          if desktop_auth_require_email_verified and (not resend_api_key or not auth_email_from):
-              raise RuntimeError(
-                  "DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true requires DEN_RESEND_API_KEY and DEN_AUTH_EMAIL_FROM"
               )
 
           def validate_redirect_url(name: str, value: str):
@@ -284,6 +271,38 @@ jobs:
           )
           if not service_url:
               raise RuntimeError(f"Render service {service_id} has no public URL")
+
+          _, current_env_vars = request("GET", f"/services/{service_id}/env-vars")
+          current_env_by_key = {}
+          for row in current_env_vars or []:
+              env_var = row.get("envVar") if isinstance(row, dict) else None
+              if not isinstance(env_var, dict):
+                  continue
+              key = env_var.get("key")
+              value = env_var.get("value")
+              if isinstance(key, str) and isinstance(value, str):
+                  current_env_by_key[key] = value
+
+          if not resend_api_key:
+              resend_api_key = current_env_by_key.get("RESEND_API_KEY", "")
+          if not auth_email_from:
+              auth_email_from = current_env_by_key.get("AUTH_EMAIL_FROM", "")
+          if configured_desktop_auth_require_email_verified is None:
+              desktop_auth_require_email_verified = (
+                  current_env_by_key.get("DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED", "false").lower() == "true"
+              )
+          else:
+              desktop_auth_require_email_verified = configured_desktop_auth_require_email_verified.lower() == "true"
+
+          if bool(resend_api_key) != bool(auth_email_from):
+              raise RuntimeError(
+                  "Render auth email env must either define both RESEND_API_KEY and AUTH_EMAIL_FROM or neither"
+              )
+
+          if desktop_auth_require_email_verified and (not resend_api_key or not auth_email_from):
+              raise RuntimeError(
+                  "DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true requires DEN_RESEND_API_KEY and DEN_AUTH_EMAIL_FROM"
+              )
 
           cors_origins = build_cors_origins(
               configured_cors_origins,
