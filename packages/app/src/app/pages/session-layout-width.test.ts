@@ -25,3 +25,14 @@ test("wide mode uses currently docked sidebars for width decisions", () => {
 
   assert.equal(availableChatWidthForLayout(800, state), 540);
 });
+
+test("wide mode accepts custom left sidebar width", () => {
+  const state: SidebarLayoutState = {
+    mode: "wide",
+    docked: { left: true, right: false },
+    dockedPreference: { left: true, right: false },
+    overlay: null,
+  };
+
+  assert.equal(availableChatWidthForLayout(800, state, 300), 500);
+});

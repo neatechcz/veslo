@@ -58,6 +58,11 @@ import WorkspaceSessionList from "../components/session/workspace-session-list";
 import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
 import { resolveTitlebarContentInsetClass } from "../components/titlebar-menu-layout";
 import {
+  clampLeftSidebarWidth,
+  readLeftSidebarWidth,
+  writeLeftSidebarWidth,
+} from "../components/layout/left-sidebar-width-prefs";
+import {
   createSessionWithWorkspaceActivation,
   openSessionWithWorkspaceActivation,
 } from "./session-navigation";
@@ -459,6 +464,8 @@ export default function DashboardView(props: DashboardViewProps) {
   const [refreshInProgress, setRefreshInProgress] = createSignal(false);
   const [providerAuthActionBusy, setProviderAuthActionBusy] = createSignal(false);
   const [shareWorkspaceId, setShareWorkspaceId] = createSignal<string | null>(null);
+  const [leftSidebarWidth, setLeftSidebarWidth] = createSignal(readLeftSidebarWidth());
+  const [leftSidebarResizing, setLeftSidebarResizing] = createSignal(false);
   const [sidebarDockedVisibility, setSidebarDockedVisibility] = createSignal(
     readSidebarDockedVisibility(),
   );
@@ -475,6 +482,55 @@ export default function DashboardView(props: DashboardViewProps) {
       writeSidebarDockedVisibility(next);
       return next;
     });
+  };
+
+  const leftSidebarStyle = createMemo(() => ({ width: `${leftSidebarWidth()}px` }));
+  let leftSidebarResizeCleanup: (() => void) | null = null;
+  const stopLeftSidebarResize = (persist: boolean) => {
+    if (leftSidebarResizeCleanup) {
+      leftSidebarResizeCleanup();
+      leftSidebarResizeCleanup = null;
+    }
+    if (!leftSidebarResizing()) return;
+    setLeftSidebarResizing(false);
+    if (!persist) return;
+    const normalized = writeLeftSidebarWidth(leftSidebarWidth());
+    setLeftSidebarWidth(normalized);
+  };
+
+  const startLeftSidebarResize = (event: PointerEvent) => {
+    if (event.button !== 0) return;
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    stopLeftSidebarResize(false);
+    setLeftSidebarResizing(true);
+    const initialWidth = leftSidebarWidth();
+    const initialX = event.clientX;
+    const previousUserSelect = document.body.style.userSelect;
+    const previousCursor = document.body.style.cursor;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const delta = moveEvent.clientX - initialX;
+      setLeftSidebarWidth(clampLeftSidebarWidth(initialWidth + delta));
+    };
+    const onPointerUp = () => stopLeftSidebarResize(true);
+    const onPointerCancel = () => stopLeftSidebarResize(true);
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp, { once: true });
+    window.addEventListener("pointercancel", onPointerCancel, { once: true });
+
+    leftSidebarResizeCleanup = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
+      document.body.style.userSelect = previousUserSelect;
+      document.body.style.cursor = previousCursor;
+    };
   };
 
   const handleProviderAuthSelect = async (providerId: string): Promise<ProviderOAuthStartResult> => {
@@ -540,9 +596,7 @@ export default function DashboardView(props: DashboardViewProps) {
     }
   };
 
-  onCleanup(() => {
-    // no-op
-  });
+  onCleanup(() => stopLeftSidebarResize(false));
 
   createEffect(() => {
     const currentTab = props.tab;
@@ -1148,7 +1202,12 @@ export default function DashboardView(props: DashboardViewProps) {
       />
 
       <Show when={leftSidebarVisible()}>
-        <aside class="w-64 hidden md:flex flex-col bg-dls-sidebar border-r border-dls-border p-4">
+        <aside
+          class={`relative hidden md:flex flex-col bg-dls-sidebar border-r border-dls-border p-4 ${
+            leftSidebarResizing() ? "cursor-col-resize" : ""
+          }`}
+          style={leftSidebarStyle()}
+        >
           <div class="flex min-h-0 flex-1 flex-col">
           <Show when={showUpdatePill()}>
             <button
@@ -1206,13 +1265,19 @@ export default function DashboardView(props: DashboardViewProps) {
             />
           </div>
         </div>
-        <SidebarStatusControls
-          clientConnected={props.clientConnected}
-          vesloServerStatus={props.vesloServerStatus}
-          authenticatedUser={props.authenticatedUser}
-          onOpenSettings={() => openSettings("general")}
-        />
-
+          <SidebarStatusControls
+            clientConnected={props.clientConnected}
+            vesloServerStatus={props.vesloServerStatus}
+            authenticatedUser={props.authenticatedUser}
+            onOpenSettings={() => openSettings("general")}
+          />
+          <div
+            class="absolute inset-y-0 right-0 w-2 cursor-col-resize"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize left sidebar"
+            onPointerDown={startLeftSidebarResize}
+          />
         </aside>
       </Show>
 

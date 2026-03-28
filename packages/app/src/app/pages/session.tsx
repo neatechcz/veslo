@@ -100,6 +100,11 @@ import WorkspaceSessionList from "../components/session/workspace-session-list";
 import type { SidebarSectionState } from "../components/session/sidebar";
 import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
 import {
+  clampLeftSidebarWidth,
+  readLeftSidebarWidth,
+  writeLeftSidebarWidth,
+} from "../components/layout/left-sidebar-width-prefs";
+import {
   applyAvailableWidth,
   createInitialSidebarLayoutState,
   toggleSidebarFromButton,
@@ -411,6 +416,8 @@ export default function SessionView(props: SessionViewProps) {
 
   const [obsidianAvailable, setObsidianAvailable] = createSignal(false);
   const [layoutRootWidth, setLayoutRootWidth] = createSignal(0);
+  const [leftSidebarWidth, setLeftSidebarWidth] = createSignal(readLeftSidebarWidth());
+  const [leftSidebarResizing, setLeftSidebarResizing] = createSignal(false);
   const [sidebarLayoutState, setSidebarLayoutState] = createSignal<SidebarLayoutState>(
     createInitialSidebarLayoutState(readSidebarDockedVisibility()),
   );
@@ -430,7 +437,7 @@ export default function SessionView(props: SessionViewProps) {
     const rootWidth = layoutRootWidth();
     if (rootWidth <= 0) return false;
     if (!leftDockedVisible() || !rightDockedVisible()) return false;
-    return availableChatWidthForLayout(rootWidth, sidebarLayoutState()) < 740;
+    return availableChatWidthForLayout(rootWidth, sidebarLayoutState(), leftSidebarWidth()) < 740;
   });
   const centerColumnWidthClass = (wideWidth: string) =>
     createMemo(() => (useCompactCenterColumn() ? "max-w-full" : wideWidth));
@@ -454,7 +461,10 @@ export default function SessionView(props: SessionViewProps) {
   const applySidebarModeForRootWidth = (rootWidth: number) => {
     if (rootWidth <= 0) return;
     setSidebarLayoutState((current) =>
-      applyAvailableWidth(current, availableChatWidthForLayout(rootWidth, current)),
+      applyAvailableWidth(
+        current,
+        availableChatWidthForLayout(rootWidth, current, leftSidebarWidth()),
+      ),
     );
   };
 
@@ -486,9 +496,72 @@ export default function SessionView(props: SessionViewProps) {
         writeSidebarDockedVisibility(toggled.dockedPreference);
       }
       if (measuredRootWidth <= 0) return toggled;
-      return applyAvailableWidth(toggled, availableChatWidthForLayout(measuredRootWidth, toggled));
+      return applyAvailableWidth(
+        toggled,
+        availableChatWidthForLayout(measuredRootWidth, toggled, leftSidebarWidth()),
+      );
     });
   };
+
+  const leftSidebarDockedStyle = createMemo(() => ({ width: `${leftSidebarWidth()}px` }));
+  const leftSidebarOverlayStyle = createMemo(() => ({
+    width: `min(${leftSidebarWidth()}px, calc(100vw - 32px))`,
+  }));
+
+  let leftSidebarResizeCleanup: (() => void) | null = null;
+  const stopLeftSidebarResize = (persist: boolean) => {
+    if (leftSidebarResizeCleanup) {
+      leftSidebarResizeCleanup();
+      leftSidebarResizeCleanup = null;
+    }
+    if (!leftSidebarResizing()) return;
+    setLeftSidebarResizing(false);
+    if (persist) {
+      const normalized = writeLeftSidebarWidth(leftSidebarWidth());
+      setLeftSidebarWidth(normalized);
+    }
+    if (typeof window !== "undefined") {
+      queueSidebarRootMeasurement();
+    }
+  };
+
+  const startLeftSidebarResize = (event: PointerEvent) => {
+    if (event.button !== 0) return;
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    stopLeftSidebarResize(false);
+    setLeftSidebarResizing(true);
+    const initialWidth = leftSidebarWidth();
+    const initialX = event.clientX;
+    const previousUserSelect = document.body.style.userSelect;
+    const previousCursor = document.body.style.cursor;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const delta = moveEvent.clientX - initialX;
+      setLeftSidebarWidth(clampLeftSidebarWidth(initialWidth + delta));
+      queueSidebarRootMeasurement();
+    };
+    const onPointerUp = () => stopLeftSidebarResize(true);
+    const onPointerCancel = () => stopLeftSidebarResize(true);
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp, { once: true });
+    window.addEventListener("pointercancel", onPointerCancel, { once: true });
+
+    leftSidebarResizeCleanup = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
+      document.body.style.userSelect = previousUserSelect;
+      document.body.style.cursor = previousCursor;
+    };
+  };
+
+  onCleanup(() => stopLeftSidebarResize(false));
 
   createEffect(() => {
     const root = sessionLayoutRootEl;
@@ -3750,8 +3823,20 @@ export default function SessionView(props: SessionViewProps) {
       />
 
       <Show when={leftDockedVisible()}>
-        <aside class="w-[260px] flex shrink-0 flex-col bg-dls-sidebar border-r border-gray-6/70 p-3 pt-12">
+        <aside
+          class={`relative flex shrink-0 flex-col bg-dls-sidebar border-r border-gray-6/70 p-3 pt-12 ${
+            leftSidebarResizing() ? "cursor-col-resize" : ""
+          }`}
+          style={leftSidebarDockedStyle()}
+        >
           {leftSidebarContent()}
+          <div
+            class="absolute inset-y-0 right-0 w-2 cursor-col-resize"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize left sidebar"
+            onPointerDown={startLeftSidebarResize}
+          />
         </aside>
       </Show>
 
@@ -4139,10 +4224,20 @@ export default function SessionView(props: SessionViewProps) {
           onClick={() => closeSidebarOverlay()}
         />
         <aside
-          class="fixed inset-y-0 left-0 z-[45] flex w-[min(260px,calc(100vw-32px))] max-w-[260px] flex-col bg-dls-sidebar border-r border-gray-6/80 p-3 pt-12 shadow-xl shadow-gray-12/20"
+          class={`fixed inset-y-0 left-0 z-[45] flex flex-col bg-dls-sidebar border-r border-gray-6/80 p-3 pt-12 shadow-xl shadow-gray-12/20 ${
+            leftSidebarResizing() ? "cursor-col-resize" : ""
+          }`}
+          style={leftSidebarOverlayStyle()}
           onClick={(event) => event.stopPropagation()}
         >
           {leftSidebarContent()}
+          <div
+            class="absolute inset-y-0 right-0 w-2 cursor-col-resize"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize left sidebar"
+            onPointerDown={startLeftSidebarResize}
+          />
         </aside>
       </Show>
 

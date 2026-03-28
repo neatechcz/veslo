@@ -19,6 +19,13 @@ import {
   type FlatSessionRow,
   type ProjectSessionGroup,
 } from "./workspace-session-list-model";
+import {
+  readCollapsedProjectMap,
+  readSidebarViewMode,
+  writeCollapsedProjectMap,
+  writeSidebarViewMode,
+  type SidebarViewMode,
+} from "./workspace-session-list-prefs";
 import { currentLocale, t } from "../../../i18n";
 
 type Props = {
@@ -52,32 +59,9 @@ type Props = {
   onOpenSessionSearch?: () => void;
 };
 
-type SidebarViewMode = "by-project" | "recent";
-
 type WorkspaceMenuTarget = {
   workspaceId: string;
   anchorKey: string;
-};
-
-const SIDEBAR_VIEW_MODE_KEY = "veslo.sidebar-session-view.v1";
-
-const readSidebarViewMode = (): SidebarViewMode => {
-  if (typeof window === "undefined") return "by-project";
-  try {
-    const raw = window.localStorage.getItem(SIDEBAR_VIEW_MODE_KEY);
-    return raw === "recent" ? "recent" : "by-project";
-  } catch {
-    return "by-project";
-  }
-};
-
-const writeSidebarViewMode = (value: SidebarViewMode) => {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(SIDEBAR_VIEW_MODE_KEY, value);
-  } catch {
-    // ignore
-  }
 };
 
 const workspaceLabel = (workspace: WorkspaceInfo) =>
@@ -101,7 +85,9 @@ export default function WorkspaceSessionList(props: Props) {
   const tr = (key: string) => t(key, currentLocale());
   const revealLabel = isWindowsPlatform() ? tr("sidebar.reveal_in_explorer") : tr("sidebar.reveal_in_finder");
   const [sidebarModeSignal, setSidebarModeSignal] = createSignal<SidebarViewMode>(readSidebarViewMode());
-  const [collapsedProjects, setCollapsedProjects] = createSignal<Record<string, boolean>>({});
+  const [collapsedProjects, setCollapsedProjects] = createSignal<Record<string, boolean>>(
+    readCollapsedProjectMap(),
+  );
   const [workspaceMenuTarget, setWorkspaceMenuTarget] = createSignal<WorkspaceMenuTarget | null>(null);
   const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
   let workspaceMenuRef: HTMLDivElement | undefined;
@@ -113,7 +99,11 @@ export default function WorkspaceSessionList(props: Props) {
     writeSidebarViewMode(value);
   };
   const toggleProjectCollapse = (projectKey: string) =>
-    setCollapsedProjects((previous) => toggleProjectCollapsed(previous, projectKey));
+    setCollapsedProjects((previous) => {
+      const next = toggleProjectCollapsed(previous, projectKey);
+      writeCollapsedProjectMap(next);
+      return next;
+    });
   const rowIndentStyle = (row: FlatSessionRow) =>
     row.nestingLevel > 0 ? { "padding-left": `${12 + Math.min(row.nestingLevel, 6) * 14}px` } : undefined;
 
@@ -124,6 +114,24 @@ export default function WorkspaceSessionList(props: Props) {
   const projectGroups = createMemo<ProjectSessionGroup[]>(() =>
     buildProjectGroups(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
   );
+
+  createEffect(() => {
+    const keys = new Set(projectGroups().map((group) => group.key));
+    setCollapsedProjects((current) => {
+      let changed = false;
+      const next: Record<string, boolean> = {};
+      for (const [key, value] of Object.entries(current)) {
+        if (!keys.has(key)) {
+          changed = true;
+          continue;
+        }
+        next[key] = value;
+      }
+      if (!changed) return current;
+      writeCollapsedProjectMap(next);
+      return next;
+    });
+  });
 
   const emptyError = createMemo(() => {
     const failedGroup = props.workspaceSessionGroups.find((group) => group.status === "error");
