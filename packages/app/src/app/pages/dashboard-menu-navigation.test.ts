@@ -49,12 +49,13 @@ test("falls back to sidebar toggle when no session is selected", () => {
 });
 
 test("dashboard routes the left titlebar button through the helper", () => {
-  assert.ok(leftMenuHandlerSource.includes("handleLeftMenuToggle"));
-  assert.ok(leftMenuHandlerSource.includes("resolveLeftMenuAction({"));
-  assert.ok(leftMenuHandlerSource.includes("tab: props.tab"));
-  assert.ok(leftMenuHandlerSource.includes("selectedSessionId: props.selectedSessionId"));
-  assert.ok(leftMenuHandlerSource.includes('props.setView("session", action.sessionId)'));
-  assert.match(dashboardSource, /onToggleLeft=\{handleLeftMenuToggle\}/);
-  assert.doesNotMatch(dashboardSource, /onToggleLeft=\{\(\) => toggleSidebarMenu\("left"\)\}/);
-  assert.doesNotMatch(leftMenuHandlerSource, /matchMedia\("\(max-width: 767px\)"\)/);
+  assert.match(leftMenuHandlerSource, /handleLeftMenuToggle/);
+  assert.match(leftMenuHandlerSource, /resolveLeftMenuAction\s*\(\s*\{/s);
+  assert.match(leftMenuHandlerSource, /tab\s*:\s*props\.tab/);
+  assert.match(leftMenuHandlerSource, /selectedSessionId\s*:\s*props\.selectedSessionId/);
+  assert.match(leftMenuHandlerSource, /props\.setView\s*\(\s*["']session["']\s*,\s*action\.sessionId\s*\)/);
+  assert.match(leftMenuHandlerSource, /action\.kind[\s\S]*?toggleSidebarMenu\s*\(\s*["']left["']\s*\)/s);
+  assert.match(dashboardSource, /onToggleLeft\s*=\s*\{\s*handleLeftMenuToggle\s*\}/);
+  assert.doesNotMatch(dashboardSource, /onToggleLeft\s*=\s*\{\s*\(\)\s*=>\s*toggleSidebarMenu\s*\(\s*["']left["']\s*\)\s*\}/);
+  assert.doesNotMatch(leftMenuHandlerSource, /matchMedia\s*\(\s*["']\(max-width:\s*767px\)["']\s*\)/);
 });
