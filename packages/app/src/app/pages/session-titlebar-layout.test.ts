@@ -26,6 +26,14 @@ test("session clears the native centered window title while custom titlebar cont
   );
 });
 
+test("session titlebar directory uses the shared app font instead of monospace", () => {
+  assert.doesNotMatch(
+    source,
+    /font-mono text-\[12px\] leading-6 text-gray-10/,
+    "session titlebar directory should not keep the old monospace treatment from the composer",
+  );
+});
+
 test("session renders the disclaimer outside the composer", () => {
   assert.match(
     source,

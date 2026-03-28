@@ -450,7 +450,7 @@ export default function SessionView(props: SessionViewProps) {
     return (
       <span
         class={label.usePathStyle
-          ? "truncate font-mono text-[12px] leading-6 text-gray-10"
+          ? "truncate text-[12px] leading-6 text-gray-10"
           : "truncate text-[10px] font-bold uppercase leading-6 tracking-widest text-gray-10"}
         title={label.label}
       >
