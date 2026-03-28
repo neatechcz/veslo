@@ -50,6 +50,30 @@ const extractTriggerFromBody = (body: string) => {
   return "";
 };
 
+const parseBoolean = (value: unknown): boolean | undefined => {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (["true", "1", "yes"].includes(normalized)) return true;
+  if (["false", "0", "no"].includes(normalized)) return false;
+  return undefined;
+};
+
+const parseStringList = (value: unknown): string[] | undefined => {
+  if (Array.isArray(value)) {
+    const items = value
+      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+      .filter(Boolean);
+    return items.length ? items : undefined;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    return [trimmed];
+  }
+  return undefined;
+};
+
 async function parseSkillEntry(
   skillPath: string,
   entryName: string,
@@ -59,6 +83,20 @@ async function parseSkillEntry(
   const { data, body } = parseFrontmatter(content);
   const name = typeof data.name === "string" ? data.name : entryName;
   const description = typeof data.description === "string" ? data.description : "";
+  const disableModelInvocation =
+    parseBoolean(data["disable-model-invocation"]) ??
+    parseBoolean(data.disableModelInvocation);
+  const userInvocable =
+    parseBoolean(data["user-invocable"]) ??
+    parseBoolean(data.userInvocable);
+  const aliases = parseStringList(data.aliases);
+  const paths = parseStringList(data.paths);
+  const whenToUse =
+    typeof data.when_to_use === "string"
+      ? data.when_to_use
+      : typeof data.whenToUse === "string"
+        ? data.whenToUse
+        : undefined;
   const trigger =
     typeof data.trigger === "string"
       ? data.trigger
@@ -78,6 +116,11 @@ async function parseSkillEntry(
     path: skillPath,
     scope,
     trigger: trigger.trim() || undefined,
+    disableModelInvocation,
+    userInvocable,
+    aliases,
+    whenToUse,
+    paths,
   };
 }
 

@@ -90,6 +90,7 @@ Sandbox advertisement (for capability discovery):
 - `POST /workspace/:id/plugins`
 - `DELETE /workspace/:id/plugins/:name`
 - `GET /workspace/:id/skills`
+- `POST /workspace/:id/skills/resolve`
 - `POST /workspace/:id/skills`
 - `GET /workspace/:id/mcp`
 - `POST /workspace/:id/mcp`

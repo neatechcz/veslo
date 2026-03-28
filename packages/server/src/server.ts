@@ -8,6 +8,7 @@ import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plu
 import { addMcp, listMcp, removeMcp } from "./mcp.js";
 import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
 import { installHubSkill, listHubSkills } from "./skill-hub.js";
+import { resolveSkillMatch } from "./skill-resolver.js";
 import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
 import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
 import { provisionWorkspaceInternalSystem } from "./internal-system.js";
@@ -3240,6 +3241,25 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
     const items = await listSkills(workspace.path, includeGlobal);
     return jsonResponse({ items });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/skills/resolve", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const text = typeof body.text === "string" ? body.text : "";
+    const includeGlobal = body?.includeGlobal === true || ctx.url.searchParams.get("includeGlobal") === "true";
+    const threshold = typeof body.threshold === "number" ? body.threshold : undefined;
+    const ambiguityDelta = typeof body.ambiguityDelta === "number" ? body.ambiguityDelta : undefined;
+    const maxCandidates = typeof body.maxCandidates === "number" ? body.maxCandidates : undefined;
+    const skills = await listSkills(workspace.path, includeGlobal);
+    const result = resolveSkillMatch({
+      text,
+      skills,
+      threshold,
+      ambiguityDelta,
+      maxCandidates,
+    });
+    return jsonResponse(result);
   });
 
   addRoute(routes, "POST", "/workspace/:id/skills/hub/:name", "client", async (ctx) => {

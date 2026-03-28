@@ -91,11 +91,30 @@ export type VesloSkillItem = {
   description: string;
   scope: "project" | "global";
   trigger?: string;
+  disableModelInvocation?: boolean;
+  userInvocable?: boolean;
+  aliases?: string[];
+  whenToUse?: string;
+  paths?: string[];
 };
 
 export type VesloSkillContent = {
   item: VesloSkillItem;
   content: string;
+};
+
+export type VesloSkillResolveCandidate = {
+  name: string;
+  score: number;
+  reasons: string[];
+  description?: string;
+  trigger?: string;
+};
+
+export type VesloSkillResolveResult = {
+  text: string;
+  match: VesloSkillResolveCandidate | null;
+  candidates: VesloSkillResolveCandidate[];
 };
 
 export type VesloHubSkillItem = {
@@ -1554,6 +1573,26 @@ export function createVesloServerClient(options: { baseUrl: string; token?: stri
         { token, hostToken },
       );
     },
+    resolveSkill: (
+      workspaceId: string,
+      payload: {
+        text: string;
+        includeGlobal?: boolean;
+        threshold?: number;
+        ambiguityDelta?: number;
+        maxCandidates?: number;
+      },
+    ) =>
+      requestJson<VesloSkillResolveResult>(
+        baseUrl,
+        `/workspace/${workspaceId}/skills/resolve`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: payload,
+        },
+      ),
     listHubSkills: () =>
       requestJson<{ items: VesloHubSkillItem[] }>(baseUrl, `/hub/skills`, {
         token,

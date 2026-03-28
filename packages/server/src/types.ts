@@ -144,6 +144,25 @@ export interface SkillItem {
   description: string;
   scope: "project" | "global";
   trigger?: string;
+  disableModelInvocation?: boolean;
+  userInvocable?: boolean;
+  aliases?: string[];
+  whenToUse?: string;
+  paths?: string[];
+}
+
+export interface SkillResolveCandidate {
+  name: string;
+  score: number;
+  reasons: string[];
+  description?: string;
+  trigger?: string;
+}
+
+export interface SkillResolveResult {
+  text: string;
+  match: SkillResolveCandidate | null;
+  candidates: SkillResolveCandidate[];
 }
 
 export interface HubSkillItem {

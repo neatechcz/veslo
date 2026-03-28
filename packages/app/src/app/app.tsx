@@ -1149,12 +1149,62 @@ export default function App() {
     return parts;
   };
 
+  async function maybeResolveSkillCommand(draft: ComposerDraft): Promise<ComposerDraft> {
+    if (draft.mode !== "prompt" || draft.command) return draft;
+
+    const text = (draft.resolvedText ?? draft.text).trim();
+    if (!text || text.startsWith("/")) return draft;
+
+    const vesloClient = vesloServerClient();
+    const workspaceId = resolvedDevtoolsWorkspaceId();
+    if (
+      vesloServerStatus() !== "connected" ||
+      !vesloClient ||
+      !workspaceId ||
+      typeof (vesloClient as unknown as { resolveSkill?: unknown }).resolveSkill !== "function"
+    ) {
+      return draft;
+    }
+
+    try {
+      const includeGlobal = workspaceStore.activeWorkspaceDisplay().workspaceType === "local";
+      const resolution = await (vesloClient as unknown as {
+        resolveSkill: (
+          workspaceId: string,
+          payload: { text: string; includeGlobal?: boolean },
+        ) => Promise<{ match?: { name?: string | null } | null }>;
+      }).resolveSkill(workspaceId, {
+        text,
+        includeGlobal,
+      });
+
+      const matchedName = resolution?.match?.name?.trim();
+      if (!matchedName) return draft;
+
+      const commands = await listCommands();
+      const matchedCommand = commands.find(
+        (entry) => entry.name === matchedName && entry.source === "skill",
+      );
+      if (!matchedCommand) return draft;
+
+      return {
+        ...draft,
+        command: {
+          name: matchedName,
+          arguments: text,
+        },
+      };
+    } catch {
+      return draft;
+    }
+  }
+
   async function sendPrompt(draft?: ComposerDraft) {
     const hasExplicitDraft = Boolean(draft);
     const fallbackDraft = composerDraft();
     const fallbackText = fallbackDraft.text.trim();
     const fallbackResolvedText = (fallbackDraft.resolvedText ?? fallbackDraft.text).trim();
-    const resolvedDraft: ComposerDraft = draft ?? {
+    let resolvedDraft: ComposerDraft = draft ?? {
       mode: fallbackDraft.mode,
       parts: fallbackDraft.parts.length ? fallbackDraft.parts : (fallbackText ? [{ type: "text", text: fallbackText } as ComposerPart] : []),
       attachments: fallbackDraft.attachments,
@@ -1162,6 +1212,7 @@ export default function App() {
       resolvedText: fallbackResolvedText || undefined,
       command: fallbackDraft.command,
     };
+    resolvedDraft = await maybeResolveSkillCommand(resolvedDraft);
     const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
     if (!content && !resolvedDraft.attachments.length) return;
 
