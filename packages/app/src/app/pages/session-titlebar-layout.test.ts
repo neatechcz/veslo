@@ -15,7 +15,7 @@ test("session routes the current directory into the shared titlebar", () => {
 test("session renders the disclaimer outside the composer", () => {
   assert.match(
     source,
-    /<Composer[\s\S]*\/>\s*<\/Show>[\s\S]*session\.composer_disclaimer/,
+    /\{\(_sessionKey\) => \(\s*<>\s*<Composer[\s\S]*\/>[\s\S]*session\.composer_disclaimer[\s\S]*<\/>\s*\)\}/,
     "session should render the disclaimer in session layout, not inside the Composer component",
   );
 });
