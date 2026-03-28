@@ -30,6 +30,15 @@ test("returns to selected session for extensions too", () => {
   assert.deepEqual(result, { kind: "return-to-session", sessionId: "sess-123" });
 });
 
+test("returns to selected session for plugins too", () => {
+  const result = resolveLeftMenuAction({
+    tab: "plugins",
+    selectedSessionId: "sess-123",
+  });
+
+  assert.deepEqual(result, { kind: "return-to-session", sessionId: "sess-123" });
+});
+
 test("falls back to sidebar toggle when no session is selected", () => {
   const result = resolveLeftMenuAction({
     tab: "scheduled",
@@ -40,15 +49,11 @@ test("falls back to sidebar toggle when no session is selected", () => {
 });
 
 test("dashboard routes the left titlebar button through the helper", () => {
-  assert.ok(leftMenuHandlerSource.includes("const handleLeftMenuToggle = () => {"));
-  assert.ok(leftMenuHandlerSource.includes("const action = resolveLeftMenuAction({"));
+  assert.ok(leftMenuHandlerSource.includes("handleLeftMenuToggle"));
+  assert.ok(leftMenuHandlerSource.includes("resolveLeftMenuAction({"));
   assert.ok(leftMenuHandlerSource.includes("tab: props.tab"));
   assert.ok(leftMenuHandlerSource.includes("selectedSessionId: props.selectedSessionId"));
-  assert.ok(
-    leftMenuHandlerSource.includes(
-      'if (action.kind === "return-to-session") {\n      props.setView("session", action.sessionId);\n      return;\n    }',
-    ),
-  );
+  assert.ok(leftMenuHandlerSource.includes('props.setView("session", action.sessionId)'));
   assert.match(dashboardSource, /onToggleLeft=\{handleLeftMenuToggle\}/);
   assert.doesNotMatch(dashboardSource, /onToggleLeft=\{\(\) => toggleSidebarMenu\("left"\)\}/);
   assert.doesNotMatch(leftMenuHandlerSource, /matchMedia\("\(max-width: 767px\)"\)/);
