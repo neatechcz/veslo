@@ -64,19 +64,19 @@ test("titlebar menu toggles support a custom left label and default to toggle te
 
   assert.match(
     source,
-    /const\s+leftLabel\s*=\s*props\.leftLabel\s*\?\?\s*["']Toggle left menu["'];/,
-    "titlebar should default the left label to Toggle left menu",
+    /const\s+leftLabel\s*=\s*\(\)\s*=>\s*props\.leftLabel\s*\?\?\s*["']Toggle left menu["'];/,
+    "titlebar should derive the left label reactively",
   );
 
   assert.match(
     source,
-    /aria-label=\{leftLabel\}/,
+    /aria-label=\{leftLabel\(\)\}/,
     "titlebar should use the resolved left label for the aria-label",
   );
 
   assert.match(
     source,
-    /title=\{leftLabel\}/,
+    /title=\{leftLabel\(\)\}/,
     "titlebar should use the resolved left label for the title",
   );
 });
