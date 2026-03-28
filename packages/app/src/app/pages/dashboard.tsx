@@ -488,20 +488,6 @@ export default function DashboardView(props: DashboardViewProps) {
     });
   };
 
-  const handleLeftMenuToggle = () => {
-    const action = resolveLeftMenuAction({
-      tab: props.tab,
-      selectedSessionId: props.selectedSessionId,
-      isNarrowViewport:
-        typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches,
-    });
-    if (action.kind === "return-to-session") {
-      props.setView("session", action.sessionId);
-      return;
-    }
-    toggleSidebarMenu("left");
-  };
-
   const leftSidebarStyle = createMemo(() => ({ width: `${leftSidebarWidth()}px` }));
   let leftSidebarResizeCleanup: (() => void) | null = null;
   const stopLeftSidebarResize = (persist: boolean) => {

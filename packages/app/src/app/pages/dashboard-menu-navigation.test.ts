@@ -93,3 +93,10 @@ test("helper source avoids viewport-specific left-menu logic when it exists", ()
 
   assert.doesNotMatch(helperSource, /matchMedia\s*\(\s*["']\(max-width:\s*767px\)["']\s*\)/);
 });
+
+test("dashboard source keeps a single left-menu handler without the legacy viewport branch", () => {
+  const handlerDeclarations = dashboardSource.match(/const\s+handleLeftMenuToggle\s*=\s*\(\)\s*=>/g) ?? [];
+
+  assert.equal(handlerDeclarations.length, 1);
+  assert.doesNotMatch(dashboardSource, /isNarrowViewport\s*:/);
+});
