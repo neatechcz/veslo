@@ -995,6 +995,20 @@ export async function setWindowTitleBarStyle(
 }
 
 /**
+ * Set the current native window title.
+ */
+export async function setWindowTitle(title: string): Promise<void> {
+  if (!isTauriRuntime()) return;
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  try {
+    await getCurrentWindow().setTitle(title);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`[tauri.setWindowTitle] Failed to set window title "${title}": ${message}`);
+  }
+}
+
+/**
  * Start dragging the current native window.
  * Intended as a reliability fallback for custom drag regions.
  */

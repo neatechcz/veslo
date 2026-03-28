@@ -26,6 +26,7 @@ import {
   obsidianIsAvailable,
   openInObsidian,
   readObsidianMirrorFile,
+  setWindowTitle,
   writeObsidianMirrorFile,
   type EngineInfo,
   type VesloServerInfo,
@@ -425,7 +426,7 @@ export default function SessionView(props: SessionViewProps) {
   const [sidebarLayoutState, setSidebarLayoutState] = createSignal<SidebarLayoutState>(
     createInitialSidebarLayoutState(readSidebarDockedVisibility()),
   );
-  const sessionTitlebarContext = createMemo(() => {
+  const sessionTitlebarLabel = createMemo(() => {
     const rootPath = props.activeWorkspaceRoot.trim();
     if (!rootPath && props.activeWorkspaceDisplay.workspaceType !== "remote") {
       return null;
@@ -438,18 +439,30 @@ export default function SessionView(props: SessionViewProps) {
       remoteLabel: tr("session.remote_workspace_label"),
     });
 
-    if (!label.label.trim()) return null;
+    return label.label.trim() ? label : null;
+  });
 
+  const sessionTitlebarContext = createMemo(() => {
+    const label = sessionTitlebarLabel();
+    if (!label) return null;
     return (
       <span
         class={label.usePathStyle
-          ? "font-mono text-[12px] text-gray-10"
-          : "text-[10px] font-bold uppercase tracking-widest text-gray-10"}
+          ? "truncate font-mono text-[12px] leading-6 text-gray-10"
+          : "truncate text-[10px] font-bold uppercase leading-6 tracking-widest text-gray-10"}
         title={label.label}
       >
         {label.label}
       </span>
     );
+  });
+
+  createEffect(() => {
+    void setWindowTitle("").catch((error) => reportError(error, "titlebar.setWindowTitle"));
+  });
+
+  onCleanup(() => {
+    void setWindowTitle("Veslo by Neatech").catch((error) => reportError(error, "titlebar.restoreWindowTitle"));
   });
 
   // In Session view the right sidebar is navigation-only; never pre-highlight a
@@ -3816,7 +3829,8 @@ export default function SessionView(props: SessionViewProps) {
       <TitlebarMenuToggles
         leftActive={leftSidebarToggleActive()}
         rightActive={rightSidebarToggleActive()}
-        centerContent={sessionTitlebarContext()}
+        leftContent={sessionTitlebarContext()}
+        showBrand={false}
         hideTitlebar={props.hideTitlebar}
         onToggleLeft={() => toggleSidebarMenu("left")}
         onToggleRight={() => toggleSidebarMenu("right")}

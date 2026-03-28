@@ -30,27 +30,22 @@ test("titlebar menu toggles keep macOS-sized icon controls", () => {
   );
 });
 
-test("titlebar menu toggles expose brand and session context slots", () => {
+test("titlebar menu toggles let session context replace the left-side brand", () => {
   assert.match(
     source,
     /Veslo by Neatech/,
-    "titlebar should render the Veslo brand next to the left toggle",
+    "titlebar should keep the Veslo brand as the fallback label when no session-specific titlebar content is provided",
   );
 
   assert.match(
     source,
-    /<div class=\{layout\.leftOffsetClass\}>[\s\S]*<LeftSidebarToggleIcon size=\{18\} \/>[\s\S]*Veslo by Neatech/,"titlebar should keep the brand in the left cluster beside the left toggle",
+    /leftContent\??:[\s\S]*showBrand\??:/,
+    "titlebar should accept optional left-side content and an explicit brand toggle so session view can show only the directory beside the left toggle",
   );
 
   assert.match(
     source,
-    /centerContent\??:/,
-    "titlebar should accept an optional center-content prop for session context",
-  );
-
-  assert.match(
-    source,
-    /props\.centerContent/,
-    "titlebar should render optional center content when provided by the page",
+    /<div class=\{layout\.leftOffsetClass\}>[\s\S]*<LeftSidebarToggleIcon size=\{18\} \/>[\s\S]*props\.leftContent[\s\S]*props\.showBrand !== false[\s\S]*Veslo by Neatech/,
+    "titlebar should render provided left-side content in the same cluster as the left toggle and only show the brand fallback when that behavior is explicitly enabled",
   );
 });

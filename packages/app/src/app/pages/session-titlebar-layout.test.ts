@@ -7,8 +7,22 @@ const source = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
 test("session routes the current directory into the shared titlebar", () => {
   assert.match(
     source,
+    /<TitlebarMenuToggles[\s\S]*leftContent=\{[\s\S]*showBrand=\{false\}/,
+    "session should pass the current directory into the left side of the shared titlebar",
+  );
+
+  assert.doesNotMatch(
+    source,
     /<TitlebarMenuToggles[\s\S]*centerContent=\{/,
-    "session should pass a centerContent value into the shared titlebar instead of keeping the path in the composer",
+    "session should not keep the current directory in the centered titlebar slot",
+  );
+});
+
+test("session clears the native centered window title while custom titlebar context is active", () => {
+  assert.match(
+    source,
+    /setWindowTitle\(""\)/,
+    "session should explicitly blank the native window title so the default centered product name does not remain visible alongside the custom titlebar content",
   );
 });
 

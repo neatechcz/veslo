@@ -8,7 +8,9 @@ type TitlebarMenuTogglesProps = {
   leftActive: boolean;
   rightActive: boolean;
   hideTitlebar: boolean;
+  leftContent?: JSX.Element;
   centerContent?: JSX.Element;
+  showBrand?: boolean;
   onToggleLeft: () => void;
   onToggleRight: () => void;
 };
@@ -59,9 +61,11 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
             >
               <LeftSidebarToggleIcon size={18} />
             </button>
-            <span class="truncate text-[13px] font-medium leading-6 text-gray-12">
-              Veslo by Neatech
-            </span>
+            {props.leftContent ?? (props.showBrand !== false ? (
+              <span class="truncate text-[13px] font-medium leading-6 text-gray-12">
+                Veslo by Neatech
+              </span>
+            ) : null)}
           </div>
         </div>
 
