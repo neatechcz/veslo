@@ -43,7 +43,7 @@ test("recent rows keep timestamp on the right and replace it with menu trigger o
 test("left sidebar session list uses tighter vertical spacing", () => {
   assert.match(
     source,
-    /fallback=\{\s*<div class="space-y-0">[\s\S]*<For each=\{recentRows\(\)\}>/,
+    /fallback=\{\s*<>\s*<div class="space-y-0">[\s\S]*<For each=\{recentRowsVisible\(\)\}>/,
     "recent-mode session rows should use a zero-gap stack",
   );
 
