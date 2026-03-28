@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
 import { resolveLeftMenuAction } from "./dashboard-menu-navigation.js";
 
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
-const leftMenuHandlerStart = dashboardSource.indexOf("const handleLeftMenuToggle = () => {");
-const leftMenuHandlerEnd = dashboardSource.indexOf('onToggleRight={() => toggleSidebarMenu("right")}', leftMenuHandlerStart);
-const leftMenuHandlerSource =
-  leftMenuHandlerStart >= 0 && leftMenuHandlerEnd >= 0
-    ? dashboardSource.slice(leftMenuHandlerStart, leftMenuHandlerEnd)
-    : dashboardSource;
+const leftMenuHandlerMatch = dashboardSource.match(
+  /const\s+handleLeftMenuToggle\s*=\s*\(\)\s*=>\s*\{[\s\S]*?onToggleRight\s*=\s*\{\s*\(\)\s*=>\s*toggleSidebarMenu\s*\(\s*["']right["']\s*\)\s*\}/s,
+);
+const leftMenuHandlerSource = leftMenuHandlerMatch?.[0] ?? dashboardSource;
+const helperSourcePath = new URL("./dashboard-menu-navigation.ts", import.meta.url);
+const helperSource = existsSync(helperSourcePath) ? readFileSync(helperSourcePath, "utf8") : null;
 
 test("returns to selected session for automations", () => {
   const result = resolveLeftMenuAction({
@@ -54,8 +54,25 @@ test("dashboard routes the left titlebar button through the helper", () => {
   assert.match(leftMenuHandlerSource, /tab\s*:\s*props\.tab/);
   assert.match(leftMenuHandlerSource, /selectedSessionId\s*:\s*props\.selectedSessionId/);
   assert.match(leftMenuHandlerSource, /props\.setView\s*\(\s*["']session["']\s*,\s*action\.sessionId\s*\)/);
-  assert.match(leftMenuHandlerSource, /action\.kind[\s\S]*?toggleSidebarMenu\s*\(\s*["']left["']\s*\)/s);
+  const returnBranchMatch = leftMenuHandlerSource.match(
+    /if\s*\(\s*action\.kind\s*===\s*["']return-to-session["']\s*\)\s*\{[\s\S]*?return\s*;[\s\S]*?\}/s,
+  );
+
+  assert.ok(returnBranchMatch);
+  assert.match(
+    leftMenuHandlerSource.slice((returnBranchMatch.index ?? 0) + returnBranchMatch[0].length),
+    /toggleSidebarMenu\s*\(\s*["']left["']\s*\)/,
+  );
   assert.match(dashboardSource, /onToggleLeft\s*=\s*\{\s*handleLeftMenuToggle\s*\}/);
   assert.doesNotMatch(dashboardSource, /onToggleLeft\s*=\s*\{\s*\(\)\s*=>\s*toggleSidebarMenu\s*\(\s*["']left["']\s*\)\s*\}/);
   assert.doesNotMatch(leftMenuHandlerSource, /matchMedia\s*\(\s*["']\(max-width:\s*767px\)["']\s*\)/);
+});
+
+test("helper source avoids viewport-specific left-menu logic when it exists", () => {
+  if (helperSource === null) {
+    assert.equal(helperSource, null);
+    return;
+  }
+
+  assert.doesNotMatch(helperSource, /matchMedia\s*\(\s*["']\(max-width:\s*767px\)["']\s*\)/);
 });
