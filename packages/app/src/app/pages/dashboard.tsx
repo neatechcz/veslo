@@ -66,6 +66,7 @@ import {
   createSessionWithWorkspaceActivation,
   openSessionWithWorkspaceActivation,
 } from "./session-navigation";
+import { resolveLeftMenuAction } from "./dashboard-menu-navigation";
 import {
   Box,
   ChevronDown,
@@ -1193,13 +1194,27 @@ export default function DashboardView(props: DashboardViewProps) {
     }),
   );
 
+  const handleLeftMenuToggle = () => {
+    const action = resolveLeftMenuAction({
+      tab: props.tab,
+      selectedSessionId: props.selectedSessionId,
+    });
+
+    if (action.kind === "return-to-session") {
+      props.setView("session", action.sessionId);
+      return;
+    }
+
+    toggleSidebarMenu("left");
+  };
+
   return (
     <div class={`flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden ${titlebarContentInsetClass()}`}>
       <TitlebarMenuToggles
         leftActive={leftSidebarVisible()}
         rightActive={rightSidebarVisible()}
         hideTitlebar={props.hideTitlebar}
-        onToggleLeft={() => toggleSidebarMenu("left")}
+        onToggleLeft={handleLeftMenuToggle}
         onToggleRight={() => toggleSidebarMenu("right")}
       />
 
