@@ -1,6 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import { deriveLatestRunArtifacts } from "./session-artifacts.js";
+import { startServer } from "./server.js";
 
 type FixturePart =
   | { type: "text"; text: string }
@@ -60,6 +64,19 @@ const families = (artifacts: Array<{ family: string }>) => artifacts.map((artifa
 
 const files = (artifacts: Array<{ family: string; path?: string; kind: string }>) =>
   artifacts.filter((artifact) => artifact.family === "files");
+
+const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void }> = [];
+
+afterEach(async () => {
+  while (runningServers.length > 0) {
+    const server = runningServers.pop();
+    try {
+      server?.stop?.(true);
+    } catch {
+      // ignore
+    }
+  }
+});
 
 describe("deriveLatestRunArtifacts", () => {
   test("derives file_discovered artifacts only from concrete workspace files the run touched", () => {
@@ -223,5 +240,116 @@ describe("deriveLatestRunArtifacts", () => {
     ]);
     expect(files(artifacts).map((artifact) => artifact.path)).toEqual([]);
     expect(artifacts.some((artifact) => artifact.path === "old/file.md" || artifact.path === "old/output.md")).toBe(false);
+  });
+});
+
+describe("latest-run artifact route", () => {
+  test("returns typed artifacts for the latest session run via Veslo server", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-artifacts-"));
+    const sessionId = "sess_1";
+
+    try {
+      const upstream = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(request) {
+          const url = new URL(request.url);
+          if (url.pathname === `/session/${sessionId}/message`) {
+            return Response.json([
+              {
+                info: { id: "msg-old-user", role: "user" },
+                parts: [{ type: "text", text: "old run" }],
+              },
+              {
+                info: { id: "msg-old-assistant", role: "assistant" },
+                parts: [{ type: "tool", tool: "skill", title: "brainstorming", sourceName: "brainstorming" }],
+              },
+              {
+                info: { id: "msg-new-user", role: "user" },
+                parts: [{ type: "text", text: "latest run" }],
+              },
+              {
+                info: { id: "msg-new-assistant", role: "assistant" },
+                parts: [
+                  { type: "tool", tool: "read", state: { input: { path: "src/app.ts" } } },
+                  { type: "tool", tool: "chrome-devtools.evaluate", server: "chrome-devtools", title: "Chrome DevTools" },
+                  { type: "tool", tool: "read", state: { input: { path: ".opencode/soul.md" } } },
+                ],
+              },
+            ]);
+          }
+          return new Response("not found", { status: 404 });
+        },
+      });
+      runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+      const server = startServer({
+        host: "127.0.0.1",
+        port: 0,
+        token: "client-token",
+        hostToken: "host-token",
+        approval: { mode: "auto", timeoutMs: 1_000 },
+        corsOrigins: ["*"],
+        workspaces: [
+          {
+            id: "ws_1",
+            name: "Workspace",
+            path: workspaceRoot,
+            workspaceType: "local",
+            baseUrl: `http://127.0.0.1:${upstream.port}`,
+          },
+        ],
+        authorizedRoots: [workspaceRoot],
+        readOnly: false,
+        startedAt: Date.now(),
+        tokenSource: "cli",
+        hostTokenSource: "cli",
+        logFormat: "pretty",
+        logRequests: false,
+      });
+      runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
+
+      const response = await fetch(
+        `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/${sessionId}/artifacts/latest-run`,
+        {
+          headers: { Authorization: "Bearer client-token" },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const payload = await response.json() as {
+        sessionId: string;
+        workspaceId: string;
+        runId: string | null;
+        items: Array<{ family: string; kind: string; status: string; path?: string; title?: string }>;
+      };
+
+      expect(payload.sessionId).toBe(sessionId);
+      expect(payload.workspaceId).toBe("ws_1");
+      expect(payload.runId).toBe("msg-new-user");
+
+      expect(payload.items).toEqual([
+        expect.objectContaining({
+          family: "files",
+          kind: "file_discovered",
+          status: "scanned",
+          path: "src/app.ts",
+        }),
+        expect.objectContaining({
+          family: "mcp",
+          kind: "mcp_used",
+          status: "used",
+          title: "Chrome DevTools",
+        }),
+        expect.objectContaining({
+          family: "soul",
+          kind: "soul_memory_used",
+          status: "used",
+        }),
+      ]);
+      expect(payload.items.some((artifact) => artifact.title === "brainstorming")).toBe(false);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
   });
 });

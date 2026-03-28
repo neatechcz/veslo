@@ -213,3 +213,40 @@ export interface AuditEntry {
   summary: string;
   timestamp: number;
 }
+
+export type SessionArtifactFamily = "files" | "skills" | "mcp" | "soul";
+
+export type SessionArtifactKind =
+  | "file_output"
+  | "file_discovered"
+  | "skill_used"
+  | "mcp_used"
+  | "soul_memory_used"
+  | "heartbeat_used";
+
+export type SessionArtifactStatus = "scanned" | "updated" | "created" | "exported" | "used" | "active";
+
+export interface SessionArtifactItem {
+  id: string;
+  sessionId: string;
+  workspaceId: string;
+  runId: string;
+  family: SessionArtifactFamily;
+  kind: SessionArtifactKind;
+  status: SessionArtifactStatus;
+  title: string;
+  subtitle?: string;
+  path?: string;
+  sourceName?: string;
+  messageId?: string;
+  partId?: string;
+  timestamp: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SessionLatestRunArtifactsResponse {
+  sessionId: string;
+  workspaceId: string;
+  runId: string | null;
+  items: SessionArtifactItem[];
+}

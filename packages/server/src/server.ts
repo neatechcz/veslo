@@ -2,7 +2,16 @@ import { readFile, writeFile, rm, readdir, rename, stat } from "node:fs/promises
 import { createHash, randomInt } from "node:crypto";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
+import type {
+  ApprovalRequest,
+  Capabilities,
+  ServerConfig,
+  WorkspaceInfo,
+  Actor,
+  ReloadReason,
+  ReloadTrigger,
+  TokenScope,
+} from "./types.js";
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { addMcp, listMcp, removeMcp } from "./mcp.js";
@@ -24,6 +33,7 @@ import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
 import { TOY_UI_CSS, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsResponse } from "./toy-ui.js";
 import { FileSessionStore } from "./file-sessions.js";
+import { deriveLatestRunArtifactsResponse } from "./session-artifacts.js";
 import pkg from "../package.json" with { type: "json" };
 
 const SERVER_VERSION = pkg.version;
@@ -553,8 +563,9 @@ async function fetchOpencodeJson(workspace: WorkspaceInfo, path: string, init: {
   }
 
   const url = new URL(baseUrl);
-  url.pathname = path.startsWith("/") ? path : `/${path}`;
-  url.search = "";
+  const [pathname, search = ""] = path.split("?");
+  url.pathname = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  url.search = search ? `?${search}` : "";
 
   const headers = new Headers();
   headers.set("Content-Type", "application/json");
@@ -1633,6 +1644,28 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     });
 
     return jsonResponse({ ok: true });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/artifacts/latest-run", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = (ctx.params.sessionId ?? "").trim();
+    if (!sessionId) {
+      throw new ApiError(400, "invalid_payload", "sessionId is required");
+    }
+
+    const messages = await fetchOpencodeJson(
+      workspace,
+      `/session/${encodeURIComponent(sessionId)}/message?limit=200`,
+      { method: "GET" },
+    );
+
+    return jsonResponse(
+      deriveLatestRunArtifactsResponse({
+        sessionId,
+        workspaceId: workspace.id,
+        messages: Array.isArray(messages) ? messages : [],
+      }),
+    );
   });
 
   addRoute(routes, "PATCH", "/workspace/:id/config", "client", async (ctx) => {
