@@ -7,6 +7,7 @@ import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, Slash
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { currentLocale, t } from "../../../i18n";
 import { extractFilesFromDataTransfer } from "../../utils/data-transfer-files";
+import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
 import { resolveShortComposerDisclaimer } from "./composer-disclaimer";
 import { resolveComposerWorkspaceLabel } from "./composer-workspace-label";
 import { nextAgentModeOnShiftTab } from "../../pages/session-shortcuts";
@@ -61,6 +62,7 @@ const IMAGE_COMPRESS_QUALITY = 0.82;
 const IMAGE_COMPRESS_TARGET_BYTES = 1_500_000;
 const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 const ACCEPTED_FILE_TYPES = [...ACCEPTED_IMAGE_TYPES, "application/pdf"];
+const PDF_SIGNATURE_SCAN_BYTES = 2048;
 const FILE_URL_RE = /^file:\/\//i;
 const HTTP_URL_RE = /^https?:\/\//i;
 const WINDOWS_PATH_RE = /^[a-zA-Z]:\\/;
@@ -1115,6 +1117,14 @@ export default function Composer(props: ComposerProps) {
       try {
         // Compress images before encoding to data URL
         const processed = isImageMime(file.type) ? await compressImageFile(file) : file;
+        const isPdfAttachment = processed.type === "application/pdf" || processed.name.toLowerCase().endsWith(".pdf");
+        if (isPdfAttachment) {
+          const prefix = new Uint8Array(await processed.slice(0, PDF_SIGNATURE_SCAN_BYTES).arrayBuffer());
+          if (!looksLikePdfDocumentPrefix(prefix)) {
+            props.onToast(`${file.name} is not a valid PDF file.`);
+            continue;
+          }
+        }
         const dataUrl = await fileToDataUrl(processed);
         // Pre-check: data URL will be embedded in JSON body; reject if too large
         const estimatedJsonBytes = dataUrl.length + 512; // data URL + JSON overhead

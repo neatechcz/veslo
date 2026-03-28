@@ -7,7 +7,28 @@ const packageSpec =
   "chrome-devtools-mcp@0.17.0";
 
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-const args = ["exec", "--yes", packageSpec, "--", ...process.argv.slice(2)];
+const forwardedArgs = process.argv.slice(2);
+
+const hasArg = (name: string) =>
+  forwardedArgs.some((value) => value === name || value.startsWith(`${name}=`));
+
+const hasExplicitBrowserProfileConfig =
+  hasArg("--isolated") ||
+  hasArg("--user-data-dir") ||
+  hasArg("--userDataDir") ||
+  hasArg("--browser-url") ||
+  hasArg("--browserUrl") ||
+  hasArg("--ws-endpoint") ||
+  hasArg("--wsEndpoint") ||
+  hasArg("--auto-connect") ||
+  hasArg("--autoConnect");
+
+const shouldInjectIsolated =
+  process.env.VESLO_CHROME_DEVTOOLS_MCP_DEFAULT_ISOLATED !== "0" && !hasExplicitBrowserProfileConfig;
+
+const effectiveArgs = shouldInjectIsolated ? [...forwardedArgs, "--isolated"] : forwardedArgs;
+
+const args = ["exec", "--yes", packageSpec, "--", ...effectiveArgs];
 
 const child = spawn(npmCommand, args, {
   stdio: "inherit",

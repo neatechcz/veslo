@@ -492,7 +492,7 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
                     "chrome-devtools".to_string(),
                     serde_json::json!({
                       "type": "local",
-                      "command": ["npx", "-y", "chrome-devtools-mcp@latest"]
+                      "command": ["npx", "-y", "chrome-devtools-mcp@latest", "--isolated"]
                     }),
                 );
                 config_changed = true;

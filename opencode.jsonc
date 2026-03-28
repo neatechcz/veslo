@@ -4,7 +4,8 @@
     "control-chrome": {
       "type": "local",
       "command": [
-        "chrome-devtools-mcp"
+        "chrome-devtools-mcp",
+        "--isolated"
       ]
     }
   },

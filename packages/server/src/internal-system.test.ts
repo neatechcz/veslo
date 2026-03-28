@@ -64,7 +64,7 @@ You are Veslo.
         join(workspaceRoot, ".opencode", "veslo", "internal", "manifest.json"),
         "utf8",
       );
-      expect(manifest).toContain('"version": "2026-03-27.1"');
+      expect(manifest).toContain('"version": "2026-03-27.2"');
       expect(manifest).toContain('"schemaVersion": 1');
       expect(manifest).toContain('"plugins"');
       expect(manifest).toContain("veslo-delegate.js");
@@ -82,6 +82,8 @@ You are Veslo.
       expect(vesloAgent).toContain("VESLO_AGENT_INSTRUCTIONS_END");
       expect(vesloAgent).toContain("Task Mode Behavior");
       expect(vesloAgent).toContain("Progressive disclosure");
+      expect(vesloAgent).toContain("Document Download Safety");
+      expect(vesloAgent).toContain("If a fetch tool already returned bytes for a file URL");
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }

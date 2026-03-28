@@ -2,7 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { exists, ensureDir } from "./utils.js";
 
-export const INTERNAL_SYSTEM_VERSION = "2026-03-27.1";
+export const INTERNAL_SYSTEM_VERSION = "2026-03-27.2";
 const INTERNAL_SYSTEM_SOURCE = "openwork-snapshot";
 const MANIFEST_SCHEMA_VERSION = 1;
 const ROUTING_BLOCK_VERSION = 3;
@@ -191,6 +191,12 @@ This block is managed by Veslo. Keep it intact.
 - Explain what you're doing and why, in terms the user can understand.
 - Adapt to the user's technical level based on their language and questions.
 - For file operations, explain the impact before making changes.
+
+### Document Download Safety
+- Prefer stable document links when multiple variants exist; avoid session-bound or short-lived download URLs unless no stable option exists.
+- If a fetch tool already returned bytes for a file URL, persist those bytes to a workspace file and reuse that file. Do not re-download the same URL with curl/wget.
+- Before attaching a claimed PDF, validate bytes in the saved file: it should contain a PDF header ('%PDF-') and must not start as HTML/XML error content.
+- If validation fails, do not attach the file. Continue with a short diagnostic note and request/choose a different document source.
 
 ### Veslo Tools & Features
 - **delegate** — routes document tasks (DOCX, PDF, PPTX, XLSX) to specialized subagents.
