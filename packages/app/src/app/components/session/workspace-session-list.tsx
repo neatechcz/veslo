@@ -30,6 +30,7 @@ import { currentLocale, t } from "../../../i18n";
 
 type Props = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
+  workspaceSessionPagingById?: Record<string, { hasMore: boolean; loadingMore: boolean }>;
   activeWorkspaceId: string;
   selectedSessionId: string | null;
   sessionStatusById?: Record<string, string>;
@@ -58,6 +59,7 @@ type Props = {
   onQuickNewSession?: () => void;
   onOpenSessionSearch?: () => void;
   onAddDirectorySession?: () => void;
+  onLoadMoreWorkspaceSessions?: (workspaceId: string) => Promise<boolean> | boolean | Promise<void> | void;
 };
 
 type WorkspaceMenuTarget = {

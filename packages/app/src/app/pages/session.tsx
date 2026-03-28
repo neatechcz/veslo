@@ -187,6 +187,8 @@ export type SessionViewProps = {
   retryLastPrompt: () => void;
   newTaskDisabled: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
+  workspaceSessionPagingById: Record<string, { hasMore: boolean; loadingMore: boolean }>;
+  loadMoreWorkspaceSidebarSessions: (workspaceId: string) => Promise<void> | void;
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
   openRenameWorkspace: (workspaceId: string) => void;
   selectSession: (sessionId: string) => Promise<void> | void;
@@ -3687,6 +3689,7 @@ export default function SessionView(props: SessionViewProps) {
         <div class="min-h-0 flex-1">
           <WorkspaceSessionList
             workspaceSessionGroups={props.workspaceSessionGroups}
+            workspaceSessionPagingById={props.workspaceSessionPagingById}
             activeWorkspaceId={props.activeWorkspaceId}
             selectedSessionId={props.selectedSessionId}
             sessionStatusById={props.sessionStatusById}
@@ -3714,6 +3717,7 @@ export default function SessionView(props: SessionViewProps) {
             onImportWorkspaceConfig={props.importWorkspaceConfig}
             onQuickNewSession={props.openNewSessionWithDirectory}
             onAddDirectorySession={props.openDirectorySessionFromPicker}
+            onLoadMoreWorkspaceSessions={props.loadMoreWorkspaceSidebarSessions}
             onOpenSessionSearch={() => openCommandPalette("sessions")}
           />
         </div>
