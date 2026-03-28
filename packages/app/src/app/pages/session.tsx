@@ -115,6 +115,7 @@ import {
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
 import ArtifactsPanel from "../components/session/artifacts-panel";
+import type { ArtifactFamily } from "../components/session/artifact-family-model";
 import {
   createSessionWithWorkspaceActivation,
   openSessionWithWorkspaceActivation,
@@ -205,6 +206,7 @@ export type SessionViewProps = {
     updater: (current: SidebarSectionState) => SidebarSectionState,
   ) => SidebarSectionState;
   artifacts: ArtifactItem[];
+  artifactFamilies: ArtifactFamily[];
   workingFiles: string[];
   authorizedDirs: string[];
   activePlugins: string[];
@@ -1027,36 +1029,6 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const canCompactSession = createMemo(() => Boolean(props.selectedSessionId) && hasUserMessages());
-
-  const touchedFiles = createMemo(() => {
-    const out: string[] = [];
-    const seen = new Set<string>();
-    const add = (value: string) => {
-      const normalized = String(value ?? "").trim().replace(/[\\/]+/g, "/");
-      if (!normalized) return;
-      const key = normalized.toLowerCase();
-      if (seen.has(key)) return;
-      seen.add(key);
-      out.push(normalized);
-    };
-
-    const artifacts = props.artifacts;
-    for (let idx = artifacts.length - 1; idx >= 0; idx -= 1) {
-      const item = artifacts[idx];
-      add(item?.path ?? item?.name ?? "");
-      if (out.length >= 48) break;
-    }
-
-    if (out.length === 0) {
-      const working = props.workingFiles;
-      for (let idx = working.length - 1; idx >= 0; idx -= 1) {
-        add(working[idx] ?? "");
-        if (out.length >= 48) break;
-      }
-    }
-
-    return out;
-  });
 
   const resolveLocalFileCandidates = async (file: string) => {
     const trimmed = normalizeLocalFilePath(file).trim();
@@ -3800,7 +3772,7 @@ export default function SessionView(props: SessionViewProps) {
 
       <ArtifactsPanel
         id="sidebar-artifacts"
-        files={touchedFiles()}
+        families={props.artifactFamilies}
         workspaceRoot={props.activeWorkspaceRoot}
         onRevealArtifact={revealArtifact}
         onOpenInObsidian={openArtifactInObsidian}

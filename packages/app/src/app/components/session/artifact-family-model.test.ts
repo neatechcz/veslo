@@ -1,21 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { VesloSessionArtifactItem } from "../../lib/veslo-server";
 import { buildArtifactFamilies, resolveArtifactFamilies } from "./artifact-family-model.js";
 
-type ArtifactFixture = {
-  id: string;
-  family: "files" | "skills" | "mcp" | "soul";
-  kind: string;
-  status: string;
-  title: string;
-  subtitle?: string;
-  path?: string;
-  sourceName?: string;
-  timestamp: number;
-};
+type ArtifactFixture = Omit<VesloSessionArtifactItem, "sessionId" | "workspaceId" | "runId"> &
+  Partial<Pick<VesloSessionArtifactItem, "sessionId" | "workspaceId" | "runId">>;
 
-const artifact = (fixture: ArtifactFixture) => fixture;
+const artifact = (fixture: ArtifactFixture): VesloSessionArtifactItem => ({
+  sessionId: "sess_1",
+  workspaceId: "ws_1",
+  runId: "run_1",
+  ...fixture,
+});
 
 const familyLabel = (family: Record<string, unknown>) =>
   String(family.label ?? family.name ?? family.family ?? family.kind ?? "");
@@ -132,6 +129,23 @@ test("resolveArtifactFamilies falls back to legacy ArtifactItem data only when s
   });
 
   assert.deepEqual(serverPreferred.map(familyLabel), ["Skills"]);
+});
+
+test("resolveArtifactFamilies keeps an empty server response authoritative when preferServerArtifacts is enabled", () => {
+  const families = resolveArtifactFamilies({
+    serverArtifacts: [],
+    preferServerArtifacts: true,
+    legacyArtifacts: [
+      {
+        id: "legacy-file",
+        name: "notes.md",
+        path: "notes.md",
+        kind: "file",
+      },
+    ],
+  });
+
+  assert.deepEqual(families, []);
 });
 
 test("technical and noisy generic file paths do not create non-file families", () => {

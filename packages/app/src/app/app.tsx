@@ -237,12 +237,14 @@ import {
   type VesloAuditEntry,
   type VesloSoulHeartbeatEntry,
   type VesloSoulStatus,
+  type VesloSessionLatestRunArtifacts,
   type VesloServerCapabilities,
   type VesloServerDiagnostics,
   type VesloServerStatus,
   type VesloServerSettings,
   VesloServerError,
 } from "./lib/veslo-server";
+import { resolveArtifactFamilies } from "./components/session/artifact-family-model";
 import { CLOUD_ONLY_MODE, resolveVesloCloudEnvironment } from "./lib/cloud-policy";
 import { isRemoteUiEnabled } from "./lib/runtime-policy";
 import {
@@ -999,6 +1001,7 @@ export default function App() {
     deriveArtifacts(messages(), { maxMessages: ARTIFACT_SCAN_MESSAGE_WINDOW }),
   );
   const workingFiles = createMemo(() => deriveWorkingFiles(artifacts()));
+  const [latestRunArtifactResponse, setLatestRunArtifactResponse] = createSignal<VesloSessionLatestRunArtifacts | undefined>(undefined);
   const activeSessionId = createMemo(() => selectedSessionId());
   const activeSessions = createMemo(() => sessions());
   const activeSessionStatusById = createMemo(() => sessionStatusById());
@@ -1006,6 +1009,77 @@ export default function App() {
   const activeTodos = createMemo(() => todos());
   const activeArtifacts = createMemo(() => artifacts());
   const activeWorkingFiles = createMemo(() => workingFiles());
+  const currentLatestRunArtifactResponse = createMemo(() => {
+    const response = latestRunArtifactResponse();
+    const sessionId = selectedSessionId();
+    const workspaceId = vesloServerWorkspaceId();
+    if (!response || !sessionId || !workspaceId) return undefined;
+    if (response.sessionId !== sessionId || response.workspaceId !== workspaceId) return undefined;
+    return response;
+  });
+  const latestRunArtifactRefreshKey = createMemo(() => {
+    const client = vesloServerClient();
+    const workspaceId = vesloServerWorkspaceId();
+    const sessionId = selectedSessionId();
+    if (!client || !workspaceId || !sessionId || vesloServerStatus() !== "connected") return "";
+
+    const list = messages();
+    let partCount = 0;
+    let lastUserMessageId = "";
+    for (const message of list) {
+      partCount += Array.isArray(message.parts) ? message.parts.length : 0;
+      const role = typeof message.info?.role === "string" ? message.info.role : "";
+      if (role === "user" && typeof message.info?.id === "string") {
+        lastUserMessageId = message.info.id;
+      }
+    }
+
+    return `${workspaceId}:${sessionId}:${lastUserMessageId}:${partCount}`;
+  });
+  const activeArtifactFamilies = createMemo(() =>
+    resolveArtifactFamilies({
+      serverArtifacts: currentLatestRunArtifactResponse()?.items,
+      preferServerArtifacts: Boolean(currentLatestRunArtifactResponse()),
+      legacyArtifacts: currentLatestRunArtifactResponse() ? [] : artifacts(),
+      workingFiles: currentLatestRunArtifactResponse() ? [] : workingFiles(),
+    }),
+  );
+
+  createEffect(() => {
+    const key = latestRunArtifactRefreshKey();
+    if (!key) {
+      setLatestRunArtifactResponse(undefined);
+      return;
+    }
+
+    const client = vesloServerClient();
+    const workspaceId = vesloServerWorkspaceId();
+    const sessionId = selectedSessionId();
+    if (!client || !workspaceId || !sessionId) {
+      setLatestRunArtifactResponse(undefined);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void client
+        .getSessionLatestRunArtifacts(workspaceId, sessionId)
+        .then((response) => {
+          if (cancelled) return;
+          if (response.sessionId !== sessionId || response.workspaceId !== workspaceId) return;
+          setLatestRunArtifactResponse(response);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setLatestRunArtifactResponse(undefined);
+        });
+    }, 120);
+
+    onCleanup(() => {
+      cancelled = true;
+      clearTimeout(timer);
+    });
+  });
 
   const sessionActivity = (session: Session) =>
     session.time?.updated ?? session.time?.created ?? 0;
@@ -6621,6 +6695,7 @@ export default function App() {
     expandedSidebarSections: expandedSidebarSections(),
     setExpandedSidebarSections: setExpandedSidebarSections,
     artifacts: activeArtifacts(),
+    artifactFamilies: activeArtifactFamilies(),
     workingFiles: activeWorkingFiles(),
     authorizedDirs: activeAuthorizedDirs(),
     busy: busy(),

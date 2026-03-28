@@ -453,6 +453,43 @@ export type VesloArtifactList = {
   items: VesloArtifactItem[];
 };
 
+export type VesloSessionArtifactFamily = "files" | "skills" | "mcp" | "soul";
+
+export type VesloSessionArtifactKind =
+  | "file_output"
+  | "file_discovered"
+  | "skill_used"
+  | "mcp_used"
+  | "soul_memory_used"
+  | "heartbeat_used";
+
+export type VesloSessionArtifactStatus = "scanned" | "updated" | "created" | "exported" | "used" | "active";
+
+export type VesloSessionArtifactItem = {
+  id: string;
+  sessionId: string;
+  workspaceId: string;
+  runId: string;
+  family: VesloSessionArtifactFamily;
+  kind: VesloSessionArtifactKind;
+  status: VesloSessionArtifactStatus;
+  title: string;
+  subtitle?: string;
+  path?: string;
+  sourceName?: string;
+  messageId?: string;
+  partId?: string;
+  timestamp: number;
+  metadata?: Record<string, unknown>;
+};
+
+export type VesloSessionLatestRunArtifacts = {
+  sessionId: string;
+  workspaceId: string;
+  runId: string | null;
+  items: VesloSessionArtifactItem[];
+};
+
 export type VesloInboxItem = {
   id: string;
   name?: string;
@@ -1231,6 +1268,7 @@ export function createVesloServerClient(options: { baseUrl: string; token?: stri
     activateWorkspace: 10_000,
     deleteWorkspace: 10_000,
     deleteSession: 12_000,
+    sessionArtifacts: 10_000,
     status: 6_000,
     config: 10_000,
     opencodeRouter: 10_000,
@@ -1279,6 +1317,12 @@ export function createVesloServerClient(options: { baseUrl: string; token?: stri
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
         { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteSession },
+      ),
+    getSessionLatestRunArtifacts: (workspaceId: string, sessionId: string) =>
+      requestJson<VesloSessionLatestRunArtifacts>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/artifacts/latest-run`,
+        { token, hostToken, timeoutMs: timeouts.sessionArtifacts },
       ),
     exportWorkspace: (workspaceId: string) =>
       requestJson<VesloWorkspaceExport>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/export`, {
