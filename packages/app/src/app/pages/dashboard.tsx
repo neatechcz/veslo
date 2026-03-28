@@ -658,7 +658,7 @@ export default function DashboardView(props: DashboardViewProps) {
     return (
       <button
         type="button"
-        class={`${compact ? "w-full h-8 flex items-center gap-2 px-2.5 rounded-lg text-[13px] font-medium transition-colors" : "w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors"} ${
+        class={`${compact ? "w-full h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-[13px] font-medium transition-colors" : "w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors"} ${
           active()
             ? "bg-dls-active text-dls-text"
             : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
@@ -1267,7 +1267,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onAddDirectorySession={props.openDirectorySessionFromPicker}
             />
           </div>
-          <div class="mt-2 space-y-0.5 border-t border-gray-6/70 pt-2">
+          <div class="mt-1.5 space-y-0 border-t border-gray-6/70 pt-1.5">
             {navItem("scheduled", t("nav.automations", currentLocale()), <History size={18} />, { compact: true })}
             {navItem("soul", t("nav.soul", currentLocale()), <HeartPulse size={18} class={soulNavIconClass()} />, {
               compact: true,

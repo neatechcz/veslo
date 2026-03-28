@@ -14,7 +14,7 @@ const rightSidebar = rightSidebarStart >= 0 ? source.slice(rightSidebarStart) : 
 test("dashboard relocates the product nav into the left sidebar above settings", () => {
   assert.match(
     leftSidebar,
-    /<WorkspaceSessionList[\s\S]*<div class="mt-2 space-y-0\.5 border-t border-gray-6\/70 pt-2">[\s\S]*navItem\("scheduled",[\s\S]*navItem\("soul",[\s\S]*navItem\("skills",[\s\S]*navItem\("mcp",[\s\S]*<SidebarStatusControls/,
+    /<WorkspaceSessionList[\s\S]*<div class="mt-1\.5 space-y-0 border-t border-gray-6\/70 pt-1\.5">[\s\S]*navItem\("scheduled",[\s\S]*navItem\("soul",[\s\S]*navItem\("skills",[\s\S]*navItem\("mcp",[\s\S]*<SidebarStatusControls/,
   );
 });
 
@@ -22,7 +22,7 @@ test("dashboard uses compact sizing for the relocated left-sidebar nav items", (
   assert.match(source, /const navItem = \(tab: DashboardTab, label: string, icon: any, options\?: \{ compact\?: boolean \}\) =>/);
   assert.match(
     source,
-    /compact \? "w-full h-8 flex items-center gap-2 px-2\.5 rounded-lg text-\[13px\] font-medium transition-colors"/,
+    /compact \? "w-full h-7 flex items-center gap-1\.5 px-2\.5 rounded-lg text-\[13px\] font-medium transition-colors"/,
   );
   assert.match(leftSidebar, /navItem\("scheduled",[\s\S]*\{ compact: true \}\)/);
 });

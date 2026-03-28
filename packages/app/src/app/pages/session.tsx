@@ -3717,10 +3717,10 @@ export default function SessionView(props: SessionViewProps) {
             onOpenSessionSearch={() => openCommandPalette("sessions")}
           />
         </div>
-        <div class="mt-2 space-y-0.5 border-t border-gray-6/70 pt-2">
+        <div class="mt-1.5 space-y-0 border-t border-gray-6/70 pt-1.5">
           <button
             type="button"
-            class={`w-full h-8 flex items-center gap-2 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
+            class={`w-full h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
               showRightSidebarSelection() && props.tab === "scheduled"
                 ? "bg-gray-4 text-gray-12"
                 : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
@@ -3732,7 +3732,7 @@ export default function SessionView(props: SessionViewProps) {
           </button>
           <button
             type="button"
-            class={`w-full h-8 flex items-center gap-2 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
+            class={`w-full h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
               showRightSidebarSelection() && props.tab === "soul"
                 ? "bg-gray-4 text-gray-12"
                 : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
@@ -3744,7 +3744,7 @@ export default function SessionView(props: SessionViewProps) {
           </button>
           <button
             type="button"
-            class={`w-full h-8 flex items-center gap-2 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
+            class={`w-full h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
               showRightSidebarSelection() && props.tab === "skills"
                 ? "bg-gray-4 text-gray-12"
                 : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
@@ -3756,7 +3756,7 @@ export default function SessionView(props: SessionViewProps) {
           </button>
           <button
             type="button"
-            class={`w-full h-8 flex items-center gap-2 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
+            class={`w-full h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
               showRightSidebarSelection() && (props.tab === "mcp" || props.tab === "plugins")
                 ? "bg-gray-4 text-gray-12"
                 : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
