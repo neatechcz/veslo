@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildProjectGroups,
   buildRecentRows,
+  displayTimestamp,
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
   isProjectCollapsed,
@@ -216,4 +217,17 @@ test("formatSessionTimestampTooltip provides exact datetime text for hover toolt
   const text = formatSessionTimestampTooltip(0, "en-US");
   assert.ok(text.length > 0);
   assert.match(text, /1970/);
+});
+
+test("displayTimestamp prefers created time over updated time", () => {
+  const value = displayTimestamp({
+    id: "session-1",
+    title: "session-1",
+    time: {
+      created: 100,
+      updated: 9_000,
+    },
+  });
+
+  assert.equal(value, 100);
 });

@@ -58,7 +58,7 @@ export const activityTimestamp = (session: WorkspaceSessionGroup["sessions"][num
   session.time?.updated ?? session.time?.created ?? 0;
 
 export const displayTimestamp = (session: WorkspaceSessionGroup["sessions"][number]) =>
-  activityTimestamp(session) || Date.now();
+  creationTimestamp(session) || activityTimestamp(session) || Date.now();
 
 const SECOND_MS = 1_000;
 const MINUTE_MS = 60 * SECOND_MS;
