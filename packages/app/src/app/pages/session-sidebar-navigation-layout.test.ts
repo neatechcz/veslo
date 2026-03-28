@@ -15,7 +15,11 @@ const rightSidebar =
 test("session relocates the dashboard nav into the left sidebar above settings", () => {
   assert.match(
     leftSidebar,
-    /<WorkspaceSessionList[\s\S]*<div class="mt-3 space-y-1 border-t border-gray-6\/70 pt-3">[\s\S]*Automations[\s\S]*Soul[\s\S]*Skills[\s\S]*Extensions[\s\S]*<SidebarStatusControls/,
+    /<WorkspaceSessionList[\s\S]*<div class="mt-2 space-y-0\.5 border-t border-gray-6\/70 pt-2">[\s\S]*Automations[\s\S]*Soul[\s\S]*Skills[\s\S]*Extensions[\s\S]*<SidebarStatusControls/,
+  );
+  assert.match(
+    leftSidebar,
+    /class=\{`w-full h-8 flex items-center gap-2 px-2\.5 rounded-lg text-\[13px\] font-medium transition-colors/,
   );
 });
 
