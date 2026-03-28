@@ -7,7 +7,6 @@ export type LeftMenuAction =
 type ResolveLeftMenuActionInput = {
   tab: DashboardTab;
   selectedSessionId: string | null | undefined;
-  isNarrowViewport: boolean;
 };
 
 const SESSION_RETURN_TABS = new Set<DashboardTab>([
@@ -21,10 +20,6 @@ const SESSION_RETURN_TABS = new Set<DashboardTab>([
 ]);
 
 export function resolveLeftMenuAction(input: ResolveLeftMenuActionInput): LeftMenuAction {
-  if (!input.isNarrowViewport) {
-    return { kind: "toggle-left-sidebar" };
-  }
-
   if (!SESSION_RETURN_TABS.has(input.tab)) {
     return { kind: "toggle-left-sidebar" };
   }

@@ -11,6 +11,7 @@ type TitlebarMenuTogglesProps = {
   leftContent?: JSX.Element;
   centerContent?: JSX.Element;
   showBrand?: boolean;
+  leftLabel?: string;
   onToggleLeft: () => void;
   onToggleRight: () => void;
 };
@@ -29,6 +30,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
         ? "text-gray-12"
         : "text-gray-9 hover:text-gray-12"
     }`;
+  const leftLabel = () => props.leftLabel ?? "Toggle left menu";
 
   const handleDragStripMouseDown = (event: MouseEvent) => {
     if (event.button !== 0) return;
@@ -56,8 +58,8 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
               type="button"
               class={buttonClass(props.leftActive)}
               onClick={() => props.onToggleLeft()}
-              aria-label="Toggle left menu"
-              title="Toggle left menu"
+              aria-label={leftLabel()}
+              title={leftLabel()}
             >
               <LeftSidebarToggleIcon size={18} />
             </button>
