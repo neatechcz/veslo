@@ -13,6 +13,7 @@ import {
   addOpencodeCacheHint,
   clearStartupPreference,
   isTauriRuntime,
+  isPrivateWorkspacePathForRoot,
   normalizeDirectoryPath,
   readStartupPreference,
   safeStringify,
@@ -1561,10 +1562,7 @@ export function createWorkspaceStore(options: {
   }
 
   const isPrivateWorkspacePath = (folder: string | null | undefined) => {
-    const root = normalizeDirectoryPath(privateWorkspaceRoot());
-    const value = normalizeDirectoryPath(folder ?? "");
-    if (!root || !value) return false;
-    return value === root || value.startsWith(`${root}/`);
+    return isPrivateWorkspacePathForRoot(folder, privateWorkspaceRoot());
   };
 
   async function ensureLocalWorkspaceActive(workspaceId: string) {

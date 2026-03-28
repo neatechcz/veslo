@@ -58,6 +58,31 @@ export function sessionDirectoryMatchesRoot(
   return sessionRoot === root;
 }
 
+export function preferredSessionWorkspaceRoot(
+  sessionDirectory: string | null | undefined,
+  activeWorkspaceRoot: string | null | undefined,
+) {
+  const sessionRoot = normalizeDirectoryPath(sessionDirectory ?? "");
+  if (sessionRoot) return sessionRoot;
+  return normalizeDirectoryPath(activeWorkspaceRoot ?? "");
+}
+
+export function isPrivateWorkspacePathForRoot(
+  folder: string | null | undefined,
+  privateWorkspaceRoot: string | null | undefined,
+) {
+  const root = normalizeDirectoryPath(privateWorkspaceRoot ?? "");
+  const value = normalizeDirectoryPath(folder ?? "");
+  if (!value) return false;
+  if (root && (value === root || value.startsWith(`${root}/`))) {
+    return true;
+  }
+
+  // Keep private-workspace UX stable even when the cached private root is
+  // unavailable or differs across app identifiers (e.g. dev/release data dirs).
+  return value.includes("/private-workspaces/");
+}
+
 export function commandPathFromWorkspaceRoot(workspaceRoot: string, commandName: string) {
   const root = workspaceRoot.trim().replace(/\/+$/, "");
   const name = commandName.trim().replace(/^\/+/, "");

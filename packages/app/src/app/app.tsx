@@ -145,6 +145,7 @@ import {
   modelEquals,
   normalizeDirectoryQueryPath,
   normalizeDirectoryPath,
+  preferredSessionWorkspaceRoot,
   sessionDirectoryMatchesRoot,
 } from "./utils";
 import { createStartupGuard } from "./utils/startup-guard";
@@ -4969,9 +4970,23 @@ export default function App() {
       throw new Error("No session selected");
     }
 
-    const sourceWorkspace = workspaceStore.activeWorkspaceDisplay();
-    const sourceWorkspaceId = workspaceStore.activeWorkspaceId().trim();
-    const sourceRoot = workspaceStore.activeWorkspaceRoot().trim();
+    const activeRoot = workspaceStore.activeWorkspaceRoot().trim();
+    const sessionRecord = sessions().find((session) => session.id === sessionID) ?? null;
+    const sourceRoot = preferredSessionWorkspaceRoot(
+      sessionRecord ? resolveSessionDirectory(sessionRecord) : "",
+      activeRoot,
+    );
+    const normalizedSourceRoot = normalizeDirectoryPath(sourceRoot);
+    const sourceWorkspaceMatch = normalizedSourceRoot
+      ? workspaceStore.workspaces().find(
+          (workspace) =>
+            workspace.workspaceType === "local" &&
+            normalizeDirectoryPath(workspace.path?.trim() ?? "") === normalizedSourceRoot,
+        ) ?? null
+      : null;
+    const sourceWorkspace = sourceWorkspaceMatch ?? workspaceStore.activeWorkspaceDisplay();
+    const sourceWorkspaceId = sourceWorkspace.id?.trim() || workspaceStore.activeWorkspaceId().trim();
+
     if (sourceWorkspace.workspaceType !== "local" || !workspaceStore.isPrivateWorkspacePath(sourceRoot)) {
       throw new Error("Choose folder is only available for private workspaces.");
     }
@@ -6431,9 +6446,10 @@ export default function App() {
     setTab,
     setSettingsTab,
     activeWorkspaceDisplay: activeWorkspaceDisplay(),
-    activeWorkspaceRoot:
-      resolveSessionDirectory(selectedSession() ?? { id: "", directory: "" }) ||
+    activeWorkspaceRoot: preferredSessionWorkspaceRoot(
+      resolveSessionDirectory(selectedSession() ?? { id: "", directory: "" }),
       workspaceStore.activeWorkspaceRoot().trim(),
+    ),
     workspaces: workspaceStore.workspaces(),
     activeWorkspaceId: workspaceStore.activeWorkspaceId(),
     connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
@@ -6453,10 +6469,18 @@ export default function App() {
     openCreateRemoteWorkspace,
     openNewSessionWithDirectory,
     canChooseSessionFolder:
-      isTauriRuntime() &&
-      activeSessionId() !== null &&
-      workspaceStore.activeWorkspaceDisplay().workspaceType === "local" &&
-      workspaceStore.isPrivateWorkspacePath(workspaceStore.activeWorkspaceRoot().trim()),
+      (() => {
+        if (!isTauriRuntime()) return false;
+        const sessionId = activeSessionId();
+        if (!sessionId) return false;
+        if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") return false;
+        const session = selectedSession();
+        const sourceRoot = preferredSessionWorkspaceRoot(
+          session ? resolveSessionDirectory(session) : "",
+          workspaceStore.activeWorkspaceRoot().trim(),
+        );
+        return workspaceStore.isPrivateWorkspacePath(sourceRoot);
+      })(),
     chooseFolderForCurrentSession,
     showRemoteActions: showRemoteActions(),
     importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
