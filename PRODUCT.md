@@ -60,13 +60,30 @@ Implementation detail:
 
 ### 4) Artifacts
 
-Artifacts are user-visible outputs:
+Artifacts are run-scoped, user-visible evidence about what actually happened in the latest run.
 
-- files created/modified
-- generated documents/spreadsheets/presentations
-- exported logs and summaries
+Artifacts must be grouped into four families:
 
-Veslo lists artifacts per run and supports open/share/download.
+- `Files`
+  - files scanned/read during the run
+  - files created/updated/exported during the run
+- `Skills`
+  - skills actually invoked in the run
+- `MCP`
+  - MCP servers actually used in the run
+- `Soul`
+  - Soul memory + heartbeat evidence, shown as one family in UI
+
+Artifacts must not show technical noise just because the runtime touched it internally:
+
+- `SKILL.md`
+- `AGENTS.md`
+- `.opencode/**`
+- internal prompt markdown
+- any other system plumbing that was not meaningful to the user
+
+Veslo lists artifacts per run and supports open/share/download when an artifact is backed by a real file path.
+Non-file artifact families remain visible as informational evidence in the session sidebar.
 
 ### 5) Audit Log
 

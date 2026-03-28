@@ -226,6 +226,39 @@ Core methods:
 - `client.session.abort()`
 - `client.session.summarize()`
 
+### Session Artifact Provenance
+
+The session sidebar `Artifacts` panel must not be derived from regex-parsing arbitrary tool output.
+
+Canonical source of truth:
+
+- Veslo server route:
+  - `GET /workspace/:id/sessions/:sessionId/artifacts/latest-run`
+- Source data:
+  - latest run message history from OpenCode session messages
+- Response:
+  - typed run artifacts with `family`, `kind`, `status`, `title`, optional `path`, optional `sourceName`, and `runId`
+
+Artifact families are:
+
+- `files`
+  - `file_discovered`
+  - `file_output`
+- `skills`
+  - `skill_used`
+- `mcp`
+  - `mcp_used`
+- `soul`
+  - `soul_memory_used`
+  - `heartbeat_used`
+
+UI rule:
+
+- `Soul` is displayed as one family even though `soul_memory_used` and `heartbeat_used` stay distinct in the server model.
+- The app consumes the server response first.
+- Legacy client-side file heuristics are fallback-only for older sessions/history when the server response is unavailable.
+- Technical runtime files such as `.opencode/**`, `SKILL.md`, `AGENTS.md`, and internal prompts must not surface as generic file artifacts.
+
 ### Auto-Compaction
 
 Veslo automatically compacts long conversations to prevent context overflow.
