@@ -66,7 +66,7 @@ import {
   createSessionWithWorkspaceActivation,
   openSessionWithWorkspaceActivation,
 } from "./session-navigation";
-import { resolveLeftMenuAction } from "./dashboard-menu-navigation";
+import { resolveDashboardTabSelectionAction, resolveLeftMenuAction } from "./dashboard-menu-navigation";
 import {
   Box,
   ChevronDown,
@@ -666,7 +666,7 @@ export default function DashboardView(props: DashboardViewProps) {
             ? "bg-dls-active text-dls-text"
             : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
         }`}
-        onClick={() => props.setTab(tab)}
+        onClick={() => handleDashboardTabSelection(tab)}
       >
         {icon}
         {label}
@@ -674,9 +674,27 @@ export default function DashboardView(props: DashboardViewProps) {
     );
   };
 
+  const handleDashboardTabSelection = (nextTab: DashboardTab, nextSettingsTab?: SettingsTab) => {
+    const action = resolveDashboardTabSelectionAction({
+      currentTab: props.tab,
+      nextTab,
+      selectedSessionId: props.selectedSessionId,
+    });
+
+    if (action.kind === "return-to-session") {
+      props.setView("session", action.sessionId);
+      return;
+    }
+
+    if (nextTab === "settings" && nextSettingsTab) {
+      props.setSettingsTab(nextSettingsTab);
+    }
+
+    props.setTab(nextTab);
+  };
+
   const openSettings = (tab: SettingsTab = "general") => {
-    props.setSettingsTab(tab);
-    props.setTab("settings");
+    handleDashboardTabSelection("settings", tab);
   };
 
   const openSoulForWorkspace = (workspaceId?: string) => {
@@ -1697,7 +1715,7 @@ export default function DashboardView(props: DashboardViewProps) {
               class={`flex flex-col items-center gap-1 text-xs ${
                 props.tab === "scheduled" ? "text-gray-12" : "text-gray-10"
               }`}
-              onClick={() => props.setTab("scheduled")}
+              onClick={() => handleDashboardTabSelection("scheduled")}
             >
               <History size={18} />
               Automations
@@ -1706,7 +1724,7 @@ export default function DashboardView(props: DashboardViewProps) {
               class={`flex flex-col items-center gap-1 text-xs ${
                 props.tab === "soul" ? "text-gray-12" : "text-gray-10"
               }`}
-              onClick={() => props.setTab("soul")}
+              onClick={() => handleDashboardTabSelection("soul")}
             >
               <HeartPulse size={18} class={soulNavIconClass()} />
               Soul
@@ -1715,7 +1733,7 @@ export default function DashboardView(props: DashboardViewProps) {
               class={`flex flex-col items-center gap-1 text-xs ${
                 props.tab === "skills" ? "text-gray-12" : "text-gray-10"
               }`}
-              onClick={() => props.setTab("skills")}
+              onClick={() => handleDashboardTabSelection("skills")}
             >
               <Zap size={18} />
               Skills
@@ -1724,7 +1742,7 @@ export default function DashboardView(props: DashboardViewProps) {
               class={`flex flex-col items-center gap-1 text-xs ${
                 props.tab === "mcp" || props.tab === "plugins" ? "text-gray-12" : "text-gray-10"
               }`}
-              onClick={() => props.setTab("mcp")}
+              onClick={() => handleDashboardTabSelection("mcp")}
             >
               <Box size={18} />
               Extensions
@@ -1734,7 +1752,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 class={`flex flex-col items-center gap-1 text-xs ${
                   props.tab === "config" ? "text-gray-12" : "text-gray-10"
                 }`}
-                onClick={() => props.setTab("config")}
+                onClick={() => handleDashboardTabSelection("config")}
               >
                 <SlidersHorizontal size={18} />
                 Advanced

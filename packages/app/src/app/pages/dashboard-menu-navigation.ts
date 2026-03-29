@@ -4,8 +4,18 @@ export type LeftMenuAction =
   | { kind: "toggle-left-sidebar" }
   | { kind: "return-to-session"; sessionId: string };
 
+export type DashboardTabSelectionAction =
+  | { kind: "open-dashboard-tab"; tab: DashboardTab }
+  | { kind: "return-to-session"; sessionId: string };
+
 type ResolveLeftMenuActionInput = {
   tab: DashboardTab;
+  selectedSessionId: string | null | undefined;
+};
+
+type ResolveDashboardTabSelectionActionInput = {
+  currentTab: DashboardTab;
+  nextTab: DashboardTab;
   selectedSessionId: string | null | undefined;
 };
 
@@ -19,6 +29,8 @@ const SESSION_RETURN_TABS = new Set<DashboardTab>([
   "settings",
 ]);
 
+const normalizeDashboardNavTab = (tab: DashboardTab): DashboardTab => (tab === "plugins" ? "mcp" : tab);
+
 export function resolveLeftMenuAction(input: ResolveLeftMenuActionInput): LeftMenuAction {
   if (!SESSION_RETURN_TABS.has(input.tab)) {
     return { kind: "toggle-left-sidebar" };
@@ -30,4 +42,18 @@ export function resolveLeftMenuAction(input: ResolveLeftMenuActionInput): LeftMe
   }
 
   return { kind: "return-to-session", sessionId };
+}
+
+export function resolveDashboardTabSelectionAction(
+  input: ResolveDashboardTabSelectionActionInput,
+): DashboardTabSelectionAction {
+  const sessionId = input.selectedSessionId?.trim() ?? "";
+  const currentTab = normalizeDashboardNavTab(input.currentTab);
+  const nextTab = normalizeDashboardNavTab(input.nextTab);
+
+  if (currentTab === nextTab && sessionId) {
+    return { kind: "return-to-session", sessionId };
+  }
+
+  return { kind: "open-dashboard-tab", tab: input.nextTab };
 }

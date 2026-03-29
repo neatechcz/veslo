@@ -2,7 +2,18 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
-import { resolveLeftMenuAction } from "./dashboard-menu-navigation.js";
+import * as dashboardMenuNavigation from "./dashboard-menu-navigation.js";
+
+const { resolveLeftMenuAction } = dashboardMenuNavigation;
+const resolveDashboardTabSelectionAction = (
+  dashboardMenuNavigation as {
+    resolveDashboardTabSelectionAction?: (input: {
+      currentTab: string;
+      nextTab: string;
+      selectedSessionId: string | null | undefined;
+    }) => unknown;
+  }
+).resolveDashboardTabSelectionAction;
 
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
 const leftMenuHandlerMatch = dashboardSource.match(
@@ -59,6 +70,45 @@ test("falls back to sidebar toggle when no session is selected", () => {
   assert.deepEqual(result, { kind: "toggle-left-sidebar" });
 });
 
+test("returns to selected session when re-selecting an active dashboard tab", () => {
+  assert.equal(typeof resolveDashboardTabSelectionAction, "function");
+  if (typeof resolveDashboardTabSelectionAction !== "function") return;
+
+  const result = resolveDashboardTabSelectionAction({
+    currentTab: "skills",
+    nextTab: "skills",
+    selectedSessionId: "sess-123",
+  });
+
+  assert.deepEqual(result, { kind: "return-to-session", sessionId: "sess-123" });
+});
+
+test("treats plugins and extensions as the same active destination when re-selected", () => {
+  assert.equal(typeof resolveDashboardTabSelectionAction, "function");
+  if (typeof resolveDashboardTabSelectionAction !== "function") return;
+
+  const result = resolveDashboardTabSelectionAction({
+    currentTab: "plugins",
+    nextTab: "mcp",
+    selectedSessionId: "sess-123",
+  });
+
+  assert.deepEqual(result, { kind: "return-to-session", sessionId: "sess-123" });
+});
+
+test("keeps opening dashboard tabs when selecting a different destination", () => {
+  assert.equal(typeof resolveDashboardTabSelectionAction, "function");
+  if (typeof resolveDashboardTabSelectionAction !== "function") return;
+
+  const result = resolveDashboardTabSelectionAction({
+    currentTab: "skills",
+    nextTab: "scheduled",
+    selectedSessionId: "sess-123",
+  });
+
+  assert.deepEqual(result, { kind: "open-dashboard-tab", tab: "scheduled" });
+});
+
 test("dashboard routes the left titlebar button through the helper", () => {
   assert.match(leftMenuHandlerSource, /const\s+leftMenuAction\s*=\s*createMemo\s*\(\s*\(\)\s*=>\s*resolveLeftMenuAction\s*\(\s*\{/s);
   assert.match(leftMenuHandlerSource, /const\s+leftMenuLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>\s*leftMenuAction\(\)\.kind\s*===\s*["']return-to-session["']/s);
@@ -99,4 +149,33 @@ test("dashboard source keeps a single left-menu handler without the legacy viewp
 
   assert.equal(handlerDeclarations.length, 1);
   assert.doesNotMatch(dashboardSource, /isNarrowViewport\s*:/);
+});
+
+test("dashboard routes active nav re-clicks through the session return helper", () => {
+  assert.match(
+    dashboardSource,
+    /const\s+handleDashboardTabSelection\s*=\s*\(\s*nextTab:\s*DashboardTab(?:,\s*nextSettingsTab\?:\s*SettingsTab)?\s*\)\s*=>\s*\{/s,
+  );
+  assert.match(
+    dashboardSource,
+    /resolveDashboardTabSelectionAction\s*\(\s*\{\s*currentTab\s*:\s*props\.tab,\s*nextTab,\s*selectedSessionId\s*:\s*props\.selectedSessionId,?\s*\}\s*\)/s,
+  );
+  assert.match(
+    dashboardSource,
+    /if\s*\(\s*action\.kind\s*===\s*["']return-to-session["']\s*\)\s*\{\s*props\.setView\s*\(\s*["']session["']\s*,\s*action\.sessionId\s*\)\s*;\s*return\s*;\s*\}/s,
+  );
+  assert.match(dashboardSource, /props\.setTab\s*\(\s*nextTab\s*\)/);
+  assert.match(
+    dashboardSource,
+    /const\s+openSettings\s*=\s*\(\s*tab:\s*SettingsTab\s*=\s*["']general["']\s*\)\s*=>\s*\{\s*handleDashboardTabSelection\s*\(\s*["']settings["']\s*,\s*tab\s*\)\s*;\s*\}/s,
+  );
+  assert.match(dashboardSource, /onClick\s*=\s*\{\s*\(\)\s*=>\s*handleDashboardTabSelection\s*\(\s*tab\s*\)\s*\}/);
+  assert.match(
+    dashboardSource,
+    /onClick\s*=\s*\{\s*\(\)\s*=>\s*handleDashboardTabSelection\s*\(\s*["']skills["']\s*\)\s*\}/,
+  );
+  assert.match(
+    dashboardSource,
+    /onClick\s*=\s*\{\s*\(\)\s*=>\s*handleDashboardTabSelection\s*\(\s*["']scheduled["']\s*\)\s*\}/,
+  );
 });
