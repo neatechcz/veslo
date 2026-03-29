@@ -9,33 +9,38 @@ const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "messa
 test("collapsed step detail wraps when it contains a path", () => {
   assert.match(
     source,
-    /containsPathLikeText\(collapsedDetail\(\)\) \? "whitespace-normal break-all" : "truncate"/,
-    "collapsed step detail should switch from truncation to wrapping for path-bearing prompts",
+    /flex w-full items-start gap-2 rounded-\[18px\] border px-3 py-2 text-left/,
+    "timeline header should render as a compact card-like row instead of the previous flat inline toggle",
   );
 });
 
-test("expanded step rows use message typography with tighter row spacing", () => {
+test("expanded timeline renders derived section cards", () => {
   assert.match(
     source,
-    /flex items-center gap-2 py-0\.5 leading-\[1\.5\] group\/step/,
-    "step rows should use compact vertical spacing while keeping message typography baseline",
+    /For each=\{timelineSections\(\)\}/,
+    "expanded timeline should iterate derived sections instead of raw step rows",
   );
   assert.match(
     source,
-    /text-\[14px\] text-gray-12 font-medium truncate shrink-0 max-w-\[200px\]/,
-    "step titles should match message window text size",
+    /<section class="rounded-\[18px\] border border-gray-6\/60 bg-gray-2\/35">/,
+    "derived sections should render as compact cards",
   );
   assert.match(
     source,
-    /text-\[14px\] text-gray-9 truncate min-w-0/,
-    "step detail text should match message window text size",
+    /text-\[13px\] font-medium leading-5 text-gray-12/,
+    "row primary text should use the new compact two-line hierarchy",
   );
 });
 
-test("expanded step groups have compact vertical separation", () => {
+test("expanded timeline rows expose secondary detail and disclosure", () => {
   assert.match(
     source,
-    /index\(\) === 0\s*\?\s*""\s*:\s*"mt-1 pt-1 border-t border-gray-6\/40"/,
-    "step groups should use tighter top spacing",
+    /text-\[12px\] leading-5 text-gray-10 break-words/,
+    "row secondary text should be rendered beneath the primary line",
+  );
+  assert.match(
+    source,
+    /<details class="mt-2">/,
+    "technical detail should be hidden behind a details disclosure",
   );
 });
