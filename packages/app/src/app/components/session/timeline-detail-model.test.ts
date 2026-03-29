@@ -94,6 +94,21 @@ test("buildTimelineDetailModel keeps plan separate from exploration", () => {
   assert.deepEqual(model.sections.map((section) => section.kind), ["plan", "explore", "action"]);
 });
 
+test("buildTimelineDetailModel does not promote generic reasoning to plan", () => {
+  const model = buildTimelineDetailModel({
+    parts: [
+      { type: "reasoning", text: "First inspect the session timeline and then adjust the UI." },
+      {
+        type: "tool",
+        tool: "read",
+        state: { input: { filePath: "packages/app/src/app/components/session/message-list.tsx" } },
+      },
+    ],
+  } as any);
+
+  assert.ok(model.sections.every((section) => section.kind !== "plan"));
+});
+
 test("buildTimelineDetailModel routes failures into issues", () => {
   const model = buildTimelineDetailModel({
     parts: [
@@ -114,7 +129,7 @@ test("buildTimelineDetailModel routes failures into issues", () => {
   assert.ok(model.sections.at(-1)?.rows.some((row) => row.status === "error"));
 });
 
-test("buildTimelineDetailModel routes error payloads in title detail and error into issues", () => {
+test("buildTimelineDetailModel routes strong error payloads in title detail and error into issues", () => {
   const model = buildTimelineDetailModel({
     parts: [
       {
@@ -132,6 +147,31 @@ test("buildTimelineDetailModel routes error payloads in title detail and error i
 
   assert.equal(model.sections.at(-1)?.kind, "issues");
   assert.ok(model.sections.at(-1)?.rows.some((row) => row.status === "error"));
+});
+
+test("buildTimelineDetailModel keeps generic error text out of issues without explicit signal", () => {
+  const model = buildTimelineDetailModel({
+    parts: [
+      {
+        type: "tool",
+        tool: "bash",
+        state: {
+          input: { command: "pnpm test" },
+          detail: "error while streaming output",
+        },
+      },
+      {
+        type: "tool",
+        tool: "bash",
+        state: {
+          input: { command: "pnpm lint" },
+          detail: "failed to parse diagnostics",
+        },
+      },
+    ],
+  } as any);
+
+  assert.ok(model.sections.every((section) => section.kind !== "issues"));
 });
 
 test("buildTimelineDetailModel splits repeated section runs when interrupted", () => {
@@ -157,6 +197,29 @@ test("buildTimelineDetailModel splits repeated section runs when interrupted", (
 
   const exploreCount = model.sections.filter((section) => section.kind === "explore").length;
   assert.equal(exploreCount, 2);
+});
+
+test("buildTimelineDetailModel keeps same basenames distinguishable in read details", () => {
+  const model = buildTimelineDetailModel({
+    parts: [
+      {
+        type: "tool",
+        tool: "read",
+        state: { input: { filePath: "packages/app/src/app/components/session/message-list.tsx" } },
+      },
+      {
+        type: "tool",
+        tool: "read",
+        state: { input: { filePath: "packages/app/src/app/utils/message-list.tsx" } },
+      },
+    ],
+  } as any);
+
+  const rows = model.sections.flatMap((section) => section.rows);
+  assert.equal(rows.length, 2);
+  assert.notEqual(rows[0]?.secondary, rows[1]?.secondary);
+  assert.match(rows[0]?.secondary ?? "", /message-list\.tsx/i);
+  assert.match(rows[1]?.secondary ?? "", /message-list\.tsx/i);
 });
 
 test("buildCollapsedSummary prefers human readable summaries", () => {

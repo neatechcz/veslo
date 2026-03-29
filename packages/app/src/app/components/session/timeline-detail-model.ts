@@ -2,8 +2,24 @@ import type { Part } from "@opencode-ai/sdk/v2/client";
 
 export type TimelineSectionKind = "plan" | "explore" | "action" | "verify" | "issues";
 
+export type TimelineRowType =
+  | "plan"
+  | "read"
+  | "list"
+  | "search"
+  | "edit"
+  | "write"
+  | "task"
+  | "skill"
+  | "command"
+  | "verify"
+  | "issue"
+  | "note"
+  | "tool";
+
 export type TimelineRowModel = {
   kind: TimelineSectionKind;
+  rowType: TimelineRowType;
   primary: string;
   secondary?: string;
   status?: "done" | "running" | "error" | "pass";
@@ -37,6 +53,14 @@ type BuildCollapsedSummaryInput = {
 const EXPLORATION_TOOLS = new Set(["read", "glob", "grep", "search", "list", "list_files"]);
 const ACTION_TOOLS = new Set(["edit", "write", "apply_patch", "task", "skill", "webfetch"]);
 const VERIFY_TOOLS = new Set(["test", "lint", "build", "verify", "check"]);
+const STRONG_TOOL_ERROR_PATTERNS = [
+  /^session-error:/i,
+  /\binvalid tool\b/i,
+  /\bmodel tried to call\b/i,
+  /\bunavailable tool\b/i,
+  /\bunknown tool\b/i,
+  /\btool not found\b/i,
+] as const;
 
 const SECTION_TITLES: Record<TimelineSectionKind, string> = {
   plan: "Plan",
@@ -81,48 +105,34 @@ function getStatus(part: Part): "done" | "running" | "error" | "pass" | undefine
   return undefined;
 }
 
-function toolErrorText(part: Part): string {
-  if (part.type !== "tool") return "";
+function hasStrongToolErrorPayload(part: Part): boolean {
+  if (part.type !== "tool") return false;
   const state = getState(part);
-  const title = normalizeText(state.title);
-  const error = normalizeText(state.error);
-  const detail = normalizeText(state.detail);
-  return [title, error, detail].filter(Boolean).join("\n");
-}
+  if (normalizeText(state.error)) return true;
 
-function hasErrorPayload(part: Part): boolean {
-  const haystack = toolErrorText(part).toLowerCase();
+  const title = normalizeText(state.title);
+  const detail = normalizeText(state.detail);
+  const haystack = [title, detail].filter(Boolean).join("\n");
   if (!haystack) return false;
-  return (
-    haystack.includes("invalid tool") ||
-    haystack.includes("model tried to call") ||
-    haystack.includes("unavailable tool") ||
-    haystack.includes("unknown tool") ||
-    haystack.includes("tool not found") ||
-    haystack.includes("failed") ||
-    haystack.includes("error")
-  );
+  return STRONG_TOOL_ERROR_PATTERNS.some((pattern) => pattern.test(haystack));
 }
 
 function isErrorPart(part: Part): boolean {
   const state = getState(part);
   const status = normalizeText(state.status).toLowerCase();
   if (status === "error" || status === "failed") return true;
-  if (hasErrorPayload(part)) return true;
+  if (hasStrongToolErrorPayload(part)) return true;
   const text = normalizeText((part as any).text);
   return text.toLowerCase().startsWith("session-error:");
 }
 
-function isPlanningText(part: Part): boolean {
+function isExplicitPlanningText(part: Part): boolean {
   const text = normalizeText((part as any).text);
   if (!text) return false;
-  const lower = text.toLowerCase();
+  const firstLine = text.split(/\r?\n/, 1)[0].trim();
   return (
-    lower.startsWith("plan:") ||
-    lower.startsWith("plán:") ||
-    lower.startsWith("plan ") ||
-    lower.startsWith("plán ") ||
-    /\b(first|next|then|after that|finally|let's|we will|i will|i'm going to|we're going to)\b/i.test(text)
+    /^#{0,3}\s*(?:plan|plán|planning|next steps|todo|objective|goals?)\b(?:\s*[:\-–—].*)?$/i.test(firstLine) ||
+    /^#{0,3}\s*(?:plan|plán)\s*[:\-–—]\s*/i.test(firstLine)
   );
 }
 
@@ -134,7 +144,7 @@ function classifyPartKind(part: Part, previousKind?: TimelineSectionKind): Timel
   if (isErrorPart(part)) return "issues";
 
   if (part.type === "reasoning" || part.type === "text") {
-    if (isPlanningText(part)) return "plan";
+    if (isExplicitPlanningText(part)) return "plan";
     if (previousKind && previousKind !== "issues") return previousKind;
     return "action";
   }
@@ -176,14 +186,23 @@ function toolOutputText(part: Part): string {
   return lines[0] ?? "";
 }
 
+function formatReadPathHint(path: string): string {
+  const normalized = path.trim().replace(/\\/g, "/").replace(/\/+/g, "/");
+  if (!normalized) return "";
+  const segments = normalized.split("/").filter(Boolean);
+  if (segments.length <= 3) return normalized;
+  return segments.slice(-3).join("/");
+}
+
 function buildReadRow(part: Part): TimelineRowModel {
   const input = getInput(part);
   const path = toolInputText(input, ["filePath", "path", "file"]);
   const label = path ? basename(path) : "soubor";
   return {
     kind: "explore",
+    rowType: "read",
     primary: `Načetl ${label}`,
-    secondary: path ? `v ${label}` : undefined,
+    secondary: path ? formatReadPathHint(path) : undefined,
     technicalDetail: path || undefined,
     status: getStatus(part),
   };
@@ -195,8 +214,9 @@ function buildListRow(part: Part): TimelineRowModel {
   const label = path ? basename(path) : "soubory";
   return {
     kind: "explore",
+    rowType: "list",
     primary: `Vypsal ${label}`,
-    secondary: path ? `v ${path}` : undefined,
+    secondary: path ? formatReadPathHint(path) : undefined,
     technicalDetail: path || undefined,
     status: getStatus(part),
   };
@@ -206,11 +226,11 @@ function buildSearchRow(part: Part): TimelineRowModel {
   const input = getInput(part);
   const pattern = toolInputText(input, ["pattern", "query"]);
   const path = toolInputText(input, ["path"]);
-  const secondary = path ? `v ${basename(path)}` : undefined;
   return {
     kind: "explore",
+    rowType: "search",
     primary: pattern ? `Vyhledal "${pattern}"` : "Vyhledal",
-    secondary,
+    secondary: path ? formatReadPathHint(path) : undefined,
     technicalDetail: pattern || path || undefined,
     status: getStatus(part),
   };
@@ -222,8 +242,9 @@ function buildWriteRow(part: Part, verb: string): TimelineRowModel {
   const label = path ? basename(path) : "soubor";
   return {
     kind: "action",
+    rowType: verb === "Upravil" ? "edit" : "write",
     primary: `${verb} ${label}`,
-    secondary: path ? `v ${label}` : undefined,
+    secondary: path ? formatReadPathHint(path) : undefined,
     technicalDetail: path || undefined,
     status: getStatus(part),
   };
@@ -237,6 +258,7 @@ function buildTaskRow(part: Part): TimelineRowModel {
 
   return {
     kind: "action",
+    rowType: isSkill ? "skill" : "task",
     primary: isSkill ? `Načetl skill ${agentType || "skill"}` : `Delegoval ${description || "úlohu"}`,
     secondary: description ? description : agentType ? `${agentType} agent` : undefined,
     technicalDetail: description || agentType || undefined,
@@ -262,8 +284,33 @@ function buildBashRow(part: Part): TimelineRowModel {
 
   return {
     kind: "action",
+    rowType: "command",
     primary,
     secondary: outcome,
+    technicalDetail: command || description || undefined,
+    status,
+  };
+}
+
+function buildVerifyRow(part: Part): TimelineRowModel {
+  const input = getInput(part);
+  const command = toolInputText(input, ["command", "cmd"]);
+  const description = toolInputText(input, ["description", "title"]);
+  const output = toolOutputText(part);
+  const status = getStatus(part);
+  const primary = description || (command ? `Ověřil ${command}` : "Ověřil změny");
+  const secondary =
+    status === "error"
+      ? output || "selhalo"
+      : status === "running"
+        ? "běží"
+        : output || "hotovo";
+
+  return {
+    kind: "verify",
+    rowType: "verify",
+    primary,
+    secondary,
     technicalDetail: command || description || undefined,
     status,
   };
@@ -276,6 +323,7 @@ function buildGenericReasoningRow(part: Part, kind: TimelineSectionKind): Timeli
   if (kind === "issues") {
     return {
       kind,
+      rowType: "issue",
       primary: "Chyba relace",
       secondary: clean || undefined,
       technicalDetail: text || undefined,
@@ -286,6 +334,7 @@ function buildGenericReasoningRow(part: Part, kind: TimelineSectionKind): Timeli
   if (kind === "plan") {
     return {
       kind,
+      rowType: "plan",
       primary: clean,
       secondary: undefined,
       technicalDetail: text || undefined,
@@ -295,6 +344,7 @@ function buildGenericReasoningRow(part: Part, kind: TimelineSectionKind): Timeli
 
   return {
     kind,
+    rowType: kind === "verify" ? "verify" : "note",
     primary: clean || "Poznámka",
     secondary: undefined,
     technicalDetail: text || undefined,
@@ -324,6 +374,7 @@ function buildRowModel(part: Part, kind: TimelineSectionKind): TimelineRowModel 
   if (toolName === "edit") return buildWriteRow(part, "Upravil");
   if (toolName === "write" || toolName === "apply_patch") return buildWriteRow(part, "Zapsal");
   if (toolName === "task" || toolName === "skill") return buildTaskRow(part);
+  if (kind === "verify") return buildVerifyRow(part);
   if (toolName === "bash" || toolName === "shell" || toolName === "exec" || toolName === "command" || toolName === "run") {
     return buildBashRow(part);
   }
@@ -334,6 +385,7 @@ function buildRowModel(part: Part, kind: TimelineSectionKind): TimelineRowModel 
 
   return {
     kind,
+    rowType: "tool",
     primary: title,
     secondary: raw ? basename(raw) : undefined,
     technicalDetail: raw || undefined,
@@ -348,32 +400,43 @@ function sectionStatusFromRows(rows: TimelineRowModel[], kind: TimelineSectionKi
   return rows.length > 0 ? "done" : undefined;
 }
 
+function countRows(rows: TimelineRowModel[], kinds: readonly TimelineRowType[]) {
+  const set = new Set(kinds);
+  return rows.filter((row) => set.has(row.rowType)).length;
+}
+
 function summarizeSection(kind: TimelineSectionKind, rows: TimelineRowModel[]): string {
   if (!rows.length) return "";
 
   switch (kind) {
-    case "plan":
-      return rows.length === 1 ? "Plán připraven" : `Plán rozdělen do ${rows.length} kroků`;
+    case "plan": {
+      const plans = countRows(rows, ["plan"]);
+      return plans === 1 ? "Plán připraven" : `Plán rozdělen do ${plans} kroků`;
+    }
     case "explore": {
-      const files = rows.filter((row) => row.primary.startsWith("Načetl ")).length;
-      const searches = rows.filter((row) => row.primary.startsWith("Vyhledal ")).length;
-      const lists = rows.filter((row) => row.primary.startsWith("Vypsal ")).length;
+      const files = countRows(rows, ["read"]);
+      const searches = countRows(rows, ["search"]);
+      const lists = countRows(rows, ["list"]);
       const items: string[] = [];
       if (files > 0) items.push(`${files} soubor${files === 1 ? "" : files >= 2 && files <= 4 ? "y" : "ů"}`);
       if (searches > 0) items.push(`${searches} hledání`);
       if (lists > 0) items.push(`${lists} výpis${lists === 1 ? "" : "ů"}`);
       return items.length > 0 ? items.join(" · ") : `${rows.length} průzkumů`;
     }
-    case "action":
-      return rows.length === 1 ? "1 akce" : `${rows.length} akcí`;
+    case "action": {
+      const actions = countRows(rows, ["edit", "write", "task", "skill", "command", "tool", "note"]);
+      return actions === 1 ? "1 akce" : `${actions} akcí`;
+    }
     case "verify":
-      return rows.some((row) => row.status === "error")
+      return countRows(rows, ["verify"]) > 0 && rows.some((row) => row.status === "error")
         ? "ověření selhalo"
         : rows.some((row) => row.status === "running")
           ? "ověření běží"
           : "ověření OK";
-    case "issues":
-      return rows.length === 1 ? "1 problém" : `${rows.length} problémů`;
+    case "issues": {
+      const issues = countRows(rows, ["issue"]);
+      return issues === 1 ? "1 problém" : `${issues} problémů`;
+    }
   }
 }
 
