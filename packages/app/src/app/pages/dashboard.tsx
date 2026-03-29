@@ -54,6 +54,8 @@ import SkillsView from "./skills";
 import SidebarStatusControls from "../components/sidebar-status-controls";
 import ProviderAuthModal, { type ProviderOAuthStartResult } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
+import SidebarAdvancedNav from "../components/session/sidebar-advanced-nav";
+import SidebarDashboardNav from "../components/session/sidebar-dashboard-nav";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
 import { resolveTitlebarContentInsetClass } from "../components/titlebar-menu-layout";
@@ -654,25 +656,6 @@ export default function DashboardView(props: DashboardViewProps) {
   });
 
   const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
-
-  const navItem = (tab: DashboardTab, label: string, icon: any, options?: { compact?: boolean }) => {
-    const active = () => props.tab === tab || (tab === "mcp" && props.tab === "plugins");
-    const compact = options?.compact ?? false;
-    return (
-      <button
-        type="button"
-        class={`${compact ? "w-full h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-[13px] font-medium transition-colors" : "w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors"} ${
-          active()
-            ? "bg-dls-active text-dls-text"
-            : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
-        }`}
-        onClick={() => handleDashboardTabSelection(tab)}
-      >
-        {icon}
-        {label}
-      </button>
-    );
-  };
 
   const handleDashboardTabSelection = (nextTab: DashboardTab, nextSettingsTab?: SettingsTab) => {
     const action = resolveDashboardTabSelectionAction({
@@ -1314,14 +1297,11 @@ export default function DashboardView(props: DashboardViewProps) {
               onLoadMoreWorkspaceSessions={props.loadMoreWorkspaceSidebarSessions}
             />
           </div>
-          <div class="mt-1.5 space-y-0 border-t border-gray-6/70 pt-1.5">
-            {navItem("scheduled", t("nav.automations", currentLocale()), <History size={18} />, { compact: true })}
-            {navItem("soul", t("nav.soul", currentLocale()), <HeartPulse size={18} class={soulNavIconClass()} />, {
-              compact: true,
-            })}
-            {navItem("skills", t("nav.skills", currentLocale()), <Zap size={18} />, { compact: true })}
-            {navItem("mcp", t("nav.extensions", currentLocale()), <Box size={18} />, { compact: true })}
-          </div>
+          <SidebarDashboardNav
+            currentTab={props.tab}
+            onSelect={handleDashboardTabSelection}
+            soulIconClass={soulNavIconClass()}
+          />
         </div>
           <SidebarStatusControls
             clientConnected={props.clientConnected}
@@ -1766,7 +1746,10 @@ export default function DashboardView(props: DashboardViewProps) {
         <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
           <Show when={props.developerMode}>
             <div class="space-y-1 pt-2">
-              {navItem("config", t("nav.advanced", currentLocale()), <SlidersHorizontal size={18} />)}
+              <SidebarAdvancedNav
+                currentTab={props.tab}
+                onSelect={() => handleDashboardTabSelection("config")}
+              />
             </div>
           </Show>
         </aside>

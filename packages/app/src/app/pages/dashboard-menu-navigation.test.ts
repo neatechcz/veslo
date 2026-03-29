@@ -169,7 +169,14 @@ test("dashboard routes active nav re-clicks through the session return helper", 
     dashboardSource,
     /const\s+openSettings\s*=\s*\(\s*tab:\s*SettingsTab\s*=\s*["']general["']\s*\)\s*=>\s*\{\s*handleDashboardTabSelection\s*\(\s*["']settings["']\s*,\s*tab\s*\)\s*;\s*\}/s,
   );
-  assert.match(dashboardSource, /onClick\s*=\s*\{\s*\(\)\s*=>\s*handleDashboardTabSelection\s*\(\s*tab\s*\)\s*\}/);
+  assert.match(
+    dashboardSource,
+    /<SidebarDashboardNav[\s\S]*currentTab=\{props\.tab\}[\s\S]*onSelect=\{handleDashboardTabSelection\}/,
+  );
+  assert.match(
+    dashboardSource,
+    /<SidebarAdvancedNav[\s\S]*currentTab=\{props\.tab\}[\s\S]*onSelect=\{\(\)\s*=>\s*handleDashboardTabSelection\(\s*["']config["']\s*\)\}/,
+  );
   assert.match(
     dashboardSource,
     /onClick\s*=\s*\{\s*\(\)\s*=>\s*handleDashboardTabSelection\s*\(\s*["']skills["']\s*\)\s*\}/,

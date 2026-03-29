@@ -63,6 +63,8 @@ import RenameSessionModal from "../components/rename-session-modal";
 import ProviderAuthModal, { type ProviderOAuthStartResult } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import SidebarStatusControls from "../components/sidebar-status-controls";
+import SidebarAdvancedNav from "../components/session/sidebar-advanced-nav";
+import SidebarDashboardNav from "../components/session/sidebar-dashboard-nav";
 import {
   buildVesloConnectInviteUrl,
   buildVesloWorkspaceBaseUrl,
@@ -467,9 +469,6 @@ export default function SessionView(props: SessionViewProps) {
     void setWindowTitle("Veslo by Neatech").catch((error) => reportError(error, "titlebar.restoreWindowTitle"));
   });
 
-  // In Session view the right sidebar is navigation-only; never pre-highlight a
-  // dashboard tab here so first-run feels chat-first rather than Automations-first.
-  const showRightSidebarSelection = createMemo(() => false);
   let commandPaletteInputEl: HTMLInputElement | undefined;
   const commandPaletteOptionRefs: HTMLButtonElement[] = [];
   const leftDockedVisible = createMemo(
@@ -3733,56 +3732,17 @@ export default function SessionView(props: SessionViewProps) {
             onOpenSessionSearch={() => openCommandPalette("sessions")}
           />
         </div>
-        <div class="mt-1.5 space-y-0 border-t border-gray-6/70 pt-1.5">
-          <button
-            type="button"
-            class={`w-full h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
-              showRightSidebarSelection() && props.tab === "scheduled"
-                ? "bg-gray-4 text-gray-12"
-                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-            }`}
-            onClick={() => openDashboardTab("scheduled")}
-          >
-            <History size={18} />
-            Automations
-          </button>
-          <button
-            type="button"
-            class={`w-full h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
-              showRightSidebarSelection() && props.tab === "soul"
-                ? "bg-gray-4 text-gray-12"
-                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-            }`}
-            onClick={() => openSoul()}
-          >
-            <HeartPulse size={18} class={soulNavIconClass()} />
-            Soul
-          </button>
-          <button
-            type="button"
-            class={`w-full h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
-              showRightSidebarSelection() && props.tab === "skills"
-                ? "bg-gray-4 text-gray-12"
-                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-            }`}
-            onClick={() => openDashboardTab("skills")}
-          >
-            <Zap size={18} />
-            Skills
-          </button>
-          <button
-            type="button"
-            class={`w-full h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
-              showRightSidebarSelection() && (props.tab === "mcp" || props.tab === "plugins")
-                ? "bg-gray-4 text-gray-12"
-                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-            }`}
-            onClick={() => openDashboardTab("mcp")}
-          >
-            <Box size={18} />
-            Extensions
-          </button>
-        </div>
+        <SidebarDashboardNav
+          currentTab={props.tab}
+          onSelect={(tab) => {
+            if (tab === "soul") {
+              openSoul();
+              return;
+            }
+            openDashboardTab(tab);
+          }}
+          soulIconClass={soulNavIconClass()}
+        />
       </div>
       <SidebarStatusControls
         clientConnected={props.clientConnected}
@@ -3797,18 +3757,7 @@ export default function SessionView(props: SessionViewProps) {
     <div class="flex-1 overflow-y-auto space-y-5 pt-2">
       <Show when={props.developerMode}>
         <div class="space-y-1 mb-2">
-          <button
-            type="button"
-            class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-              showRightSidebarSelection() && props.tab === "config"
-                ? "bg-gray-4 text-gray-12"
-                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-            }`}
-            onClick={openConfig}
-          >
-            <SlidersHorizontal size={18} />
-            Advanced
-          </button>
+          <SidebarAdvancedNav currentTab={props.tab} onSelect={openConfig} />
         </div>
       </Show>
 
