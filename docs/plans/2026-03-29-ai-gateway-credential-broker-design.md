@@ -6,7 +6,7 @@
 
 ## Goal
 
-Add a standalone cloud service that keeps AI provider secrets fully server-side, provides provider-compatible pass-through inference endpoints, pins credentials to a session-scoped lease, supports failover when a credential breaks, and exposes an internal admin control plane for credentials, usage, alerts, and user access.
+Add a standalone cloud service that keeps AI provider secrets fully server-side, provides provider-compatible pass-through inference endpoints, pins credentials to a session-scoped lease, supports failover when a credential breaks, and can be delivered in phases instead of as one large coupled project.
 
 ## Scope
 
@@ -17,6 +17,7 @@ Add a standalone cloud service that keeps AI provider secrets fully server-side,
 - Credential health tracking, alerting, reporting, and auditability.
 - Internal admin web UI for platform operators.
 - User directory and invite flow entry points inside the admin control plane.
+- A phased implementation model so the system can be shipped and verified incrementally.
 
 Out of scope:
 
@@ -25,6 +26,101 @@ Out of scope:
 - Email delivery infrastructure details.
 - Billing-grade provider-reported usage implementation details.
 - End-user UI for this system.
+
+## Delivery Model
+
+This work is no longer a single “proxy service” task. It is a new control-plane subsystem and must be delivered as separate, independently shippable slices.
+
+### Deliverable 1: Core Gateway Data Plane
+
+Purpose:
+
+- protect secrets immediately
+- make inference traffic flow through Veslo Cloud
+- establish session lease and failover semantics
+
+Must include:
+
+- standalone `services/ai-gateway` service
+- provider-compatible proxy route(s)
+- secure token broker boundary
+- session lease creation and sticky reuse
+- permanent-failure rebinding
+- credential health state transitions
+- minimal credential inventory persistence
+
+Must not depend on:
+
+- reporting dashboards
+- alert triage UI
+- user directory UI
+- invite flow UI
+
+Success criteria:
+
+- client never receives provider secrets
+- same session reuses the same binding until failure
+- broken credentials trigger controlled rebinding
+- the service can be deployed and smoke-tested on its own
+
+### Deliverable 2: Metering, Signals, and Read Models
+
+Purpose:
+
+- make the gateway observable
+- support operational triage before a polished UI exists
+- expose stable read APIs for later UI work
+
+Must include:
+
+- usage event recording
+- aggregation by `user`, `org`, `session`, and `credential`
+- incident detection helpers
+- credential-to-alert linkage
+- audit event persistence
+- JSON admin/read endpoints for credentials, sessions, usage, alerts, and audit
+
+Must not depend on:
+
+- full admin HTML/UI implementation
+- complete invite/create-user UX
+
+Success criteria:
+
+- operators can answer “who used what” and “which credential is failing”
+- alert records can be traced back to credential records
+- UI work can consume read models instead of reading internal tables directly
+
+### Deliverable 3: Control Plane UI and User Operations
+
+Purpose:
+
+- give platform admins an operational surface
+- centralize credential operations, incident triage, and user management
+
+Must include:
+
+- `platform_admin`-only access
+- page set for `Credentials`, `Sessions`, `Usage`, `Alerts`, `Users`, and `Audit`
+- credential detail with linked incidents
+- usage filters for total usage plus breakdown by credential, user, and org
+- users list plus right-side edit panel
+- create/invite, edit, disable, and destructive user actions
+- Den-backed platform user directory and invite state integration
+
+Success criteria:
+
+- platform admins can manage credentials and investigate incidents from one place
+- user management follows the real `platform_admin` + `owner/member` role model
+- the UI consumes stable read models and does not duplicate gateway logic
+
+## Dependency Rules
+
+- Deliverable 1 must ship without waiting for Deliverables 2 or 3.
+- Deliverable 2 builds on Deliverable 1 but must still be useful without a polished UI.
+- Deliverable 3 depends on the read models from Deliverable 2 and on Den-backed user/invite APIs.
+- Den changes should be limited to user directory and invite state; lease, credential, usage, and alert logic stay inside `services/ai-gateway`.
+- Admin UI should consume read endpoints, not couple itself directly to storage tables.
 
 ## Validated Product Decisions
 
@@ -338,17 +434,20 @@ This UI is not end-user facing.
 - `Credentials`
   - list of API keys and OAuth grants
   - health, lease count, last refresh/failure
+  - active alert count and incident linkage per credential
 - `Credential Detail`
   - refresh history
   - failover history
   - token usage through that credential
   - actions such as rotate, disable, drain, revoke
+  - direct links to active incidents/alerts
 - `Sessions / Leases`
   - session lookup
   - current binding
   - rebinding history and reasons
 - `Usage`
-  - per user/session/credential/org views
+  - default total-usage view
+  - group-by and filter controls for `credential`, `user`, and `org`
 - `Alerts / Incidents`
   - live credential and provider incidents
 - `Audit`
@@ -357,7 +456,8 @@ This UI is not end-user facing.
   - global user directory
   - platform-admin status
   - org role visibility
-  - invite/create-user entry points
+  - create-user entry point
+  - selected-user edit panel with enable/disable/delete controls
 
 ### Users and invite handling
 
@@ -369,7 +469,9 @@ It should support:
 - showing platform-admin status
 - showing org memberships and roles (`owner/member`)
 - creating or inviting a user
+- editing a selected user
 - disabling a user
+- deleting a user as a guarded destructive action
 - resending an invite
 
 The actual email transport is out of scope here, but the control plane should expose the operational states:
@@ -435,4 +537,10 @@ The mockup emphasizes:
 
 ## Recommended Implementation Summary
 
-Build a standalone cloud `AI Gateway + Session Lease Broker + Metering` service with provider-compatible pass-through endpoints, session-scoped sticky credential leases, controlled failover, strong observability, and a platform-admin-only control plane. Reflect existing product roles exactly as they exist in code today: `owner/member` for organizations and `platform_admin` for global control-plane access.
+Build this as three deliverables:
+
+1. a standalone cloud `AI Gateway + Session Lease Broker` data plane that solves the secret-custody and failover problem first
+2. a `Metering + Signals + Read Models` layer that makes the system observable and queryable
+3. a `platform_admin` control plane that manages credentials, incidents, usage, audit, and users against the real `owner/member/platform_admin` role model already present in code
+
+That sequencing keeps the risky path small, prevents the admin UI from blocking the security-critical gateway work, and makes each stage independently testable and deployable.
