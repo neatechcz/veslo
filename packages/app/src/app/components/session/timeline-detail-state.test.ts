@@ -30,7 +30,7 @@ test("toggleTimelineExpanded flips only the outer timeline visibility", () => {
 
   assert.equal(expanded.expanded, true);
   assert.equal(collapsed.expanded, false);
-  assert.deepEqual([...collapsed.openSectionIds], []);
+  assert.deepEqual([...collapsed.openSectionIds], ["explore-0"]);
 });
 
 test("toggleTimelineSection allows multiple sections to stay open", () => {
@@ -46,4 +46,14 @@ test("toggleTimelineSection allows multiple sections to stay open", () => {
   assert.deepEqual([...withExplore.openSectionIds], ["explore-0"]);
   assert.deepEqual([...withAction.openSectionIds].sort(), ["action-1", "explore-0"]);
   assert.deepEqual([...withExploreClosed.openSectionIds], ["action-1"]);
+});
+
+
+test("createTimelineDetailState auto-opens a single section", () => {
+  const state = createTimelineDetailState({
+    sections: [{ id: "action-0", kind: "action", status: "done" }],
+  });
+
+  assert.equal(state.expanded, false);
+  assert.deepEqual([...state.openSectionIds], ["action-0"]);
 });

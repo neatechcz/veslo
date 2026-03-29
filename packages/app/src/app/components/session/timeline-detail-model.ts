@@ -345,7 +345,7 @@ function buildGenericReasoningRow(part: Part, kind: TimelineSectionKind): Timeli
   return {
     kind,
     rowType: kind === "verify" ? "verify" : "note",
-    primary: clean || "Poznámka",
+    primary: clean || "Přemýšlení",
     secondary: undefined,
     technicalDetail: text || undefined,
     status,

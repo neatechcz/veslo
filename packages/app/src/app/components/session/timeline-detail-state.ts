@@ -13,9 +13,14 @@ export function createTimelineDetailState(input: {
   sections: TimelineDetailSectionStateInput[];
 }): TimelineDetailState {
   const runningSection = input.sections.find((section) => section.status === "running");
+  const onlySection = input.sections.length === 1 ? input.sections[0] : undefined;
   return {
     expanded: false,
-    openSectionIds: runningSection ? new Set([runningSection.id]) : new Set<string>(),
+    openSectionIds: runningSection
+      ? new Set([runningSection.id])
+      : onlySection
+        ? new Set([onlySection.id])
+        : new Set<string>(),
   };
 }
 

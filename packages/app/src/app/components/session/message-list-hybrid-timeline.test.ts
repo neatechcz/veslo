@@ -11,7 +11,7 @@ test("message list integrates the hybrid timeline model and collapse state helpe
 });
 
 test("collapsed timeline header uses the human summary from the derived model", () => {
-  assert.match(source, /timelineModel\(\)\.summary/);
+  assert.match(source, /localizedTimelineSummary\(timelineSections\(\)\)/);
   assert.match(source, /latestLabel: latestStepLabel\(\)/);
 });
 
@@ -20,4 +20,54 @@ test("expanded timeline renders nested section toggles and technical detail disc
   assert.match(source, /toggleTimelineSection\(current, section\.id\)/);
   assert.match(source, /row\.technicalDetail/);
   assert.match(source, /<details/);
+});
+
+
+test("single-section timelines do not require a second collapse interaction", () => {
+  assert.match(source, /const singleSectionMode = \(\) => timelineSections\(\)\.length === 1;/);
+  assert.match(source, /<Show when=\{singleSectionMode\(\) \|\| sectionExpanded\(section\.id\)\}>/);
+});
+
+test("section toggle handlers isolate their click events", () => {
+  assert.match(
+    source,
+    /onClick=\{\(event\) => \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*setTimelineDetailState\(\(current\) => toggleTimelineSection\(current, section\.id\)\);/s,
+  );
+});
+
+test("adjacent step-only assistant messages merge into a single timeline block", () => {
+  assert.match(
+    source,
+    /const previousBlock = blocks\[blocks\.length - 1\];[\s\S]*previousBlock\?\.kind === "steps-cluster"[\s\S]*previousBlock\.isUser === isUser[\s\S]*previousBlock\.stepGroups\.push\(/s,
+  );
+});
+
+test("mixed message blocks render a single inline timeline for all step groups", () => {
+  assert.match(source, /const inlineStepGroups = \(\) =>\s*block\.groups[\s\S]*group\.kind === "steps"/);
+  assert.match(source, /stepGroups=\{inlineStepGroups\(\)\}/);
+});
+
+test("action summaries distinguish thinking-only rows from real actions", () => {
+  assert.match(source, /countSectionRows\(section\.rows, \["note"\]\)/);
+  assert.match(source, /session\.timeline_section_thinking/);
+});
+
+test("collapsed timeline meta is not the generic execution label", () => {
+  assert.doesNotMatch(source, /const collapsedMeta = \(\) => \(expanded\(\) \? tr\("session\.timeline_hide"\) : tr\("session\.timeline_execution"\)\)/);
+  assert.match(source, /formatTimelineDuration/);
+});
+
+test("thinking-off still keeps reasoning in timeline grouping", () => {
+  assert.doesNotMatch(source, /if \(part\.type === "reasoning"\) \{\s*return props\.showThinking;\s*\}/s);
+  assert.match(source, /part\.type === "text" \|\| part\.type === "tool" \|\| part\.type === "agent" \|\| part\.type === "file" \|\| part\.type === "reasoning"/);
+});
+
+test("thinking-off hides reasoning detail but preserves a thinking indicator row", () => {
+  assert.match(source, /entry\.part\?\.type === "reasoning" && entry\.row\.rowType === "note" && !props\.showThinking/);
+  assert.match(source, /primary: tr\("session\.timeline_thinking"\)/);
+});
+
+test("timeline technical detail disclosure is controlled by the same toggle", () => {
+  assert.match(source, /<Show when=\{props\.showThinking && row\.technicalDetail\}>/);
+  assert.doesNotMatch(source, /props\.developerMode && entry\.part/);
 });

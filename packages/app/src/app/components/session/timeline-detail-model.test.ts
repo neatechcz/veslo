@@ -285,3 +285,13 @@ test("buildTimelineDetailModel emits readable row copy for file reads", () => {
   assert.ok(row?.secondary);
   assert.match(row?.secondary ?? "", /message-list\.tsx/i);
 });
+
+test("buildTimelineDetailModel uses a thinking fallback instead of a generic note label", () => {
+  const model = buildTimelineDetailModel({
+    parts: [{ type: "reasoning", text: "" }],
+  } as any);
+
+  const row = model.sections[0]?.rows[0];
+  assert.equal(row?.rowType, "note");
+  assert.equal(row?.primary, "Přemýšlení");
+});

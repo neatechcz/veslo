@@ -89,6 +89,7 @@ function ToolIcon(props: { category: string; size?: number }) {
     case "skill":
       return <Sparkles size={s()} />;
     case "note":
+      return <Sparkles size={s()} />;
     case "tool":
     default:
       return <File size={s()} />;
@@ -121,6 +122,64 @@ function latestStepPart(stepGroups: StepTimelineGroup[]): Part | undefined {
     }
   }
   return undefined;
+}
+
+function getPartTimestampRange(part: Part): { start?: number; end?: number } {
+  const directTime = (part as { time?: { start?: unknown; end?: unknown } }).time;
+  const stateTime = (part as { state?: { time?: { start?: unknown; end?: unknown } } }).state?.time;
+  const start =
+    typeof directTime?.start === "number"
+      ? directTime.start
+      : typeof stateTime?.start === "number"
+        ? stateTime.start
+        : undefined;
+  const end =
+    typeof directTime?.end === "number"
+      ? directTime.end
+      : typeof stateTime?.end === "number"
+        ? stateTime.end
+        : undefined;
+  return { start, end };
+}
+
+function formatElapsedDuration(durationMs: number): string {
+  if (durationMs < 1000) {
+    return `${Math.max(1, Math.round(durationMs))} ms`;
+  }
+
+  const totalSeconds = Math.max(1, Math.round(durationMs / 1000));
+  if (totalSeconds < 60) {
+    return `${totalSeconds} s`;
+  }
+
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (totalMinutes < 60) {
+    return seconds > 0 ? `${totalMinutes} min ${seconds} s` : `${totalMinutes} min`;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes > 0 ? `${hours} h ${minutes} min` : `${hours} h`;
+}
+
+function formatTimelineDuration(parts: Part[]): string {
+  let earliestStart: number | undefined;
+  let latestEnd: number | undefined;
+
+  for (const part of parts) {
+    const { start, end } = getPartTimestampRange(part);
+    if (typeof start !== "number") continue;
+    earliestStart = earliestStart === undefined ? start : Math.min(earliestStart, start);
+    const effectiveEnd = typeof end === "number" ? end : Date.now();
+    latestEnd = latestEnd === undefined ? effectiveEnd : Math.max(latestEnd, effectiveEnd);
+  }
+
+  if (earliestStart === undefined || latestEnd === undefined || latestEnd < earliestStart) {
+    return "";
+  }
+
+  return formatElapsedDuration(latestEnd - earliestStart);
 }
 
 type TaskStepInfo = {
@@ -195,6 +254,21 @@ export default function MessageList(props: MessageListProps) {
     const set = new Set(kinds);
     return rows.filter((entry) => set.has(entry.row.rowType)).length;
   };
+  const countTimelineRows = (sections: TimelineSectionView[], kinds: TimelineRowType[]) => {
+    const set = new Set(kinds);
+    return sections.reduce(
+      (count, section) => count + section.rows.filter((entry) => set.has(entry.row.rowType)).length,
+      0,
+    );
+  };
+  const isThinkingSection = (section: TimelineSectionView) => {
+    if (section.kind !== "action") return false;
+    const actionCount = countSectionRows(section.rows, ["edit", "write", "task", "skill", "command", "tool"]);
+    const noteCount = countSectionRows(section.rows, ["note"]);
+    return noteCount > 0 && actionCount === 0;
+  };
+  const localizedSectionTitle = (section: TimelineSectionView) =>
+    isThinkingSection(section) ? tr("session.timeline_section_thinking") : timelineSectionTitle(section.kind);
   const localizedSectionSummary = (section: TimelineSectionView) => {
     switch (section.kind) {
       case "plan": {
@@ -214,7 +288,17 @@ export default function MessageList(props: MessageListProps) {
         return items.length > 0 ? items.join(" · ") : tr("session.timeline_context_activity");
       }
       case "action": {
-        const actions = countSectionRows(section.rows, ["edit", "write", "task", "skill", "command", "tool", "note"]);
+        const actions = countSectionRows(section.rows, ["edit", "write", "task", "skill", "command", "tool"]);
+        const thoughts = countSectionRows(section.rows, ["note"]);
+        if (actions > 0 && thoughts > 0) {
+          return [
+            plural(actions, "session.timeline_summary_action_one", "session.timeline_summary_action_other"),
+            plural(thoughts, "session.timeline_summary_thinking_one", "session.timeline_summary_thinking_other"),
+          ].join(" · ");
+        }
+        if (thoughts > 0) {
+          return plural(thoughts, "session.timeline_summary_thinking_one", "session.timeline_summary_thinking_other");
+        }
         return plural(actions, "session.timeline_summary_action_one", "session.timeline_summary_action_other");
       }
       case "verify":
@@ -230,8 +314,41 @@ export default function MessageList(props: MessageListProps) {
     }
   };
   const localizedTimelineSummary = (sections: TimelineSectionView[]) => {
-    const summaries = sections.map((section) => localizedSectionSummary(section)).filter(Boolean);
-    return summaries.join(" · ");
+    const items: string[] = [];
+    const planCount = countTimelineRows(sections, ["plan"]);
+    const fileCount = countTimelineRows(sections, ["read"]);
+    const searchCount = countTimelineRows(sections, ["search"]);
+    const listCount = countTimelineRows(sections, ["list"]);
+    const actionCount = countTimelineRows(sections, ["edit", "write", "task", "skill", "command", "tool"]);
+    const thoughtCount = countTimelineRows(sections, ["note"]);
+    const issueCount = countTimelineRows(sections, ["issue"]);
+    const verifySections = sections.filter((section) => section.kind === "verify");
+
+    if (planCount > 0) {
+      items.push(
+        planCount === 1
+          ? tr("session.timeline_summary_plan_ready")
+          : tr("session.timeline_summary_plan_steps", { count: String(planCount) }),
+      );
+    }
+    if (fileCount > 0) items.push(plural(fileCount, "session.timeline_file_one", "session.timeline_file_other"));
+    if (searchCount > 0) items.push(plural(searchCount, "session.timeline_search_one", "session.timeline_search_other"));
+    if (listCount > 0) items.push(plural(listCount, "session.timeline_list_one", "session.timeline_list_other"));
+    if (actionCount > 0) items.push(plural(actionCount, "session.timeline_summary_action_one", "session.timeline_summary_action_other"));
+    if (thoughtCount > 0) items.push(plural(thoughtCount, "session.timeline_summary_thinking_one", "session.timeline_summary_thinking_other"));
+    if (verifySections.length > 0) {
+      const hasVerifyError = verifySections.some((section) => section.rows.some((entry) => entry.row.status === "error"));
+      const hasVerifyRunning = verifySections.some((section) => section.rows.some((entry) => entry.row.status === "running"));
+      items.push(
+        hasVerifyError
+          ? tr("session.timeline_summary_verify_failed")
+          : hasVerifyRunning
+            ? tr("session.timeline_summary_verify_running")
+            : tr("session.timeline_summary_verify_ok"),
+      );
+    }
+    if (issueCount > 0) items.push(plural(issueCount, "session.timeline_summary_issue_one", "session.timeline_summary_issue_other"));
+    return items.join(" · ");
   };
 
   const [copyingId, setCopyingId] = createSignal<string | null>(null);
@@ -337,15 +454,11 @@ export default function MessageList(props: MessageListProps) {
         return false;
       }
 
-      if (part.type === "reasoning") {
-        return props.showThinking;
-      }
-
       if (part.type === "step-start" || part.type === "step-finish") {
         return false;
       }
 
-      if (part.type === "text" || part.type === "tool" || part.type === "agent" || part.type === "file") {
+      if (part.type === "text" || part.type === "tool" || part.type === "agent" || part.type === "file" || part.type === "reasoning") {
         return true;
       }
 
@@ -387,13 +500,20 @@ export default function MessageList(props: MessageListProps) {
       stepGroupCount += groups.reduce((count, group) => (group.kind === "steps" ? count + 1 : count), 0);
 
       if (isStepsOnly) {
-        blocks.push({
+        const nextBlock: StepClusterBlock = {
           kind: "steps-cluster",
           id: stepGroups[0].id,
           stepGroups: stepGroups.map((group) => ({ id: group.id, parts: group.parts, mode: group.mode })),
           messageIds: [messageId],
           isUser,
-        });
+        };
+        const previousBlock = blocks[blocks.length - 1];
+        if (previousBlock?.kind === "steps-cluster" && previousBlock.isUser === isUser) {
+          previousBlock.stepGroups.push(...nextBlock.stepGroups);
+          previousBlock.messageIds.push(...nextBlock.messageIds.filter(Boolean));
+          return;
+        }
+        blocks.push(nextBlock);
         return;
       }
 
@@ -750,9 +870,28 @@ export default function MessageList(props: MessageListProps) {
 
     const hasRunning = () => timelineSections().some((section) => section.status === "running");
     const useInnerTimelineScroll = () => !(Boolean(props.isStreaming) && hasRunning());
-    const collapsedSummary = () => localizedTimelineSummary(timelineSections()) || timelineModel().summary || latestStepLabel() || tr("session.timeline_execution");
-    const collapsedMeta = () => (expanded() ? tr("session.timeline_hide") : tr("session.timeline_execution"));
+    const collapsedSummary = () => localizedTimelineSummary(timelineSections()) || latestStepLabel() || tr("session.timeline_execution");
+    const collapsedMeta = () => {
+      const labels = Array.from(new Set(timelineSections().map((section) => localizedSectionTitle(section)).filter(Boolean)));
+      const duration = formatTimelineDuration(allStepParts());
+      return [...labels, duration].filter(Boolean).join(" · ") || tr("session.timeline_execution");
+    };
+    const singleSectionMode = () => timelineSections().length === 1;
     const sectionExpanded = (sectionId: string) => timelineDetailState().openSectionIds.has(sectionId);
+    const sectionDisplayCategory = (section: TimelineSectionView): TimelineRowType | TimelineSectionKind =>
+      isThinkingSection(section) ? "note" : section.kind;
+    const displayedTimelineRow = (entry: TimelineRowView): TimelineRowModel => {
+      if (entry.part?.type === "reasoning" && entry.row.rowType === "note" && !props.showThinking) {
+        return {
+          ...entry.row,
+          primary: tr("session.timeline_thinking"),
+          secondary: undefined,
+          technicalDetail: undefined,
+        };
+      }
+
+      return entry.row;
+    };
     const iconAccentClass = (category: TimelineRowType | TimelineSectionKind) => {
       switch (category) {
         case "issue":
@@ -762,6 +901,7 @@ export default function MessageList(props: MessageListProps) {
           return "bg-emerald-3/70 text-emerald-11";
         case "task":
           return "bg-blue-3/70 text-blue-11";
+        case "note":
         case "skill":
         case "plan":
           return "bg-purple-3/70 text-purple-11";
@@ -814,52 +954,83 @@ export default function MessageList(props: MessageListProps) {
             <For each={timelineSections()}>
               {(section) => (
                 <section class="rounded-[18px] border border-gray-6/60 bg-gray-2/35">
-                  <button
-                    class="flex w-full items-center gap-2 px-3 py-2 text-left"
-                    onClick={() => setTimelineDetailState((current) => toggleTimelineSection(current, section.id))}
-                  >
-                    <ChevronRight
-                      size={14}
-                      class={`shrink-0 transition-transform duration-200 ${sectionExpanded(section.id) ? "rotate-90" : ""}`}
-                    />
-                    <div class={`shrink-0 rounded-full p-1.5 ${iconAccentClass(section.kind)}`}>
-                      <ToolIcon category={section.kind} size={13} />
-                    </div>
-                    <div class="min-w-0 flex-1">
-                      <div class="flex items-center gap-2">
-                        <span class="truncate text-[13px] font-medium text-gray-12">{section.title}</span>
-                        <span class="truncate text-[11px] text-gray-9">{localizedSectionSummary(section)}</span>
+                  <Show
+                    when={!singleSectionMode()}
+                    fallback={(
+                      <div class="flex items-center gap-2 px-3 py-2">
+                        <div class={`shrink-0 rounded-full p-1.5 ${iconAccentClass(sectionDisplayCategory(section))}`}>
+                          <ToolIcon category={sectionDisplayCategory(section)} size={13} />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                          <div class="flex items-center gap-2">
+                            <span class="truncate text-[13px] font-medium text-gray-12">{localizedSectionTitle(section)}</span>
+                          </div>
+                        </div>
+                        <Show when={section.status}>
+                          {(status) => (
+                            <span class={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusChipClass(status())}`}>
+                              {timelineStatusLabel(status())}
+                            </span>
+                          )}
+                        </Show>
                       </div>
-                    </div>
-                    <Show when={section.status}>
-                      {(status) => (
-                        <span class={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusChipClass(status())}`}>
-                          {timelineStatusLabel(status())}
-                        </span>
-                      )}
-                    </Show>
-                  </button>
+                    )}
+                  >
+                    <button
+                      type="button"
+                      class="flex w-full items-center gap-2 px-3 py-2 text-left"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setTimelineDetailState((current) => toggleTimelineSection(current, section.id));
+                      }}
+                    >
+                      <ChevronRight
+                        size={14}
+                        class={`shrink-0 transition-transform duration-200 ${sectionExpanded(section.id) ? "rotate-90" : ""}`}
+                      />
+                      <div class={`shrink-0 rounded-full p-1.5 ${iconAccentClass(sectionDisplayCategory(section))}`}>
+                        <ToolIcon category={sectionDisplayCategory(section)} size={13} />
+                      </div>
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-2">
+                          <span class="truncate text-[13px] font-medium text-gray-12">{localizedSectionTitle(section)}</span>
+                          <span class="truncate text-[11px] text-gray-9">{localizedSectionSummary(section)}</span>
+                        </div>
+                      </div>
+                      <Show when={section.status}>
+                        {(status) => (
+                          <span class={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusChipClass(status())}`}>
+                            {timelineStatusLabel(status())}
+                          </span>
+                        )}
+                      </Show>
+                    </button>
+                  </Show>
 
-                  <Show when={sectionExpanded(section.id)}>
+                  <Show when={singleSectionMode() || sectionExpanded(section.id)}>
                     <div class="border-t border-gray-6/50 px-3 pb-2">
                       <For each={section.rows}>
                         {(entry, rowIndex) => (
                           <div class={rowIndex() === 0 ? "pt-2" : "border-t border-gray-6/40 py-2"}>
-                            <div class="flex items-start gap-2">
-                              <div class={`mt-0.5 shrink-0 rounded-full p-1.5 ${iconAccentClass(entry.row.rowType)}`}>
-                                <ToolIcon category={entry.row.rowType} size={13} />
+                            {(() => {
+                              const row = displayedTimelineRow(entry);
+                              return (
+                                <div class="flex items-start gap-2">
+                              <div class={`mt-0.5 shrink-0 rounded-full p-1.5 ${iconAccentClass(row.rowType)}`}>
+                                <ToolIcon category={row.rowType} size={13} />
                               </div>
                               <div class="min-w-0 flex-1">
                                 <div class="flex items-start gap-2">
                                   <div class="min-w-0 flex-1">
-                                    <div class="text-[13px] font-medium leading-5 text-gray-12">{entry.row.primary}</div>
-                                    <Show when={entry.row.secondary}>
+                                    <div class="text-[13px] font-medium leading-5 text-gray-12">{row.primary}</div>
+                                    <Show when={row.secondary}>
                                       <div class="mt-0.5 text-[12px] leading-5 text-gray-10 break-words">
-                                        {entry.row.secondary}
+                                        {row.secondary}
                                       </div>
                                     </Show>
                                   </div>
-                                  <Show when={entry.row.status}>
+                                  <Show when={row.status}>
                                     {(status) => (
                                       <span class={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusChipClass(status())}`}>
                                         {timelineStatusLabel(status())}
@@ -869,7 +1040,7 @@ export default function MessageList(props: MessageListProps) {
                                 </div>
 
                                 <div class="mt-1 flex flex-wrap items-center gap-2">
-                                  <Show when={entry.row.rowType === "skill"}>
+                                  <Show when={row.rowType === "skill"}>
                                     <span class="inline-flex items-center rounded-full bg-purple-3/80 px-2 py-0.5 text-[10px] font-medium text-purple-11">
                                       {tr("session.timeline_badge_skill")}
                                     </span>
@@ -902,32 +1073,21 @@ export default function MessageList(props: MessageListProps) {
                                   </Show>
                                 </div>
 
-                                <Show when={entry.row.technicalDetail || (props.developerMode && entry.part)}>
+                                <Show when={props.showThinking && row.technicalDetail}>
                                   <details class="mt-2">
                                     <summary class="inline-flex cursor-pointer list-none items-center gap-1 text-[11px] text-gray-10 hover:text-gray-11">
                                       <ChevronDown size={12} class="shrink-0" />
                                       {tr("session.timeline_technical_detail")}
                                     </summary>
-                                    <Show when={entry.row.technicalDetail}>
-                                      <pre class="mt-1 whitespace-pre-wrap break-all rounded-xl bg-gray-2 px-2 py-1 text-[11px] leading-5 text-gray-10">
-                                        <code>{entry.row.technicalDetail}</code>
-                                      </pre>
-                                    </Show>
-                                    <Show when={props.developerMode && entry.part}>
-                                      <div class="mt-2 rounded-xl border border-gray-6/50 bg-gray-1/50 px-2 py-2 text-xs text-gray-10">
-                                        <PartView
-                                          part={entry.part!}
-                                          developerMode={props.developerMode}
-                                          showThinking={props.showThinking}
-                                          workspaceRoot={props.workspaceRoot}
-                                          tone={containerProps.isUser ? "dark" : "light"}
-                                        />
-                                      </div>
-                                    </Show>
+                                    <pre class="mt-1 whitespace-pre-wrap break-all rounded-xl bg-gray-2 px-2 py-1 text-[11px] leading-5 text-gray-10">
+                                      <code>{row.technicalDetail}</code>
+                                    </pre>
                                   </details>
                                 </Show>
                               </div>
-                            </div>
+                                </div>
+                              );
+                            })()}
                           </div>
                         )}
                       </For>
@@ -984,6 +1144,23 @@ export default function MessageList(props: MessageListProps) {
           const groupSpacing = block.isUser ? "mb-3" : "mb-4";
           const isSyntheticSessionError =
             !block.isUser && block.messageId.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
+          const textGroups = () =>
+            block.groups.filter(
+              (group): group is { kind: "text"; part: Part; segment: "intent" | "result" } => group.kind === "text",
+            );
+          const inlineStepGroups = () =>
+            block.groups
+              .filter((group) => group.kind === "steps")
+              .map((group) => {
+                const stepGroup = group as {
+                  kind: "steps";
+                  id: string;
+                  parts: Part[];
+                  segment: "execution";
+                  mode: StepGroupMode;
+                };
+                return { id: stepGroup.id, parts: stepGroup.parts, mode: stepGroup.mode };
+              });
 
           if (isSyntheticSessionError) {
             const messageText = block.renderableParts
@@ -1053,49 +1230,38 @@ export default function MessageList(props: MessageListProps) {
                     </For>
                   </div>
                 </Show>
-                <For each={block.groups}>
+                <For each={textGroups()}>
                   {(group, idx) => (
-                    <div class={idx() === block.groups.length - 1 ? "" : groupSpacing}>
-                      <Show when={group.kind === "text"}>
-                        {(() => {
-                          const isStreamingLatestAssistant =
-                            !block.isUser && props.isStreaming && block.messageId === latestAssistantMessageId();
-                          const markdownThrottleMs = isStreamingLatestAssistant ? 550 : 100;
-                          return (
-                            <PartView
-                              part={(group as { kind: "text"; part: Part; segment: "intent" | "result" }).part}
-                              developerMode={props.developerMode}
-                              showThinking={props.showThinking}
-                              workspaceRoot={props.workspaceRoot}
-                              tone={block.isUser ? "dark" : "light"}
-                              renderMarkdown={!block.isUser}
-                              markdownThrottleMs={markdownThrottleMs}
-                              highlightQuery={hasSearchMatch ? props.searchHighlightQuery : undefined}
-                            />
-                          );
-                        })()}
-                      </Show>
-                      {group.kind === "steps" &&
-                        (() => {
-                          const stepGroup = group as {
-                            kind: "steps";
-                            id: string;
-                            parts: Part[];
-                            segment: "execution";
-                            mode: StepGroupMode;
-                          };
-                          return (
-                            <StepsContainer
-                              id={stepGroup.id}
-                              stepGroups={[{ id: stepGroup.id, parts: stepGroup.parts, mode: stepGroup.mode }]}
-                              isUser={block.isUser}
-                              isInline={true}
-                            />
-                          );
-                        })()}
+                    <div class={idx() === textGroups().length - 1 ? "" : groupSpacing}>
+                      {(() => {
+                        const isStreamingLatestAssistant =
+                          !block.isUser && props.isStreaming && block.messageId === latestAssistantMessageId();
+                        const markdownThrottleMs = isStreamingLatestAssistant ? 550 : 100;
+                        return (
+                          <PartView
+                            part={group.part}
+                            developerMode={props.developerMode}
+                            showThinking={props.showThinking}
+                            workspaceRoot={props.workspaceRoot}
+                            tone={block.isUser ? "dark" : "light"}
+                            renderMarkdown={!block.isUser}
+                            markdownThrottleMs={markdownThrottleMs}
+                            highlightQuery={hasSearchMatch ? props.searchHighlightQuery : undefined}
+                          />
+                        );
+                      })()}
                     </div>
                   )}
                 </For>
+                <Show when={inlineStepGroups().length > 0}>
+                  <StepsContainer
+                    id={inlineStepGroups()[0]!.id}
+                    relatedIds={inlineStepGroups().map((stepGroup) => stepGroup.id).filter((stepId) => stepId !== inlineStepGroups()[0]!.id)}
+                    stepGroups={inlineStepGroups()}
+                    isUser={block.isUser}
+                    isInline={true}
+                  />
+                </Show>
                 <div class="absolute bottom-2 right-2 flex justify-end opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
                   <button
                     class="text-dls-secondary hover:text-dls-text p-1 rounded hover:bg-dls-hover transition-colors"
