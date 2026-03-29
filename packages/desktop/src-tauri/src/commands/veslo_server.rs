@@ -3,16 +3,32 @@ use tauri::{AppHandle, State};
 use crate::engine::manager::EngineManager;
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::veslo_server::manager::VesloServerManager;
-use crate::veslo_server::start_veslo_server;
+use crate::veslo_server::{recover_persisted_veslo_server_info, start_veslo_server};
 use crate::types::VesloServerInfo;
 
 #[tauri::command]
-pub fn veslo_server_info(manager: State<VesloServerManager>) -> VesloServerInfo {
-    let mut state = manager
-        .inner
-        .lock()
-        .expect("veslo server mutex poisoned");
-    VesloServerManager::snapshot_locked(&mut state)
+pub fn veslo_server_info(app: AppHandle, manager: State<VesloServerManager>) -> VesloServerInfo {
+    {
+        let mut state = manager
+            .inner
+            .lock()
+            .expect("veslo server mutex poisoned");
+        let info = VesloServerManager::snapshot_locked(&mut state);
+        if info.running {
+            return info;
+        }
+    }
+
+    match recover_persisted_veslo_server_info(&app) {
+        Ok(Some(info)) => info,
+        Ok(None) | Err(_) => {
+            let mut state = manager
+                .inner
+                .lock()
+                .expect("veslo server mutex poisoned");
+            VesloServerManager::snapshot_locked(&mut state)
+        }
+    }
 }
 
 #[tauri::command]
