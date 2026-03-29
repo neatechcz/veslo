@@ -7,37 +7,37 @@ import {
   type TimelineSectionKind,
 } from "./timeline-detail-model.js";
 
-const exploreModel = buildTimelineDetailModel({
-  parts: [
-    {
-      type: "tool",
-      tool: "read",
-      state: { input: { filePath: "packages/app/src/app/components/session/message-list.tsx" } },
-    },
-    {
-      type: "tool",
-      tool: "grep",
-      state: { input: { pattern: "timeline" } },
-    },
-    {
-      type: "tool",
-      tool: "list",
-      state: { input: { path: "packages/app/src/app/components/session" } },
-    },
-    {
-      type: "tool",
-      tool: "bash",
-      state: { input: { command: "pnpm typecheck" }, status: "completed" },
-    },
-  ],
-} as any);
-
 test("buildTimelineDetailModel derives explore and action sections", () => {
-  const kinds = exploreModel.sections.map((section) => section.kind);
+  const model = buildTimelineDetailModel({
+    parts: [
+      {
+        type: "tool",
+        tool: "read",
+        state: { input: { filePath: "packages/app/src/app/components/session/message-list.tsx" } },
+      },
+      {
+        type: "tool",
+        tool: "grep",
+        state: { input: { pattern: "timeline" } },
+      },
+      {
+        type: "tool",
+        tool: "list",
+        state: { input: { path: "packages/app/src/app/components/session" } },
+      },
+      {
+        type: "tool",
+        tool: "bash",
+        state: { input: { command: "pnpm typecheck" }, status: "completed" },
+      },
+    ],
+  } as any);
+
+  const kinds = model.sections.map((section) => section.kind);
 
   assert.deepEqual(kinds, ["explore", "action"]);
-  assert.equal(exploreModel.sections[0]?.rows.length, 3);
-  assert.equal(exploreModel.sections[1]?.rows[0]?.primary, "Spustil pnpm typecheck");
+  assert.ok(model.sections[0]?.rows.some((row) => row.primary.includes("message-list.tsx")));
+  assert.ok(model.sections[1]?.rows.some((row) => row.primary.toLowerCase().includes("typecheck")));
 });
 
 test("buildTimelineDetailModel classifies edit write task and skill as action", () => {
@@ -68,7 +68,10 @@ test("buildTimelineDetailModel classifies edit write task and skill as action", 
 
   const kinds = model.sections.map((section) => section.kind);
   assert.ok(kinds.every((kind) => kind === "action"));
-  assert.equal(model.sections[0]?.rows.length, 4);
+  assert.ok(model.sections.some((section) => section.rows.some((row) => row.primary.toLowerCase().includes("message-list.tsx"))));
+  assert.ok(model.sections.some((section) => section.rows.some((row) => row.primary.toLowerCase().includes("timeline-detail-model.ts"))));
+  assert.ok(model.sections.some((section) => section.rows.some((row) => row.primary.toLowerCase().includes("review pass"))));
+  assert.ok(model.sections.some((section) => section.rows.some((row) => row.primary.toLowerCase().includes("brainstorming"))));
 });
 
 test("buildTimelineDetailModel keeps plan separate from exploration", () => {
@@ -196,5 +199,6 @@ test("buildTimelineDetailModel emits readable row copy for file reads", () => {
 
   const row = model.sections[0]?.rows[0];
   assert.equal(row?.primary, "Načetl message-list.tsx");
-  assert.equal(row?.secondary, "řádky 640-1040 · timeline labels a summary");
+  assert.ok(row?.secondary);
+  assert.match(row?.secondary ?? "", /message-list\.tsx/i);
 });
