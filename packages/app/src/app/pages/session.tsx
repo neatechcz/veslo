@@ -4131,7 +4131,7 @@ export default function SessionView(props: SessionViewProps) {
           <div class="rounded-t-xl border border-b-0 border-gray-6/70 bg-gray-1/70 shadow-sm shadow-gray-12/5">
             <button
               type="button"
-              class="w-full flex items-center justify-between px-4 py-2.5 text-xs text-gray-9 hover:bg-gray-2/50 transition-colors rounded-t-xl"
+              class="w-full flex items-center justify-between px-4 py-1.5 text-xs text-gray-9 hover:bg-gray-2/50 transition-colors rounded-t-xl"
               onClick={() => setTodoExpanded((prev) => !prev)}
             >
               <div class="flex items-center gap-2">
@@ -4144,14 +4144,14 @@ export default function SessionView(props: SessionViewProps) {
               />
             </button>
             <Show when={todoExpanded()}>
-              <div class="px-4 pb-3 space-y-2.5 max-h-60 overflow-auto border-t border-gray-6/50">
+              <div class="px-4 pb-1.5 space-y-1 max-h-60 overflow-auto border-t border-gray-6/50">
                 <For each={todoList()}>
                   {(todo, index) => {
                     const done = () => todo.status === "completed";
                     const cancelled = () => todo.status === "cancelled";
                     const active = () => todo.status === "in_progress";
                     return (
-                      <div class="flex items-start gap-2.5 pt-2.5 first:pt-2.5">
+                      <div class="flex items-start gap-2 pt-1 first:pt-1">
                         <div class="flex items-center gap-1.5 pt-0.5">
                           <div
                             class={`h-4.5 w-4.5 rounded-full border flex items-center justify-center ${
@@ -4173,7 +4173,7 @@ export default function SessionView(props: SessionViewProps) {
                           </div>
                         </div>
                         <div
-                          class={`flex-1 text-sm leading-relaxed ${
+                          class={`flex-1 text-[13px] leading-[1.35] ${
                             cancelled() ? "text-gray-9 line-through" : "text-gray-12"
                           }`}
                         >
