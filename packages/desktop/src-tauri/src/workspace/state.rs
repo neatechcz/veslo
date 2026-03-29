@@ -1,10 +1,13 @@
+use std::collections::HashSet;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
 use tauri::Manager;
 
-use crate::types::{WorkspaceState, WORKSPACE_STATE_VERSION};
+use crate::types::{
+    RemoteType, WorkspaceInfo, WorkspaceState, WorkspaceType, WORKSPACE_STATE_VERSION,
+};
 
 pub fn stable_workspace_id(path: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -30,7 +33,7 @@ fn read_workspace_state_file(path: &PathBuf) -> Result<WorkspaceState, String> {
 
 fn legacy_state_candidates(data_dir: &PathBuf, current_state_path: &PathBuf) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
 
     let mut push_candidate = |candidate: PathBuf| {
         if candidate == *current_state_path {
@@ -44,7 +47,12 @@ fn legacy_state_candidates(data_dir: &PathBuf, current_state_path: &PathBuf) -> 
     push_candidate(data_dir.join("openwork-workspaces.json"));
 
     if let Some(parent) = data_dir.parent() {
-        for legacy_dir in ["com.differentai.openwork", "com.differentai.openwork.dev"] {
+        for legacy_dir in [
+            "com.neatech.veslo",
+            "com.neatech.veslo.dev",
+            "com.differentai.openwork",
+            "com.differentai.openwork.dev",
+        ] {
             let base = parent.join(legacy_dir);
             push_candidate(base.join("veslo-workspaces.json"));
             push_candidate(base.join("openwork-workspaces.json"));
@@ -71,35 +79,196 @@ fn try_load_legacy_workspace_state(
     None
 }
 
-pub fn load_workspace_state(app: &tauri::AppHandle) -> Result<WorkspaceState, String> {
-    let (data_dir, path) = veslo_state_paths(app)?;
-    let mut state = if path.exists() {
-        read_workspace_state_file(&path)?
-    } else if let Some(legacy) = try_load_legacy_workspace_state(&data_dir, &path) {
-        // Best-effort one-time migration into the new state file location/name.
-        if let Err(error) = fs::create_dir_all(&data_dir) {
-            eprintln!(
-                "[workspace] Failed to create migration directory {}: {error}",
-                data_dir.display()
-            );
-        } else if let Ok(serialized) = serde_json::to_string_pretty(&legacy) {
-            if let Err(error) = fs::write(&path, serialized) {
+fn persist_workspace_state_file(data_dir: &PathBuf, path: &PathBuf, state: &WorkspaceState) {
+    if let Err(error) = fs::create_dir_all(data_dir) {
+        eprintln!(
+            "[workspace] Failed to create migration directory {}: {error}",
+            data_dir.display()
+        );
+        return;
+    }
+
+    match serde_json::to_string_pretty(state) {
+        Ok(serialized) => {
+            if let Err(error) = fs::write(path, serialized) {
                 eprintln!(
                     "[workspace] Failed to persist migrated state {}: {error}",
                     path.display()
                 );
             }
         }
+        Err(error) => {
+            eprintln!(
+                "[workspace] Failed to serialize workspace state {}: {error}",
+                path.display()
+            );
+        }
+    }
+}
+
+fn workspace_identity_key(workspace: &WorkspaceInfo) -> String {
+    let normalized_path = workspace.path.trim().replace('\\', "/");
+    match workspace.workspace_type {
+        WorkspaceType::Local => format!("local::{normalized_path}"),
+        WorkspaceType::Remote => {
+            let remote_type = match workspace.remote_type.as_ref() {
+                Some(RemoteType::Veslo) => "veslo",
+                _ => "opencode",
+            };
+            let host = workspace
+                .veslo_host_url
+                .as_deref()
+                .or(workspace.base_url.as_deref())
+                .unwrap_or("")
+                .trim()
+                .replace('\\', "/");
+            let scope = workspace
+                .veslo_workspace_id
+                .as_deref()
+                .or(workspace.directory.as_deref())
+                .unwrap_or("")
+                .trim()
+                .replace('\\', "/");
+            format!("remote::{remote_type}::{host}::{scope}")
+        }
+    }
+}
+
+fn workspace_exists_by_id_or_identity(
+    seen_ids: &HashSet<String>,
+    seen_identity: &HashSet<String>,
+    workspace: &WorkspaceInfo,
+) -> bool {
+    if seen_ids.contains(workspace.id.trim()) {
+        return true;
+    }
+    let identity = workspace_identity_key(workspace);
+    !identity.trim().is_empty() && seen_identity.contains(&identity)
+}
+
+fn merge_workspace_states(base: &mut WorkspaceState, imported: Vec<WorkspaceState>) -> bool {
+    let mut changed = false;
+    let mut seen_ids = HashSet::new();
+    let mut seen_identity = HashSet::new();
+
+    for workspace in &base.workspaces {
+        let id = workspace.id.trim();
+        if !id.is_empty() {
+            seen_ids.insert(id.to_string());
+        }
+        let identity = workspace_identity_key(workspace);
+        if !identity.trim().is_empty() {
+            seen_identity.insert(identity);
+        }
+    }
+
+    for state in imported {
+        if state.version > base.version {
+            base.version = state.version;
+            changed = true;
+        }
+
+        let imported_active_id = state.active_id.trim().to_string();
+        for workspace in state.workspaces {
+            if workspace.id.trim().is_empty() {
+                continue;
+            }
+            if workspace_exists_by_id_or_identity(&seen_ids, &seen_identity, &workspace) {
+                continue;
+            }
+            seen_ids.insert(workspace.id.trim().to_string());
+            let identity = workspace_identity_key(&workspace);
+            if !identity.trim().is_empty() {
+                seen_identity.insert(identity);
+            }
+            base.workspaces.push(workspace);
+            changed = true;
+        }
+
+        let base_has_active = base
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.id == base.active_id);
+        if !base_has_active
+            && !imported_active_id.is_empty()
+            && base
+                .workspaces
+                .iter()
+                .any(|workspace| workspace.id == imported_active_id)
+        {
+            if base.active_id != imported_active_id {
+                base.active_id = imported_active_id;
+                changed = true;
+            }
+        }
+    }
+
+    changed
+}
+
+fn load_imported_workspace_states(
+    data_dir: &PathBuf,
+    current_state_path: &PathBuf,
+) -> Vec<WorkspaceState> {
+    legacy_state_candidates(data_dir, current_state_path)
+        .into_iter()
+        .filter_map(|candidate| {
+            if !candidate.exists() {
+                return None;
+            }
+            read_workspace_state_file(&candidate).ok()
+        })
+        .collect()
+}
+
+fn load_workspace_state_from_paths(
+    data_dir: &PathBuf,
+    path: &PathBuf,
+) -> Result<WorkspaceState, String> {
+    let mut migrated = false;
+    let mut state = if path.exists() {
+        read_workspace_state_file(path)?
+    } else if let Some(legacy) = try_load_legacy_workspace_state(data_dir, path) {
+        migrated = true;
         legacy
     } else {
-        return Ok(WorkspaceState::default());
+        WorkspaceState::default()
     };
+
+    let imported = load_imported_workspace_states(data_dir, path);
+    let mut changed = merge_workspace_states(&mut state, imported);
 
     if state.version < WORKSPACE_STATE_VERSION {
         state.version = WORKSPACE_STATE_VERSION;
+        changed = true;
+    }
+
+    let active_is_valid = state
+        .workspaces
+        .iter()
+        .any(|workspace| workspace.id == state.active_id);
+    if !active_is_valid {
+        let next_active = state
+            .workspaces
+            .first()
+            .map(|workspace| workspace.id.clone())
+            .unwrap_or_else(|| "".to_string());
+        if state.active_id != next_active {
+            state.active_id = next_active;
+            changed = true;
+        }
+    }
+
+    if migrated || changed {
+        persist_workspace_state_file(data_dir, path, &state);
     }
 
     Ok(state)
+}
+
+pub fn load_workspace_state(app: &tauri::AppHandle) -> Result<WorkspaceState, String> {
+    let (data_dir, path) = veslo_state_paths(app)?;
+    load_workspace_state_from_paths(&data_dir, &path)
 }
 
 pub fn save_workspace_state(app: &tauri::AppHandle, state: &WorkspaceState) -> Result<(), String> {
@@ -137,8 +306,10 @@ pub fn stable_workspace_id_for_veslo(host_url: &str, workspace_id: Option<&str>)
 
 #[cfg(test)]
 mod tests {
-    use super::try_load_legacy_workspace_state;
-    use crate::types::RemoteType;
+    use super::{
+        legacy_state_candidates, load_workspace_state_from_paths, try_load_legacy_workspace_state,
+    };
+    use crate::types::{RemoteType, WorkspaceInfo, WorkspaceState, WorkspaceType};
     use std::fs;
     use std::path::PathBuf;
     use uuid::Uuid;
@@ -190,9 +361,145 @@ mod tests {
             Some("https://legacy-host.example")
         );
         assert_eq!(workspace.veslo_token.as_deref(), Some("token-123"));
-        assert_eq!(workspace.veslo_workspace_id.as_deref(), Some("legacy-ws-id"));
+        assert_eq!(
+            workspace.veslo_workspace_id.as_deref(),
+            Some("legacy-ws-id")
+        );
         assert_eq!(workspace.veslo_workspace_name.as_deref(), Some("Legacy WS"));
 
         fs::remove_dir_all(&root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn legacy_candidates_include_neighbor_veslo_profile_state() {
+        let root = temp_root("legacy-candidates");
+        let current_data_dir = root.join("com.neatech.veslo");
+        let current_state_path = current_data_dir.join("veslo-workspaces.json");
+
+        let candidates = legacy_state_candidates(&current_data_dir, &current_state_path);
+        let expected = root
+            .join("com.neatech.veslo.dev")
+            .join("veslo-workspaces.json");
+
+        assert!(
+            candidates.iter().any(|candidate| candidate == &expected),
+            "expected sibling Veslo profile state candidate: {}",
+            expected.display()
+        );
+    }
+
+    fn local_workspace(id: &str, name: &str, path: &str) -> WorkspaceInfo {
+        WorkspaceInfo {
+            id: id.to_string(),
+            name: name.to_string(),
+            path: path.to_string(),
+            preset: "starter".to_string(),
+            workspace_type: WorkspaceType::Local,
+            remote_type: None,
+            base_url: None,
+            directory: None,
+            display_name: None,
+            veslo_host_url: None,
+            veslo_token: None,
+            veslo_workspace_id: None,
+            veslo_workspace_name: None,
+            sandbox_backend: None,
+            sandbox_run_id: None,
+            sandbox_container_name: None,
+        }
+    }
+
+    fn write_state(path: &PathBuf, state: &WorkspaceState) {
+        let dir = path.parent().expect("state file should have parent dir");
+        fs::create_dir_all(dir).expect("create state dir");
+        let serialized = serde_json::to_string_pretty(state).expect("serialize state");
+        fs::write(path, serialized).expect("write state");
+    }
+
+    #[test]
+    fn load_workspace_state_merges_neighbor_veslo_entries_when_current_exists() {
+        let root = temp_root("merge-neighbor");
+        let current_data_dir = root.join("com.neatech.veslo");
+        let current_state_path = current_data_dir.join("veslo-workspaces.json");
+        let sibling_state_path = root
+            .join("com.neatech.veslo.dev")
+            .join("veslo-workspaces.json");
+
+        write_state(
+            &current_state_path,
+            &WorkspaceState {
+                version: 4,
+                active_id: "ws-local-a".to_string(),
+                workspaces: vec![local_workspace("ws-local-a", "A", "/tmp/workspace-a")],
+            },
+        );
+        write_state(
+            &sibling_state_path,
+            &WorkspaceState {
+                version: 4,
+                active_id: "ws-local-b".to_string(),
+                workspaces: vec![local_workspace(
+                    "ws-local-b",
+                    "Company searcher",
+                    "/tmp/company-searcher",
+                )],
+            },
+        );
+
+        let loaded = load_workspace_state_from_paths(&current_data_dir, &current_state_path)
+            .expect("load merged state");
+
+        assert_eq!(loaded.active_id, "ws-local-a");
+        assert_eq!(loaded.workspaces.len(), 2);
+        assert!(loaded
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.id == "ws-local-a" && workspace.path == "/tmp/workspace-a"));
+        assert!(loaded
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.id == "ws-local-b"
+                && workspace.path == "/tmp/company-searcher"));
+
+        let persisted = fs::read_to_string(&current_state_path).expect("read persisted state");
+        let parsed: WorkspaceState =
+            serde_json::from_str(&persisted).expect("parse persisted state");
+        assert_eq!(parsed.workspaces.len(), 2);
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn load_workspace_state_dedupes_neighbor_local_entries_with_same_path() {
+        let root = temp_root("dedupe-neighbor");
+        let current_data_dir = root.join("com.neatech.veslo");
+        let current_state_path = current_data_dir.join("veslo-workspaces.json");
+        let sibling_state_path = root
+            .join("com.neatech.veslo.dev")
+            .join("veslo-workspaces.json");
+
+        write_state(
+            &current_state_path,
+            &WorkspaceState {
+                version: 4,
+                active_id: "ws-local-a".to_string(),
+                workspaces: vec![local_workspace("ws-local-a", "A", "/tmp/workspace-a")],
+            },
+        );
+        write_state(
+            &sibling_state_path,
+            &WorkspaceState {
+                version: 4,
+                active_id: "ws-local-b".to_string(),
+                workspaces: vec![local_workspace("ws-local-b", "A clone", "/tmp/workspace-a")],
+            },
+        );
+
+        let loaded = load_workspace_state_from_paths(&current_data_dir, &current_state_path)
+            .expect("load merged state");
+        assert_eq!(loaded.workspaces.len(), 1);
+        assert_eq!(loaded.workspaces[0].id, "ws-local-a");
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
     }
 }
