@@ -40,6 +40,37 @@ test("buildTimelineDetailModel derives explore and action sections", () => {
   assert.equal(exploreModel.sections[1]?.rows[0]?.primary, "Spustil pnpm typecheck");
 });
 
+test("buildTimelineDetailModel classifies edit write task and skill as action", () => {
+  const model = buildTimelineDetailModel({
+    parts: [
+      {
+        type: "tool",
+        tool: "edit",
+        state: { input: { filePath: "packages/app/src/app/components/session/message-list.tsx" }, status: "completed" },
+      },
+      {
+        type: "tool",
+        tool: "write",
+        state: { input: { filePath: "packages/app/src/app/components/session/timeline-detail-model.ts" }, status: "completed" },
+      },
+      {
+        type: "tool",
+        tool: "task",
+        state: { input: { description: "Delegate a review pass" }, status: "completed" },
+      },
+      {
+        type: "tool",
+        tool: "skill",
+        state: { input: { name: "brainstorming" }, status: "completed" },
+      },
+    ],
+  } as any);
+
+  const kinds = model.sections.map((section) => section.kind);
+  assert.ok(kinds.every((kind) => kind === "action"));
+  assert.equal(model.sections[0]?.rows.length, 4);
+});
+
 test("buildTimelineDetailModel keeps plan separate from exploration", () => {
   const model = buildTimelineDetailModel({
     parts: [
