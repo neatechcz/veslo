@@ -114,6 +114,26 @@ test("buildTimelineDetailModel routes failures into issues", () => {
   assert.ok(model.sections.at(-1)?.rows.some((row) => row.status === "error"));
 });
 
+test("buildTimelineDetailModel routes error payloads in title detail and error into issues", () => {
+  const model = buildTimelineDetailModel({
+    parts: [
+      {
+        type: "tool",
+        tool: "bash",
+        state: {
+          input: { command: "pnpm test" },
+          title: "Unknown tool",
+          detail: "tool not found in the current runtime",
+          error: "",
+        },
+      },
+    ],
+  } as any);
+
+  assert.equal(model.sections.at(-1)?.kind, "issues");
+  assert.ok(model.sections.at(-1)?.rows.some((row) => row.status === "error"));
+});
+
 test("buildTimelineDetailModel splits repeated section runs when interrupted", () => {
   const model = buildTimelineDetailModel({
     parts: [

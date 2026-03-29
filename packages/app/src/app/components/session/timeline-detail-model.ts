@@ -81,10 +81,34 @@ function getStatus(part: Part): "done" | "running" | "error" | "pass" | undefine
   return undefined;
 }
 
+function toolErrorText(part: Part): string {
+  if (part.type !== "tool") return "";
+  const state = getState(part);
+  const title = normalizeText(state.title);
+  const error = normalizeText(state.error);
+  const detail = normalizeText(state.detail);
+  return [title, error, detail].filter(Boolean).join("\n");
+}
+
+function hasErrorPayload(part: Part): boolean {
+  const haystack = toolErrorText(part).toLowerCase();
+  if (!haystack) return false;
+  return (
+    haystack.includes("invalid tool") ||
+    haystack.includes("model tried to call") ||
+    haystack.includes("unavailable tool") ||
+    haystack.includes("unknown tool") ||
+    haystack.includes("tool not found") ||
+    haystack.includes("failed") ||
+    haystack.includes("error")
+  );
+}
+
 function isErrorPart(part: Part): boolean {
   const state = getState(part);
   const status = normalizeText(state.status).toLowerCase();
   if (status === "error" || status === "failed") return true;
+  if (hasErrorPayload(part)) return true;
   const text = normalizeText((part as any).text);
   return text.toLowerCase().startsWith("session-error:");
 }
