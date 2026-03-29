@@ -592,16 +592,16 @@ export default function MessageList(props: MessageListProps) {
 
     if (rowProps.part.type === "reasoning") {
       return (
-        <div class="py-2">
+        <div class="py-1">
           <div
-            class={`rounded-2xl border border-gray-6/60 bg-gray-2/40 px-3 py-2.5 ${
+            class={`rounded-2xl border border-gray-6/60 bg-gray-2/40 px-3 py-2 ${
               rowProps.groupMode === "exploration" ? "opacity-85" : ""
             }`}
           >
-            <div class="text-[12px] font-medium text-gray-12">{title()}</div>
+            <div class="text-[14px] font-medium text-gray-12 leading-[1.5]">{title()}</div>
             <Show when={summary().detail}>
               {(detail) => (
-                <p class="mt-1 text-[12px] leading-relaxed text-gray-10 whitespace-pre-wrap break-words">
+                <p class="mt-0.5 text-[14px] leading-[1.5] text-gray-10 whitespace-pre-wrap break-words">
                   {detail()}
                 </p>
               )}
@@ -612,7 +612,7 @@ export default function MessageList(props: MessageListProps) {
     }
 
     return (
-      <div class="flex items-center gap-2 py-1 min-h-[24px] leading-5 group/step">
+      <div class="flex items-center gap-2 py-0.5 leading-[1.5] group/step">
         {/* Status dot */}
         <div class={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDotClass(status())}`} />
         {/* Tool icon */}
@@ -624,7 +624,7 @@ export default function MessageList(props: MessageListProps) {
           <ToolIcon category={category()} size={13} />
         </div>
         {/* Title */}
-        <span class="text-[13px] leading-4 text-gray-12 font-medium truncate shrink-0 max-w-[200px]">
+        <span class="text-[14px] text-gray-12 font-medium truncate shrink-0 max-w-[200px]">
           {title()}
         </span>
         {/* Skill badge */}
@@ -640,19 +640,19 @@ export default function MessageList(props: MessageListProps) {
         </Show>
         {/* Detail - truncated to single line */}
         <Show when={summary().detail}>
-          <span class="text-[12px] leading-4 text-gray-9 truncate min-w-0">
+          <span class="text-[14px] text-gray-9 truncate min-w-0">
             {summary().detail}
           </span>
         </Show>
         <Show when={task().agentType && !summary().detail}>
           {(agentType) => (
-            <span class="text-[12px] leading-4 text-gray-9 truncate min-w-0">
+            <span class="text-[14px] text-gray-9 truncate min-w-0">
               {agentType()} agent
             </span>
           )}
         </Show>
         <Show when={task().isInternal && !summary().detail}>
-          <span class="text-[12px] leading-4 text-gray-9 truncate min-w-0">
+          <span class="text-[14px] text-gray-9 truncate min-w-0">
             internal processing
           </span>
         </Show>
@@ -970,7 +970,7 @@ export default function MessageList(props: MessageListProps) {
                   class={
                     index() === 0
                       ? ""
-                      : "mt-2 pt-2 border-t border-gray-6/40"
+                      : "mt-1 pt-1 border-t border-gray-6/40"
                   }
                 >
                   <Show when={group.mode === "exploration"}>
