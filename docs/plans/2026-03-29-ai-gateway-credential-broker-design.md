@@ -385,6 +385,10 @@ An admin control-plane mockup was produced in Pencil and exported as:
 
 ![AI Gateway Admin UI](assets/2026-03-29-ai-gateway-admin-ui.png)
 
+The expanded multi-page board covering all approved control-plane pages was also exported as:
+
+![AI Gateway Admin Pages](assets/2026-03-29-ai-gateway-admin-pages.png)
+
 The mockup emphasizes:
 
 - left navigation for major control-plane surfaces
