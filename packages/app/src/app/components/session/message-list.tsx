@@ -5,7 +5,7 @@ import { Check, ChevronDown, ChevronRight, CircleAlert, Copy, Eye, File, FileEdi
 import { createVirtualizer } from "@tanstack/solid-virtual";
 
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type MessageGroup, type MessageWithParts, type StepGroupMode } from "../../types";
-import { groupMessageParts, isUserVisiblePart, summarizeStep } from "../../utils";
+import { compactHumanStepText, containsPathLikeText, groupMessageParts, isUserVisiblePart, summarizeStep } from "../../utils";
 import PartView from "../part-view";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { getTaskPartSubagentInfo, isVesloInternalSubagentType } from "../../lib/internal-subagents";
@@ -756,9 +756,10 @@ export default function MessageList(props: MessageListProps) {
       return segments.length > 0 ? segments[segments.length - 1] : token;
     };
 
-    const compactText = (value: string, max = 42) => {
+    const compactText = (value: string, max = 42, options?: { preservePaths?: boolean }) => {
       const singleLine = value.replace(/\s+/g, " ").trim();
       if (!singleLine) return "";
+      if (options?.preservePaths && containsPathLikeText(singleLine)) return singleLine;
       return singleLine.length > max ? `${singleLine.slice(0, Math.max(0, max - 3))}...` : singleLine;
     };
 
@@ -790,7 +791,7 @@ export default function MessageList(props: MessageListProps) {
 
       if (tool === "bash") {
         const description = pick("description");
-        if (description) return compactText(description);
+        if (description) return compactHumanStepText(description, 42);
         const command = pick("command", "cmd");
         return command ? compactText(`Run ${command}`, 48) : "Run command";
       }
@@ -824,7 +825,7 @@ export default function MessageList(props: MessageListProps) {
         const agent = pick("subagent_type");
         if (isVesloInternalSubagentType(agent)) return "Internal processing";
         const description = pick("description");
-        if (description) return compactText(description);
+        if (description) return compactHumanStepText(description, 42);
         return agent ? `Delegate ${agent}` : "Delegate task";
       }
 
@@ -846,7 +847,7 @@ export default function MessageList(props: MessageListProps) {
       if (!step) return "Last step";
 
       const fromTool = toolHeadline(step);
-      if (fromTool) return compactText(fromTool);
+      if (fromTool) return compactText(fromTool, 42, { preservePaths: true });
 
       if (step.type === "tool") {
         const toolName = String((step as any).tool ?? "").trim();
@@ -857,12 +858,12 @@ export default function MessageList(props: MessageListProps) {
       }
 
       const summary = summarizeStep(step);
-      const title = compactText(summary.title);
-      const detail = compactText(summary.detail ?? "");
+      const title = compactText(summary.title, 42, { preservePaths: true });
+      const detail = compactText(summary.detail ?? "", 42, { preservePaths: true });
       const generic = /^(application|tool|step|working|done|completed|success)$/i.test(title);
 
       if (title && !generic) return title;
-      if (detail) return isPathLike(detail) ? compactPathToken(detail) : detail;
+      if (detail) return detail;
       if (title) return title;
       return "Last step";
     };
@@ -941,7 +942,13 @@ export default function MessageList(props: MessageListProps) {
             <span class="text-[11px] leading-4 text-gray-9 truncate max-w-[46ch]">{collapsedSummary()}</span>
           </Show>
           <Show when={!explorationOnly() && !expanded()}>
-            <span class="text-[11px] leading-4 text-gray-9 truncate max-w-[42ch]">{collapsedDetail()}</span>
+            <span
+              class={`text-[11px] leading-4 text-gray-9 max-w-[42ch] ${
+                containsPathLikeText(collapsedDetail()) ? "whitespace-normal break-all" : "truncate"
+              }`}
+            >
+              {collapsedDetail()}
+            </span>
           </Show>
           <Show when={!explorationOnly() && expanded()}>
             <span class="text-[11px] leading-4 text-gray-9 truncate max-w-[42ch]">{collapsedSummary()}</span>

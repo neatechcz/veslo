@@ -28,6 +28,15 @@ function normalizeStepText(value: unknown): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+export function containsPathLikeText(value: string): boolean {
+  const clean = normalizeStepText(value);
+  if (!clean) return false;
+  return (
+    /(?:^|[\s"'`([{])(?:[A-Za-z]:[\\/]|~[\\/]|\/|\.{1,2}[\\/])/.test(clean) ||
+    /(?:^|[\s"'`([{])[\w.-]+[/\\][\w./\\-]+/.test(clean)
+  );
+}
+
 function cleanReasoningText(value: string): string {
   return value
     .replace(/\[REDACTED\]/g, "")
@@ -39,6 +48,12 @@ function cleanReasoningText(value: string): string {
 
 function truncateStepText(value: string, max = 80): string {
   return value.length > max ? `${value.slice(0, Math.max(0, max - 3))}...` : value;
+}
+
+export function compactHumanStepText(value: string, max = 80): string {
+  const clean = normalizeStepText(value);
+  if (!clean) return "";
+  return containsPathLikeText(clean) ? clean : truncateStepText(clean, max);
 }
 
 function isPathLike(value: string): boolean {
@@ -117,7 +132,7 @@ function buildToolTitle(state: any, toolName: string): string {
 
   if (lower === "bash") {
     const description = pick("description");
-    if (description) return truncateStepText(description, 56);
+    if (description) return compactHumanStepText(description, 56);
     const command = pick("command", "cmd");
     if (command) return truncateStepText(`Run ${command}`, 56);
     return "Run command";
@@ -182,7 +197,7 @@ function buildToolDetail(state: any, toolName: string): string | undefined {
       return "processing request";
     }
     const description = pick("description");
-    if (description) return truncateStepText(description, 80);
+    if (description) return compactHumanStepText(description, 80);
     const agent = formatAgentLabel(rawAgent);
     if (agent) return `${agent} agent`;
   }

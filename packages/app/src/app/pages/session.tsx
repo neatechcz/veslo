@@ -4470,7 +4470,7 @@ export default function SessionView(props: SessionViewProps) {
                 <div class="text-sm text-gray-12 font-mono">{props.activePermission?.permission}</div>
 
                 <div class="text-xs text-gray-10 uppercase tracking-wider mt-4 mb-2 font-semibold">{tr("session.scope_label")}</div>
-                <div class="flex items-center gap-2 text-sm font-mono text-amber-12 bg-amber-1/30 px-2 py-1 rounded border border-amber-7/20">
+                <div class="flex items-start gap-2 text-sm font-mono text-amber-12 bg-amber-1/30 px-2 py-1 rounded border border-amber-7/20 whitespace-normal break-all">
                   <HardDrive size={12} />
                   {props.activePermission?.patterns.join(", ")}
                 </div>
