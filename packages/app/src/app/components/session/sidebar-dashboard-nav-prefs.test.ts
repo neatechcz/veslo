@@ -66,3 +66,33 @@ test("ignores storage write failures", () => {
     writeSidebarDashboardNavCollapsed(true, storage);
   });
 });
+
+test("falls back safely when window.localStorage accessor throws", () => {
+  const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const throwingWindow = {};
+  Object.defineProperty(throwingWindow, "localStorage", {
+    configurable: true,
+    get() {
+      throw new Error("denied");
+    },
+  });
+
+  Object.defineProperty(globalThis, "window", {
+    value: throwingWindow,
+    configurable: true,
+    writable: true,
+  });
+
+  try {
+    assert.equal(readSidebarDashboardNavCollapsed(), DEFAULT_SIDEBAR_DASHBOARD_NAV_COLLAPSED);
+    assert.doesNotThrow(() => {
+      writeSidebarDashboardNavCollapsed(false);
+    });
+  } finally {
+    if (originalWindowDescriptor) {
+      Object.defineProperty(globalThis, "window", originalWindowDescriptor);
+    } else {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  }
+});
