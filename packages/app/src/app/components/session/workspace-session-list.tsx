@@ -15,6 +15,7 @@ import {
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
   isProjectCollapsed,
+  shouldUseExpandedNewSessionLabel,
   toggleProjectCollapsed,
   type FlatSessionRow,
   type ProjectSessionGroup,
@@ -103,8 +104,10 @@ export default function WorkspaceSessionList(props: Props) {
   const [recentLoadMoreBusy, setRecentLoadMoreBusy] = createSignal(false);
   const [workspaceMenuTarget, setWorkspaceMenuTarget] = createSignal<WorkspaceMenuTarget | null>(null);
   const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
+  const [sidebarControlsWidth, setSidebarControlsWidth] = createSignal(0);
   let workspaceMenuRef: HTMLDivElement | undefined;
   let addWorkspaceMenuRef: HTMLDivElement | undefined;
+  let sidebarControlsRef: HTMLDivElement | undefined;
   let scrollContainerRef: HTMLDivElement | undefined;
   let recentSentinelRef: HTMLDivElement | undefined;
 
@@ -252,6 +255,25 @@ export default function WorkspaceSessionList(props: Props) {
     onCleanup(() => observer.disconnect());
   });
 
+  createEffect(() => {
+    const element = sidebarControlsRef;
+    if (!element) return;
+
+    const measure = () => setSidebarControlsWidth(element.clientWidth ?? 0);
+    measure();
+
+    if (typeof ResizeObserver === "undefined") {
+      const onResize = () => measure();
+      window.addEventListener("resize", onResize);
+      onCleanup(() => window.removeEventListener("resize", onResize));
+      return;
+    }
+
+    const observer = new ResizeObserver(() => measure());
+    observer.observe(element);
+    onCleanup(() => observer.disconnect());
+  });
+
   const emptyError = createMemo(() => {
     const failedGroup = props.workspaceSessionGroups.find((group) => group.status === "error");
     if (!failedGroup) return null;
@@ -264,6 +286,10 @@ export default function WorkspaceSessionList(props: Props) {
 
   const hasVisibleRows = createMemo(() =>
     sidebarMode() === "by-project" ? projectGroups().length > 0 : recentRows().length > 0,
+  );
+
+  const newSessionLabel = createMemo(() =>
+    shouldUseExpandedNewSessionLabel(sidebarControlsWidth()) ? tr("sidebar.new_session") : tr("sidebar.new"),
   );
 
   createEffect(() => {
@@ -443,7 +469,7 @@ export default function WorkspaceSessionList(props: Props) {
 
   return (
     <div class="flex h-full min-h-0 flex-col">
-      <div class="mb-3 flex flex-wrap items-center gap-2">
+      <div class="mb-3 flex flex-wrap items-center gap-2" ref={(el) => (sidebarControlsRef = el)}>
         <div class="inline-flex shrink-0 items-center gap-1 rounded-full border border-gray-6 bg-gray-1 p-1 shadow-sm">
           <button
             type="button"
@@ -470,14 +496,16 @@ export default function WorkspaceSessionList(props: Props) {
             title={tr("sidebar.recent")}
             aria-pressed={sidebarMode() === "recent"}
             onClick={() => setSidebarMode("recent")}
-            >
-              <List size={14} />
-            </button>
+          >
+            <List size={14} />
+          </button>
         </div>
         <div class="relative flex min-w-[9rem] flex-1" ref={(el) => (addWorkspaceMenuRef = el)}>
           <button
             type="button"
             class="inline-flex h-9 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-gray-6 bg-gray-1 px-3 py-2.5 text-[13px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2"
+            aria-label={tr("sidebar.new_session")}
+            title={tr("sidebar.new_session")}
             onClick={() => {
               if (props.onQuickNewSession) {
                 props.onQuickNewSession();
@@ -487,14 +515,14 @@ export default function WorkspaceSessionList(props: Props) {
             }}
           >
             <Plus size={14} />
-            {tr("sidebar.new_session")}
+            <span class="whitespace-nowrap">{newSessionLabel()}</span>
           </button>
 
           <Show when={!props.onQuickNewSession && addWorkspaceMenuOpen()}>
             <div class="absolute left-0 right-0 top-full z-20 mt-2 overflow-hidden rounded-lg border border-gray-6 bg-gray-1 shadow-xl">
               <button
                 type="button"
-                class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 transition-colors hover:bg-gray-3 hover:text-gray-12"
+                class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:text-gray-12 hover:bg-gray-3 transition-colors"
                 onClick={() => {
                   props.onOpenCreateWorkspace();
                   setAddWorkspaceMenuOpen(false);
@@ -506,7 +534,7 @@ export default function WorkspaceSessionList(props: Props) {
               <Show when={props.showRemoteActions !== false}>
                 <button
                   type="button"
-                  class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 transition-colors hover:bg-gray-3 hover:text-gray-12"
+                  class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:text-gray-12 hover:bg-gray-3 transition-colors"
                   onClick={() => {
                     props.onOpenCreateRemoteWorkspace();
                     setAddWorkspaceMenuOpen(false);
@@ -518,7 +546,7 @@ export default function WorkspaceSessionList(props: Props) {
               </Show>
               <button
                 type="button"
-                class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 transition-colors disabled:cursor-not-allowed disabled:opacity-60 hover:bg-gray-3 hover:text-gray-12"
+                class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 disabled={props.importingWorkspaceConfig}
                 onClick={() => {
                   props.onImportWorkspaceConfig();

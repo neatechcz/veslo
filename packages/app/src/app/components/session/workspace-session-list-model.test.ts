@@ -8,6 +8,7 @@ import {
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
   isProjectCollapsed,
+  shouldUseExpandedNewSessionLabel,
   toggleProjectCollapsed,
 } from "./workspace-session-list-model.js";
 
@@ -230,4 +231,9 @@ test("displayTimestamp prefers created time over updated time", () => {
   });
 
   assert.equal(value, 100);
+});
+
+test("shouldUseExpandedNewSessionLabel expands the label at 300px", () => {
+  assert.equal(shouldUseExpandedNewSessionLabel(299), false);
+  assert.equal(shouldUseExpandedNewSessionLabel(300), true);
 });

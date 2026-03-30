@@ -37,6 +37,7 @@ export type ProjectSessionGroup = {
 
 export const PRIVATE_PROJECT_GROUP_KEY = "project:veslo-private";
 export type CollapsedProjectMap = Record<string, boolean>;
+export const NEW_SESSION_LABEL_EXPAND_WIDTH = 300;
 
 const defaultPrivateWorkspacePath = () => false;
 
@@ -87,6 +88,9 @@ export const formatSessionTimestampTooltip = (timestampMs: number, locale: strin
 
 export const isProjectCollapsed = (collapsedProjects: CollapsedProjectMap, projectKey: string) =>
   Boolean(collapsedProjects[projectKey]);
+
+export const shouldUseExpandedNewSessionLabel = (width: number) =>
+  Number.isFinite(width) && width >= NEW_SESSION_LABEL_EXPAND_WIDTH;
 
 export const toggleProjectCollapsed = (
   collapsedProjects: CollapsedProjectMap,

@@ -24,34 +24,40 @@ test("workspace session sidebar keeps controls pinned while only session rows sc
   );
 });
 
-test("workspace session sidebar keeps the control rail compact-safe and ordered", () => {
+test("workspace session sidebar keeps the control rail ordered and compact-safe", () => {
   assert.match(
     source,
-    /<div class="mb-3 flex flex-wrap items-center gap-2">/,
+    /<div class="mb-3 flex flex-wrap items-center gap-2" ref=\{\(el\) => \(sidebarControlsRef = el\)\}>/,
     "sidebar controls should wrap instead of colliding at narrow widths",
   );
 
-  assert.doesNotMatch(
-    source,
-    /<div class="mb-3 flex items-center gap-2">/,
-    "sidebar controls should not regress to a single non-wrapping row",
-  );
-
   assert.match(
     source,
-    /<div class="inline-flex shrink-0 items-center gap-1 rounded-full border border-gray-6 bg-gray-1 p-1 shadow-sm">[\s\S]*<div class="relative flex min-w-\[9rem\] flex-1"/,
-    "the new session control should sit between the left toggle cluster and the right action cluster",
-  );
-
-  assert.match(
-    source,
-    /tr\("sidebar\.new_session"\)/,
-    "the compact control row should keep the primary new-session action visible",
+    /aria-label=\{tr\("sidebar\.by_project"\)\}[\s\S]*aria-label=\{tr\("sidebar\.recent"\)\}[\s\S]*aria-label=\{tr\("sidebar\.new_session"\)\}[\s\S]*aria-label=\{tr\("session\.command_palette_search_sessions"\)\}[\s\S]*aria-label=\{tr\("sidebar\.add_directory_session"\)\}/,
+    "control row should keep folder, recents, new, search, and add-directory actions in order",
   );
 
   assert.match(
     source,
     /<div class="ml-auto flex shrink-0 items-center gap-2">/,
     "search and add-directory actions should stay in a right-aligned action cluster",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /<div class="relative mb-3" ref=\{\(el\) => \(addWorkspaceMenuRef = el\)\}>[\s\S]*class="w-full flex items-center justify-center gap-2 px-3 py-2\.5 rounded-lg text-\[13px\] font-medium text-gray-11 border border-gray-6 bg-gray-1 hover:bg-gray-2 shadow-sm transition-colors"/,
+    "old standalone full-width new-session block should no longer be present",
+  );
+
+  assert.match(
+    source,
+    /FolderPlus/,
+    "workspace session list should import and render the add-directory icon",
+  );
+
+  assert.match(
+    source,
+    /onAddDirectorySession/,
+    "workspace session list should expose a dedicated callback for picker-driven directory sessions",
   );
 });

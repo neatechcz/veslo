@@ -1085,6 +1085,7 @@ export default {
   "sidebar.loading_more": "Načítám další...",
   "sidebar.load_more": "Načíst dalších (+20)",
   "sidebar.more_ellipsis": "…",
+  "sidebar.new": "Nová",
   "sidebar.new_session": "Nová relace",
   "sidebar.new_worker": "Nový worker",
   "sidebar.no_sessions": "Zatím tu nejsou žádné relace.",

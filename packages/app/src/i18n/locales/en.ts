@@ -1089,6 +1089,7 @@ export default {
   "sidebar.loading_more": "Loading more...",
   "sidebar.load_more": "Load more (+20)",
   "sidebar.more_ellipsis": "…",
+  "sidebar.new": "New",
   "sidebar.new_session": "New session",
   "sidebar.new_worker": "New worker",
   "sidebar.no_sessions": "No sessions yet.",
