@@ -16,30 +16,42 @@ class InMemoryLeaseRepository implements LeaseRepository {
 
   public createCalls = 0;
   public rebindCalls = 0;
+  public lastRebindInput: RebindSessionLeaseInput | null = null;
 
   async getActiveLeaseBySessionId(sessionId: string): Promise<SessionLease | null> {
     return this.leasesBySession.get(sessionId) ?? null;
   }
 
-  async createSessionLease(input: CreateSessionLeaseInput): Promise<SessionLease> {
+  async createSessionLeaseIfMissing(input: CreateSessionLeaseInput): Promise<SessionLease> {
+    const existing = this.leasesBySession.get(input.sessionId);
+    if (existing) {
+      return existing;
+    }
+
     this.createCalls += 1;
-    const lease: SessionLease = {
+    const created: SessionLease = {
       id: `lease_${++this.leaseIdCounter}`,
       sessionId: input.sessionId,
       activeBindingId: input.activeBindingId,
     };
-    this.leasesBySession.set(input.sessionId, lease);
-    return lease;
+    this.leasesBySession.set(input.sessionId, created);
+    return created;
   }
 
-  async rebindSessionLease(input: RebindSessionLeaseInput): Promise<SessionLease> {
+  async rebindSessionLease(input: RebindSessionLeaseInput): Promise<SessionLease | null> {
     this.rebindCalls += 1;
+    this.lastRebindInput = input;
+
     const current = this.leasesBySession.get(input.sessionId);
     if (!current) {
       throw new Error(`lease_missing:${input.sessionId}`);
     }
 
-    const updated: SessionLease = { ...current, activeBindingId: input.activeBindingId };
+    if (current.activeBindingId !== input.expectedCurrentBindingId) {
+      return null;
+    }
+
+    const updated: SessionLease = { ...current, activeBindingId: input.nextBindingId };
     this.leasesBySession.set(input.sessionId, updated);
     return updated;
   }
@@ -96,6 +108,28 @@ test("creates a lease for first session request", async () => {
   assert.equal(calls.initial, 1);
 });
 
+test("single-flights parallel first session requests", async () => {
+  const repository = new InMemoryLeaseRepository();
+  const { selector, calls } = createSelector();
+  const broker = new LeaseBroker(repository, {
+    ...selector,
+    async selectInitialBinding(input) {
+      calls.initial += 1;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return `binding_initial_${input.sessionId}`;
+    },
+  });
+
+  const leases = await Promise.all(
+    Array.from({ length: 8 }, () => broker.getOrCreateActiveLease("session_parallel_first")),
+  );
+
+  assert.equal(repository.createCalls, 1);
+  assert.equal(calls.initial, 1);
+  assert.ok(leases.every((lease) => lease.id === leases[0]?.id));
+  assert.ok(leases.every((lease) => lease.activeBindingId === "binding_initial_session_parallel_first"));
+});
+
 test("reuses the same binding for repeated session requests", async () => {
   const repository = new InMemoryLeaseRepository();
   const { selector, calls } = createSelector();
@@ -137,6 +171,7 @@ test("rebinds once on permanent credential failure", async () => {
 
   assert.equal(repository.rebindCalls, 1);
   assert.equal(calls.replacement, 1);
+  assert.equal(repository.lastRebindInput?.expectedCurrentBindingId, "binding_1");
   assert.equal(rebound.activeBindingId, "binding_2");
 });
 
@@ -162,4 +197,30 @@ test("uses single-flight rebinding for parallel permanent failures", async () =>
   assert.equal(calls.replacement, 1);
   assert.equal(repository.rebindCalls, 1);
   assert.ok(results.every((item) => item.activeBindingId === "binding_parallel_binding_1"));
+});
+
+test("maps upstream failures through classifier in handleUpstreamFailure", async () => {
+  const repository = new InMemoryLeaseRepository();
+  const { selector } = createSelector();
+  const broker = new LeaseBroker(repository, selector);
+
+  const lease = await broker.getOrCreateActiveLease("session_classifier");
+
+  const refreshable = await broker.handleUpstreamFailure({
+    sessionId: "session_classifier",
+    currentBindingId: lease.activeBindingId,
+    failure: { statusCode: 401 },
+  });
+
+  assert.equal(refreshable.activeBindingId, lease.activeBindingId);
+  assert.equal(repository.rebindCalls, 0);
+
+  const permanent = await broker.handleUpstreamFailure({
+    sessionId: "session_classifier",
+    currentBindingId: lease.activeBindingId,
+    failure: { code: "invalid_grant" },
+  });
+
+  assert.equal(repository.rebindCalls, 1);
+  assert.equal(permanent.activeBindingId, "binding_2");
 });

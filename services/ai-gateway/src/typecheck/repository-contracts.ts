@@ -19,7 +19,7 @@ const leaseRepositoryContractCheck: LeaseRepository = {
   async getActiveLeaseBySessionId() {
     return null;
   },
-  async createSessionLease() {
+  async createSessionLeaseIfMissing() {
     return {
       id: "lease_1",
       sessionId: "session_1",

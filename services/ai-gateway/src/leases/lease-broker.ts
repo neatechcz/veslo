@@ -13,6 +13,7 @@ export type HandleFailureInput = {
 };
 
 export class LeaseBroker {
+  private readonly creationBySession = new Map<string, Promise<SessionLease>>();
   private readonly rebindingBySession = new Map<string, Promise<SessionLease>>();
 
   constructor(
@@ -26,11 +27,17 @@ export class LeaseBroker {
       return existing;
     }
 
-    const activeBindingId = await this.selector.selectInitialBinding({ sessionId });
-    return this.leases.createSessionLease({
-      sessionId,
-      activeBindingId,
+    const inFlightCreation = this.creationBySession.get(sessionId);
+    if (inFlightCreation) {
+      return inFlightCreation;
+    }
+
+    const creation = this.createLeaseIfMissing(sessionId).finally(() => {
+      this.creationBySession.delete(sessionId);
     });
+
+    this.creationBySession.set(sessionId, creation);
+    return creation;
   }
 
   async handleUpstreamFailure(input: {
@@ -69,10 +76,7 @@ export class LeaseBroker {
   }
 
   private async rebindLease(sessionId: string, currentBindingId: string): Promise<SessionLease> {
-    const currentLease = await this.leases.getActiveLeaseBySessionId(sessionId);
-    if (!currentLease) {
-      return this.getOrCreateActiveLease(sessionId);
-    }
+    const currentLease = await this.getOrCreateActiveLease(sessionId);
 
     if (currentLease.activeBindingId !== currentBindingId) {
       return currentLease;
@@ -87,9 +91,30 @@ export class LeaseBroker {
       return currentLease;
     }
 
-    return this.leases.rebindSessionLease({
+    const rebound = await this.leases.rebindSessionLease({
       sessionId,
-      activeBindingId: replacementBindingId,
+      expectedCurrentBindingId: currentBindingId,
+      nextBindingId: replacementBindingId,
+    });
+
+    if (rebound) {
+      return rebound;
+    }
+
+    const latestLease = await this.leases.getActiveLeaseBySessionId(sessionId);
+    return latestLease ?? this.getOrCreateActiveLease(sessionId);
+  }
+
+  private async createLeaseIfMissing(sessionId: string): Promise<SessionLease> {
+    const leaseBeforeCreate = await this.leases.getActiveLeaseBySessionId(sessionId);
+    if (leaseBeforeCreate) {
+      return leaseBeforeCreate;
+    }
+
+    const activeBindingId = await this.selector.selectInitialBinding({ sessionId });
+    return this.leases.createSessionLeaseIfMissing({
+      sessionId,
+      activeBindingId,
     });
   }
 }

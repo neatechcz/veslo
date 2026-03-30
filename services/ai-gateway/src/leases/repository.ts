@@ -11,11 +11,12 @@ export type CreateSessionLeaseInput = {
 
 export type RebindSessionLeaseInput = {
   sessionId: string;
-  activeBindingId: string;
+  expectedCurrentBindingId: string;
+  nextBindingId: string;
 };
 
 export interface LeaseRepository {
   getActiveLeaseBySessionId(sessionId: string): Promise<SessionLease | null>;
-  createSessionLease(input: CreateSessionLeaseInput): Promise<SessionLease>;
-  rebindSessionLease(input: RebindSessionLeaseInput): Promise<SessionLease>;
+  createSessionLeaseIfMissing(input: CreateSessionLeaseInput): Promise<SessionLease>;
+  rebindSessionLease(input: RebindSessionLeaseInput): Promise<SessionLease | null>;
 }
