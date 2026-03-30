@@ -706,13 +706,6 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
       <div class="flex flex-wrap items-center justify-end gap-4">
         <button
           type="button"
-          onClick={openSchedulerDocs}
-          class="text-xs font-medium text-gray-9 transition-colors hover:text-gray-12"
-        >
-          {tr("scheduled.learn_more")}
-        </button>
-        <button
-          type="button"
           onClick={() => props.refreshJobs({ force: true })}
           disabled={!supported() || props.busy}
           class={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
@@ -787,13 +780,6 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
               >
                 {props.reloadBusy ? tr("scheduled.reloading") : tr("scheduled.reload_veslo")}
               </Button>
-              <button
-                type="button"
-                onClick={openSchedulerDocs}
-                class="text-xs font-medium text-gray-9 transition-colors hover:text-gray-12"
-              >
-                {tr("scheduled.view_docs")}
-              </button>
             </div>
           </div>
         </div>
@@ -1032,13 +1018,6 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
               </div>
             </div>
             <div class="flex items-center justify-between gap-4 border-t border-gray-6 bg-gray-2/60 px-8 py-4">
-              <button
-                type="button"
-                onClick={openSchedulerDocs}
-                class="text-xs font-medium text-gray-9 transition-colors hover:text-gray-12"
-              >
-                {tr("scheduled.view_scheduler_docs")}
-              </button>
               <div class="flex items-center gap-3">
                 <button
                   type="button"
