@@ -8,23 +8,24 @@ type AuthEmailInput = {
 }
 
 async function sendAuthEmail(input: AuthEmailInput) {
-  if (!env.email.resendApiKey) {
-    throw new Error("RESEND_API_KEY is required to send auth emails")
+  if (!env.email.lettrApiKey) {
+    throw new Error("LETTR_API_KEY is required to send auth emails")
   }
 
-  if (!env.email.from) {
-    throw new Error("AUTH_EMAIL_FROM is required to send auth emails")
+  if (!env.email.address) {
+    throw new Error("AUTH_EMAIL_ADDRESS is required to send auth emails")
   }
 
-  const response = await fetch("https://api.resend.com/emails", {
+  const response = await fetch("https://app.lettr.com/api/emails", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${env.email.resendApiKey}`,
+      Authorization: `Bearer ${env.email.lettrApiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: env.email.from,
-      to: input.to,
+      from: env.email.address,
+      from_name: env.email.fromName,
+      to: [input.to],
       subject: input.subject,
       html: input.html,
       text: input.text,

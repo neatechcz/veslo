@@ -7,8 +7,9 @@ const schema = z.object({
   WORKER_TOKEN_ENCRYPTION_KEY: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
-  RESEND_API_KEY: z.string().optional(),
-  AUTH_EMAIL_FROM: z.string().optional(),
+  LETTR_API_KEY: z.string().optional(),
+  AUTH_EMAIL_ADDRESS: z.string().optional(),
+  AUTH_EMAIL_FROM_NAME: z.string().optional(),
   PORT: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
   DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: z.string().optional(),
@@ -74,8 +75,9 @@ export const env = {
     clientSecret: parsed.GITHUB_CLIENT_SECRET?.trim() || undefined,
   },
   email: {
-    resendApiKey: parsed.RESEND_API_KEY?.trim() || undefined,
-    from: parsed.AUTH_EMAIL_FROM?.trim() || undefined,
+    lettrApiKey: parsed.LETTR_API_KEY?.trim() || undefined,
+    address: parsed.AUTH_EMAIL_ADDRESS?.trim() || undefined,
+    fromName: parsed.AUTH_EMAIL_FROM_NAME?.trim() || undefined,
   },
   port: Number(parsed.PORT ?? "8788"),
   corsOrigins: corsOrigins ?? [],
@@ -118,5 +120,5 @@ export const env = {
 }
 
 export function isAuthEmailConfigured() {
-  return Boolean(env.email.resendApiKey && env.email.from)
+  return Boolean(env.email.lettrApiKey && env.email.address)
 }

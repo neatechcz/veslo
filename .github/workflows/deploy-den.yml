@@ -32,8 +32,9 @@ jobs:
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
-          DEN_RESEND_API_KEY: ${{ secrets.DEN_RESEND_API_KEY }}
-          DEN_AUTH_EMAIL_FROM: ${{ vars.DEN_AUTH_EMAIL_FROM }}
+          DEN_LETTR_API_KEY: ${{ secrets.DEN_LETTR_API_KEY }}
+          DEN_AUTH_EMAIL_ADDRESS: ${{ vars.DEN_AUTH_EMAIL_ADDRESS }}
+          DEN_AUTH_EMAIL_FROM_NAME: ${{ vars.DEN_AUTH_EMAIL_FROM_NAME }}
           DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: ${{ vars.DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED }}
           POLAR_ACCESS_TOKEN: ${{ secrets.POLAR_ACCESS_TOKEN }}
           POLAR_PRODUCT_ID: ${{ secrets.POLAR_PRODUCT_ID }}
@@ -77,13 +78,13 @@ jobs:
             missing=1
           fi
 
-          if [ -n "$DEN_RESEND_API_KEY" ] && [ -z "$DEN_AUTH_EMAIL_FROM" ]; then
-            echo "::error::Missing required variable: DEN_AUTH_EMAIL_FROM (required when DEN_RESEND_API_KEY is set)"
+          if [ -n "$DEN_LETTR_API_KEY" ] && [ -z "$DEN_AUTH_EMAIL_ADDRESS" ]; then
+            echo "::error::Missing required variable: DEN_AUTH_EMAIL_ADDRESS (required when DEN_LETTR_API_KEY is set)"
             missing=1
           fi
 
-          if [ -n "$DEN_AUTH_EMAIL_FROM" ] && [ -z "$DEN_RESEND_API_KEY" ]; then
-            echo "::error::Missing required secret: DEN_RESEND_API_KEY (required when DEN_AUTH_EMAIL_FROM is set)"
+          if [ -n "$DEN_AUTH_EMAIL_ADDRESS" ] && [ -z "$DEN_LETTR_API_KEY" ]; then
+            echo "::error::Missing required secret: DEN_LETTR_API_KEY (required when DEN_AUTH_EMAIL_ADDRESS is set)"
             missing=1
           fi
 
@@ -100,8 +101,9 @@ jobs:
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
-          DEN_RESEND_API_KEY: ${{ secrets.DEN_RESEND_API_KEY }}
-          DEN_AUTH_EMAIL_FROM: ${{ vars.DEN_AUTH_EMAIL_FROM }}
+          DEN_LETTR_API_KEY: ${{ secrets.DEN_LETTR_API_KEY }}
+          DEN_AUTH_EMAIL_ADDRESS: ${{ vars.DEN_AUTH_EMAIL_ADDRESS }}
+          DEN_AUTH_EMAIL_FROM_NAME: ${{ vars.DEN_AUTH_EMAIL_FROM_NAME }}
           DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: ${{ vars.DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED }}
           DEN_RENDER_CONTROL_PLANE_REPO: ${{ vars.DEN_RENDER_CONTROL_PLANE_REPO }}
           DEN_RENDER_CONTROL_PLANE_BRANCH: ${{ vars.DEN_RENDER_CONTROL_PLANE_BRANCH }}
@@ -166,8 +168,9 @@ jobs:
           polar_benefit_id = os.environ.get("POLAR_BENEFIT_ID") or ""
           github_client_id = os.environ.get("DEN_GITHUB_CLIENT_ID") or ""
           github_client_secret = os.environ.get("DEN_GITHUB_CLIENT_SECRET") or ""
-          resend_api_key = (os.environ.get("DEN_RESEND_API_KEY") or "").strip()
-          auth_email_from = (os.environ.get("DEN_AUTH_EMAIL_FROM") or "").strip()
+          lettr_api_key = (os.environ.get("DEN_LETTR_API_KEY") or "").strip()
+          auth_email_address = (os.environ.get("DEN_AUTH_EMAIL_ADDRESS") or "").strip()
+          auth_email_from_name = (os.environ.get("DEN_AUTH_EMAIL_FROM_NAME") or "").strip()
           configured_desktop_auth_require_email_verified = (
               (os.environ.get("DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED") or "").strip() or None
           )
@@ -178,9 +181,9 @@ jobs:
                   "DEN_GITHUB_CLIENT_ID and DEN_GITHUB_CLIENT_SECRET must either both be set or both be empty"
               )
 
-          if bool(resend_api_key) != bool(auth_email_from):
+          if bool(lettr_api_key) != bool(auth_email_address):
               raise RuntimeError(
-                  "DEN_RESEND_API_KEY and DEN_AUTH_EMAIL_FROM must either both be set or both be empty"
+                  "DEN_LETTR_API_KEY and DEN_AUTH_EMAIL_ADDRESS must either both be set or both be empty"
               )
 
           def validate_redirect_url(name: str, value: str):
@@ -283,10 +286,12 @@ jobs:
               if isinstance(key, str) and isinstance(value, str):
                   current_env_by_key[key] = value
 
-          if not resend_api_key:
-              resend_api_key = current_env_by_key.get("RESEND_API_KEY", "")
-          if not auth_email_from:
-              auth_email_from = current_env_by_key.get("AUTH_EMAIL_FROM", "")
+          if not lettr_api_key:
+              lettr_api_key = current_env_by_key.get("LETTR_API_KEY", "")
+          if not auth_email_address:
+              auth_email_address = current_env_by_key.get("AUTH_EMAIL_ADDRESS", "")
+          if not auth_email_from_name:
+              auth_email_from_name = current_env_by_key.get("AUTH_EMAIL_FROM_NAME", "")
           if configured_desktop_auth_require_email_verified is None:
               desktop_auth_require_email_verified = (
                   current_env_by_key.get("DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED", "false").lower() == "true"
@@ -294,14 +299,14 @@ jobs:
           else:
               desktop_auth_require_email_verified = configured_desktop_auth_require_email_verified.lower() == "true"
 
-          if bool(resend_api_key) != bool(auth_email_from):
+          if bool(lettr_api_key) != bool(auth_email_address):
               raise RuntimeError(
-                  "Render auth email env must either define both RESEND_API_KEY and AUTH_EMAIL_FROM or neither"
+                  "Render auth email env must either define both LETTR_API_KEY and AUTH_EMAIL_ADDRESS or neither"
               )
 
-          if desktop_auth_require_email_verified and (not resend_api_key or not auth_email_from):
+          if desktop_auth_require_email_verified and (not lettr_api_key or not auth_email_address):
               raise RuntimeError(
-                  "DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true requires DEN_RESEND_API_KEY and DEN_AUTH_EMAIL_FROM"
+                  "DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true requires DEN_LETTR_API_KEY and DEN_AUTH_EMAIL_ADDRESS"
               )
 
           cors_origins = build_cors_origins(
@@ -319,8 +324,9 @@ jobs:
               {"key": "BETTER_AUTH_URL", "value": service_url},
               {"key": "GITHUB_CLIENT_ID", "value": github_client_id},
               {"key": "GITHUB_CLIENT_SECRET", "value": github_client_secret},
-              {"key": "RESEND_API_KEY", "value": resend_api_key},
-              {"key": "AUTH_EMAIL_FROM", "value": auth_email_from},
+              {"key": "LETTR_API_KEY", "value": lettr_api_key},
+              {"key": "AUTH_EMAIL_ADDRESS", "value": auth_email_address},
+              {"key": "AUTH_EMAIL_FROM_NAME", "value": auth_email_from_name},
               {"key": "DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED", "value": "true" if desktop_auth_require_email_verified else "false"},
               {"key": "CORS_ORIGINS", "value": cors_origins},
               {"key": "PROVISIONER_MODE", "value": "render"},
