@@ -24,22 +24,34 @@ test("workspace session sidebar keeps controls pinned while only session rows sc
   );
 });
 
-test("workspace session sidebar keeps the action icons in a right-aligned cluster", () => {
+test("workspace session sidebar keeps the control rail compact-safe and ordered", () => {
   assert.match(
     source,
-    /<div class="mb-3 flex items-center gap-2">[\s\S]*<div class="ml-auto flex items-center gap-2">/,
-    "view toggle row should reserve a right-aligned action cluster for search and add-directory actions",
+    /<div class="mb-3 flex flex-wrap items-center gap-2">/,
+    "sidebar controls should wrap instead of colliding at narrow widths",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /<div class="mb-3 flex items-center gap-2">/,
+    "sidebar controls should not regress to a single non-wrapping row",
   );
 
   assert.match(
     source,
-    /FolderPlus/,
-    "workspace session list should import and render the add-directory icon",
+    /<div class="inline-flex shrink-0 items-center gap-1 rounded-full border border-gray-6 bg-gray-1 p-1 shadow-sm">[\s\S]*<div class="relative flex min-w-\[9rem\] flex-1"/,
+    "the new session control should sit between the left toggle cluster and the right action cluster",
   );
 
   assert.match(
     source,
-    /onAddDirectorySession/,
-    "workspace session list should expose a dedicated callback for picker-driven directory sessions",
+    /tr\("sidebar\.new_session"\)/,
+    "the compact control row should keep the primary new-session action visible",
+  );
+
+  assert.match(
+    source,
+    /<div class="ml-auto flex shrink-0 items-center gap-2">/,
+    "search and add-directory actions should stay in a right-aligned action cluster",
   );
 });

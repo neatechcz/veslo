@@ -443,66 +443,8 @@ export default function WorkspaceSessionList(props: Props) {
 
   return (
     <div class="flex h-full min-h-0 flex-col">
-      <div class="relative mb-3" ref={(el) => (addWorkspaceMenuRef = el)}>
-        <button
-          type="button"
-          class="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-[13px] font-medium text-gray-11 border border-gray-6 bg-gray-1 hover:bg-gray-2 shadow-sm transition-colors"
-          onClick={() => {
-            if (props.onQuickNewSession) {
-              props.onQuickNewSession();
-              return;
-            }
-            setAddWorkspaceMenuOpen((prev) => !prev);
-          }}
-        >
-          <Plus size={14} />
-          {tr("sidebar.new_session")}
-        </button>
-
-        <Show when={!props.onQuickNewSession && addWorkspaceMenuOpen()}>
-          <div class="absolute left-0 right-0 top-full mt-2 rounded-lg border border-gray-6 bg-gray-1 shadow-xl overflow-hidden z-20">
-            <button
-              type="button"
-              class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:text-gray-12 hover:bg-gray-3 transition-colors"
-              onClick={() => {
-                props.onOpenCreateWorkspace();
-                setAddWorkspaceMenuOpen(false);
-              }}
-            >
-              <Plus size={12} />
-              {tr("sidebar.new_worker")}
-            </button>
-            <Show when={props.showRemoteActions !== false}>
-              <button
-                type="button"
-                class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:text-gray-12 hover:bg-gray-3 transition-colors"
-                onClick={() => {
-                  props.onOpenCreateRemoteWorkspace();
-                  setAddWorkspaceMenuOpen(false);
-                }}
-              >
-                <Plus size={12} />
-                {tr("sidebar.connect_remote")}
-              </button>
-            </Show>
-            <button
-              type="button"
-              class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              disabled={props.importingWorkspaceConfig}
-              onClick={() => {
-                props.onImportWorkspaceConfig();
-                setAddWorkspaceMenuOpen(false);
-              }}
-            >
-              <Plus size={12} />
-              {tr("sidebar.import_config")}
-            </button>
-          </div>
-        </Show>
-      </div>
-
-      <div class="mb-3 flex items-center gap-2">
-        <div class="inline-flex items-center gap-1 rounded-full border border-gray-6 bg-gray-1 p-1 shadow-sm">
+      <div class="mb-3 flex flex-wrap items-center gap-2">
+        <div class="inline-flex shrink-0 items-center gap-1 rounded-full border border-gray-6 bg-gray-1 p-1 shadow-sm">
           <button
             type="button"
             class={`inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
@@ -528,11 +470,68 @@ export default function WorkspaceSessionList(props: Props) {
             title={tr("sidebar.recent")}
             aria-pressed={sidebarMode() === "recent"}
             onClick={() => setSidebarMode("recent")}
-          >
-            <List size={14} />
-          </button>
+            >
+              <List size={14} />
+            </button>
         </div>
-        <div class="ml-auto flex items-center gap-2">
+        <div class="relative flex min-w-[9rem] flex-1" ref={(el) => (addWorkspaceMenuRef = el)}>
+          <button
+            type="button"
+            class="inline-flex h-9 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-gray-6 bg-gray-1 px-3 py-2.5 text-[13px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2"
+            onClick={() => {
+              if (props.onQuickNewSession) {
+                props.onQuickNewSession();
+                return;
+              }
+              setAddWorkspaceMenuOpen((prev) => !prev);
+            }}
+          >
+            <Plus size={14} />
+            {tr("sidebar.new_session")}
+          </button>
+
+          <Show when={!props.onQuickNewSession && addWorkspaceMenuOpen()}>
+            <div class="absolute left-0 right-0 top-full z-20 mt-2 overflow-hidden rounded-lg border border-gray-6 bg-gray-1 shadow-xl">
+              <button
+                type="button"
+                class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 transition-colors hover:bg-gray-3 hover:text-gray-12"
+                onClick={() => {
+                  props.onOpenCreateWorkspace();
+                  setAddWorkspaceMenuOpen(false);
+                }}
+              >
+                <Plus size={12} />
+                {tr("sidebar.new_worker")}
+              </button>
+              <Show when={props.showRemoteActions !== false}>
+                <button
+                  type="button"
+                  class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 transition-colors hover:bg-gray-3 hover:text-gray-12"
+                  onClick={() => {
+                    props.onOpenCreateRemoteWorkspace();
+                    setAddWorkspaceMenuOpen(false);
+                  }}
+                >
+                  <Plus size={12} />
+                  {tr("sidebar.connect_remote")}
+                </button>
+              </Show>
+              <button
+                type="button"
+                class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 transition-colors disabled:cursor-not-allowed disabled:opacity-60 hover:bg-gray-3 hover:text-gray-12"
+                disabled={props.importingWorkspaceConfig}
+                onClick={() => {
+                  props.onImportWorkspaceConfig();
+                  setAddWorkspaceMenuOpen(false);
+                }}
+              >
+                <Plus size={12} />
+                {tr("sidebar.import_config")}
+              </button>
+            </div>
+          </Show>
+        </div>
+        <div class="ml-auto flex shrink-0 items-center gap-2">
           <Show when={props.onOpenSessionSearch}>
             <button
               type="button"
