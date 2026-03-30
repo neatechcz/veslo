@@ -3,6 +3,7 @@ import { FolderSearch, HeartPulse, PlugZap, Sparkles } from "lucide-solid";
 import type { JSX } from "solid-js";
 
 import type { ArtifactFamily, ArtifactFamilyId, ArtifactFamilyItem } from "./artifact-family-model";
+import { t as tr } from "../../../i18n";
 
 export type ArtifactsPanelProps = {
   families: ArtifactFamily[];
@@ -37,13 +38,21 @@ const getBasename = (value: string) => {
 const isMarkdown = (value: string) => /\.(md|mdx|markdown)$/i.test(value);
 
 const statusLabel = (value: string) => {
-  if (value === "scanned") return "Scanned";
-  if (value === "updated") return "Updated";
-  if (value === "created") return "Created";
-  if (value === "exported") return "Exported";
-  if (value === "used") return "Used";
-  if (value === "active") return "Active";
+  if (value === "scanned") return tr("session.artifact_status_scanned");
+  if (value === "updated") return tr("session.artifact_status_updated");
+  if (value === "created") return tr("session.artifact_status_created");
+  if (value === "exported") return tr("session.artifact_status_exported");
+  if (value === "used") return tr("session.artifact_status_used");
+  if (value === "active") return tr("session.artifact_status_active");
   return value;
+};
+
+const familyLabel = (family: ArtifactFamily) => {
+  if (family.family === "files") return tr("session.artifact_family_files");
+  if (family.family === "skills") return tr("session.artifact_family_skills");
+  if (family.family === "mcp") return tr("session.artifact_family_mcp");
+  if (family.family === "soul") return tr("session.artifact_family_soul");
+  return family.label;
 };
 
 const familyIcon = (family: ArtifactFamilyId): JSX.Element => {
@@ -74,7 +83,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
   return (
     <div id={props.id}>
       <div class="mb-3 flex items-center justify-between px-2">
-        <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-10">Artifacts</span>
+        <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-10">{tr("session.artifacts")}</span>
         <Show when={totalCount() > 0}>
           <span class="rounded bg-gray-4/60 px-1.5 text-[11px] font-medium text-gray-10">
             {totalCount()}
@@ -85,7 +94,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
       <div class="space-y-2">
         <Show
           when={props.families.length > 0}
-          fallback={<div class="px-2 py-1 text-xs text-gray-10">No artifacts yet.</div>}
+          fallback={<div class="px-2 py-1 text-xs text-gray-10">{tr("session.no_artifacts")}</div>}
         >
           <For each={props.families}>
             {(family) => (
@@ -93,7 +102,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
                 <div class="flex items-center justify-between px-2 py-1.5">
                   <div class="flex items-center gap-2">
                     <div class="shrink-0">{familyIcon(family.family)}</div>
-                    <div class="text-xs font-semibold text-gray-11">{family.label}</div>
+                    <div class="text-xs font-semibold text-gray-11">{familyLabel(family)}</div>
                   </div>
                   <div class="rounded-md border border-gray-5 bg-gray-1 px-1.5 py-0.5 text-[10px] font-medium text-gray-10">
                     {family.items.length}
@@ -116,17 +125,16 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
                       return (
                         <div
                           class="group flex items-start gap-2 rounded-lg border border-transparent px-2 py-1.5 transition-colors hover:border-gray-6/80 hover:bg-gray-1/70"
-                          title={subtitle() || item.title}
                         >
                           <div class="min-w-0 flex-1">
                             <div class="flex items-center gap-2">
-                              <div class="truncate text-xs font-medium text-gray-11">{displayTitle()}</div>
+                              <div class="truncate text-xs font-medium text-gray-11" title={displayTitle()}>{displayTitle()}</div>
                               <div class="shrink-0 rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-medium text-gray-10">
                                 {statusLabel(item.status)}
                               </div>
                             </div>
                             <Show when={subtitle()}>
-                              <div class="truncate text-[11px] text-gray-9">{subtitle()}</div>
+                              <div class="truncate text-[11px] text-gray-9" title={subtitle()}>{subtitle()}</div>
                             </Show>
                           </div>
 
@@ -136,7 +144,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
                                 type="button"
                                 class="rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-medium text-gray-10 transition-colors hover:border-gray-7 hover:text-gray-12"
                                 onClick={() => item.path && props.onOpenInObsidian?.(item.path)}
-                                title="Open in Obsidian"
+                                title={tr("session.open_in_obsidian")}
                               >
                                 Obsidian
                               </button>
@@ -146,9 +154,9 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
                                 type="button"
                                 class="rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-medium text-gray-10 transition-colors hover:border-gray-7 hover:text-gray-12"
                                 onClick={() => item.path && props.onRevealArtifact?.(item.path)}
-                                title="Reveal file"
+                                title={tr("session.reveal")}
                               >
-                                Reveal
+                                {tr("session.reveal")}
                               </button>
                             </Show>
                           </div>

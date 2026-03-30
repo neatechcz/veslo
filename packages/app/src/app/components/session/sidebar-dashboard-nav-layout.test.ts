@@ -23,4 +23,8 @@ test("sidebar dashboard nav collapses from prefs and exposes a divider toggle", 
     /title=\{collapseLabel\(\)\}/,
   );
   assert.match(source, /aria-expanded=\{\!collapsed\(\)\}/);
+  assert.match(
+    source,
+    /<Show when=\{collapsed\(\)\} fallback=\{<ChevronDown size=\{11\} \/>\}>\s*<ChevronUp size=\{11\} \/>\s*<\/Show>/,
+  );
 });

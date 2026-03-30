@@ -70,6 +70,7 @@ import {
 } from "./session-navigation";
 import { resolveDashboardTabSelectionAction, resolveLeftMenuAction } from "./dashboard-menu-navigation";
 import {
+  ArrowLeft,
   Box,
   ChevronDown,
   ChevronRight,
@@ -79,6 +80,7 @@ import {
   Loader2,
   MoreHorizontal,
   Plus,
+  Settings as SettingsIcon,
   SlidersHorizontal,
   Zap,
 } from "lucide-solid";
@@ -1220,6 +1222,16 @@ export default function DashboardView(props: DashboardViewProps) {
     toggleSidebarMenu("left");
   };
 
+  const headerSettingsLabel = createMemo(() => t("dashboard.settings", currentLocale()));
+  const headerBackLabel = createMemo(() => t("session.back", currentLocale()));
+  const canReturnToSession = createMemo(() => Boolean(props.selectedSessionId?.trim()));
+
+  const returnToSession = () => {
+    const sessionId = props.selectedSessionId?.trim();
+    if (!sessionId) return;
+    props.setView("session", sessionId);
+  };
+
   return (
     <div class={`flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden ${titlebarContentInsetClass()}`}>
       <TitlebarMenuToggles
@@ -1367,7 +1379,30 @@ export default function DashboardView(props: DashboardViewProps) {
               <span class="text-xs text-dls-secondary">{props.busyHint}</span>
             </Show>
           </div>
-          <div class="flex items-center gap-2" />
+          <div class="flex items-center gap-2">
+            <Show when={canReturnToSession()}>
+              <button
+                type="button"
+                class="inline-flex h-8 items-center gap-1.5 rounded-lg border border-dls-border bg-dls-surface px-2.5 text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)]"
+                onClick={returnToSession}
+                aria-label={headerBackLabel()}
+                title={headerBackLabel()}
+              >
+                <ArrowLeft size={14} />
+                <span class="hidden sm:inline">{headerBackLabel()}</span>
+              </button>
+            </Show>
+            <button
+              type="button"
+              class="inline-flex h-8 items-center gap-1.5 rounded-lg border border-dls-border bg-dls-surface px-2.5 text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)]"
+              onClick={() => openSettings("general")}
+              aria-label={headerSettingsLabel()}
+              title={headerSettingsLabel()}
+            >
+              <SettingsIcon size={14} />
+              <span class="hidden sm:inline">{headerSettingsLabel()}</span>
+            </button>
+          </div>
         </header>
 
         <div class="p-6 md:p-10 max-w-5xl mx-auto space-y-10">
@@ -1698,7 +1733,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onClick={() => handleDashboardTabSelection("scheduled")}
             >
               <History size={18} />
-              Automations
+              {t("nav.automations", currentLocale())}
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
@@ -1707,7 +1742,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onClick={() => handleDashboardTabSelection("soul")}
             >
               <HeartPulse size={18} class={soulNavIconClass()} />
-              Soul
+              {t("nav.soul", currentLocale())}
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
@@ -1716,7 +1751,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onClick={() => handleDashboardTabSelection("skills")}
             >
               <Zap size={18} />
-              Skills
+              {t("nav.skills", currentLocale())}
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
@@ -1725,7 +1760,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onClick={() => handleDashboardTabSelection("mcp")}
             >
               <Box size={18} />
-              Extensions
+              {t("nav.extensions", currentLocale())}
             </button>
             <Show when={props.developerMode}>
               <button
@@ -1735,7 +1770,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 onClick={() => handleDashboardTabSelection("config")}
               >
                 <SlidersHorizontal size={18} />
-                Advanced
+                {t("nav.advanced", currentLocale())}
               </button>
             </Show>
           </div>

@@ -16,6 +16,10 @@ const resolveDashboardTabSelectionAction = (
 ).resolveDashboardTabSelectionAction;
 
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
+const headerSourceMatch = dashboardSource.match(
+  /<header class="h-14 flex items-center justify-between px-6 md:px-10 border-b border-dls-border sticky top-0 bg-dls-surface z-10">[\s\S]*?<\/header>/,
+);
+const headerSource = headerSourceMatch?.[0] ?? "";
 const leftMenuHandlerMatch = dashboardSource.match(
   /const\s+leftMenuAction\s*=\s*createMemo\s*\(\s*\(\)\s*=>\s*resolveLeftMenuAction\s*\(\s*\{[\s\S]*?onToggleRight\s*=\s*\{\s*\(\)\s*=>\s*toggleSidebarMenu\s*\(\s*["']right["']\s*\)\s*\}/s,
 );
@@ -185,4 +189,20 @@ test("dashboard routes active nav re-clicks through the session return helper", 
     dashboardSource,
     /onClick\s*=\s*\{\s*\(\)\s*=>\s*handleDashboardTabSelection\s*\(\s*["']scheduled["']\s*\)\s*\}/,
   );
+});
+
+test("dashboard header exposes settings and back-to-chat actions", () => {
+  assert.match(
+    dashboardSource,
+    /const\s+headerSettingsLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>\s*t\("dashboard\.settings", currentLocale\(\)\)\s*\)/,
+  );
+  assert.match(
+    dashboardSource,
+    /const\s+headerBackLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>\s*t\("session\.back", currentLocale\(\)\)\s*\)/,
+  );
+  assert.match(
+    dashboardSource,
+    /const\s+returnToSession\s*=\s*\(\)\s*=>\s*\{[\s\S]*props\.setView\(\s*["']session["']\s*,\s*sessionId\s*\)/,
+  );
+  assert.match(headerSource, /onClick=\{returnToSession\}/);
 });

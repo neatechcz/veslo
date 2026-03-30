@@ -1,0 +1,1045 @@
+{
+  "version": "2.9",
+  "children": [
+    {
+      "type": "frame",
+      "id": "bi8Au",
+      "x": 0,
+      "y": 0,
+      "name": "Timeline Variants Board",
+      "width": 1880,
+      "fill": "#0B1020",
+      "layout": "vertical",
+      "gap": 14,
+      "padding": 40,
+      "children": [
+        {
+          "type": "text",
+          "id": "ZKvZh",
+          "name": "Board Eyebrow",
+          "fill": "#7B8AA8",
+          "content": "TIMELINE DETAIL EXPLORATION",
+          "fontFamily": "JetBrains Mono",
+          "fontSize": 12,
+          "fontWeight": "600",
+          "letterSpacing": 0.8
+        },
+        {
+          "type": "text",
+          "id": "uBC2D",
+          "name": "Board Title",
+          "fill": "#F5F7FB",
+          "content": "Three directions for expanded timeline details",
+          "fontFamily": "Space Grotesk",
+          "fontSize": 34,
+          "fontWeight": "700"
+        },
+        {
+          "type": "text",
+          "id": "kkyc3",
+          "name": "Board Subtitle",
+          "fill": "#8B98AD",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Same information architecture, three different levels of structure: raw log list, phase cards, and a hybrid view that keeps the feed compact while making the work readable.",
+          "lineHeight": 1.45,
+          "fontFamily": "JetBrains Mono",
+          "fontSize": 13,
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "80rME",
+          "name": "Variants Row",
+          "width": "fill_container",
+          "gap": 20,
+          "children": [
+            {
+              "type": "frame",
+              "id": "i3vc8",
+              "name": "Variant 1 Panel",
+              "width": "fill_container",
+              "fill": "#101827",
+              "cornerRadius": 18,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#25324A"
+              },
+              "layout": "vertical",
+              "gap": 14,
+              "padding": 18,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "svYDs",
+                  "name": "Variant 1 Label",
+                  "fill": "#7CC4FF",
+                  "content": "OPTION 1",
+                  "fontFamily": "JetBrains Mono",
+                  "fontSize": 11,
+                  "fontWeight": "700",
+                  "letterSpacing": 0.8
+                },
+                {
+                  "type": "text",
+                  "id": "mcMlm",
+                  "name": "Variant 1 Title",
+                  "fill": "#F5F7FB",
+                  "content": "Clean Log List",
+                  "fontFamily": "Space Grotesk",
+                  "fontSize": 22,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "fIVCc",
+                  "name": "Variant 1 Description",
+                  "fill": "#8B98AD",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Fastest to scan and cheapest in space. Keeps the timeline feeling like a productized activity log.",
+                  "lineHeight": 1.45,
+                  "fontFamily": "JetBrains Mono",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "WZZLJ",
+                  "name": "Variant 1 Preview",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "pJkgD",
+                      "name": "Log Collapsed Summary",
+                      "width": "fill_container",
+                      "fill": "#0D1626",
+                      "cornerRadius": 14,
+                      "stroke": {
+                        "thickness": 1,
+                        "fill": "#21304B"
+                      },
+                      "gap": 12,
+                      "padding": [
+                        10,
+                        12
+                      ],
+                      "justifyContent": "space_between",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "88MJy",
+                          "name": "logCollapsedLeft1",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon_font",
+                              "id": "E7Ozf",
+                              "name": "logIcon1",
+                              "width": 14,
+                              "height": 14,
+                              "iconFontName": "search",
+                              "iconFontFamily": "lucide",
+                              "fill": "#7CC4FF"
+                            },
+                            {
+                              "type": "text",
+                              "id": "4vMgR",
+                              "name": "logSummary1",
+                              "fill": "#C7D2E4",
+                              "content": "EXPLORE · 6 EVENTS · LAST: TYPECHECK",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "600",
+                              "letterSpacing": 0.4
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "pvwHt",
+                          "name": "logBadge1",
+                          "fill": "#36D17C",
+                          "content": "[DONE]",
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 11,
+                          "fontWeight": "700",
+                          "letterSpacing": 0.6
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "PijJm",
+                      "name": "Log Expanded Rows",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "a7nNx",
+                          "name": "logRow11",
+                          "width": "fill_container",
+                          "fill": "#0E1524",
+                          "cornerRadius": 12,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#1F2A40"
+                          },
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": [
+                            10,
+                            12
+                          ],
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "S4Zki",
+                              "name": "logRow11Top",
+                              "width": "fill_container",
+                              "gap": 8,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon_font",
+                                  "id": "OGIn2",
+                                  "name": "logRow11Icon",
+                                  "width": 14,
+                                  "height": 14,
+                                  "iconFontName": "eye",
+                                  "iconFontFamily": "lucide",
+                                  "fill": "#83BEFF"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "TkOOA",
+                                  "name": "logRow11Title",
+                                  "fill": "#F5F7FB",
+                                  "content": "Read message-list.tsx",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "PtFIi",
+                                  "name": "logRow11Status",
+                                  "fill": "#36D17C",
+                                  "content": "DONE",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 10,
+                                  "fontWeight": "700",
+                                  "letterSpacing": 0.6
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "iNIlK",
+                              "name": "logRow11Meta",
+                              "fill": "#8B98AD",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Rows 640-1040 · collapsed label, summary and latest-step logic",
+                              "lineHeight": 1.4,
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "AdXmH",
+                          "name": "logRow12",
+                          "width": "fill_container",
+                          "fill": "#0E1524",
+                          "cornerRadius": 12,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#1F2A40"
+                          },
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": [
+                            10,
+                            12
+                          ],
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "AWqE0",
+                              "name": "logRow12Top",
+                              "width": "fill_container",
+                              "gap": 8,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon_font",
+                                  "id": "iyKF7",
+                                  "name": "logRow12Icon",
+                                  "width": 14,
+                                  "height": 14,
+                                  "iconFontName": "search",
+                                  "iconFontFamily": "lucide",
+                                  "fill": "#83BEFF"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "2oI7T",
+                                  "name": "logRow12Title",
+                                  "fill": "#F5F7FB",
+                                  "content": "Search for timeline groups",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "mfKex",
+                                  "name": "logRow12Status",
+                                  "fill": "#36D17C",
+                                  "content": "DONE",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 10,
+                                  "fontWeight": "700",
+                                  "letterSpacing": 0.6
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "C4jCX",
+                              "name": "logRow12Meta",
+                              "fill": "#8B98AD",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "12 matches · message-list.tsx + messages.ts",
+                              "lineHeight": 1.4,
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "0zftC",
+                          "name": "logRow13",
+                          "width": "fill_container",
+                          "fill": "#0E1524",
+                          "cornerRadius": 12,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#1F2A40"
+                          },
+                          "layout": "vertical",
+                          "gap": 4,
+                          "padding": [
+                            10,
+                            12
+                          ],
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "n0vtJ",
+                              "name": "logRow13Top",
+                              "width": "fill_container",
+                              "gap": 8,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon_font",
+                                  "id": "mxIIn",
+                                  "name": "logRow13Icon",
+                                  "width": 14,
+                                  "height": 14,
+                                  "iconFontName": "terminal",
+                                  "iconFontFamily": "lucide",
+                                  "fill": "#83BEFF"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "DDC3p",
+                                  "name": "logRow13Title",
+                                  "fill": "#F5F7FB",
+                                  "content": "Run pnpm typecheck",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "hjOor",
+                                  "name": "logRow13Status",
+                                  "fill": "#36D17C",
+                                  "content": "PASS",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 10,
+                                  "fontWeight": "700",
+                                  "letterSpacing": 0.6
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "FDNVZ",
+                              "name": "logRow13Meta",
+                              "fill": "#8B98AD",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "User sees the action quickly, but the visual hierarchy still feels like a technical log.",
+                              "lineHeight": 1.4,
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "QcVGj",
+              "name": "Variant 2 Panel",
+              "width": "fill_container",
+              "fill": "#101827",
+              "cornerRadius": 18,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#25324A"
+              },
+              "layout": "vertical",
+              "gap": 14,
+              "padding": 18,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "PtfQW",
+                  "name": "Variant 2 Label",
+                  "fill": "#8ED8A3",
+                  "content": "OPTION 2",
+                  "fontFamily": "JetBrains Mono",
+                  "fontSize": 11,
+                  "fontWeight": "700",
+                  "letterSpacing": 0.8
+                },
+                {
+                  "type": "text",
+                  "id": "I4xja",
+                  "name": "Variant 2 Title",
+                  "fill": "#F5F7FB",
+                  "content": "Phase Cards",
+                  "fontFamily": "Space Grotesk",
+                  "fontSize": 22,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "m7XPd",
+                  "name": "Variant 2 Description",
+                  "fill": "#8B98AD",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Very readable and close to the reference screenshot. Strong separation between phases, but heavier vertically.",
+                  "lineHeight": 1.45,
+                  "fontFamily": "JetBrains Mono",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "gpOg1",
+                  "name": "Variant 2 Preview",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "uE5nT",
+                      "name": "Phase Card 1",
+                      "width": "fill_container",
+                      "fill": "#0D1626",
+                      "cornerRadius": 16,
+                      "stroke": {
+                        "thickness": 1,
+                        "fill": "#21304B"
+                      },
+                      "layout": "vertical",
+                      "gap": 12,
+                      "padding": [
+                        12,
+                        14
+                      ],
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "cAZi2",
+                          "name": "phaseCard21Header",
+                          "width": "fill_container",
+                          "gap": 10,
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "cYMlb",
+                              "name": "phaseCard21Left",
+                              "gap": 8,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon_font",
+                                  "id": "JgRPq",
+                                  "width": 15,
+                                  "height": 15,
+                                  "iconFontName": "search",
+                                  "iconFontFamily": "lucide",
+                                  "fill": "#8ED8A3"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "mC8bi",
+                                  "fill": "#F5F7FB",
+                                  "content": "Phase 1: Explore Workspace",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "700"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "VhhhT",
+                              "fill": "#36D17C",
+                              "content": "DONE",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 10,
+                              "fontWeight": "700",
+                              "letterSpacing": 0.6
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "VEVrC",
+                          "fill": "#A3B0C5",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Found the relevant timeline renderer, grouping logic and tool summary rules before making any proposal.",
+                          "lineHeight": 1.45,
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "bKLwm",
+                          "fill": "#1E2B42",
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "text",
+                          "id": "vUgD8",
+                          "fill": "#D6DCE8",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "FILES      message-list.tsx\nGROUPING   exploration vs standalone\nSUMMARY    steps + thought updates\nWEAKNESS   detail rows read like a raw log",
+                          "lineHeight": 1.65,
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "57mH0",
+                      "name": "Phase Card 2",
+                      "width": "fill_container",
+                      "fill": "#0D1626",
+                      "cornerRadius": 16,
+                      "stroke": {
+                        "thickness": 1,
+                        "fill": "#21304B"
+                      },
+                      "layout": "vertical",
+                      "gap": 12,
+                      "padding": [
+                        12,
+                        14
+                      ],
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "XPNkT",
+                          "name": "phaseCard22Header",
+                          "width": "fill_container",
+                          "gap": 10,
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "4dIIZ",
+                              "name": "phaseCard22Left",
+                              "gap": 8,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon_font",
+                                  "id": "ITBQS",
+                                  "width": 15,
+                                  "height": 15,
+                                  "iconFontName": "terminal",
+                                  "iconFontFamily": "lucide",
+                                  "fill": "#8ED8A3"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "uy36G",
+                                  "fill": "#F5F7FB",
+                                  "content": "Phase 2: Explain The Work",
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "700"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "KvBLV",
+                              "fill": "#7CC4FF",
+                              "content": "READY",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 10,
+                              "fontWeight": "700",
+                              "letterSpacing": 0.6
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "HnlpP",
+                          "fill": "#A3B0C5",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "This structure makes each phase feel deliberate and self-contained, but it introduces more chrome and more vertical movement.",
+                          "lineHeight": 1.45,
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "ztr4h",
+                          "fill": "#1E2B42",
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "text",
+                          "id": "hrToj",
+                          "fill": "#D6DCE8",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "WHY IT WORKS\n- clearer phase ownership\n- easy to skim in presentations\n- content feels less intimidating\n\nTRADEOFF\n- less dense than a timeline\n- heavy when there are many tiny actions",
+                          "lineHeight": 1.6,
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "a1rB8",
+              "name": "Variant 3 Panel",
+              "width": "fill_container",
+              "fill": "#101827",
+              "cornerRadius": 18,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#25324A"
+              },
+              "layout": "vertical",
+              "gap": 14,
+              "padding": 18,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "Zzopg",
+                  "name": "Variant 3 Label",
+                  "fill": "#F6C86A",
+                  "content": "RECOMMENDED",
+                  "fontFamily": "JetBrains Mono",
+                  "fontSize": 11,
+                  "fontWeight": "700",
+                  "letterSpacing": 0.8
+                },
+                {
+                  "type": "text",
+                  "id": "kG9HD",
+                  "name": "Variant 3 Title",
+                  "fill": "#F5F7FB",
+                  "content": "Hybrid Timeline",
+                  "fontFamily": "Space Grotesk",
+                  "fontSize": 22,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "1tTtX",
+                  "name": "Variant 3 Description",
+                  "fill": "#8B98AD",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Collapsed like a normal timeline, expanded like compact phase cards. Best balance of narrative clarity and density.",
+                  "lineHeight": 1.45,
+                  "fontFamily": "JetBrains Mono",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "0YkwJ",
+                  "name": "Variant 3 Preview",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "uTbTq",
+                      "name": "Hybrid Filters",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "aCy0o",
+                          "name": "hybridChipAll",
+                          "fill": "#1A2940",
+                          "cornerRadius": 999,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#30527E"
+                          },
+                          "padding": [
+                            6,
+                            10
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "KIuZc",
+                              "fill": "#DDE7F6",
+                              "content": "ALL",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "700",
+                              "letterSpacing": 0.5
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "RuDAn",
+                          "name": "hybridChipExplore",
+                          "fill": "#0D1626",
+                          "cornerRadius": 999,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#21304B"
+                          },
+                          "padding": [
+                            6,
+                            10
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "vPF8O",
+                              "fill": "#AAB7CB",
+                              "content": "EXPLORE",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "600",
+                              "letterSpacing": 0.5
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "G5JH2",
+                          "name": "hybridChipAction",
+                          "fill": "#0D1626",
+                          "cornerRadius": 999,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#21304B"
+                          },
+                          "padding": [
+                            6,
+                            10
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "C3ZES",
+                              "fill": "#AAB7CB",
+                              "content": "ACTION",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "600",
+                              "letterSpacing": 0.5
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "umDTt",
+                          "name": "hybridChipIssues",
+                          "fill": "#0D1626",
+                          "cornerRadius": 999,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#21304B"
+                          },
+                          "padding": [
+                            6,
+                            10
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "l3KQ1",
+                              "fill": "#AAB7CB",
+                              "content": "ISSUES",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 11,
+                              "fontWeight": "600",
+                              "letterSpacing": 0.5
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "4t0yW",
+                      "name": "Hybrid Collapsed Summary",
+                      "width": "fill_container",
+                      "fill": "#0D1626",
+                      "cornerRadius": 14,
+                      "stroke": {
+                        "thickness": 1,
+                        "fill": "#21304B"
+                      },
+                      "gap": 10,
+                      "padding": [
+                        10,
+                        12
+                      ],
+                      "justifyContent": "space_between",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "vJ2tN",
+                          "width": 14,
+                          "height": 14,
+                          "iconFontName": "chevron-down",
+                          "iconFontFamily": "lucide",
+                          "fill": "#7CC4FF"
+                        },
+                        {
+                          "type": "text",
+                          "id": "FJYWz",
+                          "fill": "#D6DCE8",
+                          "content": "Explore 3 items · Action 2 items · last: typecheck",
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 11,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "KdnWa",
+                          "fill": "#7CC4FF",
+                          "content": "ACTIVE",
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 10,
+                          "fontWeight": "700",
+                          "letterSpacing": 0.6
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "8MIup",
+                      "name": "Hybrid Explore Section",
+                      "width": "fill_container",
+                      "fill": "#0E1524",
+                      "cornerRadius": 12,
+                      "stroke": {
+                        "thickness": 1,
+                        "fill": "#1F2A40"
+                      },
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": [
+                        10,
+                        12
+                      ],
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "spgrp",
+                          "name": "hybridExploreHeader",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon_font",
+                              "id": "MEunZ",
+                              "width": 14,
+                              "height": 14,
+                              "iconFontName": "search",
+                              "iconFontFamily": "lucide",
+                              "fill": "#7CC4FF"
+                            },
+                            {
+                              "type": "text",
+                              "id": "uBXrm",
+                              "fill": "#F5F7FB",
+                              "content": "Explore · 3 events",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 12,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "TVQiz",
+                              "fill": "#36D17C",
+                              "content": "DONE",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 10,
+                              "fontWeight": "700",
+                              "letterSpacing": 0.6
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "1hyD2",
+                          "fill": "#AAB7CB",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Read message-list.tsx\nSearch timeline labels\nInspect grouping in messages.ts",
+                          "lineHeight": 1.65,
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "HiFgn",
+                      "name": "Hybrid Action Section",
+                      "width": "fill_container",
+                      "fill": "#0E1524",
+                      "cornerRadius": 12,
+                      "stroke": {
+                        "thickness": 1,
+                        "fill": "#1F2A40"
+                      },
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": [
+                        10,
+                        12
+                      ],
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "LluHo",
+                          "name": "hybridActionHeader",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon_font",
+                              "id": "PYN6k",
+                              "width": 14,
+                              "height": 14,
+                              "iconFontName": "terminal",
+                              "iconFontFamily": "lucide",
+                              "fill": "#F6C86A"
+                            },
+                            {
+                              "type": "text",
+                              "id": "92CFf",
+                              "fill": "#F5F7FB",
+                              "content": "Action · 2 events",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 12,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "2nHqF",
+                              "fill": "#36D17C",
+                              "content": "PASS",
+                              "fontFamily": "JetBrains Mono",
+                              "fontSize": 10,
+                              "fontWeight": "700",
+                              "letterSpacing": 0.6
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "HjqwI",
+                          "fill": "#AAB7CB",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Explain current categorization\nRun typecheck after changes\nShow raw command only on secondary disclosure",
+                          "lineHeight": 1.65,
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

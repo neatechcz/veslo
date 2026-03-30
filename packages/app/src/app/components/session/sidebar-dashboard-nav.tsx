@@ -86,8 +86,8 @@ export default function SidebarDashboardNav(props: SidebarDashboardNavProps) {
           aria-label={collapseLabel()}
           aria-expanded={!collapsed()}
         >
-          <Show when={collapsed()} fallback={<ChevronUp size={11} />}>
-            <ChevronDown size={11} />
+          <Show when={collapsed()} fallback={<ChevronDown size={11} />}>
+            <ChevronUp size={11} />
           </Show>
         </button>
       </div>

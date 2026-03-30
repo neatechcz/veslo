@@ -45,7 +45,7 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
   );
 
   return (
-    <div class="mt-3 border-t border-gray-6/70 pt-3">
+    <div class="mt-3 pt-3">
       <div class="flex items-center gap-2">
         <button
           type="button"
