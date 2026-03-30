@@ -5196,7 +5196,7 @@ export default function App() {
       getActiveWorkspaceId: () => workspaceStore.activeWorkspaceId(),
       pickDirectory: () => workspaceStore.pickWorkspaceFolder(),
       ensureWorkspaceForFolder: workspaceStore.ensureWorkspaceForFolder,
-      activateWorkspace: workspaceStore.activateWorkspace,
+      activateWorkspace: (workspaceId) => workspaceStore.activateWorkspace(workspaceId, { promoteToFront: true }),
       createSession: () => createSessionAndOpen(),
     });
   };

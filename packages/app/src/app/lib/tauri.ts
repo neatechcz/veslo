@@ -163,8 +163,14 @@ export async function workspaceBootstrap(): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_bootstrap");
 }
 
-export async function workspaceSetActive(workspaceId: string): Promise<WorkspaceList> {
-  return invoke<WorkspaceList>("workspace_set_active", { workspaceId });
+export async function workspaceSetActive(
+  workspaceId: string,
+  options?: { promoteToFront?: boolean },
+): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_set_active", {
+    workspaceId,
+    promoteToFront: options?.promoteToFront ?? false,
+  });
 }
 
 export async function workspaceCreate(input: {

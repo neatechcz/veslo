@@ -6,7 +6,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::fs::{collect_copy_conflicts, copy_dir_recursive};
 use crate::paths::home_dir;
 use crate::types::{
-    ExecResult, RemoteType, WorkspaceInfo, WorkspaceList, WorkspaceType, WorkspaceVesloConfig,
+    ExecResult, RemoteType, WorkspaceInfo, WorkspaceList, WorkspaceState, WorkspaceType,
+    WorkspaceVesloConfig,
 };
 use crate::workspace::files::ensure_workspace_files;
 use crate::workspace::state::{
@@ -143,6 +144,34 @@ fn cleanup_opencode_sessions(base_url: Option<&str>, directory: &str) {
     }
 }
 
+fn upsert_workspace(workspaces: &mut Vec<WorkspaceInfo>, workspace: WorkspaceInfo) {
+    workspaces.retain(|existing| existing.id != workspace.id);
+    workspaces.insert(0, workspace);
+}
+
+fn set_active_workspace(
+    state: &mut WorkspaceState,
+    workspace_id: &str,
+    promote_to_front: bool,
+) -> Result<(), String> {
+    let id = workspace_id.trim();
+    if id.is_empty() {
+        return Err("workspaceId is required".to_string());
+    }
+    let workspace_index = state
+        .workspaces
+        .iter()
+        .position(|workspace| workspace.id == id)
+        .ok_or_else(|| "Unknown workspaceId".to_string())?;
+    if promote_to_front && workspace_index > 0 {
+        let workspace = state.workspaces.remove(workspace_index);
+        state.workspaces.insert(0, workspace);
+    }
+
+    state.active_id = id.to_string();
+    Ok(())
+}
+
 #[tauri::command]
 pub fn workspace_bootstrap(
     app: tauri::AppHandle,
@@ -257,25 +286,17 @@ pub fn workspace_forget(
 pub fn workspace_set_active(
     app: tauri::AppHandle,
     workspace_id: String,
+    promote_to_front: Option<bool>,
     watch_state: State<WorkspaceWatchState>,
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] set_active request: {workspace_id}");
     let mut state = load_workspace_state(&app)?;
-    let id = workspace_id.trim();
-
-    if id.is_empty() {
-        return Err("workspaceId is required".to_string());
-    }
-
-    if !state.workspaces.iter().any(|w| w.id == id) {
-        return Err("Unknown workspaceId".to_string());
-    }
-
-    state.active_id = id.to_string();
+    let promote = promote_to_front.unwrap_or(false);
+    set_active_workspace(&mut state, &workspace_id, promote)?;
     save_workspace_state(&app, &state)?;
     let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
     update_workspace_watch(&app, watch_state, active_workspace)?;
-    println!("[workspace] set_active complete: {id}");
+    println!("[workspace] set_active complete: {}", workspace_id.trim());
 
     Ok(WorkspaceList {
         active_id: state.active_id,
@@ -401,8 +422,7 @@ pub fn workspace_create(
     ensure_workspace_files(&folder, &preset)?;
 
     let mut state = load_workspace_state(&app)?;
-    state.workspaces.retain(|w| w.id != id);
-    state.workspaces.push(WorkspaceInfo {
+    upsert_workspace(&mut state.workspaces, WorkspaceInfo {
         id: id.clone(),
         name: workspace_name,
         path: folder,
@@ -505,8 +525,7 @@ pub fn workspace_create_remote(
     let path = directory.clone().unwrap_or_default();
 
     let mut state = load_workspace_state(&app)?;
-    state.workspaces.retain(|w| w.id != id);
-    state.workspaces.push(WorkspaceInfo {
+    upsert_workspace(&mut state.workspaces, WorkspaceInfo {
         id: id.clone(),
         name,
         path,
@@ -1096,8 +1115,7 @@ pub fn workspace_import_config(
     let id = stable_workspace_id(&target_dir);
 
     let mut state = load_workspace_state(&app)?;
-    state.workspaces.retain(|w| w.id != id);
-    state.workspaces.push(WorkspaceInfo {
+    upsert_workspace(&mut state.workspaces, WorkspaceInfo {
         id: id.clone(),
         name,
         path: target_dir.clone(),
@@ -1125,4 +1143,109 @@ pub fn workspace_import_config(
         active_id: state.active_id,
         workspaces: state.workspaces,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn local_workspace(id: &str, path: &str) -> WorkspaceInfo {
+        WorkspaceInfo {
+            id: id.to_string(),
+            name: id.to_string(),
+            path: path.to_string(),
+            preset: "starter".to_string(),
+            workspace_type: WorkspaceType::Local,
+            remote_type: None,
+            base_url: None,
+            directory: None,
+            display_name: None,
+            veslo_host_url: None,
+            veslo_token: None,
+            veslo_workspace_id: None,
+            veslo_workspace_name: None,
+            sandbox_backend: None,
+            sandbox_run_id: None,
+            sandbox_container_name: None,
+        }
+    }
+
+    #[test]
+    fn upsert_workspace_puts_new_workspace_first() {
+        let mut workspaces = vec![
+            local_workspace("ws-a", "/tmp/a"),
+            local_workspace("ws-b", "/tmp/b"),
+        ];
+
+        upsert_workspace(&mut workspaces, local_workspace("ws-c", "/tmp/c"));
+
+        let ids = workspaces
+            .iter()
+            .map(|workspace| workspace.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["ws-c", "ws-a", "ws-b"]);
+    }
+
+    #[test]
+    fn upsert_workspace_moves_existing_workspace_to_front() {
+        let mut workspaces = vec![
+            local_workspace("ws-a", "/tmp/a"),
+            local_workspace("ws-b", "/tmp/b"),
+        ];
+
+        upsert_workspace(&mut workspaces, local_workspace("ws-a", "/tmp/a-renamed"));
+
+        let ids = workspaces
+            .iter()
+            .map(|workspace| workspace.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["ws-a", "ws-b"]);
+        assert_eq!(workspaces[0].path, "/tmp/a-renamed");
+    }
+
+    #[test]
+    fn set_active_workspace_promotes_active_workspace_to_front_when_requested() {
+        let mut state = WorkspaceState {
+            version: 4,
+            active_id: "ws-a".to_string(),
+            workspaces: vec![
+                local_workspace("ws-a", "/tmp/a"),
+                local_workspace("ws-b", "/tmp/b"),
+                local_workspace("ws-c", "/tmp/c"),
+            ],
+        };
+
+        set_active_workspace(&mut state, "ws-c", true).expect("workspace should activate");
+
+        assert_eq!(state.active_id, "ws-c");
+        let ids = state
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["ws-c", "ws-a", "ws-b"]);
+    }
+
+    #[test]
+    fn set_active_workspace_keeps_order_when_promotion_is_disabled() {
+        let mut state = WorkspaceState {
+            version: 4,
+            active_id: "ws-a".to_string(),
+            workspaces: vec![
+                local_workspace("ws-a", "/tmp/a"),
+                local_workspace("ws-b", "/tmp/b"),
+                local_workspace("ws-c", "/tmp/c"),
+            ],
+        };
+
+        set_active_workspace(&mut state, "ws-c", false).expect("workspace should activate");
+
+        assert_eq!(state.active_id, "ws-c");
+        let ids = state
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["ws-a", "ws-b", "ws-c"]);
+    }
 }

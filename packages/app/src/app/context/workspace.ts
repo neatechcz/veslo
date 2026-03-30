@@ -280,8 +280,8 @@ export function createWorkspaceStore(options: {
   const [activeWorkspaceId, setActiveWorkspaceId] = createSignal<string>("starter");
   const [privateWorkspaceRoot, setPrivateWorkspaceRoot] = createSignal("");
 
-  const syncActiveWorkspaceId = (id: string) => {
-    setActiveWorkspaceId(id);
+  const syncActiveWorkspaceId = (id?: string) => {
+    setActiveWorkspaceId(id?.trim() ?? "");
   };
 
   const [authorizedDirs, setAuthorizedDirs] = createSignal<string[]>([]);
@@ -517,8 +517,11 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function activateWorkspace(workspaceId: string) {
-    const id = workspaceId.trim();
+  async function activateWorkspace(
+    workspaceId?: string,
+    activationOptions?: { promoteToFront?: boolean },
+  ) {
+    const id = workspaceId?.trim() ?? "";
     if (!id) return false;
 
     const next = workspaces().find((w) => w.id === id) ?? null;
@@ -753,10 +756,12 @@ export function createWorkspaceStore(options: {
 
           if (isTauriRuntime()) {
             try {
-              await withTimeoutOrThrow(
-                workspaceSetActive(id),
+              const ws = await withTimeoutOrThrow(
+                workspaceSetActive(id, { promoteToFront: activationOptions?.promoteToFront ?? false }),
                 { timeoutMs: WORKSPACE_SET_ACTIVE_TIMEOUT_MS, label: "workspace_set_active" },
               );
+              setWorkspaces(ws.workspaces);
+              syncActiveWorkspaceId(ws.activeId);
             } catch {
               // ignore
             }
@@ -809,10 +814,12 @@ export function createWorkspaceStore(options: {
 
         if (isTauriRuntime()) {
           try {
-            await withTimeoutOrThrow(
-              workspaceSetActive(id),
+            const ws = await withTimeoutOrThrow(
+              workspaceSetActive(id, { promoteToFront: activationOptions?.promoteToFront ?? false }),
               { timeoutMs: WORKSPACE_SET_ACTIVE_TIMEOUT_MS, label: "workspace_set_active" },
             );
+            setWorkspaces(ws.workspaces);
+            syncActiveWorkspaceId(ws.activeId);
           } catch {
             // ignore
           }
@@ -881,10 +888,12 @@ export function createWorkspaceStore(options: {
 
       _wsLog("[workspace:activate] STEP 3 — workspaceSetActive...", { id });
       try {
-        await withTimeoutOrThrow(
-          workspaceSetActive(id),
+        const ws = await withTimeoutOrThrow(
+          workspaceSetActive(id, { promoteToFront: activationOptions?.promoteToFront ?? false }),
           { timeoutMs: WORKSPACE_SET_ACTIVE_TIMEOUT_MS, label: "workspace_set_active" },
         );
+        setWorkspaces(ws.workspaces);
+        syncActiveWorkspaceId(ws.activeId);
         _wsLog("[workspace:activate] STEP 3 — workspaceSetActive DONE");
       } catch (e) {
         _wsLog("[workspace:activate] STEP 3 — workspaceSetActive FAILED", e instanceof Error ? e.message : String(e));
@@ -1552,7 +1561,13 @@ export function createWorkspaceStore(options: {
     }
 
     const existing = findLocalWorkspaceByPath(resolvedFolder);
-    if (existing) return existing;
+    if (existing) {
+      setWorkspaces((prev) => {
+        const rest = prev.filter((workspace) => workspace.id !== existing.id);
+        return [existing, ...rest];
+      });
+      return existing;
+    }
 
     return await createLocalWorkspace("starter", resolvedFolder, {
       markOnboardingComplete: true,
