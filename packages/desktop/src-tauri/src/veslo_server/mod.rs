@@ -265,6 +265,7 @@ pub fn start_veslo_server(
 mod tests {
     use super::{read_persisted_veslo_server_info, PersistedVesloServerState};
     use std::fs;
+    use std::io::ErrorKind;
     use std::io::Read;
     use std::io::Write;
     use std::net::TcpListener;
@@ -284,7 +285,14 @@ mod tests {
 
     #[test]
     fn read_persisted_server_info_recovers_live_server() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind health listener");
+        let listener = match TcpListener::bind("127.0.0.1:0") {
+            Ok(listener) => listener,
+            Err(error) if error.kind() == ErrorKind::PermissionDenied => {
+                eprintln!("skipping health recovery test: local TCP bind not permitted ({error})");
+                return;
+            }
+            Err(error) => panic!("bind health listener: {error}"),
+        };
         let port = listener.local_addr().expect("listener addr").port();
 
         let handle = thread::spawn(move || {
