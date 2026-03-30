@@ -101,6 +101,22 @@ describe("deriveLatestRunArtifacts", () => {
     ]);
   });
 
+  test("preserves absolute unix paths for file artifacts", () => {
+    const artifacts = deriveLatestRunArtifacts(
+      session(
+        userMessage("msg_1", "Inspect the file."),
+        assistantMessage(
+          "msg_2",
+          toolPart("read", { path: "/Users/vaclavsoukup/project/notes.md" }),
+        ),
+      ),
+    );
+
+    expect(files(artifacts).map((artifact) => [artifact.kind, artifact.path])).toEqual([
+      ["file_discovered", "/Users/vaclavsoukup/project/notes.md"],
+    ]);
+  });
+
   test("derives file_output artifacts from write/edit/apply-patch activity", () => {
     const artifacts = deriveLatestRunArtifacts(
       session(

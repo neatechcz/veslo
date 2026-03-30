@@ -512,11 +512,26 @@ function isSemanticSoulPath(path: string): boolean {
 }
 
 function normalizeArtifactPath(input: string): string | null {
-  const normalized = input.trim().replace(/\\/g, "/").replace(/^\/+/, "").replace(/^\.\//, "").replace(/^workspace\//, "");
+  const raw = input.trim().replace(/\\/g, "/");
+  if (!raw) return null;
+
+  const isWindowsDriveAbsolute = /^[A-Za-z]:\//.test(raw);
+  const isUncAbsolute = raw.startsWith("//");
+  const isUnixAbsolute = raw.startsWith("/") && !isUncAbsolute;
+
+  let normalized = raw;
+  if (isUnixAbsolute) {
+    normalized = `/${raw.replace(/^\/+/, "")}`;
+  } else if (!isWindowsDriveAbsolute && !isUncAbsolute) {
+    normalized = raw.replace(/^\.\//, "").replace(/^workspace\//, "");
+  }
+
   if (!normalized) return null;
   const parts = normalized.split("/").filter(Boolean);
   if (!parts.length) return null;
   if (parts.some((part) => part === "." || part === "..")) return null;
+  if (isUnixAbsolute) return `/${parts.join("/")}`;
+  if (isUncAbsolute) return `//${parts.join("/")}`;
   return parts.join("/");
 }
 
