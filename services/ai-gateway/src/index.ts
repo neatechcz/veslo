@@ -2,13 +2,23 @@ import express from "express";
 import { pathToFileURL } from "node:url";
 
 import { env } from "./env.js";
+import { createProxyRouter, type ProxyDependencies } from "./http/proxy.js";
 
-export function createApp() {
+export type AppDependencies = {
+  proxy?: ProxyDependencies;
+};
+
+export function createApp(deps: AppDependencies = {}) {
   const app = express();
+  app.use(express.json());
 
   app.get("/health", (_req, res) => {
     res.status(200).json({ ok: true, service: "ai-gateway" });
   });
+
+  if (deps.proxy) {
+    app.use(createProxyRouter(deps.proxy));
+  }
 
   return app;
 }
