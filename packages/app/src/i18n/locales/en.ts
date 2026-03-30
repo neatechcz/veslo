@@ -1201,6 +1201,8 @@ export default {
   "nav.skills": "Skills",
   "nav.extensions": "Extensions",
   "nav.advanced": "Advanced",
+  "nav.expand_dashboard_nav": "Expand dashboard nav",
+  "nav.collapse_dashboard_nav": "Collapse dashboard nav",
 
   // ==================== Scheduled / Automations ====================
   "scheduled.learn_more": "Learn more",

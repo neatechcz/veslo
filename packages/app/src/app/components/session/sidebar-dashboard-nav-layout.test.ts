@@ -12,13 +12,15 @@ test("sidebar dashboard nav collapses from prefs and exposes a divider toggle", 
   assert.match(source, /const \[collapsed, setCollapsed\] = createSignal\(readSidebarDashboardNavCollapsed\(\)\);/);
   assert.match(source, /writeSidebarDashboardNavCollapsed\(nextCollapsed\);/);
   assert.match(source, /<Show when=\{\!collapsed\(\)\}>[\s\S]*History[\s\S]*HeartPulse[\s\S]*Zap[\s\S]*Box[\s\S]*<\/Show>/);
+  assert.match(source, /onClick=\{toggleCollapsed\}/);
+  assert.match(source, /const collapseLabel = \(\) =>[\s\S]*t\("nav\.expand_dashboard_nav", currentLocale\(\)\)[\s\S]*t\("nav\.collapse_dashboard_nav", currentLocale\(\)\);/);
   assert.match(
     source,
-    /aria-label=\{collapsed\(\) \? "Expand dashboard nav" : "Collapse dashboard nav"\}/,
+    /aria-label=\{collapseLabel\(\)\}/,
   );
   assert.match(
     source,
-    /title=\{collapsed\(\) \? "Expand dashboard nav" : "Collapse dashboard nav"\}/,
+    /title=\{collapseLabel\(\)\}/,
   );
   assert.match(source, /aria-expanded=\{\!collapsed\(\)\}/);
 });

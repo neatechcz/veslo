@@ -26,6 +26,10 @@ const isActiveTab = (currentTab: DashboardTab, tab: DashboardTab) =>
 
 export default function SidebarDashboardNav(props: SidebarDashboardNavProps) {
   const [collapsed, setCollapsed] = createSignal(readSidebarDashboardNavCollapsed());
+  const collapseLabel = () =>
+    collapsed()
+      ? t("nav.expand_dashboard_nav", currentLocale())
+      : t("nav.collapse_dashboard_nav", currentLocale());
 
   const toggleCollapsed = () =>
     setCollapsed((current) => {
@@ -76,10 +80,10 @@ export default function SidebarDashboardNav(props: SidebarDashboardNavProps) {
         <div class="border-t border-gray-6/70" />
         <button
           type="button"
-          class="absolute left-1/2 top-0 inline-flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-10 shadow-sm transition-colors hover:bg-gray-2 hover:text-gray-11"
+          class="absolute left-1/2 top-0 inline-flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-10 shadow-sm transition-colors hover:bg-gray-2 hover:text-gray-11"
           onClick={toggleCollapsed}
-          title={collapsed() ? "Expand dashboard nav" : "Collapse dashboard nav"}
-          aria-label={collapsed() ? "Expand dashboard nav" : "Collapse dashboard nav"}
+          title={collapseLabel()}
+          aria-label={collapseLabel()}
           aria-expanded={!collapsed()}
         >
           <Show when={collapsed()} fallback={<ChevronUp size={11} />}>

@@ -1197,6 +1197,8 @@ export default {
   "nav.skills": "Skills",
   "nav.extensions": "Rozšíření",
   "nav.advanced": "Pokročilé",
+  "nav.expand_dashboard_nav": "Rozbalit navigaci panelu",
+  "nav.collapse_dashboard_nav": "Sbalit navigaci panelu",
 
   // ==================== Plánované úlohy / Automatizace ====================
   "scheduled.learn_more": "Zjistit více",
