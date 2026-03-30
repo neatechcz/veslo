@@ -3,6 +3,7 @@ import test from "node:test";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 
+import type { UpstreamAuth } from "../src/credentials/token-broker.js";
 import type { LeaseRepository, RebindSessionLeaseInput, SessionLease } from "../src/leases/repository.js";
 import { LeaseBroker, type BindingSelector } from "../src/leases/lease-broker.js";
 import { createApp, type AppDependencies } from "../src/index.js";
@@ -53,7 +54,7 @@ test("POST /v1/chat/completions creates and reuses session lease and fetches aut
 
   const leaseBroker = new LeaseBroker(leases, selector);
   const tokenBrokerCalls: Array<{ bindingId: string }> = [];
-  const transportCalls: Array<{ authValue: string; body: unknown }> = [];
+  const transportCalls: Array<{ upstreamAuth: UpstreamAuth; body: unknown }> = [];
 
   const appDependencies: AppDependencies = {
     proxy: {
@@ -65,7 +66,7 @@ test("POST /v1/chat/completions creates and reuses session lease and fetches aut
         },
       },
       transport: {
-        async chatCompletions(input: { authValue: string; body: unknown }) {
+        async chatCompletions(input: { upstreamAuth: UpstreamAuth; body: unknown }) {
           transportCalls.push(input);
           return {
             status: 200,
@@ -118,8 +119,188 @@ test("POST /v1/chat/completions creates and reuses session lease and fetches aut
       { bindingId: "binding_alpha" },
     ]);
     assert.equal(transportCalls.length, 2);
-    assert.equal(transportCalls[0]?.authValue, "secret_for_binding_alpha");
+    assert.deepEqual(transportCalls[0]?.upstreamAuth, {
+      kind: "api-key",
+      value: "secret_for_binding_alpha",
+    });
     assert.deepEqual(transportCalls[0]?.body, requestBody);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("POST /v1/chat/completions returns 400 when x-veslo-session-id is missing", async () => {
+  const leases = new InMemoryLeaseRepository();
+  const selector: BindingSelector = {
+    async selectInitialBinding() {
+      return "binding_alpha";
+    },
+    async selectReplacementBinding() {
+      return "binding_beta";
+    },
+  };
+
+  const leaseBroker = new LeaseBroker(leases, selector);
+  const app = createApp({
+    proxy: {
+      leaseBroker,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          return { kind: "api-key", value: "unused" };
+        },
+      },
+      transport: {
+        async chatCompletions() {
+          return { status: 200, body: { ok: true } };
+        },
+      },
+    },
+  });
+
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-test", messages: [] }),
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: "missing_session_id" });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("POST /v1/chat/completions returns 502 on transport failure", async () => {
+  const leases = new InMemoryLeaseRepository();
+  const selector: BindingSelector = {
+    async selectInitialBinding() {
+      return "binding_alpha";
+    },
+    async selectReplacementBinding() {
+      return "binding_beta";
+    },
+  };
+
+  const leaseBroker = new LeaseBroker(leases, selector);
+  const app = createApp({
+    proxy: {
+      leaseBroker,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          return { kind: "oauth", value: "oauth_token" };
+        },
+      },
+      transport: {
+        async chatCompletions() {
+          throw new Error("upstream failed");
+        },
+      },
+    },
+  });
+
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_proxy_fail",
+      },
+      body: JSON.stringify({ model: "gpt-test", messages: [] }),
+    });
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), { error: "proxy_request_failed" });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("POST /v1/chat/completions passes upstream headers through", async () => {
+  const leases = new InMemoryLeaseRepository();
+  const selector: BindingSelector = {
+    async selectInitialBinding() {
+      return "binding_alpha";
+    },
+    async selectReplacementBinding() {
+      return "binding_beta";
+    },
+  };
+
+  const leaseBroker = new LeaseBroker(leases, selector);
+  const app = createApp({
+    proxy: {
+      leaseBroker,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          return { kind: "api-key", value: "api_key" };
+        },
+      },
+      transport: {
+        async chatCompletions() {
+          return {
+            status: 200,
+            body: { ok: true },
+            headers: {
+              "x-upstream-request-id": "req_abc",
+              "x-provider": "mock",
+            },
+          };
+        },
+      },
+    },
+  });
+
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_proxy_headers",
+      },
+      body: JSON.stringify({ model: "gpt-test", messages: [] }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-upstream-request-id"), "req_abc");
+    assert.equal(response.headers.get("x-provider"), "mock");
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("default app mounts proxy route in runtime startup mode", async () => {
+  const app = createApp();
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_runtime_default",
+      },
+      body: JSON.stringify({ model: "gpt-test", messages: [] }),
+    });
+
+    assert.notEqual(response.status, 404);
   } finally {
     server.close();
     await once(server, "close");

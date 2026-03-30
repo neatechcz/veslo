@@ -1,5 +1,7 @@
+import type { UpstreamAuth } from "../credentials/token-broker.js";
+
 export type ChatCompletionsTransportInput = {
-  authValue: string;
+  upstreamAuth: UpstreamAuth;
   body: unknown;
 };
 

@@ -39,7 +39,7 @@ export function createProxyRouter(deps: ProxyDependencies) {
       });
 
       const upstreamResponse = await deps.transport.chatCompletions({
-        authValue: upstreamAuth.value,
+        upstreamAuth,
         body: req.body,
       });
 
