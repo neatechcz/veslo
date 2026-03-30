@@ -1,0 +1,245 @@
+name: Deploy AI Gateway
+
+on:
+  workflow_dispatch:
+    inputs:
+      service_name:
+        description: Render service name
+        required: false
+        type: string
+        default: veslo-ai-gateway-dev
+      branch:
+        description: Git branch to deploy
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-ai-gateway-${{ github.event.inputs.service_name || 'veslo-ai-gateway-dev' }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.repository == 'neatechcz/veslo'
+    steps:
+      - name: Validate required secrets
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
+        run: |
+          missing=0
+          for key in RENDER_API_KEY RENDER_OWNER_ID; do
+            if [ -z "${!key}" ]; then
+              echo "::error::Missing required secret: $key"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Create or update Render AI gateway service
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
+          AI_GATEWAY_RENDER_SERVICE_NAME: ${{ github.event.inputs.service_name }}
+          AI_GATEWAY_RENDER_BRANCH: ${{ github.event.inputs.branch }}
+        run: |
+          python3 <<'PY'
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          api_key = os.environ["RENDER_API_KEY"]
+          owner_id = os.environ["RENDER_OWNER_ID"]
+          service_name = os.environ.get("AI_GATEWAY_RENDER_SERVICE_NAME") or "veslo-ai-gateway-dev"
+          branch = os.environ.get("AI_GATEWAY_RENDER_BRANCH") or os.environ.get("GITHUB_REF_NAME") or "main"
+          repo = f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'neatechcz/veslo')}"
+          root_dir = "services/ai-gateway"
+          plan = "starter"
+          region = "oregon"
+          build_command = "corepack enable && corepack prepare pnpm@10.27.0 --activate && pnpm install --no-frozen-lockfile && pnpm build"
+          start_command = "pnpm start"
+
+          headers = {
+              "Authorization": f"Bearer {api_key}",
+              "Accept": "application/json",
+              "Content-Type": "application/json",
+          }
+
+          def request(method: str, path: str, body=None):
+              url = f"https://api.render.com/v1{path}"
+              data = None
+              if body is not None:
+                  data = json.dumps(body).encode("utf-8")
+              req = urllib.request.Request(url, data=data, method=method, headers=headers)
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as resp:
+                      text = resp.read().decode("utf-8")
+                      return resp.status, json.loads(text) if text else None
+              except urllib.error.HTTPError as err:
+                  text = err.read().decode("utf-8", "replace")
+                  raise RuntimeError(f"{method} {path} failed ({err.code}): {text[:600]}")
+
+          def list_services(limit: int = 200):
+              rows = []
+              cursor = None
+
+              while len(rows) < limit:
+                  query = urllib.parse.urlencode(
+                      {k: v for k, v in {"limit": "100", "cursor": cursor}.items() if v},
+                      doseq=True,
+                  )
+                  _, page = request("GET", f"/services?{query}")
+                  if not page:
+                      break
+
+                  rows.extend(
+                      entry["service"]
+                      for entry in page
+                      if isinstance(entry, dict) and isinstance(entry.get("service"), dict) and entry["service"].get("id")
+                  )
+
+                  next_cursor = page[-1].get("cursor") if isinstance(page[-1], dict) else None
+                  if not next_cursor or next_cursor == cursor:
+                      break
+                  cursor = next_cursor
+
+              return rows[:limit]
+
+          def wait_for_health(health_url: str, timeout_seconds: int = 180):
+              deadline = time.time() + timeout_seconds
+              while time.time() < deadline:
+                  try:
+                      req = urllib.request.Request(health_url, headers={"Accept": "application/json"})
+                      with urllib.request.urlopen(req, timeout=20) as resp:
+                          body = json.loads(resp.read().decode("utf-8"))
+                          if resp.status == 200 and body.get("ok") is True:
+                              return
+                  except Exception:
+                      pass
+                  time.sleep(5)
+              raise RuntimeError(f"Timed out waiting for health endpoint {health_url}")
+
+          def wait_for_new_deploy(service_id: str, before_id: str | None):
+              for _ in range(30):
+                  time.sleep(5)
+                  _, deploys = request("GET", f"/services/{service_id}/deploys?limit=1")
+                  if not deploys:
+                      continue
+                  latest = deploys[0]["deploy"]
+                  if latest["id"] != before_id:
+                      return latest["id"]
+              raise RuntimeError("No new deploy appeared after triggering")
+
+          def wait_for_deploy_live(service_id: str, deploy_id: str):
+              terminal = {"live", "update_failed", "build_failed", "canceled"}
+              started = time.time()
+
+              while time.time() - started < 1800:
+                  _, deploys = request("GET", f"/services/{service_id}/deploys?limit=1")
+                  latest = deploys[0]["deploy"] if deploys else None
+                  if latest and latest.get("id") == deploy_id and latest.get("status") in terminal:
+                      status = latest.get("status")
+                      if status != "live":
+                          logs_query = urllib.parse.urlencode(
+                              {
+                                  "ownerId": owner_id,
+                                  "resource": [service_id],
+                                  "type": ["app", "build"],
+                                  "direction": "backward",
+                                  "limit": "60",
+                              },
+                              doseq=True,
+                          )
+                          _, recent_logs = request("GET", f"/logs?{logs_query}")
+                          log_lines = []
+                          for entry in (recent_logs or {}).get("logs", []):
+                              if not isinstance(entry, dict):
+                                  continue
+                              message = entry.get("message")
+                              if not isinstance(message, str) or not message.strip():
+                                  continue
+                              log_lines.append(
+                                  {
+                                      "timestamp": entry.get("timestamp"),
+                                      "message": message[:300],
+                                  }
+                              )
+                              if len(log_lines) >= 20:
+                                  break
+                          print("Render recent logs:", json.dumps(log_lines))
+                          raise RuntimeError(f"Render deploy {deploy_id} ended with {status}")
+                      return
+                  time.sleep(10)
+
+              raise RuntimeError(f"Timed out waiting for deploy {deploy_id}")
+
+          services = list_services()
+          existing = next((service for service in services if service.get("name") == service_name), None)
+
+          if existing:
+              service_id = existing["id"]
+              patch = {}
+              if existing.get("repo") != repo:
+                  patch["repo"] = repo
+              if existing.get("branch") != branch:
+                  patch["branch"] = branch
+              if existing.get("rootDir") != root_dir:
+                  patch["rootDir"] = root_dir
+              if existing.get("autoDeploy") != "no":
+                  patch["autoDeploy"] = "no"
+
+              if patch:
+                  print("Updating Render service source:", json.dumps(patch))
+                  request("PATCH", f"/services/{service_id}", patch)
+          else:
+              payload = {
+                  "type": "web_service",
+                  "name": service_name,
+                  "ownerId": owner_id,
+                  "repo": repo,
+                  "branch": branch,
+                  "autoDeploy": "no",
+                  "rootDir": root_dir,
+                  "serviceDetails": {
+                      "runtime": "node",
+                      "plan": plan,
+                      "region": region,
+                      "healthCheckPath": "/health",
+                      "envSpecificDetails": {
+                          "buildCommand": build_command,
+                          "startCommand": start_command,
+                      },
+                  },
+              }
+              print("Creating Render service:", json.dumps({"name": service_name, "branch": branch, "rootDir": root_dir}))
+              _, created = request("POST", "/services", payload)
+              service_id = created["service"]["id"]
+
+          _, before = request("GET", f"/services/{service_id}/deploys?limit=1")
+          before_id = before[0]["deploy"]["id"] if before else None
+
+          request("POST", f"/services/{service_id}/deploys", {})
+          print("Deploy triggered, waiting for new deploy to appear...")
+
+          deploy_id = wait_for_new_deploy(service_id, before_id)
+          print(f"New deploy detected: {deploy_id}")
+          wait_for_deploy_live(service_id, deploy_id)
+
+          _, service = request("GET", f"/services/{service_id}")
+          service_url = (service.get("serviceDetails") or {}).get("url")
+          if not service_url:
+              raise RuntimeError(f"Render service {service_id} has no public URL")
+
+          wait_for_health(f"{service_url.rstrip('/')}/health")
+          print(f"Render AI gateway deploy {deploy_id} is live at {service_url}")
+          PY
