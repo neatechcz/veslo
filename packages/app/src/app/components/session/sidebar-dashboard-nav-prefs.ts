@@ -12,7 +12,11 @@ const resolveStorage = (
 ): SidebarDashboardNavPrefsStorage | null => {
   if (storage) return storage;
   if (typeof window === "undefined") return null;
-  return window.localStorage;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
 };
 
 const parseCollapsed = (raw: string | null): boolean | null => {

@@ -36,6 +36,14 @@ test("reads stored collapsed value", () => {
   assert.equal(readSidebarDashboardNavCollapsed(storage), false);
 });
 
+test("falls back to default when stored value is invalid", () => {
+  const storage = createMemoryStorage({
+    [SIDEBAR_DASHBOARD_NAV_COLLAPSED_KEY]: "\"invalid\"",
+  });
+
+  assert.equal(readSidebarDashboardNavCollapsed(storage), DEFAULT_SIDEBAR_DASHBOARD_NAV_COLLAPSED);
+});
+
 test("writes collapsed value", () => {
   const storage = createMemoryStorage();
 
