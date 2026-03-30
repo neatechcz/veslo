@@ -1,6 +1,12 @@
 name: Deploy AI Gateway
 
 on:
+  push:
+    branches:
+      - codex/ai-gateway-control-plane
+    paths:
+      - "services/ai-gateway/**"
+      - ".github/workflows/deploy-ai-gateway.yml"
   workflow_dispatch:
     inputs:
       service_name:
