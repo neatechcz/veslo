@@ -13,10 +13,20 @@ import type { UpstreamFailureKind } from "../src/leases/error-classifier.js";
 class InMemoryLeaseRepository implements LeaseRepository {
   private readonly leasesBySession = new Map<string, SessionLease>();
   private leaseIdCounter = 0;
+  private forcedCasMismatch:
+    | {
+        sessionId: string;
+        winnerBindingId: string;
+      }
+    | null = null;
 
   public createCalls = 0;
   public rebindCalls = 0;
   public lastRebindInput: RebindSessionLeaseInput | null = null;
+
+  forceNextCasMismatch(sessionId: string, winnerBindingId: string): void {
+    this.forcedCasMismatch = { sessionId, winnerBindingId };
+  }
 
   async getActiveLeaseBySessionId(sessionId: string): Promise<SessionLease | null> {
     return this.leasesBySession.get(sessionId) ?? null;
@@ -45,6 +55,17 @@ class InMemoryLeaseRepository implements LeaseRepository {
     const current = this.leasesBySession.get(input.sessionId);
     if (!current) {
       throw new Error(`lease_missing:${input.sessionId}`);
+    }
+
+    if (this.forcedCasMismatch && this.forcedCasMismatch.sessionId === input.sessionId) {
+      const winner = this.forcedCasMismatch;
+      this.forcedCasMismatch = null;
+      const externallyUpdated: SessionLease = {
+        ...current,
+        activeBindingId: winner.winnerBindingId,
+      };
+      this.leasesBySession.set(input.sessionId, externallyUpdated);
+      return null;
     }
 
     if (current.activeBindingId !== input.expectedCurrentBindingId) {
@@ -223,4 +244,24 @@ test("maps upstream failures through classifier in handleUpstreamFailure", async
 
   assert.equal(repository.rebindCalls, 1);
   assert.equal(permanent.activeBindingId, "binding_2");
+});
+
+test("falls back to latest lease when CAS rebind precondition misses", async () => {
+  const repository = new InMemoryLeaseRepository();
+  const { selector, calls } = createSelector();
+  const broker = new LeaseBroker(repository, selector);
+
+  const lease = await broker.getOrCreateActiveLease("session_cas_fallback");
+  repository.forceNextCasMismatch("session_cas_fallback", "binding_external_winner");
+
+  const result = await triggerFailure(
+    broker,
+    "session_cas_fallback",
+    lease.activeBindingId,
+    "permanent_credential",
+  );
+
+  assert.equal(repository.rebindCalls, 1);
+  assert.equal(calls.replacement, 1);
+  assert.equal(result.activeBindingId, "binding_external_winner");
 });
