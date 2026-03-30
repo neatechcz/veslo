@@ -15,7 +15,15 @@ export function createDb(databaseUrl: string) {
     keepAliveInitialDelay: 0,
   });
 
-  return drizzle(client, { schema, mode: "default" });
+  const db = drizzle(client, { schema, mode: "default" });
+
+  return {
+    db,
+    close: async () => {
+      await client.end();
+    },
+  };
 }
 
-export type AiGatewayDb = ReturnType<typeof createDb>;
+export type AiGatewayDbHandle = ReturnType<typeof createDb>;
+export type AiGatewayDb = AiGatewayDbHandle["db"];
