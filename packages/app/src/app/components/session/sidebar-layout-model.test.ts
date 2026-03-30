@@ -25,21 +25,21 @@ test("enters narrow below minimum width and exits only at hysteresis threshold",
   assert.equal(state.mode, "wide");
 });
 
-test("narrow mode allows only one overlay and ignores opposite-side toggle while open", () => {
+test("narrow mode switches overlay sides and stores only the active side as docked preference", () => {
   let state = createInitialSidebarLayoutState({ left: true, right: true });
   state = applyAvailableWidth(state, SESSION_CHAT_MIN_WIDTH - 1);
 
   state = toggleSidebarFromButton(state, "left");
   assert.equal(state.overlay, "left");
-
-  const unchanged = toggleSidebarFromButton(state, "right");
-  assert.deepEqual(unchanged, state);
-
-  state = toggleSidebarFromButton(state, "left");
-  assert.equal(state.overlay, null);
+  assert.deepEqual(state.dockedPreference, { left: true, right: false });
 
   state = toggleSidebarFromButton(state, "right");
   assert.equal(state.overlay, "right");
+  assert.deepEqual(state.dockedPreference, { left: false, right: true });
+
+  state = toggleSidebarFromButton(state, "right");
+  assert.equal(state.overlay, null);
+  assert.deepEqual(state.dockedPreference, { left: false, right: true });
 });
 
 test("wide docked toggles persist preference and restore after narrow mode", () => {

@@ -78,19 +78,19 @@ export const toggleSidebarFromButton = (
   side: SidebarSide,
 ): SidebarLayoutState => {
   if (state.mode === "narrow") {
-    if (state.overlay === null) {
-      return {
-        ...state,
-        overlay: side,
-      };
-    }
     if (state.overlay === side) {
       return {
         ...state,
         overlay: null,
       };
     }
-    return state;
+    const nextDockedPreference: SidebarDockedVisibility =
+      side === "left" ? { left: true, right: false } : { left: false, right: true };
+    return {
+      ...state,
+      overlay: side,
+      dockedPreference: nextDockedPreference,
+    };
   }
 
   const nextDocked: SidebarDockedVisibility =
