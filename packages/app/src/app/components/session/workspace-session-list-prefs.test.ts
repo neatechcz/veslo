@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
   DEFAULT_SIDEBAR_VIEW_MODE,
+  readProjectOrder,
   readCollapsedProjectMap,
   readSidebarViewMode,
+  writeProjectOrder,
   writeCollapsedProjectMap,
   writeSidebarViewMode,
   type SidebarPrefsStorage,
@@ -69,4 +71,32 @@ test("writeSidebarViewMode persists selected mode", () => {
   const storage = createMemoryStorage();
   writeSidebarViewMode("recent", storage);
   assert.equal(storage.snapshot()["veslo.sidebar-session-view.v1"], "recent");
+});
+
+test("project order defaults to empty array", () => {
+  const storage = createMemoryStorage();
+  assert.deepEqual(readProjectOrder(storage), []);
+});
+
+test("project order reads valid string array", () => {
+  const storage = createMemoryStorage({
+    "veslo.sidebar-project-order.v1": JSON.stringify(["project:a", "project:b"]),
+  });
+  assert.deepEqual(readProjectOrder(storage), ["project:a", "project:b"]);
+});
+
+test("project order ignores invalid payload members", () => {
+  const storage = createMemoryStorage({
+    "veslo.sidebar-project-order.v1": JSON.stringify([" project:a ", 123, "", "project:a", "project:b"]),
+  });
+  assert.deepEqual(readProjectOrder(storage), ["project:a", "project:b"]);
+});
+
+test("writeProjectOrder persists normalized string array", () => {
+  const storage = createMemoryStorage();
+  writeProjectOrder([" project:a ", "", "project:b", "project:a"], storage);
+  assert.equal(
+    storage.snapshot()["veslo.sidebar-project-order.v1"],
+    JSON.stringify(["project:a", "project:b"]),
+  );
 });
