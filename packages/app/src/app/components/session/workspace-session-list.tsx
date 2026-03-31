@@ -15,7 +15,6 @@ import {
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
   isProjectCollapsed,
-  pruneCollapsedProjects,
   shouldShowNewSessionLabelText,
   shouldUseExpandedNewSessionLabel,
   toggleProjectCollapsed,
@@ -273,39 +272,6 @@ export default function WorkspaceSessionList(props: Props) {
       setRecentLoadMoreBusy(false);
     }
   };
-
-  createEffect(() => {
-    const availableProjectKeys = projectGroups().map((group) => group.key);
-    setCollapsedProjects((current) => {
-      const next = pruneCollapsedProjects(current, availableProjectKeys);
-      try {
-        window.localStorage.setItem("veslo.debug.sidebar.availableProjectKeys", JSON.stringify(availableProjectKeys));
-        window.localStorage.setItem("veslo.debug.sidebar.collapsedBeforePrune", JSON.stringify(current));
-        const rawHistory = window.localStorage.getItem("veslo.debug.sidebar.pruneHistory");
-        const history = rawHistory ? JSON.parse(rawHistory) : [];
-        if (Array.isArray(history)) {
-          history.push({
-            at: Date.now(),
-            availableProjectKeys,
-            current,
-            next,
-          });
-          while (history.length > 20) history.shift();
-          window.localStorage.setItem("veslo.debug.sidebar.pruneHistory", JSON.stringify(history));
-        }
-      } catch {
-        // debug-only instrumentation best effort
-      }
-      try {
-        window.localStorage.setItem("veslo.debug.sidebar.collapsedAfterPrune", JSON.stringify(next));
-      } catch {
-        // debug-only instrumentation best effort
-      }
-      if (next === current) return current;
-      writeCollapsedProjectMap(next);
-      return next;
-    });
-  });
 
   createEffect(() => {
     const nextGroups = projectGroups();

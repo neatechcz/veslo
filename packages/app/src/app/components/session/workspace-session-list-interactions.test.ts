@@ -33,6 +33,12 @@ test("by-project mode wires project-group drag and drop reorder handlers", () =>
 
   assert.match(
     source,
+    /const \[projectDropIndicator, setProjectDropIndicator\] = createSignal<ProjectDropIndicator \| null>\(null\);/,
+    "by-project mode should track insertion-line state for precise drop feedback",
+  );
+
+  assert.match(
+    source,
     /const handleProjectDragStart = \(event: DragEvent, projectKey: string\) => \{/,
     "project list should define a drag start handler",
   );
@@ -45,8 +51,20 @@ test("by-project mode wires project-group drag and drop reorder handlers", () =>
 
   assert.match(
     source,
-    /if \(sourceKey === targetKey\) return;/,
+    /if \(sourceKey === normalizedTargetKey\) \{\s*clearProjectDragState\(\);\s*return;\s*\}/,
     "self-drop should be ignored before reordering state is mutated",
+  );
+
+  assert.match(
+    source,
+    /position = event\.clientY < rect\.top \+ rect\.height \/ 2 \? "before" : "after";/,
+    "drag-over should compute whether insertion is before or after the hovered project row",
+  );
+
+  assert.match(
+    source,
+    /const reorderedVisibleKeys = reorderProjectKeys\(visibleKeys, sourceKey, normalizedTargetKey, dropPosition\);/,
+    "drop should pass explicit insertion position into project reorder logic",
   );
 });
 
@@ -92,6 +110,30 @@ test("project rows expose grip handle and drag lifecycle bindings", () => {
     /onDragEnd=\{handleProjectDragEnd\}/,
     "drag handle should clear transient drag state at the end of the gesture",
   );
+
+  assert.match(
+    source,
+    /event\.dataTransfer\.setDragImage\(preview, offsetX, offsetY\);/,
+    "drag start should provide a custom drag preview so users get immediate visual feedback",
+  );
+
+  assert.match(
+    source,
+    /data-project-drag-preview/,
+    "project row should expose a dedicated preview source for drag image cloning",
+  );
+
+  assert.match(
+    source,
+    /dropIndicatorPosition\(\) === "before"/,
+    "project row should expose a top insertion divider when dropping before",
+  );
+
+  assert.match(
+    source,
+    /dropIndicatorPosition\(\) === "after"/,
+    "project row should expose a bottom insertion divider when dropping after",
+  );
 });
 
 test("clicking selected parent toggles subagent expansion while non-selected rows open sessions", () => {
@@ -119,5 +161,19 @@ test("session label span exposes full title tooltip and optional decoration styl
     source,
     /style=\{sessionLabelStyle\(row\)\}/,
     "decorated subagent rows should apply persisted color styling",
+  );
+});
+
+test("collapsed project persistence writes only from explicit user toggles", () => {
+  assert.match(
+    source,
+    /const toggleProjectCollapse = \(projectKey: string\) =>\s*setCollapsedProjects\(\(previous\) => \{\s*const next = toggleProjectCollapsed\(previous, projectKey\);\s*writeCollapsedProjectMap\(next\);\s*return next;\s*\}\);/s,
+    "collapsed project state should persist when user toggles a project header",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /createEffect\(\(\) => \{[\s\S]*writeCollapsedProjectMap\(/,
+    "startup/effect paths must not overwrite persisted collapse preferences",
   );
 });
