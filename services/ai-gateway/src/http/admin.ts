@@ -518,6 +518,8 @@ class DenAdminClient {
       headers: {
         "content-type": "application/json",
         accept: "application/json",
+        origin: this.denApiBase,
+        referer: `${this.denApiBase}/`,
       },
       body: JSON.stringify(input),
     });

@@ -171,6 +171,8 @@ async function createUserViaAuth(req: express.Request, body: { email: string; na
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
+      Origin: baseUrl,
+      Referer: `${baseUrl}/`,
       Cookie: req.header("cookie") ?? "",
     },
     body: JSON.stringify({
