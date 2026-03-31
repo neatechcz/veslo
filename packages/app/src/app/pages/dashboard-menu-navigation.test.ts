@@ -206,3 +206,11 @@ test("dashboard header exposes settings and back-to-chat actions", () => {
   );
   assert.match(headerSource, /onClick=\{returnToSession\}/);
 });
+
+test("dashboard header keeps back-to-chat visible even without a selected session", () => {
+  assert.doesNotMatch(headerSource, /<Show when=\{canReturnToSession\(\)\}>/);
+  assert.doesNotMatch(
+    dashboardSource,
+    /const\s+returnToSession\s*=\s*\(\)\s*=>\s*\{\s*const\s+sessionId\s*=\s*props\.selectedSessionId\?\.trim\(\);\s*if\s*\(!sessionId\)\s*return;/s,
+  );
+});

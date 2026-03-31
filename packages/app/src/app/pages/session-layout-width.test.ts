@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { availableChatWidthForLayout } from "./session-layout-width.js";
+import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "./session-layout-width.js";
 import {
   applyAvailableWidth,
   createInitialSidebarLayoutState,
@@ -61,4 +61,25 @@ test("left menu takes priority over right preference in narrow mode so layout ca
   state = applyAvailableWidth(state, availableWidth);
   assert.equal(state.mode, "wide");
   assert.deepEqual(state.docked, { left: true, right: false });
+});
+
+test("wide layout keeps left sidebar docked by collapsing right sidebar before entering narrow mode", () => {
+  let state = createInitialSidebarLayoutState({ left: true, right: true });
+  state = reconcileSidebarLayoutForRootWidth(state, 1050, 420);
+  assert.equal(state.mode, "wide");
+  assert.deepEqual(state.docked, { left: true, right: false });
+  assert.deepEqual(state.dockedPreference, { left: true, right: true });
+});
+
+test("auto-collapsed right sidebar is restored when width can fit both sidebars again", () => {
+  const state: SidebarLayoutState = {
+    mode: "wide",
+    docked: { left: true, right: false },
+    dockedPreference: { left: true, right: true },
+    overlay: null,
+  };
+
+  const next = reconcileSidebarLayoutForRootWidth(state, 1092, 420);
+  assert.equal(next.mode, "wide");
+  assert.deepEqual(next.docked, { left: true, right: true });
 });

@@ -60,6 +60,14 @@ test("recent mode has sentinel + fallback load more button", () => {
   );
 });
 
+test("recent mode avoids hard-resetting visible rows to exactly 3", () => {
+  assert.doesNotMatch(
+    source,
+    /setRecentVisibleCount\(3\)/,
+    "recent mode should not collapse to 3 rows after state updates",
+  );
+});
+
 test("load-more controls use timestamp-sized row styling without button chrome", () => {
   assert.match(
     source,

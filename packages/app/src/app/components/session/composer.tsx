@@ -1679,7 +1679,7 @@ export default function Composer(props: ComposerProps) {
                 <div class="flex-1 min-w-0">
                   <div class="relative">
                     <Show when={!hasDraftContent()}>
-                      <div class="absolute left-0 top-0 text-gray-9 text-[15px] leading-relaxed pointer-events-none">
+                      <div class="absolute left-0 top-0 text-gray-9 text-[14px] leading-relaxed pointer-events-none">
                         {translate("session.placeholder")}
                       </div>
                     </Show>
@@ -1692,7 +1692,7 @@ export default function Composer(props: ComposerProps) {
                       onKeyDown={handleKeyDown}
                       onPaste={handlePaste}
                       onClick={handleEditorClick}
-                      class="bg-transparent border-none p-0 pb-2 pr-2 text-gray-12 focus:ring-0 text-[15px] leading-relaxed resize-none min-h-[24px] max-h-40 overflow-y-auto outline-none"
+                      class="bg-transparent border-none p-0 pb-2 pr-2 text-gray-12 focus:ring-0 text-[14px] leading-relaxed whitespace-pre-wrap break-words resize-none min-h-[24px] max-h-40 overflow-y-auto overflow-x-hidden outline-none"
                     />
 
                     <div class="mt-3 flex items-center justify-between gap-3 pt-2">

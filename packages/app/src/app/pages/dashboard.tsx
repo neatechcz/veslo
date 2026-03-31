@@ -1224,11 +1224,9 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const headerSettingsLabel = createMemo(() => t("dashboard.settings", currentLocale()));
   const headerBackLabel = createMemo(() => t("session.back", currentLocale()));
-  const canReturnToSession = createMemo(() => Boolean(props.selectedSessionId?.trim()));
 
   const returnToSession = () => {
     const sessionId = props.selectedSessionId?.trim();
-    if (!sessionId) return;
     props.setView("session", sessionId);
   };
 
@@ -1380,18 +1378,16 @@ export default function DashboardView(props: DashboardViewProps) {
             </Show>
           </div>
           <div class="flex items-center gap-2">
-            <Show when={canReturnToSession()}>
-              <button
-                type="button"
-                class="inline-flex h-8 items-center gap-1.5 rounded-lg border border-dls-border bg-dls-surface px-2.5 text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)]"
-                onClick={returnToSession}
-                aria-label={headerBackLabel()}
-                title={headerBackLabel()}
-              >
-                <ArrowLeft size={14} />
-                <span class="hidden sm:inline">{headerBackLabel()}</span>
-              </button>
-            </Show>
+            <button
+              type="button"
+              class="inline-flex h-8 items-center gap-1.5 rounded-lg border border-dls-border bg-dls-surface px-2.5 text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)]"
+              onClick={returnToSession}
+              aria-label={headerBackLabel()}
+              title={headerBackLabel()}
+            >
+              <ArrowLeft size={14} />
+              <span class="hidden sm:inline">{headerBackLabel()}</span>
+            </button>
             <button
               type="button"
               class="inline-flex h-8 items-center gap-1.5 rounded-lg border border-dls-border bg-dls-surface px-2.5 text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)]"

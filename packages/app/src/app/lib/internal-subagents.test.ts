@@ -38,6 +38,33 @@ test("getTaskPartSubagentInfo extracts internal child session ids", () => {
   assert.equal(info.sessionId, "child-1");
 });
 
+test("getTaskPartSubagentInfo prefers session-like child IDs over task labels", () => {
+  const part = {
+    type: "tool",
+    id: "part-2",
+    sessionID: "parent",
+    messageID: "msg-2",
+    tool: "task",
+    state: {
+      input: {
+        subagent_type: "explorer",
+      },
+      metadata: {
+        sessionId: "explorer_agent",
+      },
+      output: {
+        sessionID: "ses_child_42",
+      },
+    },
+  } as unknown as Part;
+
+  const info = getTaskPartSubagentInfo(part);
+  assert.equal(info.isTask, true);
+  assert.equal(info.internal, false);
+  assert.equal(info.subagentType, "explorer");
+  assert.equal(info.sessionId, "ses_child_42");
+});
+
 test("sessionLooksLikeInternalSubagent checks agent metadata", () => {
   assert.equal(
     sessionLooksLikeInternalSubagent({ id: "a", agent: "veslo-internal-xlsx" } as any),

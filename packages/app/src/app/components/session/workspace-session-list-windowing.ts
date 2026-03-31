@@ -2,6 +2,7 @@ export const PROJECT_VISIBLE_DEFAULT = 7;
 export const VIEW_LOAD_MORE_STEP = 20;
 export const RECENT_OVERSCAN_ROWS = 3;
 export const RECENT_ESTIMATED_ROW_HEIGHT = 40;
+export const RECENT_LOAD_MORE_THRESHOLD_PX = 120;
 
 export const nextProjectVisibleCount = (current: number) => {
   const safeCurrent = Number.isFinite(current) && current > 0
@@ -25,4 +26,18 @@ export const computeInitialRecentVisibleCount = (
     ? Math.floor(containerHeight / safeRowHeight)
     : 0;
   return Math.max(safeOverscan, fit + safeOverscan);
+};
+
+export const shouldLoadMoreRecentRowsOnScroll = (
+  scrollTop: number,
+  clientHeight: number,
+  scrollHeight: number,
+  thresholdPx = RECENT_LOAD_MORE_THRESHOLD_PX,
+) => {
+  const safeClientHeight = Number.isFinite(clientHeight) && clientHeight > 0 ? clientHeight : 0;
+  const safeScrollHeight = Number.isFinite(scrollHeight) && scrollHeight > 0 ? scrollHeight : 0;
+  if (safeClientHeight === 0 || safeScrollHeight === 0) return false;
+  const safeScrollTop = Number.isFinite(scrollTop) && scrollTop > 0 ? scrollTop : 0;
+  const safeThreshold = Number.isFinite(thresholdPx) && thresholdPx >= 0 ? thresholdPx : RECENT_LOAD_MORE_THRESHOLD_PX;
+  return safeScrollTop + safeClientHeight >= safeScrollHeight - safeThreshold;
 };

@@ -47,3 +47,17 @@ test("composer uses a compact control rail below the editor", () => {
     "composer disclaimer should no longer render inside the input rail",
   );
 });
+
+test("composer editor keeps compact typography without horizontal scrollbar", () => {
+  assert.match(
+    composerSource,
+    /class="absolute left-0 top-0 text-gray-9 text-\[14px\] leading-relaxed pointer-events-none"/,
+    "placeholder text should use a slightly smaller font size",
+  );
+
+  assert.match(
+    composerSource,
+    /class="bg-transparent border-none p-0 pb-2 pr-2 text-gray-12 focus:ring-0 text-\[14px\] leading-relaxed whitespace-pre-wrap break-words resize-none min-h-\[24px\] max-h-40 overflow-y-auto overflow-x-hidden outline-none"/,
+    "editor should wrap long content and avoid showing a horizontal scrollbar in narrow layouts",
+  );
+});

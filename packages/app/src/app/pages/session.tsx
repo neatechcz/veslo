@@ -109,7 +109,6 @@ import {
   writeLeftSidebarWidth,
 } from "../components/layout/left-sidebar-width-prefs";
 import {
-  applyAvailableWidth,
   createInitialSidebarLayoutState,
   toggleSidebarFromButton,
   type SidebarDockedVisibility,
@@ -124,7 +123,7 @@ import {
   createSessionWithWorkspaceActivation,
   openSessionWithWorkspaceActivation,
 } from "./session-navigation";
-import { availableChatWidthForLayout } from "./session-layout-width";
+import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "./session-layout-width";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -505,10 +504,7 @@ export default function SessionView(props: SessionViewProps) {
   const applySidebarModeForRootWidth = (rootWidth: number) => {
     if (rootWidth <= 0) return;
     setSidebarLayoutState((current) =>
-      applyAvailableWidth(
-        current,
-        availableChatWidthForLayout(rootWidth, current, leftSidebarWidth()),
-      ),
+      reconcileSidebarLayoutForRootWidth(current, rootWidth, leftSidebarWidth()),
     );
   };
 
@@ -540,10 +536,7 @@ export default function SessionView(props: SessionViewProps) {
         writeSidebarDockedVisibility(toggled.dockedPreference);
       }
       if (measuredRootWidth <= 0) return toggled;
-      return applyAvailableWidth(
-        toggled,
-        availableChatWidthForLayout(measuredRootWidth, toggled, leftSidebarWidth()),
-      );
+      return reconcileSidebarLayoutForRootWidth(toggled, measuredRootWidth, leftSidebarWidth());
     });
   };
 

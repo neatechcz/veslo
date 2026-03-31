@@ -3,10 +3,12 @@ import test from "node:test";
 
 import {
   PROJECT_VISIBLE_DEFAULT,
+  RECENT_LOAD_MORE_THRESHOLD_PX,
   RECENT_OVERSCAN_ROWS,
   VIEW_LOAD_MORE_STEP,
   computeInitialRecentVisibleCount,
   nextProjectVisibleCount,
+  shouldLoadMoreRecentRowsOnScroll,
 } from "./workspace-session-list-windowing.js";
 
 test("project window defaults and step size are stable", () => {
@@ -34,4 +36,10 @@ test("recent initial visible rows still show overscan on missing geometry", () =
   assert.equal(computeInitialRecentVisibleCount(0, 40), 3);
   assert.equal(computeInitialRecentVisibleCount(Number.NaN, 40), 3);
   assert.equal(computeInitialRecentVisibleCount(200, Number.NaN), 8);
+});
+
+test("recent scroll requests load-more when the viewport is near the end", () => {
+  assert.equal(RECENT_LOAD_MORE_THRESHOLD_PX, 120);
+  assert.equal(shouldLoadMoreRecentRowsOnScroll(700, 280, 1_090), true);
+  assert.equal(shouldLoadMoreRecentRowsOnScroll(500, 280, 1_090), false);
 });

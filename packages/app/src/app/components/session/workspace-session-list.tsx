@@ -23,9 +23,11 @@ import {
 import {
   PROJECT_VISIBLE_DEFAULT,
   RECENT_ESTIMATED_ROW_HEIGHT,
+  RECENT_LOAD_MORE_THRESHOLD_PX,
   VIEW_LOAD_MORE_STEP,
   computeInitialRecentVisibleCount,
   nextProjectVisibleCount,
+  shouldLoadMoreRecentRowsOnScroll,
 } from "./workspace-session-list-windowing";
 import {
   readCollapsedProjectMap,
@@ -147,9 +149,11 @@ export default function WorkspaceSessionList(props: Props) {
     recentLoadMoreBusy() || Object.values(props.workspaceSessionPagingById ?? {}).some((entry) => entry.loadingMore),
   );
 
+  const initialRecentVisibleCount = () =>
+    computeInitialRecentVisibleCount(scrollContainerRef?.clientHeight ?? 0, RECENT_ESTIMATED_ROW_HEIGHT);
+
   const syncRecentVisibleFromViewport = () => {
-    const containerHeight = scrollContainerRef?.clientHeight ?? 0;
-    const initialVisible = computeInitialRecentVisibleCount(containerHeight, RECENT_ESTIMATED_ROW_HEIGHT);
+    const initialVisible = initialRecentVisibleCount();
     setRecentVisibleCount((current) => Math.max(current, initialVisible));
   };
 
@@ -228,12 +232,31 @@ export default function WorkspaceSessionList(props: Props) {
   createEffect(() => {
     props.activeWorkspaceId;
     setProjectVisibleByKey({});
-    setRecentVisibleCount(3);
+    setRecentVisibleCount(initialRecentVisibleCount());
   });
 
   createEffect(() => {
     if (sidebarMode() !== "recent") return;
     syncRecentVisibleFromViewport();
+  });
+
+  createEffect(() => {
+    if (sidebarMode() !== "recent") return;
+    const container = scrollContainerRef;
+    if (!container) return;
+
+    syncRecentVisibleFromViewport();
+
+    if (typeof ResizeObserver === "undefined") {
+      const onResize = () => syncRecentVisibleFromViewport();
+      window.addEventListener("resize", onResize);
+      onCleanup(() => window.removeEventListener("resize", onResize));
+      return;
+    }
+
+    const observer = new ResizeObserver(() => syncRecentVisibleFromViewport());
+    observer.observe(container);
+    onCleanup(() => observer.disconnect());
   });
 
   createEffect(() => {
@@ -247,13 +270,34 @@ export default function WorkspaceSessionList(props: Props) {
       void loadMoreRecentRows();
     }, {
       root,
-      rootMargin: "120px 0px",
+      rootMargin: `${RECENT_LOAD_MORE_THRESHOLD_PX}px 0px`,
       threshold: 0,
     });
 
     observer.observe(sentinel);
     onCleanup(() => observer.disconnect());
   });
+
+  const handleRecentScroll = (event: Event) => {
+    if (sidebarMode() !== "recent") return;
+    if (!recentCanLoadMore() || recentLoadingMore()) return;
+
+    const currentTarget = event.currentTarget;
+    if (!(currentTarget instanceof HTMLDivElement)) return;
+
+    if (
+      !shouldLoadMoreRecentRowsOnScroll(
+        currentTarget.scrollTop,
+        currentTarget.clientHeight,
+        currentTarget.scrollHeight,
+        RECENT_LOAD_MORE_THRESHOLD_PX,
+      )
+    ) {
+      return;
+    }
+
+    void loadMoreRecentRows();
+  };
 
   createEffect(() => {
     const element = sidebarControlsRef;
@@ -586,7 +630,11 @@ export default function WorkspaceSessionList(props: Props) {
         </div>
       </div>
 
-      <div class="min-h-0 flex-1 overflow-y-auto -mr-3 pr-3" ref={(el) => (scrollContainerRef = el)}>
+      <div
+        class="min-h-0 flex-1 overflow-y-auto -mr-3 pr-3"
+        ref={(el) => (scrollContainerRef = el)}
+        onScroll={handleRecentScroll}
+      >
         <div class="space-y-1.5 mb-2">
           <Show when={hasVisibleRows()} fallback={emptyState}>
             <Show when={sidebarMode() === "by-project"} fallback={

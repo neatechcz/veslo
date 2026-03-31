@@ -15,22 +15,63 @@ export type TaskPartSubagentInfo = {
   internal: boolean;
 };
 
+const SESSION_ID_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function normalizeSessionCandidate(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function readSessionIdCandidates(record: Record<string, unknown>): string[] {
+  const values = [
+    record.sessionId,
+    record.sessionID,
+    record.session_id,
+    record.childSessionId,
+    record.childSessionID,
+    record.child_session_id,
+  ];
+
+  const out: string[] = [];
+  for (const value of values) {
+    const normalized = normalizeSessionCandidate(value);
+    if (normalized) out.push(normalized);
+  }
+  return out;
+}
+
+function looksLikeSessionId(value: string): boolean {
+  return value.startsWith("ses_") || SESSION_ID_UUID_PATTERN.test(value);
+}
+
 function readTaskChildSessionId(record: Record<string, unknown>): string | undefined {
   const state = record.state && typeof record.state === "object" ? (record.state as Record<string, unknown>) : {};
   const metadata =
     state.metadata && typeof state.metadata === "object"
       ? (state.metadata as Record<string, unknown>)
       : {};
+  const output =
+    state.output && typeof state.output === "object"
+      ? (state.output as Record<string, unknown>)
+      : {};
+  const partMetadata =
+    record.metadata && typeof record.metadata === "object"
+      ? (record.metadata as Record<string, unknown>)
+      : {};
 
-  const rawSessionId =
-    metadata.sessionId ??
-    metadata.sessionID ??
-    state.sessionId ??
-    state.sessionID;
+  // Prefer explicit tool result payload first, then metadata, then legacy state fields.
+  const candidates = [
+    ...readSessionIdCandidates(output),
+    ...readSessionIdCandidates(metadata),
+    ...readSessionIdCandidates(state),
+    ...readSessionIdCandidates(partMetadata),
+  ];
+  if (candidates.length === 0) return undefined;
 
-  if (typeof rawSessionId !== "string") return undefined;
-  const value = rawSessionId.trim();
-  return value || undefined;
+  const sessionLike = candidates.find((candidate) => looksLikeSessionId(candidate));
+  return sessionLike ?? candidates[0];
 }
 
 export function getTaskPartSubagentInfo(part: Part): TaskPartSubagentInfo {
