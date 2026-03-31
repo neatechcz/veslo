@@ -744,6 +744,7 @@ export default {
   "sidebar.loading_more": "正在加载更多...",
   "sidebar.load_more": "加载更多（+20）",
   "sidebar.more_ellipsis": "…",
+  "sidebar.reorder_project": "拖动以重新排序项目",
 
   // ==================== Common ====================
   "common.alpha": "测试版",

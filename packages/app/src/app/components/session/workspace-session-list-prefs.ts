@@ -9,6 +9,7 @@ export type SidebarViewMode = "by-project" | "recent";
 
 export const SIDEBAR_VIEW_MODE_KEY = "veslo.sidebar-session-view.v1";
 export const SIDEBAR_COLLAPSED_PROJECTS_KEY = "veslo.sidebar-collapsed-projects.v1";
+export const SIDEBAR_PROJECT_ORDER_KEY = "veslo.sidebar-project-order.v1";
 export const DEFAULT_SIDEBAR_VIEW_MODE: SidebarViewMode = "by-project";
 
 const resolveStorage = (storage?: SidebarPrefsStorage | null): SidebarPrefsStorage | null => {
@@ -24,6 +25,18 @@ const normalizeCollapsedProjectMap = (value: unknown): CollapsedProjectMap => {
   for (const [key, raw] of Object.entries(record)) {
     if (typeof raw !== "boolean") continue;
     normalized[key] = raw;
+  }
+  return normalized;
+};
+
+const normalizeProjectOrder = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  const normalized: string[] = [];
+  for (const raw of value) {
+    if (typeof raw !== "string") continue;
+    const key = raw.trim();
+    if (!key || normalized.includes(key)) continue;
+    normalized.push(key);
   }
   return normalized;
 };
@@ -82,6 +95,36 @@ export const writeCollapsedProjectMap = (
     resolvedStorage.setItem(
       SIDEBAR_COLLAPSED_PROJECTS_KEY,
       JSON.stringify(normalizeCollapsedProjectMap(value)),
+    );
+  } catch {
+    // ignore storage failures
+  }
+};
+
+export const readProjectOrder = (storage?: SidebarPrefsStorage | null): string[] => {
+  const resolvedStorage = resolveStorage(storage);
+  if (!resolvedStorage) return [];
+
+  try {
+    const raw = resolvedStorage.getItem(SIDEBAR_PROJECT_ORDER_KEY);
+    if (!raw) return [];
+    return normalizeProjectOrder(JSON.parse(raw));
+  } catch {
+    return [];
+  }
+};
+
+export const writeProjectOrder = (
+  order: string[],
+  storage?: SidebarPrefsStorage | null,
+): void => {
+  const resolvedStorage = resolveStorage(storage);
+  if (!resolvedStorage) return;
+
+  try {
+    resolvedStorage.setItem(
+      SIDEBAR_PROJECT_ORDER_KEY,
+      JSON.stringify(normalizeProjectOrder(order)),
     );
   } catch {
     // ignore storage failures
