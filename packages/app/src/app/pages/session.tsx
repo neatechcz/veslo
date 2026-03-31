@@ -19,6 +19,7 @@ import type {
   WorkspaceDisplay,
   WorkspaceSessionGroup,
   StartupPreference,
+  SidebarSubagentDecoration,
 } from "../types";
 
 import { reportError } from "../lib/error-reporter";
@@ -193,6 +194,7 @@ export type SessionViewProps = {
   newTaskDisabled: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
   workspaceSessionPagingById: Record<string, { hasMore: boolean; loadingMore: boolean }>;
+  subagentDecorationsBySessionId: Record<string, SidebarSubagentDecoration>;
   loadMoreWorkspaceSidebarSessions: (workspaceId: string) => Promise<void> | void;
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
   openRenameWorkspace: (workspaceId: string) => void;
@@ -3701,6 +3703,7 @@ export default function SessionView(props: SessionViewProps) {
           <WorkspaceSessionList
             workspaceSessionGroups={props.workspaceSessionGroups}
             workspaceSessionPagingById={props.workspaceSessionPagingById}
+            subagentDecorationsBySessionId={props.subagentDecorationsBySessionId}
             activeWorkspaceId={props.activeWorkspaceId}
             selectedSessionId={props.selectedSessionId}
             sessionStatusById={props.sessionStatusById}
@@ -4011,6 +4014,7 @@ export default function SessionView(props: SessionViewProps) {
             isStreaming={showRunIndicator()}
             developerMode={props.developerMode}
             showThinking={props.showThinking}
+            subagentDecorationsBySessionId={props.subagentDecorationsBySessionId}
             workspaceRoot={props.activeWorkspaceRoot}
             expandedStepIds={props.expandedStepIds}
             setExpandedStepIds={props.setExpandedStepIds}

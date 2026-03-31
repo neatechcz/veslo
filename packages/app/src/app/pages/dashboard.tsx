@@ -8,6 +8,7 @@ import type {
   ProviderListItem,
   SettingsTab,
   ScheduledJob,
+  SidebarSubagentDecoration,
   HubSkillCard,
   SkillCard,
   StartupPreference,
@@ -166,6 +167,7 @@ export type DashboardViewProps = {
   exportWorkspaceBusy: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
   workspaceSessionPagingById: Record<string, { hasMore: boolean; loadingMore: boolean }>;
+  subagentDecorationsBySessionId: Record<string, SidebarSubagentDecoration>;
   loadMoreWorkspaceSidebarSessions: (workspaceId: string) => Promise<void> | void;
   selectedSessionId: string | null;
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
@@ -1282,6 +1284,7 @@ export default function DashboardView(props: DashboardViewProps) {
             <WorkspaceSessionList
               workspaceSessionGroups={props.workspaceSessionGroups}
               workspaceSessionPagingById={props.workspaceSessionPagingById}
+              subagentDecorationsBySessionId={props.subagentDecorationsBySessionId}
               activeWorkspaceId={props.activeWorkspaceId}
               selectedSessionId={props.selectedSessionId}
               connectingWorkspaceId={props.connectingWorkspaceId}
