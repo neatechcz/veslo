@@ -30,8 +30,17 @@ type ListedUserRow = {
   emailVerified: boolean
 }
 
+const bootstrapPlatformAdminEmails = new Set([
+  "vaclav.soukup@neatec.cz",
+  "vaclav.soukup@neotech.cz",
+])
+
 function randomPassword() {
   return `${randomBytes(8).toString("hex")}Aa1!`
+}
+
+function isBootstrapPlatformAdminEmail(email: string | null) {
+  return typeof email === "string" && bootstrapPlatformAdminEmails.has(email.trim().toLowerCase())
 }
 
 async function requirePlatformAdminSnapshot(req: express.Request, res: express.Response): Promise<AdminSessionSnapshot | null> {
@@ -40,7 +49,7 @@ async function requirePlatformAdminSnapshot(req: express.Request, res: express.R
     return null
   }
 
-  const platformAdmin = await isPlatformAdmin(session.user.id)
+  const platformAdmin = isBootstrapPlatformAdminEmail(session.user.email) || await isPlatformAdmin(session.user.id)
   if (!platformAdmin) {
     res.status(403).json({ error: "forbidden" })
     return null
@@ -149,7 +158,7 @@ async function loadAdminUsers() {
     name: entry.name,
     email: entry.email,
     emailVerified: entry.emailVerified,
-    platformAdmin: platformAdmins.has(entry.id),
+    platformAdmin: platformAdmins.has(entry.id) || isBootstrapPlatformAdminEmail(entry.email),
     disabled: disabledUsers.has(entry.id),
     memberships: membershipsByUser.get(entry.id) ?? [],
   }))
