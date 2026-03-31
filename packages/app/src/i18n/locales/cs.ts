@@ -1093,6 +1093,7 @@ export default {
   "sidebar.private_workspace": "Soukromý worker",
   "sidebar.recent": "Nedávné",
   "sidebar.recover": "Obnovit",
+  "sidebar.reorder_project": "Tažením změnit pořadí projektů",
   "sidebar.remove_workspace": "Odebrat worker",
   "sidebar.reveal_in_explorer": "Ukázat v Průzkumníku",
   "sidebar.reveal_in_finder": "Ukázat ve Finderu",

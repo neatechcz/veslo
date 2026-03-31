@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { Folder, FolderPlus, HeartPulse, List, Loader2, MoreHorizontal, Plus, Search } from "lucide-solid";
+import { Folder, FolderPlus, GripVertical, HeartPulse, List, Loader2, MoreHorizontal, Plus, Search } from "lucide-solid";
 
 import type { VesloSoulStatus } from "../../lib/veslo-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
@@ -30,9 +30,16 @@ import {
   shouldLoadMoreRecentRowsOnScroll,
 } from "./workspace-session-list-windowing";
 import {
+  applyProjectOrder,
+  mergeVisibleOrder,
+  reorderProjectKeys,
+} from "./workspace-session-list-order";
+import {
   readCollapsedProjectMap,
+  readProjectOrder,
   readSidebarViewMode,
   writeCollapsedProjectMap,
+  writeProjectOrder,
   writeSidebarViewMode,
   type SidebarViewMode,
 } from "./workspace-session-list-prefs";
@@ -149,10 +156,13 @@ export default function WorkspaceSessionList(props: Props) {
   const [collapsedProjects, setCollapsedProjects] = createSignal<Record<string, boolean>>(
     readCollapsedProjectMap(),
   );
+  const [projectOrder, setProjectOrder] = createSignal<string[]>(readProjectOrder());
   const [projectVisibleByKey, setProjectVisibleByKey] = createSignal<Record<string, number>>({});
   const [recentVisibleCount, setRecentVisibleCount] = createSignal(3);
   const [recentLoadMoreBusy, setRecentLoadMoreBusy] = createSignal(false);
   const [expandedParentSessionIds, setExpandedParentSessionIds] = createSignal<Set<string>>(new Set());
+  const [draggingProjectKey, setDraggingProjectKey] = createSignal<string | null>(null);
+  const [dragOverProjectKey, setDragOverProjectKey] = createSignal<string | null>(null);
   const [workspaceMenuTarget, setWorkspaceMenuTarget] = createSignal<WorkspaceMenuTarget | null>(null);
   const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
   const [sidebarControlsWidth, setSidebarControlsWidth] = createSignal(0);
@@ -183,6 +193,7 @@ export default function WorkspaceSessionList(props: Props) {
   const projectGroups = createMemo<ProjectSessionGroup[]>(() =>
     buildProjectGroups(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
   );
+  const orderedProjectGroups = createMemo(() => applyProjectOrder(projectGroups(), projectOrder()));
 
   const recentHierarchy = createMemo(() => buildRowHierarchyLookup(recentRows()));
 
@@ -436,6 +447,58 @@ export default function WorkspaceSessionList(props: Props) {
     if (hasChildren(row.session.id)) {
       toggleExpandedParentSession(row.session.id);
     }
+  };
+
+  const clearProjectDragState = () => {
+    setDraggingProjectKey(null);
+    setDragOverProjectKey(null);
+  };
+
+  const handleProjectDragStart = (event: DragEvent, projectKey: string) => {
+    const key = projectKey.trim();
+    if (!key) return;
+    event.dataTransfer?.setData("text/plain", key);
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+    }
+    setDraggingProjectKey(key);
+  };
+
+  const handleProjectDragOver = (event: DragEvent, projectKey: string) => {
+    if (!draggingProjectKey()) return;
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "move";
+    }
+    setDragOverProjectKey(projectKey);
+  };
+
+  const handleProjectDragLeave = (projectKey: string) => {
+    if (dragOverProjectKey() !== projectKey) return;
+    setDragOverProjectKey(null);
+  };
+
+  const handleProjectDrop = (event: DragEvent, targetKey: string) => {
+    event.preventDefault();
+    const sourceKey = (draggingProjectKey() ?? event.dataTransfer?.getData("text/plain") ?? "").trim();
+    const normalizedTargetKey = targetKey.trim();
+    if (!sourceKey || !normalizedTargetKey) {
+      clearProjectDragState();
+      return;
+    }
+    if (sourceKey === targetKey) return;
+
+    const visibleKeys = orderedProjectGroups().map((group) => group.key);
+    const reorderedVisibleKeys = reorderProjectKeys(visibleKeys, sourceKey, normalizedTargetKey);
+    const mergedProjectOrder = mergeVisibleOrder(projectOrder(), reorderedVisibleKeys);
+
+    setProjectOrder(mergedProjectOrder);
+    writeProjectOrder(mergedProjectOrder);
+    clearProjectDragState();
+  };
+
+  const handleProjectDragEnd = () => {
+    clearProjectDragState();
   };
 
   createEffect(() => {
@@ -896,7 +959,7 @@ export default function WorkspaceSessionList(props: Props) {
                 </Show>
               </>
             }>
-              <For each={projectGroups()}>
+              <For each={orderedProjectGroups()}>
                 {(project) => {
                 const workspace = () => project.workspace;
                 const isActiveWorkspace = () => props.activeWorkspaceId === workspace().id;
@@ -907,6 +970,7 @@ export default function WorkspaceSessionList(props: Props) {
                 const taskLoadError = () => taskLoadErrorFor(workspace(), project.error);
                 const isConnectionActionBusy = () => isConnectionActionBusyFor(workspace().id);
                 const anchorKey = `project:${workspace().id}`;
+                const isProjectDragOver = () => dragOverProjectKey() === project.key;
                 const collapsed = () => isProjectCollapsed(collapsedProjects(), project.key);
                 const projectPaging = () =>
                   props.workspaceSessionPagingById?.[workspace().id] ?? { hasMore: false, loadingMore: false };
@@ -938,7 +1002,14 @@ export default function WorkspaceSessionList(props: Props) {
                 };
 
                 return (
-                  <div class="group">
+                  <div
+                    class={`group rounded-lg transition-colors ${
+                      isProjectDragOver() ? "bg-gray-2/70 ring-1 ring-gray-7/70" : ""
+                    }`}
+                    onDragOver={(event) => handleProjectDragOver(event, project.key)}
+                    onDragLeave={() => handleProjectDragLeave(project.key)}
+                    onDrop={(event) => handleProjectDrop(event, project.key)}
+                  >
                     <div class="relative flex items-start gap-2">
                       <button
                         type="button"
@@ -1008,6 +1079,18 @@ export default function WorkspaceSessionList(props: Props) {
                           title={tr("sidebar.create_session_in_project")}
                         >
                           <Plus size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          class="p-1 rounded-md text-gray-8 hover:text-gray-11 hover:bg-gray-3 cursor-grab active:cursor-grabbing"
+                          aria-label={tr("sidebar.reorder_project")}
+                          title={tr("sidebar.reorder_project")}
+                          draggable
+                          onClick={(event) => event.stopPropagation()}
+                          onDragStart={(event) => handleProjectDragStart(event, project.key)}
+                          onDragEnd={handleProjectDragEnd}
+                        >
+                          <GripVertical size={14} />
                         </button>
                         <button
                           type="button"
