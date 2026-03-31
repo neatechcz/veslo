@@ -17,3 +17,15 @@ test("ensuring an existing folder promotes that workspace to the top immediately
     /const existing = findLocalWorkspaceByPath\(resolvedFolder\);[\s\S]*if \(existing\) \{[\s\S]*setWorkspaces\(\(prev\) => \{[\s\S]*return \[existing, \.\.\.rest\];[\s\S]*\}\);[\s\S]*return existing;[\s\S]*\}/s,
   );
 });
+
+test("connect flow keeps pending permissions loaded by refreshPendingPermissions", () => {
+  assert.match(
+    source,
+    /await withTimeoutOrThrow\(\s*options\.refreshPendingPermissions\(\),[\s\S]*options\.setSelectedSessionId\(null\);[\s\S]*options\.setMessages\(\[\]\);[\s\S]*options\.setTodos\(\[\]\);[\s\S]*options\.setSessionStatusById\(\{\}\);/s,
+  );
+
+  assert.doesNotMatch(
+    source,
+    /await withTimeoutOrThrow\(\s*options\.refreshPendingPermissions\(\),[\s\S]{0,900}options\.setPendingPermissions\(\[\]\);/s,
+  );
+});

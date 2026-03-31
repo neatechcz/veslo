@@ -1347,7 +1347,6 @@ export function createWorkspaceStore(options: {
         options.setSelectedSessionId(null);
         options.setMessages([]);
         options.setTodos([]);
-        options.setPendingPermissions([]);
         options.setSessionStatusById({});
 
         options.refreshSkills({ force: true }).catch(e => reportError(e, "workspace.refreshSkills"));
