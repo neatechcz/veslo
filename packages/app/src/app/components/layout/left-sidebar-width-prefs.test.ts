@@ -10,6 +10,7 @@ import {
   writeLeftSidebarWidth,
   type LeftSidebarWidthStorage,
 } from "./left-sidebar-width-prefs.js";
+import { NEW_SESSION_LABEL_VISIBLE_WIDTH } from "../session/workspace-session-list-model.js";
 
 const createMemoryStorage = (
   initial?: Record<string, string>,
@@ -52,4 +53,13 @@ test("writeLeftSidebarWidth round-trips through read", () => {
   const storage = createMemoryStorage();
   writeLeftSidebarWidth(280, storage);
   assert.equal(readLeftSidebarWidth(storage), 280);
+});
+
+test("minimum left sidebar width keeps enough inner control width to show the compact new-session label", () => {
+  // Dashboard/sidebar shell uses 16px horizontal padding per side plus a 1px right border.
+  const controlsRowWidthAtMinimum = LEFT_SIDEBAR_WIDTH_MIN - 33;
+  assert.ok(
+    controlsRowWidthAtMinimum >= NEW_SESSION_LABEL_VISIBLE_WIDTH,
+    "minimum sidebar width should still allow the 'New' label to appear in the controls row",
+  );
 });

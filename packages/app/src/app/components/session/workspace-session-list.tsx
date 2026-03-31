@@ -15,6 +15,7 @@ import {
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
   isProjectCollapsed,
+  pruneCollapsedProjects,
   shouldShowNewSessionLabelText,
   shouldUseExpandedNewSessionLabel,
   toggleProjectCollapsed,
@@ -33,6 +34,7 @@ import {
 import {
   applyProjectOrder,
   mergeVisibleOrder,
+  type ProjectDropPosition,
   reorderProjectKeys,
 } from "./workspace-session-list-order";
 import {
@@ -84,6 +86,11 @@ type Props = {
 type WorkspaceMenuTarget = {
   workspaceId: string;
   anchorKey: string;
+};
+
+type ProjectDropIndicator = {
+  key: string;
+  position: ProjectDropPosition;
 };
 
 type RowHierarchyLookup = {
@@ -150,6 +157,9 @@ const workspaceKindLabel = (workspace: WorkspaceInfo) =>
       : t("sidebar.workspace_kind_remote", currentLocale())
     : t("sidebar.workspace_kind_local", currentLocale());
 
+const sidebarControlTooltipClass =
+  "relative after:pointer-events-none after:absolute after:left-1/2 after:bottom-full after:z-30 after:mb-1 after:-translate-x-1/2 after:rounded-md after:border after:border-gray-6 after:bg-gray-1 after:px-2 after:py-1 after:text-[10px] after:font-medium after:leading-none after:text-gray-11 after:whitespace-nowrap after:opacity-0 after:shadow-lg after:transition-opacity after:duration-150 after:delay-[250ms] hover:after:opacity-100 focus-visible:after:opacity-100 after:content-[attr(data-tooltip)]";
+
 export default function WorkspaceSessionList(props: Props) {
   const tr = (key: string) => t(key, currentLocale());
   const revealLabel = isWindowsPlatform() ? tr("sidebar.reveal_in_explorer") : tr("sidebar.reveal_in_finder");
@@ -164,6 +174,7 @@ export default function WorkspaceSessionList(props: Props) {
   const [expandedParentSessionIds, setExpandedParentSessionIds] = createSignal<Set<string>>(new Set());
   const [draggingProjectKey, setDraggingProjectKey] = createSignal<string | null>(null);
   const [dragOverProjectKey, setDragOverProjectKey] = createSignal<string | null>(null);
+  const [projectDropIndicator, setProjectDropIndicator] = createSignal<ProjectDropIndicator | null>(null);
   const [workspaceMenuTarget, setWorkspaceMenuTarget] = createSignal<WorkspaceMenuTarget | null>(null);
   const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
   const [sidebarControlsWidth, setSidebarControlsWidth] = createSignal(0);
@@ -172,6 +183,7 @@ export default function WorkspaceSessionList(props: Props) {
   let sidebarControlsRef: HTMLDivElement | undefined;
   let scrollContainerRef: HTMLDivElement | undefined;
   let recentSentinelRef: HTMLDivElement | undefined;
+  let projectDragPreviewElement: HTMLDivElement | null = null;
 
   const sidebarMode = createMemo(() => sidebarModeSignal());
   const setSidebarMode = (value: SidebarViewMode) => {
@@ -263,18 +275,33 @@ export default function WorkspaceSessionList(props: Props) {
   };
 
   createEffect(() => {
-    const keys = new Set(projectGroups().map((group) => group.key));
+    const availableProjectKeys = projectGroups().map((group) => group.key);
     setCollapsedProjects((current) => {
-      let changed = false;
-      const next: Record<string, boolean> = {};
-      for (const [key, value] of Object.entries(current)) {
-        if (!keys.has(key)) {
-          changed = true;
-          continue;
+      const next = pruneCollapsedProjects(current, availableProjectKeys);
+      try {
+        window.localStorage.setItem("veslo.debug.sidebar.availableProjectKeys", JSON.stringify(availableProjectKeys));
+        window.localStorage.setItem("veslo.debug.sidebar.collapsedBeforePrune", JSON.stringify(current));
+        const rawHistory = window.localStorage.getItem("veslo.debug.sidebar.pruneHistory");
+        const history = rawHistory ? JSON.parse(rawHistory) : [];
+        if (Array.isArray(history)) {
+          history.push({
+            at: Date.now(),
+            availableProjectKeys,
+            current,
+            next,
+          });
+          while (history.length > 20) history.shift();
+          window.localStorage.setItem("veslo.debug.sidebar.pruneHistory", JSON.stringify(history));
         }
-        next[key] = value;
+      } catch {
+        // debug-only instrumentation best effort
       }
-      if (!changed) return current;
+      try {
+        window.localStorage.setItem("veslo.debug.sidebar.collapsedAfterPrune", JSON.stringify(next));
+      } catch {
+        // debug-only instrumentation best effort
+      }
+      if (next === current) return current;
       writeCollapsedProjectMap(next);
       return next;
     });
@@ -451,8 +478,13 @@ export default function WorkspaceSessionList(props: Props) {
   };
 
   const clearProjectDragState = () => {
+    if (projectDragPreviewElement) {
+      projectDragPreviewElement.remove();
+      projectDragPreviewElement = null;
+    }
     setDraggingProjectKey(null);
     setDragOverProjectKey(null);
+    setProjectDropIndicator(null);
   };
 
   const handleProjectDragStart = (event: DragEvent, projectKey: string) => {
@@ -461,6 +493,31 @@ export default function WorkspaceSessionList(props: Props) {
     event.dataTransfer?.setData("text/plain", key);
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = "move";
+      const target = event.currentTarget;
+      if (target instanceof HTMLElement) {
+        const previewSource = target.closest("[data-project-drag-preview]");
+        if (previewSource instanceof HTMLElement) {
+          const preview = previewSource.cloneNode(true);
+          if (preview instanceof HTMLDivElement) {
+            preview.style.position = "fixed";
+            preview.style.top = "-9999px";
+            preview.style.left = "-9999px";
+            preview.style.margin = "0";
+            preview.style.pointerEvents = "none";
+            preview.style.opacity = "0.98";
+            preview.style.width = `${Math.max(previewSource.getBoundingClientRect().width, 220)}px`;
+            preview.style.boxShadow = "0 10px 28px rgba(0, 0, 0, 0.28)";
+            preview.style.zIndex = "2147483647";
+            document.body.appendChild(preview);
+            projectDragPreviewElement = preview;
+
+            const rect = previewSource.getBoundingClientRect();
+            const offsetX = Math.min(24, Math.max(8, rect.width / 10));
+            const offsetY = Math.min(20, Math.max(8, rect.height / 2));
+            event.dataTransfer.setDragImage(preview, offsetX, offsetY);
+          }
+        }
+      }
     }
     setDraggingProjectKey(key);
   };
@@ -468,15 +525,40 @@ export default function WorkspaceSessionList(props: Props) {
   const handleProjectDragOver = (event: DragEvent, projectKey: string) => {
     if (!draggingProjectKey()) return;
     event.preventDefault();
+    const normalizedProjectKey = projectKey.trim();
+    if (!normalizedProjectKey) return;
     if (event.dataTransfer) {
       event.dataTransfer.dropEffect = "move";
     }
-    setDragOverProjectKey(projectKey);
+    const currentTarget = event.currentTarget;
+    let position: ProjectDropPosition = "before";
+    if (currentTarget instanceof HTMLElement) {
+      const rect = currentTarget.getBoundingClientRect();
+      position = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+    }
+
+    setDragOverProjectKey(normalizedProjectKey);
+    setProjectDropIndicator({ key: normalizedProjectKey, position });
   };
 
-  const handleProjectDragLeave = (projectKey: string) => {
-    if (dragOverProjectKey() !== projectKey) return;
-    setDragOverProjectKey(null);
+  const handleProjectDragLeave = (event: DragEvent, projectKey: string) => {
+    const key = projectKey.trim();
+    if (!key) return;
+    const currentTarget = event.currentTarget;
+    const relatedTarget = event.relatedTarget;
+    if (
+      currentTarget instanceof HTMLElement &&
+      relatedTarget instanceof Node &&
+      currentTarget.contains(relatedTarget)
+    ) {
+      return;
+    }
+    if (dragOverProjectKey() === key) {
+      setDragOverProjectKey(null);
+    }
+    if (projectDropIndicator()?.key === key) {
+      setProjectDropIndicator(null);
+    }
   };
 
   const handleProjectDrop = (event: DragEvent, targetKey: string) => {
@@ -487,10 +569,16 @@ export default function WorkspaceSessionList(props: Props) {
       clearProjectDragState();
       return;
     }
-    if (sourceKey === targetKey) return;
+    if (sourceKey === normalizedTargetKey) {
+      clearProjectDragState();
+      return;
+    }
 
     const visibleKeys = orderedProjectGroups().map((group) => group.key);
-    const reorderedVisibleKeys = reorderProjectKeys(visibleKeys, sourceKey, normalizedTargetKey);
+    const dropPosition = projectDropIndicator()?.key === normalizedTargetKey
+      ? projectDropIndicator()?.position ?? "before"
+      : "before";
+    const reorderedVisibleKeys = reorderProjectKeys(visibleKeys, sourceKey, normalizedTargetKey, dropPosition);
     const mergedProjectOrder = mergeVisibleOrder(projectOrder(), reorderedVisibleKeys);
 
     setProjectOrder(mergedProjectOrder);
@@ -709,42 +797,11 @@ export default function WorkspaceSessionList(props: Props) {
   return (
     <div class="flex h-full min-h-0 flex-col">
       <div class="mb-3 flex flex-nowrap items-center gap-1" ref={(el) => (sidebarControlsRef = el)}>
-        <div class="inline-flex shrink-0 items-center gap-1 rounded-full border border-gray-6 bg-gray-1 p-1 shadow-sm">
-          <button
-            type="button"
-            class={`inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
-              sidebarMode() === "by-project"
-                ? "bg-gray-4/90 text-gray-12"
-                : "text-gray-9 hover:bg-gray-3 hover:text-gray-11"
-            }`}
-            aria-label={tr("sidebar.by_project")}
-            title={tr("sidebar.by_project")}
-            aria-pressed={sidebarMode() === "by-project"}
-            onClick={() => setSidebarMode("by-project")}
-          >
-            <Folder size={14} />
-          </button>
-          <button
-            type="button"
-            class={`inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
-              sidebarMode() === "recent"
-                ? "bg-gray-4/90 text-gray-12"
-                : "text-gray-9 hover:bg-gray-3 hover:text-gray-11"
-            }`}
-            aria-label={tr("sidebar.recent")}
-            title={tr("sidebar.recent")}
-            aria-pressed={sidebarMode() === "recent"}
-            onClick={() => setSidebarMode("recent")}
-          >
-            <List size={14} />
-          </button>
-        </div>
         <div class="relative flex min-w-0 flex-1" ref={(el) => (addWorkspaceMenuRef = el)}>
           <button
             type="button"
-            class="inline-flex h-8 w-full min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-gray-6 bg-gray-1 px-2 text-[12px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2"
-            aria-label={tr("sidebar.new_session")}
-            title={tr("sidebar.new_session")}
+            class={`inline-flex h-8 w-full min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-gray-6 bg-gray-1 px-2 text-[12px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 ${sidebarControlTooltipClass}`}
+            data-tooltip={tr("sidebar.new_session")}
             onClick={() => {
               if (props.onQuickNewSession) {
                 props.onQuickNewSession();
@@ -753,6 +810,7 @@ export default function WorkspaceSessionList(props: Props) {
               setAddWorkspaceMenuOpen((prev) => !prev);
             }}
           >
+            <span class="sr-only">{tr("sidebar.new_session")}</span>
             <Plus size={12} />
             <Show when={showNewSessionLabelText()}>
               <span class="whitespace-nowrap">{newSessionLabel()}</span>
@@ -800,27 +858,57 @@ export default function WorkspaceSessionList(props: Props) {
             </div>
           </Show>
         </div>
+        <div class="inline-flex shrink-0 items-center gap-1 rounded-full border border-gray-6 bg-gray-1 p-0.5 shadow-sm">
+          <button
+            type="button"
+            class={`inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
+              sidebarMode() === "by-project"
+                ? "bg-gray-4/90 text-gray-12"
+                : "text-gray-9 hover:bg-gray-3 hover:text-gray-11"
+            } ${sidebarControlTooltipClass}`}
+            data-tooltip={tr("sidebar.by_project")}
+            aria-pressed={sidebarMode() === "by-project"}
+            onClick={() => setSidebarMode("by-project")}
+          >
+            <span class="sr-only">{tr("sidebar.by_project")}</span>
+            <Folder size={14} />
+          </button>
+          <button
+            type="button"
+            class={`inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
+              sidebarMode() === "recent"
+                ? "bg-gray-4/90 text-gray-12"
+                : "text-gray-9 hover:bg-gray-3 hover:text-gray-11"
+            } ${sidebarControlTooltipClass}`}
+            data-tooltip={tr("sidebar.recent")}
+            aria-pressed={sidebarMode() === "recent"}
+            onClick={() => setSidebarMode("recent")}
+          >
+            <span class="sr-only">{tr("sidebar.recent")}</span>
+            <List size={14} />
+          </button>
+        </div>
         <div class="ml-auto flex shrink-0 items-center gap-1">
           <Show when={props.onOpenSessionSearch}>
             <button
               type="button"
-              class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-9 shadow-sm transition-colors hover:bg-gray-3 hover:text-gray-11"
-              aria-label={tr("session.command_palette_search_sessions")}
-              title={tr("session.command_palette_search_sessions")}
+              class={`inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-9 shadow-sm transition-colors hover:bg-gray-3 hover:text-gray-11 ${sidebarControlTooltipClass}`}
+              data-tooltip={tr("session.command_palette_search_sessions")}
               onClick={() => props.onOpenSessionSearch?.()}
             >
+              <span class="sr-only">{tr("session.command_palette_search_sessions")}</span>
               <Search size={13} />
             </button>
           </Show>
           <Show when={props.onAddDirectorySession}>
             <button
               type="button"
-              class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-9 shadow-sm transition-colors hover:bg-gray-3 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
-              aria-label={tr("sidebar.add_directory_session")}
-              title={tr("sidebar.add_directory_session")}
+              class={`inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-9 shadow-sm transition-colors hover:bg-gray-3 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed ${sidebarControlTooltipClass}`}
+              data-tooltip={tr("sidebar.add_directory_session")}
               disabled={props.newTaskDisabled}
               onClick={() => props.onAddDirectorySession?.()}
             >
+              <span class="sr-only">{tr("sidebar.add_directory_session")}</span>
               <FolderPlus size={13} />
             </button>
           </Show>
@@ -979,6 +1067,9 @@ export default function WorkspaceSessionList(props: Props) {
                 const isConnectionActionBusy = () => isConnectionActionBusyFor(workspace().id);
                 const anchorKey = `project:${workspace().id}`;
                 const isProjectDragOver = () => dragOverProjectKey() === project.key;
+                const isDraggedProject = () => draggingProjectKey() === project.key;
+                const dropIndicatorPosition = () =>
+                  projectDropIndicator()?.key === project.key ? projectDropIndicator()?.position : null;
                 const collapsed = () => isProjectCollapsed(collapsedProjects(), project.key);
                 const projectPaging = () =>
                   props.workspaceSessionPagingById?.[workspace().id] ?? { hasMore: false, loadingMore: false };
@@ -1011,14 +1102,22 @@ export default function WorkspaceSessionList(props: Props) {
 
                 return (
                   <div
-                    class={`group rounded-lg transition-colors ${
-                      isProjectDragOver() ? "bg-gray-2/70 ring-1 ring-gray-7/70" : ""
-                    }`}
+                    class={`group relative rounded-lg transition-colors ${
+                      isProjectDragOver() ? "bg-gray-2/70" : ""
+                    } ${isDraggedProject() ? "opacity-70" : ""}
+                    `}
+                    data-project-key={project.key}
                     onDragOver={(event) => handleProjectDragOver(event, project.key)}
-                    onDragLeave={() => handleProjectDragLeave(project.key)}
+                    onDragLeave={(event) => handleProjectDragLeave(event, project.key)}
                     onDrop={(event) => handleProjectDrop(event, project.key)}
                   >
-                    <div class="relative flex items-start gap-2">
+                    <Show when={dropIndicatorPosition() === "before"}>
+                      <div class="pointer-events-none absolute left-2 right-2 top-0 h-[2px] rounded-full bg-indigo-8/80" />
+                    </Show>
+                    <Show when={dropIndicatorPosition() === "after"}>
+                      <div class="pointer-events-none absolute left-2 right-2 bottom-0 h-[2px] rounded-full bg-indigo-8/80" />
+                    </Show>
+                    <div class="relative flex items-start gap-2" data-project-drag-preview>
                       <button
                         type="button"
                         class={`min-w-0 flex-1 rounded-lg px-1.5 py-1 text-left transition-colors ${
