@@ -25,6 +25,11 @@ export type SidebarSessionItem = {
   directory?: string | null;
 };
 
+export type SidebarSubagentDecoration = {
+  label: string;
+  color: string;
+};
+
 export type WorkspaceSessionGroup = {
   workspace: WorkspaceInfo;
   sessions: SidebarSessionItem[];

@@ -30,7 +30,6 @@ import {
 } from "../utils";
 import { unwrap } from "../lib/opencode";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
-import { getTaskPartSubagentInfo, sessionLooksLikeInternalSubagent } from "../lib/internal-subagents";
 import { formatSessionError, truncateErrorField } from "../lib/session-error";
 import { detectChromeMcpCompletedError } from "../lib/chrome-mcp-error";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../types";
@@ -208,7 +207,6 @@ export function createSessionStore(options: {
     pendingQuestions: [],
     events: [],
   });
-  const [internalChildSessionIds, setInternalChildSessionIds] = createSignal<Set<string>>(new Set());
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
   const [messageLimitBySession, setMessageLimitBySession] = createSignal<Record<string, number>>({});
   const [messageCompleteBySession, setMessageCompleteBySession] = createSignal<Record<string, boolean>>({});
@@ -219,75 +217,6 @@ export function createSessionStore(options: {
   const syntheticContinueEventTimesBySession = new Map<string, number[]>();
   const syntheticContinueLoopLastWarnAtBySession = new Map<string, number>();
   const workspaceSessionIds = new Set<string>();
-
-  const isInternalChildSessionId = (sessionID: string | null | undefined): boolean => {
-    const id = (sessionID ?? "").trim();
-    if (!id) return false;
-    return internalChildSessionIds().has(id);
-  };
-
-  const purgeSessionState = (sessionID: string) => {
-    const id = sessionID.trim();
-    if (!id) return;
-
-    workspaceSessionIds.delete(id);
-    syntheticContinueEventTimesBySession.delete(id);
-    syntheticContinueLoopLastWarnAtBySession.delete(id);
-
-    const removedMessageIDs = (store.messages[id] ?? []).map((message) => message.id);
-    setStore("sessions", (current) => removeSession(current, id));
-    if (removedMessageIDs.length > 0) {
-      setStore(
-        "commandDisplayByMessageID",
-        produce((draft: Record<string, string>) => {
-          removedMessageIDs.forEach((messageID) => {
-            delete draft[messageID];
-          });
-        }),
-      );
-    }
-
-    setStore(
-      produce((draft: StoreState) => {
-        delete draft.sessionStatus[id];
-        delete draft.sessionErrorTurns[id];
-        delete draft.todos[id];
-        const removedMessages = draft.messages[id] ?? [];
-        delete draft.messages[id];
-        for (const message of removedMessages) {
-          delete draft.parts[message.id];
-        }
-      }),
-    );
-  };
-
-  const registerInternalChildSession = (sessionID: string | null | undefined): boolean => {
-    const id = (sessionID ?? "").trim();
-    if (!id) return false;
-
-    let added = false;
-    setInternalChildSessionIds((current) => {
-      if (current.has(id)) return current;
-      const next = new Set(current);
-      next.add(id);
-      added = true;
-      return next;
-    });
-
-    if (added) {
-      purgeSessionState(id);
-    }
-
-    return added;
-  };
-
-  const registerInternalChildSessionsFromParts = (parts: Part[]) => {
-    for (const part of parts) {
-      const info = getTaskPartSubagentInfo(part);
-      if (!info.isTask || !info.internal || !info.sessionId) continue;
-      registerInternalChildSession(info.sessionId);
-    }
-  };
 
   const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
   const skillNamePattern = /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
@@ -722,17 +651,7 @@ export function createSessionStore(options: {
       }
     }
 
-    const sorted = sortSessionsByActivity(Array.from(merged.values()));
-    const nextSessions = sorted.filter((session) => {
-      if (isInternalChildSessionId(session.id)) {
-        return false;
-      }
-      if (sessionLooksLikeInternalSubagent(session)) {
-        registerInternalChildSession(session.id);
-        return false;
-      }
-      return true;
-    });
+    const nextSessions = sortSessionsByActivity(Array.from(merged.values()));
     sessionDebug("sessions:load:filtered", { root: root || null, count: nextSessions.length });
 
     // Rebuild the workspace session ID set so SSE event filtering stays in sync.
@@ -776,10 +695,6 @@ export function createSessionStore(options: {
   }
 
   function setMessagesForSession(sessionID: string, list: MessageWithParts[]) {
-    for (const message of list) {
-      registerInternalChildSessionsFromParts(message.parts);
-    }
-
     const infos = list
       .map((msg) => msg.info)
       .filter((info) => !!info?.id)
@@ -999,15 +914,7 @@ export function createSessionStore(options: {
   }
 
   const setSessions = (next: Session[]) => {
-    const filtered = sortSessionsByActivity(next).filter((session) => {
-      if (isInternalChildSessionId(session.id)) return false;
-      if (sessionLooksLikeInternalSubagent(session)) {
-        registerInternalChildSession(session.id);
-        return false;
-      }
-      return true;
-    });
-    setStore("sessions", reconcile(filtered, { key: "id" }));
+    setStore("sessions", reconcile(sortSessionsByActivity(next), { key: "id" }));
   };
 
   const setSessionStatusById = (next: Record<string, string>) => {
@@ -1096,7 +1003,6 @@ export function createSessionStore(options: {
   // loadSessions() and session creation; cleared on workspace switch
   // (when the client changes and the SSE subscription reconnects).
   const isKnownSessionId = (sessionID: string): boolean => {
-    if (isInternalChildSessionId(sessionID)) return false;
     if (workspaceSessionIds.has(sessionID)) return true;
     // Also accept if the session is already in the store (e.g. just created)
     if (store.sessions.some((s) => s.id === sessionID)) {
@@ -1145,10 +1051,6 @@ export function createSessionStore(options: {
         const record = event.properties as Record<string, unknown>;
         if (record.info && typeof record.info === "object") {
           const info = applySessionDirectoryOverride(record.info as Session);
-          if (isInternalChildSessionId(info.id) || sessionLooksLikeInternalSubagent(info)) {
-            registerInternalChildSession(info.id);
-            return;
-          }
           // Validate that the session's directory belongs to the active workspace
           // before accepting it into the store.
           const root = normalizeDirectoryPath(options.activeWorkspaceRoot());
@@ -1370,10 +1272,6 @@ export function createSessionStore(options: {
           const resolvedPart =
             store.parts[part.messageID]?.find((item) => item.id === part.id) ??
             part;
-          const internalTaskInfo = getTaskPartSubagentInfo(resolvedPart);
-          if (internalTaskInfo.isTask && internalTaskInfo.internal && internalTaskInfo.sessionId) {
-            registerInternalChildSession(internalTaskInfo.sessionId);
-          }
           recordSyntheticContinueDiagnostic(resolvedPart);
           const partUpdatedMs = Math.round((perfNow() - partUpdatedStartedAt) * 100) / 100;
           if (sessionDebugEnabled() && (partUpdatedMs >= 8 || (delta?.length ?? 0) >= 120)) {
@@ -1749,7 +1647,6 @@ export function createSessionStore(options: {
       const sessionID = options.selectedSessionId();
       return sessionID ? store.sessionErrorTurns[sessionID] ?? [] : [];
     }),
-    internalChildSessionIds,
     sessionStatusById,
     selectedSession,
     selectedSessionStatus,

@@ -3,7 +3,7 @@ import { Folder, FolderPlus, HeartPulse, List, Loader2, MoreHorizontal, Plus, Se
 
 import type { VesloSoulStatus } from "../../lib/veslo-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
-import type { WorkspaceConnectionState, WorkspaceSessionGroup } from "../../types";
+import type { SidebarSubagentDecoration, WorkspaceConnectionState, WorkspaceSessionGroup } from "../../types";
 import {
   getWorkspaceTaskLoadErrorDisplay,
   isWindowsPlatform,
@@ -41,6 +41,7 @@ import { currentLocale, t } from "../../../i18n";
 type Props = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
   workspaceSessionPagingById?: Record<string, { hasMore: boolean; loadingMore: boolean }>;
+  subagentDecorationsBySessionId?: Record<string, SidebarSubagentDecoration>;
   activeWorkspaceId: string;
   selectedSessionId: string | null;
   sessionStatusById?: Record<string, string>;
@@ -77,6 +78,53 @@ type WorkspaceMenuTarget = {
   anchorKey: string;
 };
 
+type RowHierarchyLookup = {
+  rowBySessionId: Map<string, FlatSessionRow>;
+  parentBySessionId: Map<string, string>;
+  childrenByParentId: Map<string, string[]>;
+};
+
+const buildRowHierarchyLookup = (rows: FlatSessionRow[]): RowHierarchyLookup => {
+  const rowBySessionId = new Map<string, FlatSessionRow>();
+  const parentBySessionId = new Map<string, string>();
+  const childrenByParentId = new Map<string, string[]>();
+
+  for (const row of rows) {
+    rowBySessionId.set(row.session.id, row);
+  }
+
+  for (const row of rows) {
+    const parentId = row.parentSessionId;
+    if (!parentId || !rowBySessionId.has(parentId)) continue;
+    parentBySessionId.set(row.session.id, parentId);
+    const existing = childrenByParentId.get(parentId);
+    if (existing) {
+      existing.push(row.session.id);
+    } else {
+      childrenByParentId.set(parentId, [row.session.id]);
+    }
+  }
+
+  return { rowBySessionId, parentBySessionId, childrenByParentId };
+};
+
+const rowVisibleByExpansion = (
+  row: FlatSessionRow,
+  lookup: RowHierarchyLookup,
+  expandedParentSessionIds: Set<string>,
+) => {
+  let parentId = lookup.parentBySessionId.get(row.session.id) ?? null;
+  while (parentId) {
+    if (!lookup.rowBySessionId.has(parentId)) {
+      // Parent missing from current data slice (pagination, loading) — keep child visible.
+      return true;
+    }
+    if (!expandedParentSessionIds.has(parentId)) return false;
+    parentId = lookup.parentBySessionId.get(parentId) ?? null;
+  }
+  return true;
+};
+
 const workspaceLabel = (workspace: WorkspaceInfo) =>
   workspace.displayName?.trim() ||
   workspace.vesloWorkspaceName?.trim() ||
@@ -104,6 +152,7 @@ export default function WorkspaceSessionList(props: Props) {
   const [projectVisibleByKey, setProjectVisibleByKey] = createSignal<Record<string, number>>({});
   const [recentVisibleCount, setRecentVisibleCount] = createSignal(3);
   const [recentLoadMoreBusy, setRecentLoadMoreBusy] = createSignal(false);
+  const [expandedParentSessionIds, setExpandedParentSessionIds] = createSignal<Set<string>>(new Set());
   const [workspaceMenuTarget, setWorkspaceMenuTarget] = createSignal<WorkspaceMenuTarget | null>(null);
   const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
   const [sidebarControlsWidth, setSidebarControlsWidth] = createSignal(0);
@@ -135,9 +184,17 @@ export default function WorkspaceSessionList(props: Props) {
     buildProjectGroups(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
   );
 
-  const recentRowsVisible = createMemo(() => recentRows().slice(0, recentVisibleCount()));
+  const recentHierarchy = createMemo(() => buildRowHierarchyLookup(recentRows()));
 
-  const recentHasHiddenRows = createMemo(() => recentRows().length > recentVisibleCount());
+  const recentRowsTreeVisible = createMemo(() =>
+    recentRows().filter((row) =>
+      rowVisibleByExpansion(row, recentHierarchy(), expandedParentSessionIds()),
+    ),
+  );
+
+  const recentRowsVisible = createMemo(() => recentRowsTreeVisible().slice(0, recentVisibleCount()));
+
+  const recentHasHiddenRows = createMemo(() => recentRowsTreeVisible().length > recentVisibleCount());
 
   const recentHasMoreServerRows = createMemo(() =>
     Object.values(props.workspaceSessionPagingById ?? {}).some((entry) => entry.hasMore),
@@ -329,8 +386,77 @@ export default function WorkspaceSessionList(props: Props) {
   );
 
   const hasVisibleRows = createMemo(() =>
-    sidebarMode() === "by-project" ? projectGroups().length > 0 : recentRows().length > 0,
+    sidebarMode() === "by-project" ? projectGroups().length > 0 : recentRowsTreeVisible().length > 0,
   );
+
+  const sessionDecorationFor = (sessionId: string): SidebarSubagentDecoration | null => {
+    const entry = props.subagentDecorationsBySessionId?.[sessionId];
+    if (!entry) return null;
+    const label = entry.label?.trim() ?? "";
+    const color = entry.color?.trim() ?? "";
+    if (!label || !color) return null;
+    return { label, color };
+  };
+
+  const sessionDisplayLabel = (row: FlatSessionRow) =>
+    sessionDecorationFor(row.session.id)?.label ?? row.session.title;
+
+  const sessionLabelTitle = (row: FlatSessionRow) => {
+    const decorated = sessionDecorationFor(row.session.id)?.label?.trim() ?? "";
+    const raw = row.session.title?.trim() ?? "";
+    if (decorated && raw && decorated !== raw) return `${decorated} · ${raw}`;
+    return decorated || raw;
+  };
+
+  const sessionLabelStyle = (row: FlatSessionRow) => {
+    const color = sessionDecorationFor(row.session.id)?.color?.trim() ?? "";
+    if (!color || !row.isSubagent) return undefined;
+    return { color };
+  };
+
+  const toggleExpandedParentSession = (sessionId: string) =>
+    setExpandedParentSessionIds((current) => {
+      const next = new Set(current);
+      if (next.has(sessionId)) {
+        next.delete(sessionId);
+      } else {
+        next.add(sessionId);
+      }
+      return next;
+    });
+
+  const handleSessionRowClick = (
+    row: FlatSessionRow,
+    hasChildren: (sessionId: string) => boolean,
+  ) => {
+    if (props.selectedSessionId !== row.session.id) {
+      props.onOpenSession(row.workspace.id, row.session.id);
+      return;
+    }
+    if (hasChildren(row.session.id)) {
+      toggleExpandedParentSession(row.session.id);
+    }
+  };
+
+  createEffect(() => {
+    const validSessionIds = new Set(
+      projectGroups().flatMap((group) => group.sessions.map((row) => row.session.id)),
+    );
+    for (const row of recentRows()) validSessionIds.add(row.session.id);
+
+    setExpandedParentSessionIds((current) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of current) {
+        if (validSessionIds.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  });
 
   const newSessionLabel = createMemo(() =>
     shouldUseExpandedNewSessionLabel(sidebarControlsWidth()) ? tr("sidebar.new_session") : tr("sidebar.new"),
@@ -644,6 +770,8 @@ export default function WorkspaceSessionList(props: Props) {
                     {(row) => {
                       const workspace = () => row.workspace;
                       const session = () => row.session;
+                      const hasChildren = (sessionId: string) =>
+                        (recentHierarchy().childrenByParentId.get(sessionId)?.length ?? 0) > 0;
                       const isSelected = () => props.selectedSessionId === session().id;
                       const isSessionActive = () => (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
                       const isConnecting = () => isConnectingWorkspace(workspace().id);
@@ -662,14 +790,20 @@ export default function WorkspaceSessionList(props: Props) {
                               isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
                             }`}
                             style={rowIndentStyle(row)}
-                            onClick={() => props.onOpenSession(workspace().id, session().id)}
+                            onClick={() => handleSessionRowClick(row, hasChildren)}
                           >
                             <div class="min-w-0 flex-1">
                               <div class="flex items-center gap-1.5 min-w-0">
                                 <Show when={isSessionActive()}>
                                   <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
                                 </Show>
-                                <span class="text-[13px] text-gray-11 truncate font-medium">{session().title}</span>
+                                <span
+                                  class="text-[13px] text-gray-11 truncate font-medium"
+                                  title={sessionLabelTitle(row)}
+                                  style={sessionLabelStyle(row)}
+                                >
+                                  {sessionDisplayLabel(row)}
+                                </span>
                               </div>
 
                               <div class="mt-px flex items-center gap-1 text-[11px] text-gray-10 min-w-0">
@@ -776,9 +910,16 @@ export default function WorkspaceSessionList(props: Props) {
                 const collapsed = () => isProjectCollapsed(collapsedProjects(), project.key);
                 const projectPaging = () =>
                   props.workspaceSessionPagingById?.[workspace().id] ?? { hasMore: false, loadingMore: false };
+                const projectHierarchy = () => buildRowHierarchyLookup(project.sessions);
                 const visibleCount = () => projectVisibleByKey()[project.key] ?? PROJECT_VISIBLE_DEFAULT;
-                const visibleRows = () => project.sessions.slice(0, visibleCount());
-                const hasHiddenRows = () => project.sessions.length > visibleCount();
+                const projectTreeVisibleRows = () =>
+                  project.sessions.filter((row) =>
+                    rowVisibleByExpansion(row, projectHierarchy(), expandedParentSessionIds()),
+                  );
+                const hasChildren = (sessionId: string) =>
+                  (projectHierarchy().childrenByParentId.get(sessionId)?.length ?? 0) > 0;
+                const visibleRows = () => projectTreeVisibleRows().slice(0, visibleCount());
+                const hasHiddenRows = () => projectTreeVisibleRows().length > visibleCount();
                 const canLoadMoreProjectRows = () => hasHiddenRows() || projectPaging().hasMore;
                 const loadMoreProjectRows = async () => {
                   const nextVisible = nextProjectVisibleCount(visibleCount());
@@ -909,15 +1050,19 @@ export default function WorkspaceSessionList(props: Props) {
                                     isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
                                   }`}
                                   style={rowIndentStyle(row)}
-                                  onClick={() => props.onOpenSession(row.workspace.id, session().id)}
+                                  onClick={() => handleSessionRowClick(row, hasChildren)}
                                 >
                                   <div class="min-w-0 flex-1">
                                     <div class="flex items-center gap-1.5 min-w-0">
                                       <Show when={isSessionActive()}>
                                         <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
                                       </Show>
-                                      <span class="text-[13px] text-gray-11 truncate font-medium">
-                                        {session().title}
+                                      <span
+                                        class="text-[13px] text-gray-11 truncate font-medium"
+                                        title={sessionLabelTitle(row)}
+                                        style={sessionLabelStyle(row)}
+                                      >
+                                        {sessionDisplayLabel(row)}
                                       </span>
                                     </div>
                                   </div>

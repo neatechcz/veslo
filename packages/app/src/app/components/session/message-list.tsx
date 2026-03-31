@@ -4,7 +4,13 @@ import type { Part } from "@opencode-ai/sdk/v2/client";
 import { Bot, Check, ChevronDown, ChevronRight, CircleAlert, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 
-import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type MessageGroup, type MessageWithParts, type StepGroupMode } from "../../types";
+import {
+  SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX,
+  type MessageGroup,
+  type MessageWithParts,
+  type SidebarSubagentDecoration,
+  type StepGroupMode,
+} from "../../types";
 import { compactHumanStepText, containsPathLikeText, groupMessageParts, isUserVisiblePart, summarizeStep } from "../../utils";
 import PartView from "../part-view";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
@@ -27,6 +33,7 @@ export type MessageListProps = {
   workspaceRoot?: string;
   scrollElement?: () => HTMLElement | undefined;
   setScrollToMessageById?: (handler: ((messageId: string, behavior?: ScrollBehavior) => boolean) | null) => void;
+  subagentDecorationsBySessionId?: Record<string, SidebarSubagentDecoration>;
   footer?: JSX.Element;
 };
 
@@ -249,6 +256,17 @@ export default function MessageList(props: MessageListProps) {
       default:
         return "";
     }
+  };
+  const taskDecoration = (task: TaskStepInfo): SidebarSubagentDecoration | null => {
+    if (!task.isTask || task.isInternal) return null;
+    const sessionId = task.sessionId?.trim() ?? "";
+    if (!sessionId) return null;
+    const entry = props.subagentDecorationsBySessionId?.[sessionId];
+    if (!entry) return null;
+    const label = entry.label?.trim() ?? "";
+    const color = entry.color?.trim() ?? "";
+    if (!label || !color) return null;
+    return { label, color };
   };
   const countSectionRows = (rows: TimelineRowView[], kinds: TimelineRowType[]) => {
     const set = new Set(kinds);
@@ -1023,7 +1041,24 @@ export default function MessageList(props: MessageListProps) {
                               <div class="min-w-0 flex-1">
                                 <div class="flex items-start gap-2">
                                   <div class="min-w-0 flex-1">
-                                    <div class="text-[13px] font-medium leading-5 text-gray-12">{row.primary}</div>
+                                    <div class="text-[13px] font-medium leading-5 text-gray-12">
+                                      <Show when={taskDecoration(entry.task)}>
+                                        {(decoration) => (
+                                          <span
+                                            class="mr-1.5 inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] align-middle"
+                                            style={{
+                                              color: decoration().color,
+                                              "border-color": `${decoration().color}66`,
+                                              "background-color": `${decoration().color}1a`,
+                                            }}
+                                            title={decoration().label}
+                                          >
+                                            {decoration().label}
+                                          </span>
+                                        )}
+                                      </Show>
+                                      {row.primary}
+                                    </div>
                                     <Show when={row.secondary}>
                                       <div class="mt-0.5 text-[12px] leading-5 text-gray-10 break-words">
                                         {row.secondary}

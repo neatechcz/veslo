@@ -27,7 +27,7 @@ test("by-project mode uses per-project visible window with default 7 rows", () =
 
   assert.match(
     source,
-    /project\.sessions\.slice\(0, visibleCount\(\)\)/,
+    /projectTreeVisibleRows\(\)\.slice\(0, visibleCount\(\)\)/,
     "by-project rows should render only the visible window slice",
   );
 });
