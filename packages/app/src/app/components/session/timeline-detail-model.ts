@@ -393,6 +393,18 @@ function buildRowModel(part: Part, kind: TimelineSectionKind): TimelineRowModel 
   };
 }
 
+function normalizeStaleRunningReasoningRow(
+  row: TimelineRowModel,
+  part: Part,
+  index: number,
+  total: number,
+): TimelineRowModel {
+  if (row.status !== "running") return row;
+  if (index >= total - 1) return row;
+  if (part.type !== "reasoning" && part.type !== "text") return row;
+  return { ...row, status: "done" };
+}
+
 function sectionStatusFromRows(rows: TimelineRowModel[], kind: TimelineSectionKind): TimelineSectionModel["status"] {
   if (rows.some((row) => row.status === "error")) return "error";
   if (rows.some((row) => row.status === "running")) return "running";
@@ -462,6 +474,7 @@ export function buildCollapsedSummary(input: BuildCollapsedSummaryInput): string
 }
 
 export function buildTimelineDetailModel(input: BuildTimelineDetailModelInput): TimelineDetailModel {
+  const parts = input.parts ?? [];
   const sections: TimelineSectionModel[] = [];
   let current: TimelineSectionModel | null = null;
   let previousKind: TimelineSectionKind | undefined;
@@ -482,9 +495,10 @@ export function buildTimelineDetailModel(input: BuildTimelineDetailModelInput): 
     current.summary = summarizeSection(current.kind, current.rows);
   };
 
-  for (const part of input.parts ?? []) {
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
     const kind = classifyPartKind(part, previousKind);
-    const row = buildRowModel(part, kind);
+    const row = normalizeStaleRunningReasoningRow(buildRowModel(part, kind), part, index, parts.length);
     appendSection(kind, row);
     previousKind = kind;
   }

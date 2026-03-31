@@ -295,3 +295,25 @@ test("buildTimelineDetailModel uses a thinking fallback instead of a generic not
   assert.equal(row?.rowType, "note");
   assert.equal(row?.primary, "Přemýšlení");
 });
+
+test("buildTimelineDetailModel marks stale running reasoning as done after a later response part", () => {
+  const model = buildTimelineDetailModel({
+    parts: [
+      {
+        type: "reasoning",
+        text: "Analyzing context",
+        state: { status: "pending" },
+      },
+      {
+        type: "text",
+        text: "Hotovo.",
+      },
+    ],
+  } as any);
+
+  const section = model.sections[0];
+  const firstRow = section?.rows[0];
+  assert.equal(firstRow?.rowType, "note");
+  assert.equal(firstRow?.status, "done");
+  assert.equal(section?.status, "done");
+});
