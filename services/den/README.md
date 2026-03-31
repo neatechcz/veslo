@@ -35,7 +35,7 @@ cp .env.development .env
 - `GITHUB_CLIENT_ID` optional OAuth app client ID for GitHub sign-in
 - `GITHUB_CLIENT_SECRET` optional OAuth app client secret for GitHub sign-in
 - `LETTR_API_KEY` optional Lettr API key used to send Better Auth verification and password reset emails. Blank or unset values disable email verification and password reset delivery.
-- `AUTH_EMAIL_ADDRESS` optional sender address for auth emails, for example `auth@veslo.neatech.cz`. Blank or unset values disable email verification and password reset delivery.
+- `AUTH_EMAIL_ADDRESS` optional sender address for auth emails, for example `noreply@mail.veslo.work`. Blank or unset values disable email verification and password reset delivery.
 - `AUTH_EMAIL_FROM_NAME` optional sender display name for auth emails, for example `Veslo`.
 - `PORT` server port
 - `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS). In production, wildcard `*` is rejected. Desktop CORS origins (`tauri://localhost`, `http://localhost:1420`, `http://localhost:1421`) are appended server-side to the Express CORS allowlist.
@@ -161,7 +161,7 @@ Optional GitHub Actions variable:
 - `DEN_POLAR_API_BASE` (defaults to `https://api.polar.sh`)
 - `DEN_POLAR_SUCCESS_URL` (defaults to `https://app.veslo.neatech.com`)
 - `DEN_POLAR_RETURN_URL` (defaults to `DEN_POLAR_SUCCESS_URL`)
-- `DEN_AUTH_EMAIL_ADDRESS` sender email value for hosted auth emails, for example `auth@veslo.neatech.cz`
+- `DEN_AUTH_EMAIL_ADDRESS` sender email value for hosted auth emails, for example `noreply@mail.veslo.work`
 - `DEN_AUTH_EMAIL_FROM_NAME` optional sender display name for hosted auth emails, for example `Veslo`
 - `DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED` (`true`/`false`, defaults to `false`)
 
