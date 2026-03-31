@@ -1,0 +1,45 @@
+{
+  "pages": {
+    "/admin/credentials": {
+      "heading": "Credentials",
+      "visibleControls": [
+        "text=Alerts"
+      ]
+    },
+    "/admin/sessions": {
+      "heading": "Sessions",
+      "visibleControls": []
+    },
+    "/admin/usage": {
+      "heading": "Usage",
+      "visibleControls": [
+        "text=Credential",
+        "text=Org"
+      ]
+    },
+    "/admin/alerts": {
+      "heading": "Alerts",
+      "visibleControls": []
+    },
+    "/admin/users": {
+      "heading": "Users",
+      "visibleControls": [
+        "#create-user-button",
+        "text=Create user"
+      ]
+    },
+    "/admin/audit": {
+      "heading": "Audit",
+      "visibleControls": []
+    }
+  },
+  "userFlow": {
+    "uniqueEmail": "codex.smoke.1774970777338@example.com",
+    "editorEmail": "codex.smoke.1774970777338@example.com",
+    "disableVisible": true,
+    "deleteVisible": true,
+    "remainingAfterDelete": 1
+  },
+  "authState": "Checking session",
+  "title": "AI Gateway Admin"
+}
