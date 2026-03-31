@@ -111,3 +111,26 @@ test("build model keeps colors unique within one parent and honors persisted col
   assert.equal(bySessionId.get("child-b")?.displayName, "Alex");
   assert.equal(bySessionId.get("child-c")?.displayName, "Alex #3");
 });
+
+test("build model prefers catalog localization for known role keys", () => {
+  const model = buildSubagentDecorationModel({
+    locale: "en",
+    roles: [
+      {
+        roleKey: "web-research",
+        roleLabel: "Webový výzkum",
+        firstNameByLocale: { cs: "Adam", en: "Alex" },
+      },
+    ],
+    sessions: [
+      {
+        sessionId: "child-a",
+        parentSessionId: "parent-1",
+        roleKey: "web-research",
+      },
+    ],
+  });
+
+  const decoration = model.decorations[0];
+  assert.equal(decoration?.roleLabel, "Web Research");
+});

@@ -348,10 +348,10 @@ export function buildSubagentDecorationModel(input: {
     const roleFromCatalog = roleCatalogEntryForRoleKey(session.roleKey);
 
     const roleLabel =
-      roleFromRegistry?.roleLabel ??
-      session.roleLabel ??
       roleFromCatalog?.roleLabelByLocale[locale] ??
       roleFromCatalog?.roleLabelByLocale.en ??
+      roleFromRegistry?.roleLabel ??
+      session.roleLabel ??
       "General Assistant";
 
     const firstNameByLocale = roleFromRegistry?.firstNameByLocale ??
