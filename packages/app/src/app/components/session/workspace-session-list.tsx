@@ -15,6 +15,7 @@ import {
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
   isProjectCollapsed,
+  shouldShowNewSessionLabelText,
   shouldUseExpandedNewSessionLabel,
   toggleProjectCollapsed,
   type FlatSessionRow,
@@ -458,9 +459,14 @@ export default function WorkspaceSessionList(props: Props) {
     });
   });
 
-  const newSessionLabel = createMemo(() =>
-    shouldUseExpandedNewSessionLabel(sidebarControlsWidth()) ? tr("sidebar.new_session") : tr("sidebar.new"),
+  const showNewSessionLabelText = createMemo(() =>
+    shouldShowNewSessionLabelText(sidebarControlsWidth()),
   );
+
+  const newSessionLabel = createMemo(() => {
+    if (!showNewSessionLabelText()) return "";
+    return shouldUseExpandedNewSessionLabel(sidebarControlsWidth()) ? tr("sidebar.new_session") : tr("sidebar.new");
+  });
 
   createEffect(() => {
     if (!workspaceMenuTarget()) return;
@@ -639,7 +645,7 @@ export default function WorkspaceSessionList(props: Props) {
 
   return (
     <div class="flex h-full min-h-0 flex-col">
-      <div class="mb-3 flex flex-wrap items-center gap-2" ref={(el) => (sidebarControlsRef = el)}>
+      <div class="mb-3 flex flex-nowrap items-center gap-1" ref={(el) => (sidebarControlsRef = el)}>
         <div class="inline-flex shrink-0 items-center gap-1 rounded-full border border-gray-6 bg-gray-1 p-1 shadow-sm">
           <button
             type="button"
@@ -670,10 +676,10 @@ export default function WorkspaceSessionList(props: Props) {
             <List size={14} />
           </button>
         </div>
-        <div class="relative flex min-w-[9rem] flex-1" ref={(el) => (addWorkspaceMenuRef = el)}>
+        <div class="relative flex min-w-0 flex-1" ref={(el) => (addWorkspaceMenuRef = el)}>
           <button
             type="button"
-            class="inline-flex h-9 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-gray-6 bg-gray-1 px-3 py-2.5 text-[13px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2"
+            class="inline-flex h-8 w-full min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-gray-6 bg-gray-1 px-2 text-[12px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2"
             aria-label={tr("sidebar.new_session")}
             title={tr("sidebar.new_session")}
             onClick={() => {
@@ -684,8 +690,10 @@ export default function WorkspaceSessionList(props: Props) {
               setAddWorkspaceMenuOpen((prev) => !prev);
             }}
           >
-            <Plus size={14} />
-            <span class="whitespace-nowrap">{newSessionLabel()}</span>
+            <Plus size={12} />
+            <Show when={showNewSessionLabelText()}>
+              <span class="whitespace-nowrap">{newSessionLabel()}</span>
+            </Show>
           </button>
 
           <Show when={!props.onQuickNewSession && addWorkspaceMenuOpen()}>
@@ -729,28 +737,28 @@ export default function WorkspaceSessionList(props: Props) {
             </div>
           </Show>
         </div>
-        <div class="ml-auto flex shrink-0 items-center gap-2">
+        <div class="ml-auto flex shrink-0 items-center gap-1">
           <Show when={props.onOpenSessionSearch}>
             <button
               type="button"
-              class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-9 shadow-sm transition-colors hover:bg-gray-3 hover:text-gray-11"
+              class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-9 shadow-sm transition-colors hover:bg-gray-3 hover:text-gray-11"
               aria-label={tr("session.command_palette_search_sessions")}
               title={tr("session.command_palette_search_sessions")}
               onClick={() => props.onOpenSessionSearch?.()}
             >
-              <Search size={14} />
+              <Search size={13} />
             </button>
           </Show>
           <Show when={props.onAddDirectorySession}>
             <button
               type="button"
-              class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-9 shadow-sm transition-colors hover:bg-gray-3 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
+              class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-9 shadow-sm transition-colors hover:bg-gray-3 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
               aria-label={tr("sidebar.add_directory_session")}
               title={tr("sidebar.add_directory_session")}
               disabled={props.newTaskDisabled}
               onClick={() => props.onAddDirectorySession?.()}
             >
-              <FolderPlus size={14} />
+              <FolderPlus size={13} />
             </button>
           </Show>
         </div>

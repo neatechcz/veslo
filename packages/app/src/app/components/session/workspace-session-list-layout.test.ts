@@ -27,8 +27,8 @@ test("workspace session sidebar keeps controls pinned while only session rows sc
 test("workspace session sidebar keeps the control rail ordered and compact-safe", () => {
   assert.match(
     source,
-    /<div class="mb-3 flex flex-wrap items-center gap-2" ref=\{\(el\) => \(sidebarControlsRef = el\)\}>/,
-    "sidebar controls should wrap instead of colliding at narrow widths",
+    /<div class="mb-3 flex flex-nowrap items-center gap-1" ref=\{\(el\) => \(sidebarControlsRef = el\)\}>/,
+    "sidebar controls should stay in a single row, even at minimum sidebar width",
   );
 
   assert.match(
@@ -39,8 +39,14 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
 
   assert.match(
     source,
-    /<div class="ml-auto flex shrink-0 items-center gap-2">/,
+    /<div class="ml-auto flex shrink-0 items-center gap-1">/,
     "search and add-directory actions should stay in a right-aligned action cluster",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /min-w-\[9rem\]/,
+    "new-session control should not force a large minimum width that can push the control row to a second line",
   );
 
   assert.doesNotMatch(
