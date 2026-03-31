@@ -777,6 +777,14 @@ function mapHttpError(error: unknown, res: express.Response) {
     res.status(error.status).json({ error: error.message });
     return true;
   }
+
+  if (error && typeof error === "object" && typeof (error as { status?: unknown }).status === "number") {
+    const message = typeof (error as { message?: unknown }).message === "string"
+      ? (error as { message: string }).message
+      : "request_failed";
+    res.status((error as { status: number }).status).json({ error: message });
+    return true;
+  }
   return false;
 }
 
@@ -817,20 +825,21 @@ export function createAdminRouter(adminService: AdminService) {
       return;
     }
 
-    res.locals.adminToken = token;
-    next();
-  });
-
-  router.get("/admin/api/session", async (req, res) => {
     try {
-      const session = await adminService.getSession(res.locals.adminToken as string);
-      res.json(session);
+      const session = await adminService.getSession(token);
+      res.locals.adminToken = token;
+      res.locals.adminSession = session;
+      next();
     } catch (error) {
       if (mapHttpError(error, res)) {
         return;
       }
       res.status(502).json({ error: "session_lookup_failed" });
     }
+  });
+
+  router.get("/admin/api/session", async (req, res) => {
+    res.json(res.locals.adminSession);
   });
 
   router.get("/admin/api/credentials", async (req, res) => {

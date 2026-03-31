@@ -40,3 +40,74 @@ test("GET /admin/api/session returns 401 when no bearer token is present", async
     await once(server, "close")
   }
 })
+
+test("GET /admin/api/credentials rejects invalid bearer tokens before serving read models", async () => {
+  const app = createApp({
+    admin: {
+      async signIn() {
+        throw new Error("unused")
+      },
+      async getSession() {
+        throw Object.assign(new Error("forbidden"), { status: 403 })
+      },
+      async listUsers() {
+        return []
+      },
+      async createUser() {
+        throw new Error("unused")
+      },
+      async updateUser() {
+        throw new Error("unused")
+      },
+      async disableUser() {
+        throw new Error("unused")
+      },
+      async enableUser() {
+        throw new Error("unused")
+      },
+      async deleteUser() {
+        return
+      },
+      async listCredentials() {
+        return { credentials: [{ id: "cred_1" }] as never[] }
+      },
+      async listSessions() {
+        return { sessions: [] }
+      },
+      async getUsage() {
+        return {
+          summary: { totalTokens: 0, totalRequests: 0 },
+          groupBy: "total",
+          filters: { credentials: [], users: [], orgs: [] },
+          series: [],
+          topCredentials: [],
+          topUsers: [],
+          topOrgs: [],
+        }
+      },
+      async listAlerts() {
+        return { alerts: [] }
+      },
+      async listAudit() {
+        return { events: [] }
+      },
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/credentials`, {
+      headers: {
+        authorization: "Bearer not-a-real-token",
+      },
+    })
+
+    assert.equal(response.status, 403)
+    assert.deepEqual(await response.json(), { error: "forbidden" })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})

@@ -10,6 +10,7 @@ import { db } from "./db/index.js"
 import { shouldWidenVarcharColumn } from "./db/schema-reconcile.js"
 import { env } from "./env.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
+import { requireSession } from "./http/session.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
 import { desktopAuthV2Router } from "./http/desktop-auth-v2.js"
 import { createAdminRuntimeRouter } from "./http/admin-runtime.js"
@@ -47,6 +48,11 @@ app.get("/health", (_, res) => {
 
 
 app.get("/v1/me", asyncRoute(async (req, res) => {
+  const checkedSession = await requireSession(req, res)
+  if (!checkedSession) {
+    return
+  }
+
   const session = await auth.api.getSession({
     headers: fromNodeHeaders(req.headers),
   })

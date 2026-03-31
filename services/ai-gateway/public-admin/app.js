@@ -273,6 +273,18 @@ function signOut() {
   state.token = "";
   state.session = null;
   state.user = null;
+  state.credentials = [];
+  state.sessions = [];
+  state.alerts = [];
+  state.audit = [];
+  state.users = [];
+  state.usage = null;
+  state.selectedCredentialId = null;
+  state.selectedSessionId = null;
+  state.selectedAlertId = null;
+  state.selectedAuditId = null;
+  state.selectedUserId = null;
+  state.userMode = "edit";
   localStorage.removeItem(STORAGE_KEY);
   showLogin("Signed out.");
 }
@@ -572,9 +584,10 @@ function populateUserEditor(user) {
   els.userEmail.value = user?.email || "";
   els.userEmail.disabled = !isCreate;
   els.userOrg.disabled = !isCreate;
-  els.userRole.disabled = false;
+  els.userRole.disabled = !isCreate;
   els.userPlatformAdmin.checked = user?.platformAdmin === true;
   els.userSendInvite.checked = true;
+  els.userSendInvite.disabled = !isCreate;
   if (membership?.orgId) {
     els.userOrg.value = membership.orgId;
     els.userRole.value = membership.role;
@@ -751,7 +764,11 @@ function bindNavigation() {
       event.preventDefault();
       const page = item.dataset.route || "overview";
       setActivePage(page);
-      showApp();
+      if (state.token) {
+        showApp();
+      } else {
+        showLogin();
+      }
       window.scrollTo({ top: 0, behavior: "smooth" });
     });
   });

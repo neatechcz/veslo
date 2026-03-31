@@ -256,6 +256,22 @@ async function setUserDisabledState(userId: string, disabled: boolean, actorUser
   })
 }
 
+async function ensureAdminRetentionAllowed(userId: string, res: express.Response) {
+  const users = await loadAdminUsers()
+  const activeAdmins = users.filter((entry) => entry.platformAdmin && entry.disabled !== true)
+  const target = activeAdmins.find((entry) => entry.id === userId) ?? null
+  if (!target) {
+    return true
+  }
+
+  if (activeAdmins.length <= 1) {
+    res.status(400).json({ error: "cannot_remove_last_platform_admin" })
+    return false
+  }
+
+  return true
+}
+
 async function createAdminUser(req: express.Request, res: express.Response) {
   const snapshot = await requirePlatformAdminSnapshot(req, res)
   if (!snapshot) {
@@ -379,6 +395,9 @@ async function updateAdminUser(req: express.Request, res: express.Response) {
         },
       })
     } else {
+      if (!(await ensureAdminRetentionAllowed(userId, res))) {
+        return null
+      }
       await db.delete(PlatformRoleTable).where(and(eq(PlatformRoleTable.user_id, userId), eq(PlatformRoleTable.role, "platform_admin")))
     }
   }
@@ -420,6 +439,10 @@ async function disableAdminUser(req: express.Request, res: express.Response) {
 
   if (existing.length === 0) {
     res.status(404).json({ error: "user_not_found" })
+    return null
+  }
+
+  if (!(await ensureAdminRetentionAllowed(userId, res))) {
     return null
   }
 
@@ -501,6 +524,10 @@ async function deleteAdminUser(req: express.Request, res: express.Response) {
     return null
   }
 
+  if (!(await ensureAdminRetentionAllowed(userId, res))) {
+    return null
+  }
+
   const ownedOrgs = await db
     .select({
       id: OrgTable.id,
@@ -536,18 +563,20 @@ async function deleteAdminUser(req: express.Request, res: express.Response) {
     }
   }
 
-  await db.delete(AuthSessionTable).where(eq(AuthSessionTable.userId, userId))
-  await db.delete(AuthAccountTable).where(eq(AuthAccountTable.userId, userId))
-  await db.delete(DesktopAuthHandoffTable).where(eq(DesktopAuthHandoffTable.user_id, userId))
-  await db.delete(DesktopAuthSessionTable).where(eq(DesktopAuthSessionTable.user_id, userId))
-  await db.delete(DesktopAuthTransactionTable).where(eq(DesktopAuthTransactionTable.user_id, userId))
-  await db.delete(PlatformRoleTable).where(eq(PlatformRoleTable.user_id, userId))
-  await db.delete(AdminUserStateTable).where(eq(AdminUserStateTable.user_id, userId))
-  await db.delete(OrgMembershipTable).where(eq(OrgMembershipTable.user_id, userId))
-  if (ownedOrgIds.length > 0) {
-    await db.delete(OrgTable).where(inArray(OrgTable.id, ownedOrgIds))
-  }
-  await db.delete(AuthUserTable).where(eq(AuthUserTable.id, userId))
+  await db.transaction(async (tx) => {
+    await tx.delete(AuthSessionTable).where(eq(AuthSessionTable.userId, userId))
+    await tx.delete(AuthAccountTable).where(eq(AuthAccountTable.userId, userId))
+    await tx.delete(DesktopAuthHandoffTable).where(eq(DesktopAuthHandoffTable.user_id, userId))
+    await tx.delete(DesktopAuthSessionTable).where(eq(DesktopAuthSessionTable.user_id, userId))
+    await tx.delete(DesktopAuthTransactionTable).where(eq(DesktopAuthTransactionTable.user_id, userId))
+    await tx.delete(PlatformRoleTable).where(eq(PlatformRoleTable.user_id, userId))
+    await tx.delete(AdminUserStateTable).where(eq(AdminUserStateTable.user_id, userId))
+    await tx.delete(OrgMembershipTable).where(eq(OrgMembershipTable.user_id, userId))
+    if (ownedOrgIds.length > 0) {
+      await tx.delete(OrgTable).where(inArray(OrgTable.id, ownedOrgIds))
+    }
+    await tx.delete(AuthUserTable).where(eq(AuthUserTable.id, userId))
+  })
 
   await recordAdminAudit(snapshot, "admin.user.deleted", {
     deletedUserId: userId,
