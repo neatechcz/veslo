@@ -3,11 +3,13 @@ import { pathToFileURL } from "node:url";
 
 import type { UpstreamAuth } from "./credentials/token-broker.js";
 import { env } from "./env.js";
+import { createAdminRouter, createDefaultAdminService, type AdminService } from "./http/admin.js";
 import { createProxyRouter, type ProxyDependencies } from "./http/proxy.js";
 import { LeaseBroker, type BindingSelector } from "./leases/lease-broker.js";
 import type { LeaseRepository, RebindSessionLeaseInput, SessionLease } from "./leases/repository.js";
 
 export type AppDependencies = {
+  admin?: AdminService;
   proxy?: ProxyDependencies;
 };
 
@@ -84,6 +86,7 @@ export function createApp(deps: AppDependencies = {}) {
     res.status(200).json({ ok: true, service: "ai-gateway" });
   });
 
+  app.use(createAdminRouter(deps.admin ?? createDefaultAdminService(env.denApiBase)));
   app.use(createProxyRouter(deps.proxy ?? createDefaultProxyDependencies()));
 
   return app;

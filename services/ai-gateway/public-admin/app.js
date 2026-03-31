@@ -1,0 +1,844 @@
+const STORAGE_KEY = "veslo.ai-gateway.admin.token";
+const DEFAULT_PAGES = ["credentials", "sessions", "usage", "alerts", "users", "audit"];
+
+const state = {
+  token: localStorage.getItem(STORAGE_KEY) || "",
+  page: normalizePage(location.pathname),
+  session: null,
+  user: null,
+  credentials: [],
+  sessions: [],
+  alerts: [],
+  audit: [],
+  users: [],
+  usage: null,
+  usageFilters: {
+    groupBy: "total",
+    credentialId: "",
+    userId: "",
+    orgId: "",
+  },
+  selectedCredentialId: null,
+  selectedSessionId: null,
+  selectedAlertId: null,
+  selectedAuditId: null,
+  selectedUserId: null,
+  userMode: "edit",
+};
+
+const els = {
+  loginPanel: document.getElementById("login-panel"),
+  loginForm: document.getElementById("login-form"),
+  loginEmail: document.getElementById("login-email"),
+  loginPassword: document.getElementById("login-password"),
+  loginError: document.getElementById("login-error"),
+  appPanel: document.getElementById("app-panel"),
+  authState: document.getElementById("auth-state"),
+  authUser: document.getElementById("auth-user"),
+  signOutButton: document.getElementById("sign-out-button"),
+  refreshButton: document.getElementById("refresh-button"),
+  createUserButton: document.getElementById("create-user-button"),
+  createUserButtonInline: document.getElementById("create-user-button-inline"),
+  pageTitle: document.getElementById("page-title"),
+  pageDescription: document.getElementById("page-description"),
+  pageEyebrow: document.getElementById("page-eyebrow"),
+  navItems: Array.from(document.querySelectorAll("[data-route]")),
+  pages: Array.from(document.querySelectorAll("[data-page]")),
+  credentialsTableBody: document.getElementById("credentials-table-body"),
+  credentialDetail: document.getElementById("credential-detail"),
+  sessionList: document.getElementById("session-list"),
+  sessionDetail: document.getElementById("session-detail"),
+  usageGroupBy: document.getElementById("usage-group-by"),
+  usageCredentialFilter: document.getElementById("usage-filter-credential"),
+  usageUserFilter: document.getElementById("usage-filter-user"),
+  usageOrgFilter: document.getElementById("usage-filter-org"),
+  usageChartBars: document.getElementById("usage-chart-bars"),
+  usageTotalTokens: document.getElementById("usage-total-tokens"),
+  usageTotalRequests: document.getElementById("usage-total-requests"),
+  usageTopCredential: document.getElementById("usage-top-credential"),
+  usageSeries: document.getElementById("usage-series"),
+  alertList: document.getElementById("alert-list"),
+  alertDetail: document.getElementById("alert-detail"),
+  userSearch: document.getElementById("user-search"),
+  userStatusFilter: document.getElementById("user-status-filter"),
+  userRoleFilter: document.getElementById("user-role-filter"),
+  userList: document.getElementById("user-list"),
+  userEditorStatus: document.getElementById("user-editor-status"),
+  userEditorTitle: document.getElementById("user-editor-title"),
+  userName: document.getElementById("user-name"),
+  userEmail: document.getElementById("user-email"),
+  userOrg: document.getElementById("user-org"),
+  userRole: document.getElementById("user-role"),
+  userPlatformAdmin: document.getElementById("user-platform-admin"),
+  userSendInvite: document.getElementById("user-send-invite"),
+  userDisableButton: document.getElementById("user-disable-button"),
+  userDeleteButton: document.getElementById("user-delete-button"),
+  userSaveButton: document.getElementById("user-save-button"),
+  auditSearch: document.getElementById("audit-search"),
+  auditDateRange: document.getElementById("audit-date-range"),
+  auditActorFilter: document.getElementById("audit-actor-filter"),
+  auditEntityFilter: document.getElementById("audit-entity-filter"),
+  auditList: document.getElementById("audit-list"),
+  auditDetail: document.getElementById("audit-detail"),
+  heroMetrics: Array.from(document.querySelectorAll(".hero-metrics .metric-card strong")),
+};
+
+function normalizePage(pathname) {
+  const path = pathname.replace(/\/+$/, "");
+  if (!path || path === "/admin") return "overview";
+  const page = path.split("/").pop();
+  return DEFAULT_PAGES.includes(page) ? page : "overview";
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat("en-US").format(Number(value || 0));
+}
+
+function formatDate(value) {
+  if (!value) return "Never";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+  return parsed.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function summarizeUser(user) {
+  const membership = user.memberships?.[0];
+  const orgPart = membership ? `${membership.role} in ${membership.orgName}` : "no org membership";
+  const rolePart = user.platformAdmin ? "Platform admin" : "Member";
+  return `${rolePart} · ${orgPart}`;
+}
+
+function userStatus(user) {
+  return user.disabled ? "Disabled" : user.emailVerified ? "Active" : "Invited";
+}
+
+function setStatus(text, userText = "") {
+  els.authState.textContent = text;
+  els.authUser.textContent = userText || "";
+}
+
+function showLogin(message = "") {
+  els.loginPanel.classList.remove("hidden");
+  els.appPanel.classList.add("hidden");
+  els.createUserButton.classList.add("hidden");
+  els.loginError.textContent = message;
+  els.loginError.classList.toggle("hidden", !message);
+  setStatus("Signed out", "admin access required");
+}
+
+function showApp() {
+  els.loginPanel.classList.add("hidden");
+  els.appPanel.classList.remove("hidden");
+  els.createUserButton.classList.toggle("hidden", state.page !== "users");
+}
+
+function setActivePage(page) {
+  state.page = page;
+  history.replaceState(null, "", page === "overview" ? "/admin" : `/admin/${page}`);
+  els.navItems.forEach((item) => item.classList.toggle("active", item.dataset.route === page));
+  els.pages.forEach((panel) => {
+    const active = panel.dataset.page === page || (page === "overview" && panel.dataset.page === "overview");
+    panel.classList.toggle("hidden", !active);
+  });
+  els.createUserButton.classList.toggle("hidden", page !== "users");
+
+  const titles = {
+    overview: ["AI Gateway control plane", "Overview", "Inspect credentials, sessions, usage, alerts, users, and audit events from one place."],
+    credentials: ["AI Gateway control plane", "Credentials", "Inspect provider keys, linked alerts, and rotation state."],
+    sessions: ["AI Gateway control plane", "Sessions", "Review sticky leases, rebinding history, and worker ownership."],
+    usage: ["AI Gateway control plane", "Usage", "Analyze total token usage first, then break it down by credential, user, or org."],
+    alerts: ["AI Gateway control plane", "Alerts", "Triage credential failures, usage spikes, and session anomalies."],
+    users: ["AI Gateway control plane", "Users", "Create, edit, disable, or remove users from the directory."],
+    audit: ["AI Gateway control plane", "Audit", "Filter by actor, action, or entity and inspect detailed change history."],
+  };
+
+  const [eyebrow, title, description] = titles[page] || titles.overview;
+  els.pageEyebrow.textContent = eyebrow;
+  els.pageTitle.textContent = title;
+  els.pageDescription.textContent = description;
+}
+
+async function api(path, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (state.token) {
+    headers.set("Authorization", `Bearer ${state.token}`);
+  }
+  if (options.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const response = await fetch(`/admin/api${path}`, {
+    credentials: "include",
+    ...options,
+    headers,
+  });
+
+  let payload = null;
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    payload = await response.json().catch(() => null);
+  }
+  return { response, payload };
+}
+
+async function fetchJson(path, options = {}) {
+  const { response, payload } = await api(path, options);
+  if (!response.ok) {
+    throw new Error(payload?.error || "request_failed");
+  }
+  return payload;
+}
+
+async function bootstrapSession() {
+  if (!state.token) {
+    showLogin();
+    return;
+  }
+
+  setStatus("Checking session", "validating stored token");
+  const { response, payload } = await api("/session", { method: "GET" });
+  if (!response.ok) {
+    state.token = "";
+    state.session = null;
+    state.user = null;
+    localStorage.removeItem(STORAGE_KEY);
+    showLogin(payload?.error === "unauthorized" ? "Your session expired. Sign in again." : "Unable to verify session.");
+    return;
+  }
+
+  state.session = payload;
+  state.user = payload?.user || null;
+  setStatus("Signed in", state.user ? `${state.user.name || state.user.email} · platform admin` : "platform admin");
+  showApp();
+  populateOrganizationOptions();
+  await loadAllData();
+}
+
+function populateOrganizationOptions() {
+  const organizations = Array.isArray(state.session?.organizations) ? state.session.organizations : [];
+  els.userOrg.innerHTML = organizations.length
+    ? organizations.map((entry) => `<option value="${escapeHtml(entry.id)}">${escapeHtml(entry.name)}</option>`).join("")
+    : `<option value="">No organization</option>`;
+}
+
+async function handleLogin(event) {
+  event.preventDefault();
+  els.loginError.classList.add("hidden");
+  const email = els.loginEmail.value.trim();
+  const password = els.loginPassword.value;
+
+  if (!email || !password) {
+    showLogin("Email and password are required.");
+    return;
+  }
+
+  const { response, payload } = await api("/auth/sign-in", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+
+  if (!response.ok) {
+    showLogin(payload?.error || payload?.message || "Sign in failed.");
+    return;
+  }
+
+  const token = payload?.token || "";
+  if (!token) {
+    showLogin("Sign in succeeded but no token was returned.");
+    return;
+  }
+
+  state.token = token;
+  localStorage.setItem(STORAGE_KEY, token);
+  await bootstrapSession();
+}
+
+function signOut() {
+  state.token = "";
+  state.session = null;
+  state.user = null;
+  localStorage.removeItem(STORAGE_KEY);
+  showLogin("Signed out.");
+}
+
+async function loadAllData() {
+  await Promise.all([
+    loadCredentials(),
+    loadSessions(),
+    loadAlerts(),
+    loadUsers(),
+    loadAudit(),
+    loadUsage(),
+  ]);
+  renderOverview();
+}
+
+async function loadCredentials() {
+  try {
+    const payload = await fetchJson("/credentials");
+    state.credentials = Array.isArray(payload?.credentials) ? payload.credentials : [];
+    if (!state.selectedCredentialId || !state.credentials.some((entry) => entry.id === state.selectedCredentialId)) {
+      state.selectedCredentialId = state.credentials[0]?.id || null;
+    }
+    renderCredentials();
+  } catch (error) {
+    console.error("loadCredentials failed", error);
+  }
+}
+
+async function loadSessions() {
+  try {
+    const payload = await fetchJson("/sessions");
+    state.sessions = Array.isArray(payload?.sessions) ? payload.sessions : [];
+    if (!state.selectedSessionId || !state.sessions.some((entry) => entry.id === state.selectedSessionId)) {
+      state.selectedSessionId = state.sessions[0]?.id || null;
+    }
+    renderSessions();
+  } catch (error) {
+    console.error("loadSessions failed", error);
+  }
+}
+
+async function loadAlerts() {
+  try {
+    const payload = await fetchJson("/alerts");
+    state.alerts = Array.isArray(payload?.alerts) ? payload.alerts : [];
+    if (!state.selectedAlertId || !state.alerts.some((entry) => entry.id === state.selectedAlertId)) {
+      state.selectedAlertId = state.alerts[0]?.id || null;
+    }
+    renderAlerts();
+  } catch (error) {
+    console.error("loadAlerts failed", error);
+  }
+}
+
+async function loadAudit() {
+  try {
+    const payload = await fetchJson("/audit");
+    state.audit = Array.isArray(payload?.events) ? payload.events : [];
+    if (!state.selectedAuditId || !state.audit.some((entry) => entry.id === state.selectedAuditId)) {
+      state.selectedAuditId = state.audit[0]?.id || null;
+    }
+    renderAudit();
+  } catch (error) {
+    console.error("loadAudit failed", error);
+  }
+}
+
+async function loadUsers() {
+  try {
+    const payload = await fetchJson("/users");
+    state.users = Array.isArray(payload?.users) ? payload.users : [];
+    if (!state.selectedUserId || !state.users.some((entry) => entry.id === state.selectedUserId)) {
+      state.selectedUserId = state.users[0]?.id || null;
+    }
+    if (state.userMode !== "create" && !state.selectedUserId) {
+      state.userMode = "create";
+    }
+    renderUsers();
+  } catch (error) {
+    console.error("loadUsers failed", error);
+  }
+}
+
+async function loadUsage() {
+  try {
+    const params = new URLSearchParams();
+    params.set("groupBy", state.usageFilters.groupBy);
+    if (state.usageFilters.credentialId) {
+      params.set("credentialId", state.usageFilters.credentialId);
+    }
+    if (state.usageFilters.userId) {
+      params.set("userId", state.usageFilters.userId);
+    }
+    if (state.usageFilters.orgId) {
+      params.set("orgId", state.usageFilters.orgId);
+    }
+    const payload = await fetchJson(`/usage?${params.toString()}`);
+    state.usage = payload;
+    renderUsage();
+  } catch (error) {
+    console.error("loadUsage failed", error);
+  }
+}
+
+function renderOverview() {
+  const metrics = [
+    String(state.sessions.length),
+    String(state.credentials.filter((entry) => entry.state !== "healthy").length),
+    String(state.users.length),
+  ];
+  els.heroMetrics.forEach((node, index) => {
+    if (metrics[index]) {
+      node.textContent = metrics[index];
+    }
+  });
+}
+
+function renderCredentials() {
+  const rows = state.credentials.map((credential) => {
+    const activeClass = credential.id === state.selectedCredentialId ? "row-alert" : "";
+    return `<tr class="${activeClass}" data-credential-id="${escapeHtml(credential.id)}">
+      <td><strong>${escapeHtml(credential.name)}</strong><span>${escapeHtml(credential.scope)}</span></td>
+      <td>${escapeHtml(credential.type)}</td>
+      <td><span class="status-chip">${escapeHtml(credential.state)}</span></td>
+      <td><a href="/admin/alerts" data-open-alerts="${escapeHtml(credential.id)}">${escapeHtml(String(credential.alertCount))} active alerts</a></td>
+      <td>${escapeHtml(String(credential.activeLeases))}</td>
+      <td>${escapeHtml(formatDate(credential.lastRefreshAt))}</td>
+    </tr>`;
+  }).join("");
+
+  els.credentialsTableBody.innerHTML = rows || `<tr><td colspan="6">No credentials found.</td></tr>`;
+
+  const selected = state.credentials.find((entry) => entry.id === state.selectedCredentialId) || state.credentials[0];
+  if (selected) {
+    els.credentialDetail.innerHTML = `
+      <p class="eyebrow">Selected credential</p>
+      <h3>${escapeHtml(selected.name)}</h3>
+      <div class="stack">
+        <div class="detail-line"><span>Health</span><strong>${escapeHtml(selected.state)}</strong></div>
+        <div class="detail-line"><span>Linked alerts</span><strong>${escapeHtml(String(selected.alertCount))}</strong></div>
+        <div class="detail-line"><span>Last failure</span><strong>${escapeHtml(formatDate(selected.lastFailureAt))}</strong></div>
+        <div class="detail-line"><span>Rotation</span><strong>${escapeHtml(formatDate(selected.nextRotationAt))}</strong></div>
+        <div class="detail-line"><span>Total tokens</span><strong>${escapeHtml(formatNumber(selected.totalTokens))}</strong></div>
+      </div>
+      <div class="button-row">
+        <button class="button button-secondary" type="button">Drain</button>
+        <button class="button button-secondary" type="button">Rotate</button>
+        <button class="button button-primary" type="button" data-route-alerts>Open alerts</button>
+      </div>
+    `;
+  }
+}
+
+function renderSessions() {
+  els.sessionList.innerHTML = state.sessions.map((entry) => `
+    <article class="list-card ${entry.id === state.selectedSessionId ? "active" : ""}" data-session-id="${escapeHtml(entry.id)}">
+      <div>
+        <strong>${escapeHtml(entry.id)}</strong>
+        <p>${escapeHtml(entry.userLabel)}, ${escapeHtml(entry.projectLabel)}, worker ${escapeHtml(entry.workerLabel)}</p>
+      </div>
+      <span class="status-chip">${escapeHtml(entry.state)}</span>
+    </article>
+  `).join("") || `<article class="list-card active"><div><strong>No sessions</strong><p>There are no tracked session leases yet.</p></div></article>`;
+
+  const selected = state.sessions.find((entry) => entry.id === state.selectedSessionId) || state.sessions[0];
+  if (selected) {
+    const credential = state.credentials.find((entry) => entry.id === selected.credentialId);
+    els.sessionDetail.innerHTML = `
+      <p class="eyebrow">Selected session</p>
+      <h3>${escapeHtml(selected.id)}</h3>
+      <div class="timeline">
+        <div><span>Current state</span><strong>${escapeHtml(selected.state)}</strong></div>
+        <div><span>Active binding</span><strong>${escapeHtml(credential?.name || selected.credentialId)}</strong></div>
+        <div><span>Last failover</span><strong>${escapeHtml(formatDate(selected.lastFailoverAt))}</strong></div>
+        <div><span>Last seen</span><strong>${escapeHtml(formatDate(selected.lastSeenAt))}</strong></div>
+      </div>
+      <div class="button-row">
+        <button class="button button-secondary" type="button">Open trace</button>
+        <button class="button button-primary" type="button">Watch session</button>
+      </div>
+    `;
+  }
+}
+
+function renderUsage() {
+  if (!state.usage) {
+    return;
+  }
+
+  const { filters, series, summary, topCredentials } = state.usage;
+  els.usageGroupBy.value = state.usageFilters.groupBy;
+  els.usageCredentialFilter.innerHTML = `<option value="">All credentials</option>${filters.credentials.map((entry) => `<option value="${escapeHtml(entry.id)}"${entry.id === state.usageFilters.credentialId ? " selected" : ""}>${escapeHtml(entry.label)}</option>`).join("")}`;
+  els.usageUserFilter.innerHTML = `<option value="">All users</option>${filters.users.map((entry) => `<option value="${escapeHtml(entry.id)}"${entry.id === state.usageFilters.userId ? " selected" : ""}>${escapeHtml(entry.label)}</option>`).join("")}`;
+  els.usageOrgFilter.innerHTML = `<option value="">All orgs</option>${filters.orgs.map((entry) => `<option value="${escapeHtml(entry.id)}"${entry.id === state.usageFilters.orgId ? " selected" : ""}>${escapeHtml(entry.label)}</option>`).join("")}`;
+  els.usageTotalTokens.textContent = formatNumber(summary.totalTokens);
+  els.usageTotalRequests.textContent = formatNumber(summary.totalRequests);
+  els.usageTopCredential.textContent = topCredentials[0]?.label || "No data";
+
+  const maxTokens = Math.max(...series.map((entry) => entry.totalTokens), 1);
+  els.usageChartBars.innerHTML = series.slice(0, 7).map((entry) => {
+    const height = Math.max(12, Math.round((entry.totalTokens / maxTokens) * 100));
+    return `<span title="${escapeHtml(entry.label)} · ${escapeHtml(formatNumber(entry.totalTokens))} tokens" style="height: ${height}%"></span>`;
+  }).join("");
+
+  els.usageSeries.innerHTML = series.map((entry) => `
+    <article class="list-card active">
+      <div>
+        <strong>${escapeHtml(entry.label)}</strong>
+        <p>${escapeHtml(formatNumber(entry.totalRequests))} requests</p>
+      </div>
+      <span class="status-chip">${escapeHtml(formatNumber(entry.totalTokens))} tokens</span>
+    </article>
+  `).join("") || `<article class="list-card active"><div><strong>No usage</strong><p>No usage matched the selected filters.</p></div></article>`;
+}
+
+function renderAlerts() {
+  els.alertList.innerHTML = state.alerts.map((alert) => `
+    <article class="alert-card ${alert.severity === "critical" ? "critical" : ""} ${alert.id === state.selectedAlertId ? "active" : ""}" data-alert-id="${escapeHtml(alert.id)}">
+      <div class="alert-head">
+        <strong>${escapeHtml(alert.title)}</strong>
+        <span class="status-chip">${escapeHtml(alert.severity)}</span>
+      </div>
+      <p>${escapeHtml(alert.runbook)}</p>
+      <div class="alert-meta">
+        <span>${escapeHtml(alert.source)}</span>
+        <span>${escapeHtml(formatDate(alert.lastSeenAt))}</span>
+      </div>
+    </article>
+  `).join("") || `<article class="alert-card active"><div class="alert-head"><strong>No alerts</strong></div><p>No active alert records.</p></article>`;
+
+  const selected = state.alerts.find((entry) => entry.id === state.selectedAlertId) || state.alerts[0];
+  if (selected) {
+    const credential = state.credentials.find((entry) => entry.id === selected.credentialId);
+    els.alertDetail.innerHTML = `
+      <p class="eyebrow">Runbook</p>
+      <h3>${escapeHtml(selected.title)}</h3>
+      <div class="stack">
+        <div class="detail-line"><span>Affected credential</span><strong>${escapeHtml(credential?.name || "Unassigned")}</strong></div>
+        <div class="detail-line"><span>Affected sessions</span><strong>${escapeHtml(String(selected.affectedSessions))}</strong></div>
+        <div class="detail-line"><span>Owner</span><strong>${escapeHtml(selected.owner || "Unassigned")}</strong></div>
+        <div class="detail-line"><span>Status</span><strong>${escapeHtml(selected.status)}</strong></div>
+      </div>
+      <div class="button-row">
+        <button class="button button-secondary" type="button">Acknowledge</button>
+        <button class="button button-secondary" type="button">Escalate</button>
+        <button class="button button-primary" type="button">Resolve</button>
+      </div>
+    `;
+  }
+}
+
+function filteredUsers() {
+  const term = els.userSearch.value.trim().toLowerCase();
+  const status = els.userStatusFilter.value;
+  const role = els.userRoleFilter.value;
+
+  return state.users.filter((user) => {
+    if (term && !`${user.name} ${user.email}`.toLowerCase().includes(term)) {
+      return false;
+    }
+
+    if (status === "Active" && userStatus(user) !== "Active") {
+      return false;
+    }
+    if (status === "Invited" && userStatus(user) !== "Invited") {
+      return false;
+    }
+    if (status === "Disabled" && userStatus(user) !== "Disabled") {
+      return false;
+    }
+
+    if (role === "platform_admin" && user.platformAdmin !== true) {
+      return false;
+    }
+    if (role === "member" && user.platformAdmin === true) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function currentUser() {
+  if (state.userMode === "create") {
+    return null;
+  }
+  return state.users.find((entry) => entry.id === state.selectedUserId) || null;
+}
+
+function populateUserEditor(user) {
+  const isCreate = state.userMode === "create";
+  const membership = user?.memberships?.[0];
+  els.userEditorStatus.textContent = isCreate ? "Create user" : userStatus(user);
+  els.userEditorTitle.textContent = isCreate ? "New user" : (user?.name || user?.email || "User");
+  els.userName.value = user?.name || "";
+  els.userEmail.value = user?.email || "";
+  els.userEmail.disabled = !isCreate;
+  els.userOrg.disabled = !isCreate;
+  els.userRole.disabled = false;
+  els.userPlatformAdmin.checked = user?.platformAdmin === true;
+  els.userSendInvite.checked = true;
+  if (membership?.orgId) {
+    els.userOrg.value = membership.orgId;
+    els.userRole.value = membership.role;
+  } else if (els.userOrg.options.length > 0) {
+    els.userOrg.selectedIndex = 0;
+    els.userRole.value = "member";
+  }
+  els.userDisableButton.textContent = user?.disabled ? "Enable user" : "Disable user";
+  els.userDisableButton.disabled = isCreate || !user;
+  els.userDeleteButton.disabled = isCreate || !user;
+}
+
+function renderUsers() {
+  const users = filteredUsers();
+  els.userList.innerHTML = users.map((user) => `
+    <article class="list-card ${user.id === state.selectedUserId && state.userMode !== "create" ? "active" : ""}" data-user-id="${escapeHtml(user.id)}">
+      <div>
+        <strong>${escapeHtml(user.name)}</strong>
+        <p>${escapeHtml(`${user.email} · ${summarizeUser(user)}`)}</p>
+      </div>
+      <span class="status-chip">${escapeHtml(userStatus(user))}</span>
+    </article>
+  `).join("") || `<article class="list-card active"><div><strong>No users</strong><p>No users matched the current filters.</p></div></article>`;
+
+  populateUserEditor(currentUser());
+}
+
+function filteredAudit() {
+  const term = els.auditSearch.value.trim().toLowerCase();
+  const actor = els.auditActorFilter.value;
+  const entity = els.auditEntityFilter.value;
+
+  return state.audit.filter((entry) => {
+    if (term && !`${entry.actor} ${entry.action} ${entry.entityType} ${entry.summary}`.toLowerCase().includes(term)) {
+      return false;
+    }
+    if (actor === "Platform admin" && !entry.actor.toLowerCase().includes("vaclav")) {
+      return false;
+    }
+    if (entity !== "All entities" && entity && entry.entityType.toLowerCase() !== entity.toLowerCase()) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function renderAudit() {
+  const events = filteredAudit();
+  els.auditList.innerHTML = events.map((entry) => `
+    <article class="audit-row ${entry.id === state.selectedAuditId ? "active" : ""}" data-audit-id="${escapeHtml(entry.id)}">
+      <div>
+        <strong>${escapeHtml(entry.action)}</strong>
+        <p>${escapeHtml(entry.summary)}</p>
+      </div>
+      <span>${escapeHtml(formatDate(entry.timestamp))}</span>
+    </article>
+  `).join("") || `<article class="audit-row active"><div><strong>No events</strong><p>No audit events matched the current filters.</p></div><span></span></article>`;
+
+  const selected = events.find((entry) => entry.id === state.selectedAuditId) || events[0];
+  if (selected) {
+    state.selectedAuditId = selected.id;
+    els.auditDetail.innerHTML = `
+      <p class="eyebrow">Event detail</p>
+      <h3>${escapeHtml(selected.action)}</h3>
+      <div class="stack">
+        <div class="detail-line"><span>Actor</span><strong>${escapeHtml(selected.actor)}</strong></div>
+        <div class="detail-line"><span>Changed fields</span><strong>${escapeHtml(selected.changedFields.join(", ") || "None")}</strong></div>
+        <div class="detail-line"><span>Result</span><strong>${escapeHtml(selected.result)}</strong></div>
+        <div class="detail-line"><span>Entity</span><strong>${escapeHtml(`${selected.entityType}:${selected.entityId}`)}</strong></div>
+      </div>
+      <div class="button-row">
+        <button class="button button-secondary" type="button">Open entity</button>
+        <button class="button button-secondary" type="button">Trace request</button>
+      </div>
+    `;
+  }
+}
+
+function enterCreateMode() {
+  state.userMode = "create";
+  state.selectedUserId = null;
+  setActivePage("users");
+  showApp();
+  renderUsers();
+}
+
+async function saveUser() {
+  const payload = {
+    email: els.userEmail.value.trim(),
+    name: els.userName.value.trim(),
+    platformAdmin: els.userPlatformAdmin.checked,
+    orgId: els.userOrg.value || null,
+    orgRole: els.userRole.value === "owner" ? "owner" : "member",
+  };
+
+  try {
+    if (state.userMode === "create") {
+      const created = await fetchJson("/users", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      state.userMode = "edit";
+      state.selectedUserId = created?.user?.id || null;
+    } else {
+      const user = currentUser();
+      if (!user) {
+        return;
+      }
+      await fetchJson(`/users/${encodeURIComponent(user.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: payload.name,
+          platformAdmin: payload.platformAdmin,
+        }),
+      });
+    }
+
+    await loadUsers();
+    await loadAudit();
+  } catch (error) {
+    window.alert(`Unable to save user: ${error instanceof Error ? error.message : "unknown_error"}`);
+  }
+}
+
+async function toggleUserDisabled() {
+  const user = currentUser();
+  if (!user) {
+    return;
+  }
+
+  try {
+    const action = user.disabled ? "enable" : "disable";
+    await fetchJson(`/users/${encodeURIComponent(user.id)}/${action}`, {
+      method: "POST",
+    });
+    await loadUsers();
+    await loadAudit();
+  } catch (error) {
+    window.alert(`Unable to update user: ${error instanceof Error ? error.message : "unknown_error"}`);
+  }
+}
+
+async function deleteUser() {
+  const user = currentUser();
+  if (!user) {
+    return;
+  }
+
+  const confirmed = window.confirm(`Delete ${user.email}? This cannot be undone.`);
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    await fetchJson(`/users/${encodeURIComponent(user.id)}`, {
+      method: "DELETE",
+    });
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "request_failed") {
+      window.alert(`Unable to delete user: ${error instanceof Error ? error.message : "unknown_error"}`);
+      return;
+    }
+  }
+
+  state.selectedUserId = null;
+  state.userMode = "edit";
+  await loadUsers();
+  await loadAudit();
+}
+
+function bindNavigation() {
+  els.navItems.forEach((item) => {
+    item.addEventListener("click", (event) => {
+      event.preventDefault();
+      const page = item.dataset.route || "overview";
+      setActivePage(page);
+      showApp();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  });
+}
+
+function bindActions() {
+  els.loginForm.addEventListener("submit", (event) => {
+    void handleLogin(event);
+  });
+  els.signOutButton.addEventListener("click", signOut);
+  els.refreshButton.addEventListener("click", () => void bootstrapSession());
+  els.createUserButton.addEventListener("click", enterCreateMode);
+  els.createUserButtonInline.addEventListener("click", enterCreateMode);
+  els.userSaveButton.addEventListener("click", () => void saveUser());
+  els.userDisableButton.addEventListener("click", () => void toggleUserDisabled());
+  els.userDeleteButton.addEventListener("click", () => void deleteUser());
+
+  els.credentialsTableBody.addEventListener("click", (event) => {
+    const row = event.target.closest("[data-credential-id]");
+    if (!row) return;
+    state.selectedCredentialId = row.dataset.credentialId;
+    renderCredentials();
+  });
+
+  els.sessionList.addEventListener("click", (event) => {
+    const row = event.target.closest("[data-session-id]");
+    if (!row) return;
+    state.selectedSessionId = row.dataset.sessionId;
+    renderSessions();
+  });
+
+  els.alertList.addEventListener("click", (event) => {
+    const card = event.target.closest("[data-alert-id]");
+    if (!card) return;
+    state.selectedAlertId = card.dataset.alertId;
+    renderAlerts();
+  });
+
+  els.userList.addEventListener("click", (event) => {
+    const card = event.target.closest("[data-user-id]");
+    if (!card) return;
+    state.userMode = "edit";
+    state.selectedUserId = card.dataset.userId;
+    renderUsers();
+  });
+
+  els.auditList.addEventListener("click", (event) => {
+    const card = event.target.closest("[data-audit-id]");
+    if (!card) return;
+    state.selectedAuditId = card.dataset.auditId;
+    renderAudit();
+  });
+
+  els.userSearch.addEventListener("input", renderUsers);
+  els.userStatusFilter.addEventListener("change", renderUsers);
+  els.userRoleFilter.addEventListener("change", renderUsers);
+  els.auditSearch.addEventListener("input", renderAudit);
+  els.auditActorFilter.addEventListener("change", renderAudit);
+  els.auditEntityFilter.addEventListener("change", renderAudit);
+  els.auditDateRange.addEventListener("change", renderAudit);
+  els.usageGroupBy.addEventListener("change", () => {
+    state.usageFilters.groupBy = els.usageGroupBy.value;
+    void loadUsage();
+  });
+  els.usageCredentialFilter.addEventListener("change", () => {
+    state.usageFilters.credentialId = els.usageCredentialFilter.value;
+    void loadUsage();
+  });
+  els.usageUserFilter.addEventListener("change", () => {
+    state.usageFilters.userId = els.usageUserFilter.value;
+    void loadUsage();
+  });
+  els.usageOrgFilter.addEventListener("change", () => {
+    state.usageFilters.orgId = els.usageOrgFilter.value;
+    void loadUsage();
+  });
+}
+
+function handleRoute() {
+  const page = normalizePage(location.pathname);
+  setActivePage(page);
+  if (!state.token) {
+    showLogin();
+  }
+}
+
+bindNavigation();
+bindActions();
+handleRoute();
+void bootstrapSession();

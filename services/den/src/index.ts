@@ -12,6 +12,7 @@ import { env } from "./env.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
 import { desktopAuthV2Router } from "./http/desktop-auth-v2.js"
+import { createAdminRuntimeRouter } from "./http/admin-runtime.js"
 import { orgsRouter } from "./http/orgs.js"
 import { workersRouter } from "./http/workers.js"
 
@@ -58,6 +59,7 @@ app.get("/v1/me", asyncRoute(async (req, res) => {
 
 app.use("/v1/desktop-auth", desktopAuthRouter)
 app.use("/v2/desktop-auth", desktopAuthV2Router)
+app.use("/v1/admin", createAdminRuntimeRouter())
 app.use("/v1/orgs", orgsRouter)
 app.use("/v1/workers", workersRouter)
 app.use(errorMiddleware)
@@ -299,6 +301,21 @@ async function ensureTables() {
         CONSTRAINT \`platform_role_user_id\` UNIQUE(\`user_id\`)
       )
     `)
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`admin_user_state\` (
+        \`id\` varchar(64) NOT NULL,
+        \`user_id\` varchar(64) NOT NULL,
+        \`disabled\` boolean NOT NULL DEFAULT false,
+        \`disabled_at\` timestamp(3),
+        \`disabled_by_user_id\` varchar(64),
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT \`admin_user_state_id\` PRIMARY KEY(\`id\`),
+        CONSTRAINT \`admin_user_state_user_id\` UNIQUE(\`user_id\`)
+      )
+    `)
+    await ensureIndex("admin_user_state", "admin_user_state_disabled", ["disabled"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`worker\` (
