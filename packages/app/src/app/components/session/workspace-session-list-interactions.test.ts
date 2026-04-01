@@ -68,11 +68,11 @@ test("by-project mode wires project-group drag and drop reorder handlers", () =>
   );
 });
 
-test("project rows expose grip handle and drag lifecycle bindings", () => {
-  assert.match(
+test("project rows expose drag lifecycle bindings without dedicated grip handle", () => {
+  assert.doesNotMatch(
     source,
     /GripVertical/,
-    "project rows should render a grip handle for drag affordance",
+    "project rows should not render a dedicated six-dot grip icon",
   );
 
   assert.match(
@@ -84,13 +84,13 @@ test("project rows expose grip handle and drag lifecycle bindings", () => {
   assert.match(
     source,
     /draggable/,
-    "project drag handle should opt into native drag-and-drop",
+    "project header should opt into native drag-and-drop",
   );
 
   assert.match(
     source,
     /onDragStart=\{\(event\) => handleProjectDragStart\(event, project\.key\)\}/,
-    "project header/handle should start reordering with the project key",
+    "project header should start reordering with the project key",
   );
 
   assert.match(
@@ -108,7 +108,7 @@ test("project rows expose grip handle and drag lifecycle bindings", () => {
   assert.match(
     source,
     /onDragEnd=\{handleProjectDragEnd\}/,
-    "project header/handle should clear transient drag state at the end of the gesture",
+    "project header should clear transient drag state at the end of the gesture",
   );
 
   assert.match(

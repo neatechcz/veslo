@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { Folder, FolderPlus, GripVertical, HeartPulse, List, Loader2, MoreHorizontal, Plus, Search } from "lucide-solid";
+import { Folder, FolderPlus, HeartPulse, List, Loader2, MoreHorizontal, Plus, Search } from "lucide-solid";
 
 import type { VesloSoulStatus } from "../../lib/veslo-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
@@ -1311,24 +1311,6 @@ export default function WorkspaceSessionList(props: Props) {
                           title={tr("sidebar.create_session_in_project")}
                         >
                           <Plus size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          draggable
-                          class="p-1 rounded-md text-gray-8 hover:text-gray-11 hover:bg-gray-3 cursor-grab active:cursor-grabbing"
-                          aria-label={tr("sidebar.reorder_project")}
-                          title={tr("sidebar.reorder_project")}
-                          onDragStart={(event) => handleProjectDragStart(event, project.key)}
-                          onDragEnd={handleProjectDragEnd}
-                          onClick={(event) => event.stopPropagation()}
-                          onPointerDown={(event) =>
-                            handleProjectPointerDown(
-                              event,
-                              project.key,
-                              projectDragLabel(),
-                            )}
-                        >
-                          <GripVertical size={14} />
                         </button>
                         <button
                           type="button"
