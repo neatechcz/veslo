@@ -8,6 +8,7 @@ import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { currentLocale, t } from "../../../i18n";
 import { extractFilesFromDataTransfer } from "../../utils/data-transfer-files";
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
+import { maybeConvertDocxToTextAttachment } from "../../utils/attachment-mime-normalization";
 import { nextAgentModeOnShiftTab } from "../../pages/session-shortcuts";
 
 type MentionOption = {
@@ -59,69 +60,9 @@ const IMAGE_COMPRESS_MAX_PX = 2048;
 const IMAGE_COMPRESS_QUALITY = 0.82;
 const IMAGE_COMPRESS_TARGET_BYTES = 1_500_000;
 const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
-const ACCEPTED_FILE_TYPES = [...ACCEPTED_IMAGE_TYPES, "application/pdf"];
 const PDF_SIGNATURE_SCAN_BYTES = 2048;
-const FILE_URL_RE = /^file:\/\//i;
-const HTTP_URL_RE = /^https?:\/\//i;
-const WINDOWS_PATH_RE = /^[a-zA-Z]:\\/;
-const UNC_PATH_RE = /^\\\\/;
 
 const isImageMime = (mime: string) => ACCEPTED_IMAGE_TYPES.includes(mime);
-const isSupportedAttachmentType = (mime: string) => ACCEPTED_FILE_TYPES.includes(mime);
-
-const escapeMarkdownLabel = (value: string) =>
-  value
-    .replace(/\\/g, "\\\\")
-    .replace(/\[/g, "\\[")
-    .replace(/\]/g, "\\]");
-
-const normalizeLinkTarget = (value: string) => {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  if (FILE_URL_RE.test(trimmed) || HTTP_URL_RE.test(trimmed)) {
-    return encodeURI(trimmed);
-  }
-  if (WINDOWS_PATH_RE.test(trimmed)) {
-    return `file:///${encodeURI(trimmed.replace(/\\/g, "/"))}`;
-  }
-  if (UNC_PATH_RE.test(trimmed)) {
-    const normalized = trimmed.replace(/\\/g, "/").replace(/^\/+/, "");
-    return `file://${encodeURI(normalized)}`;
-  }
-  if (trimmed.startsWith("/")) {
-    return `file://${encodeURI(trimmed)}`;
-  }
-  return "";
-};
-
-const parseClipboardLinks = (clipboard: DataTransfer) => {
-  const values = [
-    clipboard.getData("text/uri-list") ?? "",
-    clipboard.getData("text/plain") ?? "",
-    clipboard.getData("text") ?? "",
-  ];
-  const links: string[] = [];
-  const seen = new Set<string>();
-  for (const value of values) {
-    const lines = value
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith("#"));
-    for (const line of lines) {
-      const target = normalizeLinkTarget(line);
-      if (!target || seen.has(target)) continue;
-      seen.add(target);
-      links.push(target);
-    }
-  }
-  return links;
-};
-
-const formatLinks = (links: Array<{ name: string; target: string }>) =>
-  links
-    .filter((entry) => entry.target)
-    .map((entry) => `[${escapeMarkdownLabel(entry.name || "file")}](${entry.target})`)
-    .join("\n");
 
 const fileToDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -433,13 +374,8 @@ export default function Composer(props: ComposerProps) {
   let pasteCounter = 0;
   let draftScheduledAt = 0;
   let lastInputAt = 0;
+  let fileDragDepth = 0;
   const pasteTextById = new Map<string, string>();
-  const objectUrls = new Set<string>();
-  const createObjectUrl = (file: File) => {
-    const url = URL.createObjectURL(file);
-    objectUrls.add(url);
-    return url;
-  };
   // Track IME composition state so we can combine it with keyCode === 229 to
   // reliably suppress Enter during CJK input across Chrome, Safari, and WebKit.
   let imeComposing = false;
@@ -457,6 +393,7 @@ export default function Composer(props: ComposerProps) {
   const [historySnapshot, setHistorySnapshot] = createSignal<ComposerDraft | null>(null);
   const [historyIndex, setHistoryIndex] = createSignal({ prompt: -1, shell: -1 });
   const [history, setHistory] = createSignal({ prompt: [] as ComposerDraft[], shell: [] as ComposerDraft[] });
+  const [fileDragOver, setFileDragOver] = createSignal(false);
   const attachmentsDisabled = createMemo(() => !props.attachmentsEnabled);
   const hasDraftContent = createMemo(() => draftText().trim().length > 0 || attachments().length > 0);
   const selectedMode = createMemo(() => props.selectedAgent ?? "build");
@@ -465,13 +402,6 @@ export default function Composer(props: ComposerProps) {
     { value: "plan", label: "Plan" },
     { value: "veslo", label: "Task" },
   ] as const;
-
-  onCleanup(() => {
-    for (const url of objectUrls) {
-      URL.revokeObjectURL(url);
-    }
-    objectUrls.clear();
-  });
 
   const createPasteSpan = (part: Extract<ComposerPart, { type: "paste" }>) => {
     pasteTextById.set(part.id, part.text);
@@ -511,6 +441,15 @@ export default function Composer(props: ComposerProps) {
       });
     }
 
+    const clearDragState = () => {
+      clearFileDragState();
+    };
+    window.addEventListener("dragend", clearDragState);
+    window.addEventListener("drop", clearDragState);
+    onCleanup(() => {
+      window.removeEventListener("dragend", clearDragState);
+      window.removeEventListener("drop", clearDragState);
+    });
   });
 
   const mentionGroups = createMemo<MentionGroup[]>(() => {
@@ -1053,26 +992,17 @@ export default function Composer(props: ComposerProps) {
       props.onToast(props.attachmentsDisabledReason ?? translate("session.attachments_unavailable"));
       return;
     }
-    const supportedFiles = files.filter((file) => isSupportedAttachmentType(file.type));
-    const unsupportedFiles = files.filter((file) => !isSupportedAttachmentType(file.type));
-
-    if (unsupportedFiles.length) {
-      await insertUnsupportedFileLinks(unsupportedFiles, []);
-    }
-
-    if (!supportedFiles.length) {
-      return;
-    }
 
     const next: ComposerAttachment[] = [];
-    for (const file of supportedFiles) {
+    for (const file of files) {
       if (file.size > MAX_ATTACHMENT_BYTES) {
         props.onToast(`${file.name} exceeds the 8MB limit.`);
         continue;
       }
       try {
         // Compress images before encoding to data URL
-        const processed = isImageMime(file.type) ? await compressImageFile(file) : file;
+        const maybeCompressed = isImageMime(file.type) ? await compressImageFile(file) : file;
+        const processed = await maybeConvertDocxToTextAttachment(maybeCompressed);
         const isPdfAttachment = processed.type === "application/pdf" || processed.name.toLowerCase().endsWith(".pdf");
         if (isPdfAttachment) {
           const prefix = new Uint8Array(await processed.slice(0, PDF_SIGNATURE_SCAN_BYTES).arrayBuffer());
@@ -1184,40 +1114,13 @@ export default function Composer(props: ComposerProps) {
     emitDraftChange();
   };
 
-  const insertUnsupportedFileLinks = async (files: File[], clipboardLinks: string[]) => {
-    const fallbackLinks = () =>
-      files.map((file, index) => ({
-        name: file.name || `file-${index + 1}`,
-        target: clipboardLinks[index] || createObjectUrl(file),
-      }));
-
-    const text = formatLinks(fallbackLinks());
-    if (!text) {
-      props.onToast(translate("session.unsupported_attachment_type"));
-      return;
-    }
-    insertPlainTextAtSelection(text);
-    updateMentionQuery();
-    updateSlashQuery();
-    emitDraftChange();
-    props.onToast(translate("session.inserted_links_for_unsupported_files"));
-  };
-
   const handlePaste = (event: ClipboardEvent) => {
     if (!event.clipboardData) return;
     const clipboard = event.clipboardData;
     const allFiles = extractFilesFromDataTransfer(clipboard);
     if (allFiles.length) {
       event.preventDefault();
-      const supported = allFiles.filter((file) => isSupportedAttachmentType(file.type));
-      const unsupported = allFiles.filter((file) => !isSupportedAttachmentType(file.type));
-      if (supported.length) {
-        void addAttachments(supported);
-      }
-      if (unsupported.length) {
-        const links = parseClipboardLinks(clipboard);
-        void insertUnsupportedFileLinks(unsupported, links);
-      }
+      void addAttachments(allFiles);
       return;
     }
 
@@ -1251,9 +1154,41 @@ export default function Composer(props: ComposerProps) {
     emitDraftChange();
   };
 
-  const handleDrop = (event: DragEvent) => {
-    if (!event.dataTransfer) return;
+  const isFileDragTransfer = (transfer: Pick<DataTransfer, "types" | "files"> | null | undefined) => {
+    if (!transfer) return false;
+    const files = Array.from((transfer.files ?? []) as ArrayLike<File>).filter(Boolean);
+    if (files.length > 0) return true;
+    const types = Array.from((transfer.types ?? []) as ArrayLike<string>)
+      .map((entry) => entry.toLowerCase())
+      .filter(Boolean);
+    return types.includes("files");
+  };
+
+  const clearFileDragState = () => {
+    fileDragDepth = 0;
+    setFileDragOver(false);
+  };
+
+  const handleDragEnter = (event: DragEvent) => {
+    if (!isFileDragTransfer(event.dataTransfer)) return;
+    fileDragDepth += 1;
+    if (attachmentsDisabled()) return;
     event.preventDefault();
+    setFileDragOver(true);
+  };
+
+  const handleDragLeave = (event: DragEvent) => {
+    if (!isFileDragTransfer(event.dataTransfer)) return;
+    fileDragDepth = Math.max(0, fileDragDepth - 1);
+    if (fileDragDepth === 0) {
+      setFileDragOver(false);
+    }
+  };
+
+  const handleDrop = (event: DragEvent) => {
+    if (!event.dataTransfer || !isFileDragTransfer(event.dataTransfer)) return;
+    event.preventDefault();
+    clearFileDragState();
     const files = extractFilesFromDataTransfer(event.dataTransfer);
     if (files.length) void addAttachments(files);
   };
@@ -1502,14 +1437,27 @@ export default function Composer(props: ComposerProps) {
     >
       <div class={`mx-auto w-full ${composerWidthClass()}`}>
         <div
-          class={`bg-gray-1 border border-gray-6/80 rounded-xl overflow-visible transition-all relative group/input ${mentionOpen() || slashOpen() ? "rounded-t-none border-t-transparent" : "shadow-[0_8px_30px_rgba(0,0,0,0.08)]"
-            }`}
+          class={`bg-gray-1 border border-gray-6/80 rounded-xl overflow-visible transition-all relative group/input ${
+            fileDragOver() ? "border-blue-7/70 ring-2 ring-blue-7/35 bg-blue-2/20" : ""
+          } ${mentionOpen() || slashOpen() ? "rounded-t-none border-t-transparent" : "shadow-[0_8px_30px_rgba(0,0,0,0.08)]"}`}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           onDragOver={(event: DragEvent) => {
+            if (!isFileDragTransfer(event.dataTransfer)) return;
             if (attachmentsDisabled()) return;
             event.preventDefault();
+            setFileDragOver(true);
           }}
         >
+          <Show when={fileDragOver()}>
+            <div class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-xl border-2 border-dashed border-blue-8/55 bg-blue-3/20">
+              <span class="rounded-full border border-blue-8/35 bg-blue-2/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-blue-11">
+                {translate("inbox.drop_files_title")}
+              </span>
+            </div>
+          </Show>
+
           <Show when={mentionOpen()}>
             <div class="absolute bottom-full left-[-1px] right-[-1px] z-30">
               <div class="rounded-t-xl border border-gray-6 border-b-0 bg-gray-1 shadow-xl overflow-hidden">
