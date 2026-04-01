@@ -115,6 +115,12 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
     await pollStatus(port, LAUNCH_TIMEOUT);
     console.log(`[e2e] WebDriver server is ready.`);
   } catch (error) {
+    if (!appProcess) {
+      throw new Error(
+        `Spawned Tauri app exited before WebDriver became ready. ` +
+        `If Veslo is already running, run it with the e2e WebDriver build or stop it before launching tests.`,
+      );
+    }
     stopApp();
     throw error;
   }
