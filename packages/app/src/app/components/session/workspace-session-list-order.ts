@@ -23,7 +23,14 @@ export const applyProjectOrder = <T extends { key: string }>(groups: T[], stored
   return ordered;
 };
 
-export const reorderProjectKeys = (keys: string[], sourceKey: string, targetKey: string): string[] => {
+export type ProjectDropPosition = "before" | "after";
+
+export const reorderProjectKeys = (
+  keys: string[],
+  sourceKey: string,
+  targetKey: string,
+  position: ProjectDropPosition = "before",
+): string[] => {
   const source = sourceKey.trim();
   const target = targetKey.trim();
   if (!source || !target || source === target) return keys.slice();
@@ -35,7 +42,8 @@ export const reorderProjectKeys = (keys: string[], sourceKey: string, targetKey:
   const next = keys.slice();
   const [moved] = next.splice(sourceIndex, 1);
   const adjustedTargetIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
-  next.splice(adjustedTargetIndex, 0, moved);
+  const insertIndex = position === "after" ? adjustedTargetIndex + 1 : adjustedTargetIndex;
+  next.splice(insertIndex, 0, moved);
   return next;
 };
 

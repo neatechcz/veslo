@@ -43,6 +43,12 @@ test("reorderProjectKeys inserts source before target", () => {
   assert.deepEqual(next, ["c", "a", "b"]);
 });
 
+test("reorderProjectKeys inserts source after target when requested", () => {
+  const next = reorderProjectKeys(["a", "b", "c"], "a", "c", "after");
+
+  assert.deepEqual(next, ["b", "c", "a"]);
+});
+
 test("reorderProjectKeys returns original order for self drop", () => {
   const keys = ["a", "b", "c"];
 

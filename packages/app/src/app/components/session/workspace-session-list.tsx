@@ -92,6 +92,21 @@ type ProjectDropIndicator = {
   position: ProjectDropPosition;
 };
 
+type ProjectPointerDragState = {
+  sourceKey: string;
+  label: string;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  active: boolean;
+};
+
+type ProjectDragPreviewState = {
+  x: number;
+  y: number;
+  label: string;
+};
+
 type RowHierarchyLookup = {
   rowBySessionId: Map<string, FlatSessionRow>;
   parentBySessionId: Map<string, string>;
@@ -174,6 +189,8 @@ export default function WorkspaceSessionList(props: Props) {
   const [draggingProjectKey, setDraggingProjectKey] = createSignal<string | null>(null);
   const [dragOverProjectKey, setDragOverProjectKey] = createSignal<string | null>(null);
   const [projectDropIndicator, setProjectDropIndicator] = createSignal<ProjectDropIndicator | null>(null);
+  const [projectPointerDrag, setProjectPointerDrag] = createSignal<ProjectPointerDragState | null>(null);
+  const [projectDragPreview, setProjectDragPreview] = createSignal<ProjectDragPreviewState | null>(null);
   const [workspaceMenuTarget, setWorkspaceMenuTarget] = createSignal<WorkspaceMenuTarget | null>(null);
   const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
   const [sidebarControlsWidth, setSidebarControlsWidth] = createSignal(0);
@@ -443,6 +460,8 @@ export default function WorkspaceSessionList(props: Props) {
     }
   };
 
+  const PROJECT_POINTER_DRAG_START_THRESHOLD_PX = 2;
+
   const clearProjectDragState = () => {
     if (projectDragPreviewElement) {
       projectDragPreviewElement.remove();
@@ -451,9 +470,69 @@ export default function WorkspaceSessionList(props: Props) {
     setDraggingProjectKey(null);
     setDragOverProjectKey(null);
     setProjectDropIndicator(null);
+    setProjectDragPreview(null);
+  };
+
+  const applyProjectReorder = (
+    sourceKeyRaw: string,
+    targetKeyRaw: string,
+    dropPosition: ProjectDropPosition = "before",
+  ) => {
+    const sourceKey = sourceKeyRaw.trim();
+    const targetKey = targetKeyRaw.trim();
+    if (!sourceKey || !targetKey || sourceKey === targetKey) return;
+
+    const visibleKeys = orderedProjectGroups().map((group) => group.key);
+    const reorderedVisibleKeys = reorderProjectKeys(visibleKeys, sourceKey, targetKey, dropPosition);
+    const mergedProjectOrder = mergeVisibleOrder(projectOrder(), reorderedVisibleKeys);
+    setProjectOrder(mergedProjectOrder);
+    writeProjectOrder(mergedProjectOrder);
+  };
+
+  const resolveProjectDropIndicatorFromPoint = (
+    clientX: number,
+    clientY: number,
+    sourceProjectKey: string,
+  ): ProjectDropIndicator | null => {
+    if (typeof document === "undefined") return null;
+    const hit = document.elementFromPoint(clientX, clientY);
+    const targetNode = hit instanceof HTMLElement ? hit.closest("[data-project-key]") : null;
+    if (!(targetNode instanceof HTMLElement)) {
+      return null;
+    }
+
+    const targetKey = targetNode.dataset.projectKey?.trim() ?? "";
+    if (!targetKey || targetKey === sourceProjectKey) {
+      return null;
+    }
+
+    const rect = targetNode.getBoundingClientRect();
+    const position: ProjectDropPosition = clientY < rect.top + rect.height / 2 ? "before" : "after";
+    return { key: targetKey, position };
+  };
+
+  const updateProjectDropIndicatorFromPoint = (
+    clientX: number,
+    clientY: number,
+    sourceProjectKey: string,
+  ) => {
+    const indicator = resolveProjectDropIndicatorFromPoint(clientX, clientY, sourceProjectKey);
+    if (!indicator) {
+      setDragOverProjectKey(null);
+      setProjectDropIndicator(null);
+      return;
+    }
+
+    const { key, position } = indicator;
+    setDragOverProjectKey(key);
+    setProjectDropIndicator({ key, position });
   };
 
   const handleProjectDragStart = (event: DragEvent, projectKey: string) => {
+    setProjectPointerDrag(null);
+    setProjectDragPreview(null);
+    setDragOverProjectKey(null);
+    setProjectDropIndicator(null);
     const key = projectKey.trim();
     if (!key) return;
     event.dataTransfer?.setData("text/plain", key);
@@ -540,21 +619,95 @@ export default function WorkspaceSessionList(props: Props) {
       return;
     }
 
-    const visibleKeys = orderedProjectGroups().map((group) => group.key);
     const dropPosition = projectDropIndicator()?.key === normalizedTargetKey
       ? projectDropIndicator()?.position ?? "before"
       : "before";
-    const reorderedVisibleKeys = reorderProjectKeys(visibleKeys, sourceKey, normalizedTargetKey, dropPosition);
-    const mergedProjectOrder = mergeVisibleOrder(projectOrder(), reorderedVisibleKeys);
-
-    setProjectOrder(mergedProjectOrder);
-    writeProjectOrder(mergedProjectOrder);
+    applyProjectReorder(sourceKey, normalizedTargetKey, dropPosition);
     clearProjectDragState();
   };
 
   const handleProjectDragEnd = () => {
     clearProjectDragState();
   };
+
+  const handleProjectPointerDown = (
+    event: PointerEvent,
+    projectKey: string,
+    projectLabel: string,
+  ) => {
+    if (event.button !== 0 && event.button !== -1) return;
+    const sourceKey = projectKey.trim();
+    if (!sourceKey) return;
+
+    const label = projectLabel.trim() || sourceKey;
+    setProjectPointerDrag({
+      sourceKey,
+      label,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+    });
+  };
+
+  const handleProjectPointerMove = (event: PointerEvent) => {
+    const drag = projectPointerDrag();
+    if (!drag || event.pointerId !== drag.pointerId) return;
+
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    const movedEnough = (deltaX * deltaX) + (deltaY * deltaY) >= PROJECT_POINTER_DRAG_START_THRESHOLD_PX ** 2;
+    const active = drag.active || movedEnough;
+    if (!active) return;
+
+    if (!drag.active) {
+      setProjectPointerDrag({ ...drag, active: true });
+      setDraggingProjectKey(drag.sourceKey);
+    }
+
+    event.preventDefault();
+    setProjectDragPreview({
+      x: event.clientX,
+      y: event.clientY,
+      label: drag.label,
+    });
+    updateProjectDropIndicatorFromPoint(event.clientX, event.clientY, drag.sourceKey);
+  };
+
+  const finishProjectPointerDrag = (event: PointerEvent) => {
+    const drag = projectPointerDrag();
+    if (!drag || event.pointerId !== drag.pointerId) return;
+
+    if (drag.active) {
+      const indicator = resolveProjectDropIndicatorFromPoint(event.clientX, event.clientY, drag.sourceKey) ??
+        projectDropIndicator();
+      if (indicator && indicator.key !== drag.sourceKey) {
+        applyProjectReorder(drag.sourceKey, indicator.key, indicator.position);
+      }
+    }
+
+    setProjectPointerDrag(null);
+    clearProjectDragState();
+  };
+
+  createEffect(() => {
+    const drag = projectPointerDrag();
+    if (!drag) return;
+
+    const onPointerMove = (event: PointerEvent) => handleProjectPointerMove(event);
+    const onPointerUp = (event: PointerEvent) => finishProjectPointerDrag(event);
+    const onPointerCancel = (event: PointerEvent) => finishProjectPointerDrag(event);
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerCancel);
+
+    onCleanup(() => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
+    });
+  });
 
   createEffect(() => {
     const validSessionIds = new Set(
@@ -1032,6 +1185,8 @@ export default function WorkspaceSessionList(props: Props) {
                 const taskLoadError = () => taskLoadErrorFor(workspace(), project.error);
                 const isConnectionActionBusy = () => isConnectionActionBusyFor(workspace().id);
                 const anchorKey = `project:${workspace().id}`;
+                const projectDragLabel = () =>
+                  project.projectLabel || project.projectTitle || tr("sidebar.open_project");
                 const isProjectDragOver = () => dragOverProjectKey() === project.key;
                 const isDraggedProject = () => draggingProjectKey() === project.key;
                 const dropIndicatorPosition = () =>
@@ -1086,6 +1241,7 @@ export default function WorkspaceSessionList(props: Props) {
                     <div class="relative flex items-start gap-2" data-project-drag-preview>
                       <button
                         type="button"
+                        draggable
                         class={`min-w-0 flex-1 rounded-lg px-1.5 py-1 text-left transition-colors ${
                           isActiveWorkspace()
                             ? "text-gray-12"
@@ -1093,6 +1249,9 @@ export default function WorkspaceSessionList(props: Props) {
                         }`}
                         title={project.projectTitle}
                         aria-label={project.projectLabel ? `${tr("sidebar.open_project")} ${project.projectLabel}` : tr("sidebar.open_project")}
+                        onDragStart={(event) => handleProjectDragStart(event, project.key)}
+                        onDragEnd={handleProjectDragEnd}
+                        onPointerDown={(event) => handleProjectPointerDown(event, project.key, projectDragLabel())}
                         onClick={() => toggleProjectCollapse(project.key)}
                       >
                         <div class="flex items-center gap-2 min-w-0">
@@ -1155,13 +1314,19 @@ export default function WorkspaceSessionList(props: Props) {
                         </button>
                         <button
                           type="button"
+                          draggable
                           class="p-1 rounded-md text-gray-8 hover:text-gray-11 hover:bg-gray-3 cursor-grab active:cursor-grabbing"
                           aria-label={tr("sidebar.reorder_project")}
                           title={tr("sidebar.reorder_project")}
-                          draggable
-                          onClick={(event) => event.stopPropagation()}
                           onDragStart={(event) => handleProjectDragStart(event, project.key)}
                           onDragEnd={handleProjectDragEnd}
+                          onClick={(event) => event.stopPropagation()}
+                          onPointerDown={(event) =>
+                            handleProjectPointerDown(
+                              event,
+                              project.key,
+                              projectDragLabel(),
+                            )}
                         >
                           <GripVertical size={14} />
                         </button>
@@ -1285,6 +1450,19 @@ export default function WorkspaceSessionList(props: Props) {
           </Show>
         </div>
       </div>
+      <Show when={projectDragPreview()}>
+        {(preview) => (
+          <div
+            class="pointer-events-none fixed z-[90] max-w-[24rem] rounded-lg border border-gray-6 bg-gray-1/96 px-2.5 py-1.5 text-[12px] font-medium text-gray-12 shadow-xl shadow-gray-12/20 backdrop-blur-sm"
+            style={{
+              left: `${preview().x + 14}px`,
+              top: `${preview().y + 12}px`,
+            }}
+          >
+            <span class="truncate block">{preview().label}</span>
+          </div>
+        )}
+      </Show>
     </div>
   );
 }

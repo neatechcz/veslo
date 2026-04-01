@@ -63,7 +63,7 @@ test("by-project mode wires project-group drag and drop reorder handlers", () =>
 
   assert.match(
     source,
-    /const reorderedVisibleKeys = reorderProjectKeys\(visibleKeys, sourceKey, normalizedTargetKey, dropPosition\);/,
+    /const reorderedVisibleKeys = reorderProjectKeys\(visibleKeys, sourceKey, targetKey, dropPosition\);/,
     "drop should pass explicit insertion position into project reorder logic",
   );
 });
@@ -90,7 +90,7 @@ test("project rows expose grip handle and drag lifecycle bindings", () => {
   assert.match(
     source,
     /onDragStart=\{\(event\) => handleProjectDragStart\(event, project\.key\)\}/,
-    "drag handle should start reordering with the project key",
+    "project header/handle should start reordering with the project key",
   );
 
   assert.match(
@@ -108,7 +108,19 @@ test("project rows expose grip handle and drag lifecycle bindings", () => {
   assert.match(
     source,
     /onDragEnd=\{handleProjectDragEnd\}/,
-    "drag handle should clear transient drag state at the end of the gesture",
+    "project header/handle should clear transient drag state at the end of the gesture",
+  );
+
+  assert.match(
+    source,
+    /onPointerDown=\{\(event\) => handleProjectPointerDown\(event, project\.key, projectDragLabel\(\)\)\}/,
+    "project header should include pointer-based fallback drag start for webview environments with unreliable native drag",
+  );
+
+  assert.match(
+    source,
+    /const indicator = resolveProjectDropIndicatorFromPoint\(event\.clientX, event\.clientY, drag\.sourceKey\) \?\?\s*projectDropIndicator\(\);/,
+    "pointer drag finish should resolve the drop target at pointerup so reorder still works if final move event is missed",
   );
 
   assert.match(
