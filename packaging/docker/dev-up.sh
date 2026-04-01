@@ -174,6 +174,7 @@ echo "" >&2
 echo "Veslo web UI:        http://localhost:$WEB_PORT" >&2
 echo "Veslo server:        http://localhost:$VESLO_PORT" >&2
 echo "Veslo AI gateway:    http://localhost:$VESLO_AI_GATEWAY_PORT" >&2
+echo "AI gateway DB:       mysql://gateway:gateway@ai-gateway-db:3306/veslo_ai_gateway (container-internal)" >&2
 echo "Token file:          $ROOT_DIR/tmp/.dev-env-$DEV_ID" >&2
 echo "" >&2
 echo "To stop this stack:" >&2

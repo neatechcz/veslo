@@ -22,3 +22,24 @@ test("parseEnv falls back to AI_GATEWAY_PORT when PORT is unset", () => {
   assert.equal(parsed.host, "0.0.0.0");
   assert.equal(parsed.port, 4034);
 });
+
+test("parseEnv resolves gateway database, secret key, and OpenAI OAuth settings", () => {
+  const parsed = parseEnv({
+    AI_GATEWAY_PORT: "4034",
+    AI_GATEWAY_DATABASE_URL: "mysql://gateway:gateway@127.0.0.1:3306/veslo_ai_gateway",
+    AI_GATEWAY_SECRET_KEY: "test_secret_key_32_bytes_minimum____",
+    AI_GATEWAY_OPENAI_CLIENT_ID: "client_id",
+    AI_GATEWAY_OPENAI_CLIENT_SECRET: "client_secret",
+    AI_GATEWAY_OPENAI_REDIRECT_BASE: "https://veslo.example.test/auth/openai/",
+    AI_GATEWAY_DEN_API_BASE: "http://127.0.0.1:8788/",
+  });
+
+  assert.equal(parsed.databaseUrl, "mysql://gateway:gateway@127.0.0.1:3306/veslo_ai_gateway");
+  assert.equal(parsed.secretKey, "test_secret_key_32_bytes_minimum____");
+  assert.deepEqual(parsed.openAiOAuth, {
+    clientId: "client_id",
+    clientSecret: "client_secret",
+    redirectBase: "https://veslo.example.test/auth/openai",
+  });
+  assert.equal(parsed.denApiBase, "http://127.0.0.1:8788");
+});

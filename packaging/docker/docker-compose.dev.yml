@@ -31,6 +31,24 @@ x-shared: &shared
     - ${VESLO_HOST_OPENCODE_DATA_DIR:-./workspace/.veslo-host-opencode-data}:/persist/.veslo-host-opencode-data:ro
 
 services:
+  ai-gateway-db:
+    image: mysql:8.4
+    command:
+      - --default-authentication-plugin=caching_sha2_password
+    environment:
+      MYSQL_DATABASE: veslo_ai_gateway
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_USER: gateway
+      MYSQL_PASSWORD: gateway
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -proot --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    volumes:
+      - ai-gateway-db-data:/var/lib/mysql
+
   orchestrator:
     <<: *shared
     entrypoint: ["/bin/sh", "-c"]
@@ -191,6 +209,9 @@ services:
 
   ai-gateway:
     <<: *shared
+    depends_on:
+      ai-gateway-db:
+        condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -214,6 +235,12 @@ services:
       - "${VESLO_AI_GATEWAY_PORT:-4034}:4034"
     environment:
       CI: "true"
+      AI_GATEWAY_DATABASE_URL: mysql://gateway:gateway@ai-gateway-db:3306/veslo_ai_gateway
+      AI_GATEWAY_SECRET_KEY: dev_only_ai_gateway_secret_key_32b__
+      AI_GATEWAY_OPENAI_CLIENT_ID: veslo-dev-openai-client
+      AI_GATEWAY_OPENAI_CLIENT_SECRET: veslo-dev-openai-secret
+      AI_GATEWAY_OPENAI_REDIRECT_BASE: http://127.0.0.1:${VESLO_AI_GATEWAY_PORT:-4034}/auth/openai
+      AI_GATEWAY_DEN_API_BASE: http://host.docker.internal:${VESLO_PORT:-8787}
 
   web:
     <<: *shared
@@ -267,6 +294,8 @@ services:
       VESLO_DEV_ID: ${VESLO_DEV_ID:-default}
 
 volumes:
+  ai-gateway-db-data:
+    name: veslo-dev-ai-gateway-db-data
   pnpm-store:
     name: veslo-dev-pnpm-store
   bun-install:
