@@ -36,23 +36,6 @@ const credentialRepositoryContractCheck: CredentialRepository = {
 };
 
 const leaseRepositoryContractCheck: LeaseRepository = {
-  async getActiveLeaseBySessionId(): Promise<SessionLease | null> {
-    return null;
-  },
-  async createSessionLeaseIfMissing(_input: CreateSessionLeaseInput): Promise<SessionLease> {
-    return {
-      id: "lease_legacy_1",
-      sessionId: "session_legacy_1",
-      activeBindingId: "binding_legacy_1",
-    };
-  },
-  async rebindSessionLease(_input: RebindSessionLeaseInput): Promise<SessionLease | null> {
-    return {
-      id: "lease_legacy_1",
-      sessionId: "session_legacy_1",
-      activeBindingId: "binding_legacy_2",
-    };
-  },
   async getActiveLease(_input: ResolveLeaseInput): Promise<SessionLease | null> {
     return null;
   },

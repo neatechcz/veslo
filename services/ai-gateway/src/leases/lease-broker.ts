@@ -1,51 +1,48 @@
 import { classifyUpstreamFailure, type UpstreamFailureInput, type UpstreamFailureKind } from "./error-classifier.js";
-import type { LeaseRepository, SessionLease } from "./repository.js";
+import type { BindingSelector } from "./binding-selector.js";
+import type { LeaseRepository, ResolveLeaseInput, SessionLease } from "./repository.js";
 
-export type BindingSelector = {
-  selectInitialBinding(input: { sessionId: string }): Promise<string>;
-  selectReplacementBinding(input: { sessionId: string; previousBindingId: string }): Promise<string>;
-};
-
-export type HandleFailureInput = {
-  sessionId: string;
+export type HandleFailureInput = ResolveLeaseInput & {
   currentBindingId: string;
   failureKind: UpstreamFailureKind;
 };
 
 export class LeaseBroker {
-  private readonly creationBySession = new Map<string, Promise<SessionLease>>();
-  private readonly rebindingBySession = new Map<string, Promise<SessionLease>>();
+  private readonly creationByScope = new Map<string, Promise<SessionLease>>();
+  private readonly rebindingByScope = new Map<string, Promise<SessionLease>>();
 
   constructor(
     private readonly leases: LeaseRepository,
     private readonly selector: BindingSelector,
   ) {}
 
-  async getOrCreateActiveLease(sessionId: string): Promise<SessionLease> {
-    const existing = await this.leases.getActiveLeaseBySessionId(sessionId);
+  async getOrCreateActiveLease(input: ResolveLeaseInput): Promise<SessionLease> {
+    const existing = await this.leases.getActiveLease(input);
     if (existing) {
       return existing;
     }
 
-    const inFlightCreation = this.creationBySession.get(sessionId);
+    const key = leaseScopeKey(input);
+    const inFlightCreation = this.creationByScope.get(key);
     if (inFlightCreation) {
       return inFlightCreation;
     }
 
-    const creation = this.createLeaseIfMissing(sessionId).finally(() => {
-      this.creationBySession.delete(sessionId);
+    const creation = this.createLeaseIfMissing(input).finally(() => {
+      this.creationByScope.delete(key);
     });
 
-    this.creationBySession.set(sessionId, creation);
+    this.creationByScope.set(key, creation);
     return creation;
   }
 
-  async handleUpstreamFailure(input: {
-    sessionId: string;
+  async handleUpstreamFailure(input: ResolveLeaseInput & {
     currentBindingId: string;
     failure: UpstreamFailureInput;
   }): Promise<SessionLease> {
     return this.handleFailure({
+      ownerUserId: input.ownerUserId,
+      provider: input.provider,
       sessionId: input.sessionId,
       currentBindingId: input.currentBindingId,
       failureKind: classifyUpstreamFailure(input.failure),
@@ -54,36 +51,37 @@ export class LeaseBroker {
 
   async handleFailure(input: HandleFailureInput): Promise<SessionLease> {
     if (input.failureKind === "permanent_credential") {
-      return this.rebindSingleFlight(input.sessionId, input.currentBindingId);
+      return this.rebindSingleFlight(input, input.currentBindingId);
     }
 
     // Refreshable auth and transient upstream issues keep the current sticky binding.
-    return this.getOrCreateActiveLease(input.sessionId);
+    return this.getOrCreateActiveLease(input);
   }
 
-  private async rebindSingleFlight(sessionId: string, currentBindingId: string): Promise<SessionLease> {
-    const active = this.rebindingBySession.get(sessionId);
+  private async rebindSingleFlight(input: ResolveLeaseInput, currentBindingId: string): Promise<SessionLease> {
+    const key = leaseScopeKey(input);
+    const active = this.rebindingByScope.get(key);
     if (active) {
       return active;
     }
 
-    const rebinding = this.rebindLease(sessionId, currentBindingId).finally(() => {
-      this.rebindingBySession.delete(sessionId);
+    const rebinding = this.rebindLease(input, currentBindingId).finally(() => {
+      this.rebindingByScope.delete(key);
     });
 
-    this.rebindingBySession.set(sessionId, rebinding);
+    this.rebindingByScope.set(key, rebinding);
     return rebinding;
   }
 
-  private async rebindLease(sessionId: string, currentBindingId: string): Promise<SessionLease> {
-    const currentLease = await this.getOrCreateActiveLease(sessionId);
+  private async rebindLease(input: ResolveLeaseInput, currentBindingId: string): Promise<SessionLease> {
+    const currentLease = await this.getOrCreateActiveLease(input);
 
     if (currentLease.activeBindingId !== currentBindingId) {
       return currentLease;
     }
 
     const replacementBindingId = await this.selector.selectReplacementBinding({
-      sessionId,
+      ...input,
       previousBindingId: currentBindingId,
     });
 
@@ -91,8 +89,8 @@ export class LeaseBroker {
       return currentLease;
     }
 
-    const rebound = await this.leases.rebindSessionLease({
-      sessionId,
+    const rebound = await this.leases.rebindLease({
+      ...input,
       expectedCurrentBindingId: currentBindingId,
       nextBindingId: replacementBindingId,
     });
@@ -101,20 +99,24 @@ export class LeaseBroker {
       return rebound;
     }
 
-    const latestLease = await this.leases.getActiveLeaseBySessionId(sessionId);
-    return latestLease ?? this.getOrCreateActiveLease(sessionId);
+    const latestLease = await this.leases.getActiveLease(input);
+    return latestLease ?? this.getOrCreateActiveLease(input);
   }
 
-  private async createLeaseIfMissing(sessionId: string): Promise<SessionLease> {
-    const leaseBeforeCreate = await this.leases.getActiveLeaseBySessionId(sessionId);
+  private async createLeaseIfMissing(input: ResolveLeaseInput): Promise<SessionLease> {
+    const leaseBeforeCreate = await this.leases.getActiveLease(input);
     if (leaseBeforeCreate) {
       return leaseBeforeCreate;
     }
 
-    const activeBindingId = await this.selector.selectInitialBinding({ sessionId });
-    return this.leases.createSessionLeaseIfMissing({
-      sessionId,
+    const activeBindingId = await this.selector.selectInitialBinding(input);
+    return this.leases.createLeaseIfMissing({
+      ...input,
       activeBindingId,
     });
   }
+}
+
+function leaseScopeKey(input: ResolveLeaseInput): string {
+  return `${input.ownerUserId}:${input.provider}:${input.sessionId}`;
 }

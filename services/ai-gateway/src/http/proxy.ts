@@ -2,6 +2,7 @@ import { Router } from "express";
 
 import type { TokenBroker } from "../credentials/token-broker.js";
 import type { LeaseBroker } from "../leases/lease-broker.js";
+import type { LeaseProvider } from "../leases/repository.js";
 import type { ProviderTransport } from "../providers/transport.js";
 
 export type ProxyDependencies = {
@@ -33,7 +34,20 @@ export function createProxyRouter(deps: ProxyDependencies) {
         return;
       }
 
-      const lease = await deps.leaseBroker.getOrCreateActiveLease(sessionId);
+      const ownerUserId = getHeaderAsString(req.header("x-veslo-owner-user-id")) ?? "system_default";
+      const providerHeader = getHeaderAsString(req.header("x-veslo-provider"));
+      const provider = parseProvider(providerHeader) ?? "openai";
+
+      if (providerHeader && !parseProvider(providerHeader)) {
+        res.status(400).json({ error: "invalid_provider" });
+        return;
+      }
+
+      const lease = await deps.leaseBroker.getOrCreateActiveLease({
+        ownerUserId,
+        provider,
+        sessionId,
+      });
       const upstreamAuth = await deps.tokenBroker.getUpstreamAuth({
         bindingId: lease.activeBindingId,
       });
@@ -64,4 +78,12 @@ export function createProxyRouter(deps: ProxyDependencies) {
   });
 
   return router;
+}
+
+function parseProvider(value: string | null): LeaseProvider | null {
+  if (value === "openai" || value === "anthropic") {
+    return value;
+  }
+
+  return null;
 }

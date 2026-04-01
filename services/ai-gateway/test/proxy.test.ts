@@ -4,21 +4,29 @@ import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 
 import type { UpstreamAuth } from "../src/credentials/token-broker.js";
-import type { LeaseRepository, RebindSessionLeaseInput, SessionLease } from "../src/leases/repository.js";
-import { LeaseBroker, type BindingSelector } from "../src/leases/lease-broker.js";
+import type {
+  CreateSessionLeaseInput,
+  LeaseRepository,
+  RebindSessionLeaseInput,
+  ResolveLeaseInput,
+  SessionLease,
+} from "../src/leases/repository.js";
+import type { BindingSelector } from "../src/leases/binding-selector.js";
+import { LeaseBroker } from "../src/leases/lease-broker.js";
 import { createApp, type AppDependencies } from "../src/index.js";
 
 class InMemoryLeaseRepository implements LeaseRepository {
-  private readonly leasesBySession = new Map<string, SessionLease>();
+  private readonly leasesByKey = new Map<string, SessionLease>();
   private leaseIdCounter = 0;
   public createCalls = 0;
 
-  async getActiveLeaseBySessionId(sessionId: string): Promise<SessionLease | null> {
-    return this.leasesBySession.get(sessionId) ?? null;
+  async getActiveLease(input: ResolveLeaseInput): Promise<SessionLease | null> {
+    return this.leasesByKey.get(leaseKey(input)) ?? null;
   }
 
-  async createSessionLeaseIfMissing(input: { sessionId: string; activeBindingId: string }): Promise<SessionLease> {
-    const existing = this.leasesBySession.get(input.sessionId);
+  async createLeaseIfMissing(input: CreateSessionLeaseInput): Promise<SessionLease> {
+    const key = leaseKey(input);
+    const existing = this.leasesByKey.get(key);
     if (existing) {
       return existing;
     }
@@ -26,16 +34,22 @@ class InMemoryLeaseRepository implements LeaseRepository {
     this.createCalls += 1;
     const created: SessionLease = {
       id: `lease_${++this.leaseIdCounter}`,
+      ownerUserId: input.ownerUserId,
+      provider: input.provider,
       sessionId: input.sessionId,
       activeBindingId: input.activeBindingId,
     };
-    this.leasesBySession.set(input.sessionId, created);
+    this.leasesByKey.set(key, created);
     return created;
   }
 
-  async rebindSessionLease(_input: RebindSessionLeaseInput): Promise<SessionLease | null> {
+  async rebindLease(_input: RebindSessionLeaseInput): Promise<SessionLease | null> {
     return null;
   }
+}
+
+function leaseKey(input: ResolveLeaseInput): string {
+  return `${input.ownerUserId}:${input.provider}:${input.sessionId}`;
 }
 
 test("POST /v1/chat/completions creates and reuses session lease and fetches auth via token broker", async () => {

@@ -3,12 +3,19 @@ import { pathToFileURL } from "node:url";
 
 import { DefaultTokenBroker } from "./credentials/default-token-broker.js";
 import { EncryptedSecretStore } from "./credentials/encrypted-secret-store.js";
-import type { CredentialRecord, CredentialRepository } from "./credentials/repository.js";
+import type { CredentialBinding, CredentialRecord, CredentialRepository } from "./credentials/repository.js";
 import { env } from "./env.js";
 import { createAdminRouter, createDefaultAdminService, type AdminService } from "./http/admin.js";
 import { createProxyRouter, type ProxyDependencies } from "./http/proxy.js";
-import { LeaseBroker, type BindingSelector } from "./leases/lease-broker.js";
-import type { LeaseRepository, RebindSessionLeaseInput, SessionLease } from "./leases/repository.js";
+import { DefaultBindingSelector } from "./leases/binding-selector.js";
+import { LeaseBroker } from "./leases/lease-broker.js";
+import type {
+  CreateSessionLeaseInput,
+  LeaseRepository,
+  RebindSessionLeaseInput,
+  ResolveLeaseInput,
+  SessionLease,
+} from "./leases/repository.js";
 
 export type AppDependencies = {
   admin?: AdminService;
@@ -34,6 +41,29 @@ class InMemoryCredentialRepository implements CredentialRepository {
       .map((record) => record.id);
   }
 
+  async listEligibleBindings(input: {
+    ownerUserId: string;
+    provider: string;
+    excludeBindingId?: string;
+  }): Promise<CredentialBinding[]> {
+    return Array.from(this.recordsByBindingId.entries())
+      .filter(([bindingId, record]) => {
+        if (record.state !== "healthy") return false;
+        if (record.ownerUserId !== input.ownerUserId) return false;
+        if (record.provider !== input.provider) return false;
+        if (input.excludeBindingId && bindingId === input.excludeBindingId) return false;
+        return true;
+      })
+      .map(([bindingId, record]) => ({
+        id: bindingId,
+        ownerUserId: record.ownerUserId,
+        provider: record.provider,
+        credentialRecordId: record.id,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+      }));
+  }
+
   async getCredentialRecordByBindingId(bindingId: string): Promise<CredentialRecord | null> {
     return this.recordsByBindingId.get(bindingId) ?? null;
   }
@@ -50,31 +80,39 @@ class InMemoryCredentialRepository implements CredentialRepository {
 }
 
 class InMemoryLeaseRepository implements LeaseRepository {
-  private readonly leasesBySession = new Map<string, SessionLease>();
+  private readonly leasesByKey = new Map<string, SessionLease>();
   private leaseIdCounter = 0;
 
-  async getActiveLeaseBySessionId(sessionId: string): Promise<SessionLease | null> {
-    return this.leasesBySession.get(sessionId) ?? null;
+  async getActiveLease(input: ResolveLeaseInput): Promise<SessionLease | null> {
+    return this.leasesByKey.get(leaseKey(input)) ?? null;
   }
 
-  async createSessionLeaseIfMissing(input: { sessionId: string; activeBindingId: string }): Promise<SessionLease> {
-    const existing = this.leasesBySession.get(input.sessionId);
+  async createLeaseIfMissing(input: CreateSessionLeaseInput): Promise<SessionLease> {
+    const key = leaseKey(input);
+    const existing = this.leasesByKey.get(key);
     if (existing) {
       return existing;
     }
 
     const created: SessionLease = {
       id: `lease_${++this.leaseIdCounter}`,
+      ownerUserId: input.ownerUserId,
+      provider: input.provider,
       sessionId: input.sessionId,
       activeBindingId: input.activeBindingId,
     };
 
-    this.leasesBySession.set(input.sessionId, created);
+    this.leasesByKey.set(key, created);
     return created;
   }
 
   async rebindSessionLease(input: RebindSessionLeaseInput): Promise<SessionLease | null> {
-    const existing = this.leasesBySession.get(input.sessionId);
+    return this.rebindLease(input);
+  }
+
+  async rebindLease(input: RebindSessionLeaseInput): Promise<SessionLease | null> {
+    const key = leaseKey(input);
+    const existing = this.leasesByKey.get(key);
     if (!existing || existing.activeBindingId !== input.expectedCurrentBindingId) {
       return null;
     }
@@ -84,9 +122,13 @@ class InMemoryLeaseRepository implements LeaseRepository {
       activeBindingId: input.nextBindingId,
     };
 
-    this.leasesBySession.set(input.sessionId, rebound);
+    this.leasesByKey.set(key, rebound);
     return rebound;
   }
+}
+
+function leaseKey(input: ResolveLeaseInput): string {
+  return `${input.ownerUserId}:${input.provider}:${input.sessionId}`;
 }
 
 function createDefaultProxyDependencies(): ProxyDependencies {
@@ -113,14 +155,10 @@ function createDefaultProxyDependencies(): ProxyDependencies {
       apiKey: "dev_default_api_key",
     },
   });
-  const leaseBroker = new LeaseBroker(new InMemoryLeaseRepository(), {
-    async selectInitialBinding() {
-      return "default_binding";
-    },
-    async selectReplacementBinding(input) {
-      return input.previousBindingId;
-    },
-  } satisfies BindingSelector);
+  const leaseBroker = new LeaseBroker(
+    new InMemoryLeaseRepository(),
+    new DefaultBindingSelector(credentials),
+  );
 
   return {
     leaseBroker,
