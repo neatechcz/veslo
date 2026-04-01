@@ -6,10 +6,8 @@ import {
   isTauriRuntime,
   safeStringify,
 } from "../utils";
-import { reportError } from "../lib/error-reporter";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { t, currentLocale } from "../../i18n";
-import { downloadDir } from "@tauri-apps/api/path";
 import {
   opencodeDbMigrate,
   pickFile,
@@ -101,8 +99,7 @@ export function createConfigStore(deps: ConfigStoreDeps) {
         .slice(0, 60);
       const dateStamp = new Date().toISOString().slice(0, 10);
       const fileName = `veslo-${nameBase || "worker"}-${dateStamp}.veslo-workspace`;
-      const downloads = await downloadDir().catch((e: unknown) => { reportError(e, "workspace.downloadDir"); return null; });
-      const defaultPath = downloads ? `${downloads}/${fileName}` : fileName;
+      const defaultPath = fileName;
 
       const outputPath = await saveFile({
         title: "Export worker config",

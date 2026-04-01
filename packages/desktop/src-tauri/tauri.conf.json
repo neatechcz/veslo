@@ -26,7 +26,12 @@
   "bundle": {
     "createUpdaterArtifacts": true,
     "macOS": {
-      "entitlements": "./entitlements.plist"
+      "entitlements": "./entitlements.plist",
+      "infoPlist": {
+        "NSDesktopFolderUsageDescription": "Veslo needs access to your Desktop when you choose Desktop files or folders in the app.",
+        "NSDocumentsFolderUsageDescription": "Veslo needs access to your Documents when you choose Documents files or folders in the app.",
+        "NSDownloadsFolderUsageDescription": "Veslo needs access to your Downloads when you import or export files from the app."
+      }
     },
     "windows": {
       "wix": {
