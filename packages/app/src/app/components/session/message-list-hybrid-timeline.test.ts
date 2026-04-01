@@ -64,14 +64,9 @@ test("collapsed timeline meta is not the generic execution label", () => {
   assert.match(source, /formatTimelineDuration/);
 });
 
-test("thinking-off still keeps reasoning in timeline grouping", () => {
-  assert.doesNotMatch(source, /if \(part\.type === "reasoning"\) \{\s*return props\.showThinking;\s*\}/s);
-  assert.match(source, /part\.type === "text" \|\| part\.type === "tool" \|\| part\.type === "agent" \|\| part\.type === "file" \|\| part\.type === "reasoning"/);
-});
-
-test("thinking-off hides reasoning detail but preserves a thinking indicator row", () => {
-  assert.match(source, /entry\.part\?\.type === "reasoning" && entry\.row\.rowType === "note" && !props\.showThinking/);
-  assert.match(source, /primary: tr\("session\.timeline_thinking"\)/);
+test("message grouping respects thinking visibility for timeline steps", () => {
+  assert.match(source, /if \(part\.type === "reasoning"\) \{\s*return props\.showThinking;\s*\}/s);
+  assert.match(source, /groupMessageParts\(renderableParts, groupId, \{ showThinking: props\.showThinking \}\)/);
 });
 
 test("timeline technical detail disclosure is controlled by the same toggle", () => {

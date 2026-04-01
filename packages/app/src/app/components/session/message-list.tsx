@@ -514,7 +514,11 @@ export default function MessageList(props: MessageListProps) {
         return false;
       }
 
-      if (part.type === "text" || part.type === "tool" || part.type === "agent" || part.type === "file" || part.type === "reasoning") {
+      if (part.type === "reasoning") {
+        return props.showThinking;
+      }
+
+      if (part.type === "text" || part.type === "tool" || part.type === "agent" || part.type === "file") {
         return true;
       }
 
@@ -547,7 +551,7 @@ export default function MessageList(props: MessageListProps) {
 
       toolPartCount += renderableParts.reduce((count, part) => (part.type === "tool" ? count + 1 : count), 0);
       const groupId = String((message.info as any).id ?? "message");
-      const groups = groupMessageParts(renderableParts, groupId);
+      const groups = groupMessageParts(renderableParts, groupId, { showThinking: props.showThinking });
       const isUser = (message.info as any).role === "user";
       const isStepsOnly = groups.length > 0 && groups.every((group) => group.kind === "steps");
       const stepGroups = isStepsOnly

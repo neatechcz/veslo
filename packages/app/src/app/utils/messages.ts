@@ -171,6 +171,10 @@ export function isStepPart(part: Part) {
   return part.type === "reasoning" || part.type === "tool";
 }
 
+type GroupMessagePartsOptions = {
+  showThinking?: boolean;
+};
+
 export function isUserVisiblePart(part: Part) {
   const flags = part as { synthetic?: boolean; ignored?: boolean };
   if (flags.synthetic || flags.ignored) return false;
@@ -254,12 +258,13 @@ function isExplorationToolPart(part: Part) {
   return EXPLORATION_TOOL_NAMES.has(tool);
 }
 
-export function groupMessageParts(parts: Part[], messageId: string): MessageGroup[] {
+export function groupMessageParts(parts: Part[], messageId: string, options: GroupMessagePartsOptions = {}): MessageGroup[] {
   const groups: MessageGroup[] = [];
   const explorationSteps: Part[] = [];
   let textBuffer = "";
   let stepGroupIndex = 0;
   let sawExecution = false;
+  const showThinking = options.showThinking ?? true;
 
   const flushText = () => {
     if (!textBuffer) return;
@@ -290,6 +295,10 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
   };
 
   parts.forEach((part) => {
+    if (part.type === "reasoning" && !showThinking) {
+      return;
+    }
+
     if (part.type === "text") {
       if (!isVisibleTextPart(part)) {
         return;
