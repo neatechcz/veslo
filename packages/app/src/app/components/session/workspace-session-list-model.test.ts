@@ -248,6 +248,52 @@ test("requiredVisibleCountForExpandedSession requests enough rows to reveal dire
   assert.equal(requiredVisibleCountForExpandedSession(rows, new Set(["root-a"]), "root-a"), null);
 });
 
+test("requiredVisibleCountForExpandedSession includes nested expanded descendants", () => {
+  const workspace = {
+    id: "workspace-1",
+    name: "workspace-1",
+    path: "/tmp/workspace-1",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+
+  const rows = buildRecentRows([
+    {
+      workspace,
+      sessions: [
+        {
+          id: "root-a",
+          title: "root-a",
+          time: { created: 100, updated: 5_000 },
+        },
+        {
+          id: "root-b",
+          title: "root-b",
+          time: { created: 200, updated: 4_000 },
+        },
+        {
+          id: "sub-b-1",
+          title: "sub-b-1",
+          parentID: "root-b",
+          time: { created: 210, updated: 3_900 },
+        },
+        {
+          id: "sub-b-2",
+          title: "sub-b-2",
+          parentID: "sub-b-1",
+          time: { created: 220, updated: 3_800 },
+        },
+      ],
+      status: "ready",
+    },
+  ]);
+
+  assert.equal(
+    requiredVisibleCountForExpandedSession(rows, new Set(["root-b", "sub-b-1"]), "root-b"),
+    4,
+  );
+});
+
 test("buildProjectGroups keeps directory groups in workspace insertion order", () => {
   const workspaceA = {
     id: "workspace-a",

@@ -287,7 +287,23 @@ export const requiredVisibleCountForExpandedSession = (
   const parentIndex = visibleRows.findIndex((row) => row.session.id === id);
   if (parentIndex < 0) return null;
 
-  return parentIndex + childCount + 1;
+  const isDescendantOf = (candidateId: string, ancestorId: string) => {
+    let parentId = lookup.parentBySessionId.get(candidateId) ?? null;
+    while (parentId) {
+      if (parentId === ancestorId) return true;
+      parentId = lookup.parentBySessionId.get(parentId) ?? null;
+    }
+    return false;
+  };
+
+  let deepestVisibleDescendantIndex = parentIndex;
+  for (let index = parentIndex + 1; index < visibleRows.length; index += 1) {
+    if (isDescendantOf(visibleRows[index].session.id, id)) {
+      deepestVisibleDescendantIndex = index;
+    }
+  }
+
+  return deepestVisibleDescendantIndex + 1;
 };
 
 export const deriveExpandedParentSessionIds = (
