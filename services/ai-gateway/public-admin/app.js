@@ -1,9 +1,13 @@
 const STORAGE_KEY = "veslo.ai-gateway.admin.token";
+const BROWSER_AUTH_STORAGE_KEY = "veslo.ai-gateway.admin.browser-auth";
 const DEFAULT_PAGES = ["credentials", "sessions", "usage", "alerts", "users", "audit"];
+const AUTH_STATE_BYTES = 32;
+const AUTH_CODE_VERIFIER_BYTES = 32;
 
 const state = {
   token: localStorage.getItem(STORAGE_KEY) || "",
   page: normalizePage(location.pathname),
+  authBusy: false,
   session: null,
   user: null,
   credentials: [],
@@ -28,9 +32,7 @@ const state = {
 
 const els = {
   loginPanel: document.getElementById("login-panel"),
-  loginForm: document.getElementById("login-form"),
-  loginEmail: document.getElementById("login-email"),
-  loginPassword: document.getElementById("login-password"),
+  browserSignInButton: document.getElementById("browser-sign-in-button"),
   loginError: document.getElementById("login-error"),
   appPanel: document.getElementById("app-panel"),
   authState: document.getElementById("auth-state"),
@@ -90,6 +92,93 @@ function normalizePage(pathname) {
   return DEFAULT_PAGES.includes(page) ? page : "overview";
 }
 
+function authStorage() {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+function readPendingBrowserAuth(expectedSessionId = "") {
+  const store = authStorage();
+  if (!store) return null;
+
+  try {
+    const raw = store.getItem(BROWSER_AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed?.sessionId !== "string" ||
+      typeof parsed?.state !== "string" ||
+      typeof parsed?.codeVerifier !== "string"
+    ) {
+      return null;
+    }
+    if (expectedSessionId && parsed.sessionId !== expectedSessionId) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writePendingBrowserAuth(value) {
+  const store = authStorage();
+  if (!store) return;
+  try {
+    store.setItem(BROWSER_AUTH_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // ignore browser storage failures
+  }
+}
+
+function clearPendingBrowserAuth(expectedSessionId = "") {
+  const store = authStorage();
+  if (!store) return;
+  try {
+    const pending = readPendingBrowserAuth();
+    if (!expectedSessionId || pending?.sessionId === expectedSessionId) {
+      store.removeItem(BROWSER_AUTH_STORAGE_KEY);
+    }
+  } catch {
+    // ignore browser storage failures
+  }
+}
+
+function toBase64Url(buffer) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
+function randomBase64Url(length) {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return toBase64Url(bytes);
+}
+
+async function sha256Base64Url(value) {
+  const encoded = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", encoded);
+  return toBase64Url(digest);
+}
+
+function readAuthCallbackParams() {
+  const params = new URLSearchParams(location.search);
+  const code = params.get("code")?.trim() || "";
+  const sessionId = params.get("sessionId")?.trim() || "";
+  return code ? { code, sessionId } : null;
+}
+
+function clearAuthCallbackParams() {
+  history.replaceState(null, "", location.pathname);
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -133,13 +222,23 @@ function setStatus(text, userText = "") {
   els.authUser.textContent = userText || "";
 }
 
+function setBrowserAuthBusy(busy, label = "Sign in with Browser") {
+  state.authBusy = busy;
+  if (!els.browserSignInButton) {
+    return;
+  }
+  els.browserSignInButton.disabled = busy;
+  els.browserSignInButton.textContent = busy ? "Opening browser login..." : label;
+}
+
 function showLogin(message = "") {
   els.loginPanel.classList.remove("hidden");
   els.appPanel.classList.add("hidden");
   els.createUserButton.classList.add("hidden");
   els.loginError.textContent = message;
   els.loginError.classList.toggle("hidden", !message);
-  setStatus("Signed out", "admin access required");
+  setBrowserAuthBusy(false);
+  setStatus("Signed out", "browser sign-in required");
 }
 
 function showApp() {
@@ -237,35 +336,106 @@ function populateOrganizationOptions() {
     : `<option value="">No organization</option>`;
 }
 
-async function handleLogin(event) {
-  event.preventDefault();
+async function startBrowserAuth() {
   els.loginError.classList.add("hidden");
-  const email = els.loginEmail.value.trim();
-  const password = els.loginPassword.value;
+  setBrowserAuthBusy(true);
 
-  if (!email || !password) {
-    showLogin("Email and password are required.");
-    return;
+  try {
+    const stateValue = randomBase64Url(AUTH_STATE_BYTES);
+    const codeVerifier = randomBase64Url(AUTH_CODE_VERIFIER_BYTES);
+    const codeChallenge = await sha256Base64Url(codeVerifier);
+    const redirectUri = `${location.origin}${location.pathname}`;
+
+    const { response, payload } = await api("/auth/browser/start", {
+      method: "POST",
+      body: JSON.stringify({
+        intent: "signin",
+        redirectUri,
+        state: stateValue,
+        codeChallenge,
+      }),
+    });
+
+    if (!response.ok) {
+      showLogin(payload?.error || payload?.message || "Unable to start browser sign in.");
+      return;
+    }
+
+    const authorizeUrl = typeof payload?.authorizeUrl === "string" ? payload.authorizeUrl.trim() : "";
+    const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId.trim() : "";
+    if (!authorizeUrl || !sessionId) {
+      showLogin("Browser sign in started, but the response was incomplete.");
+      return;
+    }
+
+    writePendingBrowserAuth({
+      sessionId,
+      state: stateValue,
+      codeVerifier,
+    });
+
+    window.location.assign(authorizeUrl);
+  } catch (error) {
+    showLogin(error instanceof Error ? error.message : "Unable to start browser sign in.");
+  }
+}
+
+async function completeBrowserAuth() {
+  const callback = readAuthCallbackParams();
+  if (!callback) {
+    return false;
   }
 
-  const { response, payload } = await api("/auth/sign-in", {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  });
+  const pending = readPendingBrowserAuth(callback.sessionId);
+  clearAuthCallbackParams();
 
-  if (!response.ok) {
-    showLogin(payload?.error || payload?.message || "Sign in failed.");
-    return;
+  if (!pending) {
+    showLogin("This browser sign-in session is missing local handoff proof. Start sign-in again.");
+    return true;
   }
 
-  const token = payload?.token || "";
-  if (!token) {
-    showLogin("Sign in succeeded but no token was returned.");
+  setStatus("Completing sign in", "exchanging browser handoff");
+  setBrowserAuthBusy(true, "Completing sign in...");
+
+  try {
+    const { response, payload } = await api("/auth/browser/exchange", {
+      method: "POST",
+      body: JSON.stringify({
+        code: callback.code,
+        sessionId: callback.sessionId || pending.sessionId,
+        state: pending.state,
+        codeVerifier: pending.codeVerifier,
+      }),
+    });
+
+    if (!response.ok) {
+      showLogin(payload?.error || payload?.message || "Browser sign in failed.");
+      return true;
+    }
+
+    const token = typeof payload?.token === "string" ? payload.token : "";
+    if (!token) {
+      showLogin("Browser sign in succeeded but no token was returned.");
+      return true;
+    }
+
+    state.token = token;
+    localStorage.setItem(STORAGE_KEY, token);
+    await bootstrapSession();
+    return true;
+  } catch (error) {
+    showLogin(error instanceof Error ? error.message : "Browser sign in failed.");
+    return true;
+  } finally {
+    clearPendingBrowserAuth(callback.sessionId || pending.sessionId);
+  }
+}
+
+async function initializeAuth() {
+  const completedCallback = await completeBrowserAuth();
+  if (completedCallback) {
     return;
   }
-
-  state.token = token;
-  localStorage.setItem(STORAGE_KEY, token);
   await bootstrapSession();
 }
 
@@ -775,8 +945,8 @@ function bindNavigation() {
 }
 
 function bindActions() {
-  els.loginForm.addEventListener("submit", (event) => {
-    void handleLogin(event);
+  els.browserSignInButton.addEventListener("click", () => {
+    void startBrowserAuth();
   });
   els.signOutButton.addEventListener("click", signOut);
   els.refreshButton.addEventListener("click", () => void bootstrapSession());
@@ -858,4 +1028,4 @@ function handleRoute() {
 bindNavigation();
 bindActions();
 handleRoute();
-void bootstrapSession();
+void initializeAuth();

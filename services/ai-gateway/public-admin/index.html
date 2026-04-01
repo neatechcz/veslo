@@ -65,22 +65,14 @@
         <section id="login-panel" class="panel login-panel hidden" aria-labelledby="login-title">
           <div class="login-copy">
             <p class="eyebrow">Secure access</p>
-            <h2 id="login-title">Sign in to the control plane</h2>
-            <p class="muted">Use your Den email and password. If a token is already stored locally, we will try it first.</p>
+            <h2 id="login-title">Sign in with Browser</h2>
+            <p class="muted">Use the standard Veslo web login. We will return here automatically once the browser handoff finishes.</p>
           </div>
 
-          <form id="login-form" class="login-form">
-            <label>
-              <span>Email</span>
-              <input id="login-email" name="email" type="email" autocomplete="email" required />
-            </label>
-            <label>
-              <span>Password</span>
-              <input id="login-password" name="password" type="password" autocomplete="current-password" required />
-            </label>
-            <button class="button button-primary" type="submit">Sign in</button>
+          <div class="login-form">
+            <button id="browser-sign-in-button" class="button button-primary" type="button">Sign in with Browser</button>
             <p id="login-error" class="error hidden" role="alert"></p>
-          </form>
+          </div>
         </section>
 
         <section id="app-panel" class="app-grid hidden" aria-live="polite">

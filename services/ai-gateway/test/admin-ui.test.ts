@@ -5,7 +5,7 @@ import test from "node:test"
 
 import { createApp } from "../src/index.js"
 
-test("GET /admin/credentials serves the admin shell", async () => {
+test("GET /admin/credentials serves the admin shell without embedding a custom credential form", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -19,6 +19,30 @@ test("GET /admin/credentials serves the admin shell", async () => {
     assert.match(html, /AI Gateway Admin/i)
     assert.match(html, /Credentials/i)
     assert.match(html, /Users/i)
+    assert.match(html, /Sign in with Browser/i)
+    assert.doesNotMatch(html, /<form[^>]+id="login-form"/i)
+    assert.doesNotMatch(html, /type="password"/i)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js uses browser handoff auth instead of custom email-password sign-in", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /\/auth\/browser\/start/)
+    assert.match(script, /\/auth\/browser\/exchange/)
+    assert.doesNotMatch(script, /\/admin\/api\/auth\/sign-in/)
+    assert.doesNotMatch(script, /loginPassword/)
   } finally {
     server.close()
     await once(server, "close")
@@ -44,7 +68,14 @@ test("GET /admin/api/session returns 401 when no bearer token is present", async
 test("GET /admin/api/credentials rejects invalid bearer tokens before serving read models", async () => {
   const app = createApp({
     admin: {
-      async signIn() {
+      async startBrowserAuth() {
+        return {
+          authorizeUrl: "https://den.example.test/?desktopOnboarding=1&sid=test",
+          sessionId: "session_test",
+          expiresAt: null,
+        }
+      },
+      async exchangeBrowserAuth() {
         throw new Error("unused")
       },
       async getSession() {

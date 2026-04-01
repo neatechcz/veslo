@@ -123,6 +123,26 @@ export type AuthPayload = {
   session: AdminSessionSnapshot;
 };
 
+export type BrowserAuthStartPayload = {
+  authorizeUrl: string;
+  sessionId: string;
+  expiresAt: string | null;
+};
+
+export type BrowserAuthStartInput = {
+  intent: "signin" | "signup";
+  redirectUri: string;
+  state: string;
+  codeChallenge: string;
+};
+
+export type BrowserAuthExchangeInput = {
+  code: string;
+  sessionId: string;
+  state: string;
+  codeVerifier: string;
+};
+
 export type CreateUserInput = {
   email: string;
   name: string;
@@ -137,7 +157,8 @@ export type UpdateUserInput = {
 };
 
 export interface AdminService {
-  signIn(input: { email: string; password: string }): Promise<AuthPayload>;
+  startBrowserAuth(input: BrowserAuthStartInput): Promise<BrowserAuthStartPayload>;
+  exchangeBrowserAuth(input: BrowserAuthExchangeInput): Promise<AuthPayload>;
   getSession(token: string): Promise<AdminSessionSnapshot>;
   listUsers(token: string): Promise<AdminUserRecord[]>;
   createUser(token: string, input: CreateUserInput): Promise<AdminUserRecord>;
@@ -512,16 +533,41 @@ class DenAdminClient {
     return payload;
   }
 
-  async signIn(input: { email: string; password: string }) {
-    return this.requestJson("/api/auth/sign-in/email", {
+  async startBrowserAuth(input: BrowserAuthStartInput) {
+    const payload = await this.requestJson("/v1/desktop-auth/start", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "application/json",
-        origin: this.denApiBase,
-        referer: `${this.denApiBase}/`,
       },
-      body: JSON.stringify(input),
+      body: JSON.stringify({
+        intent: input.intent,
+        redirectUri: input.redirectUri,
+        state: input.state,
+        codeChallenge: input.codeChallenge,
+        codeChallengeMethod: "S256",
+      }),
+    });
+    return {
+      authorizeUrl: typeof payload?.authorizeUrl === "string" ? payload.authorizeUrl : "",
+      sessionId: typeof payload?.sessionId === "string" ? payload.sessionId : "",
+      expiresAt: typeof payload?.expiresAt === "string" ? payload.expiresAt : null,
+    } satisfies BrowserAuthStartPayload;
+  }
+
+  async exchangeBrowserAuth(input: BrowserAuthExchangeInput) {
+    return this.requestJson("/v1/desktop-auth/exchange", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({
+        code: input.code,
+        sessionId: input.sessionId,
+        state: input.state,
+        codeVerifier: input.codeVerifier,
+      }),
     });
   }
 
@@ -621,8 +667,11 @@ export function createDefaultAdminService(denApiBase: string): AdminService {
   const readModels = new InMemoryAdminReadModel();
 
   return {
-    async signIn(input) {
-      const payload = await denClient.signIn(input);
+    async startBrowserAuth(input) {
+      return denClient.startBrowserAuth(input);
+    },
+    async exchangeBrowserAuth(input) {
+      const payload = await denClient.exchangeBrowserAuth(input);
       const token = typeof payload?.token === "string" ? payload.token : null;
       if (!token) {
         throw new HttpError("missing_token", 502);
@@ -796,16 +845,24 @@ export function createAdminRouter(adminService: AdminService) {
   const publicDir = path.resolve(path.dirname(currentFile), "../../public-admin");
   const indexPath = path.join(publicDir, "index.html");
 
-  router.post("/admin/api/auth/sign-in", async (req, res) => {
-    const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";
-    const password = typeof req.body?.password === "string" ? req.body.password : "";
-    if (!email || !password) {
-      res.status(400).json({ error: "invalid_credentials" });
+  router.post("/admin/api/auth/browser/start", async (req, res) => {
+    const redirectUri = typeof req.body?.redirectUri === "string" ? req.body.redirectUri.trim() : "";
+    const state = typeof req.body?.state === "string" ? req.body.state.trim() : "";
+    const codeChallenge = typeof req.body?.codeChallenge === "string" ? req.body.codeChallenge.trim() : "";
+    const intent = req.body?.intent === "signup" ? "signup" : "signin";
+
+    if (!redirectUri || !state || !codeChallenge) {
+      res.status(400).json({ error: "invalid_browser_auth_start" });
       return;
     }
 
     try {
-      const payload = await adminService.signIn({ email, password });
+      const payload = await adminService.startBrowserAuth({
+        intent,
+        redirectUri,
+        state,
+        codeChallenge,
+      });
       res.json(payload);
     } catch (error) {
       if (mapHttpError(error, res)) {
@@ -815,8 +872,35 @@ export function createAdminRouter(adminService: AdminService) {
     }
   });
 
+  router.post("/admin/api/auth/browser/exchange", async (req, res) => {
+    const code = typeof req.body?.code === "string" ? req.body.code.trim() : "";
+    const sessionId = typeof req.body?.sessionId === "string" ? req.body.sessionId.trim() : "";
+    const state = typeof req.body?.state === "string" ? req.body.state.trim() : "";
+    const codeVerifier = typeof req.body?.codeVerifier === "string" ? req.body.codeVerifier.trim() : "";
+
+    if (!code || !sessionId || !state || !codeVerifier) {
+      res.status(400).json({ error: "invalid_browser_auth_exchange" });
+      return;
+    }
+
+    try {
+      const payload = await adminService.exchangeBrowserAuth({
+        code,
+        sessionId,
+        state,
+        codeVerifier,
+      });
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "auth_exchange_failed" });
+    }
+  });
+
   router.use("/admin/api", async (req, res, next) => {
-    if (req.path === "/auth/sign-in") {
+    if (req.path.startsWith("/auth/browser/")) {
       next();
       return;
     }
