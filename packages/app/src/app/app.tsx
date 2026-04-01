@@ -1170,6 +1170,64 @@ export default function App() {
   const [lastPromptSent, setLastPromptSent] = createSignal("");
 
   type PartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput;
+  const DOCX_ATTACHMENT_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const DOC_ATTACHMENT_MIME = "application/msword";
+  const INBOX_PATH_PREFIX = ".opencode/veslo/inbox/";
+
+  const isWordAttachment = (attachment: ComposerAttachment) => {
+    const mime = attachment.mimeType.trim().toLowerCase();
+    const name = attachment.name.trim().toLowerCase();
+    return (
+      mime === DOCX_ATTACHMENT_MIME ||
+      mime === DOC_ATTACHMENT_MIME ||
+      name.endsWith(".docx") ||
+      name.endsWith(".doc")
+    );
+  };
+
+  const attachmentToFile = async (attachment: ComposerAttachment): Promise<File> => {
+    const response = await fetch(attachment.dataUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to read attachment ${attachment.name}.`);
+    }
+    const blob = await response.blob();
+    return new File([blob], attachment.name, {
+      type: attachment.mimeType || blob.type || "application/octet-stream",
+    });
+  };
+
+  const stageDocxAttachmentsForDelegation = async (draft: ComposerDraft): Promise<ComposerDraft> => {
+    const wordAttachments = draft.attachments.filter(isWordAttachment);
+    if (!wordAttachments.length) return draft;
+
+    const client = vesloServerClient();
+    const workspaceId = (resolvedDevtoolsWorkspaceId() ?? "").trim();
+    if (!client || !workspaceId || vesloServerStatus() !== "connected") {
+      throw new Error("Connect to Veslo server before sending DOCX attachments.");
+    }
+
+    const stagedPaths: string[] = [];
+    for (const attachment of wordAttachments) {
+      const file = await attachmentToFile(attachment);
+      const uploaded = await client.uploadInbox(workspaceId, file);
+      const relativePath = String(uploaded.path ?? attachment.name).trim().replace(/^\/+/, "");
+      if (!relativePath) {
+        throw new Error(`Failed to stage ${attachment.name}.`);
+      }
+      stagedPaths.push(`${INBOX_PATH_PREFIX}${relativePath}`);
+    }
+
+    const textBase = draft.resolvedText ?? draft.text;
+    const nextResolvedText = textBase.trim()
+      ? `${textBase}\n${stagedPaths.join("\n")}`
+      : stagedPaths.join("\n");
+
+    return {
+      ...draft,
+      resolvedText: nextResolvedText,
+      attachments: draft.attachments.filter((attachment) => !isWordAttachment(attachment)),
+    };
+  };
 
   const buildPromptParts = (draft: ComposerDraft): PartInput[] => {
     const parts: PartInput[] = [];
@@ -1330,6 +1388,14 @@ export default function App() {
       command: fallbackDraft.command,
     };
     resolvedDraft = await maybeResolveSkillCommand(resolvedDraft);
+    try {
+      const stagedDraft = await stageDocxAttachmentsForDelegation(resolvedDraft);
+      resolvedDraft = stagedDraft;
+    } catch (error) {
+      setError(error instanceof Error ? error.message : safeStringify(error));
+      return;
+    }
+
     const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
     if (!content && !resolvedDraft.attachments.length) return;
 

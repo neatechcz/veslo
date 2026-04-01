@@ -3,44 +3,44 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const composerSource = readFileSync(new URL("./composer.tsx", import.meta.url), "utf8");
-const sessionSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 
-test("composer stages docx files via inbox callback instead of client-side parsing", () => {
-  assert.match(
-    composerSource,
-    /stageAttachmentToInbox\?: \(file: File\) => Promise<string \| null>/,
-    "composer should expose inbox staging callback for routed document attachments",
-  );
-
-  assert.match(
-    composerSource,
-    /const stagedPath = await props\.stageAttachmentToInbox\(file\);/,
-    "composer should stage docx files to workspace inbox",
-  );
-
-  assert.match(
-    composerSource,
-    /insertPlainTextAtCursorOrEnd\(stagedPath\);/,
-    "composer should insert staged docx workspace path into prompt text",
-  );
-
+test("composer keeps docx as attachment chips and does not inject path text on drop", () => {
   assert.doesNotMatch(
     composerSource,
-    /maybeConvertDocxToTextAttachment/,
-    "composer must not parse docx content on the client",
+    /insertPlainTextAtCursorOrEnd\(/,
+    "composer should not inject staged docx paths into editor text",
+  );
+
+  assert.match(
+    composerSource,
+    /setAttachments\(\(current: ComposerAttachment\[\]\) => \[\.\.\.current, \.\.\.next\]\);/,
+    "composer should keep dropped files as attachment chips",
   );
 });
 
-test("session view wires inbox staging into composer", () => {
+test("docx staging happens in send pipeline, not in composer", () => {
   assert.match(
-    sessionSource,
-    /stageAttachmentToInbox=\{stageAttachmentToInbox\}/,
-    "session should provide docx inbox staging callback to composer",
+    appSource,
+    /const stageDocxAttachmentsForDelegation = async \(draft: ComposerDraft\): Promise<ComposerDraft> =>/,
+    "app send pipeline should stage docx attachments for delegation",
   );
 
   assert.match(
-    sessionSource,
-    /const stageAttachmentToInbox = async \(file: File\): Promise<string \| null> =>/,
-    "session should implement inbox staging callback",
+    appSource,
+    /await client\.uploadInbox\(workspaceId, file\)/,
+    "docx staging should upload to workspace inbox",
+  );
+
+  assert.match(
+    appSource,
+    /resolvedText: nextResolvedText,/,
+    "send pipeline should append staged docx paths to resolved text",
+  );
+
+  assert.match(
+    appSource,
+    /const stagedDraft = await stageDocxAttachmentsForDelegation\(resolvedDraft\);/,
+    "send pipeline should normalize draft before building prompt parts",
   );
 });

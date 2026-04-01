@@ -8,7 +8,6 @@ import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { currentLocale, t } from "../../../i18n";
 import { extractFilesFromDataTransfer } from "../../utils/data-transfer-files";
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
-import { maybeConvertDocxToTextAttachment } from "../../utils/attachment-mime-normalization";
 import { nextAgentModeOnShiftTab } from "../../pages/session-shortcuts";
 
 type MentionOption = {
@@ -1001,8 +1000,7 @@ export default function Composer(props: ComposerProps) {
       }
       try {
         // Compress images before encoding to data URL
-        const maybeCompressed = isImageMime(file.type) ? await compressImageFile(file) : file;
-        const processed = await maybeConvertDocxToTextAttachment(maybeCompressed);
+        const processed = isImageMime(file.type) ? await compressImageFile(file) : file;
         const isPdfAttachment = processed.type === "application/pdf" || processed.name.toLowerCase().endsWith(".pdf");
         if (isPdfAttachment) {
           const prefix = new Uint8Array(await processed.slice(0, PDF_SIGNATURE_SCAN_BYTES).arrayBuffer());
