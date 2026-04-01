@@ -43,4 +43,11 @@ test("workspace session controls expose matching data-tooltip without native too
     "new-folder control should expose data-tooltip and an sr-only accessible label",
   );
   assert.doesNotMatch(source, /aria-label=\{tr\("sidebar\.add_directory_session"\)\}/);
+
+  assert.match(
+    source,
+    /data-tooltip=\{tr\("sidebar\.show_archived"\)\}[\s\S]*<span class="sr-only">\{tr\("sidebar\.show_archived"\)\}<\/span>/,
+    "show-archived control should expose data-tooltip and an sr-only accessible label",
+  );
+  assert.doesNotMatch(source, /aria-label=\{tr\("sidebar\.show_archived"\)\}/);
 });

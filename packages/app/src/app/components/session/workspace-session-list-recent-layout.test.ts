@@ -70,7 +70,7 @@ test("by-project session rows reserve right space and swap time for three-dot me
   assert.match(
     source,
     /class="absolute right-2 top-1\/2 -translate-y-1\/2 opacity-0 group-hover\/session-row:opacity-100 group-focus-within\/session-row:opacity-100 transition-opacity"/,
-    "by-project rows should show a three-dot trigger in place of time on hover/focus",
+    "by-project rows should show a row action trigger in place of time on hover/focus",
   );
 
   assert.match(
@@ -80,6 +80,26 @@ test("by-project session rows reserve right space and swap time for three-dot me
   );
 
   assert.doesNotMatch(source, /class=\{`w-full flex items-center gap-2 rounded-xl px-3 py-1\.5 text-left transition-colors \$\{/);
+});
+
+test("session hover action uses archive icon instead of three dots", () => {
+  assert.match(
+    source,
+    /onClick=\{\(event\) => handleSessionArchiveToggle\(event, session\(\)\.id\)\}/,
+    "recent rows should wire hover action to archive toggle",
+  );
+
+  assert.match(
+    source,
+    /onClick=\{\(event\) => handleSessionArchiveToggle\(event, row\.session\.id\)\}/,
+    "by-project rows should wire hover action to archive toggle",
+  );
+
+  assert.match(
+    source,
+    /aria-label=\{isSessionArchived\(session\(\)\.id\) \? tr\("sidebar\.unarchive_session"\) : tr\("sidebar\.archive_session"\)\}/,
+    "recent row action should expose archive/unarchive accessibility label",
+  );
 });
 
 test("recent rows keep metadata tucked closer to the title line", () => {

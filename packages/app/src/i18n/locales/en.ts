@@ -1082,6 +1082,7 @@ export default {
   "sidebar.by_project": "By project",
   "sidebar.connect_remote": "Connect remote",
   "sidebar.create_session_in_project": "Create session in this project",
+  "sidebar.archive_session": "Archive session",
   "sidebar.edit_connection": "Edit connection",
   "sidebar.edit_name": "Edit name",
   "sidebar.enable_soul": "Enable soul",
@@ -1100,6 +1101,7 @@ export default {
   "sidebar.recover": "Recover",
   "sidebar.reorder_project": "Drag to reorder project",
   "sidebar.remove_workspace": "Remove from Veslo",
+  "sidebar.show_archived": "Show archived",
   "sidebar.reveal_in_explorer": "Reveal in Explorer",
   "sidebar.reveal_in_finder": "Reveal in Finder",
   "sidebar.share": "Share...",
@@ -1111,6 +1113,7 @@ export default {
   "sidebar.workspace_kind_remote": "Remote",
   "sidebar.workspace_kind_sandbox": "Sandbox",
   "sidebar.workspace_options": "Workspace options",
+  "sidebar.unarchive_session": "Unarchive session",
 
   // ==================== Inbox ====================
   "inbox.connect_to_download": "Connect to a worker to download inbox files.",

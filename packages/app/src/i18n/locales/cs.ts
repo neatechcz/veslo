@@ -1078,6 +1078,7 @@ export default {
   "sidebar.by_project": "Podle projektu",
   "sidebar.connect_remote": "Připojit vzdáleně",
   "sidebar.create_session_in_project": "Vytvořit relaci v tomto projektu",
+  "sidebar.archive_session": "Archivovat relaci",
   "sidebar.edit_connection": "Upravit připojení",
   "sidebar.edit_name": "Upravit název",
   "sidebar.enable_soul": "Zapnout Soul",
@@ -1096,6 +1097,7 @@ export default {
   "sidebar.recover": "Obnovit",
   "sidebar.reorder_project": "Tažením změnit pořadí projektů",
   "sidebar.remove_workspace": "Odebrat z Veslo",
+  "sidebar.show_archived": "Zobrazit archivované",
   "sidebar.reveal_in_explorer": "Ukázat v Průzkumníku",
   "sidebar.reveal_in_finder": "Ukázat ve Finderu",
   "sidebar.share": "Sdílet...",
@@ -1107,6 +1109,7 @@ export default {
   "sidebar.workspace_kind_remote": "Vzdálený",
   "sidebar.workspace_kind_sandbox": "Sandbox",
   "sidebar.workspace_options": "Možnosti workeru",
+  "sidebar.unarchive_session": "Obnovit relaci z archivu",
 
   // ==================== Inbox ====================
   "inbox.connect_to_download": "Připojte se k workeru pro stažení souborů z inboxu.",

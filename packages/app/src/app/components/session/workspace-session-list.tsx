@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { Folder, FolderPlus, HeartPulse, List, Loader2, MoreHorizontal, Plus, Search } from "lucide-solid";
+import { Archive, Folder, FolderPlus, HeartPulse, List, Loader2, MoreHorizontal, Plus, Search } from "lucide-solid";
 
 import type { VesloSoulStatus } from "../../lib/veslo-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
@@ -42,11 +42,15 @@ import {
   reorderProjectKeys,
 } from "./workspace-session-list-order";
 import {
+  readArchivedSessionIds,
   readCollapsedProjectMap,
   readProjectOrder,
+  readShowArchivedSessions,
   readSidebarViewMode,
+  writeArchivedSessionIds,
   writeCollapsedProjectMap,
   writeProjectOrder,
+  writeShowArchivedSessions,
   writeSidebarViewMode,
   type SidebarViewMode,
 } from "./workspace-session-list-prefs";
@@ -151,6 +155,8 @@ export default function WorkspaceSessionList(props: Props) {
   const [projectDragPreview, setProjectDragPreview] = createSignal<ProjectDragPreviewState | null>(null);
   const [workspaceMenuTarget, setWorkspaceMenuTarget] = createSignal<WorkspaceMenuTarget | null>(null);
   const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
+  const [archivedSessionIds, setArchivedSessionIds] = createSignal<string[]>(readArchivedSessionIds());
+  const [showArchivedSessions, setShowArchivedSessions] = createSignal<boolean>(readShowArchivedSessions());
   const [sidebarControlsWidth, setSidebarControlsWidth] = createSignal(0);
   let workspaceMenuRef: HTMLDivElement | undefined;
   let addWorkspaceMenuRef: HTMLDivElement | undefined;
@@ -173,14 +179,30 @@ export default function WorkspaceSessionList(props: Props) {
   const rowIndentStyle = (row: FlatSessionRow) =>
     row.nestingLevel > 0 ? { "padding-left": `${12 + Math.min(row.nestingLevel, 6) * 14}px` } : undefined;
 
+  const archivedSessionIdSet = createMemo(() => new Set(archivedSessionIds()));
+  const isSessionArchived = (sessionId: string) => archivedSessionIdSet().has(sessionId.trim());
+  const shouldShowSessionRow = (row: FlatSessionRow) =>
+    showArchivedSessions() || !isSessionArchived(row.session.id);
+
   const recentRows = createMemo<FlatSessionRow[]>(() =>
     buildRecentRows(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
+  );
+  const visibleRecentRows = createMemo<FlatSessionRow[]>(() =>
+    recentRows().filter((row) => shouldShowSessionRow(row)),
   );
 
   const projectGroups = createMemo<ProjectSessionGroup[]>(() =>
     buildProjectGroups(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
   );
-  const orderedProjectGroups = createMemo(() => applyProjectOrder(projectGroups(), projectOrder()));
+  const visibleProjectGroups = createMemo<ProjectSessionGroup[]>(() =>
+    projectGroups()
+      .map((group) => ({
+        ...group,
+        sessions: group.sessions.filter((row) => shouldShowSessionRow(row)),
+      }))
+      .filter((group) => group.sessions.length > 0),
+  );
+  const orderedProjectGroups = createMemo(() => applyProjectOrder(visibleProjectGroups(), projectOrder()));
 
   createEffect(() => {
     const selectedSessionId = props.selectedSessionId?.trim() ?? "";
@@ -188,16 +210,16 @@ export default function WorkspaceSessionList(props: Props) {
     setExpandedParentSessionIds((current) => deriveExpandedParentSessionIds(
       sidebarMode() === "by-project"
         ? orderedProjectGroups().flatMap((group) => group.sessions)
-        : recentRows(),
+        : visibleRecentRows(),
       selectedSessionId,
       current,
     ));
   });
 
-  const recentHierarchy = createMemo(() => buildRowHierarchyLookup(recentRows()));
+  const recentHierarchy = createMemo(() => buildRowHierarchyLookup(visibleRecentRows()));
 
   const recentRowsTreeVisible = createMemo(() =>
-    recentRows().filter((row) =>
+    visibleRecentRows().filter((row) =>
       rowVisibleByExpansion(row, recentHierarchy(), expandedParentSessionIds()),
     ),
   );
@@ -241,7 +263,7 @@ export default function WorkspaceSessionList(props: Props) {
     if (recentLoadMoreBusy()) return;
     if (recentHasHiddenRows()) {
       setRecentVisibleCount((current) =>
-        Math.min(recentRows().length, current + VIEW_LOAD_MORE_STEP),
+        Math.min(visibleRecentRows().length, current + VIEW_LOAD_MORE_STEP),
       );
       return;
     }
@@ -253,7 +275,7 @@ export default function WorkspaceSessionList(props: Props) {
     try {
       await Promise.resolve(props.onLoadMoreWorkspaceSessions(workspaceId));
       setRecentVisibleCount((current) =>
-        Math.min(recentRows().length, current + VIEW_LOAD_MORE_STEP),
+        Math.min(visibleRecentRows().length, current + VIEW_LOAD_MORE_STEP),
       );
     } finally {
       setRecentLoadMoreBusy(false);
@@ -261,7 +283,7 @@ export default function WorkspaceSessionList(props: Props) {
   };
 
   createEffect(() => {
-    const nextGroups = projectGroups();
+    const nextGroups = visibleProjectGroups();
     setProjectVisibleByKey((current) => {
       const next: Record<string, number> = {};
       let changed = false;
@@ -378,7 +400,7 @@ export default function WorkspaceSessionList(props: Props) {
   );
 
   const hasVisibleRows = createMemo(() =>
-    sidebarMode() === "by-project" ? projectGroups().length > 0 : recentRowsTreeVisible().length > 0,
+    sidebarMode() === "by-project" ? visibleProjectGroups().length > 0 : recentRowsTreeVisible().length > 0,
   );
 
   const sessionDecorationFor = (sessionId: string): SidebarSubagentDecoration | null => {
@@ -412,7 +434,7 @@ export default function WorkspaceSessionList(props: Props) {
   ) => {
     if (sidebarMode() === "recent") {
       const required = requiredVisibleCountForExpandedSession(
-        recentRows(),
+        visibleRecentRows(),
         expandedParentSessionIds,
         sessionId,
       );
@@ -470,6 +492,43 @@ export default function WorkspaceSessionList(props: Props) {
     if (action.openSession) {
       props.onOpenSession(row.workspace.id, row.session.id);
     }
+  };
+
+  const setArchivedSessionIdsWithPersist = (updater: (current: string[]) => string[]) => {
+    setArchivedSessionIds((current) => {
+      const next = updater(current);
+      writeArchivedSessionIds(next);
+      return next;
+    });
+  };
+
+  const handleSessionArchiveToggle = (event: MouseEvent, sessionId: string) => {
+    event.stopPropagation();
+    const id = sessionId.trim();
+    if (!id) return;
+    const archived = isSessionArchived(id);
+    setArchivedSessionIdsWithPersist((current) => {
+      if (archived) return current.filter((entry) => entry !== id);
+      return current.includes(id) ? current : [...current, id];
+    });
+  };
+
+  const toggleShowArchived = () => {
+    setShowArchivedSessions((current) => {
+      const next = !current;
+      writeShowArchivedSessions(next);
+      return next;
+    });
+  };
+
+  const handleSessionRowContextMenu = (
+    event: MouseEvent,
+    workspaceId: string,
+    anchorKey: string,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setWorkspaceMenuTarget({ workspaceId, anchorKey });
   };
 
   const PROJECT_POINTER_DRAG_START_THRESHOLD_PX = 2;
@@ -723,9 +782,9 @@ export default function WorkspaceSessionList(props: Props) {
 
   createEffect(() => {
     const validSessionIds = new Set(
-      projectGroups().flatMap((group) => group.sessions.map((row) => row.session.id)),
+      visibleProjectGroups().flatMap((group) => group.sessions.map((row) => row.session.id)),
     );
-    for (const row of recentRows()) validSessionIds.add(row.session.id);
+    for (const row of visibleRecentRows()) validSessionIds.add(row.session.id);
 
     setExpandedParentSessionIds((current) => {
       let changed = false;
@@ -1020,6 +1079,20 @@ export default function WorkspaceSessionList(props: Props) {
           </button>
         </div>
         <div class="ml-auto flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            class={`inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-6 bg-gray-1 shadow-sm transition-colors ${sidebarControlTooltipClass} ${
+              showArchivedSessions()
+                ? "text-gray-12 bg-gray-4/90"
+                : "text-gray-9 hover:bg-gray-3 hover:text-gray-11"
+            }`}
+            data-tooltip={tr("sidebar.show_archived")}
+            aria-pressed={showArchivedSessions()}
+            onClick={toggleShowArchived}
+          >
+            <span class="sr-only">{tr("sidebar.show_archived")}</span>
+            <Archive size={13} />
+          </button>
           <Show when={props.onOpenSessionSearch}>
             <button
               type="button"
@@ -1073,7 +1146,10 @@ export default function WorkspaceSessionList(props: Props) {
                       const isConnectionActionBusy = () => isConnectionActionBusyFor(workspace().id);
 
                       return (
-                        <div class="relative group/session-row">
+                        <div
+                          class="relative group/session-row"
+                          onContextMenu={(event) => handleSessionRowContextMenu(event, workspace().id, anchorKey)}
+                        >
                           <button
                             type="button"
                             class={`w-full flex items-center rounded-xl px-3 py-1 pr-16 text-left transition-colors ${
@@ -1142,15 +1218,11 @@ export default function WorkspaceSessionList(props: Props) {
                             <button
                               type="button"
                               class="p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setWorkspaceMenuTarget((current) =>
-                                  current?.anchorKey === anchorKey ? null : { workspaceId: workspace().id, anchorKey },
-                                );
-                              }}
-                              aria-label={tr("sidebar.workspace_options")}
+                              onClick={(event) => handleSessionArchiveToggle(event, session().id)}
+                              aria-label={isSessionArchived(session().id) ? tr("sidebar.unarchive_session") : tr("sidebar.archive_session")}
+                              title={isSessionArchived(session().id) ? tr("sidebar.unarchive_session") : tr("sidebar.archive_session")}
                             >
-                              <MoreHorizontal size={14} />
+                              <Archive size={14} />
                             </button>
                           </div>
 
@@ -1358,7 +1430,10 @@ export default function WorkspaceSessionList(props: Props) {
                             const rowAnchorKey = `project-session:${row.rowKey}`;
 
                             return (
-                              <div class="relative group/session-row">
+                              <div
+                                class="relative group/session-row"
+                                onContextMenu={(event) => handleSessionRowContextMenu(event, row.workspace.id, rowAnchorKey)}
+                              >
                                 <button
                                   type="button"
                                   class={`w-full flex items-center gap-2 rounded-xl px-3 py-1 pr-16 text-left transition-colors ${
@@ -1394,17 +1469,11 @@ export default function WorkspaceSessionList(props: Props) {
                                   <button
                                     type="button"
                                     class="p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      setWorkspaceMenuTarget((current) =>
-                                        current?.anchorKey === rowAnchorKey
-                                          ? null
-                                          : { workspaceId: row.workspace.id, anchorKey: rowAnchorKey },
-                                      );
-                                    }}
-                                    aria-label={tr("sidebar.workspace_options")}
+                                    onClick={(event) => handleSessionArchiveToggle(event, row.session.id)}
+                                    aria-label={isSessionArchived(row.session.id) ? tr("sidebar.unarchive_session") : tr("sidebar.archive_session")}
+                                    title={isSessionArchived(row.session.id) ? tr("sidebar.unarchive_session") : tr("sidebar.archive_session")}
                                   >
-                                    <MoreHorizontal size={14} />
+                                    <Archive size={14} />
                                   </button>
                                 </div>
 

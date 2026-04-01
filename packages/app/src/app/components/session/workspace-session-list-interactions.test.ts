@@ -27,7 +27,7 @@ test("by-project mode wires project-group drag and drop reorder handlers", () =>
 
   assert.match(
     source,
-    /const orderedProjectGroups = createMemo\(\(\) => applyProjectOrder\(projectGroups\(\), projectOrder\(\)\)\);/,
+    /const orderedProjectGroups = createMemo\(\(\) => applyProjectOrder\((visibleProjectGroups|projectGroups)\(\), projectOrder\(\)\)\);/,
     "by-project mode should render from persisted project ordering",
   );
 
@@ -207,5 +207,37 @@ test("collapsed project persistence writes only from explicit user toggles", () 
     source,
     /createEffect\(\(\) => \{[\s\S]*writeCollapsedProjectMap\(/,
     "startup/effect paths must not overwrite persisted collapse preferences",
+  );
+});
+
+test("session rows use archive action and open submenu on right-click", () => {
+  assert.match(
+    source,
+    /const handleSessionRowContextMenu = \(\s*event: MouseEvent,\s*workspaceId: string,\s*anchorKey: string,\s*\) => \{/,
+    "session list should define a dedicated right-click handler for session rows",
+  );
+
+  assert.match(
+    source,
+    /onContextMenu=\{\(event\) => handleSessionRowContextMenu\(event, workspace\(\)\.id, anchorKey\)\}/,
+    "recent session rows should open submenu from right-click",
+  );
+
+  assert.match(
+    source,
+    /onContextMenu=\{\(event\) => handleSessionRowContextMenu\(event, row\.workspace\.id, rowAnchorKey\)\}/,
+    "by-project session rows should open submenu from right-click",
+  );
+
+  assert.match(
+    source,
+    /onClick=\{\(event\) => handleSessionArchiveToggle\(event, session\(\)\.id\)\}/,
+    "recent session rows should archive from the hover action button",
+  );
+
+  assert.match(
+    source,
+    /onClick=\{\(event\) => handleSessionArchiveToggle\(event, row\.session\.id\)\}/,
+    "by-project session rows should archive from the hover action button",
   );
 });
