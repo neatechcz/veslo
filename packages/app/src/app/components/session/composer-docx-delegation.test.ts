@@ -5,7 +5,7 @@ import test from "node:test";
 const composerSource = readFileSync(new URL("./composer.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 
-test("composer keeps docx as attachment chips and does not inject path text on drop", () => {
+test("composer keeps dropped files as attachment chips and does not inject path text on drop", () => {
   assert.doesNotMatch(
     composerSource,
     /insertPlainTextAtCursorOrEnd\(/,
@@ -19,28 +19,46 @@ test("composer keeps docx as attachment chips and does not inject path text on d
   );
 });
 
-test("docx staging happens in send pipeline, not in composer", () => {
+test("all attachment staging happens in send pipeline, not in composer", () => {
   assert.match(
     appSource,
-    /const stageDocxAttachmentsForDelegation = async \(draft: ComposerDraft\): Promise<ComposerDraft> =>/,
-    "app send pipeline should stage docx attachments for delegation",
+    /const stageAttachmentsForDelegation = async \(draft: ComposerDraft\): Promise<ComposerDraft> =>/,
+    "app send pipeline should stage all attachments for delegation",
+  );
+
+  assert.match(
+    appSource,
+    /const attachmentsToStage = draft\.attachments;/,
+    "staging should process every composer attachment, not only specific MIME types",
+  );
+
+  assert.doesNotMatch(
+    appSource,
+    /isWordAttachment\(/,
+    "send pipeline should not use Word-only attachment filters",
   );
 
   assert.match(
     appSource,
     /await client\.uploadInbox\(workspaceId, file\)/,
-    "docx staging should upload to workspace inbox",
+    "attachment staging should upload to workspace inbox",
   );
 
   assert.match(
     appSource,
     /resolvedText: nextResolvedText,/,
-    "send pipeline should append staged docx paths to resolved text",
+    "send pipeline should append staged paths to resolved text",
   );
 
   assert.match(
     appSource,
-    /const stagedDraft = await stageDocxAttachmentsForDelegation\(resolvedDraft\);/,
+    /attachments: \[\],/,
+    "after staging, inline attachment blobs should be removed from outbound provider parts",
+  );
+
+  assert.match(
+    appSource,
+    /const stagedDraft = await stageAttachmentsForDelegation\(resolvedDraft\);/,
     "send pipeline should normalize draft before building prompt parts",
   );
 });
