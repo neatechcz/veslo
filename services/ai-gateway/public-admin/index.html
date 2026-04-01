@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Gateway Admin</title>
+    <meta name="color-scheme" content="dark light" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="/admin/app.css" />
+    <script type="module" src="/admin/app.js"></script>
+  </head>
+  <body>
+    <div class="shell" id="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">AG</div>
+          <div>
+            <div class="brand-name">AI Gateway</div>
+            <div class="brand-subtitle">Admin control plane</div>
+          </div>
+        </div>
+
+        <nav class="nav" aria-label="Admin sections">
+          <a href="/admin/credentials" data-route="credentials" class="nav-item">Credentials</a>
+          <a href="/admin/sessions" data-route="sessions" class="nav-item">Sessions</a>
+          <a href="/admin/usage" data-route="usage" class="nav-item">Usage</a>
+          <a href="/admin/alerts" data-route="alerts" class="nav-item">Alerts</a>
+          <a href="/admin/users" data-route="users" class="nav-item">Users</a>
+          <a href="/admin/audit" data-route="audit" class="nav-item">Audit</a>
+        </nav>
+
+        <section class="sidebar-card">
+          <div class="eyebrow">Auth</div>
+          <div class="sidebar-metric">
+            <span id="auth-state">Checking session</span>
+            <span id="auth-user" class="muted">waiting for token</span>
+          </div>
+          <button id="sign-out-button" class="button button-secondary" type="button">Sign out</button>
+        </section>
+
+        <section class="sidebar-card subtle">
+          <div class="eyebrow">Live signals</div>
+          <div class="stack tight">
+            <div class="pill-row"><span class="dot good"></span> Gateway healthy</div>
+            <div class="pill-row"><span class="dot warn"></span> 2 credential alerts</div>
+            <div class="pill-row"><span class="dot info"></span> 18 active sessions</div>
+          </div>
+        </section>
+      </aside>
+
+      <main class="content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="page-eyebrow">AI Gateway control plane</p>
+            <h1 id="page-title">Overview</h1>
+            <p class="page-description" id="page-description">Inspect credentials, sessions, usage, alerts, users, and audit events from one place.</p>
+          </div>
+          <div class="topbar-actions">
+            <button id="refresh-button" class="button button-secondary" type="button">Refresh</button>
+            <button id="create-user-button" class="button button-primary hidden" type="button">Create user</button>
+          </div>
+        </header>
+
+        <section id="login-panel" class="panel login-panel hidden" aria-labelledby="login-title">
+          <div class="login-copy">
+            <p class="eyebrow">Secure access</p>
+            <h2 id="login-title">Sign in with Browser</h2>
+            <p class="muted">Use the standard Veslo web login. We will return here automatically once the browser handoff finishes.</p>
+          </div>
+
+          <div class="login-form">
+            <button id="browser-sign-in-button" class="button button-primary" type="button">Sign in with Browser</button>
+            <p id="login-error" class="error hidden" role="alert"></p>
+          </div>
+        </section>
+
+        <section id="app-panel" class="app-grid hidden" aria-live="polite">
+          <section class="panel hero-panel" data-page="overview">
+            <div class="hero-head">
+              <div>
+                <p class="eyebrow">Control summary</p>
+                <h2>Operator dashboard</h2>
+              </div>
+              <span class="status-chip success">Stable</span>
+            </div>
+            <div class="hero-metrics">
+              <article class="metric-card">
+                <span class="metric-label">Active leases</span>
+                <strong>18</strong>
+                <span class="metric-note">Sticky bindings in healthy state</span>
+              </article>
+              <article class="metric-card">
+                <span class="metric-label">Unhealthy credentials</span>
+                <strong>2</strong>
+                <span class="metric-note">1 OAuth refresh failure, 1 revoked key</span>
+              </article>
+              <article class="metric-card">
+                <span class="metric-label">Tracked users</span>
+                <strong>41</strong>
+                <span class="metric-note">13 platform admins in directory</span>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel page page-credentials" data-page="credentials">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Credentials</p>
+                <h2>Credential inventory</h2>
+              </div>
+              <div class="section-actions">
+                <button class="button button-secondary" type="button">Enroll OAuth</button>
+                <button class="button button-primary" type="button">Add credential</button>
+              </div>
+            </div>
+            <div class="toolbar">
+              <input class="input" type="search" placeholder="Search provider, state, or secret ref" />
+              <select class="input">
+                <option>All providers</option>
+                <option>OpenAI</option>
+                <option>Anthropic</option>
+                <option>Google</option>
+              </select>
+              <select class="input">
+                <option>All states</option>
+                <option>Healthy</option>
+                <option>Degraded</option>
+                <option>Unhealthy</option>
+              </select>
+            </div>
+            <div class="table-shell">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Provider</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Linked alerts</th>
+                    <th>Active leases</th>
+                    <th>Last refresh</th>
+                  </tr>
+                </thead>
+                <tbody id="credentials-table-body">
+                  <tr class="row-alert">
+                    <td><strong>OpenAI org key</strong><span>secret_ref: vault://cred/oa-001</span></td>
+                    <td>OAuth</td>
+                    <td><span class="status-chip danger">Unhealthy</span></td>
+                    <td><a href="/admin/alerts">2 active alerts</a></td>
+                    <td>6</td>
+                    <td>3 min ago</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Anthropic shared key</strong><span>secret_ref: vault://cred/anth-004</span></td>
+                    <td>API key</td>
+                    <td><span class="status-chip warning">Degraded</span></td>
+                    <td><a href="/admin/alerts">1 warning</a></td>
+                    <td>8</td>
+                    <td>18 min ago</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Google Workspace OAuth</strong><span>secret_ref: vault://cred/gws-019</span></td>
+                    <td>OAuth</td>
+                    <td><span class="status-chip success">Healthy</span></td>
+                    <td><a href="/admin/alerts">No current alerts</a></td>
+                    <td>4</td>
+                    <td>1 hour ago</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <aside class="detail-rail">
+              <div id="credential-detail" class="detail-card">
+                <p class="eyebrow">Selected credential</p>
+                <h3>OpenAI org key</h3>
+                <div class="stack">
+                  <div class="detail-line"><span>Health</span><strong>Unhealthy</strong></div>
+                  <div class="detail-line"><span>Linked alerts</span><strong>2 active</strong></div>
+                  <div class="detail-line"><span>Latest incident</span><strong>Token refresh failed</strong></div>
+                  <div class="detail-line"><span>Rotation</span><strong>Retry now</strong></div>
+                </div>
+                <div class="button-row">
+                  <button class="button button-secondary" type="button">Drain</button>
+                  <button class="button button-secondary" type="button">Rotate</button>
+                  <button class="button button-primary" type="button">Open alerts</button>
+                </div>
+              </div>
+            </aside>
+          </section>
+
+          <section class="panel page page-sessions hidden" data-page="sessions">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Sessions</p>
+                <h2>Sticky lease roster</h2>
+              </div>
+              <span class="status-chip success">18 active</span>
+            </div>
+            <div class="split-layout">
+              <div>
+                <div class="toolbar">
+                  <input class="input" type="search" placeholder="Search session, user, or worker" />
+                  <select class="input">
+                    <option>All states</option>
+                    <option>Healthy</option>
+                    <option>Rebinding</option>
+                    <option>Failed</option>
+                  </select>
+                </div>
+                <div id="session-list" class="list-cards">
+                  <article class="list-card active">
+                    <div>
+                      <strong>session_2841</strong>
+                      <p>Vaclav Soukup, project Atlas, worker `design-bot`</p>
+                    </div>
+                    <span class="status-chip success">Healthy</span>
+                  </article>
+                  <article class="list-card">
+                    <div>
+                      <strong>session_1884</strong>
+                      <p>Alicia, project Billing, worker `watchdog`</p>
+                    </div>
+                    <span class="status-chip warning">Rebinding</span>
+                  </article>
+                  <article class="list-card">
+                    <div>
+                      <strong>session_5510</strong>
+                      <p>Martin, project Docs, worker `writer`</p>
+                    </div>
+                    <span class="status-chip danger">Failed</span>
+                  </article>
+                </div>
+              </div>
+              <aside id="session-detail" class="detail-card session-detail">
+                <p class="eyebrow">Selected session</p>
+                <h3>session_2841</h3>
+                <div class="timeline">
+                  <div><span>Lease created</span><strong>09:12</strong></div>
+                  <div><span>Active binding</span><strong>OpenAI org key</strong></div>
+                  <div><span>Last failover</span><strong>Not needed</strong></div>
+                  <div><span>Usage this session</span><strong>18,240 tokens</strong></div>
+                </div>
+                <div class="button-row">
+                  <button class="button button-secondary" type="button">Open trace</button>
+                  <button class="button button-primary" type="button">Watch session</button>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="panel page page-usage hidden" data-page="usage">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Usage</p>
+                <h2>Total usage first, then drill down</h2>
+              </div>
+              <span class="status-chip info">By credential / user / org</span>
+            </div>
+            <div class="toolbar usage-toolbar">
+              <div class="segmented">
+                <button class="segment active" type="button">24h</button>
+                <button class="segment" type="button">7d</button>
+                <button class="segment" type="button">30d</button>
+              </div>
+              <select id="usage-group-by" class="input">
+                <option value="total">Total usage</option>
+                <option value="credential">Credential</option>
+                <option value="user">User</option>
+                <option value="org">Org</option>
+              </select>
+              <select id="usage-filter-credential" class="input">
+                <option value="">All credentials</option>
+              </select>
+              <select id="usage-filter-user" class="input">
+                <option value="">All users</option>
+              </select>
+              <select id="usage-filter-org" class="input">
+                <option value="">All orgs</option>
+              </select>
+            </div>
+            <div class="usage-grid">
+              <article class="chart-card">
+                <div class="chart-head">
+                  <div>
+                    <p class="eyebrow">Total usage</p>
+                    <h3>Token volume trend</h3>
+                  </div>
+                  <span class="status-chip success">+12% vs yesterday</span>
+                </div>
+                <div id="usage-chart-bars" class="fake-chart">
+                  <span style="height: 44%"></span>
+                  <span style="height: 66%"></span>
+                  <span style="height: 58%"></span>
+                  <span style="height: 78%"></span>
+                  <span style="height: 50%"></span>
+                  <span style="height: 88%"></span>
+                  <span style="height: 74%"></span>
+                </div>
+              </article>
+              <article class="metric-card tall">
+                <span class="metric-label">Prompt tokens</span>
+                <strong id="usage-total-tokens">821k</strong>
+                <span class="metric-note">Collected across sessions, users, and orgs</span>
+              </article>
+              <article class="metric-card tall">
+                <span class="metric-label">Requests</span>
+                <strong id="usage-total-requests">412k</strong>
+                <span class="metric-note">Can be grouped by credential or user</span>
+              </article>
+              <article class="metric-card tall">
+                <span class="metric-label">Top credential</span>
+                <strong id="usage-top-credential">OpenAI org key</strong>
+                <span class="metric-note">53% of current rolling usage</span>
+              </article>
+            </div>
+            <div id="usage-series" class="list-cards"></div>
+          </section>
+
+          <section class="panel page page-alerts hidden" data-page="alerts">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Alerts</p>
+                <h2>Incident triage board</h2>
+              </div>
+              <div class="segmented">
+                <button class="segment active" type="button">Active</button>
+                <button class="segment" type="button">Acknowledged</button>
+                <button class="segment" type="button">Resolved</button>
+              </div>
+            </div>
+            <div class="alerts-layout">
+              <div id="alert-list" class="alert-queue">
+                <article class="alert-card critical active">
+                  <div class="alert-head">
+                    <strong>Credential outage</strong>
+                    <span class="status-chip danger">Critical</span>
+                  </div>
+                  <p>OpenAI org key has failed 11 refresh attempts and now impacts 6 sessions.</p>
+                  <div class="alert-meta">
+                    <span>Credential: OpenAI org key</span>
+                    <span>First seen: 09:12</span>
+                  </div>
+                </article>
+                <article class="alert-card">
+                  <div class="alert-head">
+                    <strong>Usage spike</strong>
+                    <span class="status-chip warning">High</span>
+                  </div>
+                  <p>Anthropic shared key exceeded baseline on worker `assistant-runner`.</p>
+                  <div class="alert-meta">
+                    <span>Credential: Anthropic shared key</span>
+                    <span>Session: 4</span>
+                  </div>
+                </article>
+              </div>
+              <aside id="alert-detail" class="detail-card alert-detail">
+                <p class="eyebrow">Runbook</p>
+                <h3>Credential outage</h3>
+                <div class="stack">
+                  <div class="detail-line"><span>Affected credential</span><strong>OpenAI org key</strong></div>
+                  <div class="detail-line"><span>Affected sessions</span><strong>6</strong></div>
+                  <div class="detail-line"><span>Recommended action</span><strong>Rebind sessions</strong></div>
+                </div>
+                <div class="button-row">
+                  <button class="button button-secondary" type="button">Acknowledge</button>
+                  <button class="button button-secondary" type="button">Escalate</button>
+                  <button class="button button-primary" type="button">Resolve</button>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="panel page page-users hidden" data-page="users">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Users</p>
+                <h2>Directory and account management</h2>
+              </div>
+              <button id="create-user-button-inline" class="button button-primary" type="button">Create user</button>
+            </div>
+            <div class="split-layout users-layout">
+              <div>
+                <div class="toolbar">
+                  <input id="user-search" class="input" type="search" placeholder="Search by name or email" />
+                  <select id="user-status-filter" class="input">
+                    <option value="">All statuses</option>
+                    <option>Active</option>
+                    <option>Invited</option>
+                    <option>Disabled</option>
+                  </select>
+                  <select id="user-role-filter" class="input">
+                    <option value="">Role</option>
+                    <option value="platform_admin">Platform admin</option>
+                    <option value="member">Member</option>
+                  </select>
+                </div>
+                <div id="user-list" class="list-cards">
+                  <article class="list-card active">
+                    <div>
+                      <strong>Vaclav Soukup</strong>
+                      <p>vaclav.soukup@neatec.cz · Platform admin · owner in Personal</p>
+                    </div>
+                    <span class="status-chip success">Active</span>
+                  </article>
+                  <article class="list-card">
+                    <div>
+                      <strong>Alena Novak</strong>
+                      <p>alena@studio.test · member in Product · invited 2 days ago</p>
+                    </div>
+                    <span class="status-chip info">Invited</span>
+                  </article>
+                  <article class="list-card">
+                    <div>
+                      <strong>Martin Kriz</strong>
+                      <p>martin@studio.test · disabled by admin</p>
+                    </div>
+                    <span class="status-chip danger">Disabled</span>
+                  </article>
+                </div>
+              </div>
+              <aside class="detail-card user-editor">
+                <p id="user-editor-status" class="eyebrow">Edit user</p>
+                <h3 id="user-editor-title">Vaclav Soukup</h3>
+                <form class="editor-form">
+                  <label>
+                    <span>Name</span>
+                    <input id="user-name" class="input" value="Vaclav Soukup" />
+                  </label>
+                  <label>
+                    <span>Email</span>
+                    <input id="user-email" class="input" value="vaclav.soukup@neatec.cz" />
+                  </label>
+                  <label>
+                    <span>Organization</span>
+                    <select id="user-org" class="input">
+                      <option>Personal</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Organization role</span>
+                    <select id="user-role" class="input">
+                      <option selected>owner</option>
+                      <option>member</option>
+                    </select>
+                  </label>
+                  <label class="switch-row">
+                    <span>Platform admin</span>
+                    <input id="user-platform-admin" type="checkbox" checked />
+                  </label>
+                  <label class="switch-row">
+                    <span>Send invite email immediately</span>
+                    <input id="user-send-invite" type="checkbox" checked />
+                  </label>
+                </form>
+                <div class="button-row">
+                  <button id="user-disable-button" class="button button-secondary" type="button">Disable user</button>
+                  <button id="user-delete-button" class="button button-secondary" type="button">Delete user</button>
+                  <button id="user-save-button" class="button button-primary" type="button">Save changes</button>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="panel page page-audit hidden" data-page="audit">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Audit</p>
+                <h2>Filterable event stream</h2>
+              </div>
+              <button class="button button-secondary" type="button">Export CSV</button>
+            </div>
+            <div class="audit-layout">
+              <aside class="audit-filters">
+                <div class="stack tight">
+                  <label>
+                    <span class="eyebrow">Search</span>
+                    <input id="audit-search" class="input" type="search" placeholder="Actor, action, entity" />
+                  </label>
+                  <label>
+                    <span class="eyebrow">Date range</span>
+                    <select id="audit-date-range" class="input">
+                      <option>Last 24h</option>
+                      <option>Last 7 days</option>
+                      <option>Last 30 days</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span class="eyebrow">Actor</span>
+                    <select id="audit-actor-filter" class="input">
+                      <option>All actors</option>
+                      <option>Platform admin</option>
+                      <option>Member</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span class="eyebrow">Entity type</span>
+                    <select id="audit-entity-filter" class="input">
+                      <option>All entities</option>
+                      <option>User</option>
+                      <option>Credential</option>
+                      <option>Session</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="button-row">
+                  <button class="button button-secondary" type="button">Reset</button>
+                  <button class="button button-primary" type="button">Apply</button>
+                </div>
+              </aside>
+              <section id="audit-list" class="audit-stream">
+                <article class="audit-row active">
+                  <div>
+                    <strong>User invited</strong>
+                    <p>Václav Soukup created `alena@studio.test` and sent an invite.</p>
+                  </div>
+                  <span>14:21</span>
+                </article>
+                <article class="audit-row">
+                  <div>
+                    <strong>Credential rotated</strong>
+                    <p>OpenAI org key moved to draining and a replacement binding was assigned.</p>
+                  </div>
+                  <span>13:58</span>
+                </article>
+                <article class="audit-row">
+                  <div>
+                    <strong>Session rebinding</strong>
+                    <p>session_1884 switched to Anthropic shared key after failure classification.</p>
+                  </div>
+                  <span>13:31</span>
+                </article>
+              </section>
+              <aside id="audit-detail" class="detail-card audit-detail">
+                <p class="eyebrow">Event detail</p>
+                <h3>User invited</h3>
+                <div class="stack">
+                  <div class="detail-line"><span>Actor</span><strong>Václav Soukup</strong></div>
+                  <div class="detail-line"><span>Changed fields</span><strong>invite status, platform role</strong></div>
+                  <div class="detail-line"><span>Result</span><strong>Success</strong></div>
+                  <div class="detail-line"><span>Correlation</span><strong>evt_9a21f</strong></div>
+                </div>
+                <div class="button-row">
+                  <button class="button button-secondary" type="button">Open user</button>
+                  <button class="button button-secondary" type="button">Open org</button>
+                </div>
+              </aside>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

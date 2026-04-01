@@ -144,6 +144,22 @@ export const PlatformRoleTable = mysqlTable(
   ],
 )
 
+export const AdminUserStateTable = mysqlTable(
+  "admin_user_state",
+  {
+    id: id().primaryKey(),
+    user_id: varchar("user_id", { length: 64 }).notNull(),
+    disabled: boolean("disabled").notNull().default(false),
+    disabled_at: timestamp("disabled_at", { fsp: 3 }),
+    disabled_by_user_id: varchar("disabled_by_user_id", { length: 64 }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("admin_user_state_user_id").on(table.user_id),
+    index("admin_user_state_disabled").on(table.disabled),
+  ],
+)
+
 export const WorkerTable = mysqlTable(
   "worker",
   {
