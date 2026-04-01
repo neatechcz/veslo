@@ -1,7 +1,9 @@
 import express from "express";
 import { pathToFileURL } from "node:url";
 
-import type { UpstreamAuth } from "./credentials/token-broker.js";
+import { DefaultTokenBroker } from "./credentials/default-token-broker.js";
+import { EncryptedSecretStore } from "./credentials/encrypted-secret-store.js";
+import type { CredentialRecord, CredentialRepository } from "./credentials/repository.js";
 import { env } from "./env.js";
 import { createAdminRouter, createDefaultAdminService, type AdminService } from "./http/admin.js";
 import { createProxyRouter, type ProxyDependencies } from "./http/proxy.js";
@@ -12,6 +14,40 @@ export type AppDependencies = {
   admin?: AdminService;
   proxy?: ProxyDependencies;
 };
+
+class InMemoryCredentialRepository implements CredentialRepository {
+  constructor(private readonly recordsByBindingId: Map<string, CredentialRecord>) {}
+
+  async getCredentialRecordById(credentialRecordId: string): Promise<CredentialRecord | null> {
+    for (const record of this.recordsByBindingId.values()) {
+      if (record.id === credentialRecordId) {
+        return record;
+      }
+    }
+
+    return null;
+  }
+
+  async listHealthyCredentialRecordIds(): Promise<string[]> {
+    return Array.from(this.recordsByBindingId.values())
+      .filter((record) => record.state === "healthy")
+      .map((record) => record.id);
+  }
+
+  async getCredentialRecordByBindingId(bindingId: string): Promise<CredentialRecord | null> {
+    return this.recordsByBindingId.get(bindingId) ?? null;
+  }
+
+  async markCredentialState(input: { credentialRecordId: string; state: CredentialRecord["state"] }): Promise<void> {
+    for (const [bindingId, record] of this.recordsByBindingId.entries()) {
+      if (record.id !== input.credentialRecordId) continue;
+      this.recordsByBindingId.set(bindingId, {
+        ...record,
+        state: input.state,
+      });
+    }
+  }
+}
 
 class InMemoryLeaseRepository implements LeaseRepository {
   private readonly leasesBySession = new Map<string, SessionLease>();
@@ -54,6 +90,29 @@ class InMemoryLeaseRepository implements LeaseRepository {
 }
 
 function createDefaultProxyDependencies(): ProxyDependencies {
+  const credentials = new InMemoryCredentialRepository(
+    new Map([
+      [
+        "default_binding",
+        {
+          id: "cred_default_1",
+          ownerUserId: "system_default",
+          provider: "openai",
+          credentialType: "api_key",
+          state: "healthy",
+          secretRef: "secret_default_1",
+          createdAt: new Date("2026-04-01T00:00:00.000Z"),
+          updatedAt: new Date("2026-04-01T00:00:00.000Z"),
+        },
+      ],
+    ]),
+  );
+  const secrets = new EncryptedSecretStore(env.secretKey, {
+    secret_default_1: {
+      kind: "api_key",
+      apiKey: "dev_default_api_key",
+    },
+  });
   const leaseBroker = new LeaseBroker(new InMemoryLeaseRepository(), {
     async selectInitialBinding() {
       return "default_binding";
@@ -65,11 +124,10 @@ function createDefaultProxyDependencies(): ProxyDependencies {
 
   return {
     leaseBroker,
-    tokenBroker: {
-      async getUpstreamAuth(): Promise<UpstreamAuth> {
-        throw new Error("token_broker_not_configured");
-      },
-    },
+    tokenBroker: new DefaultTokenBroker({
+      credentials,
+      secrets,
+    }),
     transport: {
       async chatCompletions() {
         throw new Error("provider_transport_not_configured");
