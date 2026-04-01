@@ -77,6 +77,8 @@ You are Veslo.
       expect(plugin).toContain("hasExplicitDelegateRequest");
       expect(plugin).toContain("spusť subagenta");
       expect(plugin).toContain('return "veslo-internal-research"');
+      expect(plugin).toContain('" listu "');
+      expect(plugin).not.toContain('" list "');
       expect(plugin).toContain("client.session.get");
       expect(plugin).toContain("query: { directory: parentDirectory }");
 

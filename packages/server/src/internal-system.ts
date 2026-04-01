@@ -444,7 +444,6 @@ function detectDelegateAgentFromText(text) {
       " radku ",
       " bunka ",
       " listu ",
-      " list ",
     ])
   ) {
     return "veslo-internal-xlsx";
