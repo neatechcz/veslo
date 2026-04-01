@@ -1,6 +1,9 @@
 import express from "express"
+import { eq } from "drizzle-orm"
 import { fromNodeHeaders } from "better-auth/node"
 import { auth } from "../auth.js"
+import { db } from "../db/index.js"
+import { AdminUserStateTable } from "../db/schema.js"
 
 export type SessionContext = {
   user: {
@@ -18,6 +21,19 @@ export async function requireSession(req: express.Request, res: express.Response
 
   if (!session?.user?.id) {
     res.status(401).json({ error: "unauthorized" })
+    return null
+  }
+
+  const userState = await db
+    .select({
+      disabled: AdminUserStateTable.disabled,
+    })
+    .from(AdminUserStateTable)
+    .where(eq(AdminUserStateTable.user_id, session.user.id))
+    .limit(1)
+
+  if (userState[0]?.disabled === true) {
+    res.status(403).json({ error: "user_disabled" })
     return null
   }
 

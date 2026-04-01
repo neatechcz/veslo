@@ -10,7 +10,8 @@
 #   VESLO_HOST_TOKEN   — host/admin token (auto-generated if unset)
 #   VESLO_WORKSPACE    — host path to mount as workspace (default: ./workspace)
 #   VESLO_PORT         — host port to map to container :8787 (default: 8787)
-#   WEB_PORT              — host port to map to container :5173 (default: 5173)
+#   WEB_PORT           — host port to map to container :5173 (default: 5173)
+#   VESLO_AI_GATEWAY_PORT — host port to map to container :4034 (default: 4034)
 #   VESLO_DEV_ID       — unique ID for this stack (default: default)
 #   VESLO_OPENCODE_CONFIG_DIR      — host OpenCode config dir detection override (read by dev-up.sh)
 #   VESLO_OPENCODE_DATA_DIR        — host OpenCode data dir detection override (read by dev-up.sh)
@@ -186,7 +187,33 @@ services:
       VESLO_HOST_TOKEN: ${VESLO_HOST_TOKEN:-}
       VESLO_DEV_ID: ${VESLO_DEV_ID:-default}
       VESLO_SIDECAR_SOURCE: external
- 
+
+  ai-gateway:
+    <<: *shared
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+
+        corepack enable && corepack prepare pnpm@10.27.0 --activate
+
+        echo "[ai-gateway] Installing dependencies..."
+        pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
+
+        echo ""
+        echo "============================================"
+        echo "  Veslo AI gateway"
+        echo "  URL:    http://localhost:${VESLO_AI_GATEWAY_PORT:-4034}"
+        echo "  Health: http://localhost:${VESLO_AI_GATEWAY_PORT:-4034}/health"
+        echo "============================================"
+        echo ""
+
+        exec pnpm --filter @neatech/ai-gateway dev
+    ports:
+      - "${VESLO_AI_GATEWAY_PORT:-4034}:4034"
+    environment:
+      CI: "true"
+
   web:
     <<: *shared
     depends_on:
