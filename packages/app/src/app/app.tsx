@@ -1170,20 +1170,7 @@ export default function App() {
   const [lastPromptSent, setLastPromptSent] = createSignal("");
 
   type PartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput;
-  const DOCX_ATTACHMENT_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  const DOC_ATTACHMENT_MIME = "application/msword";
   const INBOX_PATH_PREFIX = ".opencode/veslo/inbox/";
-
-  const isWordAttachment = (attachment: ComposerAttachment) => {
-    const mime = attachment.mimeType.trim().toLowerCase();
-    const name = attachment.name.trim().toLowerCase();
-    return (
-      mime === DOCX_ATTACHMENT_MIME ||
-      mime === DOC_ATTACHMENT_MIME ||
-      name.endsWith(".docx") ||
-      name.endsWith(".doc")
-    );
-  };
 
   const attachmentToFile = async (attachment: ComposerAttachment): Promise<File> => {
     const response = await fetch(attachment.dataUrl);
@@ -1196,18 +1183,18 @@ export default function App() {
     });
   };
 
-  const stageDocxAttachmentsForDelegation = async (draft: ComposerDraft): Promise<ComposerDraft> => {
-    const wordAttachments = draft.attachments.filter(isWordAttachment);
-    if (!wordAttachments.length) return draft;
+  const stageAttachmentsForDelegation = async (draft: ComposerDraft): Promise<ComposerDraft> => {
+    const attachmentsToStage = draft.attachments;
+    if (!attachmentsToStage.length) return draft;
 
     const client = vesloServerClient();
     const workspaceId = (resolvedDevtoolsWorkspaceId() ?? "").trim();
     if (!client || !workspaceId || vesloServerStatus() !== "connected") {
-      throw new Error("Connect to Veslo server before sending DOCX attachments.");
+      throw new Error("Connect to Veslo server before sending attachments.");
     }
 
     const stagedPaths: string[] = [];
-    for (const attachment of wordAttachments) {
+    for (const attachment of attachmentsToStage) {
       const file = await attachmentToFile(attachment);
       const uploaded = await client.uploadInbox(workspaceId, file);
       const relativePath = String(uploaded.path ?? attachment.name).trim().replace(/^\/+/, "");
@@ -1221,11 +1208,20 @@ export default function App() {
     const nextResolvedText = textBase.trim()
       ? `${textBase}\n${stagedPaths.join("\n")}`
       : stagedPaths.join("\n");
+    const nextCommand = draft.command
+      ? {
+          ...draft.command,
+          arguments: draft.command.arguments.trim()
+            ? `${draft.command.arguments}\n${stagedPaths.join("\n")}`
+            : stagedPaths.join("\n"),
+        }
+      : draft.command;
 
     return {
       ...draft,
       resolvedText: nextResolvedText,
-      attachments: draft.attachments.filter((attachment) => !isWordAttachment(attachment)),
+      attachments: [],
+      command: nextCommand,
     };
   };
 
@@ -1389,7 +1385,7 @@ export default function App() {
     };
     resolvedDraft = await maybeResolveSkillCommand(resolvedDraft);
     try {
-      const stagedDraft = await stageDocxAttachmentsForDelegation(resolvedDraft);
+      const stagedDraft = await stageAttachmentsForDelegation(resolvedDraft);
       resolvedDraft = stagedDraft;
     } catch (error) {
       setError(error instanceof Error ? error.message : safeStringify(error));
@@ -2485,8 +2481,9 @@ export default function App() {
 
       // Fetch sessions scoped to the workspace directory to avoid loading the
       // full global session list for every workspace.
+      // Keep `roots` unset so the backend returns both root sessions and child/subagent sessions.
       const list = unwrap(
-        await c.session.list({ directory: queryDirectory, roots: false, limit: requestLimit }),
+        await c.session.list({ directory: queryDirectory, limit: requestLimit }),
       );
       wsDebug("sidebar:list", {
         id,
