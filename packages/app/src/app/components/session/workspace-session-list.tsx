@@ -17,6 +17,7 @@ import {
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
   isProjectCollapsed,
+  resolveSessionRowClickAction,
   requiredVisibleCountForExpandedSession,
   rowVisibleByExpansion,
   shouldShowNewSessionLabelText,
@@ -457,14 +458,18 @@ export default function WorkspaceSessionList(props: Props) {
     row: FlatSessionRow,
     hasChildren: (sessionId: string) => boolean,
   ) => {
-    if (props.selectedSessionId !== row.session.id) {
-      props.onOpenSession(row.workspace.id, row.session.id);
-      return;
-    }
-    if (hasChildren(row.session.id)) {
+    const action = resolveSessionRowClickAction({
+      selectedSessionId: props.selectedSessionId,
+      clickedSessionId: row.session.id,
+      hasChildren: hasChildren(row.session.id),
+    });
+
+    if (action.toggleExpandedParent) {
       toggleExpandedParentSession(row.session.id);
     }
-    props.onOpenSession(row.workspace.id, row.session.id);
+    if (action.openSession) {
+      props.onOpenSession(row.workspace.id, row.session.id);
+    }
   };
 
   const PROJECT_POINTER_DRAG_START_THRESHOLD_PX = 2;

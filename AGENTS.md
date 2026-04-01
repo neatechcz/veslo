@@ -60,6 +60,26 @@ Read INFRASTRUCTURE.md
 
 **NEVER run the web application (Next.js / `packages/web`).** Always run the Tauri native desktop application (`packages/desktop`) instead. This applies to all contexts: development, testing, debugging, and E2E verification. If you need to launch the app, use the Tauri dev command, not `next dev` or any web-only server.
 
+## Codex Internal App Testing Rule (Required)
+
+When we say **"test the app"**, it means testing the real Veslo desktop runtime end-to-end (UI + runtime behavior), not just mobile-specific checks.
+
+Use this exact workflow for internal Codex testing:
+
+1. Build the desktop app with the WebDriver plugin:
+   - `cd packages/desktop`
+   - `pnpm tauri build --debug --no-bundle -- --features e2e`
+2. Run UI tests through WebdriverIO against the Tauri binary:
+   - `cd packages/e2e`
+   - `pnpm test --spec ./specs/<target>.spec.ts`
+3. Reuse running app instances whenever possible:
+   - Before launching, tests must check `http://127.0.0.1:4445/status`.
+   - If WebDriver is already available, tests must attach to the running app.
+   - In that case tests must not force-stop the app at teardown.
+4. Only spawn/stop the app from the harness when no compatible running instance is available.
+
+This rule applies every time Codex launches or tests Veslo internally.
+
 ## Agent Guidelines for development
 
 * **Purpose-first UI**: prioritize clarity, safety, and approachability for non-technical users.

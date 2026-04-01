@@ -38,8 +38,9 @@ WKWebView (macOS) / WebView2 (Win) / WebKitGTK (Linux)
 1. `tauri-plugin-webdriver` (Rust crate, v0.2.x) is added to the Tauri app behind a Cargo feature flag (`e2e`). The plugin registration in Rust is gated behind `#[cfg(debug_assertions)]`.
 2. On debug builds with the `e2e` feature enabled, the plugin starts an axum HTTP server on `127.0.0.1:4445` that speaks W3C WebDriver protocol.
 3. Platform-specific backends (`macos.rs` via `objc2-web-kit`, `windows.rs` via `webview2-com`, `linux.rs` via `webkit2gtk`) translate WebDriver commands to native WebView API calls.
-4. WebdriverIO connects to port 4445 and runs test specs against the real native app.
-5. `@wdio/visual-service` captures screenshots through the standard W3C screenshot endpoints and compares against baselines.
+4. WebdriverIO first probes `http://127.0.0.1:4445/status`; if an app is already running and WebDriver-ready, tests attach to it directly.
+5. If no WebDriver-ready app is running, the harness launches the Tauri binary and waits for `/status`.
+6. `@wdio/visual-service` captures screenshots through the standard W3C screenshot endpoints and compares against baselines.
 
 ### Security
 
@@ -124,17 +125,20 @@ Key settings:
 - `framework`: `mocha`
 - `reporters`: `['spec']`
 - `services`: `[['visual', { baselineFolder: './__snapshots__/' }]]`
-- `onPrepare`: calls `app-launcher.ts` to spawn the Tauri binary
-- `onComplete`: kills the Tauri process
+- `onPrepare`: calls `app-launcher.ts` and either reuses an existing WebDriver-ready app or spawns one
+- `beforeTest`: verifies `/status` so each test runs against a confirmed live app
+- `onComplete`: only kills the app process if it was started by the harness
 
 ### 4. App launcher (`helpers/app-launcher.ts`)
 
 Responsibilities:
 
-1. Resolve the Tauri binary path (platform-specific, supports both bundled `.app` and unbundled binary from `--no-bundle`)
-2. Spawn the binary with `TAURI_WEBDRIVER_PORT=4445` environment variable
-3. Poll `http://127.0.0.1:4445/status` with 250ms intervals, 30-second timeout
-4. On teardown, send SIGTERM (Unix) or kill the process (Windows)
+1. Probe `http://127.0.0.1:4445/status` first.
+2. If status is healthy, reuse the running app process (no relaunch, no forced teardown).
+3. If status is unavailable, resolve the Tauri binary path (platform-specific, supports both bundled `.app` and unbundled binary from `--no-bundle`).
+4. Spawn the binary with `TAURI_WEBDRIVER_PORT=4445` environment variable.
+5. Poll `http://127.0.0.1:4445/status` with 250ms intervals, 30-second timeout.
+6. On teardown, send SIGTERM (Unix) or kill the process (Windows) only when the harness owns the spawned process.
 
 Binary path resolution (the Cargo package name is `veslo`, from `src-tauri/Cargo.toml`). With `--no-bundle` (the default for CI and local E2E), only the unbundled path exists:
 
@@ -167,9 +171,16 @@ Note: with `--no-bundle` on macOS, the binary runs without a dock icon or proper
 
 ### session.spec.ts
 
-- Create a new session via UI
-- Session appears in the sidebar list
-- Clicking a session navigates to it
+- Session view is rendered and interactive
+- Session sidebar structure is present
+- Session interactions can be extended with deterministic subagent regression checks
+
+### session-subagent-regression (ITU)
+
+- Reproduce restart behavior with a selected parent session
+- First click on a non-selected session activates it
+- Second click on the now-selected parent toggles subagent expansion
+- Validate this on the running Tauri app instance (reuse when already running)
 
 ### composer.spec.ts
 

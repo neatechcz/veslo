@@ -331,6 +331,38 @@ export const deriveExpandedParentSessionIds = (
   return next;
 };
 
+export type SessionRowClickAction = {
+  openSession: boolean;
+  toggleExpandedParent: boolean;
+};
+
+export const resolveSessionRowClickAction = (input: {
+  selectedSessionId: string | null | undefined;
+  clickedSessionId: string | null | undefined;
+  hasChildren: boolean;
+}): SessionRowClickAction => {
+  const selected = input.selectedSessionId?.trim() ?? "";
+  const clicked = input.clickedSessionId?.trim() ?? "";
+  if (!clicked) {
+    return {
+      openSession: false,
+      toggleExpandedParent: false,
+    };
+  }
+
+  if (selected !== clicked) {
+    return {
+      openSession: true,
+      toggleExpandedParent: false,
+    };
+  }
+
+  return {
+    openSession: true,
+    toggleExpandedParent: input.hasChildren,
+  };
+};
+
 const buildHierarchicalRows = (
   rows: FlatSessionRow[],
   compareRows: (a: FlatSessionRow, b: FlatSessionRow) => number,

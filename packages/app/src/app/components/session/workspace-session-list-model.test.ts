@@ -4,11 +4,13 @@ import test from "node:test";
 import {
   buildProjectGroups,
   buildRecentRows,
+  buildRowHierarchyLookup,
   deriveExpandedParentSessionIds,
   displayTimestamp,
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
   isProjectCollapsed,
+  resolveSessionRowClickAction,
   requiredVisibleCountForExpandedSession,
   shouldShowNewSessionLabelText,
   shouldUseExpandedNewSessionLabel,
@@ -203,6 +205,59 @@ test("deriveExpandedParentSessionIds expands the selected branch so subagents st
     [...deriveExpandedParentSessionIds(rows, "sub-a-2")].sort(),
     ["root-a", "sub-a-1"],
   );
+});
+
+test("session row click behavior after restart keeps first click for selection and second click for subagent expansion", () => {
+  const workspace = {
+    id: "workspace-1",
+    name: "workspace-1",
+    path: "/tmp/workspace-1",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+
+  const rows = buildRecentRows([
+    {
+      workspace,
+      sessions: [
+        {
+          id: "root-parent",
+          title: "root-parent",
+          time: { created: 100, updated: 1_000 },
+        },
+        {
+          id: "child-subagent",
+          title: "child-subagent",
+          parentID: "root-parent",
+          time: { created: 200, updated: 900 },
+        },
+      ],
+      status: "ready",
+    },
+  ]);
+  const hierarchy = buildRowHierarchyLookup(rows);
+  const hasChildren = (sessionId: string) =>
+    (hierarchy.childrenByParentId.get(sessionId)?.length ?? 0) > 0;
+
+  const firstClick = resolveSessionRowClickAction({
+    selectedSessionId: null,
+    clickedSessionId: "root-parent",
+    hasChildren: hasChildren("root-parent"),
+  });
+  assert.deepEqual(firstClick, {
+    openSession: true,
+    toggleExpandedParent: false,
+  });
+
+  const secondClick = resolveSessionRowClickAction({
+    selectedSessionId: "root-parent",
+    clickedSessionId: "root-parent",
+    hasChildren: hasChildren("root-parent"),
+  });
+  assert.deepEqual(secondClick, {
+    openSession: true,
+    toggleExpandedParent: true,
+  });
 });
 
 test("requiredVisibleCountForExpandedSession requests enough rows to reveal direct children", () => {

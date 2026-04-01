@@ -11,6 +11,7 @@ const LAUNCH_TIMEOUT = parseInt(process.env.E2E_LAUNCH_TIMEOUT ?? '30000', 10);
 const POLL_INTERVAL = 250;
 
 let appProcess: ChildProcess | null = null;
+let appProcessOwnedByHarness = false;
 
 function resolveDesktopRoot(): string {
   return resolve(join(__dirname, '..', '..', 'desktop'));
@@ -55,7 +56,31 @@ async function pollStatus(port: number, timeout: number): Promise<void> {
   throw new Error(`WebDriver server did not respond on ${url} within ${timeout}ms`);
 }
 
+async function hasReadyWebDriverServer(port: number): Promise<boolean> {
+  const url = `http://127.0.0.1:${port}/status`;
+  try {
+    const res = await fetch(url);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function ensureWebDriverReady(
+  port: number = WEBDRIVER_PORT,
+  timeout: number = Math.max(POLL_INTERVAL, Math.min(5_000, LAUNCH_TIMEOUT)),
+): Promise<void> {
+  await pollStatus(port, timeout);
+}
+
 export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
+  if (await hasReadyWebDriverServer(port)) {
+    console.log(`[e2e] Reusing existing WebDriver server on port ${port}.`);
+    appProcess = null;
+    appProcessOwnedByHarness = false;
+    return;
+  }
+
   const binaryPath = resolveBinaryPath();
   console.log(`[e2e] Launching Tauri binary: ${binaryPath}`);
   console.log(`[e2e] WebDriver port: ${port}`);
@@ -70,6 +95,7 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  appProcessOwnedByHarness = true;
 
   appProcess.stdout?.on('data', (data: Buffer) => {
     process.stdout.write(`[app:stdout] ${data}`);
@@ -81,15 +107,23 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   appProcess.on('exit', (code) => {
     console.log(`[e2e] App process exited with code ${code}`);
     appProcess = null;
+    appProcessOwnedByHarness = false;
   });
 
-  console.log(`[e2e] Waiting for WebDriver server on port ${port}...`);
-  await pollStatus(port, LAUNCH_TIMEOUT);
-  console.log(`[e2e] WebDriver server is ready.`);
+  try {
+    console.log(`[e2e] Waiting for WebDriver server on port ${port}...`);
+    await pollStatus(port, LAUNCH_TIMEOUT);
+    console.log(`[e2e] WebDriver server is ready.`);
+  } catch (error) {
+    stopApp();
+    throw error;
+  }
 }
 
 export function stopApp(): void {
-  if (!appProcess) return;
+  if (!appProcessOwnedByHarness || !appProcess) {
+    return;
+  }
   console.log(`[e2e] Stopping app process (PID ${appProcess.pid})...`);
 
   if (process.platform === 'win32') {

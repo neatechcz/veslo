@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { startApp, stopApp } from './helpers/app-launcher.js';
+import { ensureWebDriverReady, startApp, stopApp } from './helpers/app-launcher.js';
 import type { Options } from '@wdio/types';
 
 const WEBDRIVER_PORT = 4445;
@@ -48,6 +48,10 @@ export const config: Options.Testrunner = {
 
   onPrepare: async () => {
     await startApp(WEBDRIVER_PORT);
+  },
+
+  beforeTest: async () => {
+    await ensureWebDriverReady(WEBDRIVER_PORT);
   },
 
   onComplete: () => {
