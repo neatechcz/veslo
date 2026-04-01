@@ -741,6 +741,7 @@ export default {
 
   // ==================== Sidebar ====================
   "sidebar.add_directory_session": "添加目录并打开会话",
+  "sidebar.archive_confirm": "确认",
   "sidebar.loading_more": "正在加载更多...",
   "sidebar.load_more": "加载更多（+20）",
   "sidebar.more_ellipsis": "…",

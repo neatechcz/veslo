@@ -22,6 +22,7 @@ import {
   rowVisibleByExpansion,
   shouldShowNewSessionLabelText,
   shouldUseExpandedNewSessionLabel,
+  splitSessionDisplayLabel,
   toggleProjectCollapsed,
   type FlatSessionRow,
   type ProjectSessionGroup,
@@ -157,9 +158,13 @@ export default function WorkspaceSessionList(props: Props) {
   const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
   const [archivedSessionIds, setArchivedSessionIds] = createSignal<string[]>(readArchivedSessionIds());
   const [showArchivedSessions, setShowArchivedSessions] = createSignal<boolean>(readShowArchivedSessions());
+  const [pendingArchiveConfirmationSessionId, setPendingArchiveConfirmationSessionId] = createSignal<string | null>(
+    null,
+  );
   const [sidebarControlsWidth, setSidebarControlsWidth] = createSignal(0);
   let workspaceMenuRef: HTMLDivElement | undefined;
   let addWorkspaceMenuRef: HTMLDivElement | undefined;
+  let pendingArchiveConfirmButtonRef: HTMLButtonElement | undefined;
   let sidebarControlsRef: HTMLDivElement | undefined;
   let scrollContainerRef: HTMLDivElement | undefined;
   let recentSentinelRef: HTMLDivElement | undefined;
@@ -181,6 +186,8 @@ export default function WorkspaceSessionList(props: Props) {
 
   const archivedSessionIdSet = createMemo(() => new Set(archivedSessionIds()));
   const isSessionArchived = (sessionId: string) => archivedSessionIdSet().has(sessionId.trim());
+  const isArchiveConfirmationPending = (sessionId: string) =>
+    pendingArchiveConfirmationSessionId() === sessionId.trim();
   const shouldShowSessionRow = (row: FlatSessionRow) =>
     showArchivedSessions() || !isSessionArchived(row.session.id);
 
@@ -412,20 +419,17 @@ export default function WorkspaceSessionList(props: Props) {
     return { label, color };
   };
 
-  const sessionDisplayLabel = (row: FlatSessionRow) =>
-    sessionDecorationFor(row.session.id)?.label ?? row.session.title;
-
-  const sessionLabelTitle = (row: FlatSessionRow) => {
-    const decorated = sessionDecorationFor(row.session.id)?.label?.trim() ?? "";
-    const raw = row.session.title?.trim() ?? "";
-    if (decorated && raw && decorated !== raw) return `${decorated} · ${raw}`;
-    return decorated || raw;
+  const sessionLabelParts = (row: FlatSessionRow) => {
+    const decorated = sessionDecorationFor(row.session.id)?.label;
+    return splitSessionDisplayLabel(row.session.title, decorated);
   };
 
-  const sessionLabelStyle = (row: FlatSessionRow) => {
+  const sessionLabelTitle = (row: FlatSessionRow) => sessionLabelParts(row).tooltip;
+
+  const sessionLabelColor = (row: FlatSessionRow) => {
     const color = sessionDecorationFor(row.session.id)?.color?.trim() ?? "";
-    if (!color || !row.isSubagent) return undefined;
-    return { color };
+    if (!color || !row.isSubagent) return "";
+    return color;
   };
 
   const ensureExpandedSessionChildrenVisible = (
@@ -502,11 +506,18 @@ export default function WorkspaceSessionList(props: Props) {
     });
   };
 
-  const handleSessionArchiveToggle = (event: MouseEvent, sessionId: string) => {
+  const handleSessionArchiveAction = (event: MouseEvent, sessionId: string) => {
     event.stopPropagation();
     const id = sessionId.trim();
     if (!id) return;
     const archived = isSessionArchived(id);
+
+    if (!archived && !isArchiveConfirmationPending(id)) {
+      setPendingArchiveConfirmationSessionId(id);
+      return;
+    }
+
+    setPendingArchiveConfirmationSessionId(null);
     setArchivedSessionIdsWithPersist((current) => {
       if (archived) return current.filter((entry) => entry !== id);
       return current.includes(id) ? current : [...current, id];
@@ -785,6 +796,10 @@ export default function WorkspaceSessionList(props: Props) {
       visibleProjectGroups().flatMap((group) => group.sessions.map((row) => row.session.id)),
     );
     for (const row of visibleRecentRows()) validSessionIds.add(row.session.id);
+    const pendingId = pendingArchiveConfirmationSessionId();
+    if (pendingId && !validSessionIds.has(pendingId)) {
+      setPendingArchiveConfirmationSessionId(null);
+    }
 
     setExpandedParentSessionIds((current) => {
       let changed = false;
@@ -819,6 +834,21 @@ export default function WorkspaceSessionList(props: Props) {
     };
     window.addEventListener("pointerdown", closeMenu);
     onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
+  });
+
+  createEffect(() => {
+    const pendingArchiveId = pendingArchiveConfirmationSessionId();
+    if (!pendingArchiveId) {
+      pendingArchiveConfirmButtonRef = undefined;
+      return;
+    }
+    const cancelPendingArchive = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (pendingArchiveConfirmButtonRef && target && pendingArchiveConfirmButtonRef.contains(target)) return;
+      setPendingArchiveConfirmationSessionId(null);
+    };
+    window.addEventListener("pointerdown", cancelPendingArchive);
+    onCleanup(() => window.removeEventListener("pointerdown", cancelPendingArchive));
   });
 
   createEffect(() => {
@@ -1142,6 +1172,9 @@ export default function WorkspaceSessionList(props: Props) {
                       const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
                       const soulEnabled = () => Boolean(soulStatus()?.enabled);
                       const taskLoadError = () => taskLoadErrorFor(workspace(), row.error);
+                      const label = () => sessionLabelParts(row);
+                      const labelColor = () => sessionLabelColor(row);
+                      const archiveConfirmationPending = () => isArchiveConfirmationPending(session().id);
                       const anchorKey = `recent:${row.rowKey}`;
                       const isConnectionActionBusy = () => isConnectionActionBusyFor(workspace().id);
 
@@ -1166,9 +1199,19 @@ export default function WorkspaceSessionList(props: Props) {
                                 <span
                                   class="text-[13px] text-gray-11 truncate font-medium"
                                   title={sessionLabelTitle(row)}
-                                  style={sessionLabelStyle(row)}
                                 >
-                                  {sessionDisplayLabel(row)}
+                                  <Show when={label().decoratedName} fallback={label().description ?? ""}>
+                                    {(decoratedName) => (
+                                      <>
+                                        <span style={labelColor() ? { color: labelColor() } : undefined}>
+                                          {decoratedName()}
+                                        </span>
+                                        <Show when={label().description}>
+                                          {(description) => <span>{` · ${description()}`}</span>}
+                                        </Show>
+                                      </>
+                                    )}
+                                  </Show>
                                 </span>
                               </div>
 
@@ -1214,15 +1257,36 @@ export default function WorkspaceSessionList(props: Props) {
                             {formatSessionRelativeAge(displayTimestamp(session()))}
                           </span>
 
-                          <div class="absolute right-2 bottom-1 opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100 transition-opacity">
+                          <div
+                            class={`absolute right-2 bottom-1 transition-opacity ${
+                              archiveConfirmationPending()
+                                ? "opacity-100"
+                                : "opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100"
+                            }`}
+                          >
                             <button
                               type="button"
-                              class="p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"
-                              onClick={(event) => handleSessionArchiveToggle(event, session().id)}
-                              aria-label={isSessionArchived(session().id) ? tr("sidebar.unarchive_session") : tr("sidebar.archive_session")}
-                              title={isSessionArchived(session().id) ? tr("sidebar.unarchive_session") : tr("sidebar.archive_session")}
+                              class={archiveConfirmationPending()
+                                ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
+                                : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
+                              onClick={(event) => handleSessionArchiveAction(event, session().id)}
+                              aria-label={archiveConfirmationPending()
+                                ? tr("sidebar.archive_confirm")
+                                : isSessionArchived(session().id)
+                                ? tr("sidebar.unarchive_session")
+                                : tr("sidebar.archive_session")}
+                              title={archiveConfirmationPending()
+                                ? tr("sidebar.archive_confirm")
+                                : isSessionArchived(session().id)
+                                ? tr("sidebar.unarchive_session")
+                                : tr("sidebar.archive_session")}
+                              ref={(el) => {
+                                if (archiveConfirmationPending()) pendingArchiveConfirmButtonRef = el;
+                              }}
                             >
-                              <Archive size={14} />
+                              <Show when={archiveConfirmationPending()} fallback={<Archive size={14} />}>
+                                {tr("sidebar.archive_confirm")}
+                              </Show>
                             </button>
                           </div>
 
@@ -1427,6 +1491,9 @@ export default function WorkspaceSessionList(props: Props) {
                             const isSelected = () => props.selectedSessionId === session().id;
                             const isSessionActive = () =>
                               (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
+                            const label = () => sessionLabelParts(row);
+                            const labelColor = () => sessionLabelColor(row);
+                            const archiveConfirmationPending = () => isArchiveConfirmationPending(row.session.id);
                             const rowAnchorKey = `project-session:${row.rowKey}`;
 
                             return (
@@ -1450,9 +1517,19 @@ export default function WorkspaceSessionList(props: Props) {
                                       <span
                                         class="text-[13px] text-gray-11 truncate font-medium"
                                         title={sessionLabelTitle(row)}
-                                        style={sessionLabelStyle(row)}
                                       >
-                                        {sessionDisplayLabel(row)}
+                                        <Show when={label().decoratedName} fallback={label().description ?? ""}>
+                                          {(decoratedName) => (
+                                            <>
+                                              <span style={labelColor() ? { color: labelColor() } : undefined}>
+                                                {decoratedName()}
+                                              </span>
+                                              <Show when={label().description}>
+                                                {(description) => <span>{` · ${description()}`}</span>}
+                                              </Show>
+                                            </>
+                                          )}
+                                        </Show>
                                       </span>
                                     </div>
                                   </div>
@@ -1465,15 +1542,36 @@ export default function WorkspaceSessionList(props: Props) {
                                   {formatSessionRelativeAge(displayTimestamp(session()))}
                                 </span>
 
-                                <div class="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100 transition-opacity">
+                                <div
+                                  class={`absolute right-2 top-1/2 -translate-y-1/2 transition-opacity ${
+                                    archiveConfirmationPending()
+                                      ? "opacity-100"
+                                      : "opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100"
+                                  }`}
+                                >
                                   <button
                                     type="button"
-                                    class="p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"
-                                    onClick={(event) => handleSessionArchiveToggle(event, row.session.id)}
-                                    aria-label={isSessionArchived(row.session.id) ? tr("sidebar.unarchive_session") : tr("sidebar.archive_session")}
-                                    title={isSessionArchived(row.session.id) ? tr("sidebar.unarchive_session") : tr("sidebar.archive_session")}
+                                    class={archiveConfirmationPending()
+                                      ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
+                                      : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
+                                    onClick={(event) => handleSessionArchiveAction(event, row.session.id)}
+                                    aria-label={archiveConfirmationPending()
+                                      ? tr("sidebar.archive_confirm")
+                                      : isSessionArchived(row.session.id)
+                                      ? tr("sidebar.unarchive_session")
+                                      : tr("sidebar.archive_session")}
+                                    title={archiveConfirmationPending()
+                                      ? tr("sidebar.archive_confirm")
+                                      : isSessionArchived(row.session.id)
+                                      ? tr("sidebar.unarchive_session")
+                                      : tr("sidebar.archive_session")}
+                                    ref={(el) => {
+                                      if (archiveConfirmationPending()) pendingArchiveConfirmButtonRef = el;
+                                    }}
                                   >
-                                    <Archive size={14} />
+                                    <Show when={archiveConfirmationPending()} fallback={<Archive size={14} />}>
+                                      {tr("sidebar.archive_confirm")}
+                                    </Show>
                                   </button>
                                 </div>
 

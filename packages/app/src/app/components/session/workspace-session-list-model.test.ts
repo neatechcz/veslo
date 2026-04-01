@@ -11,6 +11,7 @@ import {
   formatSessionTimestampTooltip,
   isProjectCollapsed,
   resolveSessionRowClickAction,
+  splitSessionDisplayLabel,
   requiredVisibleCountForExpandedSession,
   shouldShowNewSessionLabelText,
   shouldUseExpandedNewSessionLabel,
@@ -347,6 +348,26 @@ test("requiredVisibleCountForExpandedSession includes nested expanded descendant
     requiredVisibleCountForExpandedSession(rows, new Set(["root-b", "sub-b-1"]), "root-b"),
     4,
   );
+});
+
+test("splitSessionDisplayLabel keeps colored subagent name and still shows session description", () => {
+  const label = splitSessionDisplayLabel("Vytvor shrnutí release notes", "Adam #2");
+
+  assert.deepEqual(label, {
+    decoratedName: "Adam #2",
+    description: "Vytvor shrnutí release notes",
+    tooltip: "Adam #2 · Vytvor shrnutí release notes",
+  });
+});
+
+test("splitSessionDisplayLabel avoids duplicating the same text twice", () => {
+  const label = splitSessionDisplayLabel("Adam", "Adam");
+
+  assert.deepEqual(label, {
+    decoratedName: "Adam",
+    description: null,
+    tooltip: "Adam",
+  });
 });
 
 test("buildProjectGroups keeps directory groups in workspace insertion order", () => {

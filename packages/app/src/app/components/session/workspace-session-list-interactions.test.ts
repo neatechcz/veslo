@@ -182,7 +182,7 @@ test("selected session auto-expands its branch in the sidebar", () => {
   );
 });
 
-test("session label span exposes full title tooltip and optional decoration styling", () => {
+test("session label span exposes full title tooltip and renders colored subagent prefix with session description", () => {
   assert.match(
     source,
     /title=\{sessionLabelTitle\(row\)\}/,
@@ -191,8 +191,20 @@ test("session label span exposes full title tooltip and optional decoration styl
 
   assert.match(
     source,
-    /style=\{sessionLabelStyle\(row\)\}/,
-    "decorated subagent rows should apply persisted color styling",
+    /splitSessionDisplayLabel\(row\.session\.title, decorated\)/,
+    "session labels should split subagent name from raw session description",
+  );
+
+  assert.match(
+    source,
+    /style=\{labelColor\(\) \? \{ color: labelColor\(\) \} : undefined\}/,
+    "decorated subagent prefix should apply persisted color styling",
+  );
+
+  assert.match(
+    source,
+    /` · \$\{description\(\)\}`/,
+    "decorated rows should continue with the original sub-session description",
   );
 });
 
@@ -231,13 +243,37 @@ test("session rows use archive action and open submenu on right-click", () => {
 
   assert.match(
     source,
-    /onClick=\{\(event\) => handleSessionArchiveToggle\(event, session\(\)\.id\)\}/,
-    "recent session rows should archive from the hover action button",
+    /const \[pendingArchiveConfirmationSessionId, setPendingArchiveConfirmationSessionId\] = createSignal<string \| null>\(/,
+    "session list should track pending archive confirmation per session id",
   );
 
   assert.match(
     source,
-    /onClick=\{\(event\) => handleSessionArchiveToggle\(event, row\.session\.id\)\}/,
-    "by-project session rows should archive from the hover action button",
+    /if \(!archived && !isArchiveConfirmationPending\(id\)\) \{\s*setPendingArchiveConfirmationSessionId\(id\);\s*return;\s*\}/s,
+    "first click on a non-archived session should only arm inline confirmation",
+  );
+
+  assert.match(
+    source,
+    /onClick=\{\(event\) => handleSessionArchiveAction\(event, session\(\)\.id\)\}/,
+    "recent session rows should route hover action through two-step archive confirmation",
+  );
+
+  assert.match(
+    source,
+    /onClick=\{\(event\) => handleSessionArchiveAction\(event, row\.session\.id\)\}/,
+    "by-project session rows should route hover action through two-step archive confirmation",
+  );
+
+  assert.match(
+    source,
+    /pendingArchiveConfirmButtonRef\.contains\(target\)[\s\S]*window\.addEventListener\("pointerdown", cancelPendingArchive\);/,
+    "pending archive confirmation should cancel when clicking outside the inline confirm button",
+  );
+
+  assert.match(
+    source,
+    /tr\("sidebar\.archive_confirm"\)/,
+    "inline archive confirmation should use localized confirm label",
   );
 });

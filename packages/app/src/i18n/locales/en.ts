@@ -1083,6 +1083,7 @@ export default {
   "sidebar.connect_remote": "Connect remote",
   "sidebar.create_session_in_project": "Create session in this project",
   "sidebar.archive_session": "Archive session",
+  "sidebar.archive_confirm": "Confirm",
   "sidebar.edit_connection": "Edit connection",
   "sidebar.edit_name": "Edit name",
   "sidebar.enable_soul": "Enable soul",

@@ -62,6 +62,42 @@ export const activityTimestamp = (session: WorkspaceSessionGroup["sessions"][num
 export const displayTimestamp = (session: WorkspaceSessionGroup["sessions"][number]) =>
   creationTimestamp(session) || activityTimestamp(session) || Date.now();
 
+export type SessionDisplayLabelParts = {
+  decoratedName: string | null;
+  description: string | null;
+  tooltip: string;
+};
+
+export const splitSessionDisplayLabel = (
+  sessionTitle: string | null | undefined,
+  decorationLabel: string | null | undefined,
+): SessionDisplayLabelParts => {
+  const description = typeof sessionTitle === "string" ? sessionTitle.trim() : "";
+  const decoratedName = typeof decorationLabel === "string" ? decorationLabel.trim() : "";
+
+  if (!decoratedName) {
+    return {
+      decoratedName: null,
+      description: description || null,
+      tooltip: description,
+    };
+  }
+
+  if (!description || description === decoratedName) {
+    return {
+      decoratedName,
+      description: null,
+      tooltip: decoratedName,
+    };
+  }
+
+  return {
+    decoratedName,
+    description,
+    tooltip: `${decoratedName} · ${description}`,
+  };
+};
+
 const SECOND_MS = 1_000;
 const MINUTE_MS = 60 * SECOND_MS;
 const HOUR_MS = 60 * MINUTE_MS;

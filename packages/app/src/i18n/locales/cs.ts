@@ -1079,6 +1079,7 @@ export default {
   "sidebar.connect_remote": "Připojit vzdáleně",
   "sidebar.create_session_in_project": "Vytvořit relaci v tomto projektu",
   "sidebar.archive_session": "Archivovat relaci",
+  "sidebar.archive_confirm": "Potvrdit",
   "sidebar.edit_connection": "Upravit připojení",
   "sidebar.edit_name": "Upravit název",
   "sidebar.enable_soul": "Zapnout Soul",

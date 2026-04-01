@@ -21,7 +21,7 @@ test("recent rows keep timestamp on the right and replace it with menu trigger o
 
   assert.match(
     source,
-    /class="absolute right-2 bottom-1 opacity-0 group-hover\/session-row:opacity-100 group-focus-within\/session-row:opacity-100 transition-opacity"/,
+    /class=\{`absolute right-2 bottom-1 transition-opacity \$\{/,
     "row should expose a menu trigger exactly where timestamp disappears on hover",
   );
 
@@ -69,7 +69,7 @@ test("by-project session rows reserve right space and swap time for three-dot me
 
   assert.match(
     source,
-    /class="absolute right-2 top-1\/2 -translate-y-1\/2 opacity-0 group-hover\/session-row:opacity-100 group-focus-within\/session-row:opacity-100 transition-opacity"/,
+    /class=\{`absolute right-2 top-1\/2 -translate-y-1\/2 transition-opacity \$\{/,
     "by-project rows should show a row action trigger in place of time on hover/focus",
   );
 
@@ -85,20 +85,26 @@ test("by-project session rows reserve right space and swap time for three-dot me
 test("session hover action uses archive icon instead of three dots", () => {
   assert.match(
     source,
-    /onClick=\{\(event\) => handleSessionArchiveToggle\(event, session\(\)\.id\)\}/,
-    "recent rows should wire hover action to archive toggle",
+    /onClick=\{\(event\) => handleSessionArchiveAction\(event, session\(\)\.id\)\}/,
+    "recent rows should wire hover action to the archive confirmation flow",
   );
 
   assert.match(
     source,
-    /onClick=\{\(event\) => handleSessionArchiveToggle\(event, row\.session\.id\)\}/,
-    "by-project rows should wire hover action to archive toggle",
+    /onClick=\{\(event\) => handleSessionArchiveAction\(event, row\.session\.id\)\}/,
+    "by-project rows should wire hover action to the archive confirmation flow",
   );
 
   assert.match(
     source,
-    /aria-label=\{isSessionArchived\(session\(\)\.id\) \? tr\("sidebar\.unarchive_session"\) : tr\("sidebar\.archive_session"\)\}/,
-    "recent row action should expose archive/unarchive accessibility label",
+    /aria-label=\{archiveConfirmationPending\(\)\s*\?\s*tr\("sidebar\.archive_confirm"\)\s*:\s*isSessionArchived\(session\(\)\.id\)\s*\?\s*tr\("sidebar\.unarchive_session"\)\s*:\s*tr\("sidebar\.archive_session"\)\}/,
+    "recent row action should expose localized confirm/archive/unarchive accessibility labels",
+  );
+
+  assert.match(
+    source,
+    /<Show when=\{archiveConfirmationPending\(\)\} fallback=\{<Archive size=\{14\} \/>\}>\s*\{tr\("sidebar\.archive_confirm"\)\}/,
+    "archive action should switch to localized inline confirm text before final archive",
   );
 });
 
@@ -117,7 +123,7 @@ test("recent rows keep metadata tucked closer to the title line", () => {
 
   assert.match(
     source,
-    /class="absolute right-2 bottom-1 opacity-0 group-hover\/session-row:opacity-100 group-focus-within\/session-row:opacity-100 transition-opacity"/,
+    /class=\{`absolute right-2 bottom-1 transition-opacity \$\{/,
     "recent row menu trigger should replace the timestamp in the tighter bottom position",
   );
 });
