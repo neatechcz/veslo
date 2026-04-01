@@ -197,6 +197,10 @@ pnpm build:ui
 pnpm test:e2e
 ```
 
+Updater system documentation:
+
+- [docs/desktop-updater.md](./docs/desktop-updater.md)
+
 ## Troubleshooting
 
 ### Linux / Wayland (Hyprland)
