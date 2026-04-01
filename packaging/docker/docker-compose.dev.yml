@@ -180,7 +180,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 90s
+      # Cold boot installs dependencies and compiles sidecars before veslo-server binds :8787.
+      start_period: 240s
     environment:
       CI: "true"
       VESLO_TOKEN: ${VESLO_TOKEN:-}

@@ -4,6 +4,8 @@
 
 :root {
   color-scheme: light;
+  --font-inter: "Inter";
+  --font-ibm-plex-mono: "IBM Plex Mono";
   --ow-bg: #fafafa;
   --ow-ink: #0f172a;
   --ow-muted: #475569;

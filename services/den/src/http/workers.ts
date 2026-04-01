@@ -7,6 +7,7 @@ import { getCloudWorkerBillingStatus, requireCloudWorkerAccess, setCloudWorkerSu
 import { db } from "../db/index.js"
 import { WorkerBundleTable, WorkerInstanceTable, WorkerTable, WorkerTokenTable } from "../db/schema.js"
 import { env } from "../env.js"
+import { requireVerifiedEmail } from "./email-verification.js"
 import { decryptWorkerToken, encryptWorkerToken } from "../security/token-crypto.js"
 import { asyncRoute, isTransientDbConnectionError } from "./errors.js"
 import { canDeleteWorker, canRevealWorkerHostToken } from "./access.js"
@@ -303,6 +304,10 @@ workersRouter.post("/", asyncRoute(async (req, res) => {
   }
 
   if (parsed.data.destination === "cloud") {
+    if (!requireVerifiedEmail(res, context.session)) {
+      return
+    }
+
     const access = await requireCloudWorkerAccess({
       userId: context.session.user.id,
       email: context.session.user.email ?? `${context.session.user.id}@placeholder.local`,
@@ -454,6 +459,10 @@ workersRouter.post("/billing/subscription", asyncRoute(async (req, res) => {
     email: session.user.email ?? `${session.user.id}@placeholder.local`,
     emailVerified: session.user.emailVerified,
     name: session.user.name ?? session.user.email ?? "Veslo User",
+  }
+
+  if (!requireVerifiedEmail(res, session)) {
+    return
   }
 
   const subscription = await setCloudWorkerSubscriptionCancellation(billingInput, parsed.data.cancelAtPeriodEnd)
