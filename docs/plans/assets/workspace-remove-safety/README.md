@@ -20,3 +20,9 @@ This executes:
 1. `detach_only` keeps `.opencode` and `opencode.jsonc` on disk.
 2. `delete_local_data` removes `.opencode` and `opencode.jsonc`.
 3. App bridge defaults to `detach_only`.
+
+## Related follow-up
+
+Session archive/context-menu verification notes are documented in:
+
+`docs/plans/assets/session-archive-context-menu/README.md`
