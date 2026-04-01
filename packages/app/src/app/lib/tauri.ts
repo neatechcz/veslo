@@ -269,8 +269,13 @@ export async function workspaceUpdateDisplayName(input: {
   });
 }
 
-export async function workspaceForget(workspaceId: string): Promise<WorkspaceList> {
-  return invoke<WorkspaceList>("workspace_forget", { workspaceId });
+export type WorkspaceForgetMode = "detach_only" | "delete_local_data";
+
+export async function workspaceForget(
+  workspaceId: string,
+  mode: WorkspaceForgetMode = "detach_only",
+): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_forget", { workspaceId, mode });
 }
 
 export async function workspaceAddAuthorizedRoot(input: {

@@ -15,7 +15,7 @@ use crate::workspace::state::{
     stable_workspace_id_for_remote, stable_workspace_id_for_veslo,
 };
 use crate::workspace::watch::{update_workspace_watch, WorkspaceWatchState};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 use walkdir::WalkDir;
 use zip::write::FileOptions;
@@ -172,6 +172,45 @@ fn set_active_workspace(
     Ok(())
 }
 
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceForgetMode {
+    DetachOnly,
+    DeleteLocalData,
+}
+
+impl Default for WorkspaceForgetMode {
+    fn default() -> Self {
+        Self::DetachOnly
+    }
+}
+
+fn cleanup_workspace_local_state(workspace_root: &Path, mode: WorkspaceForgetMode) {
+    if mode != WorkspaceForgetMode::DeleteLocalData {
+        return;
+    }
+
+    let opencode_dir = workspace_root.join(".opencode");
+    if opencode_dir.is_dir() {
+        if let Err(e) = fs::remove_dir_all(&opencode_dir) {
+            println!(
+                "[workspace] warning: failed to remove {}: {e}",
+                opencode_dir.display()
+            );
+        }
+    }
+
+    let opencode_jsonc = workspace_root.join("opencode.jsonc");
+    if opencode_jsonc.is_file() {
+        if let Err(e) = fs::remove_file(&opencode_jsonc) {
+            println!(
+                "[workspace] warning: failed to remove {}: {e}",
+                opencode_jsonc.display()
+            );
+        }
+    }
+}
+
 #[tauri::command]
 pub fn workspace_bootstrap(
     app: tauri::AppHandle,
@@ -206,10 +245,12 @@ pub fn workspace_bootstrap(
 pub fn workspace_forget(
     app: tauri::AppHandle,
     workspace_id: String,
+    mode: Option<WorkspaceForgetMode>,
     watch_state: State<WorkspaceWatchState>,
     engine_manager: State<crate::engine::manager::EngineManager>,
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] forget request: {workspace_id}");
+    let forget_mode = mode.unwrap_or_default();
     let mut state = load_workspace_state(&app)?;
     let id = workspace_id.trim();
 
@@ -241,9 +282,11 @@ pub fn workspace_forget(
     let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
     update_workspace_watch(&app, watch_state, active_workspace)?;
 
-    // Cleanup OpenCode sessions and local files for local workspaces
+    // Cleanup OpenCode sessions and local files only for explicit destructive forget mode.
     if let Some(ref ws) = forgotten_workspace {
-        if ws.workspace_type == WorkspaceType::Local {
+        if ws.workspace_type == WorkspaceType::Local
+            && forget_mode == WorkspaceForgetMode::DeleteLocalData
+        {
             // Clean up sessions from the global OpenCode DB before removing local state
             let base_url = engine_manager
                 .inner
@@ -251,26 +294,7 @@ pub fn workspace_forget(
                 .ok()
                 .and_then(|s| s.base_url.clone());
             cleanup_opencode_sessions(base_url.as_deref(), &ws.path);
-
-            let ws_root = PathBuf::from(&ws.path);
-            let opencode_dir = ws_root.join(".opencode");
-            if opencode_dir.is_dir() {
-                if let Err(e) = fs::remove_dir_all(&opencode_dir) {
-                    println!(
-                        "[workspace] warning: failed to remove {}: {e}",
-                        opencode_dir.display()
-                    );
-                }
-            }
-            let opencode_jsonc = ws_root.join("opencode.jsonc");
-            if opencode_jsonc.is_file() {
-                if let Err(e) = fs::remove_file(&opencode_jsonc) {
-                    println!(
-                        "[workspace] warning: failed to remove {}: {e}",
-                        opencode_jsonc.display()
-                    );
-                }
-            }
+            cleanup_workspace_local_state(Path::new(&ws.path), forget_mode);
         }
     }
 
@@ -1148,6 +1172,9 @@ pub fn workspace_import_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn local_workspace(id: &str, path: &str) -> WorkspaceInfo {
         WorkspaceInfo {
@@ -1168,6 +1195,38 @@ mod tests {
             sandbox_run_id: None,
             sandbox_container_name: None,
         }
+    }
+
+    fn temp_workspace_root(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("veslo-workspace-forget-{name}-{nonce}"));
+        fs::create_dir_all(root.join(".opencode")).expect("create .opencode");
+        fs::write(root.join("opencode.jsonc"), "{}").expect("create opencode.jsonc");
+        root
+    }
+
+    #[test]
+    fn workspace_forget_default_keeps_local_files() {
+        let root = temp_workspace_root("detach");
+        cleanup_workspace_local_state(&root, WorkspaceForgetMode::DetachOnly);
+        assert!(root.join(".opencode").is_dir(), ".opencode should remain for detach");
+        assert!(root.join("opencode.jsonc").is_file(), "opencode.jsonc should remain for detach");
+        fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn workspace_forget_delete_local_data_removes_local_files() {
+        let root = temp_workspace_root("delete");
+        cleanup_workspace_local_state(&root, WorkspaceForgetMode::DeleteLocalData);
+        assert!(!root.join(".opencode").exists(), ".opencode should be removed for destructive mode");
+        assert!(
+            !root.join("opencode.jsonc").exists(),
+            "opencode.jsonc should be removed for destructive mode"
+        );
+        fs::remove_dir_all(&root).expect("cleanup");
     }
 
     #[test]

@@ -1099,7 +1099,7 @@ export default {
   "sidebar.recent": "Recent",
   "sidebar.recover": "Recover",
   "sidebar.reorder_project": "Drag to reorder project",
-  "sidebar.remove_workspace": "Remove workspace",
+  "sidebar.remove_workspace": "Remove from Veslo",
   "sidebar.reveal_in_explorer": "Reveal in Explorer",
   "sidebar.reveal_in_finder": "Reveal in Finder",
   "sidebar.share": "Share...",
