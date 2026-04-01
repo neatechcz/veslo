@@ -3,11 +3,15 @@ import test from "node:test";
 
 import {
   DEFAULT_SIDEBAR_VIEW_MODE,
+  readArchivedSessionIds,
   readProjectOrder,
   readCollapsedProjectMap,
+  readShowArchivedSessions,
   readSidebarViewMode,
+  writeArchivedSessionIds,
   writeProjectOrder,
   writeCollapsedProjectMap,
+  writeShowArchivedSessions,
   writeSidebarViewMode,
   type SidebarPrefsStorage,
 } from "./workspace-session-list-prefs.js";
@@ -99,4 +103,26 @@ test("writeProjectOrder persists normalized string array", () => {
     storage.snapshot()["veslo.sidebar-project-order.v1"],
     JSON.stringify(["project:a", "project:b"]),
   );
+});
+
+test("show archived defaults to false", () => {
+  const storage = createMemoryStorage();
+  assert.equal(readShowArchivedSessions(storage), false);
+});
+
+test("show archived round-trips true value", () => {
+  const storage = createMemoryStorage();
+  writeShowArchivedSessions(true, storage);
+  assert.equal(readShowArchivedSessions(storage), true);
+});
+
+test("archived session ids default to empty list", () => {
+  const storage = createMemoryStorage();
+  assert.deepEqual(readArchivedSessionIds(storage), []);
+});
+
+test("archived session ids are normalized (trim + dedupe)", () => {
+  const storage = createMemoryStorage();
+  writeArchivedSessionIds([" session-a ", "", "session-b", "session-a"], storage);
+  assert.deepEqual(readArchivedSessionIds(storage), ["session-a", "session-b"]);
 });
