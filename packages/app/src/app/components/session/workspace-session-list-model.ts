@@ -210,19 +210,84 @@ const collectFlatRows = (
     group.sessions.map((session) => buildFlatSessionRow(group, session, isPrivateWorkspacePath)),
   );
 
-const buildRowParentLookup = (rows: FlatSessionRow[]) => {
-  const rowBySessionId = new Map(rows.map((row) => [row.session.id, row] as const));
+export type RowHierarchyLookup = {
+  rowBySessionId: Map<string, FlatSessionRow>;
+  parentBySessionId: Map<string, string>;
+  childrenByParentId: Map<string, string[]>;
+};
+
+export const buildRowHierarchyLookup = (rows: FlatSessionRow[]): RowHierarchyLookup => {
+  const rowBySessionId = new Map<string, FlatSessionRow>();
   const parentBySessionId = new Map<string, string>();
-  const childCountByParentId = new Map<string, number>();
+  const childrenByParentId = new Map<string, string[]>();
+
+  for (const row of rows) {
+    rowBySessionId.set(row.session.id, row);
+  }
 
   for (const row of rows) {
     const parentId = row.parentSessionId;
     if (!parentId || !rowBySessionId.has(parentId)) continue;
     parentBySessionId.set(row.session.id, parentId);
-    childCountByParentId.set(parentId, (childCountByParentId.get(parentId) ?? 0) + 1);
+    const existing = childrenByParentId.get(parentId);
+    if (existing) {
+      existing.push(row.session.id);
+    } else {
+      childrenByParentId.set(parentId, [row.session.id]);
+    }
+  }
+
+  return { rowBySessionId, parentBySessionId, childrenByParentId };
+};
+
+const buildRowParentLookup = (rows: FlatSessionRow[]) => {
+  const { rowBySessionId, parentBySessionId, childrenByParentId } = buildRowHierarchyLookup(rows);
+  const childCountByParentId = new Map<string, number>();
+
+  for (const [parentId, children] of childrenByParentId.entries()) {
+    childCountByParentId.set(parentId, children.length);
   }
 
   return { rowBySessionId, parentBySessionId, childCountByParentId };
+};
+
+export const rowVisibleByExpansion = (
+  row: FlatSessionRow,
+  lookup: RowHierarchyLookup,
+  expandedParentSessionIds: ReadonlySet<string>,
+) => {
+  let parentId = lookup.parentBySessionId.get(row.session.id) ?? null;
+  while (parentId) {
+    if (!lookup.rowBySessionId.has(parentId)) {
+      // Parent missing from current data slice (pagination, loading) — keep child visible.
+      return true;
+    }
+    if (!expandedParentSessionIds.has(parentId)) return false;
+    parentId = lookup.parentBySessionId.get(parentId) ?? null;
+  }
+  return true;
+};
+
+export const requiredVisibleCountForExpandedSession = (
+  rows: FlatSessionRow[],
+  expandedParentSessionIds: ReadonlySet<string>,
+  sessionId: string,
+): number | null => {
+  const id = sessionId.trim();
+  if (!id) return null;
+
+  const lookup = buildRowHierarchyLookup(rows);
+  if (!lookup.rowBySessionId.has(id)) return null;
+  const childCount = lookup.childrenByParentId.get(id)?.length ?? 0;
+  if (childCount === 0) return null;
+
+  const visibleRows = rows.filter((row) =>
+    rowVisibleByExpansion(row, lookup, expandedParentSessionIds)
+  );
+  const parentIndex = visibleRows.findIndex((row) => row.session.id === id);
+  if (parentIndex < 0) return null;
+
+  return parentIndex + childCount + 1;
 };
 
 export const deriveExpandedParentSessionIds = (

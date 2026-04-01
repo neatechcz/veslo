@@ -9,6 +9,7 @@ import {
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
   isProjectCollapsed,
+  requiredVisibleCountForExpandedSession,
   shouldShowNewSessionLabelText,
   shouldUseExpandedNewSessionLabel,
   toggleProjectCollapsed,
@@ -202,6 +203,49 @@ test("deriveExpandedParentSessionIds expands the selected branch so subagents st
     [...deriveExpandedParentSessionIds(rows, "sub-a-2")].sort(),
     ["root-a", "sub-a-1"],
   );
+});
+
+test("requiredVisibleCountForExpandedSession requests enough rows to reveal direct children", () => {
+  const workspace = {
+    id: "workspace-1",
+    name: "workspace-1",
+    path: "/tmp/workspace-1",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+
+  const rows = buildRecentRows([
+    {
+      workspace,
+      sessions: [
+        {
+          id: "root-a",
+          title: "root-a",
+          time: { created: 100, updated: 4_000 },
+        },
+        {
+          id: "root-b",
+          title: "root-b",
+          time: { created: 200, updated: 3_000 },
+        },
+        {
+          id: "sub-b-1",
+          title: "sub-b-1",
+          parentID: "root-b",
+          time: { created: 210, updated: 2_900 },
+        },
+        {
+          id: "root-c",
+          title: "root-c",
+          time: { created: 300, updated: 2_000 },
+        },
+      ],
+      status: "ready",
+    },
+  ]);
+
+  assert.equal(requiredVisibleCountForExpandedSession(rows, new Set(["root-b"]), "root-b"), 3);
+  assert.equal(requiredVisibleCountForExpandedSession(rows, new Set(["root-a"]), "root-a"), null);
 });
 
 test("buildProjectGroups keeps directory groups in workspace insertion order", () => {

@@ -9,6 +9,7 @@ import {
   isWindowsPlatform,
 } from "../../utils";
 import {
+  buildRowHierarchyLookup,
   buildProjectGroups,
   buildRecentRows,
   deriveExpandedParentSessionIds,
@@ -16,6 +17,8 @@ import {
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
   isProjectCollapsed,
+  requiredVisibleCountForExpandedSession,
+  rowVisibleByExpansion,
   shouldShowNewSessionLabelText,
   shouldUseExpandedNewSessionLabel,
   toggleProjectCollapsed,
@@ -106,53 +109,6 @@ type ProjectDragPreviewState = {
   x: number;
   y: number;
   label: string;
-};
-
-type RowHierarchyLookup = {
-  rowBySessionId: Map<string, FlatSessionRow>;
-  parentBySessionId: Map<string, string>;
-  childrenByParentId: Map<string, string[]>;
-};
-
-const buildRowHierarchyLookup = (rows: FlatSessionRow[]): RowHierarchyLookup => {
-  const rowBySessionId = new Map<string, FlatSessionRow>();
-  const parentBySessionId = new Map<string, string>();
-  const childrenByParentId = new Map<string, string[]>();
-
-  for (const row of rows) {
-    rowBySessionId.set(row.session.id, row);
-  }
-
-  for (const row of rows) {
-    const parentId = row.parentSessionId;
-    if (!parentId || !rowBySessionId.has(parentId)) continue;
-    parentBySessionId.set(row.session.id, parentId);
-    const existing = childrenByParentId.get(parentId);
-    if (existing) {
-      existing.push(row.session.id);
-    } else {
-      childrenByParentId.set(parentId, [row.session.id]);
-    }
-  }
-
-  return { rowBySessionId, parentBySessionId, childrenByParentId };
-};
-
-const rowVisibleByExpansion = (
-  row: FlatSessionRow,
-  lookup: RowHierarchyLookup,
-  expandedParentSessionIds: Set<string>,
-) => {
-  let parentId = lookup.parentBySessionId.get(row.session.id) ?? null;
-  while (parentId) {
-    if (!lookup.rowBySessionId.has(parentId)) {
-      // Parent missing from current data slice (pagination, loading) — keep child visible.
-      return true;
-    }
-    if (!expandedParentSessionIds.has(parentId)) return false;
-    parentId = lookup.parentBySessionId.get(parentId) ?? null;
-  }
-  return true;
 };
 
 const workspaceLabel = (workspace: WorkspaceInfo) =>
@@ -449,6 +405,42 @@ export default function WorkspaceSessionList(props: Props) {
     return { color };
   };
 
+  const ensureExpandedSessionChildrenVisible = (
+    sessionId: string,
+    expandedParentSessionIds: ReadonlySet<string>,
+  ) => {
+    if (sidebarMode() === "recent") {
+      const required = requiredVisibleCountForExpandedSession(
+        recentRows(),
+        expandedParentSessionIds,
+        sessionId,
+      );
+      if (required == null) return;
+      setRecentVisibleCount((current) => Math.max(current, required));
+      return;
+    }
+
+    const groups = orderedProjectGroups();
+    for (const group of groups) {
+      if (!group.sessions.some((row) => row.session.id === sessionId)) continue;
+      const required = requiredVisibleCountForExpandedSession(
+        group.sessions,
+        expandedParentSessionIds,
+        sessionId,
+      );
+      if (required == null) return;
+      setProjectVisibleByKey((current) => {
+        const baseline = current[group.key] ?? PROJECT_VISIBLE_DEFAULT;
+        if (baseline >= required) return current;
+        return {
+          ...current,
+          [group.key]: required,
+        };
+      });
+      return;
+    }
+  };
+
   const toggleExpandedParentSession = (sessionId: string) =>
     setExpandedParentSessionIds((current) => {
       const next = new Set(current);
@@ -456,6 +448,7 @@ export default function WorkspaceSessionList(props: Props) {
         next.delete(sessionId);
       } else {
         next.add(sessionId);
+        ensureExpandedSessionChildrenVisible(sessionId, next);
       }
       return next;
     });
