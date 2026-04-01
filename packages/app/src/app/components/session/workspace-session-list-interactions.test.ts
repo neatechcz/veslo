@@ -148,11 +148,11 @@ test("project rows expose drag lifecycle bindings without dedicated grip handle"
   );
 });
 
-test("clicking selected parent toggles subagent expansion while non-selected rows open sessions", () => {
+test("clicking selected rows still opens session detail while selected parents toggle subagent expansion", () => {
   assert.match(
     source,
-    /const handleSessionRowClick = \(\s*row: FlatSessionRow,\s*hasChildren: \(sessionId: string\) => boolean,\s*\) => \{\s*if \(props\.selectedSessionId !== row\.session\.id\) \{\s*props\.onOpenSession\(row\.workspace\.id, row\.session\.id\);\s*return;\s*\}\s*if \(hasChildren\(row\.session\.id\)\) \{\s*toggleExpandedParentSession\(row\.session\.id\);\s*\}\s*\};/s,
-    "selected row should toggle expansion only when it has children; otherwise rows open the session",
+    /const handleSessionRowClick = \(\s*row: FlatSessionRow,\s*hasChildren: \(sessionId: string\) => boolean,\s*\) => \{\s*if \(props\.selectedSessionId !== row\.session\.id\) \{\s*props\.onOpenSession\(row\.workspace\.id, row\.session\.id\);\s*return;\s*\}\s*if \(hasChildren\(row\.session\.id\)\) \{\s*toggleExpandedParentSession\(row\.session\.id\);\s*\}\s*props\.onOpenSession\(row\.workspace\.id, row\.session\.id\);\s*\};/s,
+    "selected row click should still route to session detail, and selected parents should also toggle expansion",
   );
 
   assert.match(

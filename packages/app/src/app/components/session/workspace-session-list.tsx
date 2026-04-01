@@ -471,6 +471,7 @@ export default function WorkspaceSessionList(props: Props) {
     if (hasChildren(row.session.id)) {
       toggleExpandedParentSession(row.session.id);
     }
+    props.onOpenSession(row.workspace.id, row.session.id);
   };
 
   const PROJECT_POINTER_DRAG_START_THRESHOLD_PX = 2;
