@@ -1035,6 +1035,7 @@ export default {
   "session.timeline_section_explore": "Explore",
   "session.timeline_section_issues": "Issues",
   "session.timeline_section_plan": "Plan",
+  "session.timeline_section_subagents": "Subagents",
   "session.timeline_section_thinking": "Thinking",
   "session.timeline_section_verify": "Verify",
   "session.timeline_summary_action_one": "{count} action",

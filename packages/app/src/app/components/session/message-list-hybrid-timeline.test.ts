@@ -52,6 +52,13 @@ test("action summaries distinguish thinking-only rows from real actions", () => 
   assert.match(source, /session\.timeline_section_thinking/);
 });
 
+test("action headings split thinking rows and subagent rows into separate timeline sections", () => {
+  assert.match(source, /splitActionSectionRows/);
+  assert.match(source, /labelKind: "thinking"/);
+  assert.match(source, /labelKind: "subagents"/);
+  assert.match(source, /session\.timeline_section_subagents/);
+});
+
 test("collapsed timeline meta is not the generic execution label", () => {
   assert.doesNotMatch(source, /const collapsedMeta = \(\) => \(expanded\(\) \? tr\("session\.timeline_hide"\) : tr\("session\.timeline_execution"\)\)/);
   assert.match(source, /formatTimelineDuration/);

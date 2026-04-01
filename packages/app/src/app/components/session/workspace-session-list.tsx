@@ -11,6 +11,7 @@ import {
 import {
   buildProjectGroups,
   buildRecentRows,
+  deriveExpandedParentSessionIds,
   displayTimestamp,
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
@@ -223,6 +224,18 @@ export default function WorkspaceSessionList(props: Props) {
     buildProjectGroups(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
   );
   const orderedProjectGroups = createMemo(() => applyProjectOrder(projectGroups(), projectOrder()));
+
+  createEffect(() => {
+    const selectedSessionId = props.selectedSessionId?.trim() ?? "";
+    if (!selectedSessionId) return;
+    setExpandedParentSessionIds((current) => deriveExpandedParentSessionIds(
+      sidebarMode() === "by-project"
+        ? orderedProjectGroups().flatMap((group) => group.sessions)
+        : recentRows(),
+      selectedSessionId,
+      current,
+    ));
+  });
 
   const recentHierarchy = createMemo(() => buildRowHierarchyLookup(recentRows()));
 

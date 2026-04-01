@@ -210,6 +210,46 @@ const collectFlatRows = (
     group.sessions.map((session) => buildFlatSessionRow(group, session, isPrivateWorkspacePath)),
   );
 
+const buildRowParentLookup = (rows: FlatSessionRow[]) => {
+  const rowBySessionId = new Map(rows.map((row) => [row.session.id, row] as const));
+  const parentBySessionId = new Map<string, string>();
+  const childCountByParentId = new Map<string, number>();
+
+  for (const row of rows) {
+    const parentId = row.parentSessionId;
+    if (!parentId || !rowBySessionId.has(parentId)) continue;
+    parentBySessionId.set(row.session.id, parentId);
+    childCountByParentId.set(parentId, (childCountByParentId.get(parentId) ?? 0) + 1);
+  }
+
+  return { rowBySessionId, parentBySessionId, childCountByParentId };
+};
+
+export const deriveExpandedParentSessionIds = (
+  rows: FlatSessionRow[],
+  selectedSessionId: string | null | undefined,
+  currentExpandedParentSessionIds: ReadonlySet<string> = new Set<string>(),
+): Set<string> => {
+  const selectedId = selectedSessionId?.trim() ?? "";
+  const next = new Set(currentExpandedParentSessionIds);
+  if (!selectedId) return next;
+
+  const { rowBySessionId, parentBySessionId, childCountByParentId } = buildRowParentLookup(rows);
+  if (!rowBySessionId.has(selectedId)) return next;
+
+  if ((childCountByParentId.get(selectedId) ?? 0) > 0) {
+    next.add(selectedId);
+  }
+
+  let parentId = parentBySessionId.get(selectedId) ?? null;
+  while (parentId) {
+    next.add(parentId);
+    parentId = parentBySessionId.get(parentId) ?? null;
+  }
+
+  return next;
+};
+
 const buildHierarchicalRows = (
   rows: FlatSessionRow[],
   compareRows: (a: FlatSessionRow, b: FlatSessionRow) => number,

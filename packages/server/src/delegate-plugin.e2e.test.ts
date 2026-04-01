@@ -190,4 +190,39 @@ describe("delegate plugin E2E", () => {
       } catch {}
     }
   }, 120_000);
+
+  test("model calls delegate when user explicitly asks to run a subagent", async () => {
+    const session = await fetchOpenCode("/session", {
+      method: "POST",
+      body: JSON.stringify({ title: "E2E test: explicit subagent request" }),
+    });
+    const sessionId = session.id;
+
+    try {
+      const response = await fetchOpenCode(`/session/${sessionId}/message`, {
+        method: "POST",
+        body: JSON.stringify(
+          buildMessageBody(
+            "Spusť subagenta, který na internetu najde jak se jmenují všechny hry od Blizzard.",
+          ),
+        ),
+      });
+
+      expect(response?.info?.providerID).toBe(OPENCODE_PROVIDER_ID);
+      expect(response?.info?.modelID).toBe(OPENCODE_MODEL_ID);
+
+      const toolNames = await readSessionToolCalls(sessionId);
+
+      console.log("Tool calls found in session history:", toolNames.length > 0 ? toolNames : "NONE");
+      if (response?.info?.error) {
+        console.log("Assistant error:", JSON.stringify(response.info.error));
+      }
+
+      expect(toolNames).toContain("delegate");
+    } finally {
+      try {
+        await fetchOpenCode(`/session/${sessionId}`, { method: "DELETE" });
+      } catch {}
+    }
+  }, 120_000);
 });

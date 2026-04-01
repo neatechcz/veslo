@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildProjectGroups,
   buildRecentRows,
+  deriveExpandedParentSessionIds,
   displayTimestamp,
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
@@ -155,6 +156,51 @@ test("buildProjectGroups keeps subagents nested under their parent in by-project
   assert.deepEqual(
     groups[0].sessions.map((row) => row.nestingLevel),
     [0, 1, 0],
+  );
+});
+
+test("deriveExpandedParentSessionIds expands the selected branch so subagents stay visible", () => {
+  const workspace = {
+    id: "workspace-1",
+    name: "workspace-1",
+    path: "/tmp/workspace-1",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+
+  const rows = buildRecentRows([
+    {
+      workspace,
+      sessions: [
+        {
+          id: "root-a",
+          title: "root-a",
+          time: { created: 100, updated: 1_000 },
+        },
+        {
+          id: "sub-a-1",
+          title: "sub-a-1",
+          parentID: "root-a",
+          time: { created: 200, updated: 2_000 },
+        },
+        {
+          id: "sub-a-2",
+          title: "sub-a-2",
+          parentID: "sub-a-1",
+          time: { created: 300, updated: 3_000 },
+        },
+      ],
+      status: "ready",
+    },
+  ]);
+
+  assert.deepEqual(
+    [...deriveExpandedParentSessionIds(rows, "root-a")].sort(),
+    ["root-a"],
+  );
+  assert.deepEqual(
+    [...deriveExpandedParentSessionIds(rows, "sub-a-2")].sort(),
+    ["root-a", "sub-a-1"],
   );
 });
 

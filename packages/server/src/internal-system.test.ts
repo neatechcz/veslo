@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { provisionWorkspaceInternalSystem } from "./internal-system.js";
@@ -38,12 +38,26 @@ You are Veslo.
       expect(docxSkill).toContain('veslo_internal_pack: true');
       expect(docxSkill).not.toContain("license: Proprietary");
 
+      const researchSkill = await readFile(
+        join(workspaceRoot, ".opencode", "veslo", "internal", "research", "SKILL.md"),
+        "utf8",
+      );
+      expect(researchSkill).toContain("name: research");
+      expect(researchSkill).toContain('veslo_internal_pack: true');
+
       const subagent = await readFile(
         join(workspaceRoot, ".opencode", "agents", "veslo-internal-docx.md"),
         "utf8",
       );
       expect(subagent).toContain("mode: subagent");
       expect(subagent).toContain("hidden: true");
+
+      const researchSubagent = await readFile(
+        join(workspaceRoot, ".opencode", "agents", "veslo-internal-research.md"),
+        "utf8",
+      );
+      expect(researchSubagent).toContain("Veslo internal Research execution agent");
+      expect(researchSubagent).toContain("mode: subagent");
 
       const vesloAgent = await readFile(join(workspaceRoot, ".opencode", "agents", "veslo.md"), "utf8");
       expect(vesloAgent).toContain("VESLO_INTERNAL_ROUTING_START");
@@ -56,15 +70,21 @@ You are Veslo.
       expect(plugin).toContain('import { tool } from "@opencode-ai/plugin"');
       expect(plugin).toContain("veslo-internal-xlsx");
       expect(plugin).toContain("veslo-internal-docx");
+      expect(plugin).toContain("veslo-internal-research");
       expect(plugin).toContain("export default async");
       expect(plugin).toContain('"chat.message"');
       expect(plugin).toContain("VESLO_ROUTER_FORCE_DELEGATE");
+      expect(plugin).toContain("hasExplicitDelegateRequest");
+      expect(plugin).toContain("spusť subagenta");
+      expect(plugin).toContain('return "veslo-internal-research"');
+      expect(plugin).toContain("client.session.get");
+      expect(plugin).toContain("query: { directory: parentDirectory }");
 
       const manifest = await readFile(
         join(workspaceRoot, ".opencode", "veslo", "internal", "manifest.json"),
         "utf8",
       );
-      expect(manifest).toContain('"version": "2026-03-27.2"');
+      expect(manifest).toContain('"version": "2026-03-31.1"');
       expect(manifest).toContain('"schemaVersion": 1');
       expect(manifest).toContain('"plugins"');
       expect(manifest).toContain("veslo-delegate.js");
@@ -179,7 +199,9 @@ Some custom rules here.
       await provisionWorkspaceInternalSystem(workspaceRoot);
 
       const vesloMdPath = join(workspaceRoot, ".opencode", "agents", "veslo.md");
-      const fileExists = await Bun.file(vesloMdPath).exists();
+      const fileExists = await access(vesloMdPath)
+        .then(() => true)
+        .catch(() => false);
       // veslo.md should not be created by TS — only internal subagents are written
       expect(fileExists).toBe(false);
 

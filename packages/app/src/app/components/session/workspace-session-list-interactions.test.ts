@@ -162,6 +162,14 @@ test("clicking selected parent toggles subagent expansion while non-selected row
   );
 });
 
+test("selected session auto-expands its branch in the sidebar", () => {
+  assert.match(
+    source,
+    /setExpandedParentSessionIds\(\(current\) => deriveExpandedParentSessionIds\(/,
+    "sidebar should expand the selected session branch so child subagents are visible immediately",
+  );
+});
+
 test("session label span exposes full title tooltip and optional decoration styling", () => {
   assert.match(
     source,

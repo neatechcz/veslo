@@ -8,6 +8,24 @@
 
 **Tech Stack:** SolidJS (`@neatech/veslo-ui`), Tauri command bridge (`@tauri-apps/api` invoke), Rust backend (`packages/desktop/src-tauri`), Node test runner + Rust unit tests.
 
+## Decision Update (2026-04-01)
+
+These decisions supersede any near-term destructive delete work in this plan.
+
+1. Session and workspace lifecycle stay separate.
+2. Session actions are archive-first. Deletion is out of scope for the current phase.
+3. Temporary sessions are removed from active UI when archived, but local workspace files stay on disk.
+4. Database metadata must keep workspace/session linkage even for archived/hidden entries, so future cleanup tooling can be implemented without data loss.
+5. Cloud sync stores full session/worker metadata (messages, session metadata, workspace binding, archived state), but not user workspace file contents.
+6. Remote/web clients treat cloud sessions as `view-only`.
+7. Opening a `view-only` session from web uses `Open in Desktop` deep-link.
+8. Desktop should auto-reconnect the session to the local workspace when available.
+9. If the workspace is missing on that device, session remains `view-only` and UI shows explicit state: workspace unavailable on this device.
+
+## Scope Shift For This Plan
+
+Immediate delivery is documentation and UX/contract preparation, not destructive deletion behavior. The "delete local data" branch below is postponed to a later phase.
+
 ---
 
 ### Task 1: Add Safe Backend Contract For Workspace Forget

@@ -1031,6 +1031,7 @@ export default {
   "session.timeline_section_explore": "Průzkum",
   "session.timeline_section_issues": "Problémy",
   "session.timeline_section_plan": "Plán",
+  "session.timeline_section_subagents": "Subagenti",
   "session.timeline_section_thinking": "Přemýšlení",
   "session.timeline_section_verify": "Ověření",
   "session.timeline_summary_action_one": "{count} akce",

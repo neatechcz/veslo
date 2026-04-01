@@ -2,7 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { exists, ensureDir } from "./utils.js";
 
-export const INTERNAL_SYSTEM_VERSION = "2026-03-27.2";
+export const INTERNAL_SYSTEM_VERSION = "2026-03-31.1";
 const INTERNAL_SYSTEM_SOURCE = "openwork-snapshot";
 const MANIFEST_SCHEMA_VERSION = 1;
 const ROUTING_BLOCK_VERSION = 3;
@@ -18,13 +18,14 @@ const INSTRUCTIONS_BLOCK_END = "<!-- VESLO_INSTRUCTIONS_END -->";
 const AGENT_BLOCK_START = "<!-- VESLO_AGENT_INSTRUCTIONS_START -->";
 const AGENT_BLOCK_END = "<!-- VESLO_AGENT_INSTRUCTIONS_END -->";
 
-const INTERNAL_PACKS = ["docx", "pdf", "pptx", "xlsx", "skill-creator"] as const;
+const INTERNAL_PACKS = ["docx", "pdf", "pptx", "xlsx", "skill-creator", "research"] as const;
 const INTERNAL_AGENT_FILES = [
   "veslo-internal-docx.md",
   "veslo-internal-pdf.md",
   "veslo-internal-pptx.md",
   "veslo-internal-xlsx.md",
   "veslo-internal-skill-creator.md",
+  "veslo-internal-research.md",
 ] as const;
 
 type ProvisionStats = { written: number; unchanged: number };
@@ -164,9 +165,9 @@ function managedVesloRoutingBlock() {
 
 This block is managed by Veslo. Keep it intact.
 
-Document and skill tasks are handled via the \`delegate\` tool, which routes work
+Document, skill, and explicit subagent requests are handled via the \`delegate\` tool, which routes work
 to specialized hidden subagents. Use it like any other tool — the model selects it
-based on context (file types, document references, skill creation requests).
+based on context (file types, document references, skill creation requests, explicit delegation language).
 
 Execution behavior:
 - Internal subagent identities are implementation details; do not surface their names unless explicitly requested in developer/debug context.
@@ -199,7 +200,7 @@ This block is managed by Veslo. Keep it intact.
 - If validation fails, do not attach the file. Continue with a short diagnostic note and request/choose a different document source.
 
 ### Veslo Tools & Features
-- **delegate** — routes document tasks (DOCX, PDF, PPTX, XLSX) to specialized subagents.
+- **delegate** — routes document tasks and explicit "use subagent/delegate" requests to specialized subagents.
 - **Skills** — reusable workflows in \`.opencode/skills/\`. Suggest creating one when work repeats.
 - **Scheduler** — recurring tasks (daily, weekly, interval). Mention when a task could be automated.
 - **Workspace** — user may have multiple workspaces; respect workspace boundaries.
@@ -326,6 +327,15 @@ async function writeInternalAgents(workspaceRoot: string, stats: ProvisionStats)
       }),
     ],
     ["veslo-internal-skill-creator.md", internalSkillCreatorAgentDocument()],
+    [
+      "veslo-internal-research.md",
+      internalAgentDocument({
+        label: "Research",
+        pack: "research",
+        summary:
+          "Handle explicit user requests to run/delegate to a subagent for general research or multi-step execution.",
+      }),
+    ],
   ];
 
   for (const [filename, doc] of docs) {
@@ -341,7 +351,7 @@ function delegatePluginSource(): string {
  *
  * Registers a \`delegate\` tool that the model can call via native tool_use
  * to route work to specialized Veslo internal subagents (docx, pdf, pptx,
- * xlsx, skill-creator).
+ * xlsx, skill-creator, research).
  *
  * This replaces text-based routing with a hard tool-call mechanism — the
  * same way the model invokes read, bash, etc.
@@ -355,6 +365,7 @@ const AGENTS = [
   "veslo-internal-pptx",
   "veslo-internal-xlsx",
   "veslo-internal-skill-creator",
+  "veslo-internal-research",
 ];
 
 const FORCE_DELEGATE_PREFIX = "[VESLO_ROUTER_FORCE_DELEGATE]";
@@ -369,6 +380,28 @@ function normalizedText(value) {
 
 function includesAny(value, tokens) {
   return tokens.some((token) => value.includes(token));
+}
+
+function hasExplicitDelegateRequest(value) {
+  return includesAny(value, [
+    " subagent ",
+    " sub-agent ",
+    " subagenta",
+    " subagenti",
+    " spusť subagenta",
+    " spust subagenta",
+    " použij subagenta",
+    " pouzij subagenta",
+    " spawn subagent",
+    " run subagent",
+    " start subagent",
+    " use subagent",
+    " delegate this ",
+    " delegate to subagent",
+    " delegate to a subagent",
+    " deleguj na subagenta",
+    " deleguj to ",
+  ]);
 }
 
 function detectDelegateAgentFromText(text) {
@@ -447,6 +480,10 @@ function detectDelegateAgentFromText(text) {
     ])
   ) {
     return "veslo-internal-pptx";
+  }
+
+  if (hasExplicitDelegateRequest(value)) {
+    return "veslo-internal-research";
   }
 
   return null;
@@ -537,18 +574,20 @@ export default async (ctx) => {
     tool: {
       delegate: tool({
         description: [
-          "Delegate a task to a specialized Veslo document subagent.",
-          "Use this tool when the user's message involves working with documents:",
+          "Delegate a task to a specialized Veslo subagent.",
+          "Use this tool when the user's message involves documents, skill creation,",
+          "or explicitly asks to run/delegate to a subagent:",
           "- veslo-internal-xlsx: Excel/spreadsheet files (.xlsx, .xlsm, .csv, .tsv) — reading, writing, editing, charting, formulas",
           "- veslo-internal-docx: Word documents (.docx) — authoring, editing, conversion, formatting",
           "- veslo-internal-pdf: PDF files (.pdf) — extraction, form filling, transformation, merging",
           "- veslo-internal-pptx: PowerPoint presentations (.pptx) — creating, editing slides",
           "- veslo-internal-skill-creator: Creating or updating reusable skills (only on explicit user request)",
+          "- veslo-internal-research: Explicit user request to run/delegate to a subagent for general research/execution",
           "",
           "Delegate on any signal that document work is needed: file extensions, attached files,",
           "file paths, references to document content, or phrasing about editing/reading/creating",
           "those formats. When unsure whether a file exists, delegate to search for it.",
-          "Do not delegate general coding or plain-text tasks without document signals.",
+          "Do not delegate general coding or plain-text tasks unless the user explicitly requests subagent delegation.",
           "",
           "Return the subagent's results directly. Do not expose internal agent names to the user.",
         ].join("\\n"),
@@ -562,7 +601,22 @@ export default async (ctx) => {
         },
         async execute(args, context) {
           try {
+            let parentDirectory = "";
+            try {
+              const parent = await client.session.get({
+                path: { sessionID: context.sessionID },
+              });
+              const candidate =
+                (typeof parent?.data?.directory === "string" && parent.data.directory.trim()) ||
+                (typeof parent?.directory === "string" && parent.directory.trim()) ||
+                "";
+              parentDirectory = candidate || "";
+            } catch {
+              // Fallback to default workspace directory when parent lookup fails.
+            }
+
             const created = await client.session.create({
+              ...(parentDirectory ? { query: { directory: parentDirectory } } : {}),
               body: {
                 parentID: context.sessionID,
                 title: \`Delegate: \${args.agent}\`,

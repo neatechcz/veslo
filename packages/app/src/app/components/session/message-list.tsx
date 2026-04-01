@@ -203,10 +203,12 @@ type TimelineRowView = {
   task: TaskStepInfo;
 };
 
+type TimelineSectionLabelKind = TimelineSectionKind | "thinking" | "subagents";
+
 type TimelineSectionView = {
   id: string;
   kind: TimelineSectionKind;
-  title: string;
+  labelKind: TimelineSectionLabelKind;
   summary: string;
   status?: TimelineRowModel["status"];
   rows: TimelineRowView[];
@@ -239,7 +241,11 @@ export default function MessageList(props: MessageListProps) {
     return value;
   };
 
-  const timelineSectionTitle = (kind: TimelineSectionKind) => tr(`session.timeline_section_${kind}`);
+  const timelineSectionTitle = (kind: TimelineSectionLabelKind) => {
+    if (kind === "thinking") return tr("session.timeline_section_thinking");
+    if (kind === "subagents") return tr("session.timeline_section_subagents");
+    return tr(`session.timeline_section_${kind}`);
+  };
   const plural = (count: number, oneKey: string, otherKey: string) =>
     tr(count === 1 ? oneKey : otherKey, { count: String(count) });
 
@@ -279,14 +285,46 @@ export default function MessageList(props: MessageListProps) {
       0,
     );
   };
-  const isThinkingSection = (section: TimelineSectionView) => {
-    if (section.kind !== "action") return false;
-    const actionCount = countSectionRows(section.rows, ["edit", "write", "task", "skill", "command", "tool"]);
-    const noteCount = countSectionRows(section.rows, ["note"]);
-    return noteCount > 0 && actionCount === 0;
+  const localizedSectionTitle = (section: TimelineSectionView) => timelineSectionTitle(section.labelKind);
+  const sectionStatusFromRows = (rows: TimelineRowView[]) => {
+    if (rows.some((entry) => entry.row.status === "error")) return "error" as const;
+    if (rows.some((entry) => entry.row.status === "running")) return "running" as const;
+    if (rows.some((entry) => entry.row.status === "pass")) return "pass" as const;
+    if (rows.some((entry) => entry.row.status === "done")) return "done" as const;
+    return undefined;
   };
-  const localizedSectionTitle = (section: TimelineSectionView) =>
-    isThinkingSection(section) ? tr("session.timeline_section_thinking") : timelineSectionTitle(section.kind);
+  const splitActionSectionRows = (rows: TimelineRowView[]) => {
+    const thinkingRows: TimelineRowView[] = [];
+    const subagentRows: TimelineRowView[] = [];
+    const otherRows: TimelineRowView[] = [];
+
+    for (const row of rows) {
+      if (row.row.rowType === "note") {
+        thinkingRows.push(row);
+        continue;
+      }
+      if (row.task.isTask && !row.task.isInternal) {
+        subagentRows.push(row);
+        continue;
+      }
+      otherRows.push(row);
+    }
+
+    return [
+      {
+        labelKind: "thinking" as const,
+        rows: thinkingRows,
+      },
+      {
+        labelKind: "subagents" as const,
+        rows: subagentRows,
+      },
+      {
+        labelKind: "action" as const,
+        rows: otherRows,
+      },
+    ].filter((group) => group.rows.length > 0);
+  };
   const localizedSectionSummary = (section: TimelineSectionView) => {
     switch (section.kind) {
       case "plan": {
@@ -839,7 +877,7 @@ export default function MessageList(props: MessageListProps) {
     const timelineSections = createMemo<TimelineSectionView[]>(() => {
       const parts = allStepParts();
       let cursor = 0;
-      return timelineModel().sections.map((section, sectionIndex) => {
+      const baseSections = timelineModel().sections.map((section, sectionIndex) => {
         const rows = section.rows.map((row, rowIndex) => {
           const part = parts[cursor + rowIndex];
           return {
@@ -853,12 +891,42 @@ export default function MessageList(props: MessageListProps) {
         return {
           id: `${containerProps.id}:section:${sectionIndex}`,
           kind: section.kind,
-          title: timelineSectionTitle(section.kind),
+          labelKind: section.kind,
           summary: section.summary,
           status: section.status,
           rows,
         };
       });
+
+      const sections: TimelineSectionView[] = [];
+      for (const section of baseSections) {
+        if (section.kind !== "action") {
+          sections.push(section);
+          continue;
+        }
+
+        const splitGroups = splitActionSectionRows(section.rows);
+        if (splitGroups.length <= 1) {
+          sections.push({
+            ...section,
+            labelKind: splitGroups[0]?.labelKind ?? "action",
+          });
+          continue;
+        }
+
+        splitGroups.forEach((group, groupIndex) => {
+          sections.push({
+            id: `${section.id}:label:${group.labelKind}:${groupIndex}`,
+            kind: "action",
+            labelKind: group.labelKind,
+            summary: section.summary,
+            status: sectionStatusFromRows(group.rows),
+            rows: group.rows,
+          });
+        });
+      }
+
+      return sections;
     });
     const [timelineDetailState, setTimelineDetailState] = createSignal<TimelineDetailState>(
       createTimelineDetailState({ sections: [] }),
@@ -896,8 +964,11 @@ export default function MessageList(props: MessageListProps) {
     };
     const singleSectionMode = () => timelineSections().length === 1;
     const sectionExpanded = (sectionId: string) => timelineDetailState().openSectionIds.has(sectionId);
-    const sectionDisplayCategory = (section: TimelineSectionView): TimelineRowType | TimelineSectionKind =>
-      isThinkingSection(section) ? "note" : section.kind;
+    const sectionDisplayCategory = (section: TimelineSectionView): TimelineRowType | TimelineSectionKind => {
+      if (section.labelKind === "thinking") return "note";
+      if (section.labelKind === "subagents") return "task";
+      return section.kind;
+    };
     const displayedTimelineRow = (entry: TimelineRowView): TimelineRowModel => {
       if (entry.part?.type === "reasoning" && entry.row.rowType === "note" && !props.showThinking) {
         return {
