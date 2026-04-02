@@ -15,6 +15,7 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { TuiHandle } from "./tui/app.js";
 import { reconcileOpencodeVersion } from "./opencode-version.js";
 import { sanitizeRuntimePayloadForLogs } from "./security.js";
+import { readVersionManifestFromDirs, type VersionInfo, type VersionManifest } from "./version-manifest.js";
 
 type ApprovalMode = "manual" | "auto";
 
@@ -107,11 +108,6 @@ type ChildHandle = {
   child: ReturnType<typeof spawn>;
 };
 
-type VersionInfo = {
-  version: string;
-  sha256: string;
-};
-
 type SidecarName = "veslo-server" | "veslo-code-router" | "veslo-code";
 
 type SidecarTarget =
@@ -121,11 +117,6 @@ type SidecarTarget =
   | "linux-arm64"
   | "windows-x64"
   | "windows-arm64";
-
-type VersionManifest = {
-  dir: string;
-  entries: Record<string, VersionInfo>;
-};
 
 type RemoteSidecarAsset = {
   asset?: string;
@@ -988,20 +979,12 @@ function resolveBinCommand(bin: string): { command: string; prefixArgs: string[]
 }
 
 async function readVersionManifest(): Promise<VersionManifest | null> {
-  const candidates = [dirname(process.execPath), dirname(fileURLToPath(import.meta.url))];
-  for (const dir of candidates) {
-    const manifestPath = join(dir, "versions.json");
-    if (await fileExists(manifestPath)) {
-      try {
-        const payload = await readFile(manifestPath, "utf8");
-        const entries = JSON.parse(payload) as Record<string, VersionInfo>;
-        return { dir, entries };
-      } catch {
-        return { dir, entries: {} };
-      }
-    }
-  }
-  return null;
+  return readVersionManifestFromDirs(
+    [dirname(process.execPath), dirname(fileURLToPath(import.meta.url))],
+    {
+      target: process.env.TAURI_ENV_TARGET_TRIPLE ?? process.env.TARGET ?? null,
+    },
+  );
 }
 
 const remoteManifestCache = new Map<string, Promise<RemoteSidecarManifest | null>>();
