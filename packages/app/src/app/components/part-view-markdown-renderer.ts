@@ -1,6 +1,6 @@
 import { marked } from "marked";
 
-import { renderCodeSpanWithLink, renderInlineTextWithLinks } from "./part-view-link-utils";
+import { renderCodeSpanWithLink } from "./part-view-link-utils";
 
 const escapeHtml = (value: string) =>
   value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -37,7 +37,9 @@ export function createCustomRenderer(tone: "light" | "dark") {
       }
     }
 
-    return renderInlineTextWithLinks(typeof record.text === "string" ? record.text : "");
+    // Let marked handle URL autolinks via GFM — no custom link detection in prose text.
+    // File paths in backticks are still detected via renderer.codespan().
+    return escapeHtml(typeof record.text === "string" ? record.text : "");
   };
 
   renderer.code = ({ text, lang }) => {

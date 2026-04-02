@@ -49,6 +49,9 @@ const isWorkspaceRelativeFilePath = (value: string) => {
   // Reject purely numeric paths (e.g. "536/38") — they are not file paths
   if (segments.every((segment) => /^\d+$/.test(segment))) return false;
 
+  // Require a file-like extension to avoid false positives like "wins/ties" or "název/model"
+  if (!hasFileLikeExtension(stripped)) return false;
+
   return true;
 };
 
