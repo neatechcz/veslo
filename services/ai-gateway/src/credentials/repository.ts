@@ -9,6 +9,7 @@ export type CredentialRecord = {
   secretRef: string;
   createdAt: Date;
   updatedAt: Date;
+  lastFailureAt?: Date | null;
 };
 
 export type CredentialBinding = {
@@ -48,6 +49,24 @@ export type MarkCredentialStateInput = {
   reason?: string | null;
 };
 
+export type CreateUserCredentialInput = {
+  ownerUserId: string;
+  provider: string;
+  credentialType: CredentialType;
+  secretRef: string;
+};
+
+export type ListUserCredentialsInput = {
+  ownerUserId: string;
+  provider: string;
+};
+
+export type RevokeUserCredentialInput = {
+  ownerUserId: string;
+  provider: string;
+  credentialId: string;
+};
+
 export interface CredentialRepository {
   // Legacy API used by the current scaffold. Remove after the provider-scoped
   // binding selector and token broker are wired in.
@@ -58,5 +77,8 @@ export interface CredentialRepository {
   listEligibleBindings?(input: ListEligibleBindingsInput): Promise<CredentialBinding[]>;
   getCredentialRecordByBindingId?(bindingId: string): Promise<CredentialRecord | null>;
   listAdminCredentials?(): Promise<AdminCredentialRecord[]>;
+  createUserCredential?(input: CreateUserCredentialInput): Promise<CredentialRecord>;
+  listUserCredentials?(input: ListUserCredentialsInput): Promise<CredentialRecord[]>;
+  revokeUserCredential?(input: RevokeUserCredentialInput): Promise<CredentialRecord | null>;
   markCredentialState(input: MarkCredentialStateInput): Promise<void>;
 }

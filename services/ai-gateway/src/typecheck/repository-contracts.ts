@@ -1,10 +1,13 @@
 import type {
   AdminCredentialRecord,
+  CreateUserCredentialInput,
   CredentialBinding,
   CredentialRecord,
   CredentialRepository,
   ListEligibleBindingsInput,
+  ListUserCredentialsInput,
   MarkCredentialStateInput,
+  RevokeUserCredentialInput,
 } from "../credentials/repository.js";
 import type { AuditEventRecord, AuditRepository, ListAuditEventsInput, RecordAuditEventInput } from "../audit/repository.js";
 import type {
@@ -39,6 +42,25 @@ const credentialRepositoryContractCheck: CredentialRepository = {
   },
   async listAdminCredentials(): Promise<AdminCredentialRecord[]> {
     return [];
+  },
+  async createUserCredential(_input: CreateUserCredentialInput): Promise<CredentialRecord> {
+    return {
+      id: "cred_1",
+      ownerUserId: "user_1",
+      provider: "openai",
+      credentialType: "oauth",
+      state: "healthy",
+      secretRef: "secret_1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      lastFailureAt: null,
+    };
+  },
+  async listUserCredentials(_input: ListUserCredentialsInput): Promise<CredentialRecord[]> {
+    return [];
+  },
+  async revokeUserCredential(_input: RevokeUserCredentialInput): Promise<CredentialRecord | null> {
+    return null;
   },
   async markCredentialState(_input: MarkCredentialStateInput) {
     return;
