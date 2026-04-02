@@ -98,7 +98,7 @@ function internalAgentDocument(input: { label: string; pack: string; summary: st
 description: Veslo internal ${input.label} execution agent
 mode: subagent
 hidden: true
-temperature: 0.1
+temperature: 0.5
 tools:
   "*": false
   "read": true
@@ -131,7 +131,7 @@ function internalSkillCreatorAgentDocument() {
 description: Veslo internal skill-creator execution agent
 mode: subagent
 hidden: true
-temperature: 0.1
+temperature: 0.5
 tools:
   "*": false
   "read": true
