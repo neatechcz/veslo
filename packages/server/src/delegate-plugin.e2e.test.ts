@@ -10,7 +10,8 @@
  *   - The delegate plugin provisioned to the workspace
  *
  * Configuration via environment variables:
- *   OPENCODE_URL       - OpenCode server URL (default: http://192.168.0.101:52734)
+ *   OPENCODE_E2E       - Set to 1 to enable this suite (default: disabled)
+ *   OPENCODE_URL       - OpenCode server URL (default: http://127.0.0.1:4096)
  *   OPENCODE_PASSWORD   - Basic auth password
  *   OPENCODE_DIRECTORY  - Workspace directory
  *   OPENCODE_PROVIDER_ID - Model provider ID (default: openai)
@@ -23,7 +24,8 @@
 
 import { describe, expect, test } from "bun:test";
 
-const OPENCODE_URL = process.env.OPENCODE_URL || "http://192.168.0.101:52734";
+const OPENCODE_E2E = process.env.OPENCODE_E2E === "1";
+const OPENCODE_URL = process.env.OPENCODE_URL || "http://127.0.0.1:4096";
 const OPENCODE_PASSWORD = process.env.OPENCODE_PASSWORD || "";
 const OPENCODE_DIRECTORY = process.env.OPENCODE_DIRECTORY || "";
 const OPENCODE_PROVIDER_ID = process.env.OPENCODE_PROVIDER_ID || "openai";
@@ -86,7 +88,7 @@ async function readSessionToolCalls(sessionId: string): Promise<string[]> {
   return tools;
 }
 
-describe("delegate plugin E2E", () => {
+(OPENCODE_E2E ? describe : describe.skip)("delegate plugin E2E", () => {
   test("delegate tool is registered in OpenCode tool list", async () => {
     const toolIds: string[] = await fetchOpenCode("/experimental/tool/ids");
 
