@@ -17,7 +17,7 @@ type RemoteWorkspaceDefaults = {
   displayName?: string | null;
 };
 
-function normalizeSharedBundleImportIntent(value: string | null | undefined): SharedBundleImportIntent {
+export function normalizeSharedBundleImportIntent(value: string | null | undefined): SharedBundleImportIntent {
   const normalized = (value ?? "").trim().toLowerCase();
   if (normalized === "new_worker" || normalized === "new-worker" || normalized === "newworker") {
     return "new_worker";

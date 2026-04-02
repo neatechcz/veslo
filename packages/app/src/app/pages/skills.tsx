@@ -781,7 +781,7 @@ export default function SkillsView(props: SkillsViewProps) {
                         <Show when={skill.trigger}>
                           <span
                             class="inline-block max-w-full rounded-md border border-dls-border bg-dls-hover px-2 py-1 truncate"
-                            title={translate("skills.trigger_title", { trigger: skill.trigger })}
+                            title={translate("skills.trigger_title", { trigger: skill.trigger ?? "" }) || ""}
                           >
                             {translate("skills.trigger_label")} {skill.trigger}
                           </span>

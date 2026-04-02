@@ -60,6 +60,7 @@ import {
 import { resolveSubagentRole } from "./lib/subagent-role-resolver";
 import {
   parseSharedBundleDeepLink,
+  normalizeSharedBundleImportIntent,
   stripSharedBundleQuery,
   parseRemoteConnectDeepLink,
   stripRemoteConnectQuery,
@@ -1971,7 +1972,7 @@ export default function App() {
         globalSyncSetProvider: (data) => globalSync.set("provider", data as Parameters<typeof globalSync.set>[1]),
         globalSyncSetProviderMerged: (data, mergedConnected) =>
           globalSync.set("provider", { ...(data as Record<string, unknown>), connected: mergedConnected } as Parameters<typeof globalSync.set>[1]),
-        unwrap,
+        unwrap: <T,>(result: { data?: T; error?: unknown }) => unwrap(result as never),
         isTauriRuntime,
         readOpencodeConfig,
         writeOpencodeConfig,
