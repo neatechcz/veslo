@@ -8,7 +8,7 @@ const tauriSource = readFileSync(new URL("../lib/tauri.ts", import.meta.url), "u
 test("workspace store maps forget options to detach/delete modes", () => {
   assert.match(
     workspaceSource,
-    /const mode = options\?\.deleteLocalData \? "delete_local_data" : "detach_only";/,
+    /const mode = forgetOptions\?\.deleteLocalData \? "delete_local_data" : "detach_only";/,
     "workspace store should default to detach_only and use delete_local_data only when explicitly requested",
   );
 

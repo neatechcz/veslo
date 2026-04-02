@@ -13,6 +13,7 @@ import { once } from "node:events";
 
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { TuiHandle } from "./tui/app.js";
+import { reconcileOpencodeVersion } from "./opencode-version.js";
 import { sanitizeRuntimePayloadForLogs } from "./security.js";
 
 type ApprovalMode = "manual" | "auto";
@@ -3253,18 +3254,12 @@ async function verifyOpenCodeRouterVersion(binary: ResolvedBinary): Promise<stri
 
 async function verifyOpencodeVersion(binary: ResolvedBinary): Promise<string | undefined> {
   const actual = await readCliVersion(binary.bin);
-  // When the binary was explicitly provided via --opencode-bin (source "external"),
-  // a strict version check would break desktop app users whenever a new opencode
-  // release ships on GitHub before Veslo updates its bundled binary. Log a
-  // warning instead of throwing so the caller can still proceed.
-  if (binary.source === "external" && binary.expectedVersion && actual && binary.expectedVersion !== actual) {
+  if (!actual) {
     process.stderr.write(
-      `[veslo-orchestrator] Warning: opencode version mismatch (expected ${binary.expectedVersion}, got ${actual}). Proceeding with ${binary.bin}.\n`,
+      `[veslo-orchestrator] Warning: unable to determine opencode version from ${binary.bin}. Proceeding without a version check.\n`,
     );
-    return actual;
   }
-  assertVersionMatch("veslo-code", binary.expectedVersion, actual, binary.bin);
-  return actual;
+  return reconcileOpencodeVersion(binary, actual);
 }
 
 async function verifyVesloServer(input: {

@@ -27,7 +27,10 @@ const GATEWAY_PROVIDER_SECRET_OPTION_KEYS = new Set([
   "refreshtoken",
   "token",
 ]);
-const GATEWAY_PROVIDER_SECRET_HEADER_KEYS = new Set(["authorization", "apikey"]);
+const GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS = new Set([
+  "xveslogatewaytoken",
+  "xveslosessionid",
+]);
 
 export const OPENCODE_SESSION_ID_TEMPLATE = "${OPENCODE_SESSION_ID}";
 
@@ -138,6 +141,21 @@ function normalizeConfigKey(input: string): string {
   return input.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+function isGatewayProviderSecretKey(normalizedKey: string): boolean {
+  if (!normalizedKey) return false;
+  if (GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS.has(normalizedKey)) return false;
+  if (normalizedKey === "authorization") return true;
+  if (normalizedKey === "apikey") return true;
+  if (normalizedKey === "accesskey") return true;
+  if (normalizedKey === "privatekey") return true;
+  if (normalizedKey.endsWith("token")) return true;
+  if (normalizedKey.endsWith("secret")) return true;
+  if (normalizedKey.endsWith("apikey")) return true;
+  if (normalizedKey.endsWith("accesskey")) return true;
+  if (normalizedKey.endsWith("privatekey")) return true;
+  return false;
+}
+
 function readConfigObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -158,7 +176,7 @@ function sanitizeGatewayProviderHeaders(value: unknown): Record<string, string> 
   const sanitized: Record<string, string> = {};
 
   for (const [key, rawValue] of Object.entries(headers)) {
-    if (GATEWAY_PROVIDER_SECRET_HEADER_KEYS.has(normalizeConfigKey(key))) {
+    if (isGatewayProviderSecretKey(normalizeConfigKey(key))) {
       continue;
     }
     if (typeof rawValue !== "string") continue;

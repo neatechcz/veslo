@@ -33,8 +33,6 @@ x-shared: &shared
 services:
   ai-gateway-db:
     image: mysql:8.4
-    command:
-      - --default-authentication-plugin=caching_sha2_password
     environment:
       MYSQL_DATABASE: veslo_ai_gateway
       MYSQL_ROOT_PASSWORD: root
