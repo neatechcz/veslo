@@ -2,7 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { exists, ensureDir } from "./utils.js";
 
-export const INTERNAL_SYSTEM_VERSION = "2026-03-31.1";
+export const INTERNAL_SYSTEM_VERSION = "2026-04-02.1";
 const INTERNAL_SYSTEM_SOURCE = "openwork-snapshot";
 const MANIFEST_SCHEMA_VERSION = 1;
 const ROUTING_BLOCK_VERSION = 3;
@@ -116,9 +116,16 @@ You are a hidden Veslo internal execution agent.
 Scope:
 - ${input.summary}
 - Use resources from \`.opencode/veslo/internal/${input.pack}\`.
-- Load \`.opencode/veslo/internal/${input.pack}/SKILL.md\` first, then only the needed helper files.
 
-Rules:
+MANDATORY first step:
+1. Read \`.opencode/veslo/internal/${input.pack}/SKILL.md\` using the read tool.
+2. Follow the workflow described in SKILL.md exactly.
+3. Only read additional helper files when SKILL.md references them.
+
+Critical rules:
+- You MUST read SKILL.md before doing anything else. Do not skip this step.
+- You MUST produce files in the correct binary format (e.g. .docx must be a valid ZIP/OOXML archive, not plaintext).
+- If SKILL.md says to use a library (e.g. \`npm install -g docx\`, \`pip install pypdf\`), install it first via bash, then use it.
 - Perform concrete file/tool work end-to-end.
 - Keep edits deterministic and minimal.
 - Return concise execution status and outputs to the parent.
@@ -504,6 +511,10 @@ function forceDelegateInstruction(agent, userText) {
     "Use the full original user request as delegate.task.",
     "Do not answer from memory before delegate returns.",
     "",
+    "IMPORTANT: Do NOT use the 'skill' tool for this request. The delegate tool",
+    "routes to a specialized subagent that has the correct tools and context.",
+    "Using 'skill' instead of 'delegate' will produce incorrect results.",
+    "",
     "Original user request:",
     userText,
   ].join("\\n");
@@ -567,6 +578,7 @@ export default async (ctx) => {
           \`For the current user request, first action MUST be tool call delegate(agent=\\"\${delegateAgent}\\").\`,
           "Pass the full user request as delegate.task.",
           "Do not answer from memory before delegate returns.",
+          "Do NOT use the 'skill' tool — use 'delegate' exclusively.",
         ].join("\\n"),
       );
     },
