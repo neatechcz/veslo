@@ -22,6 +22,8 @@ test("GET /admin/credentials serves the admin shell without embedding a custom c
     assert.match(html, /Sign in with Browser/i)
     assert.doesNotMatch(html, /<form[^>]+id="login-form"/i)
     assert.doesNotMatch(html, /type="password"/i)
+    assert.doesNotMatch(html, /OpenAI Shared Pool A/i)
+    assert.doesNotMatch(html, /Anthropic Shared Pool B/i)
   } finally {
     server.close()
     await once(server, "close")

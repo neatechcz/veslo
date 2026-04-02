@@ -8,6 +8,23 @@ export type SessionLease = {
   activeBindingId: string;
 };
 
+export type AdminSessionState = "healthy" | "degraded" | "rebound";
+
+export type AdminSessionRecord = {
+  id: string;
+  sessionId: string;
+  provider: LeaseProvider;
+  userLabel: string;
+  orgLabel: string;
+  projectLabel: string;
+  workerLabel: string;
+  credentialId: string;
+  state: AdminSessionState;
+  retries: number;
+  lastSeenAt: string;
+  lastFailoverAt: string | null;
+};
+
 export type CreateSessionLeaseInput = {
   ownerUserId: string;
   provider: LeaseProvider;
@@ -33,4 +50,5 @@ export interface LeaseRepository {
   getActiveLease(input: ResolveLeaseInput): Promise<SessionLease | null>;
   createLeaseIfMissing(input: CreateSessionLeaseInput): Promise<SessionLease>;
   rebindLease(input: RebindSessionLeaseInput): Promise<SessionLease | null>;
+  listAdminSessions?(): Promise<AdminSessionRecord[]>;
 }

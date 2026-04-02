@@ -20,6 +20,22 @@ export type CredentialBinding = {
   updatedAt: Date;
 };
 
+export type AdminCredentialRecord = {
+  id: string;
+  name: string;
+  provider: string;
+  type: CredentialType;
+  state: CredentialState;
+  scope: string;
+  activeLeases: number;
+  alertCount: number;
+  lastRefreshAt: string;
+  lastFailureAt: string | null;
+  totalTokens: number;
+  nextRotationAt: string | null;
+  linkedAlertIds: string[];
+};
+
 export type ListEligibleBindingsInput = {
   ownerUserId: string;
   provider: string;
@@ -41,5 +57,6 @@ export interface CredentialRepository {
   // Provider-scoped BYOK API for the gateway rollout.
   listEligibleBindings?(input: ListEligibleBindingsInput): Promise<CredentialBinding[]>;
   getCredentialRecordByBindingId?(bindingId: string): Promise<CredentialRecord | null>;
+  listAdminCredentials?(): Promise<AdminCredentialRecord[]>;
   markCredentialState(input: MarkCredentialStateInput): Promise<void>;
 }
