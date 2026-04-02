@@ -249,7 +249,7 @@ test("session rows use archive action and open submenu on right-click", () => {
 
   assert.match(
     source,
-    /if \(!archived && !isArchiveConfirmationPending\(id\)\) \{\s*setPendingArchiveConfirmationSessionId\(id\);\s*return;\s*\}/s,
+    /if \(!archived && !isArchiveConfirmationPending\(id\)\) \{[\s\S]*setPendingArchiveConfirmationSessionId\(id\);\s*return;\s*\}/s,
     "first click on a non-archived session should only arm inline confirmation",
   );
 
@@ -275,5 +275,13 @@ test("session rows use archive action and open submenu on right-click", () => {
     source,
     /tr\("sidebar\.archive_confirm"\)/,
     "inline archive confirmation should use localized confirm label",
+  );
+});
+
+test("archive action stores clicked button as pending confirm target before arming confirmation", () => {
+  assert.match(
+    source,
+    /if \(!archived && !isArchiveConfirmationPending\(id\)\) \{\s*if \(event\.currentTarget instanceof HTMLButtonElement\) \{\s*pendingArchiveConfirmButtonRef = event\.currentTarget;\s*\}\s*setPendingArchiveConfirmationSessionId\(id\);\s*return;\s*\}/s,
+    "first archive click should capture button target before pending mode, so outside-click cancellation does not clear confirm click",
   );
 });

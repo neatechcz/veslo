@@ -513,6 +513,9 @@ export default function WorkspaceSessionList(props: Props) {
     const archived = isSessionArchived(id);
 
     if (!archived && !isArchiveConfirmationPending(id)) {
+      if (event.currentTarget instanceof HTMLButtonElement) {
+        pendingArchiveConfirmButtonRef = event.currentTarget;
+      }
       setPendingArchiveConfirmationSessionId(id);
       return;
     }
