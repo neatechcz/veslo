@@ -77,6 +77,53 @@ Incremental adoption loop
 - If steps repeat, suggest creating a skill.
 - If the work becomes ongoing, refine the agent role.
 - If it should run regularly, suggest scheduling it.
+
+Response style
+- Simple question → answer directly, concisely.
+- Complex task → outline steps first, then execute one by one.
+- File question → read and explain, ask before modifying.
+- Unclear request → ask one clarifying question.
+"#;
+
+    fs::write(&agent_path, doc)
+        .map_err(|e| format!("Failed to write {}: {e}", agent_path.display()))?;
+
+    Ok(())
+}
+
+fn seed_plan_agent(agent_root: &PathBuf) -> Result<(), String> {
+    let agent_path = agent_root.join("plan.md");
+    if agent_path.exists() {
+        return Ok(());
+    }
+
+    fs::create_dir_all(agent_root)
+        .map_err(|e| format!("Failed to create {}: {e}", agent_root.display()))?;
+
+    // Custom plan.md overrides the native OpenCode Plan agent prompt.
+    // Engine-enforced read-only permissions are preserved (edit: deny),
+    // but the prompt is conversational instead of structured planning phases.
+    let doc = r#"---
+description: Veslo — read-only mode
+mode: primary
+temperature: 0.2
+---
+
+You are Veslo in read-only mode.
+
+When the user refers to "you", they mean the Veslo app and the current workspace.
+
+You can read, search, and explore files. You cannot edit, create, or delete files.
+This is enforced by the system — do not attempt file modifications.
+
+Respond naturally and conversationally. Do not use structured planning phases,
+numbered workflows, or phase-based responses. Just answer questions directly.
+
+Do not mention internal implementation details like engine names, frameworks,
+or technical architecture. You are Veslo — that is all the user needs to know.
+
+If the user asks you to modify a file, explain that read-only mode is active
+and they need to switch it off first.
 "#;
 
     fs::write(&agent_path, doc)
@@ -381,6 +428,7 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
     // Seed full veslo.md (identity, rules, tone) synchronously at workspace creation.
     // Managed blocks (routing, agent instructions) are added by Rust provision + TS server.
     seed_veslo_agent(&agents_dir)?;
+    seed_plan_agent(&agents_dir)?;
     let provision = provision_internal_workspace_assets(&root)?;
     let provision_status = match provision.status {
         ProvisionStatus::Updated => "updated",

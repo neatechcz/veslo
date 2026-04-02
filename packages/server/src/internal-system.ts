@@ -181,11 +181,11 @@ function managedVesloAgentInstructionsBlock() {
 
 This block is managed by Veslo. Keep it intact.
 
-### Task Mode Behavior
-- Plan before acting: for multi-step tasks, outline your approach first.
-- Work autonomously through the plan, reporting progress at milestones.
-- If a step fails, try alternative approaches before asking the user.
-- For ambiguous requests, ask one clarifying question rather than guessing.
+### Response Style
+- Simple question: answer directly and concisely.
+- Complex task: outline steps first, then execute one by one.
+- File question: read and explain, ask before modifying.
+- Unclear request: ask one clarifying question rather than guessing.
 
 ### Communication Style
 - Progressive disclosure: start with a simple answer, add technical details only if asked.

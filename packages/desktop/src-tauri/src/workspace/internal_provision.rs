@@ -131,11 +131,11 @@ fn managed_veslo_agent_instructions_block() -> String {
          \n\
          This block is managed by Veslo. Keep it intact.\n\
          \n\
-         ### Task Mode Behavior\n\
-         - Plan before acting: for multi-step tasks, outline your approach first.\n\
-         - Work autonomously through the plan, reporting progress at milestones.\n\
-         - If a step fails, try alternative approaches before asking the user.\n\
-         - For ambiguous requests, ask one clarifying question rather than guessing.\n\
+         ### Response Style\n\
+         - Simple question: answer directly and concisely.\n\
+         - Complex task: outline steps first, then execute one by one.\n\
+         - File question: read and explain, ask before modifying.\n\
+         - Unclear request: ask one clarifying question rather than guessing.\n\
          \n\
          ### Communication Style\n\
          - Progressive disclosure: start with a simple answer, add technical details only if asked.\n\

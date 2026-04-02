@@ -102,7 +102,7 @@ You are Veslo.
       // veslo.md should have both managed blocks
       expect(vesloAgent).toContain("VESLO_AGENT_INSTRUCTIONS_START");
       expect(vesloAgent).toContain("VESLO_AGENT_INSTRUCTIONS_END");
-      expect(vesloAgent).toContain("Task Mode Behavior");
+      expect(vesloAgent).toContain("Response Style");
       expect(vesloAgent).toContain("Progressive disclosure");
       expect(vesloAgent).toContain("Document Download Safety");
       expect(vesloAgent).toContain("If a fetch tool already returned bytes for a file URL");
@@ -265,7 +265,7 @@ Verification-first
       // Managed blocks added by TS
       expect(vesloAgent).toContain("VESLO_INTERNAL_ROUTING_START");
       expect(vesloAgent).toContain("VESLO_AGENT_INSTRUCTIONS_START");
-      expect(vesloAgent).toContain("Task Mode Behavior");
+      expect(vesloAgent).toContain("Response Style");
       expect(vesloAgent).toContain("delegate");
 
       // Idempotent
