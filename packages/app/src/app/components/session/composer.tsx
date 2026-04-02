@@ -1,14 +1,14 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import fuzzysort from "fuzzysort";
-import { ArrowUp, AtSign, File as FileIcon, Paperclip, Square, Terminal, X, Zap } from "lucide-solid";
+import { ArrowUp, File as FileIcon, Paperclip, Square, Terminal, X, Zap } from "lucide-solid";
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { currentLocale, t } from "../../../i18n";
 import { extractFilesFromDataTransfer } from "../../utils/data-transfer-files";
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
-import { nextAgentModeOnShiftTab } from "../../pages/session-shortcuts";
+
 
 type MentionOption = {
   id: string;
@@ -381,8 +381,6 @@ export default function Composer(props: ComposerProps) {
   const [mentionIndex, setMentionIndex] = createSignal(0);
   const [mentionQuery, setMentionQuery] = createSignal("");
   const [mentionOpen, setMentionOpen] = createSignal(false);
-  const [agentOptions, setAgentOptions] = createSignal<Agent[]>([]);
-  const [agentLoaded, setAgentLoaded] = createSignal(false);
   const [searchResults, setSearchResults] = createSignal<string[]>([]);
   const [attachments, setAttachments] = createSignal<ComposerAttachment[]>(
     (props.initialDraft.attachments ?? []).map((attachment) => ({ ...attachment })),
@@ -395,12 +393,7 @@ export default function Composer(props: ComposerProps) {
   const [fileDragOver, setFileDragOver] = createSignal(false);
   const attachmentsDisabled = createMemo(() => !props.attachmentsEnabled);
   const hasDraftContent = createMemo(() => draftText().trim().length > 0 || attachments().length > 0);
-  const selectedMode = createMemo(() => props.selectedAgent ?? "build");
-  const modeOptions = [
-    { value: "build", label: "Build" },
-    { value: "plan", label: "Plan" },
-    { value: "veslo", label: "Task" },
-  ] as const;
+  const isReadonly = createMemo(() => props.selectedAgent === "plan");
 
   const createPasteSpan = (part: Extract<ComposerPart, { type: "paste" }>) => {
     pasteTextById.set(part.id, part.text);
@@ -454,13 +447,6 @@ export default function Composer(props: ComposerProps) {
   const mentionGroups = createMemo<MentionGroup[]>(() => {
     if (!mentionOpen()) return [];
     const query = mentionQuery().trim().toLowerCase();
-    const agents: MentionOption[] = agentOptions().map((agent: Agent) => ({
-      id: `agent:${agent.name}`,
-      kind: "agent" as const,
-      label: agent.name,
-      value: agent.name,
-      display: agent.name,
-    }));
     const seen = new Set<string>();
     const recentFiles: MentionOption[] = props.recentFiles
       .filter((file: string) => {
@@ -486,14 +472,14 @@ export default function Composer(props: ComposerProps) {
         value: file,
         display: file,
       }));
-    const all = [...agents, ...recentFiles, ...searchFiles];
+    const all = [...recentFiles, ...searchFiles];
     const list = query
       ? fuzzysort.go(query, all, { keys: ["display"] }).map((entry: any) => entry.obj)
       : all;
     const groups: MentionGroup[] = [];
     const bucket = new Map<MentionGroup["category"], MentionOption[]>();
     for (const item of list) {
-      const category = item.kind === "agent" ? "agent" : item.recent ? "recent" : "file";
+      const category = item.recent ? "recent" : "file";
       const current = bucket.get(category);
       if (current) {
         current.push(item);
@@ -501,7 +487,7 @@ export default function Composer(props: ComposerProps) {
       }
       bucket.set(category, [item]);
     }
-    const order: MentionGroup["category"][] = ["agent", "file", "recent"];
+    const order: MentionGroup["category"][] = ["file", "recent"];
     for (const category of order) {
       const items = bucket.get(category);
       if (!items?.length) continue;
@@ -1315,18 +1301,17 @@ export default function Composer(props: ComposerProps) {
       }
     }
 
-    const nextMode = nextAgentModeOnShiftTab(selectedMode(), {
-      key: event.key,
-      defaultPrevented: event.defaultPrevented,
-      metaKey: event.metaKey,
-      ctrlKey: event.ctrlKey,
-      altKey: event.altKey,
-      shiftKey: event.shiftKey,
-      busy: props.busy,
-    });
-    if (nextMode) {
+    if (
+      event.key === "Tab" &&
+      event.shiftKey &&
+      !event.defaultPrevented &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !props.busy
+    ) {
       event.preventDefault();
-      props.onSelectAgent(nextMode);
+      props.onSelectAgent(isReadonly() ? "veslo" : "plan");
       return;
     }
 
@@ -1366,14 +1351,7 @@ export default function Composer(props: ComposerProps) {
     }
   };
 
-  createEffect(() => {
-    if (!mentionOpen() || agentLoaded()) return;
-    props
-      .listAgents()
-      .then((agents) => setAgentOptions(agents))
-      .catch(() => setAgentOptions([]))
-      .finally(() => setAgentLoaded(true));
-  });
+  // Agent loading removed — agents are no longer shown in @mention dropdown.
 
   createEffect(() => {
     if (!mentionOpen()) {
@@ -1479,33 +1457,23 @@ export default function Composer(props: ComposerProps) {
                             }}
                             onMouseEnter={() => setMentionIndex(optionIndex())}
                           >
-                            <Show
-                              when={option.kind === "agent"}
-                              fallback={
-                                <>
-                                  <FileIcon size={14} class="text-gray-9" />
-                                  <div class="flex items-center min-w-0 text-xs">
-                                    {(() => {
-                                      const value = option.value;
-                                      const slash = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
-                                      const dir = slash === -1 ? "" : value.slice(0, slash + 1);
-                                      const name = slash === -1 ? value : value.slice(slash + 1);
-                                      return (
-                                        <>
-                                          <span class="text-gray-9 truncate">{dir}</span>
-                                          <Show when={name}>
-                                            <span class="text-gray-11 font-semibold">{name}</span>
-                                          </Show>
-                                        </>
-                                      );
-                                    })()}
-                                  </div>
-                                </>
-                              }
-                            >
-                              <AtSign size={14} class="text-gray-9" />
-                              <span class="text-xs font-semibold text-gray-11">@{option.label}</span>
-                            </Show>
+                            <FileIcon size={14} class="text-gray-9" />
+                            <div class="flex items-center min-w-0 text-xs">
+                              {(() => {
+                                const value = option.value;
+                                const slash = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
+                                const dir = slash === -1 ? "" : value.slice(0, slash + 1);
+                                const name = slash === -1 ? value : value.slice(slash + 1);
+                                return (
+                                  <>
+                                    <span class="text-gray-9 truncate">{dir}</span>
+                                    <Show when={name}>
+                                      <span class="text-gray-11 font-semibold">{name}</span>
+                                    </Show>
+                                  </>
+                                );
+                              })()}
+                            </div>
                           </button>
                         );
                       }}
@@ -1676,26 +1644,20 @@ export default function Composer(props: ComposerProps) {
                           </button>
                         </div>
 
-                        <div class="inline-flex items-center rounded-lg border border-gray-6/80 bg-gray-2 p-0.5">
-                          <For each={modeOptions}>
-                            {(m) => {
-                              const active = () => selectedMode() === m.value;
-                              return (
-                                <button
-                                  type="button"
-                                  disabled={props.busy}
-                                  class={`px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors ${active()
-                                    ? "bg-gray-4 text-gray-12 shadow-sm"
-                                    : "text-gray-10 hover:text-gray-11"
-                                    }`}
-                                  onClick={() => props.onSelectAgent(m.value)}
-                                >
-                                  {m.label}
-                                </button>
-                              );
-                            }}
-                          </For>
-                        </div>
+                        <button
+                          type="button"
+                          disabled={props.busy}
+                          class={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[12px] font-medium transition-colors ${
+                            isReadonly()
+                              ? "border-blue-6 bg-blue-3 text-blue-11"
+                              : "border-gray-6/80 bg-gray-2 text-gray-10 hover:text-gray-11"
+                          }`}
+                          onClick={() => props.onSelectAgent(isReadonly() ? "veslo" : "plan")}
+                          title={isReadonly() ? "Read-only mode active — click to allow file editing" : "Click to enter read-only mode"}
+                        >
+                          <span class={`inline-block w-1.5 h-1.5 rounded-full ${isReadonly() ? "bg-blue-9" : "bg-gray-8"}`} />
+                          {isReadonly() ? "Jen se ptám" : "Jen se ptám"}
+                        </button>
 
                         <Show when={props.canChooseSessionFolder}>
                           <button
