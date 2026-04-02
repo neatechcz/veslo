@@ -75,7 +75,7 @@ function parseAiClassifierResponse(raw: string): SubagentRoleResolution | null {
 }
 
 export async function resolveSubagentRole(
-  input: { locale: SubagentLocale; prompt: string; timeoutMs?: number },
+  input: { locale: SubagentLocale; prompt: string; fallbackPrompt?: string; timeoutMs?: number },
   deps: SubagentRoleResolverDeps,
 ): Promise<SubagentRoleResolution> {
   const locale = normalizeSubagentLocale(input.locale);
@@ -96,7 +96,8 @@ export async function resolveSubagentRole(
     // Deterministic fallback below.
   }
 
-  const fallback = deps.classifyDeterministic({ locale, prompt: input.prompt });
+  const fallbackPrompt = typeof input.fallbackPrompt === "string" ? input.fallbackPrompt : input.prompt;
+  const fallback = deps.classifyDeterministic({ locale, prompt: fallbackPrompt });
   const normalizedFallback = normalizeResolvedRole({
     role_key: fallback.roleKey,
     role_label: fallback.roleLabel,

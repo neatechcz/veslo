@@ -12,11 +12,19 @@ test("artifact file rows expose a tooltip for the filename", () => {
   );
 });
 
-test("artifact file rows expose a tooltip for the path subtitle", () => {
+test("artifact file rows expose a tooltip for the directory subtitle", () => {
   assert.match(
     source,
     /<div class="truncate text-\[11px\] text-gray-9" title=\{subtitle\(\)\}>/,
-    "artifacts panel should expose the full relative path on the subtitle tooltip",
+    "artifacts panel should expose the directory subtitle on the tooltip",
+  );
+});
+
+test("artifact file rows stack filename, tags, then directory", () => {
+  assert.match(
+    source,
+    /<div class="min-w-0 flex-1 space-y-1">[\s\S]*?<div class="truncate text-xs font-medium text-gray-11" title=\{displayTitle\(\)\}>[\s\S]*?<div class="flex flex-wrap items-center gap-1\.5">[\s\S]*?<Show when=\{subtitle\(\)\}>[\s\S]*?<div class="truncate text-\[11px\] text-gray-9" title=\{subtitle\(\)\}>/,
+    "artifacts rows should render filename above tags and directory below tags",
   );
 });
 

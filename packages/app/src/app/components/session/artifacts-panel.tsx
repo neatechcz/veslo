@@ -35,6 +35,12 @@ const getBasename = (value: string) => {
   return segments[segments.length - 1] ?? value;
 };
 
+const getDirname = (value: string) => {
+  const segments = splitPathSegments(value);
+  if (segments.length <= 1) return ".";
+  return segments.slice(0, -1).join("/");
+};
+
 const isMarkdown = (value: string) => /\.(md|mdx|markdown)$/i.test(value);
 
 const statusLabel = (value: string) => {
@@ -72,7 +78,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
   );
 
   const subtitleText = (item: ArtifactFamilyItem) => {
-    if (item.path) return toWorkspaceRelative(item.path, props.workspaceRoot);
+    if (item.path) return getDirname(toWorkspaceRelative(item.path, props.workspaceRoot));
     const subtitle = item.subtitle?.trim();
     if (subtitle) return subtitle;
     const sourceName = item.sourceName?.trim();
@@ -126,38 +132,35 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
                         <div
                           class="group flex items-start gap-2 rounded-lg border border-transparent px-2 py-1.5 transition-colors hover:border-gray-6/80 hover:bg-gray-1/70"
                         >
-                          <div class="min-w-0 flex-1">
-                            <div class="flex items-center gap-2">
-                              <div class="truncate text-xs font-medium text-gray-11" title={displayTitle()}>{displayTitle()}</div>
+                          <div class="min-w-0 flex-1 space-y-1">
+                            <div class="truncate text-xs font-medium text-gray-11" title={displayTitle()}>{displayTitle()}</div>
+                            <div class="flex flex-wrap items-center gap-1.5">
                               <div class="shrink-0 rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-medium text-gray-10">
                                 {statusLabel(item.status)}
                               </div>
+                              <Show when={canOpenMd()}>
+                                <button
+                                  type="button"
+                                  class="rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-medium text-gray-10 transition-colors hover:border-gray-7 hover:text-gray-12"
+                                  onClick={() => item.path && props.onOpenInObsidian?.(item.path)}
+                                  title={tr("session.open_in_obsidian")}
+                                >
+                                  Obsidian
+                                </button>
+                              </Show>
+                              <Show when={canReveal()}>
+                                <button
+                                  type="button"
+                                  class="rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-medium text-gray-10 transition-colors hover:border-gray-7 hover:text-gray-12"
+                                  onClick={() => item.path && props.onRevealArtifact?.(item.path)}
+                                  title={tr("session.reveal")}
+                                >
+                                  {tr("session.reveal")}
+                                </button>
+                              </Show>
                             </div>
                             <Show when={subtitle()}>
                               <div class="truncate text-[11px] text-gray-9" title={subtitle()}>{subtitle()}</div>
-                            </Show>
-                          </div>
-
-                          <div class="flex shrink-0 items-center gap-1.5">
-                            <Show when={canOpenMd()}>
-                              <button
-                                type="button"
-                                class="rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-medium text-gray-10 transition-colors hover:border-gray-7 hover:text-gray-12"
-                                onClick={() => item.path && props.onOpenInObsidian?.(item.path)}
-                                title={tr("session.open_in_obsidian")}
-                              >
-                                Obsidian
-                              </button>
-                            </Show>
-                            <Show when={canReveal()}>
-                              <button
-                                type="button"
-                                class="rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-medium text-gray-10 transition-colors hover:border-gray-7 hover:text-gray-12"
-                                onClick={() => item.path && props.onRevealArtifact?.(item.path)}
-                                title={tr("session.reveal")}
-                              >
-                                {tr("session.reveal")}
-                              </button>
                             </Show>
                           </div>
                         </div>

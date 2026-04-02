@@ -1088,15 +1088,6 @@ export default function App() {
 
     return `${workspaceId}:${sessionId}:${lastUserMessageId}:${partCount}`;
   });
-  const activeArtifactFamilies = createMemo(() =>
-    resolveArtifactFamilies({
-      serverArtifacts: currentLatestRunArtifactResponse()?.items,
-      preferServerArtifacts: Boolean(currentLatestRunArtifactResponse()),
-      legacyArtifacts: currentLatestRunArtifactResponse() ? [] : artifacts(),
-      workingFiles: currentLatestRunArtifactResponse() ? [] : workingFiles(),
-    }),
-  );
-
   createEffect(() => {
     const key = latestRunArtifactRefreshKey();
     if (!key) {
@@ -2286,6 +2277,16 @@ export default function App() {
     developerMode,
   });
 
+  const activeArtifactFamilies = createMemo(() =>
+    resolveArtifactFamilies({
+      serverArtifacts: currentLatestRunArtifactResponse()?.items,
+      preferServerArtifacts: Boolean(currentLatestRunArtifactResponse()),
+      legacyArtifacts: currentLatestRunArtifactResponse() ? [] : artifacts(),
+      workingFiles: currentLatestRunArtifactResponse() ? [] : workingFiles(),
+      workspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
+    }),
+  );
+
   type SidebarWorkspaceSessionsStatus = WorkspaceSessionGroup["status"];
   const [sidebarSessionsByWorkspaceId, setSidebarSessionsByWorkspaceId] = createSignal<
     Record<string, SidebarSessionItem[]>
@@ -2957,6 +2958,7 @@ export default function App() {
         {
           locale,
           prompt: classificationPrompt,
+          fallbackPrompt: `${candidate.sessionTitle}\n${candidate.parentSessionTitle}`,
           timeoutMs: 3_000,
         },
         {

@@ -193,6 +193,76 @@ test("technical and noisy generic file paths do not create non-file families", (
   assert.ok(families.length === 0 || families.every((family) => familyLabel(family as Record<string, unknown>) === "Files"));
 });
 
+test("absolute system paths outside workspace root are filtered from file artifacts", () => {
+  const families = resolveArtifactFamilies({
+    serverArtifacts: [
+      artifact({
+        id: "external-skill-md",
+        family: "files",
+        kind: "file_discovered",
+        status: "scanned",
+        title: "SKILL.md",
+        path: "/Users/vaclavsoukup/.codex/skills/systematic-debugging/SKILL.md",
+        timestamp: 20,
+      }),
+      artifact({
+        id: "workspace-file",
+        family: "files",
+        kind: "file_discovered",
+        status: "scanned",
+        title: "session.tsx",
+        path: "/Users/vaclavsoukup/AI agent projects/Veslo/packages/app/src/app/pages/session.tsx",
+        timestamp: 10,
+      }),
+    ],
+    preferServerArtifacts: true,
+    workspaceRoot: "/Users/vaclavsoukup/AI agent projects/Veslo",
+  });
+
+  assert.deepEqual(families.map(familyLabel), ["Files"]);
+  const filesFamily = families[0] as Record<string, unknown>;
+  const paths = familyItems(filesFamily).map((item) => String((item as Record<string, unknown>).path ?? ""));
+  assert.deepEqual(paths, ["/Users/vaclavsoukup/AI agent projects/Veslo/packages/app/src/app/pages/session.tsx"]);
+});
+
+test("technical config and instruction files are filtered in fallback data", () => {
+  const families = resolveArtifactFamilies({
+    serverArtifacts: undefined,
+    legacyArtifacts: [
+      {
+        id: "agents-doc",
+        name: "AGENTS.md",
+        path: "AGENTS.md",
+        kind: "file",
+      },
+      {
+        id: "claude-doc",
+        name: "CLAUDE.md",
+        path: "CLAUDE.md",
+        kind: "file",
+      },
+      {
+        id: "workspace-config",
+        name: "opencode.json",
+        path: "opencode.json",
+        kind: "file",
+      },
+      {
+        id: "real-file",
+        name: "session.tsx",
+        path: "packages/app/src/app/pages/session.tsx",
+        kind: "file",
+      },
+    ],
+    workspaceRoot: "/Users/vaclavsoukup/AI agent projects/Veslo",
+  });
+
+  assert.deepEqual(families.map(familyLabel), ["Files"]);
+  const filesFamily = families[0] as Record<string, unknown>;
+  const paths = familyItems(filesFamily).map((item) => String((item as Record<string, unknown>).path ?? ""));
+  assert.deepEqual(paths, ["packages/app/src/app/pages/session.tsx"]);
+});
+
 test("family ordering prefers active families in Files, Skills, MCP, Soul order", () => {
   const families = buildArtifactFamilies({
     artifacts: [
