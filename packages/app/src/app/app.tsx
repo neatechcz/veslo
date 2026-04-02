@@ -1964,6 +1964,8 @@ export default function App() {
     if (!_providerAuth) {
       _providerAuth = createProviderAuthModule({
         getClient: client,
+        getVesloServerClient: () => vesloServerClient(),
+        getGatewayAuthToken: () => readDenAuth()?.token?.trim() ?? null,
         getProviders: providers,
         getProviderDefaults: providerDefaults,
         getProviderAuthMethods: providerAuthMethods,

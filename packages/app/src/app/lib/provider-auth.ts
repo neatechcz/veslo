@@ -11,14 +11,20 @@ import type {
   TextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 import { parse } from "jsonc-parser";
+import type { VesloServerClient } from "./veslo-server";
 
 import { fetchWithTimeout } from "./http";
 import {
   extractOpenAiCompatibleModelIds,
+  GATEWAY_OWNED_PROVIDER_IDS,
+  isGatewayApiKeyProvider,
+  isGatewayOAuthProvider,
+  isGatewayOwnedProvider,
   LM_STUDIO_DEFAULT_BASE_URL,
   LM_STUDIO_PROVIDER_ID,
   LM_STUDIO_PROVIDER_NAME,
   LM_STUDIO_PROVIDER_NPM,
+  mergeConnectedProviderIds,
   resolveLmStudioBaseUrl,
 } from "../utils/providers";
 
@@ -136,9 +142,26 @@ const buildProviderAuthMethods = (
     }
     if (!Array.isArray(provider.env) || provider.env.length === 0) continue;
     const existing = merged[id] ?? [];
+    if (isGatewayOAuthProvider(id)) {
+      merged[id] = existing.filter((method) => method.type !== "api");
+      continue;
+    }
     if (existing.some((method) => method.type === "api")) continue;
     merged[id] = [...existing, { type: "api", label: "API key" }];
   }
+
+  const openAiMethods = (merged.openai ?? []).filter((method) => method.type !== "api");
+  if (!openAiMethods.some((method) => method.type === "oauth")) {
+    openAiMethods.push({ type: "oauth", label: "OAuth" });
+  }
+  merged.openai = openAiMethods;
+
+  const anthropicMethods = merged.anthropic ?? [];
+  if (!anthropicMethods.some((method) => method.type === "api")) {
+    anthropicMethods.push({ type: "api", label: "API key" });
+  }
+  merged.anthropic = anthropicMethods;
+
   return merged;
 };
 
@@ -161,6 +184,8 @@ const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, label: st
 
 export interface ProviderAuthDeps {
   getClient: () => Client | null;
+  getVesloServerClient?: () => VesloServerClient | null;
+  getGatewayAuthToken?: () => string | null;
   getProviders: () => ProviderListItem[];
   getProviderDefaults: () => Record<string, string>;
   getProviderAuthMethods: () => Record<string, ProviderAuthMethod[]>;
@@ -186,6 +211,8 @@ export interface ProviderAuthDeps {
 export function createProviderAuthModule(deps: ProviderAuthDeps) {
   const {
     getClient,
+    getVesloServerClient,
+    getGatewayAuthToken,
     getProviders,
     getProviderDefaults,
     getProviderAuthMethods,
@@ -205,6 +232,51 @@ export function createProviderAuthModule(deps: ProviderAuthDeps) {
     const c = getClient();
     if (!c) throw new Error("Not connected to a server");
     return c;
+  };
+
+  const buildGatewayAuthorization = (url: string): ProviderAuthAuthorization => ({
+    url,
+    method: "code",
+    instructions: "Authorize in your browser, then paste the returned code here.",
+  });
+
+  const resolveGatewayClient = () => getVesloServerClient?.() ?? null;
+
+  const resolveGatewayAuthToken = () => {
+    const trimmed = getGatewayAuthToken?.()?.trim() ?? "";
+    return trimmed || null;
+  };
+
+  const requireGatewayContext = (providerId: string) => {
+    const client = resolveGatewayClient();
+    if (!client) {
+      throw new Error(`Veslo server is required to manage ${providerId} credentials.`);
+    }
+
+    const userToken = resolveGatewayAuthToken();
+    if (!userToken) {
+      throw new Error(`Sign in to Veslo before managing ${providerId} credentials.`);
+    }
+
+    return { client, userToken };
+  };
+
+  const resolveGatewayConnectedProviderIds = async () => {
+    const client = resolveGatewayClient();
+    const userToken = resolveGatewayAuthToken();
+    if (!client || !userToken) {
+      return null;
+    }
+
+    const settled = await Promise.allSettled(
+      GATEWAY_OWNED_PROVIDER_IDS.map(async (providerId) => {
+        const listed = await client.listGatewayCredentials(userToken, providerId);
+        const hasActiveCredential = (listed.credentials ?? []).some((credential) => credential.state !== "revoked");
+        return hasActiveCredential ? providerId : null;
+      }),
+    );
+
+    return settled.flatMap((result) => (result.status === "fulfilled" && result.value ? [result.value] : []));
   };
 
   const loadProviderAuthMethods = async () => {
@@ -271,13 +343,17 @@ export function createProviderAuthModule(deps: ProviderAuthDeps) {
 
   const refreshProviderState = async (c: Client, forceConnectedProviderId?: string) => {
     const updated = unwrap(await c.provider.list());
-    if (!forceConnectedProviderId) {
+    const gatewayConnectedProviderIds = await resolveGatewayConnectedProviderIds();
+
+    if (!forceConnectedProviderId && gatewayConnectedProviderIds === null) {
       globalSyncSetProvider(updated);
       return;
     }
 
-    const mergedConnected = Array.from(
-      new Set([...(updated.connected ?? []), forceConnectedProviderId]),
+    const mergedConnected = mergeConnectedProviderIds(
+      updated.connected ?? [],
+      gatewayConnectedProviderIds ?? [],
+      forceConnectedProviderId ? [forceConnectedProviderId] : [],
     );
     globalSyncSetProviderMerged(updated, mergedConnected);
   };
@@ -293,6 +369,17 @@ export function createProviderAuthModule(deps: ProviderAuthDeps) {
     const trimmed = apiKey.trim();
     if (!trimmed) {
       throw new Error("API key is required");
+    }
+
+    if (isGatewayOwnedProvider(resolvedProviderId)) {
+      if (!isGatewayApiKeyProvider(resolvedProviderId)) {
+        throw new Error(`API key auth is not supported for ${resolvedProviderId}. Use OAuth instead.`);
+      }
+
+      const { client: gatewayClient, userToken } = requireGatewayContext(resolvedProviderId);
+      await gatewayClient.saveAnthropicApiKey(userToken, trimmed);
+      await refreshProviderState(c);
+      return `Connected ${resolvedProviderId}`;
     }
 
     await c.auth.set({
@@ -328,6 +415,15 @@ export function createProviderAuthModule(deps: ProviderAuthDeps) {
       const resolved = providerId?.trim() ?? "";
       if (!resolved) {
         throw new Error("Provider ID is required");
+      }
+
+      if (isGatewayOAuthProvider(resolved)) {
+        const { client: gatewayClient, userToken } = requireGatewayContext(resolved);
+        const started = await gatewayClient.startOpenAiOAuth(userToken);
+        return {
+          methodIndex: 0,
+          authorization: buildGatewayAuthorization(started.authorizeUrl),
+        };
       }
 
       const methods = authMethods[resolved];
@@ -367,6 +463,17 @@ export function createProviderAuthModule(deps: ProviderAuthDeps) {
 
     try {
       const trimmedCode = code?.trim();
+      if (isGatewayOAuthProvider(resolved)) {
+        if (!trimmedCode) {
+          throw new Error("Authorization code is required");
+        }
+
+        const { client: gatewayClient, userToken } = requireGatewayContext(resolved);
+        await gatewayClient.finishOpenAiOAuth(userToken, trimmedCode);
+        await refreshProviderState(c);
+        return `Connected ${resolved}`;
+      }
+
       const result = await c.provider.oauth.callback({
         providerID: resolved,
         method: methodIndex,
@@ -412,6 +519,19 @@ export function createProviderAuthModule(deps: ProviderAuthDeps) {
     const resolved = providerId.trim();
     if (!resolved) {
       throw new Error("Provider ID is required");
+    }
+
+    if (isGatewayOwnedProvider(resolved)) {
+      const { client: gatewayClient, userToken } = requireGatewayContext(resolved);
+      const listed = await gatewayClient.listGatewayCredentials(userToken, resolved);
+      const activeCredentials = (listed.credentials ?? []).filter((credential) => credential.state !== "revoked");
+      await Promise.all(
+        activeCredentials.map((credential) =>
+          gatewayClient.revokeGatewayCredential(userToken, resolved, credential.id)
+        ),
+      );
+      await refreshProviderState(c);
+      return `Disconnected ${resolved}`;
     }
 
     const removeProviderAuth = async () => {

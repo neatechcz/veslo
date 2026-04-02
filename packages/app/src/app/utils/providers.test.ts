@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
   extractOpenAiCompatibleModelIds,
+  isGatewayOwnedProvider,
   isApiCredentialRequired,
+  mergeConnectedProviderIds,
   resolveLmStudioBaseUrl,
   resolveEffectiveConnectedProviderIds,
 } from "./providers.js";
@@ -80,4 +82,15 @@ test("does not require API key credential for LM Studio provider", () => {
 test("requires API key credential for non-LM Studio providers", () => {
   assert.equal(isApiCredentialRequired("openai"), true);
   assert.equal(isApiCredentialRequired("anthropic"), true);
+});
+
+test("identifies gateway-owned providers", () => {
+  assert.equal(isGatewayOwnedProvider("openai"), true);
+  assert.equal(isGatewayOwnedProvider("anthropic"), true);
+  assert.equal(isGatewayOwnedProvider("lmstudio"), false);
+});
+
+test("merges connected provider ids without duplicates", () => {
+  const merged = mergeConnectedProviderIds(["openai"], ["anthropic", "openai"], ["", " lmstudio "]);
+  assert.deepEqual(merged, ["openai", "anthropic", "lmstudio"]);
 });
