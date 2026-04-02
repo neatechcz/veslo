@@ -16,6 +16,8 @@ import type {
   ResolveLeaseInput,
   SessionLease,
 } from "./leases/repository.js";
+import { AnthropicTransport } from "./providers/anthropic-transport.js";
+import { OpenAiTransport } from "./providers/openai-transport.js";
 
 export type AppDependencies = {
   admin?: AdminService;
@@ -159,6 +161,9 @@ function createDefaultProxyDependencies(): ProxyDependencies {
     new InMemoryLeaseRepository(),
     new DefaultBindingSelector(credentials),
   );
+  const notConfiguredFetch: typeof fetch = async () => {
+    throw new Error("provider_transport_not_configured");
+  };
 
   return {
     leaseBroker,
@@ -166,11 +171,8 @@ function createDefaultProxyDependencies(): ProxyDependencies {
       credentials,
       secrets,
     }),
-    transport: {
-      async chatCompletions() {
-        throw new Error("provider_transport_not_configured");
-      },
-    },
+    openAiTransport: new OpenAiTransport({ fetchImpl: notConfiguredFetch }),
+    anthropicTransport: new AnthropicTransport({ fetchImpl: notConfiguredFetch }),
   };
 }
 
