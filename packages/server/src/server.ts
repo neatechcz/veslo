@@ -48,6 +48,8 @@ const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
 const AI_GATEWAY_DEFAULT_PORT = 4034;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
 const GATEWAY_CALLER_AUTH_HEADER = "x-veslo-gateway-authorization";
+const GATEWAY_ACCESS_TOKEN_HEADER = "x-veslo-gateway-token";
+const GATEWAY_SESSION_ID_HEADER = "x-veslo-session-id";
 
 const REDACTED_CONFIG_KEYS = [
   "password",
@@ -719,10 +721,28 @@ function requireAiGatewayCallerAuth(request: Request): string {
   return authorization;
 }
 
+function requireAiGatewayAccessToken(request: Request): string {
+  const accessToken = request.headers.get(GATEWAY_ACCESS_TOKEN_HEADER)?.trim() ?? "";
+  if (!accessToken) {
+    throw new ApiError(401, "gateway_unauthorized", "Gateway access token is required");
+  }
+  return `Bearer ${accessToken}`;
+}
+
+function requireAiGatewaySessionId(request: Request): string {
+  const sessionId = request.headers.get(GATEWAY_SESSION_ID_HEADER)?.trim() ?? "";
+  if (!sessionId) {
+    throw new ApiError(400, "gateway_session_required", "Gateway session id is required");
+  }
+  return sessionId;
+}
+
 async function proxyAiGatewayRequest(input: {
   request: Request;
   url: URL;
   gatewayPath: string;
+  auth: "caller" | "gateway-token";
+  requireSessionId?: boolean;
 }) {
   const baseUrl = resolveAiGatewayBaseUrl();
   const target = new URL(baseUrl);
@@ -730,8 +750,15 @@ async function proxyAiGatewayRequest(input: {
   target.search = input.url.search;
 
   const headers = new Headers(input.request.headers);
-  headers.set("Authorization", requireAiGatewayCallerAuth(input.request));
+  headers.set(
+    "Authorization",
+    input.auth === "caller" ? requireAiGatewayCallerAuth(input.request) : requireAiGatewayAccessToken(input.request),
+  );
+  if (input.requireSessionId) {
+    headers.set(GATEWAY_SESSION_ID_HEADER, requireAiGatewaySessionId(input.request));
+  }
   headers.delete(GATEWAY_CALLER_AUTH_HEADER);
+  headers.delete(GATEWAY_ACCESS_TOKEN_HEADER);
   headers.delete("x-veslo-host-token");
   headers.delete("x-veslo-client-id");
   headers.delete("host");
@@ -807,7 +834,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   headers.set("Access-Control-Allow-Origin", allowOrigin);
   headers.set(
     "Access-Control-Allow-Headers",
-    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, X-Veslo-Gateway-Authorization, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
+    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, X-Veslo-Gateway-Authorization, X-Veslo-Gateway-Token, X-Veslo-Session-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
   );
   headers.set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
   headers.set("Vary", "Origin");
@@ -1539,6 +1566,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       request: ctx.request,
       url: ctx.url,
       gatewayPath: "/api/providers/openai/oauth/start",
+      auth: "caller",
     });
   });
 
@@ -1547,6 +1575,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       request: ctx.request,
       url: ctx.url,
       gatewayPath: "/api/providers/openai/oauth/callback",
+      auth: "caller",
     });
   });
 
@@ -1555,6 +1584,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       request: ctx.request,
       url: ctx.url,
       gatewayPath: "/api/providers/anthropic/api-keys",
+      auth: "caller",
     });
   });
 
@@ -1564,6 +1594,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       request: ctx.request,
       url: ctx.url,
       gatewayPath: `/api/providers/${provider}/credentials`,
+      auth: "caller",
     });
   });
 
@@ -1573,6 +1604,27 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       request: ctx.request,
       url: ctx.url,
       gatewayPath: `/api/providers/${provider}/credentials/${encodeURIComponent(ctx.params.credentialId ?? "")}`,
+      auth: "caller",
+    });
+  });
+
+  addRoute(routes, "POST", "/ai-gateway/providers/openai/v1/chat/completions", "client", async (ctx) => {
+    return proxyAiGatewayRequest({
+      request: ctx.request,
+      url: ctx.url,
+      gatewayPath: "/providers/openai/v1/chat/completions",
+      auth: "gateway-token",
+      requireSessionId: true,
+    });
+  });
+
+  addRoute(routes, "POST", "/ai-gateway/providers/anthropic/v1/messages", "client", async (ctx) => {
+    return proxyAiGatewayRequest({
+      request: ctx.request,
+      url: ctx.url,
+      gatewayPath: "/providers/anthropic/v1/messages",
+      auth: "gateway-token",
+      requireSessionId: true,
     });
   });
 

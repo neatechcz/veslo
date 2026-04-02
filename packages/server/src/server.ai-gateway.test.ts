@@ -25,6 +25,103 @@ function createTestConfig() {
 }
 
 describe("ai gateway proxy routes", () => {
+  test("server proxies ai-gateway provider routes with gateway token and session id", async () => {
+    const requests: Array<{
+      method: string;
+      pathname: string;
+      authorization: string | null;
+      gatewayToken: string | null;
+      sessionId: string | null;
+      hostToken: string | null;
+      clientId: string | null;
+      body: unknown;
+    }> = [];
+
+    const upstream = createServer(async (req, res) => {
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const rawBody = Buffer.concat(chunks).toString("utf8");
+      requests.push({
+        method: req.method ?? "GET",
+        pathname: req.url ?? "/",
+        authorization: req.headers.authorization ?? null,
+        gatewayToken: typeof req.headers["x-veslo-gateway-token"] === "string" ? req.headers["x-veslo-gateway-token"] : null,
+        sessionId: typeof req.headers["x-veslo-session-id"] === "string" ? req.headers["x-veslo-session-id"] : null,
+        hostToken: typeof req.headers["x-veslo-host-token"] === "string" ? req.headers["x-veslo-host-token"] : null,
+        clientId: typeof req.headers["x-veslo-client-id"] === "string" ? req.headers["x-veslo-client-id"] : null,
+        body: rawBody ? JSON.parse(rawBody) : null,
+      });
+
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({
+        id: "chatcmpl_123",
+        object: "chat.completion",
+        model: "gpt-4o-mini",
+      }));
+    });
+    upstream.listen(0, "127.0.0.1");
+    await once(upstream, "listening");
+    const upstreamPort = (upstream.address() as AddressInfo).port;
+
+    const previousBaseUrl = process.env.VESLO_AI_GATEWAY_BASE_URL;
+    process.env.VESLO_AI_GATEWAY_BASE_URL = `http://127.0.0.1:${upstreamPort}`;
+
+    const server = startServer(createTestConfig());
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/openai/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer client-token",
+          "content-type": "application/json",
+          "x-veslo-gateway-token": "gateway-access-token",
+          "x-veslo-session-id": "session_123",
+          "x-veslo-client-id": "desktop-app",
+          "x-veslo-host-token": "should-not-forward",
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [{ role: "user", content: "Hello" }],
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        id: "chatcmpl_123",
+        object: "chat.completion",
+        model: "gpt-4o-mini",
+      });
+
+      expect(requests).toEqual([
+        {
+          method: "POST",
+          pathname: "/providers/openai/v1/chat/completions",
+          authorization: "Bearer gateway-access-token",
+          gatewayToken: null,
+          sessionId: "session_123",
+          hostToken: null,
+          clientId: null,
+          body: {
+            model: "gpt-4o-mini",
+            messages: [{ role: "user", content: "Hello" }],
+          },
+        },
+      ]);
+    } finally {
+      server.stop(true);
+      upstream.close();
+      await once(upstream, "close");
+      if (previousBaseUrl === undefined) {
+        delete process.env.VESLO_AI_GATEWAY_BASE_URL;
+      } else {
+        process.env.VESLO_AI_GATEWAY_BASE_URL = previousBaseUrl;
+      }
+    }
+  });
+
   test("server proxies ai-gateway credential routes with caller auth", async () => {
     const requests: Array<{
       method: string;

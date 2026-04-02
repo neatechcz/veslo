@@ -120,6 +120,7 @@ function createProviderAuthRuntime(overrides?: {
   };
 
   const vesloServerClient = {
+    baseUrl: "http://127.0.0.1:4318",
     startOpenAiOAuth: async (userToken: string) => {
       calls.startOpenAiOAuth.push({ userToken });
       return { authorizeUrl: "https://openai.example.test/oauth" };
@@ -228,6 +229,20 @@ test("submitProviderApiKey sends anthropic api keys to veslo server gateway api,
   assert.equal(runtime.calls.authSet.length, 0);
   assert.equal(runtime.calls.sessionCreate.length, 0);
   assert.equal(runtime.calls.sessionPrompt.length, 0);
+  assert.equal(runtime.calls.instanceDispose, 1);
+  assert.equal(runtime.calls.writeOpencodeConfig.length, 1);
+  assert.match(
+    runtime.calls.writeOpencodeConfig[0]?.content ?? "",
+    /"baseURL": "http:\/\/127\.0\.0\.1:\d+\/ai-gateway\/providers\/anthropic\/v1"/,
+  );
+  assert.match(
+    runtime.calls.writeOpencodeConfig[0]?.content ?? "",
+    /"x-veslo-gateway-token": "den_token_123"/,
+  );
+  assert.match(
+    runtime.calls.writeOpencodeConfig[0]?.content ?? "",
+    /"x-veslo-session-id": "\$\{OPENCODE_SESSION_ID\}"/,
+  );
   assert.deepEqual(runtime.lastMergedConnected(), ["anthropic"]);
 });
 
@@ -251,6 +266,20 @@ test("completeProviderAuthOAuth finishes openai oauth via veslo server gateway a
   assert.equal(result, "Connected openai");
   assert.deepEqual(runtime.calls.finishOpenAiOAuth, [{ userToken: "den_token_123", code: "oauth-code-123" }]);
   assert.equal(runtime.calls.oauthCallback.length, 0);
+  assert.equal(runtime.calls.instanceDispose, 1);
+  assert.equal(runtime.calls.writeOpencodeConfig.length, 1);
+  assert.match(
+    runtime.calls.writeOpencodeConfig[0]?.content ?? "",
+    /"baseURL": "http:\/\/127\.0\.0\.1:\d+\/ai-gateway\/providers\/openai\/v1"/,
+  );
+  assert.match(
+    runtime.calls.writeOpencodeConfig[0]?.content ?? "",
+    /"x-veslo-gateway-token": "den_token_123"/,
+  );
+  assert.match(
+    runtime.calls.writeOpencodeConfig[0]?.content ?? "",
+    /"x-veslo-session-id": "\$\{OPENCODE_SESSION_ID\}"/,
+  );
   assert.deepEqual(runtime.lastMergedConnected(), ["openai"]);
 });
 

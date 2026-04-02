@@ -1,7 +1,9 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { parse } from "jsonc-parser";
 
 import { isTauriRuntime } from "../utils";
+import { isGatewayOwnedProvider, type GatewayOwnedProviderId } from "../utils/providers";
 import { fetchWithTimeout } from "./http";
 
 type FieldsResult<T> =
@@ -18,6 +20,16 @@ export type OpencodeAuth = {
 const DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS = 10_000;
 const OAUTH_OPENCODE_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const MCP_AUTH_OPENCODE_REQUEST_TIMEOUT_MS = 90_000;
+const GATEWAY_PROVIDER_SECRET_OPTION_KEYS = new Set([
+  "apikey",
+  "apikeyid",
+  "accesstoken",
+  "refreshtoken",
+  "token",
+]);
+const GATEWAY_PROVIDER_SECRET_HEADER_KEYS = new Set(["authorization", "apikey"]);
+
+export const OPENCODE_SESSION_ID_TEMPLATE = "${OPENCODE_SESSION_ID}";
 
 function getRequestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
@@ -120,6 +132,107 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     headers: Object.keys(headers).length ? headers : undefined,
     fetch: fetchImpl,
   });
+}
+
+function normalizeConfigKey(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function readConfigObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function parseConfigContent(content?: string | null): Record<string, unknown> {
+  const raw = content?.trim() ?? "";
+  if (!raw) return {};
+
+  const parsed = parse(raw);
+  return readConfigObject(parsed);
+}
+
+function sanitizeGatewayProviderHeaders(value: unknown): Record<string, string> {
+  const headers = readConfigObject(value);
+  const sanitized: Record<string, string> = {};
+
+  for (const [key, rawValue] of Object.entries(headers)) {
+    if (GATEWAY_PROVIDER_SECRET_HEADER_KEYS.has(normalizeConfigKey(key))) {
+      continue;
+    }
+    if (typeof rawValue !== "string") continue;
+    sanitized[key] = rawValue;
+  }
+
+  return sanitized;
+}
+
+function sanitizeGatewayProviderOptions(value: unknown): Record<string, unknown> {
+  const options = readConfigObject(value);
+  const sanitized: Record<string, unknown> = {};
+
+  for (const [key, rawValue] of Object.entries(options)) {
+    const normalizedKey = normalizeConfigKey(key);
+    if (GATEWAY_PROVIDER_SECRET_OPTION_KEYS.has(normalizedKey)) {
+      continue;
+    }
+    if (normalizedKey === "headers") {
+      sanitized[key] = sanitizeGatewayProviderHeaders(rawValue);
+      continue;
+    }
+    sanitized[key] = rawValue;
+  }
+
+  return sanitized;
+}
+
+export function applyGatewayProviderRouting(
+  content: string | null | undefined,
+  input: {
+    providerId: GatewayOwnedProviderId;
+    serverBaseUrl: string;
+    gatewayAccessToken: string;
+  },
+) {
+  const providerId = input.providerId.trim().toLowerCase();
+  if (!isGatewayOwnedProvider(providerId)) {
+    throw new Error(`Gateway routing is not supported for provider: ${input.providerId}`);
+  }
+
+  const serverBaseUrl = input.serverBaseUrl.trim().replace(/\/+$/, "");
+  if (!serverBaseUrl) {
+    throw new Error("Server base URL is required");
+  }
+
+  const gatewayAccessToken = input.gatewayAccessToken.trim();
+  if (!gatewayAccessToken) {
+    throw new Error("Gateway access token is required");
+  }
+
+  const parsed = parseConfigContent(content);
+  const providerRoot = readConfigObject(parsed.provider);
+  const existingProvider = readConfigObject(providerRoot[providerId]);
+  const existingOptions = sanitizeGatewayProviderOptions(existingProvider.options);
+  const existingHeaders = sanitizeGatewayProviderHeaders(existingOptions.headers);
+
+  parsed.provider = {
+    ...providerRoot,
+    [providerId]: {
+      ...existingProvider,
+      options: {
+        ...existingOptions,
+        baseURL: `${serverBaseUrl}/ai-gateway/providers/${providerId}/v1`,
+        headers: {
+          ...existingHeaders,
+          "x-veslo-gateway-token": gatewayAccessToken,
+          "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
+        },
+      },
+    },
+  };
+
+  return JSON.stringify(parsed, null, 2);
 }
 
 export async function waitForHealthy(

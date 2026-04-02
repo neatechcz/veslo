@@ -14,9 +14,11 @@ import { parse } from "jsonc-parser";
 import type { VesloServerClient } from "./veslo-server";
 
 import { fetchWithTimeout } from "./http";
+import { applyGatewayProviderRouting } from "./opencode";
 import {
   extractOpenAiCompatibleModelIds,
   GATEWAY_OWNED_PROVIDER_IDS,
+  type GatewayOwnedProviderId,
   isGatewayApiKeyProvider,
   isGatewayOAuthProvider,
   isGatewayOwnedProvider,
@@ -261,6 +263,34 @@ export function createProviderAuthModule(deps: ProviderAuthDeps) {
     return { client, userToken };
   };
 
+  const writeGatewayProviderRouting = async (providerId: GatewayOwnedProviderId) => {
+    const workspaceRoot = getWorkspaceRoot().trim();
+    if (!workspaceRoot) {
+      throw new Error("Pick a workspace folder first.");
+    }
+
+    const gatewayClient = resolveGatewayClient();
+    if (!gatewayClient) {
+      throw new Error(`Veslo server is required to manage ${providerId} credentials.`);
+    }
+
+    const gatewayAccessToken = resolveGatewayAuthToken();
+    if (!gatewayAccessToken) {
+      throw new Error(`Sign in to Veslo before managing ${providerId} credentials.`);
+    }
+
+    const configFile = await readOpencodeConfig("project", workspaceRoot);
+    const content = applyGatewayProviderRouting(configFile?.content ?? "", {
+      providerId,
+      serverBaseUrl: gatewayClient.baseUrl,
+      gatewayAccessToken,
+    });
+    const writeResult = await writeOpencodeConfig("project", workspaceRoot, `${content}\n`);
+    if (!writeResult.ok) {
+      throw new Error(writeResult.stderr || writeResult.stdout || "Failed to update opencode.json");
+    }
+  };
+
   const resolveGatewayConnectedProviderIds = async () => {
     const client = resolveGatewayClient();
     const userToken = resolveGatewayAuthToken();
@@ -378,6 +408,8 @@ export function createProviderAuthModule(deps: ProviderAuthDeps) {
 
       const { client: gatewayClient, userToken } = requireGatewayContext(resolvedProviderId);
       await gatewayClient.saveAnthropicApiKey(userToken, trimmed);
+      await writeGatewayProviderRouting(resolvedProviderId);
+      unwrap(await c.instance.dispose());
       await refreshProviderState(c);
       return `Connected ${resolvedProviderId}`;
     }
@@ -470,6 +502,8 @@ export function createProviderAuthModule(deps: ProviderAuthDeps) {
 
         const { client: gatewayClient, userToken } = requireGatewayContext(resolved);
         await gatewayClient.finishOpenAiOAuth(userToken, trimmedCode);
+        await writeGatewayProviderRouting("openai");
+        unwrap(await c.instance.dispose());
         await refreshProviderState(c);
         return `Connected ${resolved}`;
       }
