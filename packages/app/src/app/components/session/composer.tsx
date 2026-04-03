@@ -1302,6 +1302,20 @@ export default function Composer(props: ComposerProps) {
     }
 
     if (
+      event.key === "Enter" &&
+      event.altKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !mentionOpen() &&
+      !slashOpen()
+    ) {
+      event.preventDefault();
+      document.execCommand("insertLineBreak");
+      emitDraftChange();
+      return;
+    }
+
+    if (
       event.key === "Tab" &&
       event.shiftKey &&
       !event.defaultPrevented &&
