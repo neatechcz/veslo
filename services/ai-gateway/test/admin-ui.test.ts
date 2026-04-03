@@ -43,8 +43,33 @@ test("GET /admin/app.js uses browser handoff auth instead of custom email-passwo
     const script = await response.text()
     assert.match(script, /\/auth\/browser\/start/)
     assert.match(script, /\/auth\/browser\/exchange/)
+    assert.match(script, /host\.docker\.internal/)
+    assert.match(script, /127\.0\.0\.1/)
     assert.doesNotMatch(script, /\/admin\/api\/auth\/sign-in/)
     assert.doesNotMatch(script, /loginPassword/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js preserves auth callback query params until browser exchange completes", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /const nextPath = page === "overview" \? "\/admin" : `\/admin\/\$\{page\}`/)
+    assert.match(script, /if \(location\.pathname !== nextPath\) {\s*history\.replaceState\(null, "", nextPath\);\s*}/)
+    assert.doesNotMatch(
+      script,
+      /history\.replaceState\(null, "", page === "overview" \? "\/admin" : `\/admin\/\$\{page\}`\);/,
+    )
   } finally {
     server.close()
     await once(server, "close")

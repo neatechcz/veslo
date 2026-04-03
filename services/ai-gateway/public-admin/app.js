@@ -179,6 +179,24 @@ function clearAuthCallbackParams() {
   history.replaceState(null, "", location.pathname);
 }
 
+function normalizeBrowserAuthorizeUrl(rawUrl) {
+  const value = typeof rawUrl === "string" ? rawUrl.trim() : "";
+  if (!value) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(value, location.origin);
+    const runningLocally = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+    if (runningLocally && parsed.hostname === "host.docker.internal") {
+      parsed.hostname = location.hostname === "127.0.0.1" ? "127.0.0.1" : "localhost";
+    }
+    return parsed.toString();
+  } catch {
+    return value;
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -249,7 +267,10 @@ function showApp() {
 
 function setActivePage(page) {
   state.page = page;
-  history.replaceState(null, "", page === "overview" ? "/admin" : `/admin/${page}`);
+  const nextPath = page === "overview" ? "/admin" : `/admin/${page}`;
+  if (location.pathname !== nextPath) {
+    history.replaceState(null, "", nextPath);
+  }
   els.navItems.forEach((item) => item.classList.toggle("active", item.dataset.route === page));
   els.pages.forEach((panel) => {
     const active = panel.dataset.page === page || (page === "overview" && panel.dataset.page === "overview");
@@ -361,7 +382,7 @@ async function startBrowserAuth() {
       return;
     }
 
-    const authorizeUrl = typeof payload?.authorizeUrl === "string" ? payload.authorizeUrl.trim() : "";
+    const authorizeUrl = normalizeBrowserAuthorizeUrl(typeof payload?.authorizeUrl === "string" ? payload.authorizeUrl : "");
     const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId.trim() : "";
     if (!authorizeUrl || !sessionId) {
       showLogin("Browser sign in started, but the response was incomplete.");
@@ -588,7 +609,7 @@ function renderCredentials() {
 
   els.credentialsTableBody.innerHTML = rows || `<tr><td colspan="6">No credentials found.</td></tr>`;
 
-  const selected = state.credentials.find((entry) => entry.id === state.selectedCredentialId) || state.credentials[0];
+  const selected = currentCredential();
   if (selected) {
     els.credentialDetail.innerHTML = `
       <p class="eyebrow">Selected credential</p>
@@ -601,8 +622,9 @@ function renderCredentials() {
         <div class="detail-line"><span>Total tokens</span><strong>${escapeHtml(formatNumber(selected.totalTokens))}</strong></div>
       </div>
       <div class="button-row">
-        <button class="button button-secondary" type="button">Drain</button>
-        <button class="button button-secondary" type="button">Rotate</button>
+        <button class="button button-secondary" type="button" data-credential-action="drain">Drain</button>
+        <button class="button button-secondary" type="button" data-credential-action="rotate">Rotate</button>
+        <button class="button button-secondary" type="button" data-credential-action="revoke">Revoke</button>
         <button class="button button-primary" type="button" data-route-alerts>Open alerts</button>
       </div>
     `;
@@ -686,7 +708,7 @@ function renderAlerts() {
     </article>
   `).join("") || `<article class="alert-card active"><div class="alert-head"><strong>No alerts</strong></div><p>No active alert records.</p></article>`;
 
-  const selected = state.alerts.find((entry) => entry.id === state.selectedAlertId) || state.alerts[0];
+  const selected = currentAlert();
   if (selected) {
     const credential = state.credentials.find((entry) => entry.id === selected.credentialId);
     els.alertDetail.innerHTML = `
@@ -699,9 +721,9 @@ function renderAlerts() {
         <div class="detail-line"><span>Status</span><strong>${escapeHtml(selected.status)}</strong></div>
       </div>
       <div class="button-row">
-        <button class="button button-secondary" type="button">Acknowledge</button>
-        <button class="button button-secondary" type="button">Escalate</button>
-        <button class="button button-primary" type="button">Resolve</button>
+        <button class="button button-secondary" type="button" data-alert-action="acknowledge">Acknowledge</button>
+        <button class="button button-primary" type="button" data-alert-action="resolve">Resolve</button>
+        <button class="button button-secondary" type="button" data-route-audit>Open audit</button>
       </div>
     `;
   }
@@ -743,6 +765,14 @@ function currentUser() {
     return null;
   }
   return state.users.find((entry) => entry.id === state.selectedUserId) || null;
+}
+
+function currentCredential() {
+  return state.credentials.find((entry) => entry.id === state.selectedCredentialId) || state.credentials[0] || null;
+}
+
+function currentAlert() {
+  return state.alerts.find((entry) => entry.id === state.selectedAlertId) || state.alerts[0] || null;
 }
 
 function populateUserEditor(user) {
@@ -842,6 +872,85 @@ function enterCreateMode() {
   setActivePage("users");
   showApp();
   renderUsers();
+}
+
+async function refreshCredentialOperations() {
+  await Promise.all([
+    loadCredentials(),
+    loadSessions(),
+    loadAlerts(),
+    loadAudit(),
+  ]);
+  renderOverview();
+}
+
+async function refreshAlertOperations() {
+  await Promise.all([
+    loadCredentials(),
+    loadAlerts(),
+    loadAudit(),
+  ]);
+  renderOverview();
+}
+
+function openAlertsForSelectedCredential() {
+  const credential = currentCredential();
+  if (credential) {
+    const matchingAlert = state.alerts.find((entry) =>
+      entry.credentialId === credential.id ||
+      credential.linkedAlertIds.includes(entry.id),
+    );
+    if (matchingAlert) {
+      state.selectedAlertId = matchingAlert.id;
+    }
+  }
+
+  setActivePage("alerts");
+  showApp();
+  renderAlerts();
+}
+
+async function runCredentialAction(action) {
+  const credential = currentCredential();
+  if (!credential || !action) {
+    return;
+  }
+
+  const confirmationMessages = {
+    drain: `Drain ${credential.name}? New sessions will stop using this credential.`,
+    rotate: `Rotate ${credential.name}? Active sessions will move to another healthy credential if one is available.`,
+    revoke: `Revoke ${credential.name}? Existing sessions may lose access if no replacement is available.`,
+  };
+
+  const confirmed = window.confirm(confirmationMessages[action] || `Apply ${action} to ${credential.name}?`);
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    await fetchJson(`/credentials/${encodeURIComponent(credential.id)}/${action}`, {
+      method: "POST",
+    });
+    await refreshCredentialOperations();
+  } catch (error) {
+    window.alert(`Unable to ${action} credential: ${error instanceof Error ? error.message : "unknown_error"}`);
+  }
+}
+
+async function runAlertAction(action) {
+  const alert = currentAlert();
+  if (!alert || !action) {
+    return;
+  }
+
+  try {
+    await fetchJson(`/alerts/${encodeURIComponent(alert.id)}/${action}`, {
+      method: "POST",
+    });
+    await refreshAlertOperations();
+  } catch (error) {
+    window.alert(`Unable to ${action} alert: ${error instanceof Error ? error.message : "unknown_error"}`);
+  }
 }
 
 async function saveUser() {
@@ -963,6 +1072,19 @@ function bindActions() {
     renderCredentials();
   });
 
+  els.credentialDetail.addEventListener("click", (event) => {
+    const actionButton = event.target.closest("[data-credential-action]");
+    if (actionButton) {
+      void runCredentialAction(actionButton.dataset.credentialAction);
+      return;
+    }
+
+    const routeAlerts = event.target.closest("[data-route-alerts]");
+    if (routeAlerts) {
+      openAlertsForSelectedCredential();
+    }
+  });
+
   els.sessionList.addEventListener("click", (event) => {
     const row = event.target.closest("[data-session-id]");
     if (!row) return;
@@ -975,6 +1097,21 @@ function bindActions() {
     if (!card) return;
     state.selectedAlertId = card.dataset.alertId;
     renderAlerts();
+  });
+
+  els.alertDetail.addEventListener("click", (event) => {
+    const actionButton = event.target.closest("[data-alert-action]");
+    if (actionButton) {
+      void runAlertAction(actionButton.dataset.alertAction);
+      return;
+    }
+
+    const routeAudit = event.target.closest("[data-route-audit]");
+    if (routeAudit) {
+      setActivePage("audit");
+      showApp();
+      renderAudit();
+    }
   });
 
   els.userList.addEventListener("click", (event) => {

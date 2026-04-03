@@ -3,6 +3,7 @@ export type RecordUsageInput = {
   ownerUserId: string;
   provider: string;
   sessionId: string;
+  credentialId: string;
   bindingId: string;
   model: string;
   inputTokens?: number;

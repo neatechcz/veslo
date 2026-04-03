@@ -1,15 +1,18 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import express, { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { AlertRecord, AlertRepository } from "../alerts/repository.js";
+import { MySqlAlertRepository } from "../alerts/mysql-repository.js";
 import type { AuditRepository, AuditEventRecord, ListAuditEventsInput } from "../audit/repository.js";
 import { MySqlAuditRepository } from "../audit/mysql-repository.js";
 import type { AdminCredentialRecord } from "../credentials/repository.js";
 import type { AiGatewayDb } from "../db/index.js";
 import { createDb } from "../db/index.js";
-import { credentialBindingTable, credentialRecordTable, credentialUsageEventTable, sessionLeaseTable } from "../db/schema.js";
+import { credentialBindingTable, credentialHealthEventTable, credentialRecordTable, credentialUsageEventTable, sessionLeaseTable, type CredentialState } from "../db/schema.js";
 import { env } from "../env.js";
 import type { AdminSessionRecord, LeaseProvider } from "../leases/repository.js";
 import { MySqlUsageRepository } from "../usage/mysql-repository.js";
@@ -56,20 +59,6 @@ export type AdminUserRecord = {
 export type CredentialRecord = AdminCredentialRecord;
 
 export type SessionRecord = AdminSessionRecord;
-
-export type AlertRecord = {
-  id: string;
-  title: string;
-  severity: "critical" | "high" | "medium";
-  source: string;
-  status: "active" | "acknowledged" | "resolved";
-  credentialId: string | null;
-  affectedSessions: number;
-  firstSeenAt: string;
-  lastSeenAt: string;
-  owner: string | null;
-  runbook: string;
-};
 
 export type AuditRecord = AuditEventRecord;
 
@@ -127,9 +116,14 @@ export interface AdminService {
   enableUser(token: string, userId: string): Promise<AdminUserRecord>;
   deleteUser(token: string, userId: string): Promise<void>;
   listCredentials(_token: string): Promise<{ credentials: CredentialRecord[] }>;
+  revokeCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
+  drainCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
+  rotateCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   listSessions(_token: string): Promise<{ sessions: SessionRecord[] }>;
   getUsage(_token: string, input: { groupBy: UsageGroupBy; credentialId: string | null; userId: string | null; orgId: string | null }): Promise<UsageResponse>;
   listAlerts(_token: string): Promise<{ alerts: AlertRecord[] }>;
+  acknowledgeAlert(_token: string, alertId: string, actorUserId: string | null): Promise<{ alert: AlertRecord }>;
+  resolveAlert(_token: string, alertId: string, actorUserId: string | null): Promise<{ alert: AlertRecord }>;
   listAudit(_token: string): Promise<{ events: AuditRecord[] }>;
 }
 
@@ -162,64 +156,22 @@ type AdminSessionReadRepository = {
   listAdminSessions(): Promise<SessionRecord[]>;
 };
 
+type AdminCredentialActionRepository = {
+  revokeCredential(credentialId: string): Promise<boolean>;
+  drainCredential(credentialId: string): Promise<boolean>;
+  rotateCredential(credentialId: string): Promise<boolean>;
+};
+
 type AdminReadModelDependencies = {
   denClient?: DenAdminApi;
   credentialReadRepository?: AdminCredentialReadRepository;
+  credentialActionRepository?: AdminCredentialActionRepository;
   sessionReadRepository?: AdminSessionReadRepository;
+  alertRepository?: AlertRepository;
   usageRepository?: UsageRepository;
   auditRepository?: AuditRepository;
   now?: () => Date;
 };
-
-const DEFAULT_ALERTS: AlertRecord[] = [
-  {
-    id: "alert_invalid_grant_pool_a",
-    title: "Refresh token retries increasing",
-    severity: "medium",
-    source: "token-broker",
-    status: "active",
-    credentialId: "cred_openai_shared_a",
-    affectedSessions: 3,
-    firstSeenAt: "2026-03-31T12:45:00.000Z",
-    lastSeenAt: "2026-03-31T14:15:00.000Z",
-    owner: "platform",
-    runbook: "Inspect token refresh failures and verify fallback threshold.",
-  },
-  {
-    id: "alert_nova_failover",
-    title: "Nova enterprise failover storm",
-    severity: "critical",
-    source: "lease-broker",
-    status: "active",
-    credentialId: "cred_openai_ent_nova",
-    affectedSessions: 6,
-    firstSeenAt: "2026-03-31T13:58:00.000Z",
-    lastSeenAt: "2026-03-31T14:22:00.000Z",
-    owner: "on-call",
-    runbook: "Drain unhealthy credential and inspect replacement binding saturation.",
-  },
-  {
-    id: "alert_nova_invalid_grant",
-    title: "invalid_grant returned by upstream OAuth",
-    severity: "high",
-    source: "provider-auth",
-    status: "acknowledged",
-    credentialId: "cred_openai_ent_nova",
-    affectedSessions: 4,
-    firstSeenAt: "2026-03-31T13:52:00.000Z",
-    lastSeenAt: "2026-03-31T14:04:00.000Z",
-    owner: "vaclav.soukup@neatec.cz",
-    runbook: "Rotate the underlying grant and monitor session rebound counts.",
-  },
-];
-
-class InMemoryAlertReadModel {
-  private readonly alerts = DEFAULT_ALERTS.map((entry) => ({ ...entry }));
-
-  listAlerts() {
-    return this.alerts.map((entry) => ({ ...entry }));
-  }
-}
 
 class MySqlAdminCredentialReadRepository implements AdminCredentialReadRepository {
   constructor(private readonly db: AiGatewayDb) {}
@@ -304,11 +256,119 @@ class MySqlAdminSessionReadRepository implements AdminSessionReadRepository {
   }
 }
 
+class MySqlAdminCredentialActionRepository implements AdminCredentialActionRepository {
+  constructor(private readonly db: AiGatewayDb) {}
+
+  async revokeCredential(credentialId: string): Promise<boolean> {
+    return this.transitionCredentialState(credentialId, "revoked", "admin_revoke");
+  }
+
+  async drainCredential(credentialId: string): Promise<boolean> {
+    return this.transitionCredentialState(credentialId, "draining", "admin_drain");
+  }
+
+  async rotateCredential(credentialId: string): Promise<boolean> {
+    const credential = await this.getCredential(credentialId);
+    if (!credential) {
+      return false;
+    }
+
+    const targetBindings = await this.db
+      .select({ id: credentialBindingTable.id })
+      .from(credentialBindingTable)
+      .where(eq(credentialBindingTable.credential_record_id, credentialId))
+      .orderBy(credentialBindingTable.created_at);
+    const targetBindingIds = targetBindings.map((binding) => binding.id);
+
+    if (targetBindingIds.length > 0) {
+      const replacements = await this.db
+        .select({ id: credentialBindingTable.id })
+        .from(credentialBindingTable)
+        .innerJoin(credentialRecordTable, eq(credentialBindingTable.credential_record_id, credentialRecordTable.id))
+        .where(
+          and(
+            eq(credentialBindingTable.owner_user_id, credential.owner_user_id),
+            eq(credentialBindingTable.provider, credential.provider),
+            ne(credentialBindingTable.credential_record_id, credentialId),
+            eq(credentialRecordTable.state, "healthy"),
+          ),
+        )
+        .orderBy(credentialBindingTable.created_at);
+
+      if (replacements.length > 0) {
+        const activeLeases = await this.db
+          .select({ id: sessionLeaseTable.id })
+          .from(sessionLeaseTable)
+          .where(inArray(sessionLeaseTable.active_binding_id, targetBindingIds))
+          .orderBy(sessionLeaseTable.session_id);
+
+        await Promise.all(activeLeases.map((lease, index) =>
+          this.db
+            .update(sessionLeaseTable)
+            .set({
+              active_binding_id: replacements[index % replacements.length]!.id,
+              updated_at: new Date(),
+            })
+            .where(eq(sessionLeaseTable.id, lease.id)),
+        ));
+      }
+    }
+
+    return this.transitionCredentialState(credentialId, "draining", "admin_rotate", credential);
+  }
+
+  private async transitionCredentialState(
+    credentialId: string,
+    nextState: CredentialState,
+    reason: string,
+    loadedCredential: typeof credentialRecordTable.$inferSelect | null = null,
+  ): Promise<boolean> {
+    const credential = loadedCredential ?? await this.getCredential(credentialId);
+    if (!credential) {
+      return false;
+    }
+
+    const previousState = credential.state;
+    const now = new Date();
+
+    await this.db
+      .update(credentialRecordTable)
+      .set({
+        state: nextState,
+        updated_at: now,
+      })
+      .where(eq(credentialRecordTable.id, credentialId));
+
+    await this.db.insert(credentialHealthEventTable).values({
+      id: `health_${randomUUID()}`,
+      credential_record_id: credentialId,
+      from_state: previousState,
+      to_state: nextState,
+      reason,
+      created_at: now,
+    });
+
+    return true;
+  }
+
+  private async getCredential(credentialId: string) {
+    const rows = await this.db
+      .select()
+      .from(credentialRecordTable)
+      .where(eq(credentialRecordTable.id, credentialId))
+      .limit(1);
+
+    return rows[0] ?? null;
+  }
+}
+
 function createDefaultAdminReadRepositories() {
   let repositories:
     | {
         credentialReadRepository: AdminCredentialReadRepository;
+        credentialActionRepository: AdminCredentialActionRepository;
         sessionReadRepository: AdminSessionReadRepository;
+        alertRepository: AlertRepository;
         usageRepository: UsageRepository;
         auditRepository: AuditRepository;
       }
@@ -322,7 +382,9 @@ function createDefaultAdminReadRepositories() {
     const handle = createDb(env.databaseUrl);
     repositories = {
       credentialReadRepository: new MySqlAdminCredentialReadRepository(handle.db),
+      credentialActionRepository: new MySqlAdminCredentialActionRepository(handle.db),
       sessionReadRepository: new MySqlAdminSessionReadRepository(handle.db),
+      alertRepository: new MySqlAlertRepository(handle.db),
       usageRepository: new MySqlUsageRepository(handle.db),
       auditRepository: new MySqlAuditRepository(handle.db),
     };
@@ -508,12 +570,14 @@ export function createDefaultAdminService(
 ): AdminService {
   const denClient = deps.denClient ?? new DenAdminClient(denApiBase);
   const getDefaultRepositories = createDefaultAdminReadRepositories();
-  const alerts = new InMemoryAlertReadModel();
-  const now = deps.now ?? (() => new Date());
   const getCredentialReadRepository = () =>
     deps.credentialReadRepository ?? getDefaultRepositories().credentialReadRepository;
+  const getCredentialActionRepository = () =>
+    deps.credentialActionRepository ?? getDefaultRepositories().credentialActionRepository;
   const getSessionReadRepository = () =>
     deps.sessionReadRepository ?? getDefaultRepositories().sessionReadRepository;
+  const getAlertRepository = () =>
+    deps.alertRepository ?? getDefaultRepositories().alertRepository;
   const getUsageRepository = () =>
     deps.usageRepository ?? getDefaultRepositories().usageRepository;
   const getAuditRepository = () =>
@@ -535,6 +599,42 @@ export function createDefaultAdminService(
       result: input.result,
       summary: input.summary,
     });
+  }
+
+  async function listCredentialsWithAlerts(): Promise<CredentialRecord[]> {
+    const [credentials, alerts] = await Promise.all([
+      getCredentialReadRepository().listAdminCredentials(),
+      getAlertRepository().listAlerts(),
+    ]);
+
+    const unresolvedAlertsByCredentialId = new Map<string, AlertRecord[]>();
+    for (const alert of alerts) {
+      if (!alert.credentialId || alert.status === "resolved") {
+        continue;
+      }
+
+      const existing = unresolvedAlertsByCredentialId.get(alert.credentialId) ?? [];
+      existing.push(alert);
+      unresolvedAlertsByCredentialId.set(alert.credentialId, existing);
+    }
+
+    return credentials.map((credential) => {
+      const linkedAlerts = unresolvedAlertsByCredentialId.get(credential.id) ?? [];
+      return {
+        ...credential,
+        alertCount: linkedAlerts.length,
+        linkedAlertIds: linkedAlerts.map((alert) => alert.id),
+      };
+    });
+  }
+
+  async function getCredentialOrThrow(credentialId: string): Promise<CredentialRecord> {
+    const credentials = await listCredentialsWithAlerts();
+    const credential = credentials.find((entry) => entry.id === credentialId);
+    if (!credential) {
+      throw new HttpError("credential_not_found", 404);
+    }
+    return credential;
   }
 
   return {
@@ -620,7 +720,52 @@ export function createDefaultAdminService(
       });
     },
     async listCredentials() {
-      return { credentials: await getCredentialReadRepository().listAdminCredentials() };
+      return { credentials: await listCredentialsWithAlerts() };
+    },
+    async revokeCredential(_token, credentialId, actorUserId) {
+      const updated = await getCredentialActionRepository().revokeCredential(credentialId);
+      if (!updated) {
+        throw new HttpError("credential_not_found", 404);
+      }
+      await recordAuditEvent({
+        actorUserId,
+        action: "credential.revoke",
+        entityType: "credential",
+        entityId: credentialId,
+        result: "warning",
+        summary: `Revoked credential ${credentialId}.`,
+      });
+      return { credential: await getCredentialOrThrow(credentialId) };
+    },
+    async drainCredential(_token, credentialId, actorUserId) {
+      const updated = await getCredentialActionRepository().drainCredential(credentialId);
+      if (!updated) {
+        throw new HttpError("credential_not_found", 404);
+      }
+      await recordAuditEvent({
+        actorUserId,
+        action: "credential.drain",
+        entityType: "credential",
+        entityId: credentialId,
+        result: "warning",
+        summary: `Draining credential ${credentialId} for new assignments.`,
+      });
+      return { credential: await getCredentialOrThrow(credentialId) };
+    },
+    async rotateCredential(_token, credentialId, actorUserId) {
+      const updated = await getCredentialActionRepository().rotateCredential(credentialId);
+      if (!updated) {
+        throw new HttpError("credential_not_found", 404);
+      }
+      await recordAuditEvent({
+        actorUserId,
+        action: "credential.rotate",
+        entityType: "credential",
+        entityId: credentialId,
+        result: "ok",
+        summary: `Rotated active sessions off credential ${credentialId}.`,
+      });
+      return { credential: await getCredentialOrThrow(credentialId) };
     },
     async listSessions() {
       return { sessions: await getSessionReadRepository().listAdminSessions() };
@@ -633,7 +778,35 @@ export function createDefaultAdminService(
       return usageRepository.aggregateUsage(input);
     },
     async listAlerts() {
-      return { alerts: alerts.listAlerts() };
+      return { alerts: await getAlertRepository().listAlerts() };
+    },
+    async acknowledgeAlert(_token, alertId, actorUserId) {
+      const acknowledge = getAlertRepository().acknowledgeAlert;
+      if (!acknowledge) {
+        throw new HttpError("alert_actions_unavailable", 503);
+      }
+      const alert = await acknowledge.call(getAlertRepository(), {
+        alertId,
+        actorUserId,
+      });
+      if (!alert) {
+        throw new HttpError("alert_not_found", 404);
+      }
+      return { alert };
+    },
+    async resolveAlert(_token, alertId, actorUserId) {
+      const resolve = getAlertRepository().resolveAlert;
+      if (!resolve) {
+        throw new HttpError("alert_actions_unavailable", 503);
+      }
+      const alert = await resolve.call(getAlertRepository(), {
+        alertId,
+        actorUserId,
+      });
+      if (!alert) {
+        throw new HttpError("alert_not_found", 404);
+      }
+      return { alert };
     },
     async listAudit() {
       const auditRepository = getAuditRepository();
@@ -699,6 +872,11 @@ function mapHttpError(error: unknown, res: express.Response) {
     return true;
   }
   return false;
+}
+
+function getAdminActorUserId(res: express.Response) {
+  const session = res.locals.adminSession as AdminSessionSnapshot | undefined;
+  return session?.user.email ?? session?.user.id ?? null;
 }
 
 export function createAdminRouter(adminService: AdminService) {
@@ -795,6 +973,54 @@ export function createAdminRouter(adminService: AdminService) {
     res.json(payload);
   });
 
+  router.post("/admin/api/credentials/:credentialId/revoke", async (req, res) => {
+    try {
+      const payload = await adminService.revokeCredential(
+        res.locals.adminToken as string,
+        req.params.credentialId,
+        getAdminActorUserId(res),
+      );
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "credential_revoke_failed" });
+    }
+  });
+
+  router.post("/admin/api/credentials/:credentialId/drain", async (req, res) => {
+    try {
+      const payload = await adminService.drainCredential(
+        res.locals.adminToken as string,
+        req.params.credentialId,
+        getAdminActorUserId(res),
+      );
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "credential_drain_failed" });
+    }
+  });
+
+  router.post("/admin/api/credentials/:credentialId/rotate", async (req, res) => {
+    try {
+      const payload = await adminService.rotateCredential(
+        res.locals.adminToken as string,
+        req.params.credentialId,
+        getAdminActorUserId(res),
+      );
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "credential_rotate_failed" });
+    }
+  });
+
   router.get("/admin/api/sessions", async (req, res) => {
     const payload = await adminService.listSessions(res.locals.adminToken as string);
     res.json(payload);
@@ -813,6 +1039,38 @@ export function createAdminRouter(adminService: AdminService) {
   router.get("/admin/api/alerts", async (req, res) => {
     const payload = await adminService.listAlerts(res.locals.adminToken as string);
     res.json(payload);
+  });
+
+  router.post("/admin/api/alerts/:alertId/acknowledge", async (req, res) => {
+    try {
+      const payload = await adminService.acknowledgeAlert(
+        res.locals.adminToken as string,
+        req.params.alertId,
+        getAdminActorUserId(res),
+      );
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "alert_acknowledge_failed" });
+    }
+  });
+
+  router.post("/admin/api/alerts/:alertId/resolve", async (req, res) => {
+    try {
+      const payload = await adminService.resolveAlert(
+        res.locals.adminToken as string,
+        req.params.alertId,
+        getAdminActorUserId(res),
+      );
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "alert_resolve_failed" });
+    }
   });
 
   router.get("/admin/api/audit", async (req, res) => {

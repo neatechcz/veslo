@@ -27,7 +27,7 @@ export class MySqlUsageRepository implements UsageRepository {
       id: input.requestId,
       owner_user_id: input.ownerUserId,
       provider: input.provider,
-      credential_record_id: input.bindingId,
+      credential_record_id: input.credentialId,
       credential_binding_id: input.bindingId,
       session_id: input.sessionId,
       request_id: input.requestId,

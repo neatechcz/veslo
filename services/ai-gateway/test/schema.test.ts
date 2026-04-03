@@ -8,6 +8,7 @@ import {
   credentialBindingTable,
   credentialHealthEventTable,
   credentialRecordTable,
+  credentialSecretTable,
   credentialUsageEventTable,
   sessionLeaseTable,
 } from "../src/db/schema.js";
@@ -16,6 +17,7 @@ import { createDb } from "../src/db/index.js";
 test("exports required core table names", () => {
   const requiredCoreNames = {
     credential_record: "credential_record",
+    credential_secret: "credential_secret",
     credential_binding: "credential_binding",
     session_lease: "session_lease",
     credential_health_event: "credential_health_event",
@@ -30,6 +32,7 @@ test("exports required core table names", () => {
 
 test("exports required table definitions", () => {
   assert.ok(credentialRecordTable);
+  assert.ok(credentialSecretTable);
   assert.ok(credentialBindingTable);
   assert.ok(sessionLeaseTable);
   assert.ok(credentialHealthEventTable);

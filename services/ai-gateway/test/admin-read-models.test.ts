@@ -11,6 +11,7 @@ import {
   type SessionRecord,
   type UsageResponse,
 } from "../src/http/admin.js"
+import type { AlertRecord } from "../src/alerts/repository.js"
 import { createApp } from "../src/index.js"
 
 const AUTHORIZATION = { authorization: "Bearer admin-token" }
@@ -144,6 +145,7 @@ function createAdminApp(overrides: {
   credentials?: CredentialRecord[]
   sessions?: Array<SessionRecord & { provider: "openai" | "anthropic"; sessionId: string }>
   usage?: UsageResponse
+  alerts?: AlertRecord[]
   audit?: AuditRecord[]
 }) {
   const service = createDefaultAdminService("http://den.example.test", {
@@ -164,6 +166,11 @@ function createAdminApp(overrides: {
       },
       async aggregateUsage() {
         return overrides.usage ?? createUsageResponse("total")
+      },
+    },
+    alertRepository: {
+      async listAlerts() {
+        return overrides.alerts ?? []
       },
     },
     auditRepository: {

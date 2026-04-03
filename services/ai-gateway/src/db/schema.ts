@@ -12,6 +12,7 @@ const timestamps = {
 
 export const CoreTableNames = {
   credential_record: "credential_record",
+  credential_secret: "credential_secret",
   credential_binding: "credential_binding",
   session_lease: "session_lease",
   credential_health_event: "credential_health_event",
@@ -39,6 +40,17 @@ export const credentialRecordTable = mysqlTable(
   (table) => [
     index("credential_record_owner_provider_state").on(table.owner_user_id, table.provider, table.state),
   ],
+);
+
+export const credentialSecretTable = mysqlTable(
+  CoreTableNames.credential_secret,
+  {
+    secret_ref: varchar("secret_ref", { length: 255 }).primaryKey(),
+    iv: text("iv").notNull(),
+    auth_tag: text("auth_tag").notNull(),
+    ciphertext: text("ciphertext").notNull(),
+    ...timestamps,
+  },
 );
 
 export const credentialBindingTable = mysqlTable(

@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto"
+
 import { desc } from "drizzle-orm"
 
 import type { AiGatewayDb } from "../db/index.js"
@@ -46,8 +48,8 @@ export class MySqlAuditRepository implements AuditRepository {
   }
 }
 
-function createAuditEventId(input: RecordAuditEventInput) {
-  return `audit_${input.entityType}_${input.entityId}_${Date.now()}`
+export function createAuditEventId(_input: RecordAuditEventInput) {
+  return `audit_${randomUUID()}`
 }
 
 function normalizeResult(value: string): AuditEventRecord["result"] {

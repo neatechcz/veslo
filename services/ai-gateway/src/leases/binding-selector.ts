@@ -7,11 +7,21 @@ export type BindingSelector = {
 };
 
 export class DefaultBindingSelector implements BindingSelector {
+  private readonly nextInitialIndexByPool = new Map<string, number>();
+
   constructor(private readonly credentials: CredentialRepository) {}
 
   async selectInitialBinding(input: ResolveLeaseInput): Promise<string> {
     const bindings = await this.listEligibleBindings(input);
-    return bindings[0]?.id ?? this.throwNoEligibleBindings(input);
+    if (bindings.length === 0) {
+      return this.throwNoEligibleBindings(input);
+    }
+
+    const poolKey = this.poolKey(input);
+    const nextIndex = this.nextInitialIndexByPool.get(poolKey) ?? 0;
+    this.nextInitialIndexByPool.set(poolKey, (nextIndex + 1) % bindings.length);
+
+    return bindings[nextIndex % bindings.length]!.id;
   }
 
   async selectReplacementBinding(
@@ -40,5 +50,9 @@ export class DefaultBindingSelector implements BindingSelector {
 
   private throwNoEligibleBindings(input: ResolveLeaseInput): never {
     throw new Error(`no_eligible_bindings:${input.ownerUserId}:${input.provider}`);
+  }
+
+  private poolKey(input: ResolveLeaseInput): string {
+    return `${input.ownerUserId}:${input.provider}`;
   }
 }

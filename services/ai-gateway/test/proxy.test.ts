@@ -3,6 +3,7 @@ import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 
+import type { CredentialRecord } from "../src/credentials/repository.js";
 import type { UpstreamAuth } from "../src/credentials/token-broker.js";
 import type { BindingSelector } from "../src/leases/binding-selector.js";
 import { LeaseBroker } from "../src/leases/lease-broker.js";
@@ -89,6 +90,60 @@ async function withMutedConsoleError<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
+const GATEWAY_AUTH_HEADER = {
+  authorization: "Bearer gateway-access-token",
+};
+
+function createGatewaySessions() {
+  return {
+    async resolveSession(token: string) {
+      assert.equal(token, "gateway-access-token");
+      return {
+        token,
+        user: {
+          id: "user_gateway",
+          email: "gateway@example.test",
+        },
+      };
+    },
+  };
+}
+
+function createCredentialsByBindingId(records: Record<string, CredentialRecord>) {
+  return {
+    async getCredentialRecordById() {
+      return null;
+    },
+    async listHealthyCredentialRecordIds() {
+      return [];
+    },
+    async getCredentialRecordByBindingId(bindingId: string) {
+      return records[bindingId] ?? null;
+    },
+    async markCredentialState() {},
+  };
+}
+
+function createCredentialRecord(bindingId: string, provider: "openai" | "anthropic"): CredentialRecord {
+  return {
+    id: `cred_${bindingId}`,
+    ownerUserId: "user_gateway",
+    provider,
+    credentialType: provider === "openai" ? "oauth" : "api_key",
+    state: "healthy",
+    secretRef: `secret_${bindingId}`,
+    createdAt: new Date("2026-04-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-04-01T00:00:00.000Z"),
+    lastFailureAt: null,
+  };
+}
+
+function createNoopUsageRepository() {
+  return {
+    async recordUsage() {},
+  };
+}
+
 test("POST /providers/openai/v1/chat/completions forwards with sticky openai lease", async () => {
   const leases = new InMemoryLeaseRepository();
   const selectorCalls = { initial: 0, replacement: 0 };
@@ -108,6 +163,11 @@ test("POST /providers/openai/v1/chat/completions forwards with sticky openai lea
   const leaseBroker = new LeaseBroker(leases, selector);
   const app = createApp({
     proxy: {
+      gatewaySessions: createGatewaySessions(),
+      credentials: createCredentialsByBindingId({
+        binding_openai_alpha: createCredentialRecord("binding_openai_alpha", "openai"),
+      }),
+      usageRepository: createNoopUsageRepository(),
       leaseBroker,
       tokenBroker: {
         async getUpstreamAuth(input: { bindingId: string }) {
@@ -153,6 +213,7 @@ test("POST /providers/openai/v1/chat/completions forwards with sticky openai lea
     const first = await fetch(url, {
       method: "POST",
       headers: {
+        ...GATEWAY_AUTH_HEADER,
         "content-type": "application/json",
         "x-veslo-session-id": "session_openai_1",
       },
@@ -170,6 +231,7 @@ test("POST /providers/openai/v1/chat/completions forwards with sticky openai lea
     const second = await fetch(url, {
       method: "POST",
       headers: {
+        ...GATEWAY_AUTH_HEADER,
         "content-type": "application/json",
         "x-veslo-session-id": "session_openai_1",
       },
@@ -214,6 +276,11 @@ test("POST /providers/anthropic/v1/messages forwards with sticky anthropic lease
   const leaseBroker = new LeaseBroker(leases, selector);
   const app = createApp({
     proxy: {
+      gatewaySessions: createGatewaySessions(),
+      credentials: createCredentialsByBindingId({
+        binding_anthropic_alpha: createCredentialRecord("binding_anthropic_alpha", "anthropic"),
+      }),
+      usageRepository: createNoopUsageRepository(),
       leaseBroker,
       tokenBroker: {
         async getUpstreamAuth(input: { bindingId: string }) {
@@ -257,6 +324,7 @@ test("POST /providers/anthropic/v1/messages forwards with sticky anthropic lease
     const response = await fetch(url, {
       method: "POST",
       headers: {
+        ...GATEWAY_AUTH_HEADER,
         "content-type": "application/json",
         "x-veslo-session-id": "session_anthropic_1",
       },
@@ -313,6 +381,12 @@ test("permanent credential failures call handleUpstreamFailure and retry once", 
   const transportCalls: Array<{ upstreamAuth: UpstreamAuth; body: unknown }> = [];
   const app = createApp({
     proxy: {
+      gatewaySessions: createGatewaySessions(),
+      credentials: createCredentialsByBindingId({
+        binding_openai_primary: createCredentialRecord("binding_openai_primary", "openai"),
+        binding_openai_failover: createCredentialRecord("binding_openai_failover", "openai"),
+      }),
+      usageRepository: createNoopUsageRepository(),
       leaseBroker,
       tokenBroker: {
         async getUpstreamAuth(input: { bindingId: string }) {
@@ -359,6 +433,7 @@ test("permanent credential failures call handleUpstreamFailure and retry once", 
       {
         method: "POST",
         headers: {
+          ...GATEWAY_AUTH_HEADER,
           "content-type": "application/json",
           "x-veslo-session-id": "session_rebind_1",
         },
@@ -415,6 +490,11 @@ test("transient upstream failures do not rebind", async () => {
   let transportCalls = 0;
   const app = createApp({
     proxy: {
+      gatewaySessions: createGatewaySessions(),
+      credentials: createCredentialsByBindingId({
+        binding_openai_alpha: createCredentialRecord("binding_openai_alpha", "openai"),
+      }),
+      usageRepository: createNoopUsageRepository(),
       leaseBroker,
       tokenBroker: {
         async getUpstreamAuth() {
@@ -449,6 +529,7 @@ test("transient upstream failures do not rebind", async () => {
         {
           method: "POST",
           headers: {
+            ...GATEWAY_AUTH_HEADER,
             "content-type": "application/json",
             "x-veslo-session-id": "session_transient_1",
           },
@@ -481,6 +562,11 @@ test("POST /providers/openai/v1/chat/completions returns 400 when x-veslo-sessio
 
   const app = createApp({
     proxy: {
+      gatewaySessions: createGatewaySessions(),
+      credentials: createCredentialsByBindingId({
+        binding_openai_alpha: createCredentialRecord("binding_openai_alpha", "openai"),
+      }),
+      usageRepository: createNoopUsageRepository(),
       leaseBroker: new LeaseBroker(leases, selector),
       tokenBroker: {
         async getUpstreamAuth() {
@@ -510,6 +596,7 @@ test("POST /providers/openai/v1/chat/completions returns 400 when x-veslo-sessio
       {
         method: "POST",
         headers: {
+          ...GATEWAY_AUTH_HEADER,
           "content-type": "application/json",
         },
         body: JSON.stringify({ model: "gpt-test", messages: [] }),
