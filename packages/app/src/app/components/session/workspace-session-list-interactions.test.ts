@@ -207,11 +207,17 @@ test("parent sessions expose a mini branch toggle icon that only expands/collaps
   );
 });
 
-test("selected session auto-expands its branch in the sidebar", () => {
-  assert.match(
+test("selected sessions do not auto-expand parent branches", () => {
+  assert.doesNotMatch(
+    source,
+    /createEffect\(\(\) => \{[\s\S]*props\.selectedSessionId[\s\S]*deriveExpandedParentSessionIds/s,
+    "selected rows should no longer trigger branch expansion from sidebar selection",
+  );
+
+  assert.doesNotMatch(
     source,
     /setExpandedParentSessionIds\(\(current\) => deriveExpandedParentSessionIds\(/,
-    "sidebar should expand the selected session branch so child subagents are visible immediately",
+    "branch expansion should only happen from the explicit mini toggle",
   );
 });
 

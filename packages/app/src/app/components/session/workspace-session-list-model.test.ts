@@ -5,7 +5,6 @@ import {
   buildProjectGroups,
   buildRecentRows,
   buildRowHierarchyLookup,
-  deriveExpandedParentSessionIds,
   displayTimestamp,
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
@@ -13,6 +12,7 @@ import {
   resolveSessionRowClickAction,
   splitSessionDisplayLabel,
   requiredVisibleCountForExpandedSession,
+  rowVisibleByExpansion,
   shouldShowNewSessionLabelText,
   shouldUseExpandedNewSessionLabel,
   toggleProjectCollapsed,
@@ -163,7 +163,7 @@ test("buildProjectGroups keeps subagents nested under their parent in by-project
   );
 });
 
-test("deriveExpandedParentSessionIds expands the selected branch so subagents stay visible", () => {
+test("rowVisibleByExpansion keeps child rows hidden until the branch is explicitly expanded", () => {
   const workspace = {
     id: "workspace-1",
     name: "workspace-1",
@@ -198,14 +198,11 @@ test("deriveExpandedParentSessionIds expands the selected branch so subagents st
     },
   ]);
 
-  assert.deepEqual(
-    [...deriveExpandedParentSessionIds(rows, "root-a")].sort(),
-    ["root-a"],
-  );
-  assert.deepEqual(
-    [...deriveExpandedParentSessionIds(rows, "sub-a-2")].sort(),
-    ["root-a", "sub-a-1"],
-  );
+  const hierarchy = buildRowHierarchyLookup(rows);
+
+  assert.equal(rowVisibleByExpansion(rows[0], hierarchy, new Set()), true);
+  assert.equal(rowVisibleByExpansion(rows[1], hierarchy, new Set()), false);
+  assert.equal(rowVisibleByExpansion(rows[1], hierarchy, new Set(["root-a"])), true);
 });
 
 test("session row click behavior after restart keeps first click for selection and second click for subagent expansion", () => {

@@ -276,17 +276,6 @@ export const buildRowHierarchyLookup = (rows: FlatSessionRow[]): RowHierarchyLoo
   return { rowBySessionId, parentBySessionId, childrenByParentId };
 };
 
-const buildRowParentLookup = (rows: FlatSessionRow[]) => {
-  const { rowBySessionId, parentBySessionId, childrenByParentId } = buildRowHierarchyLookup(rows);
-  const childCountByParentId = new Map<string, number>();
-
-  for (const [parentId, children] of childrenByParentId.entries()) {
-    childCountByParentId.set(parentId, children.length);
-  }
-
-  return { rowBySessionId, parentBySessionId, childCountByParentId };
-};
-
 export const rowVisibleByExpansion = (
   row: FlatSessionRow,
   lookup: RowHierarchyLookup,
@@ -340,31 +329,6 @@ export const requiredVisibleCountForExpandedSession = (
   }
 
   return deepestVisibleDescendantIndex + 1;
-};
-
-export const deriveExpandedParentSessionIds = (
-  rows: FlatSessionRow[],
-  selectedSessionId: string | null | undefined,
-  currentExpandedParentSessionIds: ReadonlySet<string> = new Set<string>(),
-): Set<string> => {
-  const selectedId = selectedSessionId?.trim() ?? "";
-  const next = new Set(currentExpandedParentSessionIds);
-  if (!selectedId) return next;
-
-  const { rowBySessionId, parentBySessionId, childCountByParentId } = buildRowParentLookup(rows);
-  if (!rowBySessionId.has(selectedId)) return next;
-
-  if ((childCountByParentId.get(selectedId) ?? 0) > 0) {
-    next.add(selectedId);
-  }
-
-  let parentId = parentBySessionId.get(selectedId) ?? null;
-  while (parentId) {
-    next.add(parentId);
-    parentId = parentBySessionId.get(parentId) ?? null;
-  }
-
-  return next;
 };
 
 export type SessionRowClickAction = {
