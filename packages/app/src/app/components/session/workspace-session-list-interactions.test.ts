@@ -174,6 +174,39 @@ test("clicking selected rows still opens session detail while selected parents t
   );
 });
 
+test("parent sessions expose a mini branch toggle icon that only expands/collapses", () => {
+  assert.match(
+    source,
+    /const handleSessionExpandToggle = \(event: MouseEvent, sessionId: string\) => \{/,
+    "session list should define a dedicated branch-toggle handler",
+  );
+
+  assert.match(
+    source,
+    /event\.stopPropagation\(\);\s*const normalizedId = sessionId\.trim\(\);[\s\S]*toggleExpandedParentSession\(normalizedId\);/s,
+    "branch toggle handler should stop row click bubbling and only toggle expansion",
+  );
+
+  assert.match(
+    source,
+    /const sessionBranchToggleLabel = \(sessionId: string\) =>\s*isParentExpanded\(sessionId\) \? tr\("sidebar\.collapse_session_branch"\) : tr\("sidebar\.expand_session_branch"\);/,
+    "toggle control should expose localized expand/collapse labels",
+  );
+
+  assert.match(
+    source,
+    /\{isParentExpanded\(session\(\)\.id\) \? "v" : ">"\}/,
+    "toggle icon should switch between > and v based on branch expansion state",
+  );
+
+  const toggleClickBindings = source.match(/onClick=\{\(event\) => handleSessionExpandToggle\(event, session\(\)\.id\)\}/g) ?? [];
+  assert.equal(
+    toggleClickBindings.length,
+    2,
+    "both recent and by-project rows should wire the same mini branch toggle click handler",
+  );
+});
+
 test("selected session auto-expands its branch in the sidebar", () => {
   assert.match(
     source,

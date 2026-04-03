@@ -498,6 +498,29 @@ export default function WorkspaceSessionList(props: Props) {
     }
   };
 
+  const handleSessionRowKeyDown = (
+    event: KeyboardEvent,
+    row: FlatSessionRow,
+    hasChildren: (sessionId: string) => boolean,
+  ) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    handleSessionRowClick(row, hasChildren);
+  };
+
+  const isParentExpanded = (sessionId: string) => expandedParentSessionIds().has(sessionId.trim());
+
+  const sessionBranchToggleLabel = (sessionId: string) =>
+    isParentExpanded(sessionId) ? tr("sidebar.collapse_session_branch") : tr("sidebar.expand_session_branch");
+
+  const handleSessionExpandToggle = (event: MouseEvent, sessionId: string) => {
+    event.stopPropagation();
+    const normalizedId = sessionId.trim();
+    if (!normalizedId) return;
+    toggleExpandedParentSession(normalizedId);
+  };
+
   const setArchivedSessionIdsWithPersist = (updater: (current: string[]) => string[]) => {
     setArchivedSessionIds((current) => {
       const next = updater(current);
@@ -1186,18 +1209,31 @@ export default function WorkspaceSessionList(props: Props) {
                           class="relative group/session-row"
                           onContextMenu={(event) => handleSessionRowContextMenu(event, workspace().id, anchorKey)}
                         >
-                          <button
-                            type="button"
+                          <div
+                            role="button"
+                            tabIndex={0}
                             class={`w-full flex items-center rounded-xl px-3 py-1 pr-16 text-left transition-colors ${
                               isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
                             }`}
                             style={rowIndentStyle(row)}
                             onClick={() => handleSessionRowClick(row, hasChildren)}
+                            onKeyDown={(event) => handleSessionRowKeyDown(event, row, hasChildren)}
                           >
                             <div class="min-w-0 flex-1">
                               <div class="flex items-center gap-1.5 min-w-0">
                                 <Show when={isSessionActive()}>
                                   <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
+                                </Show>
+                                <Show when={hasChildren(session().id)}>
+                                  <button
+                                    type="button"
+                                    class="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded text-[9px] leading-none text-gray-9 transition-colors hover:bg-gray-4/70 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"
+                                    aria-label={sessionBranchToggleLabel(session().id)}
+                                    title={sessionBranchToggleLabel(session().id)}
+                                    onClick={(event) => handleSessionExpandToggle(event, session().id)}
+                                  >
+                                    <span aria-hidden>{isParentExpanded(session().id) ? "v" : ">"}</span>
+                                  </button>
                                 </Show>
                                 <span
                                   class="text-[13px] text-gray-11 truncate font-medium"
@@ -1251,7 +1287,7 @@ export default function WorkspaceSessionList(props: Props) {
                                 </Show>
                               </div>
                             </div>
-                          </button>
+                          </div>
 
                           <span
                             class="pointer-events-none absolute right-2 bottom-1 text-[11px] text-gray-9 whitespace-nowrap transition-opacity group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
@@ -1504,18 +1540,31 @@ export default function WorkspaceSessionList(props: Props) {
                                 class="relative group/session-row"
                                 onContextMenu={(event) => handleSessionRowContextMenu(event, row.workspace.id, rowAnchorKey)}
                               >
-                                <button
-                                  type="button"
+                                <div
+                                  role="button"
+                                  tabIndex={0}
                                   class={`w-full flex items-center gap-2 rounded-xl px-3 py-1 pr-16 text-left transition-colors ${
                                     isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
                                   }`}
                                   style={rowIndentStyle(row)}
                                   onClick={() => handleSessionRowClick(row, hasChildren)}
+                                  onKeyDown={(event) => handleSessionRowKeyDown(event, row, hasChildren)}
                                 >
                                   <div class="min-w-0 flex-1">
                                     <div class="flex items-center gap-1.5 min-w-0">
                                       <Show when={isSessionActive()}>
                                         <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
+                                      </Show>
+                                      <Show when={hasChildren(session().id)}>
+                                        <button
+                                          type="button"
+                                          class="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded text-[9px] leading-none text-gray-9 transition-colors hover:bg-gray-4/70 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"
+                                          aria-label={sessionBranchToggleLabel(session().id)}
+                                          title={sessionBranchToggleLabel(session().id)}
+                                          onClick={(event) => handleSessionExpandToggle(event, session().id)}
+                                        >
+                                          <span aria-hidden>{isParentExpanded(session().id) ? "v" : ">"}</span>
+                                        </button>
                                       </Show>
                                       <span
                                         class="text-[13px] text-gray-11 truncate font-medium"
@@ -1536,7 +1585,7 @@ export default function WorkspaceSessionList(props: Props) {
                                       </span>
                                     </div>
                                   </div>
-                                </button>
+                                </div>
 
                                 <span
                                   class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-9 whitespace-nowrap transition-opacity group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"

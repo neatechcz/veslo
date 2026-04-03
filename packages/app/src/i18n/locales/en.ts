@@ -1080,8 +1080,10 @@ export default {
   // ==================== Sidebar ====================
   "sidebar.add_directory_session": "Add directory and open session",
   "sidebar.by_project": "By project",
+  "sidebar.collapse_session_branch": "Collapse session branch",
   "sidebar.connect_remote": "Connect remote",
   "sidebar.create_session_in_project": "Create session in this project",
+  "sidebar.expand_session_branch": "Expand session branch",
   "sidebar.archive_session": "Archive session",
   "sidebar.archive_confirm": "Confirm",
   "sidebar.edit_connection": "Edit connection",

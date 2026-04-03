@@ -1076,8 +1076,10 @@ export default {
   // ==================== Sidebar ====================
   "sidebar.add_directory_session": "Přidat adresář a otevřít relaci",
   "sidebar.by_project": "Podle projektu",
+  "sidebar.collapse_session_branch": "Sbalit větev relace",
   "sidebar.connect_remote": "Připojit vzdáleně",
   "sidebar.create_session_in_project": "Vytvořit relaci v tomto projektu",
+  "sidebar.expand_session_branch": "Rozbalit větev relace",
   "sidebar.archive_session": "Archivovat relaci",
   "sidebar.archive_confirm": "Potvrdit",
   "sidebar.edit_connection": "Upravit připojení",
