@@ -171,7 +171,10 @@ async function sha256Base64Url(value) {
 function readAuthCallbackParams() {
   const params = new URLSearchParams(location.search);
   const code = params.get("code")?.trim() || "";
-  const sessionId = params.get("sessionId")?.trim() || "";
+  const sessionId =
+    params.get("transactionId")?.trim() ||
+    params.get("sessionId")?.trim() ||
+    "";
   return code ? { code, sessionId } : null;
 }
 
@@ -338,7 +341,13 @@ async function bootstrapSession() {
     state.session = null;
     state.user = null;
     localStorage.removeItem(STORAGE_KEY);
-    showLogin(payload?.error === "unauthorized" ? "Your session expired. Sign in again." : "Unable to verify session.");
+    showLogin(
+      payload?.error === "unauthorized"
+        ? "Your session expired. Sign in again."
+        : payload?.error === "forbidden"
+          ? "You do not have admin access."
+          : "Unable to verify session.",
+    );
     return;
   }
 

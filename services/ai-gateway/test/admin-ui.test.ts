@@ -76,6 +76,31 @@ test("GET /admin/app.js preserves auth callback query params until browser excha
   }
 })
 
+test("GET /admin/app.js supports transactionId callbacks and forbidden admin access messaging", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(
+      script,
+      /params\.get\("transactionId"\)\?\.trim\(\)\s*\|\|\s*params\.get\("sessionId"\)\?\.trim\(\)\s*\|\|\s*""/,
+    )
+    assert.match(
+      script,
+      /payload\?\.error === "forbidden"\s*\?\s*"You do not have admin access\."\s*:\s*"Unable to verify session\."/,
+    )
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin/api/session returns 401 when no bearer token is present", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
