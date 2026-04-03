@@ -163,7 +163,7 @@ test("buildProjectGroups keeps subagents nested under their parent in by-project
   );
 });
 
-test("rowVisibleByExpansion keeps child rows hidden until the branch is explicitly expanded", () => {
+test("rowVisibleByExpansion keeps a three-level branch closed until each parent is explicitly expanded", () => {
   const workspace = {
     id: "workspace-1",
     name: "workspace-1",
@@ -199,10 +199,12 @@ test("rowVisibleByExpansion keeps child rows hidden until the branch is explicit
   ]);
 
   const hierarchy = buildRowHierarchyLookup(rows);
+  const visibleIds = (expandedParents: ReadonlySet<string>) =>
+    rows.filter((row) => rowVisibleByExpansion(row, hierarchy, expandedParents)).map((row) => row.session.id);
 
-  assert.equal(rowVisibleByExpansion(rows[0], hierarchy, new Set()), true);
-  assert.equal(rowVisibleByExpansion(rows[1], hierarchy, new Set()), false);
-  assert.equal(rowVisibleByExpansion(rows[1], hierarchy, new Set(["root-a"])), true);
+  assert.deepEqual(visibleIds(new Set()), ["root-a"]);
+  assert.deepEqual(visibleIds(new Set(["root-a"])), ["root-a", "sub-a-1"]);
+  assert.deepEqual(visibleIds(new Set(["root-a", "sub-a-1"])), ["root-a", "sub-a-1", "sub-a-2"]);
 });
 
 test("session row click behavior after restart keeps first click for selection and second click for subagent expansion", () => {
