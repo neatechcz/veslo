@@ -19,8 +19,20 @@ test("composer uses a compact control rail below the editor", () => {
 
   assert.match(
     composerSource,
+    /class=\{`inline-flex items-center gap-1\.5 rounded-lg border px-2\.5 py-1 text-\[12px\] font-medium transition-colors \$\{/,
+    '"Jen se ptám" mode switch should use a compact single-button control',
+  );
+
+  assert.match(
+    composerSource,
+    /onClick=\{\(\) => props\.onSelectAgent\(isReadonly\(\) \? "veslo" : "plan"\)\}/,
+    '"Jen se ptám" control should toggle readonly mode directly',
+  );
+
+  assert.doesNotMatch(
+    composerSource,
     /class="inline-flex items-center rounded-lg border border-gray-6\/80 bg-gray-2 p-0\.5"/,
-    "mode switch should use a compact segmented control",
+    "composer should no longer render the old segmented Build\/Plan\/Task control",
   );
 
   assert.match(
