@@ -11,7 +11,101 @@ veslo_internal_snapshot: "2026-03-16"
 
 This guide covers essential PDF processing operations using Python libraries and command-line tools. For advanced features, JavaScript libraries, and detailed examples, see REFERENCE.md. If you need to fill out a PDF form, read FORMS.md and follow its instructions.
 
-## Quick Start
+## Creating New PDF Documents
+
+When the user asks to **create a new PDF** (report, document, letter, etc.), use this workflow. It produces professionally formatted output with proper typography.
+
+**Requirements:** `pandoc` and `weasyprint` (both typically pre-installed on macOS via Homebrew).
+
+### Step 1: Write content as Markdown
+
+Create a `.md` file with the document content.
+
+### Step 2: Convert to HTML
+
+```bash
+BODY=$(pandoc document.md -t html5)
+```
+
+### Step 3: Wrap in styled HTML template
+
+Create a complete HTML file with inline CSS. **Default page size is A4.** If the user requests a different size (A5, Letter, etc.), change the `@page { size: ... }` value.
+
+```bash
+cat > /tmp/veslo-pdf-temp.html << HTMLEOF
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<style>
+@page {
+    size: A4;
+    margin: 25mm 25mm 25mm 25mm;
+    @bottom-center {
+        content: counter(page);
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        font-size: 9pt;
+        color: #999;
+    }
+}
+body {
+    font-family: "Helvetica Neue", "Segoe UI", Arial, sans-serif;
+    font-size: 12pt;
+    line-height: 1.55;
+    color: #1a1a1a;
+    text-align: justify;
+    hyphens: auto;
+    -webkit-hyphens: auto;
+}
+h1 { font-size: 24pt; font-weight: 700; color: #111; margin-top: 0; margin-bottom: 12pt; line-height: 1.2; text-align: left; }
+h2 { font-size: 16pt; font-weight: 600; color: #222; margin-top: 16pt; margin-bottom: 8pt; line-height: 1.3; text-align: left; }
+h3 { font-size: 13pt; font-weight: 600; color: #333; margin-top: 18pt; margin-bottom: 6pt; line-height: 1.3; text-align: left; }
+p { margin-top: 4pt; margin-bottom: 8pt; orphans: 3; widows: 3; }
+strong { font-weight: 600; color: #111; }
+em { font-style: italic; color: #444; }
+blockquote { margin: 10pt 0; padding: 8pt 14pt; border-left: 3pt solid #888; background-color: #f7f7f7; color: #444; font-style: italic; }
+blockquote p { margin: 2pt 0; }
+hr { display: none; }
+a { color: #2563eb; text-decoration: none; word-break: break-all; overflow-wrap: break-word; }
+ul, ol { margin-top: 4pt; margin-bottom: 8pt; padding-left: 20pt; }
+li { margin-bottom: 3pt; }
+code { font-family: "SF Mono", "Fira Code", "Consolas", monospace; font-size: 10pt; background-color: #f3f3f3; padding: 1pt 4pt; border-radius: 2pt; }
+pre { background-color: #f5f5f5; padding: 10pt 12pt; border-radius: 4pt; font-size: 9.5pt; line-height: 1.5; overflow-wrap: break-word; white-space: pre-wrap; text-align: left; }
+table { width: 100%; border-collapse: collapse; margin: 10pt 0; font-size: 10.5pt; }
+th { background-color: #f0f0f0; font-weight: 600; text-align: left; padding: 6pt 8pt; border-bottom: 1.5pt solid #999; }
+td { padding: 5pt 8pt; border-bottom: 0.5pt solid #ddd; }
+tr:last-child td { border-bottom: none; }
+</style>
+</head>
+<body>
+$BODY
+</body>
+</html>
+HTMLEOF
+```
+
+### Step 4: Convert HTML to PDF
+
+```bash
+DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib weasyprint /tmp/veslo-pdf-temp.html output.pdf 2>/dev/null
+```
+
+### Notes
+- **CRITICAL: heredoc delimiter must NOT be quoted** — use `<< HTMLEOF`, NEVER `<< 'HTMLEOF'`. Single-quoted delimiters prevent `$BODY` variable expansion and produce literal `$BODY` text in the PDF.
+- **Always use inline CSS** — do not use external stylesheets or pandoc `--standalone`.
+- **DYLD_FALLBACK_LIBRARY_PATH** is required on macOS for weasyprint to find Homebrew libraries.
+- **Redirect stderr** — weasyprint outputs GLib warnings that do not affect the result.
+- **Page size** — default A4. Change `@page { size: A5; }` or `size: Letter;` as needed. Adjust margins proportionally for smaller sizes.
+- **Markdown validation** — ensure blank lines before lists (`- ` or `1. `) so pandoc renders them correctly.
+- **If pandoc or weasyprint are not installed**, install them: `brew install pandoc` and `pip install weasyprint`.
+
+---
+
+## Reading and Manipulating Existing PDFs
+
+For working with existing PDF files (extracting text, merging, splitting, forms), use the tools below.
+
+### Quick Start
 
 ```python
 from pypdf import PdfReader, PdfWriter

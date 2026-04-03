@@ -4,7 +4,7 @@ use std::path::Path;
 use include_dir::{include_dir, Dir};
 use serde::{Deserialize, Serialize};
 
-const INTERNAL_PACK_VERSION: &str = "2026-04-02.1";
+const INTERNAL_PACK_VERSION: &str = "2026-04-03.1";
 const INTERNAL_PACK_SOURCE: &str = "openwork-snapshot";
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
 const ROUTING_BLOCK_VERSION: u32 = 3;
