@@ -2555,6 +2555,7 @@ async function startOpencode(options: {
     env: {
       ...process.env,
       OPENCODE_CLIENT: "veslo-orchestrator",
+      OPENCODE_DISABLE_CLAUDE_CODE: "1",
       VESLO: "1",
       VESLO_RUN_ID: options.runId,
       VESLO_LOG_FORMAT: options.logFormat,
@@ -2947,6 +2948,7 @@ async function writeSandboxEntrypoint(options: {
     `if [ -d ${shQuote(hostOpencodeDataDir)} ]; then cp ${shQuote(`${hostOpencodeDataDir}/auth.json`)} \"$XDG_DATA_HOME/opencode/auth.json\" 2>/dev/null || true; cp ${shQuote(`${hostOpencodeDataDir}/mcp-auth.json`)} \"$XDG_DATA_HOME/opencode/mcp-auth.json\" 2>/dev/null || true; fi`,
     `export OPENCODE_URL=${shQuote(`http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`)}`,
     `export OPENCODE_CLIENT=veslo-orchestrator`,
+    `export OPENCODE_DISABLE_CLAUDE_CODE=1`,
     `export OPENCODE_HOT_RELOAD=${shQuote(options.opencode.hotReload.enabled ? "1" : "0")}`,
     `export OPENCODE_HOT_RELOAD_DEBOUNCE_MS=${shQuote(String(options.opencode.hotReload.debounceMs))}`,
     `export OPENCODE_HOT_RELOAD_COOLDOWN_MS=${shQuote(String(options.opencode.hotReload.cooldownMs))}`,
