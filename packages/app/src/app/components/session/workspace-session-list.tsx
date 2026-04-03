@@ -1,5 +1,17 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { Archive, Folder, FolderPlus, HeartPulse, List, Loader2, MoreHorizontal, Plus, Search } from "lucide-solid";
+import {
+  Archive,
+  ChevronDown,
+  ChevronRight,
+  Folder,
+  FolderPlus,
+  HeartPulse,
+  List,
+  Loader2,
+  MoreHorizontal,
+  Plus,
+  Search,
+} from "lucide-solid";
 
 import type { VesloSoulStatus } from "../../lib/veslo-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
@@ -506,6 +518,24 @@ export default function WorkspaceSessionList(props: Props) {
     const normalizedId = sessionId.trim();
     if (!normalizedId) return;
     toggleExpandedParentSession(normalizedId);
+  };
+
+  const sessionBranchToggle = (sessionId: string, hasChildren: boolean) => {
+    if (!hasChildren) return null;
+
+    return (
+      <button
+        type="button"
+        class="absolute left-1/2 top-[1.375rem] -translate-x-1/2 -translate-y-1/2 inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-10 shadow-sm transition-colors hover:bg-gray-2 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"
+        aria-label={sessionBranchToggleLabel(sessionId)}
+        title={sessionBranchToggleLabel(sessionId)}
+        onClick={(event) => handleSessionExpandToggle(event, sessionId)}
+      >
+        <Show when={isParentExpanded(sessionId)} fallback={<ChevronRight size={12} />}>
+          <ChevronDown size={12} />
+        </Show>
+      </button>
+    );
   };
 
   const setArchivedSessionIdsWithPersist = (updater: (current: string[]) => string[]) => {
@@ -1206,21 +1236,11 @@ export default function WorkspaceSessionList(props: Props) {
                             onClick={() => handleSessionRowClick(row, hasChildren)}
                             onKeyDown={(event) => handleSessionRowKeyDown(event, row, hasChildren)}
                           >
-                            <div class="min-w-0 flex-1">
+                            <div class="relative min-w-0 flex-1">
+                              {sessionBranchToggle(session().id, hasChildren(session().id))}
                               <div class="flex items-center gap-1.5 min-w-0">
                                 <Show when={isSessionActive()}>
                                   <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
-                                </Show>
-                                <Show when={hasChildren(session().id)}>
-                                  <button
-                                    type="button"
-                                    class="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded text-[9px] leading-none text-gray-9 transition-colors hover:bg-gray-4/70 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"
-                                    aria-label={sessionBranchToggleLabel(session().id)}
-                                    title={sessionBranchToggleLabel(session().id)}
-                                    onClick={(event) => handleSessionExpandToggle(event, session().id)}
-                                  >
-                                    <span aria-hidden>{isParentExpanded(session().id) ? "v" : ">"}</span>
-                                  </button>
                                 </Show>
                                 <span
                                   class="text-[13px] text-gray-11 truncate font-medium"
@@ -1537,21 +1557,11 @@ export default function WorkspaceSessionList(props: Props) {
                                   onClick={() => handleSessionRowClick(row, hasChildren)}
                                   onKeyDown={(event) => handleSessionRowKeyDown(event, row, hasChildren)}
                                 >
-                                  <div class="min-w-0 flex-1">
+                                  <div class="relative min-w-0 flex-1">
+                                    {sessionBranchToggle(session().id, hasChildren(session().id))}
                                     <div class="flex items-center gap-1.5 min-w-0">
                                       <Show when={isSessionActive()}>
                                         <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
-                                      </Show>
-                                      <Show when={hasChildren(session().id)}>
-                                        <button
-                                          type="button"
-                                          class="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded text-[9px] leading-none text-gray-9 transition-colors hover:bg-gray-4/70 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"
-                                          aria-label={sessionBranchToggleLabel(session().id)}
-                                          title={sessionBranchToggleLabel(session().id)}
-                                          onClick={(event) => handleSessionExpandToggle(event, session().id)}
-                                        >
-                                          <span aria-hidden>{isParentExpanded(session().id) ? "v" : ">"}</span>
-                                        </button>
                                       </Show>
                                       <span
                                         class="text-[13px] text-gray-11 truncate font-medium"

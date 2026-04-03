@@ -111,6 +111,18 @@ test("session hover action uses archive icon instead of three dots", () => {
 test("recent rows keep metadata tucked closer to the title line", () => {
   assert.match(
     source,
+    /<div class="relative min-w-0 flex-1">[\s\S]*sessionBranchToggle\(session\(\)\.id, hasChildren\(session\(\)\.id\)\)[\s\S]*<div class="mt-px flex items-center gap-1 text-\[11px\] text-gray-10 min-w-0">/s,
+    "recent rows should keep the branch toggle inside the content column between title and metadata",
+  );
+
+  assert.match(
+    source,
+    /class="absolute left-1\/2 top-\[1\.375rem\] -translate-x-1\/2 -translate-y-1\/2 inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-10 shadow-sm transition-colors hover:bg-gray-2 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"/,
+    "recent rows should center the overlay toggle under the title line",
+  );
+
+  assert.match(
+    source,
     /<div class="mt-px flex items-center gap-1 text-\[11px\] text-gray-10 min-w-0">/,
     "recent rows should keep the metadata line visually tighter to the title",
   );
