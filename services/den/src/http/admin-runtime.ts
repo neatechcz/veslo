@@ -31,6 +31,7 @@ type ListedUserRow = {
 }
 
 const bootstrapPlatformAdminEmails = new Set([
+  "michal.sara@neatech.cz",
   "vaclav.soukup@neatec.cz",
   "vaclav.soukup@neotech.cz",
 ])
@@ -39,7 +40,7 @@ function randomPassword() {
   return `${randomBytes(8).toString("hex")}Aa1!`
 }
 
-function isBootstrapPlatformAdminEmail(email: string | null) {
+export function isBootstrapPlatformAdminEmail(email: string | null) {
   return typeof email === "string" && bootstrapPlatformAdminEmails.has(email.trim().toLowerCase())
 }
 
