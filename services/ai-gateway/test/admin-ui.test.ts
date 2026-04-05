@@ -93,6 +93,10 @@ test("GET /admin/app.js supports transactionId callbacks and forbidden admin acc
       script,
       /payload\?\.error === "forbidden"\s*\?\s*"You do not have admin access\."\s*:\s*"Unable to verify session\."/,
     )
+    assert.match(
+      script,
+      /payload\?\.error === "forbidden"\s*\?\s*"You do not have admin access\."\s*:\s*payload\?\.error\s*\|\|\s*payload\?\.message\s*\|\|\s*"Browser sign in failed\."/,
+    )
   } finally {
     server.close()
     await once(server, "close")

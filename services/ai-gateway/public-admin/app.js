@@ -440,7 +440,11 @@ async function completeBrowserAuth() {
     });
 
     if (!response.ok) {
-      showLogin(payload?.error || payload?.message || "Browser sign in failed.");
+      showLogin(
+        payload?.error === "forbidden"
+          ? "You do not have admin access."
+          : payload?.error || payload?.message || "Browser sign in failed.",
+      );
       return true;
     }
 
