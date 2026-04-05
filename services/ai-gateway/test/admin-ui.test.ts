@@ -65,11 +65,9 @@ test("GET /admin/app.js preserves auth callback query params until browser excha
     assert.equal(response.status, 200)
     const script = await response.text()
     assert.match(script, /const nextPath = page === "overview" \? "\/admin" : `\/admin\/\$\{page\}`/)
-    assert.match(script, /if \(location\.pathname !== nextPath\) {\s*history\.replaceState\(null, "", nextPath\);\s*}/)
-    assert.doesNotMatch(
-      script,
-      /history\.replaceState\(null, "", page === "overview" \? "\/admin" : `\/admin\/\$\{page\}`\);/,
-    )
+    assert.match(script, /const nextUrl = `\$\{nextPath\}\$\{location\.search\}\$\{location\.hash\}`/)
+    assert.match(script, /if \(location\.pathname !== nextPath\) {\s*history\.replaceState\(null, "", nextUrl\);\s*}/)
+    assert.doesNotMatch(script, /history\.replaceState\(null, "", nextPath\)/)
   } finally {
     server.close()
     await once(server, "close")

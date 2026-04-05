@@ -271,8 +271,9 @@ function showApp() {
 function setActivePage(page) {
   state.page = page;
   const nextPath = page === "overview" ? "/admin" : `/admin/${page}`;
+  const nextUrl = `${nextPath}${location.search}${location.hash}`;
   if (location.pathname !== nextPath) {
-    history.replaceState(null, "", nextPath);
+    history.replaceState(null, "", nextUrl);
   }
   els.navItems.forEach((item) => item.classList.toggle("active", item.dataset.route === page));
   els.pages.forEach((panel) => {
