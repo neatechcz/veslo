@@ -483,6 +483,36 @@ export default function App() {
     return createVesloServerClient({ baseUrl, token: auth.token, hostToken: auth.hostToken });
   });
 
+  const isLoopbackUrl = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    try {
+      const parsed = new URL(trimmed);
+      const hostname = parsed.hostname.trim().toLowerCase();
+      return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+    } catch {
+      return false;
+    }
+  };
+
+  const gatewayVesloServerClient = createMemo(() => {
+    const active = vesloServerClient();
+    const activeBaseUrl = active?.baseUrl?.trim() ?? "";
+    const settings = vesloServerSettings();
+    const remoteUrl = normalizeVesloServerUrl(settings.urlOverride ?? "") ?? "";
+    const remoteToken = settings.token?.trim() ?? "";
+
+    if (!remoteUrl || !remoteToken) {
+      return active;
+    }
+
+    if (isLoopbackUrl(activeBaseUrl) && !isLoopbackUrl(remoteUrl)) {
+      return createVesloServerClient({ baseUrl: remoteUrl, token: remoteToken });
+    }
+
+    return active;
+  });
+
   const devtoolsVesloClient = createMemo(() => vesloServerClient());
 
   createEffect(() => {
@@ -1965,6 +1995,7 @@ export default function App() {
       _providerAuth = createProviderAuthModule({
         getClient: client,
         getVesloServerClient: () => vesloServerClient(),
+        getGatewayVesloServerClient: () => gatewayVesloServerClient(),
         getGatewayAuthToken: () => readDenAuth()?.token?.trim() ?? null,
         getProviders: providers,
         getProviderDefaults: providerDefaults,

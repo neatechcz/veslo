@@ -17,6 +17,8 @@ type GatewayCredential = {
 
 function createProviderAuthRuntime(overrides?: {
   gatewayCredentials?: Partial<Record<GatewayProvider, GatewayCredential[]>>;
+  localGatewayBaseUrl?: string;
+  remoteGatewayBaseUrl?: string | null;
 }) {
   const providerUpdates: Array<{ data: unknown; mergedConnected?: string[] }> = [];
   const gatewayCredentials: Record<GatewayProvider, GatewayCredential[]> = {
@@ -40,6 +42,11 @@ function createProviderAuthRuntime(overrides?: {
     listGatewayCredentials: [] as Array<{ userToken: string; provider: GatewayProvider }>,
     revokeGatewayCredential: [] as Array<{ userToken: string; provider: GatewayProvider; credentialId: string }>,
     writeOpencodeConfig: [] as Array<{ scope: string; workspaceRoot: string; content: string }>,
+    remoteStartOpenAiOAuth: [] as Array<{ userToken: string }>,
+    remoteFinishOpenAiOAuth: [] as Array<{ userToken: string; code: string }>,
+    remoteSaveAnthropicApiKey: [] as Array<{ userToken: string; apiKey: string }>,
+    remoteListGatewayCredentials: [] as Array<{ userToken: string; provider: GatewayProvider }>,
+    remoteRevokeGatewayCredential: [] as Array<{ userToken: string; provider: GatewayProvider; credentialId: string }>,
   };
 
   let gatewayCredentialCounter = 100;
@@ -119,8 +126,11 @@ function createProviderAuthRuntime(overrides?: {
     },
   };
 
+  const localGatewayBaseUrl = overrides?.localGatewayBaseUrl ?? "http://127.0.0.1:4318";
+  const remoteGatewayBaseUrl = overrides?.remoteGatewayBaseUrl ?? null;
+
   const vesloServerClient = {
-    baseUrl: "http://127.0.0.1:4318",
+    baseUrl: localGatewayBaseUrl,
     startOpenAiOAuth: async (userToken: string) => {
       calls.startOpenAiOAuth.push({ userToken });
       return { authorizeUrl: "https://openai.example.test/oauth" };
@@ -178,6 +188,67 @@ function createProviderAuthRuntime(overrides?: {
     },
   };
 
+  const remoteVesloServerClient = remoteGatewayBaseUrl
+    ? {
+        baseUrl: remoteGatewayBaseUrl,
+        startOpenAiOAuth: async (userToken: string) => {
+          calls.remoteStartOpenAiOAuth.push({ userToken });
+          return { authorizeUrl: "https://openai.example.test/oauth-remote" };
+        },
+        finishOpenAiOAuth: async (userToken: string, code: string) => {
+          calls.remoteFinishOpenAiOAuth.push({ userToken, code });
+          const credential: GatewayCredential = {
+            id: `cred_${++gatewayCredentialCounter}`,
+            provider: "openai",
+            credentialType: "oauth",
+            state: "healthy",
+            createdAt: "2026-04-02T12:00:00.000Z",
+            updatedAt: "2026-04-02T12:00:00.000Z",
+            lastFailureAt: null,
+          };
+          gatewayCredentials.openai.push(credential);
+          return { credential };
+        },
+        saveAnthropicApiKey: async (userToken: string, apiKey: string) => {
+          calls.remoteSaveAnthropicApiKey.push({ userToken, apiKey });
+          const credential: GatewayCredential = {
+            id: `cred_${++gatewayCredentialCounter}`,
+            provider: "anthropic",
+            credentialType: "api_key",
+            state: "healthy",
+            createdAt: "2026-04-02T12:05:00.000Z",
+            updatedAt: "2026-04-02T12:05:00.000Z",
+            lastFailureAt: null,
+          };
+          gatewayCredentials.anthropic.push(credential);
+          return { credential };
+        },
+        listGatewayCredentials: async (userToken: string, provider: GatewayProvider) => {
+          calls.remoteListGatewayCredentials.push({ userToken, provider });
+          return { credentials: [...gatewayCredentials[provider]] };
+        },
+        revokeGatewayCredential: async (userToken: string, provider: GatewayProvider, credentialId: string) => {
+          calls.remoteRevokeGatewayCredential.push({ userToken, provider, credentialId });
+          const current = gatewayCredentials[provider].find((credential) => credential.id === credentialId);
+          if (current) {
+            current.state = "revoked";
+            current.updatedAt = "2026-04-02T12:15:00.000Z";
+          }
+          return {
+            credential: current ?? {
+              id: credentialId,
+              provider,
+              credentialType: provider === "openai" ? "oauth" : "api_key",
+              state: "revoked",
+              createdAt: "2026-04-02T12:00:00.000Z",
+              updatedAt: "2026-04-02T12:15:00.000Z",
+              lastFailureAt: null,
+            },
+          };
+        },
+      }
+    : null;
+
   const module = createProviderAuthModule({
     getClient: () => client as never,
     getProviders: () => [
@@ -207,6 +278,7 @@ function createProviderAuthRuntime(overrides?: {
       return { ok: true };
     },
     getVesloServerClient: () => vesloServerClient,
+    getGatewayVesloServerClient: () => remoteVesloServerClient as any,
     getGatewayAuthToken: () => "den_token_123",
   } as any);
 
@@ -256,6 +328,28 @@ test("startProviderAuth sends openai oauth start to veslo server gateway api, no
   assert.equal(started.authorization.method, "code");
   assert.deepEqual(runtime.calls.startOpenAiOAuth, [{ userToken: "den_token_123" }]);
   assert.equal(runtime.calls.oauthAuthorize.length, 0);
+});
+
+test("gateway-owned providers prefer configured remote veslo server over local loopback server", async () => {
+  const runtime = createProviderAuthRuntime({
+    localGatewayBaseUrl: "http://127.0.0.1:4318",
+    remoteGatewayBaseUrl: "https://dev.veslo.example",
+  });
+
+  const started = await runtime.module.startProviderAuth("openai");
+  const completed = await runtime.module.completeProviderAuthOAuth("openai", 0, "oauth-code-123");
+
+  assert.equal(started.authorization.url, "https://openai.example.test/oauth-remote");
+  assert.equal(completed, "Connected openai");
+  assert.deepEqual(runtime.calls.startOpenAiOAuth, []);
+  assert.deepEqual(runtime.calls.remoteStartOpenAiOAuth, [{ userToken: "den_token_123" }]);
+  assert.deepEqual(runtime.calls.finishOpenAiOAuth, []);
+  assert.deepEqual(runtime.calls.remoteFinishOpenAiOAuth, [{ userToken: "den_token_123", code: "oauth-code-123" }]);
+  assert.equal(runtime.calls.writeOpencodeConfig.length, 1);
+  assert.match(
+    runtime.calls.writeOpencodeConfig[0]?.content ?? "",
+    /"baseURL": "https:\/\/dev\.veslo\.example\/ai-gateway\/providers\/openai\/v1"/,
+  );
 });
 
 test("completeProviderAuthOAuth finishes openai oauth via veslo server gateway api", async () => {

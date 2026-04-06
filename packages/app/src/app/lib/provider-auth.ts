@@ -187,6 +187,7 @@ const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, label: st
 export interface ProviderAuthDeps {
   getClient: () => Client | null;
   getVesloServerClient?: () => VesloServerClient | null;
+  getGatewayVesloServerClient?: () => VesloServerClient | null;
   getGatewayAuthToken?: () => string | null;
   getProviders: () => ProviderListItem[];
   getProviderDefaults: () => Record<string, string>;
@@ -214,6 +215,7 @@ export function createProviderAuthModule(deps: ProviderAuthDeps) {
   const {
     getClient,
     getVesloServerClient,
+    getGatewayVesloServerClient,
     getGatewayAuthToken,
     getProviders,
     getProviderDefaults,
@@ -242,7 +244,7 @@ export function createProviderAuthModule(deps: ProviderAuthDeps) {
     instructions: "Authorize in your browser, then paste the returned code here.",
   });
 
-  const resolveGatewayClient = () => getVesloServerClient?.() ?? null;
+  const resolveGatewayClient = () => getGatewayVesloServerClient?.() ?? getVesloServerClient?.() ?? null;
 
   const resolveGatewayAuthToken = () => {
     const trimmed = getGatewayAuthToken?.()?.trim() ?? "";
