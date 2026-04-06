@@ -1212,7 +1212,7 @@ export default function WorkspaceSessionList(props: Props) {
                           <div
                             role="button"
                             tabIndex={0}
-                            class={`w-full flex items-center rounded-xl px-3 py-1 pr-16 text-left transition-colors ${
+                            class={`w-full flex items-center rounded-xl px-3 py-1 pr-12 text-left transition-colors ${
                               isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
                             }`}
                             style={rowIndentStyle(row)}
@@ -1543,7 +1543,7 @@ export default function WorkspaceSessionList(props: Props) {
                                 <div
                                   role="button"
                                   tabIndex={0}
-                                  class={`w-full flex items-center gap-2 rounded-xl px-3 py-1 pr-16 text-left transition-colors ${
+                                  class={`w-full flex items-center gap-2 rounded-xl px-3 py-1 pr-12 text-left transition-colors ${
                                     isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
                                   }`}
                                   style={rowIndentStyle(row)}

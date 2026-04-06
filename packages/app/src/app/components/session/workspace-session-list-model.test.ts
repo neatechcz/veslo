@@ -421,10 +421,10 @@ test("buildProjectGroups keeps directory groups in workspace insertion order", (
 
 test("formatSessionRelativeAge uses compact d/h/m/s labels", () => {
   const now = 10 * 24 * 60 * 60 * 1000;
-  assert.equal(formatSessionRelativeAge(now - 3 * 24 * 60 * 60 * 1000, now), "3d ago");
-  assert.equal(formatSessionRelativeAge(now - 2 * 60 * 60 * 1000, now), "2h ago");
-  assert.equal(formatSessionRelativeAge(now - 7 * 60 * 1000, now), "7m ago");
-  assert.equal(formatSessionRelativeAge(now - 12 * 1000, now), "12s ago");
+  assert.equal(formatSessionRelativeAge(now - 3 * 24 * 60 * 60 * 1000, now), "3d");
+  assert.equal(formatSessionRelativeAge(now - 2 * 60 * 60 * 1000, now), "2h");
+  assert.equal(formatSessionRelativeAge(now - 7 * 60 * 1000, now), "7m");
+  assert.equal(formatSessionRelativeAge(now - 12 * 1000, now), "12s");
 });
 
 test("formatSessionTimestampTooltip provides exact datetime text for hover tooltip", () => {

@@ -107,10 +107,10 @@ export const formatSessionRelativeAge = (timestampMs: number, nowMs = Date.now()
   const delta = nowMs - timestampMs;
 
   if (delta < 0) return "just now";
-  if (delta < MINUTE_MS) return `${Math.max(1, Math.round(delta / SECOND_MS))}s ago`;
-  if (delta < HOUR_MS) return `${Math.max(1, Math.round(delta / MINUTE_MS))}m ago`;
-  if (delta < DAY_MS) return `${Math.max(1, Math.round(delta / HOUR_MS))}h ago`;
-  return `${Math.max(1, Math.round(delta / DAY_MS))}d ago`;
+  if (delta < MINUTE_MS) return `${Math.max(1, Math.round(delta / SECOND_MS))}s`;
+  if (delta < HOUR_MS) return `${Math.max(1, Math.round(delta / MINUTE_MS))}m`;
+  if (delta < DAY_MS) return `${Math.max(1, Math.round(delta / HOUR_MS))}h`;
+  return `${Math.max(1, Math.round(delta / DAY_MS))}d`;
 };
 
 export const formatSessionTimestampTooltip = (timestampMs: number, locale: string) => {
