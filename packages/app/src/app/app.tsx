@@ -268,6 +268,10 @@ import {
   type VesloServerSettings,
   VesloServerError,
 } from "./lib/veslo-server";
+import {
+  pickCollisionSafeName,
+  toWorkspaceRelativeFromSessionDir,
+} from "./lib/session-attachment-staging";
 import { resolveArtifactFamilies } from "./components/session/artifact-family-model";
 import { CLOUD_ONLY_MODE, resolveVesloCloudEnvironment } from "./lib/cloud-policy";
 import { isRemoteUiEnabled } from "./lib/runtime-policy";
@@ -1161,7 +1165,6 @@ export default function App() {
   const [lastPromptSent, setLastPromptSent] = createSignal("");
 
   type PartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput;
-  const INBOX_PATH_PREFIX = ".opencode/veslo/inbox/";
 
   const attachmentToFile = async (attachment: ComposerAttachment): Promise<File> => {
     const response = await fetch(attachment.dataUrl);
@@ -1174,7 +1177,82 @@ export default function App() {
     });
   };
 
-  const stageAttachmentsForDelegation = async (draft: ComposerDraft): Promise<ComposerDraft> => {
+  const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
+    const bytes = new Uint8Array(buffer);
+    const fallbackBuffer = (globalThis as {
+      Buffer?: { from: (input: Uint8Array) => { toString: (encoding: string) => string } };
+    }).Buffer;
+    if (fallbackBuffer) {
+      return fallbackBuffer.from(bytes).toString("base64");
+    }
+    if (typeof btoa !== "function") {
+      throw new Error("Base64 encoder is unavailable");
+    }
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      const slice = bytes.subarray(index, index + chunkSize);
+      for (const byte of slice) {
+        binary += String.fromCharCode(byte);
+      }
+    }
+    return btoa(binary);
+  };
+
+  const resolveSessionDirectoryRelativePath = (sessionID: string, filename: string) => {
+    const workspaceRoot = workspaceProjectDir().trim();
+    const sessionDirectory = (sessionDirectoryOverrideById()[sessionID] ?? workspaceRoot).trim();
+    if (!workspaceRoot || !sessionDirectory) {
+      throw new Error("Session directory is not available for attachment staging.");
+    }
+
+    const workspaceRootForCheck = normalizeDirectoryPath(workspaceRoot) || workspaceRoot;
+    const sessionDirectoryForCheck = normalizeDirectoryPath(sessionDirectory) || sessionDirectory;
+    return toWorkspaceRelativeFromSessionDir({
+      workspaceRoot: workspaceRootForCheck,
+      sessionDirectory: sessionDirectoryForCheck,
+      filename,
+    });
+  };
+
+  const resolveCollisionSafeAttachmentPath = async (
+    client: NonNullable<ReturnType<typeof vesloServerClient>>,
+    fileSessionId: string,
+    preferredPath: string,
+    reservedPaths: Set<string>,
+  ) => {
+    const normalizedPreferred = preferredPath.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+    const slashIndex = normalizedPreferred.lastIndexOf("/");
+    const directoryRel = slashIndex === -1 ? "" : normalizedPreferred.slice(0, slashIndex);
+    const filename = slashIndex === -1 ? normalizedPreferred : normalizedPreferred.slice(slashIndex + 1);
+    const knownCollisions = new Set(reservedPaths);
+
+    let attempt = 0;
+    while (attempt < 512) {
+      const candidatePath = pickCollisionSafeName({
+        directoryRel,
+        filename,
+        existingPaths: knownCollisions,
+      });
+
+      const result = await client.readFileBatch(fileSessionId, [candidatePath]);
+      const item = result.items[0];
+      if (item?.ok) {
+        knownCollisions.add(candidatePath);
+        attempt += 1;
+        continue;
+      }
+      if (!item || item.code === "file_not_found") {
+        reservedPaths.add(candidatePath);
+        return candidatePath;
+      }
+      throw new Error(item.message ?? `Unable to stage ${filename}.`);
+    }
+
+    throw new Error(`Failed to resolve a unique filename for ${filename}.`);
+  };
+
+  const stageAttachmentsIntoSessionDirectory = async (draft: ComposerDraft, sessionID: string): Promise<ComposerDraft> => {
     const attachmentsToStage = draft.attachments;
     if (!attachmentsToStage.length) return draft;
 
@@ -1184,15 +1262,33 @@ export default function App() {
       throw new Error("Connect to Veslo server before sending attachments.");
     }
 
+    const reservedPaths = new Set<string>();
     const stagedPaths: string[] = [];
-    for (const attachment of attachmentsToStage) {
-      const file = await attachmentToFile(attachment);
-      const uploaded = await client.uploadInbox(workspaceId, file);
-      const relativePath = String(uploaded.path ?? attachment.name).trim().replace(/^\/+/, "");
-      if (!relativePath) {
-        throw new Error(`Failed to stage ${attachment.name}.`);
+    const fileSession = await client.createFileSession(workspaceId, {
+      ttlSeconds: 15 * 60,
+      write: true,
+    });
+
+    try {
+      for (const attachment of attachmentsToStage) {
+        const file = await attachmentToFile(attachment);
+        const preferredPath = resolveSessionDirectoryRelativePath(sessionID, file.name);
+        const relativePath = await resolveCollisionSafeAttachmentPath(client, fileSession.session.id, preferredPath, reservedPaths);
+        const contentBase64 = arrayBufferToBase64(await file.arrayBuffer());
+        const writeResult = await client.writeFileBatch(fileSession.session.id, [
+          {
+            path: relativePath,
+            contentBase64,
+          },
+        ]);
+        const item = writeResult.items[0];
+        if (!item?.ok) {
+          throw new Error(item?.message ?? `Failed to stage ${attachment.name}.`);
+        }
+        stagedPaths.push(relativePath);
       }
-      stagedPaths.push(`${INBOX_PATH_PREFIX}${relativePath}`);
+    } finally {
+      await client.closeFileSession(fileSession.session.id).catch(() => undefined);
     }
 
     const textBase = draft.resolvedText ?? draft.text;
@@ -1375,21 +1471,14 @@ export default function App() {
       command: fallbackDraft.command,
     };
     resolvedDraft = await maybeResolveSkillCommand(resolvedDraft);
-    try {
-      const stagedDraft = await stageAttachmentsForDelegation(resolvedDraft);
-      resolvedDraft = stagedDraft;
-    } catch (error) {
-      setError(error instanceof Error ? error.message : safeStringify(error));
-      return;
-    }
 
-    const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
-    if (!content && !resolvedDraft.attachments.length) return;
+    const initialContent = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
+    if (!initialContent && !resolvedDraft.attachments.length) return;
 
     const c = client();
     if (!c) return;
 
-    const compactShortcut = /^\/compact(?:\s+.*)?$/i.test(content);
+    const compactShortcut = /^\/compact(?:\s+.*)?$/i.test(initialContent);
     const compactCommand = resolvedDraft.command?.name === "compact" || compactShortcut;
     const commandName = compactCommand ? "compact" : (resolvedDraft.command?.name ?? null);
     if (compactCommand && !selectedSessionId()) {
@@ -1403,6 +1492,17 @@ export default function App() {
       sessionID = selectedSessionId();
     }
     if (!sessionID) return;
+
+    try {
+      const stagedDraft = await stageAttachmentsIntoSessionDirectory(resolvedDraft, sessionID);
+      resolvedDraft = stagedDraft;
+    } catch (error) {
+      setError(error instanceof Error ? error.message : safeStringify(error));
+      return;
+    }
+
+    const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
+    if (!content && !resolvedDraft.attachments.length) return;
 
     setBusy(true);
     setBusyLabel("status.running");

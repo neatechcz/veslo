@@ -9,7 +9,7 @@ test("composer keeps dropped files as attachment chips and does not inject path 
   assert.doesNotMatch(
     composerSource,
     /insertPlainTextAtCursorOrEnd\(/,
-    "composer should not inject staged docx paths into editor text",
+    "composer should not inject staged paths into editor text",
   );
 
   assert.match(
@@ -19,29 +19,41 @@ test("composer keeps dropped files as attachment chips and does not inject path 
   );
 });
 
-test("all attachment staging happens in send pipeline, not in composer", () => {
+test("all attachment staging happens in session-directory send pipeline, not in composer", () => {
   assert.match(
     appSource,
-    /const stageAttachmentsForDelegation = async \(draft: ComposerDraft\): Promise<ComposerDraft> =>/,
-    "app send pipeline should stage all attachments for delegation",
+    /const stageAttachmentsIntoSessionDirectory = async \(draft: ComposerDraft, sessionID: string\): Promise<ComposerDraft> =>/,
+    "app send pipeline should stage attachments into the active session directory",
   );
 
   assert.match(
     appSource,
     /const attachmentsToStage = draft\.attachments;/,
-    "staging should process every composer attachment, not only specific MIME types",
+    "staging should process every composer attachment",
   );
 
   assert.doesNotMatch(
     appSource,
-    /isWordAttachment\(/,
-    "send pipeline should not use Word-only attachment filters",
+    /uploadInbox\(/,
+    "composer send flow should not stage attachments through inbox uploads",
   );
 
   assert.match(
     appSource,
-    /await client\.uploadInbox\(workspaceId, file\)/,
-    "attachment staging should upload to workspace inbox",
+    /await client\.createFileSession\(workspaceId, \{[\s\S]*write: true,/,
+    "staging should open a writable file session",
+  );
+
+  assert.match(
+    appSource,
+    /await client\.readFileBatch\([^,]+, \[candidatePath\]\)/,
+    "staging should probe for filename collisions in the session directory",
+  );
+
+  assert.match(
+    appSource,
+    /await client\.writeFileBatch\([^,]+, \[/,
+    "staging should write attachments into the session directory",
   );
 
   assert.match(
@@ -58,7 +70,7 @@ test("all attachment staging happens in send pipeline, not in composer", () => {
 
   assert.match(
     appSource,
-    /const stagedDraft = await stageAttachmentsForDelegation\(resolvedDraft\);/,
-    "send pipeline should normalize draft before building prompt parts",
+    /const stagedDraft = await stageAttachmentsIntoSessionDirectory\(resolvedDraft, sessionID\);/,
+    "send pipeline should normalize draft after session selection and before provider calls",
   );
 });
