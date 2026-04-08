@@ -40,6 +40,7 @@ import {
   formatConfigWithDefaultModel,
   resolveWorkspaceDefaultModel,
 } from "./lib/model-persistence";
+import { buildModelPickerOptions } from "./lib/model-picker-options";
 import {
   emptySubagentDecorationsPersistence,
   parseSubagentDecorationsPersistence,
@@ -4747,79 +4748,19 @@ export default function App() {
   );
 
   const modelOptions = createMemo<ModelOption[]>(() => {
-    const allProviders = providers();
-    const defaults = providerDefaults();
-    const currentDefault = defaultModel();
-
-    if (!allProviders.length) {
-      return [
-        {
-          providerID: DEFAULT_MODEL.providerID,
-          modelID: DEFAULT_MODEL.modelID,
-          title: DEFAULT_MODEL.modelID,
-          description: DEFAULT_MODEL.providerID,
-          footer: t("settings.model_fallback", currentLocale()),
-          isFree: true,
-          isConnected: false,
-        },
-      ];
-    }
-
-    const sortedProviders = allProviders.slice().sort((a, b) => {
-      const aIsOpencode = a.id === "opencode";
-      const bIsOpencode = b.id === "opencode";
-      if (aIsOpencode !== bIsOpencode) return aIsOpencode ? -1 : 1;
-      return a.name.localeCompare(b.name);
+    return buildModelPickerOptions({
+      providers: providers(),
+      providerDefaults: providerDefaults(),
+      connectedProviderIds: providerConnectedIds(),
+      currentDefault: defaultModel(),
+      currentSelection: modelPickerCurrent(),
+      labels: {
+        default: t("settings.model_default", currentLocale()),
+        reasoning: t("settings.model_reasoning", currentLocale()),
+        disconnected: t("status.disconnected", currentLocale()),
+      },
     });
 
-    const next: ModelOption[] = [];
-
-    for (const provider of sortedProviders) {
-      const defaultModelID = defaults[provider.id];
-      const isConnected = providerConnectedIds().includes(provider.id);
-      const models = Object.values(provider.models ?? {}).filter(
-        (m) => m.status !== "deprecated"
-      );
-
-      models.sort((a, b) => {
-        const aFree = a.cost?.input === 0 && a.cost?.output === 0;
-        const bFree = b.cost?.input === 0 && b.cost?.output === 0;
-        if (aFree !== bFree) return aFree ? -1 : 1;
-        return (a.name ?? a.id).localeCompare(b.name ?? b.id);
-      });
-
-      for (const model of models) {
-        const isFree = model.cost?.input === 0 && model.cost?.output === 0;
-        const isDefault =
-          provider.id === currentDefault.providerID && model.id === currentDefault.modelID;
-        const footerBits: string[] = [];
-        if (defaultModelID === model.id || isDefault) {
-          footerBits.push(t("settings.model_default", currentLocale()));
-        }
-        if (model.reasoning) footerBits.push(t("settings.model_reasoning", currentLocale()));
-
-        next.push({
-          providerID: provider.id,
-          modelID: model.id,
-          title: model.name ?? model.id,
-          description: provider.name,
-          footer: footerBits.length
-            ? footerBits.slice(0, 2).join(" · ")
-            : undefined,
-          disabled: !isConnected,
-          isFree,
-          isConnected,
-        });
-      }
-    }
-
-    next.sort((a, b) => {
-      if (a.isConnected !== b.isConnected) return a.isConnected ? -1 : 1;
-      if (a.isFree !== b.isFree) return a.isFree ? -1 : 1;
-      return a.title.localeCompare(b.title);
-    });
-
-    return next;
   });
 
   const filteredModelOptions = createMemo(() => {

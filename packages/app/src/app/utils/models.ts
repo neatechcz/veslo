@@ -30,6 +30,16 @@ const humanizeModelLabel = (value: string) => {
     .join(" ");
 };
 
+export function resolveModelLabelParts(model: ModelRef, providers: ProviderListItem[] = []) {
+  const provider = providers.find((p) => p.id === model.providerID);
+  const modelInfo = provider?.models?.[model.modelID];
+
+  return {
+    providerLabel: provider?.name ?? humanizeModelLabel(model.providerID),
+    modelLabel: modelInfo?.name ?? humanizeModelLabel(model.modelID),
+  };
+}
+
 export function formatModelRef(model: ModelRef) {
   return `${model.providerID}/${model.modelID}`;
 }
@@ -48,11 +58,7 @@ export function modelEquals(a: ModelRef, b: ModelRef) {
 }
 
 export function formatModelLabel(model: ModelRef, providers: ProviderListItem[] = []) {
-  const provider = providers.find((p) => p.id === model.providerID);
-  const modelInfo = provider?.models?.[model.modelID];
-
-  const providerLabel = provider?.name ?? humanizeModelLabel(model.providerID);
-  const modelLabel = modelInfo?.name ?? humanizeModelLabel(model.modelID);
+  const { providerLabel, modelLabel } = resolveModelLabelParts(model, providers);
 
   return `${providerLabel} · ${modelLabel}`;
 }

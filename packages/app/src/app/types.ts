@@ -306,6 +306,7 @@ export type ModelOption = {
   disabled?: boolean;
   isFree: boolean;
   isConnected: boolean;
+  keepVisibleWhenDisconnected?: boolean;
 };
 
 export type SelectedSessionSnapshot = {

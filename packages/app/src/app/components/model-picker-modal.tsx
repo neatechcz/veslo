@@ -37,6 +37,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
     const counts = new Map<string, number>();
 
     for (const opt of props.filteredOptions) {
+      if (opt.keepVisibleWhenDisconnected) continue;
       if (opt.isConnected) continue;
       counts.set(opt.providerID, (counts.get(opt.providerID) ?? 0) + 1);
       if (seen.has(opt.providerID)) continue;
@@ -56,7 +57,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
 
   const renderedItems = createMemo<RenderedItem[]>(() => [
     ...props.filteredOptions
-      .filter((opt) => opt.isConnected)
+      .filter((opt) => opt.isConnected || opt.keepVisibleWhenDisconnected)
       .map((opt) => ({ kind: "model" as const, opt })),
     ...otherProviderLinks().map((item) => ({ kind: "provider" as const, ...item })),
   ]);
