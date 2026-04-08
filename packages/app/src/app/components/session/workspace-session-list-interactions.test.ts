@@ -177,6 +177,12 @@ test("clicking selected rows still opens session detail while selected parents t
 test("parent sessions expose a mini branch toggle icon that only expands/collapses", () => {
   assert.match(
     source,
+    /import \{[\s\S]*ChevronDown,[\s\S]*ChevronRight,[\s\S]*\} from "lucide-solid";/,
+    "session list should import chevron icons for the overlay toggle",
+  );
+
+  assert.match(
+    source,
     /const handleSessionExpandToggle = \(event: MouseEvent, sessionId: string\) => \{/,
     "session list should define a dedicated branch-toggle handler",
   );
@@ -195,23 +201,53 @@ test("parent sessions expose a mini branch toggle icon that only expands/collaps
 
   assert.match(
     source,
-    /\{isParentExpanded\(session\(\)\.id\) \? "v" : ">"\}/,
-    "toggle icon should switch between > and v based on branch expansion state",
+    /const sessionBranchToggle = \(sessionId: string, hasChildren: boolean\) =>/,
+    "session list should define a shared branch toggle renderer",
   );
 
-  const toggleClickBindings = source.match(/onClick=\{\(event\) => handleSessionExpandToggle\(event, session\(\)\.id\)\}/g) ?? [];
+  assert.match(
+    source,
+    /<Show when=\{isParentExpanded\(sessionId\)\} fallback=\{<ChevronRight size=\{12\} \/>}>[\s\S]*<ChevronDown size=\{12\} \/>[\s\S]*<\/Show>/s,
+    "toggle control should swap chevrons based on branch expansion state",
+  );
+
+  assert.match(
+    source,
+    /class="absolute left-1\/2 top-\[1\.375rem\] -translate-x-1\/2 -translate-y-1\/2 inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-10 shadow-sm transition-colors hover:bg-gray-2 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"/,
+    "toggle control should render as the circular overlay chrome instead of a text glyph",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /<span aria-hidden>\{isParentExpanded\(session\(\)\.id\) \? "v" : ">"\}<\/span>/,
+    "toggle icon should no longer render the inline text glyph",
+  );
+
+  const toggleCallBindings = source.match(/sessionBranchToggle\(session\(\)\.id, hasChildren\(session\(\)\.id\)\)/g) ?? [];
   assert.equal(
-    toggleClickBindings.length,
+    toggleCallBindings.length,
     2,
-    "both recent and by-project rows should wire the same mini branch toggle click handler",
+    "both recent and by-project rows should invoke the shared overlay toggle renderer",
+  );
+
+  assert.match(
+    source,
+    /onClick=\{\(event\) => handleSessionExpandToggle\(event, sessionId\)\}/,
+    "toggle helper should still stop propagation and toggle expansion only",
   );
 });
 
-test("selected session auto-expands its branch in the sidebar", () => {
-  assert.match(
+test("workspace-session-list.tsx no longer derives branch expansion from selectedSessionId", () => {
+  assert.doesNotMatch(
+    source,
+    /createEffect\(\(\) => \{[\s\S]*props\.selectedSessionId[\s\S]*deriveExpandedParentSessionIds/s,
+    "implementation should not auto-derive expanded parents from selectedSessionId",
+  );
+
+  assert.doesNotMatch(
     source,
     /setExpandedParentSessionIds\(\(current\) => deriveExpandedParentSessionIds\(/,
-    "sidebar should expand the selected session branch so child subagents are visible immediately",
+    "explicit mini-toggle is the only allowed branch expansion path",
   );
 });
 
