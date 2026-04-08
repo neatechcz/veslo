@@ -13,6 +13,18 @@ Guidelines:
   - safe (no surprising side effects)
 - When a prerequisite is missing, surface the **exact failing check** and a concrete next step.
 
+## Runtime Model Resolution
+
+Veslo uses a single global runtime model configured in the app as the only authoritative model for execution.
+
+Rules:
+
+- All future runs in all sessions use the current global model.
+- Existing sessions do not preserve or restore a separate per-session model.
+- Message history can display historical model metadata, but that metadata is not used for future routing.
+- Veslo must not auto-fallback to a different model when the configured global model is unavailable.
+- Any session-surface model picker acts as a shortcut for changing the same global model.
+
 ### Example: Docker-backed sandboxes (desktop)
 
 When enabling Docker-backed sandbox mode, prefer an explicit, single-path override for the Docker client binary:

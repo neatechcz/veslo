@@ -34,13 +34,13 @@ import {
   shouldAutoCompact,
 } from "./lib/auto-compaction";
 import {
-  parseSessionModelOverrides,
-  serializeSessionModelOverrides,
+  clearLegacySessionModelPersistence,
   parseDefaultModelFromConfig,
   formatConfigWithDefaultModel,
   resolveWorkspaceDefaultModel,
 } from "./lib/model-persistence";
 import { buildModelPickerOptions } from "./lib/model-picker-options";
+import { resolveGlobalRuntimeModel } from "./lib/global-model-runtime";
 import {
   emptySubagentDecorationsPersistence,
   parseSubagentDecorationsPersistence,
@@ -117,7 +117,6 @@ import {
   LANGUAGE_PREF_KEY,
   MCP_QUICK_CONNECT,
   MODEL_PREF_KEY,
-  SESSION_MODEL_PREF_KEY,
   SUGGESTED_PLUGINS,
   THINKING_PREF_KEY,
   VARIANT_PREF_KEY,
@@ -196,7 +195,6 @@ import { currentLocale, isLanguage, setLocale, t, type Language } from "../i18n"
 import {
   isWindowsPlatform,
   isMacPlatform,
-  lastUserModelFromMessages,
   // normalizeDirectoryPath,
   parseModelRef,
   readStartupPreference,
@@ -973,14 +971,6 @@ export default function App() {
     if ((session.directory ?? "").trim() === override) return session;
     return { ...session, directory: override } as T;
   };
-  const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<
-    Record<string, ModelRef>
-  >({});
-  const [sessionModelById, setSessionModelById] = createSignal<
-    Record<string, ModelRef>
-  >({});
-  const [pendingSessionModel, setPendingSessionModel] = createSignal<ModelRef | null>(null);
-  const [sessionModelOverridesReady, setSessionModelOverridesReady] = createSignal(false);
   const [workspaceDefaultModelReady, setWorkspaceDefaultModelReady] = createSignal(false);
   const [legacyDefaultModel, setLegacyDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
   const [defaultModelExplicit, setDefaultModelExplicit] = createSignal(false);
@@ -1021,20 +1011,6 @@ export default function App() {
     selectedSessionId,
     setSelectedSessionId,
     sessionDirectoryOverrideById,
-    sessionModelState: () => ({
-      overrides: sessionModelOverrideById(),
-      resolved: sessionModelById(),
-    }),
-    setSessionModelState: (updater) => {
-      const next = updater({
-        overrides: sessionModelOverrideById(),
-        resolved: sessionModelById(),
-      });
-      setSessionModelOverrideById(next.overrides);
-      setSessionModelById(next.resolved);
-      return next;
-    },
-    lastUserModelFromMessages,
     developerMode,
     setError,
     setSseConnected,
@@ -1632,18 +1608,6 @@ export default function App() {
           directory: sessionDirOverride,
         });
         assertNoClientError(result);
-
-        setSessionModelById((current) => ({
-          ...current,
-          [sessionID]: model,
-        }));
-
-        setSessionModelOverrideById((current) => {
-          if (!current[sessionID]) return current;
-          const copy = { ...current };
-          delete copy[sessionID];
-          return copy;
-        });
       }
 
       finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
@@ -2308,8 +2272,6 @@ export default function App() {
   };
 
   const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
-  const sessionModelOverridesKey = (workspaceId: string) =>
-    `${SESSION_MODEL_PREF_KEY}.${workspaceId}`;
 
   const getConfigSnapshot = (content: string | null) => {
     if (!content?.trim()) return "";
@@ -4010,6 +3972,14 @@ export default function App() {
     if (pendingExchangeProof) {
       startDesktopAuthStatusPolling(pendingExchangeProof.sessionId);
     }
+
+    if (typeof window !== "undefined") {
+      try {
+        clearLegacySessionModelPersistence(window.localStorage);
+      } catch {
+        // ignore
+      }
+    }
   });
 
   onCleanup(() => {
@@ -4418,18 +4388,7 @@ export default function App() {
     try {
       if (typeof window !== "undefined") {
         try {
-          const sessionOverridePrefix = `${SESSION_MODEL_PREF_KEY}.`;
-          const keysToRemove: string[] = [];
-          for (let index = 0; index < window.localStorage.length; index += 1) {
-            const key = window.localStorage.key(index);
-            if (!key) continue;
-            if (key.startsWith(sessionOverridePrefix)) {
-              keysToRemove.push(key);
-            }
-          }
-          for (const key of keysToRemove) {
-            window.localStorage.removeItem(key);
-          }
+          clearLegacySessionModelPersistence(window.localStorage);
         } catch {
           // ignore
         }
@@ -4945,19 +4904,7 @@ export default function App() {
   });
 
   const selectedSessionModel = createMemo<ModelRef>(() => {
-    const id = selectedSessionId();
-    if (!id) return pendingSessionModel() ?? defaultModel();
-
-    const override = sessionModelOverrideById()[id];
-    if (override) return override;
-
-    const known = sessionModelById()[id];
-    if (known) return known;
-
-    const fromMessages = lastUserModelFromMessages(messages());
-    if (fromMessages) return fromMessages;
-
-    return defaultModel();
+    return resolveGlobalRuntimeModel(defaultModel());
   });
 
   const selectedSessionAgent = createMemo(() => {
@@ -4966,13 +4913,7 @@ export default function App() {
     return sessionAgentById()[id] ?? null;
   });
 
-  const selectedSessionModelLabel = createMemo(() =>
-    formatModelLabel(selectedSessionModel(), providers())
-  );
-
-  const modelPickerCurrent = createMemo(() =>
-    modelPickerTarget() === "default" ? defaultModel() : selectedSessionModel()
-  );
+  const modelPickerCurrent = createMemo(() => selectedSessionModel());
 
   const modelOptions = createMemo<ModelOption[]>(() => {
     return buildModelPickerOptions({
@@ -5009,12 +4950,6 @@ export default function App() {
     });
   });
 
-  function openSessionModelPicker() {
-    setModelPickerTarget("session");
-    setModelPickerQuery("");
-    setModelPickerOpen(true);
-  }
-
   function openDefaultModelPicker() {
     setModelPickerTarget("default");
     setModelPickerQuery("");
@@ -5022,23 +4957,6 @@ export default function App() {
   }
 
   function applyModelSelection(next: ModelRef) {
-    if (modelPickerTarget() === "default") {
-      setDefaultModelExplicit(true);
-      setDefaultModel(next);
-      setModelPickerOpen(false);
-      return;
-    }
-
-    const id = selectedSessionId();
-    if (!id) {
-      setPendingSessionModel(next);
-      setDefaultModelExplicit(true);
-      setDefaultModel(next);
-      setModelPickerOpen(false);
-      return;
-    }
-
-    setSessionModelOverrideById((current) => ({ ...current, [id]: next }));
     setDefaultModelExplicit(true);
     setDefaultModel(next);
     setModelPickerOpen(false);
@@ -5771,20 +5689,11 @@ export default function App() {
       }
 
       const session = unwrap(rawResult);
-      const pendingModel = pendingSessionModel();
       // Immediately select and show the new session before background list refresh.
       setBusyLabel("status.loading_session");
       mark("session:select:start", { sessionID: session.id });
       await selectSession(session.id);
       mark("session:select:ok", { sessionID: session.id });
-
-      if (pendingModel) {
-        setSessionModelOverrideById((current) => ({
-          ...current,
-          [session.id]: pendingModel,
-        }));
-        setPendingSessionModel(null);
-      }
 
       // Inject the new session into the reactive sessions() store so
       // the createEffect bridge (sessions → sidebar) will always include it,
@@ -6395,39 +6304,10 @@ export default function App() {
   });
 
   createEffect(() => {
-    if (typeof window === "undefined") return;
-    const workspaceId = workspaceStore.activeWorkspaceId();
-    if (!workspaceId) return;
-
-    setSessionModelOverridesReady(false);
-    const raw = window.localStorage.getItem(sessionModelOverridesKey(workspaceId));
-    setSessionModelOverrideById(parseSessionModelOverrides(raw));
-    setSessionModelOverridesReady(true);
-  });
-
-  createEffect(() => {
     if (!isTauriRuntime()) return;
     const projectDir = workspaceProjectDir().trim();
     if (!projectDir) return;
     void refreshMcpServers();
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!sessionModelOverridesReady()) return;
-    const workspaceId = workspaceStore.activeWorkspaceId();
-    if (!workspaceId) return;
-
-    const payload = serializeSessionModelOverrides(sessionModelOverrideById());
-    try {
-      if (payload) {
-        window.localStorage.setItem(sessionModelOverridesKey(workspaceId), payload);
-      } else {
-        window.localStorage.removeItem(sessionModelOverridesKey(workspaceId));
-      }
-    } catch {
-      // ignore
-    }
   });
 
   createEffect(() => {

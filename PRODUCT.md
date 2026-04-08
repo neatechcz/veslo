@@ -32,6 +32,14 @@ We should also eventually guide ther to:
 
 Veslo must feel like "Claude code, but for everyone."
 
+## Runtime Model Policy
+
+- Veslo uses one global runtime model configured in the app.
+- Every session, including older sessions, uses the current global model for future runs.
+- Veslo does not persist model selection per session.
+- Historical message metadata may show which model was used earlier, but it does not decide future routing.
+- If the configured global model is unavailable, Veslo must fail explicitly and must not auto-select a fallback model.
+
 ### 1) Tasks
 
 - A Task = a user-described outcome.

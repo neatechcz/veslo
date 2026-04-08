@@ -7,7 +7,6 @@ import type {
   Client,
   MessageInfo,
   MessageWithParts,
-  ModelRef,
   OpencodeEvent,
   PendingPermission,
   PendingQuestion,
@@ -21,7 +20,6 @@ import {
   addOpencodeCacheHint,
   extractSessionId,
   normalizeDirectoryQueryPath,
-  modelFromUserMessage,
   normalizeDirectoryPath,
   normalizeEvent,
   normalizeSessionStatus,
@@ -41,11 +39,6 @@ import {
   shouldShowReconnected,
   shouldShowReconnecting,
 } from "./session-reconnect";
-
-export type SessionModelState = {
-  overrides: Record<string, ModelRef>;
-  resolved: Record<string, ModelRef>;
-};
 
 export type SessionStore = ReturnType<typeof createSessionStore>;
 
@@ -144,9 +137,6 @@ export function createSessionStore(options: {
   selectedSessionId: () => string | null;
   setSelectedSessionId: (id: string | null) => void;
   sessionDirectoryOverrideById?: () => Record<string, string>;
-  sessionModelState: () => SessionModelState;
-  setSessionModelState: (updater: (current: SessionModelState) => SessionModelState) => SessionModelState;
-  lastUserModelFromMessages: (messages: MessageWithParts[]) => ModelRef | null;
   developerMode: () => boolean;
   setError: (message: string | null) => void;
   setSseConnected: (connected: boolean) => void;
@@ -779,22 +769,6 @@ export function createSessionStore(options: {
       setMessageLimitBySession((prev) => ({ ...prev, [sessionID]: requestLimit }));
       setMessageCompleteBySession((prev) => ({ ...prev, [sessionID]: msgs.length < requestLimit }));
 
-      const model = options.lastUserModelFromMessages(msgs);
-      if (model) {
-        if (abortIfStale("selection changed before model applied")) return;
-        options.setSessionModelState((current) => ({
-          overrides: current.overrides,
-          resolved: { ...current.resolved, [sessionID]: model },
-        }));
-
-        options.setSessionModelState((current) => {
-          if (!current.overrides[sessionID]) return current;
-          const copy = { ...current.overrides };
-          delete copy[sessionID];
-          return { ...current, overrides: copy };
-        });
-      }
-
       try {
         mark("calling session.todo");
         const list = unwrap(await withTimeout(c.session.todo({ sessionID }), 8000, "session.todo"));
@@ -1176,21 +1150,6 @@ export function createSessionStore(options: {
         if (record.info && typeof record.info === "object") {
           const info = record.info as Message;
           if (!isKnownSessionId(info.sessionID)) return;
-          const model = modelFromUserMessage(info as MessageInfo);
-          if (model) {
-            options.setSessionModelState((current) => ({
-              overrides: current.overrides,
-              resolved: { ...current.resolved, [info.sessionID]: model },
-            }));
-
-            options.setSessionModelState((current) => {
-              if (!current.overrides[info.sessionID]) return current;
-              const copy = { ...current.overrides };
-              delete copy[info.sessionID];
-              return { ...current, overrides: copy };
-            });
-          }
-
           setStore("messages", info.sessionID, (current = []) => upsertMessageInfo(current, info));
         }
       }

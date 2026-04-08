@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { ModelRef } from "../types.js";
-import { resolveWorkspaceDefaultModel } from "./model-persistence.js";
+import {
+  clearLegacySessionModelPersistence,
+  collectLegacySessionModelStorageKeys,
+  resolveWorkspaceDefaultModel,
+} from "./model-persistence.js";
 
 const CLAUDE: ModelRef = {
   providerID: "anthropic",
@@ -12,6 +16,25 @@ const CLAUDE: ModelRef = {
 const GPT_Codex: ModelRef = {
   providerID: "openai",
   modelID: "gpt-5.3-codex",
+};
+
+const createStorage = (initialKeys: string[]) => {
+  const keys = initialKeys.slice();
+  return {
+    get length() {
+      return keys.length;
+    },
+    key(index: number) {
+      return keys[index] ?? null;
+    },
+    removeItem(target: string) {
+      const index = keys.indexOf(target);
+      if (index !== -1) keys.splice(index, 1);
+    },
+    snapshot() {
+      return keys.slice();
+    },
+  };
 };
 
 test("keeps current default when workspace config has no model", () => {
@@ -42,4 +65,36 @@ test("falls back to legacy default when current is missing", () => {
   });
 
   assert.deepEqual(next, CLAUDE);
+});
+
+test("collects only legacy per-session model keys from storage", () => {
+  const storage = createStorage([
+    "veslo.defaultModel",
+    "veslo.sessionModels.workspace-a",
+    "veslo.sessionModels.workspace-b",
+    "veslo.sessionDirectories.workspace-a",
+    "veslo.sessionModels",
+  ]);
+
+  assert.deepEqual(collectLegacySessionModelStorageKeys(storage), [
+    "veslo.sessionModels.workspace-a",
+    "veslo.sessionModels.workspace-b",
+  ]);
+});
+
+test("clears legacy per-session model keys without touching other preferences", () => {
+  const storage = createStorage([
+    "veslo.defaultModel",
+    "veslo.sessionModels.workspace-a",
+    "veslo.language",
+    "veslo.sessionModels.workspace-b",
+  ]);
+
+  const removed = clearLegacySessionModelPersistence(storage);
+
+  assert.deepEqual(removed, [
+    "veslo.sessionModels.workspace-a",
+    "veslo.sessionModels.workspace-b",
+  ]);
+  assert.deepEqual(storage.snapshot(), ["veslo.defaultModel", "veslo.language"]);
 });

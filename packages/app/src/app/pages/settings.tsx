@@ -1184,8 +1184,8 @@ export default function SettingsView(props: SettingsViewProps) {
           <div class="space-y-6">
             <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
               <div>
-                <div class="text-sm font-medium text-gray-12">Model</div>
-                <div class="text-xs text-gray-10">Defaults + thinking controls for runs.</div>
+                <div class="text-sm font-medium text-gray-12">{translate("settings.model_title")}</div>
+                <div class="text-xs text-gray-10">{translate("settings.model_hint")}</div>
               </div>
 
               <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
@@ -1199,7 +1199,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   onClick={props.openDefaultModelPicker}
                   disabled={props.busy}
                 >
-                  Change
+                  {translate("settings.change")}
                 </Button>
               </div>
 
