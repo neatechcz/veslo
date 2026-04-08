@@ -174,7 +174,7 @@ test("clicking selected rows still opens session detail while selected parents t
   );
 });
 
-test("parent sessions expose a mini inline branch toggle that only expands/collapses", () => {
+test("parent sessions expose a mini under-title branch toggle that only expands/collapses", () => {
   assert.match(
     source,
     /import \{[\s\S]*ChevronDown,[\s\S]*ChevronRight,[\s\S]*\} from "lucide-solid";/,
@@ -213,8 +213,8 @@ test("parent sessions expose a mini inline branch toggle that only expands/colla
 
   assert.match(
     source,
-    /class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-\[4px\] text-gray-9 transition-colors hover:bg-gray-4\/70 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"/,
-    "toggle control should use a compact square hitbox instead of the circular overlay chrome",
+    /class="pointer-events-none absolute left-1\/2 top-\[1\.375rem\] -translate-x-1\/2 -translate-y-1\/2"[\s\S]*class="pointer-events-auto inline-flex h-4 w-4 items-center justify-center rounded-\[4px\] text-gray-9 transition-colors hover:bg-gray-4\/70 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"/,
+    "toggle control should stay under the title but limit pointer input to a compact square hitbox",
   );
 
   assert.doesNotMatch(

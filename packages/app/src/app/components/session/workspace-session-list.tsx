@@ -524,17 +524,19 @@ export default function WorkspaceSessionList(props: Props) {
     if (!hasChildren) return null;
 
     return (
-      <button
-        type="button"
-        class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] text-gray-9 transition-colors hover:bg-gray-4/70 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"
-        aria-label={sessionBranchToggleLabel(sessionId)}
-        title={sessionBranchToggleLabel(sessionId)}
-        onClick={(event) => handleSessionExpandToggle(event, sessionId)}
-      >
-        <Show when={isParentExpanded(sessionId)} fallback={<ChevronRight size={12} />}>
-          <ChevronDown size={12} />
-        </Show>
-      </button>
+      <div class="pointer-events-none absolute left-1/2 top-[1.375rem] -translate-x-1/2 -translate-y-1/2">
+        <button
+          type="button"
+          class="pointer-events-auto inline-flex h-4 w-4 items-center justify-center rounded-[4px] text-gray-9 transition-colors hover:bg-gray-4/70 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"
+          aria-label={sessionBranchToggleLabel(sessionId)}
+          title={sessionBranchToggleLabel(sessionId)}
+          onClick={(event) => handleSessionExpandToggle(event, sessionId)}
+        >
+          <Show when={isParentExpanded(sessionId)} fallback={<ChevronRight size={12} />}>
+            <ChevronDown size={12} />
+          </Show>
+        </button>
+      </div>
     );
   };
 
@@ -1237,11 +1239,11 @@ export default function WorkspaceSessionList(props: Props) {
                             onKeyDown={(event) => handleSessionRowKeyDown(event, row, hasChildren)}
                           >
                             <div class="relative min-w-0 flex-1">
+                              {sessionBranchToggle(session().id, hasChildren(session().id))}
                               <div class="flex items-center gap-1.5 min-w-0">
                                 <Show when={isSessionActive()}>
                                   <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
                                 </Show>
-                                {sessionBranchToggle(session().id, hasChildren(session().id))}
                                 <span
                                   class="text-[13px] text-gray-11 truncate font-medium"
                                   title={sessionLabelTitle(row)}
@@ -1558,11 +1560,11 @@ export default function WorkspaceSessionList(props: Props) {
                                   onKeyDown={(event) => handleSessionRowKeyDown(event, row, hasChildren)}
                                 >
                                   <div class="relative min-w-0 flex-1">
+                                    {sessionBranchToggle(session().id, hasChildren(session().id))}
                                     <div class="flex items-center gap-1.5 min-w-0">
                                       <Show when={isSessionActive()}>
                                         <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
                                       </Show>
-                                      {sessionBranchToggle(session().id, hasChildren(session().id))}
                                       <span
                                         class="text-[13px] text-gray-11 truncate font-medium"
                                         title={sessionLabelTitle(row)}
