@@ -22,6 +22,9 @@ test("expanded timeline renders nested section toggles and technical detail disc
   assert.match(source, /<details/);
 });
 
+test("expanded timeline does not create an inner scroll container", () => {
+  assert.doesNotMatch(source, /max-h-\[480px\] overflow-y-auto/);
+});
 
 test("single-section timelines do not require a second collapse interaction", () => {
   assert.match(source, /const singleSectionMode = \(\) => timelineSections\(\)\.length === 1;/);

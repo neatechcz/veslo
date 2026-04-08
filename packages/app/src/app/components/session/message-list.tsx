@@ -959,7 +959,6 @@ export default function MessageList(props: MessageListProps) {
     });
 
     const hasRunning = () => timelineSections().some((section) => section.status === "running");
-    const useInnerTimelineScroll = () => !(Boolean(props.isStreaming) && hasRunning());
     const collapsedSummary = () => localizedTimelineSummary(timelineSections()) || latestStepLabel() || tr("session.timeline_execution");
     const collapsedMeta = () => {
       const labels = Array.from(new Set(timelineSections().map((section) => localizedSectionTitle(section)).filter(Boolean)));
@@ -1041,9 +1040,7 @@ export default function MessageList(props: MessageListProps) {
         </button>
 
         <Show when={expanded()}>
-          <div
-            class={`mt-2 space-y-2 ${useInnerTimelineScroll() ? "max-h-[480px] overflow-y-auto pr-1" : ""}`}
-          >
+          <div class="mt-2 space-y-2">
             <For each={timelineSections()}>
               {(section) => (
                 <section class="rounded-[18px] border border-gray-6/60 bg-gray-2/35">
