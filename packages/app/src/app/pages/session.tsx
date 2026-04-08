@@ -202,6 +202,7 @@ export type SessionViewProps = {
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
   openRenameWorkspace: (workspaceId: string) => void;
   selectSession: (sessionId: string) => Promise<void> | void;
+  pendingSessionLoad: { sessionTitle: string; workspaceName: string } | null;
   setPendingSessionLoad: (value: { sessionTitle: string; workspaceName: string } | null) => void;
   messages: MessageWithParts[];
   todos: TodoItem[];
@@ -684,6 +685,12 @@ export default function SessionView(props: SessionViewProps) {
   const hasWorkspaceConfigured = createMemo(() => props.workspaces.length > 0);
   const showWorkspaceSetupEmptyState = createMemo(
     () => !hasWorkspaceConfigured() && !props.selectedSessionId && props.messages.length === 0,
+  );
+  const showSessionLoadingState = createMemo(() =>
+    Boolean(props.selectedSessionId) &&
+    props.messages.length === 0 &&
+    !showWorkspaceSetupEmptyState() &&
+    (Boolean(props.pendingSessionLoad) || props.loadingEarlierMessages)
   );
   const sessionWorkspaceContextLabel = createMemo(() => {
     if (showWorkspaceSetupEmptyState()) return "";
@@ -4021,7 +4028,27 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
               </div>
             </Show>
-            <Show when={props.messages.length === 0 && !showWorkspaceSetupEmptyState()}>
+            <Show when={showSessionLoadingState()}>
+              <div class="mx-auto max-w-xl px-6 py-20 text-center">
+                <div class="mx-auto flex max-w-md flex-col items-center gap-5 rounded-3xl border border-gray-6 bg-gray-2/60 px-8 py-10 shadow-sm">
+                  <div class="flex h-16 w-16 items-center justify-center rounded-3xl border border-gray-6 bg-gray-1 text-gray-10">
+                    <Loader2 size={18} class="animate-spin text-gray-10" />
+                  </div>
+                  <div class="space-y-2">
+                    <h3 class="text-xl font-medium text-gray-12">
+                      {props.pendingSessionLoad?.sessionTitle || tr("session.opening_conversation")}
+                    </h3>
+                    <Show when={props.pendingSessionLoad?.workspaceName}>
+                      {(workspaceName) => (
+                        <p class="text-sm text-gray-10">{workspaceName()}</p>
+                      )}
+                    </Show>
+                    <p class="text-sm text-gray-10">{tr("session.opening_conversation")}</p>
+                  </div>
+                </div>
+              </div>
+            </Show>
+            <Show when={props.messages.length === 0 && !showWorkspaceSetupEmptyState() && !showSessionLoadingState()}>
               <div class="text-center py-16 px-6 space-y-6">
                 <div class="w-16 h-16 bg-dls-hover rounded-3xl mx-auto flex items-center justify-center border border-dls-border">
                   <Zap class="text-dls-secondary" />

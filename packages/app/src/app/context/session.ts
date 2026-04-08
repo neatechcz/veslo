@@ -823,18 +823,6 @@ export function createSessionStore(options: {
     const run = (async () => {
       mark("start");
 
-      mark("checking health");
-      try {
-        await withTimeout(c.global.health(), 3000, "health");
-        mark("health ok");
-      } catch (error) {
-        mark("health FAILED", {
-          error: error instanceof Error ? error.message : safeStringify(error),
-        });
-        throw new Error("Server connection lost. Please reload.");
-      }
-      if (abortIfStale("selection changed after health")) return;
-
       const existingLimit = messageLimitBySession()[sessionID] ?? 0;
       const requestLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, existingLimit);
       setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
@@ -865,32 +853,6 @@ export function createSessionStore(options: {
         });
       }
 
-      try {
-        mark("calling session.todo");
-        const list = unwrap(await withTimeout(c.session.todo({ sessionID }), 8000, "session.todo"));
-        mark("session.todo done");
-        if (abortIfStale("selection changed before todos applied")) return;
-        setStore("todos", sessionID, list);
-      } catch (error) {
-        mark("session.todo failed/timeout", {
-          error: error instanceof Error ? error.message : safeStringify(error),
-        });
-        if (abortIfStale("selection changed before todo fallback")) return;
-        setStore("todos", sessionID, []);
-      }
-
-      try {
-        mark("calling permission.list");
-        await withTimeout(refreshPendingPermissions(), 6000, "permission.list");
-        mark("permission.list done");
-        if (abortIfStale("selection changed before permissions applied")) return;
-      } catch (error) {
-        mark("permission.list failed/timeout", {
-          error: error instanceof Error ? error.message : safeStringify(error),
-        });
-        if (abortIfStale("selection changed after permission failure")) return;
-      }
-
       finishPerf(perfEnabled, "session.select", "complete", startedAt, {
         runId,
         sessionID,
@@ -898,6 +860,33 @@ export function createSessionStore(options: {
         todoCount: (store.todos[sessionID] ?? []).length,
       });
       setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
+
+      void (async () => {
+        try {
+          mark("calling session.todo");
+          const list = unwrap(await withTimeout(c.session.todo({ sessionID }), 8000, "session.todo"));
+          mark("session.todo done");
+          if (abortIfStale("selection changed before todos applied")) return;
+          setStore("todos", sessionID, list);
+        } catch (error) {
+          mark("session.todo failed/timeout", {
+            error: error instanceof Error ? error.message : safeStringify(error),
+          });
+          if (abortIfStale("selection changed before todo fallback")) return;
+          setStore("todos", sessionID, []);
+        }
+
+        try {
+          mark("calling permission.list");
+          await withTimeout(refreshPendingPermissions(), 6000, "permission.list");
+          mark("permission.list done");
+          if (abortIfStale("selection changed before permissions applied")) return;
+        } catch (error) {
+          mark("permission.list failed/timeout", {
+            error: error instanceof Error ? error.message : safeStringify(error),
+          });
+        }
+      })();
     })();
 
     selectGuard.register(sessionID, version, run);
