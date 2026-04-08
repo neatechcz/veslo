@@ -312,26 +312,86 @@ test("session rows use archive action and open submenu on right-click", () => {
 
   assert.match(
     source,
-    /const \[pendingArchiveConfirmationSessionId, setPendingArchiveConfirmationSessionId\] = createSignal<string \| null>\(/,
-    "session list should track pending archive confirmation per session id",
+    /archivedSessionIds\?: string\[\];/,
+    "session list should accept archived session ids from callers instead of local persistence",
   );
 
   assert.match(
     source,
-    /if \(!archived && !isArchiveConfirmationPending\(id\)\) \{[\s\S]*setPendingArchiveConfirmationSessionId\(id\);\s*return;\s*\}/s,
-    "first click on a non-archived session should only arm inline confirmation",
+    /onArchiveSession\?: \(workspaceId: string, sessionId: string\) => Promise<void> \| void;/,
+    "session list should accept an archive callback from callers",
+  );
+
+  assert.match(
+    source,
+    /onUnarchiveSession\?: \(workspaceId: string, sessionId: string\) => Promise<void> \| void;/,
+    "session list should accept an unarchive callback from callers",
+  );
+
+  assert.match(
+    source,
+    /const \[pendingArchiveConfirmationSessionId, setPendingArchiveConfirmationSessionId\] = createSignal<string \| null>\(/,
+    "session list should still track pending archive confirmation per session id",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /readArchivedSessionIds\(/,
+    "session list should no longer read archived ids from local storage",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /writeArchivedSessionIds\(/,
+    "session list should no longer write archived ids to local storage",
+  );
+
+  assert.match(
+    source,
+    /const archivedSessionIds = \(\) => props\.archivedSessionIds\s*\?\? \[\];/,
+    "archived session ids should come from caller props",
+  );
+
+  assert.match(
+    source,
+    /const handleSessionArchiveAction = async \(event: MouseEvent, sessionId: string\) => \{/,
+    "archive actions should be async so they can call caller-provided handlers",
+  );
+
+  assert.match(
+    source,
+    /if \(archived\) \{\s*await Promise\.resolve\(props\.onUnarchiveSession\?\.\(workspaceId, id\)\);\s*return;\s*\}/s,
+    "archived sessions should route unarchive through the caller callback",
+  );
+
+  assert.match(
+    source,
+    /await Promise\.resolve\(props\.onArchiveSession\?\.\(workspaceId, id\)\);/,
+    "archive confirmation should call the caller archive callback",
+  );
+
+  assert.match(
+    source,
+    /const workspaceId = group\.workspace\.id;/,
+    "archive actions should preserve the workspace id when invoking caller callbacks",
+  );
+
+  assert.match(
+    source,
+    /if \(archived\) \{\s*await Promise\.resolve\(props\.onUnarchiveSession\?\.\(workspaceId, id\)\);\s*return;\s*\}[\s\S]*if \(!isArchiveConfirmationPending\(id\)\) \{[\s\S]*setPendingArchiveConfirmationSessionId\(id\);\s*return;\s*\}/s,
+    "first click on a non-archived session should only arm inline confirmation, while archived sessions unarchive immediately",
   );
 
   assert.match(
     source,
     /onClick=\{\(event\) => handleSessionArchiveAction\(event, session\(\)\.id\)\}/,
-    "recent session rows should route hover action through two-step archive confirmation",
+    "recent session rows should route hover action through two-step archive confirmation and caller callbacks",
   );
 
   assert.match(
     source,
     /onClick=\{\(event\) => handleSessionArchiveAction\(event, row\.session\.id\)\}/,
-    "by-project session rows should route hover action through two-step archive confirmation",
+    "by-project session rows should route hover action through two-step archive confirmation and caller callbacks",
   );
 
   assert.match(
@@ -350,7 +410,7 @@ test("session rows use archive action and open submenu on right-click", () => {
 test("archive action stores clicked button as pending confirm target before arming confirmation", () => {
   assert.match(
     source,
-    /if \(!archived && !isArchiveConfirmationPending\(id\)\) \{\s*if \(event\.currentTarget instanceof HTMLButtonElement\) \{\s*pendingArchiveConfirmButtonRef = event\.currentTarget;\s*\}\s*setPendingArchiveConfirmationSessionId\(id\);\s*return;\s*\}/s,
+    /if \(!isArchiveConfirmationPending\(id\)\) \{\s*if \(event\.currentTarget instanceof HTMLButtonElement\) \{\s*pendingArchiveConfirmButtonRef = event\.currentTarget;\s*\}\s*setPendingArchiveConfirmationSessionId\(id\);\s*return;\s*\}/s,
     "first archive click should capture button target before pending mode, so outside-click cancellation does not clear confirm click",
   );
 });

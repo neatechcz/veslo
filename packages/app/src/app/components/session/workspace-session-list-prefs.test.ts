@@ -3,12 +3,10 @@ import test from "node:test";
 
 import {
   DEFAULT_SIDEBAR_VIEW_MODE,
-  readArchivedSessionIds,
   readProjectOrder,
   readCollapsedProjectMap,
   readShowArchivedSessions,
   readSidebarViewMode,
-  writeArchivedSessionIds,
   writeProjectOrder,
   writeCollapsedProjectMap,
   writeShowArchivedSessions,
@@ -114,15 +112,4 @@ test("show archived round-trips true value", () => {
   const storage = createMemoryStorage();
   writeShowArchivedSessions(true, storage);
   assert.equal(readShowArchivedSessions(storage), true);
-});
-
-test("archived session ids default to empty list", () => {
-  const storage = createMemoryStorage();
-  assert.deepEqual(readArchivedSessionIds(storage), []);
-});
-
-test("archived session ids are normalized (trim + dedupe)", () => {
-  const storage = createMemoryStorage();
-  writeArchivedSessionIds([" session-a ", "", "session-b", "session-a"], storage);
-  assert.deepEqual(readArchivedSessionIds(storage), ["session-a", "session-b"]);
 });

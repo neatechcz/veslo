@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { deriveLocalVesloServerUrlFromOpencodeBaseUrl } from "./veslo-server.js";
+import {
+  createVesloServerClient,
+  deriveLocalVesloServerUrlFromOpencodeBaseUrl,
+} from "./veslo-server.js";
 
 test("deriveLocalVesloServerUrlFromOpencodeBaseUrl rewrites local loopback hosts to Veslo port", () => {
   const derived = deriveLocalVesloServerUrlFromOpencodeBaseUrl("http://127.0.0.1:64792");
@@ -21,4 +24,70 @@ test("deriveLocalVesloServerUrlFromOpencodeBaseUrl returns null for non-local ho
 test("deriveLocalVesloServerUrlFromOpencodeBaseUrl accepts explicit target port", () => {
   const derived = deriveLocalVesloServerUrlFromOpencodeBaseUrl("http://localhost:64792", 9999);
   assert.equal(derived, "http://localhost:9999");
+});
+
+test("session archive requests include the account id header", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; headers: Headers }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+    });
+    return new Response(JSON.stringify({ items: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      accountId: "usr_123",
+    });
+
+    await client.listSessionArchives();
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.url, "https://veslo.example/session-archives");
+    assert.equal(calls[0]?.headers.get("authorization"), "Bearer token-123");
+    assert.equal(calls[0]?.headers.get("x-veslo-account-id"), "usr_123");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("non-archive requests do not include the account id header", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; headers: Headers }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+    });
+    return new Response(JSON.stringify({ items: [], activeId: null }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      accountId: "usr_123",
+    });
+
+    await client.listWorkspaces();
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.url, "https://veslo.example/workspaces");
+    assert.equal(calls[0]?.headers.get("authorization"), "Bearer token-123");
+    assert.equal(calls[0]?.headers.has("x-veslo-account-id"), false);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });

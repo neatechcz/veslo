@@ -7,6 +7,7 @@ import type {
   PluginScope,
   ProviderListItem,
   SettingsTab,
+  SessionArchiveItem,
   ScheduledJob,
   SidebarSubagentDecoration,
   HubSkillCard,
@@ -177,6 +178,9 @@ export type DashboardViewProps = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
   workspaceSessionPagingById: Record<string, { hasMore: boolean; loadingMore: boolean }>;
   subagentDecorationsBySessionId: Record<string, SidebarSubagentDecoration>;
+  archivedSessionIds: string[];
+  archiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
+  unarchiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
   loadMoreWorkspaceSidebarSessions: (workspaceId: string) => Promise<void> | void;
   selectedSessionId: string | null;
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
@@ -345,6 +349,8 @@ export type DashboardViewProps = {
   notionError: string | null;
   notionBusy: boolean;
   connectNotion: () => void;
+  sessionArchives: SessionArchiveItem[];
+  onUnarchiveArchivedSession: (sessionId: string) => Promise<void> | void;
 };
 
 type SidebarDockedVisibility = {
@@ -1307,6 +1313,7 @@ export default function DashboardView(props: DashboardViewProps) {
               workspaceSessionGroups={props.workspaceSessionGroups}
               workspaceSessionPagingById={props.workspaceSessionPagingById}
               subagentDecorationsBySessionId={props.subagentDecorationsBySessionId}
+              archivedSessionIds={props.archivedSessionIds}
               activeWorkspaceId={props.activeWorkspaceId}
               selectedSessionId={props.selectedSessionId}
               connectingWorkspaceId={props.connectingWorkspaceId}
@@ -1331,6 +1338,8 @@ export default function DashboardView(props: DashboardViewProps) {
               onImportWorkspaceConfig={props.importWorkspaceConfig}
               onQuickNewSession={props.openNewSessionWithDirectory}
               onAddDirectorySession={props.openDirectorySessionFromPicker}
+              onArchiveSession={props.archiveSession}
+              onUnarchiveSession={props.unarchiveSession}
               onLoadMoreWorkspaceSessions={props.loadMoreWorkspaceSidebarSessions}
             />
           </div>
@@ -1657,6 +1666,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   notionError={props.notionError}
                   notionBusy={props.notionBusy}
                   connectNotion={props.connectNotion}
+                  sessionArchives={props.sessionArchives}
+                  onUnarchiveSession={props.onUnarchiveArchivedSession}
                 />
 
             </Match>

@@ -106,6 +106,18 @@ test("session hover action uses archive icon instead of three dots", () => {
     /<Show when=\{archiveConfirmationPending\(\)\} fallback=\{<Archive size=\{14\} \/>\}>\s*\{tr\("sidebar\.archive_confirm"\)\}/,
     "archive action should switch to localized inline confirm text before final archive",
   );
+
+  assert.doesNotMatch(
+    source,
+    /readArchivedSessionIds\(/,
+    "recent rows should not depend on local archived-id storage",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /writeArchivedSessionIds\(/,
+    "recent rows should not persist archived ids to local storage",
+  );
 });
 
 test("recent rows keep metadata tucked closer to the title line while keeping the toggle under the title", () => {
