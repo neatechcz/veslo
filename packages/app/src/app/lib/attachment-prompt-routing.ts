@@ -18,6 +18,7 @@ type RouteStagedAttachmentsForModelInput = {
 type RouteStagedAttachmentsForModelResult = {
   draft: ComposerDraft;
   system?: string;
+  error?: string;
 };
 
 const appendPathsToText = (base: string | undefined, paths: string[]) => {
@@ -48,18 +49,8 @@ const modelSupportsInlineImages = (model: ModelRef, providers: ProviderListItem[
   return Boolean(modelInfo?.modalities?.input?.includes("image"));
 };
 
-const buildNonVisionImageFallback = (absolutePaths: string[]) => {
-  const instructions = [
-    "The user attached image files, but the selected model cannot inspect inline images directly.",
-    "Keep the user-visible attachment in context, but inspect the image by calling the read tool on these exact absolute paths:",
-    ...absolutePaths.map((path) => `- ${path}`),
-    "Treat those files as the canonical image inputs for the user's latest request.",
-    "Do not use glob, find, ls, search, or guess alternative screenshot paths.",
-    "Do not tell the user the image is unavailable when the exact file path is listed above.",
-  ];
-
-  return instructions.join("\n");
-};
+const NON_VISION_IMAGE_ERROR =
+  "The selected model cannot inspect image attachments. Switch to a model with image input and send again.";
 
 export function routeStagedAttachmentsForModel(
   input: RouteStagedAttachmentsForModelInput,
@@ -81,6 +72,6 @@ export function routeStagedAttachmentsForModel(
 
   return {
     draft: nextDraft,
-    system: buildNonVisionImageFallback(stagedImages.map((attachment) => attachment.absolutePath)),
+    error: NON_VISION_IMAGE_ERROR,
   };
 }

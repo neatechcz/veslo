@@ -82,11 +82,12 @@ test("vision-capable models keep image attachments inline without leaking staged
   });
 
   assert.equal(result.system, undefined);
+  assert.equal(result.error, undefined);
   assert.equal(result.draft.resolvedText, "Co je na screenshotu?");
   assert.deepEqual(result.draft.attachments, [imageAttachment]);
 });
 
-test("non-vision models keep image attachments visible and receive an exact no-search read fallback outside the user prompt text", () => {
+test("non-vision prompt models reject image attachments instead of relying on a read-tool fallback", () => {
   const model: ModelRef = { providerID: "opencode", modelID: "minimax-m2.5-free" };
   const result = routeStagedAttachmentsForModel({
     draft: baseDraft([imageAttachment]),
@@ -105,9 +106,8 @@ test("non-vision models keep image attachments visible and receive an exact no-s
 
   assert.equal(result.draft.resolvedText, "Co je na screenshotu?");
   assert.deepEqual(result.draft.attachments, [imageAttachment]);
-  assert.match(result.system ?? "", /read tool/i);
-  assert.match(result.system ?? "", /do not use glob|do not use find|instead of searching/i);
-  assert.match(result.system ?? "", /\/workspace\/Screenshot 2026-04-08 at 10\.17\.50\.png/);
+  assert.equal(result.system, undefined);
+  assert.match(result.error ?? "", /cannot inspect image attachments/i);
   assert.doesNotMatch(result.draft.resolvedText ?? "", /Screenshot 2026-04-08 at 10\.17\.50\.png/);
 });
 
@@ -129,6 +129,7 @@ test("non-image attachments still append staged paths into the prompt for editab
   });
 
   assert.equal(result.system, undefined);
+  assert.equal(result.error, undefined);
   assert.match(result.draft.resolvedText ?? "", /Co je na screenshotu\?\nsession\/brief\.docx$/);
   assert.deepEqual(result.draft.attachments, [docAttachment]);
 });
@@ -156,6 +157,7 @@ test("shell mode keeps staged image paths in the command text instead of relying
   });
 
   assert.equal(result.system, undefined);
+  assert.equal(result.error, undefined);
   assert.match(result.draft.resolvedText ?? "", /^ls\nsession\/Screenshot 2026-04-08 at 10\.17\.50\.png$/);
   assert.deepEqual(result.draft.attachments, [imageAttachment]);
 });

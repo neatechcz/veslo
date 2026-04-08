@@ -1509,6 +1509,10 @@ export default function App() {
         model,
         providers: providers(),
       });
+      if (routedDraft.error) {
+        setError(routedDraft.error);
+        return false;
+      }
       resolvedDraft = routedDraft.draft;
       promptSystem = routedDraft.system;
     } catch (error) {
@@ -4760,7 +4764,6 @@ export default function App() {
         disconnected: t("status.disconnected", currentLocale()),
       },
     });
-
   });
 
   const filteredModelOptions = createMemo(() => {

@@ -17,7 +17,7 @@ test("staging failure blocks send with an explicit error and no draft clear", ()
 
   assert.match(
     stagingWindow,
-    /const stagedAttachments = await stageAttachmentsIntoSessionDirectory\(resolvedDraft, sessionID\);\s*const routedDraft = routeStagedAttachmentsForModel\(\{[\s\S]*?\}\);\s*resolvedDraft = routedDraft\.draft;\s*promptSystem = routedDraft\.system;\s*\} catch \(error\) \{\s*setError\(error instanceof Error \? error\.message : safeStringify\(error\)\);\s*return false;\s*\}/s,
+    /const stagedAttachments = await stageAttachmentsIntoSessionDirectory\(resolvedDraft, sessionID\);\s*const routedDraft = routeStagedAttachmentsForModel\(\{[\s\S]*?\}\);\s*if \(routedDraft\.error\) \{\s*setError\(routedDraft\.error\);\s*return false;\s*\}\s*resolvedDraft = routedDraft\.draft;\s*promptSystem = routedDraft\.system;\s*\} catch \(error\) \{\s*setError\(error instanceof Error \? error\.message : safeStringify\(error\)\);\s*return false;\s*\}/s,
     "send flow should hard-fail when attachment staging fails",
   );
 
@@ -64,7 +64,7 @@ test("session page enables attachments only when Veslo server is connected", () 
   );
 });
 
-test("send flow routes screenshot attachments by model capability instead of leaking filenames into prompt text", () => {
+test("send flow blocks screenshot analysis on non-vision models instead of relying on a hidden read fallback", () => {
   assert.match(
     appSource,
     /const routedDraft = routeStagedAttachmentsForModel\(\{\s*draft: resolvedDraft,\s*stagedAttachments,\s*model,\s*providers: providers\(\),\s*\}\);/s,
@@ -73,8 +73,8 @@ test("send flow routes screenshot attachments by model capability instead of lea
 
   assert.match(
     appSource,
-    /\.\.\.\(promptSystem \? \{ system: promptSystem \} : \{\}\),/,
-    "non-vision models should receive a hidden system fallback instead of screenshot filenames in the user prompt",
+    /if \(routedDraft\.error\) \{\s*setError\(routedDraft\.error\);\s*return false;\s*\}/s,
+    "non-vision screenshot sends should fail with a visible error before the prompt runs",
   );
 
   assert.doesNotMatch(
