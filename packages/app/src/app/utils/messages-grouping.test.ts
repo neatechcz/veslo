@@ -57,3 +57,53 @@ test("groupMessageParts still preserves tool steps when thinking is hidden", () 
     assert.equal(groups[0].parts[0]?.type, "tool");
   }
 });
+
+test("groupMessageParts does not emit a duplicate text group for attachment file parts", () => {
+  const groups = groupMessageParts(
+    [
+      {
+        type: "text",
+        text: "posílám screenshot, žádná taková sekce tam není",
+      } as any,
+      {
+        type: "file",
+        filename: "Screenshot 2026-04-08 at 11.43.22.png",
+        mime: "image/png",
+        url: "data:image/png;base64,AAAA",
+      } as any,
+    ],
+    "msg-4",
+  );
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0]?.kind, "text");
+  if (groups[0]?.kind === "text") {
+    assert.equal(groups[0].part.type, "text");
+    assert.equal((groups[0].part as any).text, "posílám screenshot, žádná taková sekce tam není");
+  }
+});
+
+test("groupMessageParts still preserves workspace file reference parts", () => {
+  const groups = groupMessageParts(
+    [
+      {
+        type: "text",
+        text: "Mrkni na tenhle soubor",
+      } as any,
+      {
+        type: "file",
+        filename: "README.md",
+        mime: "text/plain",
+        url: "file:///workspace/README.md",
+      } as any,
+    ],
+    "msg-5",
+  );
+
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0]?.kind, "text");
+  assert.equal(groups[1]?.kind, "text");
+  if (groups[1]?.kind === "text") {
+    assert.equal(groups[1].part.type, "file");
+  }
+});

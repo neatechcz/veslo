@@ -187,6 +187,12 @@ export function isVisibleTextPart(part: Part) {
   return part.type === "text" && isUserVisiblePart(part);
 }
 
+function isAttachmentFilePart(part: Part) {
+  if (part.type !== "file") return false;
+  const url = (part as { url?: string }).url;
+  return typeof url === "string" && !url.startsWith("file://");
+}
+
 /**
  * Detect internal agent handoff / session-compaction text that should be hidden.
  *
@@ -317,6 +323,10 @@ export function groupMessageParts(parts: Part[], messageId: string, options: Gro
 
     if (part.type === "file") {
       flushExplorationSteps();
+      if (isAttachmentFilePart(part)) {
+        flushText();
+        return;
+      }
       flushText();
       groups.push({ kind: "text", part, segment: sawExecution ? "result" : "intent" });
       return;
