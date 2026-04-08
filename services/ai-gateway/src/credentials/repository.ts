@@ -2,6 +2,7 @@ import type { CredentialState, CredentialType } from "../db/schema.js";
 
 export type CredentialRecord = {
   id: string;
+  name: string | null;
   ownerUserId: string;
   provider: string;
   credentialType: CredentialType;
@@ -51,6 +52,15 @@ export type MarkCredentialStateInput = {
 
 export type CreateUserCredentialInput = {
   ownerUserId: string;
+  name?: string | null;
+  provider: string;
+  credentialType: CredentialType;
+  secretRef: string;
+};
+
+export type CreatePlatformCredentialInput = {
+  ownerUserId: string;
+  name: string;
   provider: string;
   credentialType: CredentialType;
   secretRef: string;
@@ -78,6 +88,7 @@ export interface CredentialRepository {
   getCredentialRecordByBindingId?(bindingId: string): Promise<CredentialRecord | null>;
   listAdminCredentials?(): Promise<AdminCredentialRecord[]>;
   createUserCredential?(input: CreateUserCredentialInput): Promise<CredentialRecord>;
+  createPlatformCredential?(input: CreatePlatformCredentialInput): Promise<CredentialRecord>;
   listUserCredentials?(input: ListUserCredentialsInput): Promise<CredentialRecord[]>;
   revokeUserCredential?(input: RevokeUserCredentialInput): Promise<CredentialRecord | null>;
   markCredentialState(input: MarkCredentialStateInput): Promise<void>;

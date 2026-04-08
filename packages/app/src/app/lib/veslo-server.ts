@@ -591,26 +591,18 @@ export type VesloReloadEvent = {
 
 export type VesloGatewayProvider = "openai" | "anthropic";
 
-export type VesloGatewayCredential = {
+export type VesloUserAiAccess = {
   id: string;
-  provider: VesloGatewayProvider;
-  credentialType: "oauth" | "api_key";
-  state: "healthy" | "failing" | "revoked";
-  createdAt: string;
-  updatedAt: string;
-  lastFailureAt: string | null;
+  userId: string;
+  enabled: boolean;
+  provider: VesloGatewayProvider | null;
+  defaultModel: string | null;
+  allowedModels: string[];
+  updatedAt: string | null;
 };
 
-export type VesloGatewayCredentialResult = {
-  credential: VesloGatewayCredential;
-};
-
-export type VesloGatewayCredentialsResult = {
-  credentials: VesloGatewayCredential[];
-};
-
-export type VesloOpenAiOAuthStartResult = {
-  authorizeUrl: string;
+export type VesloUserAiAccessResult = {
+  aiAccess: VesloUserAiAccess | null;
 };
 
 export const DEFAULT_VESLO_SERVER_PORT = 8787;
@@ -1170,13 +1162,6 @@ function buildGatewayCallerHeaders(userToken: string) {
   };
 }
 
-function normalizeGatewayProvider(provider: string): VesloGatewayProvider {
-  if (provider === "openai" || provider === "anthropic") {
-    return provider;
-  }
-  throw new Error(`Unsupported gateway provider: ${provider}`);
-}
-
 // Use Tauri's fetch when running in the desktop app to avoid CORS issues
 const resolveFetch = () => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
 
@@ -1340,51 +1325,12 @@ export function createVesloServerClient(options: { baseUrl: string; token?: stri
       const path = suffix ? `/veslo-code-router/bindings?${suffix}` : "/veslo-code-router/bindings";
       return requestJsonRaw<VesloOpenCodeRouterBindingsResult>(baseUrl, path, { token, hostToken, timeoutMs: timeouts.opencodeRouter });
     },
-    startOpenAiOAuth: (userToken: string) =>
-      requestJson<VesloOpenAiOAuthStartResult>(baseUrl, "/ai-gateway/providers/openai/oauth/start", {
+    getMyAiAccess: (userToken: string) =>
+      requestJson<VesloUserAiAccessResult>(baseUrl, "/ai-gateway/me/ai-access", {
         token,
         hostToken,
-        method: "POST",
-        body: {},
         headers: buildGatewayCallerHeaders(userToken),
       }),
-    finishOpenAiOAuth: (userToken: string, code: string) =>
-      requestJson<VesloGatewayCredentialResult>(baseUrl, "/ai-gateway/providers/openai/oauth/callback", {
-        token,
-        hostToken,
-        method: "POST",
-        body: { code: code.trim() },
-        headers: buildGatewayCallerHeaders(userToken),
-      }),
-    saveAnthropicApiKey: (userToken: string, apiKey: string) =>
-      requestJson<VesloGatewayCredentialResult>(baseUrl, "/ai-gateway/providers/anthropic/api-keys", {
-        token,
-        hostToken,
-        method: "POST",
-        body: { apiKey: apiKey.trim() },
-        headers: buildGatewayCallerHeaders(userToken),
-      }),
-    listGatewayCredentials: (userToken: string, provider: VesloGatewayProvider) =>
-      requestJson<VesloGatewayCredentialsResult>(
-        baseUrl,
-        `/ai-gateway/providers/${encodeURIComponent(normalizeGatewayProvider(provider))}/credentials`,
-        {
-          token,
-          hostToken,
-          headers: buildGatewayCallerHeaders(userToken),
-        },
-      ),
-    revokeGatewayCredential: (userToken: string, provider: VesloGatewayProvider, credentialId: string) =>
-      requestJson<VesloGatewayCredentialResult>(
-        baseUrl,
-        `/ai-gateway/providers/${encodeURIComponent(normalizeGatewayProvider(provider))}/credentials/${encodeURIComponent(credentialId)}`,
-        {
-          token,
-          hostToken,
-          method: "DELETE",
-          headers: buildGatewayCallerHeaders(userToken),
-        },
-      ),
     opencodeRouterTelegramIdentities: () =>
       requestJsonRaw<VesloOpenCodeRouterTelegramIdentitiesResult>(baseUrl, "/veslo-code-router/identities/telegram", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
     opencodeRouterSlackIdentities: () =>

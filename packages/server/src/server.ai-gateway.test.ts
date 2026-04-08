@@ -122,7 +122,7 @@ describe("ai gateway proxy routes", () => {
     }
   });
 
-  test("server proxies ai-gateway credential routes with caller auth", async () => {
+  test("server proxies ai-gateway user ai access routes with caller auth", async () => {
     const requests: Array<{
       method: string;
       pathname: string;
@@ -150,14 +150,14 @@ describe("ai gateway proxy routes", () => {
       res.statusCode = 200;
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({
-        credential: {
-          id: "cred_1",
-          provider: "anthropic",
-          credentialType: "api_key",
-          state: "healthy",
-          createdAt: "2026-04-02T10:00:00.000Z",
-          updatedAt: "2026-04-02T10:00:00.000Z",
-          lastFailureAt: null,
+        aiAccess: {
+          id: "ai_access_user_123",
+          userId: "user_123",
+          enabled: true,
+          provider: "openai",
+          defaultModel: "gpt-4o-mini",
+          allowedModels: ["gpt-4o-mini"],
+          updatedAt: "2026-04-08T10:00:00.000Z",
         },
       }));
     });
@@ -171,39 +171,36 @@ describe("ai gateway proxy routes", () => {
     const server = startServer(createTestConfig());
 
     try {
-      const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/anthropic/api-keys`, {
-        method: "POST",
+      const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/me/ai-access`, {
         headers: {
           authorization: "Bearer client-token",
-          "content-type": "application/json",
           "x-veslo-gateway-authorization": "Bearer den-user-token",
           "x-veslo-client-id": "desktop-app",
           "x-veslo-host-token": "should-not-forward",
         },
-        body: JSON.stringify({ apiKey: "sk-ant-secret" }),
       });
 
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({
-        credential: {
-          id: "cred_1",
-          provider: "anthropic",
-          credentialType: "api_key",
-          state: "healthy",
-          createdAt: "2026-04-02T10:00:00.000Z",
-          updatedAt: "2026-04-02T10:00:00.000Z",
-          lastFailureAt: null,
+        aiAccess: {
+          id: "ai_access_user_123",
+          userId: "user_123",
+          enabled: true,
+          provider: "openai",
+          defaultModel: "gpt-4o-mini",
+          allowedModels: ["gpt-4o-mini"],
+          updatedAt: "2026-04-08T10:00:00.000Z",
         },
       });
 
       expect(requests).toEqual([
         {
-          method: "POST",
-          pathname: "/api/providers/anthropic/api-keys",
+          method: "GET",
+          pathname: "/api/me/ai-access",
           authorization: "Bearer den-user-token",
           hostToken: null,
           clientId: null,
-          body: { apiKey: "sk-ant-secret" },
+          body: null,
         },
       ]);
     } finally {
@@ -225,18 +222,18 @@ describe("ai gateway proxy routes", () => {
       res.end(JSON.stringify({
         accessToken: "gateway-access-token",
         refreshToken: "provider-refresh-token",
-        credentials: [
-          {
-            id: "cred_1",
-            provider: "openai",
-            credentialType: "oauth",
-            state: "healthy",
-            apiKey: "sk-live-openai",
-            nested: {
-              accessToken: "nested-access-token",
-            },
-          },
-        ],
+        aiAccess: {
+          id: "ai_access_123",
+          userId: "user_123",
+          enabled: true,
+          provider: "openai",
+          defaultModel: "gpt-4o-mini",
+          allowedModels: ["gpt-4o-mini"],
+        },
+        nested: {
+          apiKey: "sk-live-openai",
+          accessToken: "nested-access-token",
+        },
       }));
     });
     upstream.listen(0, "127.0.0.1");
@@ -249,7 +246,7 @@ describe("ai gateway proxy routes", () => {
     const server = startServer(createTestConfig());
 
     try {
-      const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/openai/credentials`, {
+      const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/me/ai-access`, {
         headers: {
           authorization: "Bearer client-token",
           "x-veslo-gateway-authorization": "Bearer den-user-token",
@@ -261,10 +258,13 @@ describe("ai gateway proxy routes", () => {
       const payload = await response.json() as {
         accessToken: string;
         refreshToken: string;
-        credentials: Array<{
+        aiAccess: {
+          defaultModel: string;
+        };
+        nested: {
           apiKey: string;
-          nested: { accessToken: string };
-        }>;
+          accessToken: string;
+        };
       };
       const serialized = JSON.stringify(payload);
 
@@ -274,8 +274,9 @@ describe("ai gateway proxy routes", () => {
       expect(serialized).not.toContain("nested-access-token");
       expect(payload.accessToken).toBe(REDACTED_SECRET_VALUE);
       expect(payload.refreshToken).toBe(REDACTED_SECRET_VALUE);
-      expect(payload.credentials[0]?.apiKey).toBe(REDACTED_SECRET_VALUE);
-      expect(payload.credentials[0]?.nested.accessToken).toBe(REDACTED_SECRET_VALUE);
+      expect(payload.aiAccess.defaultModel).toBe("gpt-4o-mini");
+      expect(payload.nested.apiKey).toBe(REDACTED_SECRET_VALUE);
+      expect(payload.nested.accessToken).toBe(REDACTED_SECRET_VALUE);
     } finally {
       server.stop(true);
       upstream.close();

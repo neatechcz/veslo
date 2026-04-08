@@ -149,7 +149,9 @@ pub fn read_orchestrator_state(data_dir: &str) -> Option<OrchestratorStateFile> 
 fn fetch_json<T: DeserializeOwned>(url: &str) -> Result<T, String> {
     const ORCHESTRATOR_FETCH_TIMEOUT_MS: u64 = 1200;
     let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_millis(ORCHESTRATOR_FETCH_TIMEOUT_MS))
+        .timeout(std::time::Duration::from_millis(
+            ORCHESTRATOR_FETCH_TIMEOUT_MS,
+        ))
         .build();
 
     let response = agent
@@ -170,23 +172,6 @@ pub fn fetch_orchestrator_health(base_url: &str) -> Result<OrchestratorHealth, S
 pub fn fetch_orchestrator_workspaces(base_url: &str) -> Result<OrchestratorWorkspaceList, String> {
     let url = format!("{}/workspaces", base_url.trim_end_matches('/'));
     fetch_json(&url)
-}
-
-pub fn wait_for_orchestrator(
-    base_url: &str,
-    timeout_ms: u64,
-) -> Result<OrchestratorHealth, String> {
-    let start = std::time::Instant::now();
-    let mut last_error = None;
-    while start.elapsed().as_millis() < timeout_ms as u128 {
-        match fetch_orchestrator_health(base_url) {
-            Ok(health) if health.ok => return Ok(health),
-            Ok(_) => last_error = Some("Orchestrator reported unhealthy".to_string()),
-            Err(err) => last_error = Some(err),
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-    Err(last_error.unwrap_or_else(|| "Timed out waiting for orchestrator".to_string()))
 }
 
 pub fn request_orchestrator_shutdown(data_dir: &str) -> Result<bool, String> {

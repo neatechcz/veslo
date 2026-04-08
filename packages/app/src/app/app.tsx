@@ -34,8 +34,6 @@ import {
   shouldAutoCompact,
 } from "./lib/auto-compaction";
 import {
-  parseSessionModelOverrides,
-  serializeSessionModelOverrides,
   parseDefaultModelFromConfig,
   formatConfigWithDefaultModel,
   resolveWorkspaceDefaultModel,
@@ -79,7 +77,6 @@ import {
   initialSidebarSessionLimit,
   nextSidebarSessionLimit,
 } from "./pages/sidebar-session-pagination";
-import ModelPickerModal from "./components/model-picker-modal";
 import ResetModal from "./components/reset-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
 import VesloLogo from "./components/veslo-logo";
@@ -117,7 +114,6 @@ import {
   LANGUAGE_PREF_KEY,
   MCP_QUICK_CONNECT,
   MODEL_PREF_KEY,
-  SESSION_MODEL_PREF_KEY,
   SUGGESTED_PLUGINS,
   THINKING_PREF_KEY,
   VARIANT_PREF_KEY,
@@ -131,7 +127,6 @@ import type {
   PlaceholderAssistantMessage,
   StartupPreference,
   EngineRuntime,
-  ModelOption,
   ModelRef,
   OnboardingStep,
   PluginScope,
@@ -270,18 +265,17 @@ import {
   VesloServerError,
 } from "./lib/veslo-server";
 import { resolveArtifactFamilies } from "./components/session/artifact-family-model";
+import {
+  AI_ACCESS_ADMIN_MANAGED_MESSAGE,
+  AI_ACCESS_LOADING_MESSAGE,
+  AI_ACCESS_NOT_CONFIGURED_MESSAGE,
+  formatManagedAiAccessConfig,
+  resolveManagedAiAccess,
+  type ManagedAiAccessProfile,
+} from "./lib/ai-access";
+import { assertNoClientError, describeRequestError } from "./lib/client-errors";
 import { CLOUD_ONLY_MODE, resolveVesloCloudEnvironment } from "./lib/cloud-policy";
 import { isRemoteUiEnabled } from "./lib/runtime-policy";
-import {
-  resolveEffectiveConnectedProviderIds,
-} from "./utils/providers";
-import {
-  createProviderAuthModule,
-  describeProviderError,
-  assertNoClientError,
-  type ProviderAuthMethod,
-  type ProviderOAuthStartResult,
-} from "./lib/provider-auth";
 
 type RemoteWorkspaceDefaults = {
   vesloHostUrl?: string | null;
@@ -981,16 +975,10 @@ export default function App() {
   const [sessionModelById, setSessionModelById] = createSignal<
     Record<string, ModelRef>
   >({});
-  const [pendingSessionModel, setPendingSessionModel] = createSignal<ModelRef | null>(null);
-  const [sessionModelOverridesReady, setSessionModelOverridesReady] = createSignal(false);
   const [workspaceDefaultModelReady, setWorkspaceDefaultModelReady] = createSignal(false);
   const [legacyDefaultModel, setLegacyDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
   const [defaultModelExplicit, setDefaultModelExplicit] = createSignal(false);
   const [sessionAgentById, setSessionAgentById] = createSignal<Record<string, string>>({});
-  const [providerAuthModalOpen, setProviderAuthModalOpen] = createSignal(false);
-  const [providerAuthBusy, setProviderAuthBusy] = createSignal(false);
-  const [providerAuthError, setProviderAuthError] = createSignal<string | null>(null);
-  const [providerAuthMethods, setProviderAuthMethods] = createSignal<Record<string, ProviderAuthMethod[]>>({});
 
   const SKILL_HOT_RELOAD_GRACE_MS = 5000;
   let markReloadRequiredHandler: ((reason: ReloadReason, trigger?: ReloadTrigger) => void) | undefined;
@@ -1987,66 +1975,6 @@ export default function App() {
     });
   }
 
-  // Provider auth module – delegates to lib/provider-auth.ts
-  // The module is created lazily (after globalSync / workspaceStore are ready).
-  let _providerAuth: ReturnType<typeof createProviderAuthModule> | null = null;
-  const getProviderAuth = () => {
-    if (!_providerAuth) {
-      _providerAuth = createProviderAuthModule({
-        getClient: client,
-        getVesloServerClient: () => vesloServerClient(),
-        getGatewayVesloServerClient: () => gatewayVesloServerClient(),
-        getGatewayAuthToken: () => readDenAuth()?.token?.trim() ?? null,
-        getProviders: providers,
-        getProviderDefaults: providerDefaults,
-        getProviderAuthMethods: providerAuthMethods,
-        getWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
-        setProviderAuthError,
-        globalSyncSetProvider: (data) => globalSync.set("provider", data as Parameters<typeof globalSync.set>[1]),
-        globalSyncSetProviderMerged: (data, mergedConnected) =>
-          globalSync.set("provider", { ...(data as Record<string, unknown>), connected: mergedConnected } as Parameters<typeof globalSync.set>[1]),
-        unwrap: <T,>(result: { data?: T; error?: unknown }) => unwrap(result as never),
-        isTauriRuntime,
-        readOpencodeConfig,
-        writeOpencodeConfig,
-      });
-    }
-    return _providerAuth;
-  };
-
-  const loadProviderAuthMethods = () => getProviderAuth().loadProviderAuthMethods();
-  const startProviderAuth = (providerId?: string) => getProviderAuth().startProviderAuth(providerId);
-  const completeProviderAuthOAuth = (providerId: string, methodIndex: number, code?: string) =>
-    getProviderAuth().completeProviderAuthOAuth(providerId, methodIndex, code);
-  const submitProviderApiKey = (providerId: string, apiKey: string) =>
-    getProviderAuth().submitProviderApiKey(providerId, apiKey);
-  const testProviderApiKey = (providerId: string, apiKey: string) =>
-    getProviderAuth().testProviderApiKey(providerId, apiKey);
-  const disconnectProvider = (providerId: string) => getProviderAuth().disconnectProvider(providerId);
-  const connectLmStudioProvider = (baseUrlInput?: string) =>
-    getProviderAuth().connectLmStudioProvider(baseUrlInput);
-
-  async function openProviderAuthModal() {
-    setProviderAuthBusy(true);
-    setProviderAuthError(null);
-    try {
-      const methods = await loadProviderAuthMethods();
-      setProviderAuthMethods(methods);
-      setProviderAuthModalOpen(true);
-    } catch (error) {
-      const message = describeProviderError(error, "Failed to load providers");
-      setProviderAuthError(message);
-      throw error;
-    } finally {
-      setProviderAuthBusy(false);
-    }
-  }
-
-  function closeProviderAuthModal() {
-    setProviderAuthModalOpen(false);
-    setProviderAuthError(null);
-  }
-
   async function saveSessionExport(sessionID: string) {
     const c = client();
     if (!c) {
@@ -2197,12 +2125,6 @@ export default function App() {
   const globalSync = useGlobalSync();
   const providers = createMemo(() => globalSync.data.provider.all ?? []);
   const providerDefaults = createMemo(() => globalSync.data.provider.default ?? {});
-  const providerConnectedIds = createMemo(() =>
-    resolveEffectiveConnectedProviderIds(
-      providers(),
-      globalSync.data.provider.connected ?? [],
-    ),
-  );
   const setProviders = (value: ProviderListItem[]) => {
     globalSync.set("provider", "all", value);
   };
@@ -2214,8 +2136,10 @@ export default function App() {
   };
 
   const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
-  const sessionModelOverridesKey = (workspaceId: string) =>
-    `${SESSION_MODEL_PREF_KEY}.${workspaceId}`;
+  const [managedAiAccess, setManagedAiAccess] = createSignal<ManagedAiAccessProfile | null>(null);
+  const [managedAiAccessBusy, setManagedAiAccessBusy] = createSignal(false);
+  const [managedAiAccessError, setManagedAiAccessError] = createSignal<string | null>(null);
+  const managedAiAccessModel = createMemo(() => managedAiAccess()?.defaultModel ?? null);
 
   const getConfigSnapshot = (content: string | null) => {
     if (!content?.trim()) return "";
@@ -2231,11 +2155,6 @@ export default function App() {
       return content;
     }
   };
-  const [modelPickerOpen, setModelPickerOpen] = createSignal(false);
-  const [modelPickerTarget, setModelPickerTarget] = createSignal<
-    "session" | "default"
-  >("session");
-  const [modelPickerQuery, setModelPickerQuery] = createSignal("");
 
   const [showThinking, setShowThinking] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
@@ -3761,6 +3680,74 @@ export default function App() {
     });
   });
 
+  const managedAiAccessMessage = createMemo(() => {
+    if (managedAiAccess()) return AI_ACCESS_ADMIN_MANAGED_MESSAGE;
+    if (managedAiAccessBusy()) return AI_ACCESS_LOADING_MESSAGE;
+    return managedAiAccessError() ?? AI_ACCESS_NOT_CONFIGURED_MESSAGE;
+  });
+
+  const managedAiAccessProviderLabel = createMemo(() => {
+    const profile = managedAiAccess();
+    if (!profile) return null;
+    const provider = providers().find((entry) => entry.id === profile.providerId);
+    return provider?.name ?? profile.providerId;
+  });
+
+  const managedAiAccessDefaultModelLabel = createMemo(() => {
+    const profile = managedAiAccess();
+    if (!profile) return null;
+    return formatModelLabel(profile.defaultModel, providers());
+  });
+
+  const managedAiAccessBlockedReason = createMemo(() => {
+    const userToken = readDenAuth()?.token?.trim() ?? "";
+    if (!userToken || !gatewayVesloServerClient()) {
+      return null;
+    }
+    if (managedAiAccess()) return null;
+    if (managedAiAccessBusy()) return AI_ACCESS_LOADING_MESSAGE;
+    return managedAiAccessError() ?? AI_ACCESS_NOT_CONFIGURED_MESSAGE;
+  });
+
+  createEffect(() => {
+    authenticatedUser();
+
+    const gatewayClient = gatewayVesloServerClient();
+    const userToken = readDenAuth()?.token?.trim() ?? "";
+    if (!gatewayClient || !userToken) {
+      setManagedAiAccess(null);
+      setManagedAiAccessBusy(false);
+      setManagedAiAccessError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setManagedAiAccessBusy(true);
+    setManagedAiAccessError(null);
+
+    void gatewayClient
+      .getMyAiAccess(userToken)
+      .then((response) => {
+        if (cancelled) return;
+        const { profile, reason } = resolveManagedAiAccess(response.aiAccess);
+        setManagedAiAccess(profile);
+        setManagedAiAccessError(profile ? null : reason ?? AI_ACCESS_NOT_CONFIGURED_MESSAGE);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setManagedAiAccess(null);
+        setManagedAiAccessError(describeRequestError(error, "Failed to load AI access"));
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setManagedAiAccessBusy(false);
+      });
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
+
   createEffect(() => {
     const pending = pendingRemoteConnectDeepLink();
     if (!pending || booting()) {
@@ -4107,25 +4094,7 @@ export default function App() {
 
   const resetAppConfigDefaults = async () => {
     try {
-      if (typeof window !== "undefined") {
-        try {
-          const sessionOverridePrefix = `${SESSION_MODEL_PREF_KEY}.`;
-          const keysToRemove: string[] = [];
-          for (let index = 0; index < window.localStorage.length; index += 1) {
-            const key = window.localStorage.key(index);
-            if (!key) continue;
-            if (key.startsWith(sessionOverridePrefix)) {
-              keysToRemove.push(key);
-            }
-          }
-          for (const key of keysToRemove) {
-            window.localStorage.removeItem(key);
-          }
-        } catch {
-          // ignore
-        }
-      }
-
+      setSessionModelOverrideById({});
       setThemeMode("system");
       setEngineSource(isTauriRuntime() ? "sidecar" : "path");
       setEngineCustomBinPath("");
@@ -4636,8 +4605,11 @@ export default function App() {
   });
 
   const selectedSessionModel = createMemo<ModelRef>(() => {
+    const managedModel = managedAiAccessModel();
+    if (managedModel) return managedModel;
+
     const id = selectedSessionId();
-    if (!id) return pendingSessionModel() ?? defaultModel();
+    if (!id) return defaultModel();
 
     const override = sessionModelOverrideById()[id];
     if (override) return override;
@@ -4656,156 +4628,6 @@ export default function App() {
     if (!id) return null;
     return sessionAgentById()[id] ?? null;
   });
-
-  const selectedSessionModelLabel = createMemo(() =>
-    formatModelLabel(selectedSessionModel(), providers())
-  );
-
-  const modelPickerCurrent = createMemo(() =>
-    modelPickerTarget() === "default" ? defaultModel() : selectedSessionModel()
-  );
-
-  const modelOptions = createMemo<ModelOption[]>(() => {
-    const allProviders = providers();
-    const defaults = providerDefaults();
-    const currentDefault = defaultModel();
-
-    if (!allProviders.length) {
-      return [
-        {
-          providerID: DEFAULT_MODEL.providerID,
-          modelID: DEFAULT_MODEL.modelID,
-          title: DEFAULT_MODEL.modelID,
-          description: DEFAULT_MODEL.providerID,
-          footer: t("settings.model_fallback", currentLocale()),
-          isFree: true,
-          isConnected: false,
-        },
-      ];
-    }
-
-    const sortedProviders = allProviders.slice().sort((a, b) => {
-      const aIsOpencode = a.id === "opencode";
-      const bIsOpencode = b.id === "opencode";
-      if (aIsOpencode !== bIsOpencode) return aIsOpencode ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-
-    const next: ModelOption[] = [];
-
-    for (const provider of sortedProviders) {
-      const defaultModelID = defaults[provider.id];
-      const isConnected = providerConnectedIds().includes(provider.id);
-      const models = Object.values(provider.models ?? {}).filter(
-        (m) => m.status !== "deprecated"
-      );
-
-      models.sort((a, b) => {
-        const aFree = a.cost?.input === 0 && a.cost?.output === 0;
-        const bFree = b.cost?.input === 0 && b.cost?.output === 0;
-        if (aFree !== bFree) return aFree ? -1 : 1;
-        return (a.name ?? a.id).localeCompare(b.name ?? b.id);
-      });
-
-      for (const model of models) {
-        const isFree = model.cost?.input === 0 && model.cost?.output === 0;
-        const isDefault =
-          provider.id === currentDefault.providerID && model.id === currentDefault.modelID;
-        const footerBits: string[] = [];
-        if (defaultModelID === model.id || isDefault) {
-          footerBits.push(t("settings.model_default", currentLocale()));
-        }
-        if (model.reasoning) footerBits.push(t("settings.model_reasoning", currentLocale()));
-
-        next.push({
-          providerID: provider.id,
-          modelID: model.id,
-          title: model.name ?? model.id,
-          description: provider.name,
-          footer: footerBits.length
-            ? footerBits.slice(0, 2).join(" · ")
-            : undefined,
-          disabled: !isConnected,
-          isFree,
-          isConnected,
-        });
-      }
-    }
-
-    next.sort((a, b) => {
-      if (a.isConnected !== b.isConnected) return a.isConnected ? -1 : 1;
-      if (a.isFree !== b.isFree) return a.isFree ? -1 : 1;
-      return a.title.localeCompare(b.title);
-    });
-
-    return next;
-  });
-
-  const filteredModelOptions = createMemo(() => {
-    const q = modelPickerQuery().trim().toLowerCase();
-    const options = modelOptions();
-    if (!q) return options;
-
-    return options.filter((opt) => {
-      const haystack = [
-        opt.title,
-        opt.description ?? "",
-        opt.footer ?? "",
-        `${opt.providerID}/${opt.modelID}`,
-        opt.isConnected ? "connected" : "disconnected",
-        opt.isFree ? "free" : "paid",
-      ]
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(q);
-    });
-  });
-
-  function openSessionModelPicker() {
-    setModelPickerTarget("session");
-    setModelPickerQuery("");
-    setModelPickerOpen(true);
-  }
-
-  function openDefaultModelPicker() {
-    setModelPickerTarget("default");
-    setModelPickerQuery("");
-    setModelPickerOpen(true);
-  }
-
-  function applyModelSelection(next: ModelRef) {
-    if (modelPickerTarget() === "default") {
-      setDefaultModelExplicit(true);
-      setDefaultModel(next);
-      setModelPickerOpen(false);
-      return;
-    }
-
-    const id = selectedSessionId();
-    if (!id) {
-      setPendingSessionModel(next);
-      setDefaultModelExplicit(true);
-      setDefaultModel(next);
-      setModelPickerOpen(false);
-      return;
-    }
-
-    setSessionModelOverrideById((current) => ({ ...current, [id]: next }));
-    setDefaultModelExplicit(true);
-    setDefaultModel(next);
-    setModelPickerOpen(false);
-
-    if (typeof window !== "undefined" && currentView() === "session") {
-      requestAnimationFrame(() => {
-        window.dispatchEvent(new CustomEvent("veslo:focusPrompt"));
-      });
-    }
-  }
-
-  function openSettingsFromModelPicker() {
-    setTab("settings");
-    setView("dashboard");
-  }
 
   async function connectNotion() {
     if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") {
@@ -5523,20 +5345,11 @@ export default function App() {
       }
 
       const session = unwrap(rawResult);
-      const pendingModel = pendingSessionModel();
       // Immediately select and show the new session before background list refresh.
       setBusyLabel("status.loading_session");
       mark("session:select:start", { sessionID: session.id });
       await selectSession(session.id);
       mark("session:select:ok", { sessionID: session.id });
-
-      if (pendingModel) {
-        setSessionModelOverrideById((current) => ({
-          ...current,
-          [session.id]: pendingModel,
-        }));
-        setPendingSessionModel(null);
-      }
 
       // Inject the new session into the reactive sessions() store so
       // the createEffect bridge (sessions → sidebar) will always include it,
@@ -6150,11 +5963,7 @@ export default function App() {
     if (typeof window === "undefined") return;
     const workspaceId = workspaceStore.activeWorkspaceId();
     if (!workspaceId) return;
-
-    setSessionModelOverridesReady(false);
-    const raw = window.localStorage.getItem(sessionModelOverridesKey(workspaceId));
-    setSessionModelOverrideById(parseSessionModelOverrides(raw));
-    setSessionModelOverridesReady(true);
+    setSessionModelOverrideById({});
   });
 
   createEffect(() => {
@@ -6162,24 +5971,6 @@ export default function App() {
     const projectDir = workspaceProjectDir().trim();
     if (!projectDir) return;
     void refreshMcpServers();
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!sessionModelOverridesReady()) return;
-    const workspaceId = workspaceStore.activeWorkspaceId();
-    if (!workspaceId) return;
-
-    const payload = serializeSessionModelOverrides(sessionModelOverrideById());
-    try {
-      if (payload) {
-        window.localStorage.setItem(sessionModelOverridesKey(workspaceId), payload);
-      } else {
-        window.localStorage.removeItem(sessionModelOverridesKey(workspaceId));
-      }
-    } catch {
-      // ignore
-    }
   });
 
   createEffect(() => {
@@ -6208,6 +5999,19 @@ export default function App() {
     let cancelled = false;
 
     const applyDefault = async () => {
+      const adminManagedModel = managedAiAccessModel();
+      if (adminManagedModel) {
+        setDefaultModelExplicit(true);
+        const currentDefault = untrack(defaultModel);
+        if (!modelEquals(currentDefault, adminManagedModel)) {
+          setDefaultModel(adminManagedModel);
+        }
+        if (!cancelled) {
+          setWorkspaceDefaultModelReady(true);
+        }
+        return;
+      }
+
       let configDefault: ModelRef | null = null;
       let configFileContent: string | null = null;
 
@@ -6280,6 +6084,9 @@ export default function App() {
     const root = workspaceStore.activeWorkspacePath().trim();
     if (!root) return;
     const nextModel = defaultModel();
+    const managedProfile = managedAiAccess();
+    const gatewayClient = gatewayVesloServerClient();
+    const gatewayAccessToken = readDenAuth()?.token?.trim() ?? "";
     const vesloClient = vesloServerClient();
     const vesloWorkspaceId = vesloServerWorkspaceId();
     const vesloCapabilities = resolvedVesloCapabilities();
@@ -6293,6 +6100,23 @@ export default function App() {
     const writeConfig = async () => {
       try {
         if (canUseVesloServer) {
+          if (managedProfile && gatewayClient && gatewayAccessToken) {
+            const config = await vesloClient.getConfig(vesloWorkspaceId);
+            const content = formatManagedAiAccessConfig(
+              JSON.stringify(config.opencode ?? {}, null, 2),
+              {
+                profile: managedProfile,
+                serverBaseUrl: gatewayClient.baseUrl,
+                gatewayAccessToken,
+              },
+            );
+            await vesloClient.patchConfig(vesloWorkspaceId, {
+              opencode: JSON.parse(content) as Record<string, unknown>,
+            });
+            markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+            return;
+          }
+
           const config = await vesloClient.getConfig(vesloWorkspaceId);
           const currentModel = typeof config.opencode?.model === "string" ? parseModelRef(config.opencode.model) : null;
           if (currentModel && modelEquals(currentModel, nextModel)) return;
@@ -6305,6 +6129,23 @@ export default function App() {
         }
 
         const configFile = await readOpencodeConfig("project", root);
+        if (managedProfile && gatewayClient && gatewayAccessToken) {
+          const content = formatManagedAiAccessConfig(configFile.content, {
+            profile: managedProfile,
+            serverBaseUrl: gatewayClient.baseUrl,
+            gatewayAccessToken,
+          });
+          if ((configFile.content ?? "").trim() === content.trim()) return;
+
+          const result = await writeOpencodeConfig("project", root, content);
+          if (!result.ok) {
+            throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
+          }
+          setLastKnownConfigSnapshot(getConfigSnapshot(content));
+          markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+          return;
+        }
+
         const existingModel = parseDefaultModelFromConfig(configFile.content);
         if (existingModel && modelEquals(existingModel, nextModel)) return;
 
@@ -6842,20 +6683,6 @@ export default function App() {
       setTab,
       settingsTab: settingsTab(),
       setSettingsTab,
-      providers: providers(),
-      providerConnectedIds: providerConnectedIds(),
-      providerAuthBusy: providerAuthBusy(),
-      providerAuthModalOpen: providerAuthModalOpen(),
-      providerAuthError: providerAuthError(),
-      providerAuthMethods: providerAuthMethods(),
-      openProviderAuthModal,
-      disconnectProvider,
-      connectLmStudioProvider,
-      closeProviderAuthModal,
-      startProviderAuth,
-      completeProviderAuthOAuth,
-      submitProviderApiKey,
-      testProviderApiKey,
       view: currentView(),
       setView,
       startupPreference: startupPreference(),
@@ -6993,9 +6820,12 @@ export default function App() {
       createSessionAndOpen,
       setPrompt,
       selectSession: selectSession,
-      defaultModelLabel: formatModelLabel(defaultModel(), providers()),
-      defaultModelRef: formatModelRef(defaultModel()),
-      openDefaultModelPicker,
+      aiAccessBusy: managedAiAccessBusy(),
+      aiAccessConfigured: Boolean(managedAiAccess()),
+      aiAccessMessage: managedAiAccessMessage(),
+      aiAccessProviderLabel: managedAiAccessProviderLabel(),
+      aiAccessDefaultModelLabel: managedAiAccessDefaultModelLabel(),
+      aiAccessAllowedModels: managedAiAccess()?.allowedModels ?? [],
       showThinking: showThinking(),
       toggleShowThinking: () => setShowThinking((v) => !v),
       autoCompactContext: autoCompactContext(),
@@ -7248,19 +7078,7 @@ export default function App() {
     respondQuestion: respondQuestion,
     safeStringify: safeStringify,
     showTryNotionPrompt: tryNotionPromptVisible() && notionIsActive(),
-    startProviderAuth: startProviderAuth,
-    completeProviderAuthOAuth: completeProviderAuthOAuth,
-    submitProviderApiKey: submitProviderApiKey,
-    testProviderApiKey: testProviderApiKey,
-    connectLmStudioProvider: connectLmStudioProvider,
-    openProviderAuthModal: openProviderAuthModal,
-    closeProviderAuthModal: closeProviderAuthModal,
-    providerAuthModalOpen: providerAuthModalOpen(),
-    providerAuthBusy: providerAuthBusy(),
-    providerAuthError: providerAuthError(),
-    providerAuthMethods: providerAuthMethods(),
-    providers: providers(),
-    providerConnectedIds: providerConnectedIds(),
+    aiAccessBlockedReason: managedAiAccessBlockedReason(),
     listAgents: listAgents,
     listCommands: listCommands,
     selectedSessionAgent: selectedSessionAgent(),
@@ -7479,19 +7297,6 @@ export default function App() {
           </div>
         )}
       </Show>
-
-      <ModelPickerModal
-        open={modelPickerOpen()}
-        options={modelOptions()}
-        filteredOptions={filteredModelOptions()}
-        query={modelPickerQuery()}
-        setQuery={setModelPickerQuery}
-        target={modelPickerTarget()}
-        current={modelPickerCurrent()}
-        onSelect={applyModelSelection}
-        onOpenSettings={openSettingsFromModelPicker}
-        onClose={() => setModelPickerOpen(false)}
-      />
 
       <ResetModal
         open={resetModalOpen()}

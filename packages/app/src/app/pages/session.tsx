@@ -10,7 +10,6 @@ import type {
   McpStatusMap,
   PendingPermission,
   PendingQuestion,
-  ProviderListItem,
   SettingsTab,
   SkillCard,
   TodoItem,
@@ -61,7 +60,6 @@ import {
 import Button from "../components/button";
 import ConfirmModal from "../components/confirm-modal";
 import RenameSessionModal from "../components/rename-session-modal";
-import ProviderAuthModal, { type ProviderOAuthStartResult } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import SidebarStatusControls from "../components/sidebar-status-controls";
 import SidebarAdvancedNav from "../components/session/sidebar-advanced-nav";
@@ -254,19 +252,7 @@ export type SessionViewProps = {
   error: string | null;
   sessionStatus: string;
   renameSession: (sessionId: string, title: string) => Promise<void>;
-  startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
-  completeProviderAuthOAuth: (providerId: string, methodIndex: number, code?: string) => Promise<string | void>;
-  submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
-  testProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
-  connectLmStudioProvider: (baseUrlInput?: string) => Promise<string | void>;
-  openProviderAuthModal: () => Promise<void>;
-  closeProviderAuthModal: () => void;
-  providerAuthModalOpen: boolean;
-  providerAuthBusy: boolean;
-  providerAuthError: string | null;
-  providerAuthMethods: Record<string, { type: "oauth" | "api"; label: string }[]>;
-  providers: ProviderListItem[];
-  providerConnectedIds: string[];
+  aiAccessBlockedReason: string | null;
   listAgents: () => Promise<Agent[]>;
   searchFiles: (query: string) => Promise<string[]>;
   listCommands: () => Promise<{ id: string; name: string; description?: string; source?: "command" | "mcp" | "skill" }[]>;
@@ -397,7 +383,6 @@ export default function SessionView(props: SessionViewProps) {
   const topInitializedSessionIds = new Set<string>();
 
   const [toastMessage, setToastMessage] = createSignal<string | null>(null);
-  const [providerAuthActionBusy, setProviderAuthActionBusy] = createSignal(false);
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
@@ -2876,77 +2861,6 @@ export default function SessionView(props: SessionViewProps) {
     onCleanup(() => window.removeEventListener("mousedown", handler));
   });
 
-  const handleProviderAuthSelect = async (providerId: string): Promise<ProviderOAuthStartResult> => {
-    if (providerAuthActionBusy()) {
-      throw new Error("Provider auth is already in progress.");
-    }
-    setProviderAuthActionBusy(true);
-    try {
-      return await props.startProviderAuth(providerId);
-    } finally {
-      setProviderAuthActionBusy(false);
-    }
-  };
-
-  const handleProviderAuthOAuth = async (providerId: string, methodIndex: number, code?: string) => {
-    if (providerAuthActionBusy()) return;
-    setProviderAuthActionBusy(true);
-    try {
-      const message = await props.completeProviderAuthOAuth(providerId, methodIndex, code);
-      setToastMessage(message || tr("session.provider_connected"));
-      props.closeProviderAuthModal();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : tr("session.oauth_failed");
-      setToastMessage(message);
-    } finally {
-      setProviderAuthActionBusy(false);
-    }
-  };
-
-  const handleProviderAuthApiKey = async (providerId: string, apiKey: string) => {
-    if (providerAuthActionBusy()) return;
-    setProviderAuthActionBusy(true);
-    try {
-      const message = await props.submitProviderApiKey(providerId, apiKey);
-      setToastMessage(message || tr("session.api_key_saved"));
-      props.closeProviderAuthModal();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : tr("session.api_key_save_failed");
-      setToastMessage(message);
-    } finally {
-      setProviderAuthActionBusy(false);
-    }
-  };
-
-  const handleProviderAuthApiKeyTest = async (providerId: string, apiKey: string) => {
-    if (providerAuthActionBusy()) return;
-    setProviderAuthActionBusy(true);
-    try {
-      const message = await props.testProviderApiKey(providerId, apiKey);
-      setToastMessage(message || tr("session.connection_verified"));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : tr("session.connection_test_failed");
-      setToastMessage(message);
-    } finally {
-      setProviderAuthActionBusy(false);
-    }
-  };
-
-  const handleProviderAuthLmStudio = async (baseUrlInput?: string) => {
-    if (providerAuthActionBusy()) return;
-    setProviderAuthActionBusy(true);
-    try {
-      const message = await props.connectLmStudioProvider(baseUrlInput);
-      setToastMessage(message || tr("session.provider_connected"));
-      props.closeProviderAuthModal();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : tr("session.connection_test_failed");
-      setToastMessage(message);
-    } finally {
-      setProviderAuthActionBusy(false);
-    }
-  };
-
   const shareWorkspace = createMemo(() => {
     const id = shareWorkspaceId();
     if (!id) return null;
@@ -3330,6 +3244,10 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const handleSendPrompt = (draft: ComposerDraft) => {
+    if (props.aiAccessBlockedReason) {
+      setToastMessage(props.aiAccessBlockedReason);
+      return;
+    }
     scheduleScrollToLatest("auto");
     startRun();
     props.sendPromptAsync(draft).catch(e => reportError(e, "session.sendPrompt"));
@@ -3464,19 +3382,6 @@ export default function SessionView(props: SessionViewProps) {
           setCommandPaletteQuery("");
           setCommandPaletteActiveIndex(0);
           focusCommandPaletteInput();
-        },
-      },
-      {
-        id: "provider",
-        title: tr("session.command_palette_connect_provider"),
-        detail: tr("session.command_palette_connect_provider_detail"),
-        meta: tr("session.command_palette_meta_open"),
-        action: () => {
-          closeCommandPalette();
-          void props.openProviderAuthModal().catch((error) => {
-            const message = error instanceof Error ? error.message : tr("session.failed_load_providers");
-            setToastMessage(message);
-          });
         },
       },
     ];
@@ -4140,6 +4045,11 @@ export default function SessionView(props: SessionViewProps) {
         <Show when={props.selectedSessionId ?? "__no-session"} keyed>
           {(_sessionKey) => (
             <>
+              <Show when={props.aiAccessBlockedReason}>
+                <div class="mx-auto mb-3 w-full max-w-[min(100%,72rem)] rounded-2xl border border-amber-7/30 bg-amber-2/30 px-4 py-3 text-sm text-amber-12">
+                  {props.aiAccessBlockedReason}
+                </div>
+              </Show>
               <Composer
                 initialDraft={props.composerDraft}
                 prompt={props.composerDraft.text}
@@ -4320,22 +4230,6 @@ export default function SessionView(props: SessionViewProps) {
           </div>
         </div>
       </Show>
-
-      <ProviderAuthModal
-        open={props.providerAuthModalOpen}
-        loading={props.providerAuthBusy}
-        submitting={providerAuthActionBusy()}
-        error={props.providerAuthError}
-        providers={props.providers}
-        connectedProviderIds={props.providerConnectedIds}
-        authMethods={props.providerAuthMethods}
-        onSelect={handleProviderAuthSelect}
-        onSubmitApiKey={handleProviderAuthApiKey}
-        onTestApiKey={handleProviderAuthApiKeyTest}
-        onConnectLmStudio={handleProviderAuthLmStudio}
-        onSubmitOAuth={handleProviderAuthOAuth}
-        onClose={props.closeProviderAuthModal}
-      />
 
       <RenameSessionModal
         open={renameModalOpen()}

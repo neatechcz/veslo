@@ -5,7 +5,7 @@ import test from "node:test"
 
 import { createApp } from "../src/index.js"
 
-test("GET /admin/credentials serves the admin shell without embedding a custom credential form", async () => {
+test("GET /admin/credentials serves the admin shell with an admin-only platform credential form", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -21,9 +21,10 @@ test("GET /admin/credentials serves the admin shell without embedding a custom c
     assert.match(html, /Users/i)
     assert.match(html, /Sign in with Browser/i)
     assert.doesNotMatch(html, /<form[^>]+id="login-form"/i)
-    assert.doesNotMatch(html, /type="password"/i)
-    assert.doesNotMatch(html, /OpenAI Shared Pool A/i)
-    assert.doesNotMatch(html, /Anthropic Shared Pool B/i)
+    assert.match(html, /id="credential-create-provider"/)
+    assert.match(html, /id="credential-create-name"/)
+    assert.match(html, /id="credential-create-secret"/)
+    assert.match(html, /id="credential-create-submit"/)
   } finally {
     server.close()
     await once(server, "close")
@@ -97,6 +98,71 @@ test("GET /admin/app.js supports transactionId callbacks and forbidden admin acc
       script,
       /payload\?\.error === "forbidden"\s*\?\s*"You do not have admin access\."\s*:\s*payload\?\.error\s*\|\|\s*payload\?\.message\s*\|\|\s*"Browser sign in failed\."/,
     )
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/users includes admin-managed ai access controls in the user editor", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/users`)
+
+    assert.equal(response.status, 200)
+    const html = await response.text()
+    assert.match(html, /AI access/i)
+    assert.match(html, /id="user-ai-access-enabled"/)
+    assert.match(html, /id="user-ai-access-provider"/)
+    assert.match(html, /id="user-ai-access-default-model"/)
+    assert.match(html, /id="user-ai-access-allowed-models"/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js loads and saves per-user ai access assignments", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /\/users\/\$\{encodeURIComponent\([^)]+\)\}\/ai-access/)
+    assert.match(script, /user-ai-access-provider/)
+    assert.match(script, /user-ai-access-default-model/)
+    assert.match(script, /user-ai-access-allowed-models/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js creates platform credentials from the Credentials page", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /credential-create-provider/)
+    assert.match(script, /credential-create-name/)
+    assert.match(script, /credential-create-secret/)
+    assert.match(script, /credential-create-submit/)
+    assert.match(script, /await fetchJson\("\/credentials", \{\s*method: "POST"/)
   } finally {
     server.close()
     await once(server, "close")

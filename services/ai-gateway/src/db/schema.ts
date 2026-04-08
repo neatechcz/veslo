@@ -18,6 +18,7 @@ export const CoreTableNames = {
   credential_health_event: "credential_health_event",
   credential_usage_event: "credential_usage_event",
   audit_event: "audit_event",
+  user_ai_access_policy: "user_ai_access_policy",
 } as const;
 
 export const CredentialType = ["api_key", "oauth"] as const;
@@ -30,6 +31,7 @@ export const credentialRecordTable = mysqlTable(
   CoreTableNames.credential_record,
   {
     id: idColumn().primaryKey(),
+    name: varchar("name", { length: 255 }),
     owner_user_id: varchar("owner_user_id", { length: 64 }).notNull(),
     provider: varchar("provider", { length: 64 }).notNull(),
     credential_type: mysqlEnum("credential_type", CredentialType).notNull(),
@@ -136,5 +138,22 @@ export const auditEventTable = mysqlTable(
     index("audit_event_entity").on(table.entity_type, table.entity_id),
     index("audit_event_actor").on(table.actor_user_id),
     index("audit_event_action").on(table.action),
+  ],
+);
+
+export const userAiAccessPolicyTable = mysqlTable(
+  CoreTableNames.user_ai_access_policy,
+  {
+    id: idColumn().primaryKey(),
+    user_id: varchar("user_id", { length: 64 }).notNull(),
+    enabled: int("enabled").notNull().default(1),
+    provider: varchar("provider", { length: 64 }),
+    default_model: varchar("default_model", { length: 128 }),
+    allowed_models_json: text("allowed_models_json").notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("user_ai_access_policy_user_id").on(table.user_id),
+    index("user_ai_access_policy_provider").on(table.provider),
   ],
 );

@@ -315,6 +315,68 @@ a {
   font-size: 0.92rem;
 }
 
+.editor-section {
+  display: grid;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.editor-section h4 {
+  margin: 4px 0 0;
+  font-size: 1rem;
+}
+
+.editor-note {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.ai-access-textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.credential-create-card {
+  margin-bottom: 16px;
+}
+
+.credential-create-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 14px 0 12px;
+}
+
+.credential-create-grid label,
+.credential-create-secret-field {
+  display: grid;
+  gap: 8px;
+}
+
+.credential-create-grid span,
+.credential-create-secret-field span {
+  color: #d9e4fb;
+  font-size: 0.92rem;
+}
+
+.credential-create-status {
+  margin: 0;
+}
+
+.credential-create-status[data-tone="success"] {
+  color: var(--success);
+}
+
+.credential-create-status[data-tone="error"] {
+  color: var(--danger);
+}
+
+.credential-create-status[data-tone="pending"] {
+  color: var(--info);
+}
+
 .error {
   color: var(--danger);
   margin: 0;
@@ -650,6 +712,7 @@ td span,
   .usage-grid,
   .alerts-layout,
   .audit-layout,
+  .credential-create-grid,
   .split-layout,
   .login-panel {
     grid-template-columns: 1fr;

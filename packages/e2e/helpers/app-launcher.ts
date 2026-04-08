@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { prepareDesktopAuthSeed } from './desktop-auth-seed.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -12,6 +13,13 @@ const POLL_INTERVAL = 250;
 
 let appProcess: ChildProcess | null = null;
 let appProcessOwnedByHarness = false;
+
+type AppLaunchEnvOptions = {
+  platform?: NodeJS.Platform;
+  port: number;
+  opencodeHome: string;
+  snapshotPath: string;
+};
 
 function resolveDesktopRoot(): string {
   return resolve(join(__dirname, '..', '..', 'desktop'));
@@ -66,6 +74,25 @@ async function hasReadyWebDriverServer(port: number): Promise<boolean> {
   }
 }
 
+export function createAppLaunchEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  options: AppLaunchEnvOptions,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...baseEnv,
+    TAURI_WEBDRIVER_PORT: String(options.port),
+    OPENCODE_HOME: options.opencodeHome,
+    VESLO_DEN_AUTH_SNAPSHOT_PATH: options.snapshotPath,
+  };
+
+  if ((options.platform ?? process.platform) === 'linux') {
+    delete env.WAYLAND_DISPLAY;
+    env.GDK_BACKEND = 'x11';
+  }
+
+  return env;
+}
+
 export async function ensureWebDriverReady(
   port: number = WEBDRIVER_PORT,
   timeout: number = Math.max(POLL_INTERVAL, Math.min(5_000, LAUNCH_TIMEOUT)),
@@ -86,13 +113,14 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   console.log(`[e2e] WebDriver port: ${port}`);
 
   const tmpDir = join(resolveDesktopRoot(), '..', 'e2e', '.tmp-opencode-home');
+  const snapshotPath = prepareDesktopAuthSeed(tmpDir);
 
   appProcess = spawn(binaryPath, [], {
-    env: {
-      ...process.env,
-      TAURI_WEBDRIVER_PORT: String(port),
-      OPENCODE_HOME: tmpDir,
-    },
+    env: createAppLaunchEnv(process.env, {
+      port,
+      opencodeHome: tmpDir,
+      snapshotPath,
+    }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   appProcessOwnedByHarness = true;

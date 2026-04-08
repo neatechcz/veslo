@@ -5,7 +5,6 @@ import type {
   McpStatusMap,
   OpencodeConnectStatus,
   PluginScope,
-  ProviderListItem,
   SettingsTab,
   ScheduledJob,
   SidebarSubagentDecoration,
@@ -53,7 +52,6 @@ import ConfigView from "./config";
 import SettingsView from "./settings";
 import SkillsView from "./skills";
 import SidebarStatusControls from "../components/sidebar-status-controls";
-import ProviderAuthModal, { type ProviderOAuthStartResult } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import SidebarAdvancedNav from "../components/session/sidebar-advanced-nav";
 import SidebarDashboardNav from "../components/session/sidebar-dashboard-nav";
@@ -93,20 +91,6 @@ export type DashboardViewProps = {
   setTab: (tab: DashboardTab) => void;
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
-  providers: ProviderListItem[];
-  providerConnectedIds: string[];
-  providerAuthBusy: boolean;
-  providerAuthModalOpen: boolean;
-  providerAuthError: string | null;
-  providerAuthMethods: Record<string, { type: "oauth" | "api"; label: string }[]>;
-  openProviderAuthModal: () => Promise<void>;
-  disconnectProvider: (providerId: string) => Promise<string | void>;
-  connectLmStudioProvider: (baseUrlInput?: string) => Promise<string | void>;
-  closeProviderAuthModal: () => void;
-  startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
-  completeProviderAuthOAuth: (providerId: string, methodIndex: number, code?: string) => Promise<string | void>;
-  submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
-  testProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
   view: View;
   setView: (view: View, sessionId?: string) => void;
   startupPreference: StartupPreference | null;
@@ -261,9 +245,12 @@ export type DashboardViewProps = {
   createSessionAndOpen: () => void;
   setPrompt: (value: string) => void;
   selectSession: (sessionId: string) => Promise<void> | void;
-  defaultModelLabel: string;
-  defaultModelRef: string;
-  openDefaultModelPicker: () => void;
+  aiAccessBusy: boolean;
+  aiAccessConfigured: boolean;
+  aiAccessMessage: string;
+  aiAccessProviderLabel: string | null;
+  aiAccessDefaultModelLabel: string | null;
+  aiAccessAllowedModels: string[];
   showThinking: boolean;
   toggleShowThinking: () => void;
   autoCompactContext: boolean;
@@ -472,7 +459,6 @@ export default function DashboardView(props: DashboardViewProps) {
   // Track last refreshed tab to avoid duplicate calls
   const [lastRefreshedTab, setLastRefreshedTab] = createSignal<string | null>(null);
   const [refreshInProgress, setRefreshInProgress] = createSignal(false);
-  const [providerAuthActionBusy, setProviderAuthActionBusy] = createSignal(false);
   const [shareWorkspaceId, setShareWorkspaceId] = createSignal<string | null>(null);
   const [leftSidebarWidth, setLeftSidebarWidth] = createSignal(readLeftSidebarWidth());
   const [leftSidebarResizing, setLeftSidebarResizing] = createSignal(false);
@@ -541,69 +527,6 @@ export default function DashboardView(props: DashboardViewProps) {
       document.body.style.userSelect = previousUserSelect;
       document.body.style.cursor = previousCursor;
     };
-  };
-
-  const handleProviderAuthSelect = async (providerId: string): Promise<ProviderOAuthStartResult> => {
-    if (providerAuthActionBusy()) {
-      throw new Error("Provider auth is already in progress.");
-    }
-    setProviderAuthActionBusy(true);
-    try {
-      return await props.startProviderAuth(providerId);
-    } finally {
-      setProviderAuthActionBusy(false);
-    }
-  };
-
-  const handleProviderAuthOAuth = async (providerId: string, methodIndex: number, code?: string) => {
-    if (providerAuthActionBusy()) return;
-    setProviderAuthActionBusy(true);
-    try {
-      await props.completeProviderAuthOAuth(providerId, methodIndex, code);
-      props.closeProviderAuthModal();
-    } catch {
-      // Errors are surfaced in the modal.
-    } finally {
-      setProviderAuthActionBusy(false);
-    }
-  };
-
-  const handleProviderAuthApiKey = async (providerId: string, apiKey: string) => {
-    if (providerAuthActionBusy()) return;
-    setProviderAuthActionBusy(true);
-    try {
-      await props.submitProviderApiKey(providerId, apiKey);
-      props.closeProviderAuthModal();
-    } catch {
-      // Errors are surfaced in the modal.
-    } finally {
-      setProviderAuthActionBusy(false);
-    }
-  };
-
-  const handleProviderAuthApiKeyTest = async (providerId: string, apiKey: string) => {
-    if (providerAuthActionBusy()) return;
-    setProviderAuthActionBusy(true);
-    try {
-      await props.testProviderApiKey(providerId, apiKey);
-    } catch {
-      // Errors are surfaced in the modal.
-    } finally {
-      setProviderAuthActionBusy(false);
-    }
-  };
-
-  const handleProviderAuthLmStudio = async (baseUrlInput?: string) => {
-    if (providerAuthActionBusy()) return;
-    setProviderAuthActionBusy(true);
-    try {
-      await props.connectLmStudioProvider(baseUrlInput);
-      props.closeProviderAuthModal();
-    } catch {
-      // Errors are surfaced in the modal.
-    } finally {
-      setProviderAuthActionBusy(false);
-    }
   };
 
   onCleanup(() => stopLeftSidebarResize(false));
@@ -1545,11 +1468,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   busy={props.busy}
                   settingsTab={props.settingsTab}
                   setSettingsTab={props.setSettingsTab}
-                  providers={props.providers}
-                  providerConnectedIds={props.providerConnectedIds}
-                  providerAuthBusy={props.providerAuthBusy}
-                  openProviderAuthModal={props.openProviderAuthModal}
-                  disconnectProvider={props.disconnectProvider}
                   vesloServerStatus={props.vesloServerStatus}
                   vesloServerUrl={props.vesloServerUrl}
                   vesloReconnectBusy={props.vesloReconnectBusy}
@@ -1578,9 +1496,12 @@ export default function DashboardView(props: DashboardViewProps) {
                   engineRuntime={props.engineRuntime}
                   setEngineRuntime={props.setEngineRuntime}
                   isWindows={props.isWindows}
-                  defaultModelLabel={props.defaultModelLabel}
-                  defaultModelRef={props.defaultModelRef}
-                  openDefaultModelPicker={props.openDefaultModelPicker}
+                  aiAccessBusy={props.aiAccessBusy}
+                  aiAccessConfigured={props.aiAccessConfigured}
+                  aiAccessMessage={props.aiAccessMessage}
+                  aiAccessProviderLabel={props.aiAccessProviderLabel}
+                  aiAccessDefaultModelLabel={props.aiAccessDefaultModelLabel}
+                  aiAccessAllowedModels={props.aiAccessAllowedModels}
                   showThinking={props.showThinking}
                   toggleShowThinking={props.toggleShowThinking}
                   autoCompactContext={props.autoCompactContext}
@@ -1671,22 +1592,6 @@ export default function DashboardView(props: DashboardViewProps) {
             </div>
           </div>
         </Show>
-
-        <ProviderAuthModal
-          open={props.providerAuthModalOpen}
-          loading={props.providerAuthBusy}
-          submitting={providerAuthActionBusy()}
-          error={props.providerAuthError}
-          providers={props.providers}
-          connectedProviderIds={props.providerConnectedIds}
-          authMethods={props.providerAuthMethods}
-          onSelect={handleProviderAuthSelect}
-          onSubmitApiKey={handleProviderAuthApiKey}
-          onTestApiKey={handleProviderAuthApiKeyTest}
-          onConnectLmStudio={handleProviderAuthLmStudio}
-          onSubmitOAuth={handleProviderAuthOAuth}
-          onClose={props.closeProviderAuthModal}
-        />
 
         <ShareWorkspaceModal
           open={Boolean(shareWorkspaceId())}

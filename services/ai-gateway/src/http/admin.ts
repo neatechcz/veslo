@@ -6,10 +6,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { AlertRecord, AlertRepository } from "../alerts/repository.js";
+import type { AiAccessProvider, AiAccessRepository, UpsertUserAiAccessPolicyInput, UserAiAccessPolicyRecord } from "../access/repository.js";
+import { MySqlAiAccessRepository } from "../access/mysql-repository.js";
 import { MySqlAlertRepository } from "../alerts/mysql-repository.js";
 import type { AuditRepository, AuditEventRecord, ListAuditEventsInput } from "../audit/repository.js";
 import { MySqlAuditRepository } from "../audit/mysql-repository.js";
-import type { AdminCredentialRecord } from "../credentials/repository.js";
+import { getPlatformCredentialOwnerUserId } from "../credentials/platform-owner.js";
+import { MySqlCredentialRepository } from "../credentials/mysql-repository.js";
+import { MySqlSecretStore } from "../credentials/mysql-secret-store.js";
+import type { AdminCredentialRecord, CreatePlatformCredentialInput, CredentialRecord as GatewayCredentialRecord } from "../credentials/repository.js";
+import type { SecretStore } from "../credentials/secret-store.js";
 import type { AiGatewayDb } from "../db/index.js";
 import { createDb } from "../db/index.js";
 import { credentialBindingTable, credentialHealthEventTable, credentialRecordTable, credentialUsageEventTable, sessionLeaseTable, type CredentialState } from "../db/schema.js";
@@ -66,6 +72,23 @@ export type UsageGroupBy = RepositoryUsageGroupBy;
 
 export type UsageResponse = UsageAggregateResponse;
 
+export type AdminUserAiAccessRecord = {
+  id: string;
+  userId: string;
+  enabled: boolean;
+  provider: AiAccessProvider | null;
+  defaultModel: string | null;
+  allowedModels: string[];
+  updatedAt: string;
+};
+
+export type UpdateUserAiAccessInput = {
+  enabled: boolean;
+  provider: AiAccessProvider | null;
+  defaultModel: string | null;
+  allowedModels: string[];
+};
+
 export type AuthPayload = {
   token: string;
   denApiBase: string;
@@ -105,6 +128,12 @@ export type UpdateUserInput = {
   platformAdmin?: boolean;
 };
 
+export type CreateCredentialInput = {
+  provider: LeaseProvider | null;
+  name?: string | null;
+  secret: string;
+};
+
 export interface AdminService {
   startBrowserAuth(input: BrowserAuthStartInput): Promise<BrowserAuthStartPayload>;
   exchangeBrowserAuth(input: BrowserAuthExchangeInput): Promise<AuthPayload>;
@@ -112,10 +141,13 @@ export interface AdminService {
   listUsers(token: string): Promise<AdminUserRecord[]>;
   createUser(token: string, input: CreateUserInput): Promise<AdminUserRecord>;
   updateUser(token: string, userId: string, input: UpdateUserInput): Promise<AdminUserRecord>;
+  getUserAiAccess(token: string, userId: string): Promise<{ aiAccess: AdminUserAiAccessRecord | null }>;
+  upsertUserAiAccess(token: string, userId: string, input: UpdateUserAiAccessInput): Promise<{ aiAccess: AdminUserAiAccessRecord }>;
   disableUser(token: string, userId: string): Promise<AdminUserRecord>;
   enableUser(token: string, userId: string): Promise<AdminUserRecord>;
   deleteUser(token: string, userId: string): Promise<void>;
   listCredentials(_token: string): Promise<{ credentials: CredentialRecord[] }>;
+  createCredential(_token: string, input: CreateCredentialInput, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   revokeCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   drainCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   rotateCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
@@ -162,14 +194,21 @@ type AdminCredentialActionRepository = {
   rotateCredential(credentialId: string): Promise<boolean>;
 };
 
+type AdminCredentialWriteRepository = {
+  createPlatformCredential(input: CreatePlatformCredentialInput): Promise<GatewayCredentialRecord>;
+};
+
 type AdminReadModelDependencies = {
   denClient?: DenAdminApi;
   credentialReadRepository?: AdminCredentialReadRepository;
   credentialActionRepository?: AdminCredentialActionRepository;
+  credentialWriteRepository?: AdminCredentialWriteRepository;
   sessionReadRepository?: AdminSessionReadRepository;
+  aiAccessRepository?: AiAccessRepository;
   alertRepository?: AlertRepository;
   usageRepository?: UsageRepository;
   auditRepository?: AuditRepository;
+  secretStore?: SecretStore;
   now?: () => Date;
 };
 
@@ -205,7 +244,7 @@ class MySqlAdminCredentialReadRepository implements AdminCredentialReadRepositor
 
     return credentialRows.map((row) => ({
       id: row.id,
-      name: `${formatProviderLabel(row.provider)} ${row.id}`,
+      name: row.name?.trim() || `${formatProviderLabel(row.provider)} ${row.id}`,
       provider: row.provider,
       type: row.credential_type,
       state: row.state,
@@ -367,10 +406,13 @@ function createDefaultAdminReadRepositories() {
     | {
         credentialReadRepository: AdminCredentialReadRepository;
         credentialActionRepository: AdminCredentialActionRepository;
+        credentialWriteRepository: AdminCredentialWriteRepository;
         sessionReadRepository: AdminSessionReadRepository;
+        aiAccessRepository: AiAccessRepository;
         alertRepository: AlertRepository;
         usageRepository: UsageRepository;
         auditRepository: AuditRepository;
+        secretStore: SecretStore;
       }
     | null = null;
 
@@ -383,10 +425,13 @@ function createDefaultAdminReadRepositories() {
     repositories = {
       credentialReadRepository: new MySqlAdminCredentialReadRepository(handle.db),
       credentialActionRepository: new MySqlAdminCredentialActionRepository(handle.db),
+      credentialWriteRepository: new MySqlCredentialRepository(handle.db),
       sessionReadRepository: new MySqlAdminSessionReadRepository(handle.db),
+      aiAccessRepository: new MySqlAiAccessRepository(handle.db),
       alertRepository: new MySqlAlertRepository(handle.db),
       usageRepository: new MySqlUsageRepository(handle.db),
       auditRepository: new MySqlAuditRepository(handle.db),
+      secretStore: new MySqlSecretStore(handle.db, env.secretKey),
     };
 
     return repositories;
@@ -574,14 +619,20 @@ export function createDefaultAdminService(
     deps.credentialReadRepository ?? getDefaultRepositories().credentialReadRepository;
   const getCredentialActionRepository = () =>
     deps.credentialActionRepository ?? getDefaultRepositories().credentialActionRepository;
+  const getCredentialWriteRepository = () =>
+    deps.credentialWriteRepository ?? getDefaultRepositories().credentialWriteRepository;
   const getSessionReadRepository = () =>
     deps.sessionReadRepository ?? getDefaultRepositories().sessionReadRepository;
+  const getAiAccessRepository = () =>
+    deps.aiAccessRepository ?? getDefaultRepositories().aiAccessRepository;
   const getAlertRepository = () =>
     deps.alertRepository ?? getDefaultRepositories().alertRepository;
   const getUsageRepository = () =>
     deps.usageRepository ?? getDefaultRepositories().usageRepository;
   const getAuditRepository = () =>
     deps.auditRepository ?? getDefaultRepositories().auditRepository;
+  const getSecretStore = () =>
+    deps.secretStore ?? getDefaultRepositories().secretStore;
 
   async function recordAuditEvent(input: {
     actorUserId?: string | null;
@@ -684,6 +735,29 @@ export function createDefaultAdminService(
       });
       return updated;
     },
+    async getUserAiAccess(_token, userId) {
+      return {
+        aiAccess: toAdminUserAiAccessRecord(await getAiAccessRepository().getUserAiAccess(userId)),
+      };
+    },
+    async upsertUserAiAccess(_token, userId, input) {
+      const validated = validateUserAiAccessInput({
+        ...input,
+        userId,
+      });
+      const saved = await getAiAccessRepository().upsertUserAiAccess(validated);
+      await recordAuditEvent({
+        actorUserId: "admin-ui",
+        action: "user.ai_access.update",
+        entityType: "user",
+        entityId: userId,
+        result: "ok",
+        summary: `Updated AI access for user ${userId}.`,
+      });
+      return {
+        aiAccess: toAdminUserAiAccessRecord(saved)!,
+      };
+    },
     async disableUser(token, userId) {
       const updated = await denClient.disableUser(token, userId);
       await recordAuditEvent({
@@ -721,6 +795,29 @@ export function createDefaultAdminService(
     },
     async listCredentials() {
       return { credentials: await listCredentialsWithAlerts() };
+    },
+    async createCredential(_token, input, actorUserId) {
+      const validated = validateCreateCredentialInput(input);
+      const stored = await getSecretStore().put({
+        kind: "api_key",
+        apiKey: validated.secret,
+      });
+      const created = await getCredentialWriteRepository().createPlatformCredential({
+        ownerUserId: getPlatformCredentialOwnerUserId(validated.provider),
+        name: validated.name,
+        provider: validated.provider,
+        credentialType: "api_key",
+        secretRef: stored.secretRef,
+      });
+      await recordAuditEvent({
+        actorUserId,
+        action: "credential.create",
+        entityType: "credential",
+        entityId: created.id,
+        result: "ok",
+        summary: `Created ${validated.provider} credential ${created.id}.`,
+      });
+      return { credential: toAdminCredentialRecord(created) };
     },
     async revokeCredential(_token, credentialId, actorUserId) {
       const updated = await getCredentialActionRepository().revokeCredential(credentialId);
@@ -813,6 +910,111 @@ export function createDefaultAdminService(
       const listInput: ListAuditEventsInput = { limit: 100 };
       return { events: auditRepository.listEvents ? await auditRepository.listEvents(listInput) : [] };
     },
+  };
+}
+
+function validateCreateCredentialInput(input: CreateCredentialInput): {
+  provider: LeaseProvider;
+  name: string;
+  secret: string;
+} {
+  const provider = parseCredentialProvider(input.provider);
+  const name = typeof input.name === "string" ? input.name.trim() : "";
+  const secret = typeof input.secret === "string" ? input.secret.trim() : "";
+
+  if (!provider) {
+    throw new HttpError("invalid_provider", 400);
+  }
+
+  if (!secret) {
+    throw new HttpError("invalid_credential_secret", 400);
+  }
+
+  return {
+    provider,
+    name: name || `${formatProviderLabel(provider)} credential`,
+    secret,
+  };
+}
+
+function validateUserAiAccessInput(input: UpdateUserAiAccessInput & { userId: string }): UpsertUserAiAccessPolicyInput {
+  const enabled = input.enabled === true;
+  const provider = parseAiAccessProvider(input.provider);
+  const defaultModel = typeof input.defaultModel === "string" ? input.defaultModel.trim() : "";
+  const allowedModels = normalizeAllowedModels(input.allowedModels);
+
+  if (enabled && !provider) {
+    throw new HttpError("invalid_ai_access_provider", 400);
+  }
+
+  if (enabled && !defaultModel) {
+    throw new HttpError("invalid_ai_access_default_model", 400);
+  }
+
+  if (allowedModels.length > 0 && defaultModel && !allowedModels.includes(defaultModel)) {
+    throw new HttpError("invalid_ai_access_allowed_models", 400);
+  }
+
+  return {
+    userId: input.userId,
+    enabled,
+    provider,
+    defaultModel: defaultModel || null,
+    allowedModels,
+  };
+}
+
+function parseAiAccessProvider(value: unknown): AiAccessProvider | null {
+  return value === "openai" || value === "anthropic" ? value : null;
+}
+
+function normalizeAllowedModels(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const unique = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") continue;
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    unique.add(trimmed);
+  }
+
+  return Array.from(unique);
+}
+
+function toAdminCredentialRecord(record: GatewayCredentialRecord): CredentialRecord {
+  return {
+    id: record.id,
+    name: record.name?.trim() || `${formatProviderLabel(record.provider)} ${record.id}`,
+    provider: record.provider,
+    type: record.credentialType,
+    state: record.state,
+    scope: record.ownerUserId,
+    activeLeases: 0,
+    alertCount: 0,
+    lastRefreshAt: record.updatedAt.toISOString(),
+    lastFailureAt: record.lastFailureAt instanceof Date ? record.lastFailureAt.toISOString() : null,
+    totalTokens: 0,
+    nextRotationAt: null,
+    linkedAlertIds: [],
+  };
+}
+
+function toAdminUserAiAccessRecord(record: UserAiAccessPolicyRecord | null): AdminUserAiAccessRecord | null {
+  if (!record) {
+    return null;
+  }
+
+  return {
+    id: record.id,
+    userId: record.userId,
+    enabled: record.enabled,
+    provider: record.provider,
+    defaultModel: record.defaultModel,
+    allowedModels: record.allowedModels,
+    updatedAt: record.updatedAt.toISOString(),
   };
 }
 
@@ -973,6 +1175,26 @@ export function createAdminRouter(adminService: AdminService) {
     res.json(payload);
   });
 
+  router.post("/admin/api/credentials", async (req, res) => {
+    try {
+      const payload = await adminService.createCredential(
+        res.locals.adminToken as string,
+        {
+          provider: parseCredentialProvider(req.body?.provider),
+          name: typeof req.body?.name === "string" ? req.body.name.trim() : "",
+          secret: typeof req.body?.secret === "string" ? req.body.secret.trim() : "",
+        },
+        getAdminActorUserId(res),
+      );
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "credential_create_failed" });
+    }
+  });
+
   router.post("/admin/api/credentials/:credentialId/revoke", async (req, res) => {
     try {
       const payload = await adminService.revokeCredential(
@@ -1123,6 +1345,35 @@ export function createAdminRouter(adminService: AdminService) {
     }
   });
 
+  router.get("/admin/api/users/:userId/ai-access", async (req, res) => {
+    try {
+      const payload = await adminService.getUserAiAccess(res.locals.adminToken as string, req.params.userId);
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "user_ai_access_lookup_failed" });
+    }
+  });
+
+  router.put("/admin/api/users/:userId/ai-access", async (req, res) => {
+    try {
+      const payload = await adminService.upsertUserAiAccess(res.locals.adminToken as string, req.params.userId, {
+        enabled: req.body?.enabled === true,
+        provider: parseAiAccessProvider(req.body?.provider),
+        defaultModel: typeof req.body?.defaultModel === "string" ? req.body.defaultModel.trim() : null,
+        allowedModels: normalizeAllowedModels(req.body?.allowedModels),
+      });
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "user_ai_access_update_failed" });
+    }
+  });
+
   router.post("/admin/api/users/:userId/disable", async (req, res) => {
     try {
       const user = await adminService.disableUser(res.locals.adminToken as string, req.params.userId);
@@ -1179,4 +1430,8 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   return router;
+}
+
+function parseCredentialProvider(value: unknown): LeaseProvider | null {
+  return value === "openai" || value === "anthropic" ? value : null;
 }

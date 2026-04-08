@@ -3,8 +3,10 @@ import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 
+import type { AiAccessRepository } from "../src/access/repository.js";
 import type { AiGatewayDb } from "../src/db/index.js";
 import { createApp, createDefaultProxyDependencies, createDefaultRuntimeState, createDefaultUserCredentialDependencies, type RuntimeState } from "../src/index.js";
+import { getPlatformCredentialOwnerUserId } from "../src/credentials/platform-owner.js";
 import { MySqlCredentialRepository } from "../src/credentials/mysql-repository.js";
 import { MySqlSecretStore } from "../src/credentials/mysql-secret-store.js";
 import type { CredentialBinding, CredentialRecord, CredentialRepository, MarkCredentialStateInput } from "../src/credentials/repository.js";
@@ -212,6 +214,23 @@ function leaseKey(input: ResolveLeaseInput): string {
 
 function createPersistentRuntime() {
   return {
+    aiAccess: {
+      async getUserAiAccess(userId: string) {
+        return {
+          id: `ai_access_${userId}`,
+          userId,
+          enabled: true,
+          provider: "anthropic",
+          defaultModel: "claude-runtime",
+          allowedModels: ["claude-runtime"],
+          createdAt: new Date("2026-04-03T11:30:00.000Z"),
+          updatedAt: new Date("2026-04-03T11:35:00.000Z"),
+        };
+      },
+      async upsertUserAiAccess() {
+        throw new Error("unused");
+      },
+    } satisfies AiAccessRepository,
     credentials: new PersistentCredentialRepository(),
     secrets: new PersistentSecretStore(),
     leases: new PersistentLeaseRepository(),
@@ -289,7 +308,7 @@ test("createDefaultRuntimeState uses MySQL-backed runtime stores", () => {
   assert.ok(runtime.leases instanceof MySqlLeaseRepository);
 });
 
-test("runtime-backed dependencies keep user credentials and leases across app re-instantiation", async () => {
+test("runtime-backed dependencies keep platform credentials and leases across app re-instantiation", async () => {
   const runtime = createPersistentRuntime();
   let persistedBindingId = "";
   const firstTransportCalls: Array<{ upstreamAuth: UpstreamAuth; body: unknown }> = [];
@@ -302,19 +321,21 @@ test("runtime-backed dependencies keep user credentials and leases across app re
 
   try {
     const { port } = firstServer.address() as AddressInfo;
-    const addCredential = await fetch(`http://127.0.0.1:${port}/api/providers/anthropic/api-keys`, {
-      method: "POST",
-      headers: {
-        authorization: "Bearer user-access-token",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ apiKey: "sk-ant-runtime" }),
+    const storedSecret = await runtime.secrets.put({
+      kind: "api_key",
+      apiKey: "sk-ant-runtime",
+    });
+    const createdCredential = await runtime.credentials.createUserCredential?.({
+      ownerUserId: getPlatformCredentialOwnerUserId("anthropic"),
+      provider: "anthropic",
+      credentialType: "api_key",
+      secretRef: storedSecret.secretRef,
     });
 
-    assert.equal(addCredential.status, 200);
+    assert.ok(createdCredential);
 
     const bindings = await runtime.credentials.listEligibleBindings?.({
-      ownerUserId: "user_runtime",
+      ownerUserId: getPlatformCredentialOwnerUserId("anthropic"),
       provider: "anthropic",
     });
 

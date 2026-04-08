@@ -1,6 +1,5 @@
 import { join } from 'node:path';
 import { ensureWebDriverReady, startApp, stopApp } from './helpers/app-launcher.js';
-import type { Options } from '@wdio/types';
 
 const WEBDRIVER_PORT = 4445;
 
@@ -8,7 +7,7 @@ const platformDir = process.platform === 'darwin' ? 'macos'
   : process.platform === 'win32' ? 'windows'
   : 'linux';
 
-export const config: Options.Testrunner = {
+export const config = {
   runner: 'local',
 
   specs: ['./specs/*.spec.ts'],

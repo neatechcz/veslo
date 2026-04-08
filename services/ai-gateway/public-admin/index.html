@@ -110,8 +110,7 @@
                 <h2>Credential inventory</h2>
               </div>
               <div class="section-actions">
-                <button class="button button-secondary" type="button">Enroll OAuth</button>
-                <button class="button button-primary" type="button">Add credential</button>
+                <span class="status-chip">Admin managed</span>
               </div>
             </div>
             <div class="toolbar">
@@ -129,63 +128,90 @@
                 <option>Unhealthy</option>
               </select>
             </div>
-            <div class="table-shell">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Provider</th>
-                    <th>Type</th>
-                    <th>Status</th>
-                    <th>Linked alerts</th>
-                    <th>Active leases</th>
-                    <th>Last refresh</th>
-                  </tr>
-                </thead>
-                <tbody id="credentials-table-body">
-                  <tr class="row-alert">
-                    <td><strong>OpenAI org key</strong><span>secret_ref: vault://cred/oa-001</span></td>
-                    <td>OAuth</td>
-                    <td><span class="status-chip danger">Unhealthy</span></td>
-                    <td><a href="/admin/alerts">2 active alerts</a></td>
-                    <td>6</td>
-                    <td>3 min ago</td>
-                  </tr>
-                  <tr>
-                    <td><strong>Anthropic shared key</strong><span>secret_ref: vault://cred/anth-004</span></td>
-                    <td>API key</td>
-                    <td><span class="status-chip warning">Degraded</span></td>
-                    <td><a href="/admin/alerts">1 warning</a></td>
-                    <td>8</td>
-                    <td>18 min ago</td>
-                  </tr>
-                  <tr>
-                    <td><strong>Google Workspace OAuth</strong><span>secret_ref: vault://cred/gws-019</span></td>
-                    <td>OAuth</td>
-                    <td><span class="status-chip success">Healthy</span></td>
-                    <td><a href="/admin/alerts">No current alerts</a></td>
-                    <td>4</td>
-                    <td>1 hour ago</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <aside class="detail-rail">
-              <div id="credential-detail" class="detail-card">
-                <p class="eyebrow">Selected credential</p>
-                <h3>OpenAI org key</h3>
-                <div class="stack">
-                  <div class="detail-line"><span>Health</span><strong>Unhealthy</strong></div>
-                  <div class="detail-line"><span>Linked alerts</span><strong>2 active</strong></div>
-                  <div class="detail-line"><span>Latest incident</span><strong>Token refresh failed</strong></div>
-                  <div class="detail-line"><span>Rotation</span><strong>Retry now</strong></div>
-                </div>
-                <div class="button-row">
-                  <button class="button button-secondary" type="button">Drain</button>
-                  <button class="button button-secondary" type="button">Rotate</button>
-                  <button class="button button-primary" type="button">Open alerts</button>
-                </div>
+            <div class="credential-create-card detail-card">
+              <p class="eyebrow">Create platform credential</p>
+              <h3>Bind a provider secret to the shared pool</h3>
+              <div class="credential-create-grid">
+                <label>
+                  <span>Provider</span>
+                  <select class="input" id="credential-create-provider">
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Display name</span>
+                  <input class="input" id="credential-create-name" type="text" placeholder="Production OpenAI key" />
+                </label>
               </div>
-            </aside>
+              <label class="credential-create-secret-field">
+                <span>API secret</span>
+                <textarea class="input ai-access-textarea" id="credential-create-secret" placeholder="Paste the provider API key or token."></textarea>
+              </label>
+              <div class="button-row">
+                <button class="button button-primary" id="credential-create-submit" type="button">Create credential</button>
+                <p class="editor-note credential-create-status" id="credential-create-status">Secrets are stored encrypted and assigned to the provider platform pool.</p>
+              </div>
+            </div>
+            <div class="split-layout credentials-layout">
+              <div class="table-shell">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Provider</th>
+                      <th>Type</th>
+                      <th>Status</th>
+                      <th>Linked alerts</th>
+                      <th>Active leases</th>
+                      <th>Last refresh</th>
+                    </tr>
+                  </thead>
+                  <tbody id="credentials-table-body">
+                    <tr class="row-alert">
+                      <td><strong>OpenAI org key</strong><span>secret_ref: vault://cred/oa-001</span></td>
+                      <td>OAuth</td>
+                      <td><span class="status-chip danger">Unhealthy</span></td>
+                      <td><a href="/admin/alerts">2 active alerts</a></td>
+                      <td>6</td>
+                      <td>3 min ago</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Anthropic shared key</strong><span>secret_ref: vault://cred/anth-004</span></td>
+                      <td>API key</td>
+                      <td><span class="status-chip warning">Degraded</span></td>
+                      <td><a href="/admin/alerts">1 warning</a></td>
+                      <td>8</td>
+                      <td>18 min ago</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Google Workspace OAuth</strong><span>secret_ref: vault://cred/gws-019</span></td>
+                      <td>OAuth</td>
+                      <td><span class="status-chip success">Healthy</span></td>
+                      <td><a href="/admin/alerts">No current alerts</a></td>
+                      <td>4</td>
+                      <td>1 hour ago</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <aside class="detail-rail">
+                <div id="credential-detail" class="detail-card">
+                  <p class="eyebrow">Selected credential</p>
+                  <h3>OpenAI org key</h3>
+                  <div class="stack">
+                    <div class="detail-line"><span>Health</span><strong>Unhealthy</strong></div>
+                    <div class="detail-line"><span>Linked alerts</span><strong>2 active</strong></div>
+                    <div class="detail-line"><span>Latest incident</span><strong>Token refresh failed</strong></div>
+                    <div class="detail-line"><span>Rotation</span><strong>Retry now</strong></div>
+                  </div>
+                  <div class="button-row">
+                    <button class="button button-secondary" type="button">Drain</button>
+                    <button class="button button-secondary" type="button">Rotate</button>
+                    <button class="button button-primary" type="button">Open alerts</button>
+                  </div>
+                </div>
+              </aside>
+            </div>
           </section>
 
           <section class="panel page page-sessions hidden" data-page="sessions">
@@ -451,6 +477,33 @@
                     <span>Send invite email immediately</span>
                     <input id="user-send-invite" type="checkbox" checked />
                   </label>
+                  <section class="editor-section">
+                    <div>
+                      <p class="eyebrow">AI access</p>
+                      <h4>Admin-managed AI access</h4>
+                    </div>
+                    <label class="switch-row">
+                      <span>Enable AI access</span>
+                      <input id="user-ai-access-enabled" type="checkbox" />
+                    </label>
+                    <label>
+                      <span>Assigned provider</span>
+                      <select id="user-ai-access-provider" class="input">
+                        <option value="">Not assigned</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Default model</span>
+                      <input id="user-ai-access-default-model" class="input" placeholder="gpt-4o-mini" />
+                    </label>
+                    <label>
+                      <span>Allowed models</span>
+                      <textarea id="user-ai-access-allowed-models" class="input ai-access-textarea" placeholder="One model per line or comma-separated"></textarea>
+                    </label>
+                    <p id="user-ai-access-status" class="editor-note muted">Assignments are enforced by the gateway for this signed-in user.</p>
+                  </section>
                 </form>
                 <div class="button-row">
                   <button id="user-disable-button" class="button button-secondary" type="button">Disable user</button>
