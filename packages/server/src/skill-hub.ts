@@ -11,8 +11,8 @@ import { projectSkillsDir } from "./workspace-files.js";
 type HubRepo = { owner: string; repo: string; ref: string };
 
 const DEFAULT_HUB_REPO: HubRepo = {
-  owner: "neatech",
-  repo: "veslo-hub",
+  owner: "different-ai",
+  repo: "openwork-hub",
   ref: "main",
 };
 

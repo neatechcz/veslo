@@ -125,7 +125,7 @@ export function createExtensionsStore(options: {
       }
 
       // Browser fallback: fetch directly from GitHub (public catalog).
-      const listingRes = await fetch("https://api.github.com/repos/neatech/veslo-hub/contents/skills?ref=main", {
+      const listingRes = await fetch("https://api.github.com/repos/different-ai/openwork-hub/contents/skills?ref=main", {
         headers: { Accept: "application/vnd.github+json" },
       });
       if (!listingRes.ok) {
@@ -140,7 +140,7 @@ export function createExtensionsStore(options: {
 
       const next: HubSkillCard[] = dirs.map((dirName) => ({
         name: dirName,
-        source: { owner: "neatech", repo: "veslo-hub", ref: "main", path: `skills/${dirName}` },
+        source: { owner: "different-ai", repo: "openwork-hub", ref: "main", path: `skills/${dirName}` },
       }));
 
       if (refreshHubSkillsAborted) return;

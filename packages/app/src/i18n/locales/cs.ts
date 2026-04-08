@@ -1378,7 +1378,7 @@ export default {
   "skills.install_skills": "Instalovat skills",
   "skills.refresh_hub": "Obnovit hub",
   "skills.no_hub_skills": "Žádné hub skills nejsou dostupné.",
-  "skills.from_hub": "Z veslo-hub",
+  "skills.from_hub": "Z hubu",
   "skills.trigger_label": "Trigger:",
   "skills.installing_hub": "Instaluji",
   "skills.add_hub": "Přidat",

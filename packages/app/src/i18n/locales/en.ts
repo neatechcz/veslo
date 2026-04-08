@@ -1382,7 +1382,7 @@ export default {
   "skills.install_skills": "Install skills",
   "skills.refresh_hub": "Refresh hub",
   "skills.no_hub_skills": "No hub skills available.",
-  "skills.from_hub": "From veslo-hub",
+  "skills.from_hub": "From Hub",
   "skills.trigger_label": "Trigger:",
   "skills.installing_hub": "Installing",
   "skills.add_hub": "Add",

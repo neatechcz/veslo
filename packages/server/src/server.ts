@@ -803,7 +803,7 @@ function buildCapabilities(config: ServerConfig): Capabilities {
       skills: {
         read: true,
         install: writeEnabled,
-        repo: { owner: "neatech", name: "veslo-hub", ref: "main" },
+        repo: { owner: "different-ai", name: "openwork-hub", ref: "main" },
       },
     },
     plugins: { read: true, write: writeEnabled },
