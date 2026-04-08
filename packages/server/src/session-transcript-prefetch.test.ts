@@ -116,4 +116,41 @@ describe("session transcript prefetch core", () => {
     expect(highSnapshot.limit).toBe(200);
     expect(highSnapshot.messages.length).toBe(200);
   });
+
+  test("treats undersized warm snapshots as cold after desired limit increases", async () => {
+    let calls = 0;
+
+    const store = createSessionTranscriptPrefetchStore({
+      loadTranscript: async ({ workspaceId, sessionId, limit }) => {
+        calls += 1;
+        return {
+          workspaceId,
+          sessionId,
+          messages: Array.from({ length: limit }, (_, index) => ({ id: `m-${index + 1}` })),
+          partsByMessageId: {},
+        };
+      },
+      autoPrefetchOnInterest: false,
+    });
+
+    await store.getOrLoad({ workspaceId: "ws_local", sessionId: "sess-a", limit: 20 });
+
+    const interest = await store.updateInterest({
+      workspaceId: "ws_local",
+      visibleSessionIds: ["sess-a"],
+      selectedSessionId: "sess-a",
+      limit: 200,
+    });
+
+    expect(interest.items).toEqual([]);
+    expect(interest.queuedSessionIds).toEqual(["sess-a"]);
+    expect(store.listWarmSnapshots({ workspaceId: "ws_local", sessionIds: ["sess-a"] })).toEqual([]);
+
+    await store.prefetchWorkspace("ws_local");
+
+    expect(calls).toBe(2);
+    expect(
+      store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a", limit: 200 })?.messages.length,
+    ).toBe(200);
+  });
 });

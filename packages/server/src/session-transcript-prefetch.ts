@@ -252,14 +252,14 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
           continue;
         }
 
-        const warm = getWarmSnapshot({ workspaceId, sessionId });
+        const limit = resolveDesiredLimit(workspaceId, sessionId);
+        const warm = getWarmSnapshot({ workspaceId, sessionId, limit });
         if (warm) {
           queue.shift();
           queueByWorkspace.set(workspaceId, queue);
           continue;
         }
 
-        const limit = resolveDesiredLimit(workspaceId, sessionId);
         try {
           await ensureLoaded({ workspaceId, sessionId, limit });
         } catch {
@@ -291,7 +291,7 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
       }
 
       const items = queue
-        .map((sessionId) => getWarmSnapshot({ workspaceId, sessionId }))
+        .map((sessionId) => getWarmSnapshot({ workspaceId, sessionId, limit }))
         .filter((snapshot): snapshot is SessionTranscriptSnapshot => Boolean(snapshot));
       const queuedSessionIds = queue.filter((sessionId) => !items.some((snapshot) => snapshot.sessionId === sessionId));
 
@@ -316,7 +316,8 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
       for (const sessionId of sessionIds) {
         if (seen.has(sessionId)) continue;
         seen.add(sessionId);
-        const warm = getWarmSnapshot({ workspaceId, sessionId });
+        const limit = resolveDesiredLimit(workspaceId, sessionId);
+        const warm = getWarmSnapshot({ workspaceId, sessionId, limit });
         if (warm) snapshots.push(warm);
       }
       return snapshots;
