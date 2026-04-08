@@ -1,5 +1,6 @@
+use std::env;
 use std::net::TcpListener;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tauri::async_runtime::Receiver;
 use tauri::AppHandle;
@@ -7,6 +8,34 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 const DEFAULT_VESLO_PORT: u16 = 8787;
+const VESLO_SERVER_DEV_WATCH_ENV: &str = "VESLO_SERVER_DEV_WATCH";
+const VESLO_SERVER_DEV_DIR_ENV: &str = "VESLO_SERVER_DEV_DIR";
+
+fn parse_dev_watch_flag(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|raw| raw.trim().to_ascii_lowercase()),
+        Some(flag) if matches!(flag.as_str(), "1" | "true" | "yes" | "on")
+    )
+}
+
+fn should_use_dev_watch_mode() -> bool {
+    parse_dev_watch_flag(env::var(VESLO_SERVER_DEV_WATCH_ENV).ok().as_deref())
+}
+
+fn resolve_dev_watch_dir() -> PathBuf {
+    let dir = env::var(VESLO_SERVER_DEV_DIR_ENV)
+        .ok()
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty())
+        .unwrap_or_else(|| ".".to_string());
+    PathBuf::from(dir)
+}
+
+fn build_veslo_server_dev_watch_args(mut server_args: Vec<String>) -> Vec<String> {
+    let mut args = vec!["--watch".to_string(), "src/cli.ts".to_string(), "--".to_string()];
+    args.append(&mut server_args);
+    args
+}
 
 pub fn resolve_veslo_port() -> Result<u16, String> {
     if TcpListener::bind(("0.0.0.0", DEFAULT_VESLO_PORT)).is_ok() {
@@ -83,12 +112,7 @@ pub fn spawn_veslo_server(
     opencode_password: Option<&str>,
     opencode_router_health_port: Option<u16>,
 ) -> Result<(Receiver<CommandEvent>, CommandChild), String> {
-    let command = match app.shell().sidecar("veslo-server") {
-        Ok(command) => command,
-        Err(_) => app.shell().command("veslo-server"),
-    };
-
-    let args = build_veslo_args(
+    let server_args = build_veslo_args(
         host,
         port,
         workspace_paths,
@@ -97,11 +121,25 @@ pub fn spawn_veslo_server(
         opencode_base_url,
         opencode_directory,
     );
-    let cwd = workspace_paths
-        .first()
-        .map(|path| Path::new(path))
-        .unwrap_or_else(|| Path::new("."));
-    let mut command = command.args(args).current_dir(cwd);
+    let use_dev_watch = should_use_dev_watch_mode();
+
+    let mut command = if use_dev_watch {
+        let dev_watch_dir = resolve_dev_watch_dir();
+        app.shell()
+            .command("bun")
+            .args(build_veslo_server_dev_watch_args(server_args))
+            .current_dir(&dev_watch_dir)
+    } else {
+        let command = match app.shell().sidecar("veslo-server") {
+            Ok(command) => command,
+            Err(_) => app.shell().command("veslo-server"),
+        };
+        let cwd = workspace_paths
+            .first()
+            .map(|path| Path::new(path))
+            .unwrap_or_else(|| Path::new("."));
+        command.args(server_args).current_dir(cwd)
+    };
 
     if let Some(port) = opencode_router_health_port {
         command = command.env("OPENCODE_ROUTER_HEALTH_PORT", port.to_string());
@@ -125,5 +163,40 @@ pub fn spawn_veslo_server(
 
     command
         .spawn()
-        .map_err(|e| format!("Failed to start Veslo server: {e}"))
+        .map_err(|e| {
+            if use_dev_watch {
+                format!("Failed to start Veslo server in dev watch mode: {e}")
+            } else {
+                format!("Failed to start Veslo server: {e}")
+            }
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_dev_watch_flag_truthy_values() {
+        assert!(parse_dev_watch_flag(Some("1")));
+        assert!(parse_dev_watch_flag(Some("true")));
+        assert!(parse_dev_watch_flag(Some("TRUE")));
+        assert!(!parse_dev_watch_flag(Some("0")));
+        assert!(!parse_dev_watch_flag(Some("false")));
+        assert!(!parse_dev_watch_flag(Some("")));
+        assert!(!parse_dev_watch_flag(None));
+    }
+
+    #[test]
+    fn prepends_bun_watch_prefix_for_dev_server() {
+        let args = vec!["--host".to_string(), "0.0.0.0".to_string()];
+        let expected = vec![
+            "--watch".to_string(),
+            "src/cli.ts".to_string(),
+            "--".to_string(),
+            "--host".to_string(),
+            "0.0.0.0".to_string(),
+        ];
+        assert_eq!(build_veslo_server_dev_watch_args(args), expected);
+    }
 }
