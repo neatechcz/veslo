@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
 import * as dashboardMenuNavigation from "./dashboard-menu-navigation.js";
+import { resolveVisibleSettingsTab } from "../lib/settings-tab-label.js";
 
 const { resolveLeftMenuAction } = dashboardMenuNavigation;
 const resolveDashboardTabSelectionAction = (
@@ -16,6 +17,7 @@ const resolveDashboardTabSelectionAction = (
 ).resolveDashboardTabSelectionAction;
 
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
+const settingsSource = readFileSync(new URL("./settings.tsx", import.meta.url), "utf8");
 const headerSourceMatch = dashboardSource.match(
   /<header class="h-14 flex items-center justify-between px-6 md:px-10 border-b border-dls-border sticky top-0 bg-dls-surface z-10">[\s\S]*?<\/header>/,
 );
@@ -26,6 +28,8 @@ const leftMenuHandlerMatch = dashboardSource.match(
 const leftMenuHandlerSource = leftMenuHandlerMatch?.[0] ?? dashboardSource;
 const helperSourcePath = new URL("./dashboard-menu-navigation.ts", import.meta.url);
 const helperSource = existsSync(helperSourcePath) ? readFileSync(helperSourcePath, "utf8") : null;
+const settingsTabLabelSourcePath = new URL("../lib/settings-tab-label.ts", import.meta.url);
+const settingsTabLabelSource = readFileSync(settingsTabLabelSourcePath, "utf8");
 
 test("returns to selected session for automations", () => {
   const result = resolveLeftMenuAction({
@@ -213,4 +217,42 @@ test("dashboard header keeps back-to-chat visible even without a selected sessio
     dashboardSource,
     /const\s+returnToSession\s*=\s*\(\)\s*=>\s*\{\s*const\s+sessionId\s*=\s*props\.selectedSessionId\?\.trim\(\);\s*if\s*\(!sessionId\)\s*return;/s,
   );
+});
+
+test("dashboard centers the titlebar on the active settings subsection", () => {
+  assert.match(
+    dashboardSource,
+    /import\s*\{\s*resolveSettingsTabLabel,\s*resolveVisibleSettingsTab\s*\}\s*from\s+["']\.\.\/lib\/settings-tab-label["'];/,
+  );
+  assert.match(
+    dashboardSource,
+    /resolveVisibleSettingsTab\(\s*props\.settingsTab,\s*props\.developerMode\s*\)/,
+  );
+  assert.match(
+    dashboardSource,
+    /props\.tab\s*===\s*["']settings["']\s*\?\s*resolveSettingsTabLabel\(\s*visibleSettingsTab\(\)\s*\)\s*:\s*title\(\)/,
+  );
+  assert.match(
+    dashboardSource,
+    /<TitlebarMenuToggles[\s\S]*centerContent=\{dashboardTitlebarContext\(\)\}/,
+  );
+  assert.doesNotMatch(dashboardSource, /<TitlebarMenuToggles[\s\S]*centerContent=\{title\(\)\}/);
+  assert.match(
+    settingsSource,
+    /import\s*\{\s*resolveSettingsTabLabel,\s*resolveVisibleSettingsTab\s*\}\s*from\s+["']\.\.\/lib\/settings-tab-label["'];/,
+  );
+  assert.match(settingsSource, /resolveVisibleSettingsTab\(\s*props\.settingsTab,\s*props\.developerMode\s*\)/);
+  assert.match(settingsSource, /{resolveSettingsTabLabel\(tab\)}/);
+  assert.doesNotMatch(settingsSource, /tabLabel\(tab\)/);
+});
+
+test("settings tab labels are localized through a shared helper", () => {
+  assert.equal(resolveVisibleSettingsTab("debug", false), "general");
+  assert.equal(resolveVisibleSettingsTab("debug", true), "debug");
+  assert.match(settingsTabLabelSource, /settings\.general/);
+  assert.match(settingsTabLabelSource, /settings\.model/);
+  assert.match(settingsTabLabelSource, /settings\.advanced/);
+  assert.match(settingsTabLabelSource, /settings\.debug/);
+  assert.match(settingsTabLabelSource, /return\s+t\(key,\s*currentLocale\(\)\)/);
+  assert.doesNotMatch(settingsTabLabelSource, /"General"|"Model"|"Advanced"|"Debug"/);
 });

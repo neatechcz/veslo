@@ -60,6 +60,7 @@ import SidebarDashboardNav from "../components/session/sidebar-dashboard-nav";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
 import { resolveTitlebarContentInsetClass } from "../components/titlebar-menu-layout";
+import { resolveSettingsTabLabel, resolveVisibleSettingsTab } from "../lib/settings-tab-label";
 import {
   clampLeftSidebarWidth,
   readLeftSidebarWidth,
@@ -429,6 +430,12 @@ export default function DashboardView(props: DashboardViewProps) {
         return t("nav.automations", currentLocale());
     }
   });
+  const visibleSettingsTab = createMemo(() =>
+    resolveVisibleSettingsTab(props.settingsTab, props.developerMode),
+  );
+  const dashboardTitlebarContext = createMemo(() =>
+    props.tab === "settings" ? resolveSettingsTabLabel(visibleSettingsTab()) : title(),
+  );
 
   const workspaceLabel = (workspace: WorkspaceInfo) =>
     workspace.displayName?.trim() ||
@@ -1237,6 +1244,7 @@ export default function DashboardView(props: DashboardViewProps) {
       <TitlebarMenuToggles
         leftActive={leftMenuActive()}
         rightActive={rightSidebarVisible()}
+        centerContent={dashboardTitlebarContext()}
         hideTitlebar={props.hideTitlebar}
         leftLabel={leftMenuLabel()}
         onToggleLeft={handleLeftMenuToggle}

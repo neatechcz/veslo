@@ -3778,8 +3778,7 @@ export default function SessionView(props: SessionViewProps) {
       <TitlebarMenuToggles
         leftActive={leftSidebarToggleActive()}
         rightActive={rightSidebarToggleActive()}
-        leftContent={sessionTitlebarContext()}
-        showBrand={false}
+        centerContent={sessionTitlebarContext()}
         hideTitlebar={props.hideTitlebar}
         onToggleLeft={() => toggleSidebarMenu("left")}
         onToggleRight={() => toggleSidebarMenu("right")}

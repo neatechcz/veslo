@@ -4,17 +4,23 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
 
-test("session routes the current directory into the shared titlebar", () => {
+test("session routes the current directory into the centered shared titlebar slot", () => {
   assert.match(
     source,
-    /<TitlebarMenuToggles[\s\S]*leftContent=\{[\s\S]*showBrand=\{false\}/,
-    "session should pass the current directory into the left side of the shared titlebar",
+    /<TitlebarMenuToggles[\s\S]*centerContent=\{sessionTitlebarContext\(\)\}/,
+    "session should pass the current directory into the centered titlebar slot",
   );
 
   assert.doesNotMatch(
     source,
-    /<TitlebarMenuToggles[\s\S]*centerContent=\{/,
-    "session should not keep the current directory in the centered titlebar slot",
+    /<TitlebarMenuToggles[\s\S]*leftContent=\{/,
+    "session should not override the shared left titlebar content",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /<TitlebarMenuToggles[\s\S]*showBrand=\{false\}/,
+    "session should keep the shared brand fallback enabled",
   );
 });
 
