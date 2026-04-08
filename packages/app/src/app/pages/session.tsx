@@ -20,6 +20,7 @@ import type {
   WorkspaceSessionGroup,
   StartupPreference,
   SidebarSubagentDecoration,
+  VisibleSessionIdsChangeHandler,
 } from "../types";
 
 import { reportError } from "../lib/error-reporter";
@@ -3469,6 +3470,48 @@ export default function SessionView(props: SessionViewProps) {
     });
   };
 
+  const resolveVesloWorkspaceId = (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return null;
+    const workspace =
+      props.workspaces.find((item) => item.id === id) ??
+      props.workspaceSessionGroups.find((group) => group.workspace.id === id)?.workspace;
+    if (workspace?.workspaceType === "remote" && workspace.remoteType === "veslo") {
+      return (
+        workspace.vesloWorkspaceId?.trim() ||
+        parseVesloWorkspaceIdFromUrl(workspace.vesloHostUrl ?? "") ||
+        parseVesloWorkspaceIdFromUrl(workspace.baseUrl ?? "") ||
+        null
+      );
+    }
+    return workspace?.vesloWorkspaceId?.trim() || id;
+  };
+
+  const reportVisibleSessionIds: VisibleSessionIdsChangeHandler = (workspaceId, visibleSessionIds) => {
+    const client = props.vesloServerClient;
+    const serverWorkspaceId = resolveVesloWorkspaceId(workspaceId);
+    if (!client || !serverWorkspaceId) return;
+
+    const selectedSessionId = props.selectedSessionId?.trim() || null;
+    const selectedSessionHint =
+      visibleSessionIds.length > 0 &&
+      selectedSessionId &&
+      (workspaceId === props.activeWorkspaceId || visibleSessionIds.includes(selectedSessionId))
+        ? selectedSessionId
+        : null;
+    void client.prefetchSessionTranscripts(serverWorkspaceId, {
+      visibleSessionIds,
+      selectedSessionId: selectedSessionHint,
+      limit: 140,
+    }).catch((error) => {
+      console.warn("[session.visible-session-prefetch] failed", {
+        workspaceId,
+        serverWorkspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  };
+
   const commandPaletteRootItems = createMemo<CommandPaletteItem[]>(() => {
     const items: CommandPaletteItem[] = [
       {
@@ -3760,6 +3803,7 @@ export default function SessionView(props: SessionViewProps) {
             onArchiveSession={props.archiveSession}
             onUnarchiveSession={props.unarchiveSession}
             onLoadMoreWorkspaceSessions={props.loadMoreWorkspaceSidebarSessions}
+            onVisibleSessionIdsChange={reportVisibleSessionIds}
             onOpenSessionSearch={() => openCommandPalette("sessions")}
           />
         </div>

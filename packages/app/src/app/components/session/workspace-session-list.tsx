@@ -15,7 +15,12 @@ import {
 
 import type { VesloSoulStatus } from "../../lib/veslo-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
-import type { SidebarSubagentDecoration, WorkspaceConnectionState, WorkspaceSessionGroup } from "../../types";
+import type {
+  SidebarSubagentDecoration,
+  VisibleSessionIdsChangeHandler,
+  WorkspaceConnectionState,
+  WorkspaceSessionGroup,
+} from "../../types";
 import {
   getWorkspaceTaskLoadErrorDisplay,
   isWindowsPlatform,
@@ -64,6 +69,7 @@ import {
   writeSidebarViewMode,
   type SidebarViewMode,
 } from "./workspace-session-list-prefs";
+import { deriveVisibleSessionPrefetchIds } from "./workspace-session-list-prefetch";
 import { currentLocale, t } from "../../../i18n";
 
 type Props = {
@@ -102,6 +108,7 @@ type Props = {
   archivedSessionIds?: string[];
   onArchiveSession?: (workspaceId: string, sessionId: string) => Promise<void> | void;
   onUnarchiveSession?: (workspaceId: string, sessionId: string) => Promise<void> | void;
+  onVisibleSessionIdsChange?: VisibleSessionIdsChangeHandler;
 };
 
 type WorkspaceMenuTarget = {
@@ -244,6 +251,18 @@ export default function WorkspaceSessionList(props: Props) {
   );
 
   const recentRowsVisible = createMemo(() => recentRowsTreeVisible().slice(0, recentVisibleCount()));
+  const visibleProjectRows = createMemo<FlatSessionRow[]>(() => {
+    const expandedParentIds = expandedParentSessionIds();
+    const visibleByProject = projectVisibleByKey();
+    return orderedProjectGroups().flatMap((group) => {
+      const projectHierarchy = buildRowHierarchyLookup(group.sessions);
+      const projectTreeVisibleRows = group.sessions.filter((row) =>
+        rowVisibleByExpansion(row, projectHierarchy, expandedParentIds),
+      );
+      const visibleCount = visibleByProject[group.key] ?? PROJECT_VISIBLE_DEFAULT;
+      return projectTreeVisibleRows.slice(0, visibleCount);
+    });
+  });
 
   const recentHasHiddenRows = createMemo(() => recentRowsTreeVisible().length > recentVisibleCount());
 
@@ -867,6 +886,62 @@ export default function WorkspaceSessionList(props: Props) {
       }
       return changed ? next : current;
     });
+  });
+
+  const lastReportedVisibleSessionIdsByWorkspace = new Map<string, string>();
+
+  createEffect(() => {
+    const callback = props.onVisibleSessionIdsChange;
+    if (!callback) return;
+
+    const selectedSessionId = props.selectedSessionId?.trim() || null;
+    const selectedWorkspaceId = selectedSessionId ? sessionWorkspaceById().get(selectedSessionId) ?? null : null;
+    const rows = sidebarMode() === "by-project" ? visibleProjectRows() : recentRowsVisible();
+    const visibleIdsByWorkspace = new Map<string, string[]>();
+    const currentWorkspaceIds = new Set<string>();
+
+    for (const row of rows) {
+      const workspaceId = row.workspace.id;
+      const ids = visibleIdsByWorkspace.get(workspaceId) ?? [];
+      ids.push(row.session.id);
+      visibleIdsByWorkspace.set(workspaceId, ids);
+    }
+
+    for (const group of props.workspaceSessionGroups) {
+      const workspaceId = group.workspace.id;
+      currentWorkspaceIds.add(workspaceId);
+      const rawVisibleSessionIds = visibleIdsByWorkspace.get(workspaceId) ?? [];
+      const visibleSessionIds = deriveVisibleSessionPrefetchIds({
+        selectedSessionId:
+          rawVisibleSessionIds.length > 0 && workspaceId === selectedWorkspaceId ? selectedSessionId : null,
+        visibleSessionIds: rawVisibleSessionIds,
+      });
+      if (!visibleSessionIds.length) {
+        if (lastReportedVisibleSessionIdsByWorkspace.has(workspaceId)) {
+          lastReportedVisibleSessionIdsByWorkspace.delete(workspaceId);
+          props.onVisibleSessionIdsChange?.(workspaceId, []);
+        }
+        continue;
+      }
+      const signature = visibleSessionIds.join("\u0000");
+      if (lastReportedVisibleSessionIdsByWorkspace.get(workspaceId) === signature) continue;
+      lastReportedVisibleSessionIdsByWorkspace.set(workspaceId, signature);
+      props.onVisibleSessionIdsChange?.(workspaceId, visibleSessionIds);
+    }
+
+    for (const workspaceId of Array.from(lastReportedVisibleSessionIdsByWorkspace.keys())) {
+      if (currentWorkspaceIds.has(workspaceId)) continue;
+      lastReportedVisibleSessionIdsByWorkspace.delete(workspaceId);
+      props.onVisibleSessionIdsChange?.(workspaceId, []);
+    }
+  });
+
+  onCleanup(() => {
+    if (!props.onVisibleSessionIdsChange) return;
+    for (const workspaceId of Array.from(lastReportedVisibleSessionIdsByWorkspace.keys())) {
+      props.onVisibleSessionIdsChange?.(workspaceId, []);
+    }
+    lastReportedVisibleSessionIdsByWorkspace.clear();
   });
 
   const showNewSessionLabelText = createMemo(() =>
