@@ -36,7 +36,7 @@ import {
   readDenApiBaseOverride,
   writeDenApiBaseOverride,
 } from "../lib/den-auth";
-import { resolveSettingsTabLabel } from "../lib/settings-tab-label";
+import { resolveSettingsTabLabel, resolveVisibleSettingsTab } from "../lib/settings-tab-label";
 import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 
@@ -641,8 +641,7 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const activeTab = createMemo<SettingsTab>(() => {
-    const tabs = availableTabs();
-    return tabs.includes(props.settingsTab) ? props.settingsTab : "general";
+    return resolveVisibleSettingsTab(props.settingsTab, props.developerMode);
   });
 
   createEffect(() => {

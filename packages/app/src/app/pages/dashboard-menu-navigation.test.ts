@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
 import * as dashboardMenuNavigation from "./dashboard-menu-navigation.js";
+import { resolveVisibleSettingsTab } from "../lib/settings-tab-label.js";
 
 const { resolveLeftMenuAction } = dashboardMenuNavigation;
 const resolveDashboardTabSelectionAction = (
@@ -221,11 +222,15 @@ test("dashboard header keeps back-to-chat visible even without a selected sessio
 test("dashboard centers the titlebar on the active settings subsection", () => {
   assert.match(
     dashboardSource,
-    /import\s*\{\s*resolveSettingsTabLabel\s*\}\s*from\s+["']\.\.\/lib\/settings-tab-label["'];/,
+    /import\s*\{\s*resolveSettingsTabLabel,\s*resolveVisibleSettingsTab\s*\}\s*from\s+["']\.\.\/lib\/settings-tab-label["'];/,
   );
   assert.match(
     dashboardSource,
-    /const\s+dashboardTitlebarContext\s*=\s*createMemo\s*\(\s*\(\)\s*=>\s*[\r\n\s]*props\.tab\s*===\s*["']settings["']\s*\?\s*resolveSettingsTabLabel\(\s*props\.settingsTab\s*\)\s*:\s*title\(\)\s*,\s*\)/s,
+    /resolveVisibleSettingsTab\(\s*props\.settingsTab,\s*props\.developerMode\s*\)/,
+  );
+  assert.match(
+    dashboardSource,
+    /props\.tab\s*===\s*["']settings["']\s*\?\s*resolveSettingsTabLabel\(\s*visibleSettingsTab\(\)\s*\)\s*:\s*title\(\)/,
   );
   assert.match(
     dashboardSource,
@@ -234,13 +239,16 @@ test("dashboard centers the titlebar on the active settings subsection", () => {
   assert.doesNotMatch(dashboardSource, /<TitlebarMenuToggles[\s\S]*centerContent=\{title\(\)\}/);
   assert.match(
     settingsSource,
-    /import\s*\{\s*resolveSettingsTabLabel\s*\}\s*from\s+["']\.\.\/lib\/settings-tab-label["'];/,
+    /import\s*\{\s*resolveSettingsTabLabel,\s*resolveVisibleSettingsTab\s*\}\s*from\s+["']\.\.\/lib\/settings-tab-label["'];/,
   );
+  assert.match(settingsSource, /resolveVisibleSettingsTab\(\s*props\.settingsTab,\s*props\.developerMode\s*\)/);
   assert.match(settingsSource, /{resolveSettingsTabLabel\(tab\)}/);
   assert.doesNotMatch(settingsSource, /tabLabel\(tab\)/);
 });
 
 test("settings tab labels are localized through a shared helper", () => {
+  assert.equal(resolveVisibleSettingsTab("debug", false), "general");
+  assert.equal(resolveVisibleSettingsTab("debug", true), "debug");
   assert.match(settingsTabLabelSource, /settings\.general/);
   assert.match(settingsTabLabelSource, /settings\.model/);
   assert.match(settingsTabLabelSource, /settings\.advanced/);
