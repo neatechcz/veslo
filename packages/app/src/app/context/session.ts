@@ -2,6 +2,7 @@ import { batch, createEffect, createMemo, createSignal, onCleanup } from "solid-
 import { createStore, produce, reconcile } from "solid-js/store";
 
 import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client";
+import type { VesloSessionTranscriptSnapshot } from "../lib/veslo-server";
 
 import type {
   Client,
@@ -48,6 +49,11 @@ export type SessionModelState = {
 };
 
 export type SessionStore = ReturnType<typeof createSessionStore>;
+
+type TranscriptFreshness = {
+  fetchedAt: number | null;
+  staleAt: number | null;
+};
 
 type StoreState = {
   sessions: Session[];
@@ -211,6 +217,9 @@ export function createSessionStore(options: {
   const [messageLimitBySession, setMessageLimitBySession] = createSignal<Record<string, number>>({});
   const [messageCompleteBySession, setMessageCompleteBySession] = createSignal<Record<string, boolean>>({});
   const [messageLoadBusyBySession, setMessageLoadBusyBySession] = createSignal<Record<string, boolean>>({});
+  const [transcriptFreshnessBySession, setTranscriptFreshnessBySession] = createSignal<
+    Record<string, TranscriptFreshness>
+  >({});
   const reloadDetectionSet = new Set<string>();
   const invalidToolDetectionSet = new Set<string>();
   const chromeMcpFailureDetectionSet = new Set<string>();
@@ -708,6 +717,67 @@ export function createSessionStore(options: {
         setStore("parts", message.info.id, reconcile(sortById(parts), { key: "id" }));
       }
     });
+  }
+
+  function hydrateTranscriptSnapshot(snapshot: VesloSessionTranscriptSnapshot) {
+    const sessionID = snapshot.sessionId.trim();
+    if (!sessionID) return;
+
+    const nextFetchedAt = typeof snapshot.fetchedAt === "number" ? snapshot.fetchedAt : null;
+    const currentFreshness = transcriptFreshnessBySession()[sessionID];
+    if (
+      currentFreshness?.fetchedAt != null &&
+      nextFetchedAt != null &&
+      nextFetchedAt < currentFreshness.fetchedAt
+    ) {
+      return;
+    }
+
+    const nextMessages: MessageWithParts[] = snapshot.messages
+      .filter((info): info is MessageInfo => Boolean(info?.id))
+      .map((info) => ({
+        info,
+        parts: sortById((snapshot.partsByMessageId[info.id] ?? []).filter((part): part is Part => Boolean(part?.id))),
+      }));
+    const existingMessageCount = getCachedTranscriptMessageCount(sessionID);
+
+    batch(() => {
+      setTranscriptFreshnessBySession((current) => ({
+        ...current,
+        [sessionID]: {
+          fetchedAt: nextFetchedAt,
+          staleAt: typeof snapshot.staleAt === "number" ? snapshot.staleAt : null,
+        },
+      }));
+
+      if (existingMessageCount > nextMessages.length) return;
+
+      setMessagesForSession(sessionID, nextMessages);
+
+      const requestedLimit = Math.max(snapshot.limit || 0, nextMessages.length);
+      const currentLimit = messageLimitBySession()[sessionID] ?? 0;
+      const effectiveLimit = Math.max(requestedLimit, currentLimit);
+      setMessageLimitBySession((current) => ({
+        ...current,
+        [sessionID]: effectiveLimit,
+      }));
+      setMessageCompleteBySession((current) => ({
+        ...current,
+        [sessionID]: nextMessages.length < effectiveLimit,
+      }));
+    });
+  }
+
+  function hasWarmTranscript(sessionID: string) {
+    return (store.messages[sessionID] ?? []).length > 0;
+  }
+
+  function getCachedTranscriptMessageCount(sessionID: string) {
+    return (store.messages[sessionID] ?? []).length;
+  }
+
+  function getTranscriptFreshness(sessionID: string) {
+    return transcriptFreshnessBySession()[sessionID] ?? null;
   }
 
   async function selectSession(sessionID: string) {
@@ -1678,5 +1748,9 @@ export function createSessionStore(options: {
     setPendingQuestions,
     selectedSessionHasEarlierMessages,
     selectedSessionLoadingEarlierMessages,
+    hydrateTranscriptSnapshot,
+    hasWarmTranscript,
+    getCachedTranscriptMessageCount,
+    getTranscriptFreshness,
   };
 }

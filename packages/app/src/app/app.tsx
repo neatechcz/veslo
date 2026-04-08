@@ -1075,7 +1075,29 @@ export default function App() {
     setPendingPermissions,
     selectedSessionHasEarlierMessages,
     selectedSessionLoadingEarlierMessages,
+    hydrateTranscriptSnapshot,
   } = sessionStore;
+
+  const hydratedVesloServerClient = createMemo(() => {
+    const client = vesloServerClient();
+    if (!client) return null;
+
+    return {
+      ...client,
+      prefetchSessionTranscripts: async (workspaceId, input) => {
+        const result = await client.prefetchSessionTranscripts(workspaceId, input);
+        for (const item of result.items) {
+          hydrateTranscriptSnapshot(item);
+        }
+        return result;
+      },
+      getSessionTranscript: async (workspaceId, sessionId, limit = 140) => {
+        const snapshot = await client.getSessionTranscript(workspaceId, sessionId, limit);
+        hydrateTranscriptSnapshot(snapshot);
+        return snapshot;
+      },
+    };
+  });
 
   const ARTIFACT_SCAN_MESSAGE_WINDOW = 220;
   const artifacts = createMemo(() =>
@@ -7118,7 +7140,7 @@ export default function App() {
       error: error(),
       vesloServerStatus: vesloStatus,
       vesloServerUrl: vesloServerUrl(),
-      vesloServerClient: vesloServerClient(),
+      vesloServerClient: hydratedVesloServerClient(),
       vesloReconnectBusy: vesloReconnectBusy(),
       reconnectVesloServer,
       vesloServerSettings: vesloServerSettings(),
@@ -7431,7 +7453,7 @@ export default function App() {
     vesloServerStatus: vesloServerStatus(),
     startupPreference: startupPreference(),
     hideTitlebar: hideTitlebar(),
-    vesloServerClient: vesloServerClient(),
+    vesloServerClient: hydratedVesloServerClient(),
     vesloServerSettings: vesloServerSettings(),
     vesloServerHostInfo: vesloServerHostInfo(),
     vesloServerWorkspaceId: vesloServerWorkspaceId(),
