@@ -1,12 +1,10 @@
 import {
   Match,
-  Suspense,
   Show,
   Switch,
   createEffect,
   createMemo,
   createSignal,
-  lazy,
   onCleanup,
   onMount,
   untrack,
@@ -87,6 +85,12 @@ import VesloLogo from "./components/veslo-logo";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
 import RenameWorkspaceModal from "./components/rename-workspace-modal";
+import McpAuthModal from "./components/mcp-auth-modal";
+import OnboardingView from "./pages/onboarding";
+import DashboardView from "./pages/dashboard";
+import SessionView from "./pages/session";
+import ProtoWorkspacesView from "./pages/proto-workspaces";
+import ProtoV1UxView from "./pages/proto-v1-ux";
 import {
   deleteSessionComposerDraft,
   getSessionComposerDraft,
@@ -285,13 +289,6 @@ import {
   type ProviderAuthMethod,
   type ProviderOAuthStartResult,
 } from "./lib/provider-auth";
-
-const McpAuthModal = lazy(() => import("./components/mcp-auth-modal"));
-const OnboardingView = lazy(() => import("./pages/onboarding"));
-const DashboardView = lazy(() => import("./pages/dashboard"));
-const SessionView = lazy(() => import("./pages/session"));
-const ProtoWorkspacesView = lazy(() => import("./pages/proto-workspaces"));
-const ProtoV1UxView = lazy(() => import("./pages/proto-v1-ux"));
 
 type RemoteWorkspaceDefaults = {
   vesloHostUrl?: string | null;
@@ -7488,29 +7485,27 @@ export default function App() {
 
   return (
     <>
-      <Suspense>
-        <Switch>
-          <Match when={currentView() === "proto"}>
-            <Switch>
-              <Match when={isProtoV1Ux()}>
-                <ProtoV1UxView />
-              </Match>
-              <Match when={true}>
-                <ProtoWorkspacesView />
-              </Match>
-            </Switch>
-          </Match>
-          <Match when={currentView() === "onboarding"}>
-            <OnboardingView {...onboardingProps()} />
-          </Match>
-          <Match when={currentView() === "session"}>
-            <SessionView {...sessionProps()} />
-          </Match>
-          <Match when={true}>
-            <DashboardView {...dashboardProps()} />
-          </Match>
-        </Switch>
-      </Suspense>
+      <Switch>
+        <Match when={currentView() === "proto"}>
+          <Switch>
+            <Match when={isProtoV1Ux()}>
+              <ProtoV1UxView />
+            </Match>
+            <Match when={true}>
+              <ProtoWorkspacesView />
+            </Match>
+          </Switch>
+        </Match>
+        <Match when={currentView() === "onboarding"}>
+          <OnboardingView {...onboardingProps()} />
+        </Match>
+        <Match when={currentView() === "session"}>
+          <SessionView {...sessionProps()} />
+        </Match>
+        <Match when={true}>
+          <DashboardView {...dashboardProps()} />
+        </Match>
+      </Switch>
 
       <WorkspaceSwitchOverlay
         open={workspaceSwitchOpen() && !pendingSessionLoad()}
@@ -7596,32 +7591,30 @@ export default function App() {
         onTextChange={setResetModalText}
       />
 
-      <Show when={mcpAuthModalOpen()}>
-        <McpAuthModal
-          open={mcpAuthModalOpen()}
-          client={client()}
-          entry={mcpAuthEntry()}
-          projectDir={workspaceProjectDir()}
-          language={currentLocale()}
-          reloadRequired={mcpAuthNeedsReload()}
-          reloadBlocked={activeReloadBlockingSessions().length > 0}
-          activeSessions={activeReloadBlockingSessions()}
-          isRemoteWorkspace={activeWorkspaceDisplay().workspaceType === "remote"}
-          onForceStopSession={(sessionID) => abortSession(sessionID)}
-          onClose={() => {
-            setMcpAuthModalOpen(false);
-            setMcpAuthEntry(null);
-            setMcpAuthNeedsReload(false);
-          }}
-          onComplete={async () => {
-            setMcpAuthModalOpen(false);
-            setMcpAuthEntry(null);
-            setMcpAuthNeedsReload(false);
-            await refreshMcpServers();
-          }}
-          onReloadEngine={() => reloadWorkspaceEngineAndResume()}
-        />
-      </Show>
+      <McpAuthModal
+        open={mcpAuthModalOpen()}
+        client={client()}
+        entry={mcpAuthEntry()}
+        projectDir={workspaceProjectDir()}
+        language={currentLocale()}
+        reloadRequired={mcpAuthNeedsReload()}
+        reloadBlocked={activeReloadBlockingSessions().length > 0}
+        activeSessions={activeReloadBlockingSessions()}
+        isRemoteWorkspace={activeWorkspaceDisplay().workspaceType === "remote"}
+        onForceStopSession={(sessionID) => abortSession(sessionID)}
+        onClose={() => {
+          setMcpAuthModalOpen(false);
+          setMcpAuthEntry(null);
+          setMcpAuthNeedsReload(false);
+        }}
+        onComplete={async () => {
+          setMcpAuthModalOpen(false);
+          setMcpAuthEntry(null);
+          setMcpAuthNeedsReload(false);
+          await refreshMcpServers();
+        }}
+        onReloadEngine={() => reloadWorkspaceEngineAndResume()}
+      />
 
       <CreateWorkspaceModal
         open={workspaceStore.createWorkspaceOpen()}
