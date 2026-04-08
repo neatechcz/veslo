@@ -174,11 +174,11 @@ test("clicking selected rows still opens session detail while selected parents t
   );
 });
 
-test("parent sessions expose a mini branch toggle icon that only expands/collapses", () => {
+test("parent sessions expose a mini inline branch toggle that only expands/collapses", () => {
   assert.match(
     source,
     /import \{[\s\S]*ChevronDown,[\s\S]*ChevronRight,[\s\S]*\} from "lucide-solid";/,
-    "session list should import chevron icons for the overlay toggle",
+    "session list should import chevron icons for the branch toggle",
   );
 
   assert.match(
@@ -213,21 +213,21 @@ test("parent sessions expose a mini branch toggle icon that only expands/collaps
 
   assert.match(
     source,
-    /class="absolute left-1\/2 top-\[1\.375rem\] -translate-x-1\/2 -translate-y-1\/2 inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-10 shadow-sm transition-colors hover:bg-gray-2 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"/,
-    "toggle control should render as the circular overlay chrome instead of a text glyph",
+    /class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-\[4px\] text-gray-9 transition-colors hover:bg-gray-4\/70 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"/,
+    "toggle control should use a compact square hitbox instead of the circular overlay chrome",
   );
 
   assert.doesNotMatch(
     source,
-    /<span aria-hidden>\{isParentExpanded\(session\(\)\.id\) \? "v" : ">"\}<\/span>/,
-    "toggle icon should no longer render the inline text glyph",
+    /class="absolute left-1\/2 top-\[1\.375rem\] -translate-x-1\/2 -translate-y-1\/2 inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-10 shadow-sm transition-colors hover:bg-gray-2 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"/,
+    "toggle icon should no longer render as the large centered overlay button",
   );
 
   const toggleCallBindings = source.match(/sessionBranchToggle\(session\(\)\.id, hasChildren\(session\(\)\.id\)\)/g) ?? [];
   assert.equal(
     toggleCallBindings.length,
     2,
-    "both recent and by-project rows should invoke the shared overlay toggle renderer",
+    "both recent and by-project rows should invoke the shared branch toggle renderer",
   );
 
   assert.match(

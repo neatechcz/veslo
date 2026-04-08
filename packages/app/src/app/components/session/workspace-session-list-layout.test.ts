@@ -80,28 +80,28 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
   );
 });
 
-test("by-project rows center the branch toggle below the title without adding a new block row", () => {
+test("by-project rows keep the branch toggle inline before the title without overlay chrome", () => {
   assert.match(
     source,
     /sessionBranchToggle\(session\(\)\.id, hasChildren\(session\(\)\.id\)\)/,
-    "by-project rows should reuse the shared overlay toggle renderer",
+    "by-project rows should reuse the shared branch toggle renderer",
   );
 
   assert.match(
     source,
     /<div class="relative min-w-0 flex-1">/,
-    "by-project rows should keep the toggle inside a relative title/content wrapper",
+    "by-project rows should keep the title/content wrapper around the inline toggle and label",
   );
 
   assert.match(
     source,
-    /class="absolute left-1\/2 top-\[1\.375rem\] -translate-x-1\/2 -translate-y-1\/2 inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-10 shadow-sm transition-colors hover:bg-gray-2 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"/,
-    "by-project rows should use the same centered circular overlay toggle chrome",
+    /<div class="flex items-center gap-1\.5 min-w-0">[\s\S]*sessionBranchToggle\(session\(\)\.id, hasChildren\(session\(\)\.id\)\)[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-11 truncate font-medium"/,
+    "by-project rows should render the toggle inline before the session title so it never overlaps the label",
   );
 
   assert.doesNotMatch(
     source,
-    /class="inline-flex h-3\.5 w-3\.5 shrink-0 items-center justify-center rounded text-\[9px\] leading-none text-gray-9 transition-colors hover:bg-gray-4\/70 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"/,
-    "by-project rows should not keep the old inline text-toggle slot",
+    /class="absolute left-1\/2 top-\[1\.375rem\] -translate-x-1\/2 -translate-y-1\/2 inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-10 shadow-sm transition-colors hover:bg-gray-2 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"/,
+    "by-project rows should not keep the circular overlay toggle that steals pointer input from the title",
   );
 });
