@@ -1184,36 +1184,71 @@ export default function Composer(props: ComposerProps) {
       const selection = window.getSelection();
       if (selection && selection.rangeCount) {
         const range = selection.getRangeAt(0);
-        if (range.collapsed) {
-          const container = range.startContainer;
-          const offset = range.startOffset;
+        if (!editorRef.contains(range.startContainer) || !editorRef.contains(range.endContainer)) return;
 
-          const resolvePreviousSibling = () => {
-            if (container === editorRef) {
-              return offset > 0 ? editorRef.childNodes[offset - 1] : null;
-            }
-            if (container.nodeType === Node.TEXT_NODE) {
-              const parent = container.parentNode;
-              if (parent === editorRef) {
-                if (offset > 0) return null;
-                return container.previousSibling;
-              }
-            }
-            return null;
-          };
+        const isSlashChip = (node: Node | null): node is HTMLElement =>
+          node instanceof HTMLElement && Boolean(node.dataset.slashCommand);
+        const isSingleSpace = (node: Node | null): node is Text => node instanceof Text && (node.textContent ?? "") === " ";
+        const removeSlashChip = (chip: HTMLElement) => {
+          const next = chip.nextSibling;
+          if (isSingleSpace(next)) {
+            next.parentNode?.removeChild(next);
+          }
+          chip.parentNode?.removeChild(chip);
+        };
 
-          const prev = resolvePreviousSibling();
-          if (prev instanceof HTMLElement && prev.dataset.slashCommand) {
+        if (!range.collapsed) {
+          const selectedChip = Array.from(editorRef.querySelectorAll("span[data-slash-command]")).find((candidate) =>
+            range.intersectsNode(candidate),
+          );
+          if (selectedChip instanceof HTMLElement && selectedChip.dataset.slashCommand) {
             event.preventDefault();
-            // Also remove a single trailing space node if present.
-            const next = prev.nextSibling;
-            if (next && next.nodeType === Node.TEXT_NODE && (next.textContent ?? "") === " ") {
-              next.parentNode?.removeChild(next);
-            }
-            prev.parentNode?.removeChild(prev);
+            removeSlashChip(selectedChip);
             emitDraftChange();
             return;
           }
+        }
+
+        const direction: "backward" | "forward" = event.key === "Backspace" ? "backward" : "forward";
+        const container = range.startContainer;
+        const offset = range.startOffset;
+
+        const resolveBoundaryNode = () => {
+          if (container === editorRef) {
+            if (direction === "backward") {
+              return offset > 0 ? editorRef.childNodes[offset - 1] : null;
+            }
+            return offset < editorRef.childNodes.length ? editorRef.childNodes[offset] : null;
+          }
+
+          if (container.nodeType === Node.TEXT_NODE && container.parentNode === editorRef) {
+            const length = (container.textContent ?? "").length;
+            if (direction === "backward") {
+              if (offset === 0) return container.previousSibling;
+              if (offset === length) return container;
+              return null;
+            }
+            if (offset === length) return container.nextSibling;
+            if (offset === 0) return container;
+            return null;
+          }
+
+          return null;
+        };
+
+        const resolveSlashChip = (candidate: Node | null) => {
+          if (isSlashChip(candidate)) return candidate;
+          if (!isSingleSpace(candidate)) return null;
+          const neighbor = direction === "backward" ? candidate.previousSibling : candidate.nextSibling;
+          return isSlashChip(neighbor) ? neighbor : null;
+        };
+
+        const targetChip = resolveSlashChip(resolveBoundaryNode());
+        if (targetChip) {
+          event.preventDefault();
+          removeSlashChip(targetChip);
+          emitDraftChange();
+          return;
         }
       }
     }
