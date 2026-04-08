@@ -40,6 +40,14 @@ test("session titlebar directory uses the shared app font instead of monospace",
   );
 });
 
+test("session hides the centered directory context when the chat is empty", () => {
+  assert.match(
+    source,
+    /const sessionTitlebarContext = createMemo\(\(\) => \{\s*if \(props\.messages\.length === 0\) return null;/,
+    "session should avoid showing duplicate directory context above the composer in empty chats",
+  );
+});
+
 test("session renders the disclaimer outside the composer", () => {
   assert.match(
     source,

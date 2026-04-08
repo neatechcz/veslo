@@ -449,6 +449,7 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const sessionTitlebarContext = createMemo(() => {
+    if (props.messages.length === 0) return null;
     const label = sessionTitlebarLabel();
     if (!label) return null;
     return (
