@@ -36,6 +36,7 @@ import {
   readDenApiBaseOverride,
   writeDenApiBaseOverride,
 } from "../lib/den-auth";
+import { resolveSettingsTabLabel } from "../lib/settings-tab-label";
 import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 
@@ -633,19 +634,6 @@ export default function SettingsView(props: SettingsViewProps) {
   const isLocalEngineRunning = createMemo(() => Boolean(props.engineInfo?.running));
   const startupLabel = createMemo(() => "Connect to cloud server");
 
-  const tabLabel = (tab: SettingsTab) => {
-    switch (tab) {
-      case "model":
-        return "Model";
-      case "advanced":
-        return "Advanced";
-      case "debug":
-        return "Debug";
-      default:
-        return "General";
-    }
-  };
-
   const availableTabs = createMemo<SettingsTab[]>(() => {
     const tabs: SettingsTab[] = ["general", "model", "advanced"];
     if (props.developerMode) tabs.push("debug");
@@ -955,7 +943,7 @@ export default function SettingsView(props: SettingsViewProps) {
                 }`}
                 onClick={() => props.setSettingsTab(tab)}
               >
-                {tabLabel(tab)}
+                {resolveSettingsTabLabel(tab)}
               </button>
             )}
           </For>

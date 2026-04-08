@@ -60,6 +60,7 @@ import SidebarDashboardNav from "../components/session/sidebar-dashboard-nav";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
 import { resolveTitlebarContentInsetClass } from "../components/titlebar-menu-layout";
+import { resolveSettingsTabLabel } from "../lib/settings-tab-label";
 import {
   clampLeftSidebarWidth,
   readLeftSidebarWidth,
@@ -429,20 +430,8 @@ export default function DashboardView(props: DashboardViewProps) {
         return t("nav.automations", currentLocale());
     }
   });
-  const settingsSubsectionLabel = createMemo(() => {
-    switch (props.settingsTab) {
-      case "model":
-        return "Model";
-      case "advanced":
-        return "Advanced";
-      case "debug":
-        return "Debug";
-      default:
-        return "General";
-    }
-  });
   const dashboardTitlebarContext = createMemo(() =>
-    props.tab === "settings" ? settingsSubsectionLabel() : title(),
+    props.tab === "settings" ? resolveSettingsTabLabel(props.settingsTab) : title(),
   );
 
   const workspaceLabel = (workspace: WorkspaceInfo) =>

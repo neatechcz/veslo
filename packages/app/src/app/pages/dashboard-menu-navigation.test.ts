@@ -16,6 +16,7 @@ const resolveDashboardTabSelectionAction = (
 ).resolveDashboardTabSelectionAction;
 
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
+const settingsSource = readFileSync(new URL("./settings.tsx", import.meta.url), "utf8");
 const headerSourceMatch = dashboardSource.match(
   /<header class="h-14 flex items-center justify-between px-6 md:px-10 border-b border-dls-border sticky top-0 bg-dls-surface z-10">[\s\S]*?<\/header>/,
 );
@@ -26,6 +27,8 @@ const leftMenuHandlerMatch = dashboardSource.match(
 const leftMenuHandlerSource = leftMenuHandlerMatch?.[0] ?? dashboardSource;
 const helperSourcePath = new URL("./dashboard-menu-navigation.ts", import.meta.url);
 const helperSource = existsSync(helperSourcePath) ? readFileSync(helperSourcePath, "utf8") : null;
+const settingsTabLabelSourcePath = new URL("../lib/settings-tab-label.ts", import.meta.url);
+const settingsTabLabelSource = readFileSync(settingsTabLabelSourcePath, "utf8");
 
 test("returns to selected session for automations", () => {
   const result = resolveLeftMenuAction({
@@ -218,15 +221,30 @@ test("dashboard header keeps back-to-chat visible even without a selected sessio
 test("dashboard centers the titlebar on the active settings subsection", () => {
   assert.match(
     dashboardSource,
-    /const\s+settingsSubsectionLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>\s*\{[\s\S]*switch\s*\(\s*props\.settingsTab\s*\)\s*\{[\s\S]*case\s+["']model["']:\s*return\s+["']Model["'];[\s\S]*case\s+["']advanced["']:\s*return\s+["']Advanced["'];[\s\S]*case\s+["']debug["']:\s*return\s+["']Debug["'];[\s\S]*default:\s*return\s+["']General["'];[\s\S]*\}\s*\}\s*\)/s,
+    /import\s*\{\s*resolveSettingsTabLabel\s*\}\s*from\s+["']\.\.\/lib\/settings-tab-label["'];/,
   );
   assert.match(
     dashboardSource,
-    /const\s+dashboardTitlebarContext\s*=\s*createMemo\s*\(\s*\(\)\s*=>\s*[\r\n\s]*props\.tab\s*===\s*["']settings["']\s*\?\s*settingsSubsectionLabel\(\)\s*:\s*title\(\)\s*,\s*\)/s,
+    /const\s+dashboardTitlebarContext\s*=\s*createMemo\s*\(\s*\(\)\s*=>\s*[\r\n\s]*props\.tab\s*===\s*["']settings["']\s*\?\s*resolveSettingsTabLabel\(\s*props\.settingsTab\s*\)\s*:\s*title\(\)\s*,\s*\)/s,
   );
   assert.match(
     dashboardSource,
     /<TitlebarMenuToggles[\s\S]*centerContent=\{dashboardTitlebarContext\(\)\}/,
   );
   assert.doesNotMatch(dashboardSource, /<TitlebarMenuToggles[\s\S]*centerContent=\{title\(\)\}/);
+  assert.match(
+    settingsSource,
+    /import\s*\{\s*resolveSettingsTabLabel\s*\}\s*from\s+["']\.\.\/lib\/settings-tab-label["'];/,
+  );
+  assert.match(settingsSource, /{resolveSettingsTabLabel\(tab\)}/);
+  assert.doesNotMatch(settingsSource, /tabLabel\(tab\)/);
+});
+
+test("settings tab labels are localized through a shared helper", () => {
+  assert.match(settingsTabLabelSource, /settings\.general/);
+  assert.match(settingsTabLabelSource, /settings\.model/);
+  assert.match(settingsTabLabelSource, /settings\.advanced/);
+  assert.match(settingsTabLabelSource, /settings\.debug/);
+  assert.match(settingsTabLabelSource, /return\s+t\(key,\s*currentLocale\(\)\)/);
+  assert.doesNotMatch(settingsTabLabelSource, /"General"|"Model"|"Advanced"|"Debug"/);
 });
