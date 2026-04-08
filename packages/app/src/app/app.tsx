@@ -262,6 +262,7 @@ import {
   type VesloAuditEntry,
   type VesloSoulHeartbeatEntry,
   type VesloSoulStatus,
+  type VesloSessionArchiveRecord,
   type VesloSessionLatestRunArtifacts,
   type VesloServerCapabilities,
   type VesloServerDiagnostics,
@@ -279,6 +280,13 @@ import {
 } from "./lib/attachment-prompt-routing";
 import { resolveArtifactFamilies } from "./components/session/artifact-family-model";
 import { CLOUD_ONLY_MODE, resolveVesloCloudEnvironment } from "./lib/cloud-policy";
+import {
+  LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY,
+  buildLegacyArchiveMigration,
+  buildSessionArchiveSnapshot,
+  sortArchivedSessionsByRecency,
+  toSessionArchiveItem,
+} from "./lib/session-archive-model";
 import { isRemoteUiEnabled } from "./lib/runtime-policy";
 import {
   resolveEffectiveConnectedProviderIds,
@@ -299,8 +307,8 @@ type RemoteWorkspaceDefaults = {
 };
 
 export default function App() {
-  const envVesloWorkspaceId =
-    resolveVesloCloudEnvironment(import.meta.env as Record<string, string | undefined>).workspaceId ?? null;
+  const cloudEnvironment = resolveVesloCloudEnvironment(import.meta.env as Record<string, string | undefined>);
+  const envVesloWorkspaceId = cloudEnvironment.workspaceId ?? null;
 
   // Workspace switch tracing is noisy, so only emit in developer mode.
   // (Veslo already has a developer mode toggle in Settings.)
@@ -436,6 +444,7 @@ export default function App() {
   const [vesloAuditStatus, setVesloAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
   const [vesloAuditError, setVesloAuditError] = createSignal<string | null>(null);
   const [devtoolsWorkspaceId, setDevtoolsWorkspaceId] = createSignal<string | null>(null);
+  const [authenticatedAccountId, setAuthenticatedAccountId] = createSignal<string | null>(null);
 
   const vesloServerLocalFallbackBaseUrl = createMemo(() => {
     if (!isTauriRuntime()) return "";
@@ -489,6 +498,17 @@ export default function App() {
     if (!baseUrl) return null;
     const auth = vesloServerAuth();
     return createVesloServerClient({ baseUrl, token: auth.token, hostToken: auth.hostToken });
+  });
+
+  const vesloArchiveClient = createMemo(() => {
+    const baseUrl =
+      normalizeVesloServerUrl(vesloServerSettings().urlOverride ?? "") ??
+      normalizeVesloServerUrl(cloudEnvironment.vesloUrl) ??
+      "";
+    const token = vesloServerSettings().token?.trim() || cloudEnvironment.token?.trim() || "";
+    const accountId = authenticatedAccountId()?.trim() ?? "";
+    if (!baseUrl || !token || !accountId) return null;
+    return createVesloServerClient({ baseUrl, token, accountId });
   });
 
   const devtoolsVesloClient = createMemo(() => vesloServerClient());
@@ -2898,6 +2918,207 @@ export default function App() {
     return paging;
   });
 
+  const SESSION_ARCHIVE_MIGRATION_KEY_PREFIX = "veslo.session-archives-cloud-migrated.v1:";
+
+  const readLegacyArchivedSessionIds = () => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = window.localStorage.getItem(LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+  };
+
+  const clearLegacyArchivedSessionIds = () => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.removeItem(LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY);
+    } catch {
+      // ignore
+    }
+  };
+
+  const readArchiveMigrationDone = (accountId: string) => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem(`${SESSION_ARCHIVE_MIGRATION_KEY_PREFIX}${accountId}`) === "true";
+    } catch {
+      return false;
+    }
+  };
+
+  const writeArchiveMigrationDone = (accountId: string) => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(`${SESSION_ARCHIVE_MIGRATION_KEY_PREFIX}${accountId}`, "true");
+    } catch {
+      // ignore
+    }
+  };
+
+  const [sessionArchiveRecords, setSessionArchiveRecords] = createSignal<VesloSessionArchiveRecord[]>([]);
+  const [sessionArchiveReady, setSessionArchiveReady] = createSignal(false);
+  const [sessionArchivePendingIds, setSessionArchivePendingIds] = createSignal<Set<string>>(new Set());
+
+  const applySessionArchiveRecords = (items: VesloSessionArchiveRecord[]) => {
+    setSessionArchiveRecords(sortArchivedSessionsByRecency(items));
+    setSessionArchiveReady(true);
+  };
+
+  const archivedSessionIds = createMemo(() => sessionArchiveRecords().map((record) => record.sessionId));
+  const sessionArchives = createMemo(() =>
+    sortArchivedSessionsByRecency(
+      sessionArchiveRecords().map((record) => toSessionArchiveItem(record, workspaceStore.workspaces())),
+    ),
+  );
+
+  const withPendingArchivedSession = async (sessionId: string, task: () => Promise<void>) => {
+    const id = sessionId.trim();
+    if (!id) return;
+    if (sessionArchivePendingIds().has(id)) return;
+
+    setSessionArchivePendingIds((current) => {
+      const next = new Set(current);
+      next.add(id);
+      return next;
+    });
+    try {
+      await task();
+    } finally {
+      setSessionArchivePendingIds((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  const loadSessionArchives = async () => {
+    const client = vesloArchiveClient();
+    const accountId = authenticatedAccountId()?.trim() ?? "";
+    if (!client || !accountId) {
+      setSessionArchiveRecords([]);
+      setSessionArchiveReady(true);
+      return;
+    }
+
+    const response = await client.listSessionArchives();
+    applySessionArchiveRecords(response.items ?? []);
+  };
+
+  let lastSessionArchiveClientKey = "";
+  createEffect(() => {
+    const client = vesloArchiveClient();
+    const accountId = authenticatedAccountId()?.trim() ?? "";
+    const key = client && accountId ? `${client.baseUrl}::${client.token ?? ""}::${accountId}` : "";
+    if (key === lastSessionArchiveClientKey) return;
+    lastSessionArchiveClientKey = key;
+    setSessionArchiveReady(false);
+    void loadSessionArchives().catch((error) => {
+      reportError(error, "sessionArchives.load");
+      setSessionArchiveRecords([]);
+      setSessionArchiveReady(true);
+    });
+  });
+
+  let sessionArchiveMigrationRunning = false;
+  createEffect(() => {
+    const client = vesloArchiveClient();
+    const accountId = authenticatedAccountId()?.trim() ?? "";
+    const ready = sessionArchiveReady();
+    const records = sessionArchiveRecords();
+    const groups = sidebarWorkspaceGroups();
+
+    if (!client || !accountId || !ready || sessionArchiveMigrationRunning) return;
+    if (readArchiveMigrationDone(accountId)) return;
+
+    const legacyIds = readLegacyArchivedSessionIds();
+    if (legacyIds.length === 0) {
+      writeArchiveMigrationDone(accountId);
+      return;
+    }
+
+    if (records.length > 0) {
+      clearLegacyArchivedSessionIds();
+      writeArchiveMigrationDone(accountId);
+      return;
+    }
+
+    const migrationRecords = buildLegacyArchiveMigration(legacyIds, groups);
+    if (migrationRecords.length === 0) {
+      const allGroupsSettled =
+        groups.length > 0 && groups.every((group) => group.status === "ready" || group.status === "error");
+      if (allGroupsSettled) {
+        clearLegacyArchivedSessionIds();
+        writeArchiveMigrationDone(accountId);
+      }
+      return;
+    }
+
+    sessionArchiveMigrationRunning = true;
+    void (async () => {
+      try {
+        let latest: VesloSessionArchiveRecord[] = records;
+        for (const record of migrationRecords) {
+          const { sessionId, ...payload } = record;
+          latest = (await client.putSessionArchive(sessionId, payload)).items ?? [];
+        }
+        applySessionArchiveRecords(latest);
+        clearLegacyArchivedSessionIds();
+        writeArchiveMigrationDone(accountId);
+      } catch (error) {
+        reportError(error, "sessionArchives.migrateLegacy");
+      } finally {
+        sessionArchiveMigrationRunning = false;
+      }
+    })();
+  });
+
+  const archiveSidebarSession = async (workspaceId: string, sessionId: string) => {
+    const client = vesloArchiveClient();
+    const accountId = authenticatedAccountId()?.trim() ?? "";
+    if (!client || !accountId) {
+      setError("Cloud sign-in is required to archive sessions.");
+      return;
+    }
+
+    const group = sidebarWorkspaceGroups().find((entry) => entry.workspace.id === workspaceId) ?? null;
+    const session = group?.sessions.find((entry) => entry.id === sessionId) ?? null;
+    if (!group || !session) return;
+
+    await withPendingArchivedSession(sessionId, async () => {
+      const response = await client.putSessionArchive(
+        sessionId,
+        buildSessionArchiveSnapshot({ session, workspace: group.workspace }),
+      );
+      applySessionArchiveRecords(response.items ?? []);
+      clearLegacyArchivedSessionIds();
+      writeArchiveMigrationDone(accountId);
+    });
+  };
+
+  const unarchiveSession = async (sessionId: string) => {
+    const client = vesloArchiveClient();
+    const accountId = authenticatedAccountId()?.trim() ?? "";
+    if (!client || !accountId) {
+      setError("Cloud sign-in is required to unarchive sessions.");
+      return;
+    }
+
+    await withPendingArchivedSession(sessionId, async () => {
+      const response = await client.deleteSessionArchive(sessionId);
+      applySessionArchiveRecords(response.items ?? []);
+      clearLegacyArchivedSessionIds();
+      writeArchiveMigrationDone(accountId);
+    });
+  };
+
   type SidebarSubagentCandidate = {
     workspaceId: string;
     sessionId: string;
@@ -3804,6 +4025,7 @@ export default function App() {
 
     const auth = readDenAuth();
     setAuthenticatedUser(resolveDenUserLabel(auth));
+    setAuthenticatedAccountId(auth?.user?.id?.trim() || null);
     if (!auth) return;
 
     const token = auth?.token?.trim() ?? "";
@@ -3829,6 +4051,7 @@ export default function App() {
           name: userName || undefined,
           email: userEmail || undefined,
         }));
+        setAuthenticatedAccountId(userId);
         writeDenAuth({
           ...auth,
           user: {
@@ -6954,6 +7177,17 @@ export default function App() {
       workspaceSessionGroups: sidebarWorkspaceGroups(),
       workspaceSessionPagingById: workspaceSessionPagingById(),
       subagentDecorationsBySessionId: subagentDecorationsBySessionId(),
+      archivedSessionIds: archivedSessionIds(),
+      archiveSession: (workspaceId: string, sessionId: string) =>
+        archiveSidebarSession(workspaceId, sessionId).catch((error) => {
+          reportError(error, "sessionArchives.archiveSidebar");
+          setError(error instanceof Error ? error.message : safeStringify(error));
+        }),
+      unarchiveSession: (_workspaceId: string, sessionId: string) =>
+        unarchiveSession(sessionId).catch((error) => {
+          reportError(error, "sessionArchives.unarchiveSidebar");
+          setError(error instanceof Error ? error.message : safeStringify(error));
+        }),
       loadMoreWorkspaceSidebarSessions,
       isPrivateWorkspacePath: workspaceStore.isPrivateWorkspacePath,
       selectedSessionId: activeSessionId(),
@@ -7093,6 +7327,12 @@ export default function App() {
       notionError: notionError(),
       notionBusy: notionBusy(),
       connectNotion,
+      sessionArchives: sessionArchives(),
+      onUnarchiveArchivedSession: (sessionId: string) =>
+        unarchiveSession(sessionId).catch((error) => {
+          reportError(error, "sessionArchives.unarchiveSettings");
+          setError(error instanceof Error ? error.message : safeStringify(error));
+        }),
       mcpServers: mcpServers(),
       mcpStatus: mcpStatus(),
       mcpLastUpdatedAt: mcpLastUpdatedAt(),
@@ -7234,6 +7474,17 @@ export default function App() {
     workspaceSessionGroups: sidebarWorkspaceGroups(),
     workspaceSessionPagingById: workspaceSessionPagingById(),
     subagentDecorationsBySessionId: subagentDecorationsBySessionId(),
+    archivedSessionIds: archivedSessionIds(),
+    archiveSession: (workspaceId: string, sessionId: string) =>
+      archiveSidebarSession(workspaceId, sessionId).catch((error) => {
+        reportError(error, "sessionArchives.archiveSidebar");
+        setError(error instanceof Error ? error.message : safeStringify(error));
+      }),
+    unarchiveSession: (_workspaceId: string, sessionId: string) =>
+      unarchiveSession(sessionId).catch((error) => {
+        reportError(error, "sessionArchives.unarchiveSidebar");
+        setError(error instanceof Error ? error.message : safeStringify(error));
+      }),
     loadMoreWorkspaceSidebarSessions,
     isPrivateWorkspacePath: workspaceStore.isPrivateWorkspacePath,
     soulStatusByWorkspaceId: soulStatusByWorkspaceId(),

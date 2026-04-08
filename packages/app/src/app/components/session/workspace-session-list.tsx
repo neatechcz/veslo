@@ -54,12 +54,10 @@ import {
   reorderProjectKeys,
 } from "./workspace-session-list-order";
 import {
-  readArchivedSessionIds,
   readCollapsedProjectMap,
   readProjectOrder,
   readShowArchivedSessions,
   readSidebarViewMode,
-  writeArchivedSessionIds,
   writeCollapsedProjectMap,
   writeProjectOrder,
   writeShowArchivedSessions,
@@ -101,6 +99,9 @@ type Props = {
   onOpenSessionSearch?: () => void;
   onAddDirectorySession?: () => void;
   onLoadMoreWorkspaceSessions?: (workspaceId: string) => Promise<boolean> | boolean | Promise<void> | void;
+  archivedSessionIds?: string[];
+  onArchiveSession?: (workspaceId: string, sessionId: string) => Promise<void> | void;
+  onUnarchiveSession?: (workspaceId: string, sessionId: string) => Promise<void> | void;
 };
 
 type WorkspaceMenuTarget = {
@@ -167,7 +168,6 @@ export default function WorkspaceSessionList(props: Props) {
   const [projectDragPreview, setProjectDragPreview] = createSignal<ProjectDragPreviewState | null>(null);
   const [workspaceMenuTarget, setWorkspaceMenuTarget] = createSignal<WorkspaceMenuTarget | null>(null);
   const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
-  const [archivedSessionIds, setArchivedSessionIds] = createSignal<string[]>(readArchivedSessionIds());
   const [showArchivedSessions, setShowArchivedSessions] = createSignal<boolean>(readShowArchivedSessions());
   const [pendingArchiveConfirmationSessionId, setPendingArchiveConfirmationSessionId] = createSignal<string | null>(
     null,
@@ -195,7 +195,20 @@ export default function WorkspaceSessionList(props: Props) {
   const rowIndentStyle = (row: FlatSessionRow) =>
     row.nestingLevel > 0 ? { "padding-left": `${12 + Math.min(row.nestingLevel, 6) * 14}px` } : undefined;
 
-  const archivedSessionIdSet = createMemo(() => new Set(archivedSessionIds()));
+  const archivedSessionIds = () => props.archivedSessionIds ?? [];
+  const sessionWorkspaceById = createMemo(() => {
+    const map = new Map<string, string>();
+    for (const group of props.workspaceSessionGroups) {
+      const workspaceId = group.workspace.id;
+      for (const session of group.sessions) {
+        map.set(session.id, workspaceId);
+      }
+    }
+    return map;
+  });
+  const archivedSessionIdSet = createMemo(
+    () => new Set(archivedSessionIds().map((sessionId) => sessionId.trim()).filter(Boolean)),
+  );
   const isSessionArchived = (sessionId: string) => archivedSessionIdSet().has(sessionId.trim());
   const isArchiveConfirmationPending = (sessionId: string) =>
     pendingArchiveConfirmationSessionId() === sessionId.trim();
@@ -540,21 +553,20 @@ export default function WorkspaceSessionList(props: Props) {
     );
   };
 
-  const setArchivedSessionIdsWithPersist = (updater: (current: string[]) => string[]) => {
-    setArchivedSessionIds((current) => {
-      const next = updater(current);
-      writeArchivedSessionIds(next);
-      return next;
-    });
-  };
-
-  const handleSessionArchiveAction = (event: MouseEvent, sessionId: string) => {
+  const handleSessionArchiveAction = async (event: MouseEvent, sessionId: string) => {
     event.stopPropagation();
     const id = sessionId.trim();
     if (!id) return;
     const archived = isSessionArchived(id);
+    const workspaceId = sessionWorkspaceById().get(id) ?? "";
+    if (!workspaceId) return;
 
-    if (!archived && !isArchiveConfirmationPending(id)) {
+    if (archived) {
+      await Promise.resolve(props.onUnarchiveSession?.(workspaceId, id));
+      return;
+    }
+
+    if (!isArchiveConfirmationPending(id)) {
       if (event.currentTarget instanceof HTMLButtonElement) {
         pendingArchiveConfirmButtonRef = event.currentTarget;
       }
@@ -563,10 +575,7 @@ export default function WorkspaceSessionList(props: Props) {
     }
 
     setPendingArchiveConfirmationSessionId(null);
-    setArchivedSessionIdsWithPersist((current) => {
-      if (archived) return current.filter((entry) => entry !== id);
-      return current.includes(id) ? current : [...current, id];
-    });
+    await Promise.resolve(props.onArchiveSession?.(workspaceId, id));
   };
 
   const toggleShowArchived = () => {

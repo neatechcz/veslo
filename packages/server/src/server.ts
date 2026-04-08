@@ -33,6 +33,7 @@ import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
 import { TOY_UI_CSS, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsResponse } from "./toy-ui.js";
 import { FileSessionStore } from "./file-sessions.js";
+import { createSessionArchiveStore } from "./session-archives.js";
 import { deriveLatestRunArtifactsResponse } from "./session-artifacts.js";
 import pkg from "../package.json" with { type: "json" };
 
@@ -732,7 +733,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   headers.set("Access-Control-Allow-Origin", allowOrigin);
   headers.set(
     "Access-Control-Allow-Headers",
-    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
+    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, x-veslo-account-id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
   );
   headers.set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
   headers.set("Vary", "Origin");
@@ -772,6 +773,14 @@ async function requireHost(request: Request, config: ServerConfig, tokens: Token
   }
   const clientId = request.headers.get("x-veslo-client-id") ?? undefined;
   return { type: "remote", clientId, tokenHash: hashToken(bearer), scope };
+}
+
+export function resolveArchiveOwnerKey(request: Request): string {
+  const accountId = request.headers.get("x-veslo-account-id")?.trim() ?? "";
+  if (!accountId) {
+    throw new ApiError(400, "account_id_required", "A stable cloud account id is required for session archive sync.");
+  }
+  return accountId;
 }
 
 function buildCapabilities(config: ServerConfig): Capabilities {
@@ -1312,6 +1321,7 @@ export function serializeWorkspace(workspace: ServerConfig["workspaces"][number]
 function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: TokenService): Route[] {
   const routes: Route[] = [];
   const fileSessions = new FileSessionStore();
+  const sessionArchives = createSessionArchiveStore();
 
   const serializeFileSession = (session: {
     id: string;
@@ -1457,6 +1467,57 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const active = config.workspaces[0] ?? null;
     const items = config.workspaces.map(serializeWorkspace);
     return jsonResponse({ items, activeId: active?.id ?? null });
+  });
+
+  addRoute(routes, "GET", "/session-archives", "client", async (ctx) => {
+    const ownerKey = resolveArchiveOwnerKey(ctx.request);
+    return jsonResponse({ items: await sessionArchives.list(ownerKey) });
+  });
+
+  addRoute(routes, "PUT", "/session-archives/:sessionId", "client", async (ctx) => {
+    ensureWritable(config);
+    const ownerKey = resolveArchiveOwnerKey(ctx.request);
+    const body = await readJsonBody(ctx.request);
+    const archivedAt = typeof body.archivedAt === "number" && Number.isFinite(body.archivedAt) ? body.archivedAt : Date.now();
+    const titleSnapshot = typeof body.titleSnapshot === "string" ? body.titleSnapshot : "";
+    return jsonResponse({
+      items: await sessionArchives.put(ownerKey, {
+        sessionId: ctx.params.sessionId,
+        archivedAt,
+        titleSnapshot,
+        workspaceIdAtArchive: typeof body.workspaceIdAtArchive === "string" ? body.workspaceIdAtArchive : undefined,
+        workspaceLabelSnapshot: typeof body.workspaceLabelSnapshot === "string" ? body.workspaceLabelSnapshot : undefined,
+        resolvedDirectoryAtArchive:
+          typeof body.resolvedDirectoryAtArchive === "string" ? body.resolvedDirectoryAtArchive : undefined,
+        projectRootAtArchive: typeof body.projectRootAtArchive === "string" ? body.projectRootAtArchive : undefined,
+        projectLabelSnapshot: typeof body.projectLabelSnapshot === "string" ? body.projectLabelSnapshot : undefined,
+        parentSessionId:
+          typeof body.parentSessionId === "string"
+            ? body.parentSessionId
+            : body.parentSessionId === null
+              ? null
+              : undefined,
+        createdAtSnapshot:
+          typeof body.createdAtSnapshot === "number" && Number.isFinite(body.createdAtSnapshot)
+            ? body.createdAtSnapshot
+            : body.createdAtSnapshot === null
+              ? null
+              : undefined,
+        updatedAtSnapshot:
+          typeof body.updatedAtSnapshot === "number" && Number.isFinite(body.updatedAtSnapshot)
+            ? body.updatedAtSnapshot
+            : body.updatedAtSnapshot === null
+              ? null
+              : undefined,
+        workspaceIdentity: typeof body.workspaceIdentity === "string" ? body.workspaceIdentity : undefined,
+      }),
+    });
+  });
+
+  addRoute(routes, "DELETE", "/session-archives/:sessionId", "client", async (ctx) => {
+    ensureWritable(config);
+    const ownerKey = resolveArchiveOwnerKey(ctx.request);
+    return jsonResponse({ items: await sessionArchives.delete(ownerKey, ctx.params.sessionId) });
   });
 
   addRoute(routes, "GET", "/tokens", "host", async () => {

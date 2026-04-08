@@ -194,6 +194,9 @@ export type SessionViewProps = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
   workspaceSessionPagingById: Record<string, { hasMore: boolean; loadingMore: boolean }>;
   subagentDecorationsBySessionId: Record<string, SidebarSubagentDecoration>;
+  archivedSessionIds: string[];
+  archiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
+  unarchiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
   loadMoreWorkspaceSidebarSessions: (workspaceId: string) => Promise<void> | void;
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
   openRenameWorkspace: (workspaceId: string) => void;
@@ -3726,6 +3729,7 @@ export default function SessionView(props: SessionViewProps) {
             workspaceSessionGroups={props.workspaceSessionGroups}
             workspaceSessionPagingById={props.workspaceSessionPagingById}
             subagentDecorationsBySessionId={props.subagentDecorationsBySessionId}
+            archivedSessionIds={props.archivedSessionIds}
             activeWorkspaceId={props.activeWorkspaceId}
             selectedSessionId={props.selectedSessionId}
             sessionStatusById={props.sessionStatusById}
@@ -3753,6 +3757,8 @@ export default function SessionView(props: SessionViewProps) {
             onImportWorkspaceConfig={props.importWorkspaceConfig}
             onQuickNewSession={props.openNewSessionWithDirectory}
             onAddDirectorySession={props.openDirectorySessionFromPicker}
+            onArchiveSession={props.archiveSession}
+            onUnarchiveSession={props.unarchiveSession}
             onLoadMoreWorkspaceSessions={props.loadMoreWorkspaceSidebarSessions}
             onOpenSessionSearch={() => openCommandPalette("sessions")}
           />

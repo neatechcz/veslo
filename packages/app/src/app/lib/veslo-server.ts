@@ -439,6 +439,21 @@ export type VesloWorkspaceExport = {
   commands?: Array<{ name: string; description?: string; template?: string }>;
 };
 
+export type VesloSessionArchiveRecord = {
+  sessionId: string;
+  archivedAt: number;
+  titleSnapshot: string;
+  workspaceIdAtArchive?: string;
+  workspaceLabelSnapshot?: string;
+  resolvedDirectoryAtArchive?: string;
+  projectRootAtArchive?: string;
+  projectLabelSnapshot?: string;
+  parentSessionId?: string | null;
+  createdAtSnapshot?: number | null;
+  updatedAtSnapshot?: number | null;
+  workspaceIdentity?: string;
+};
+
 export type VesloArtifactItem = {
   id: string;
   name?: string;
@@ -1140,7 +1155,14 @@ const DEFAULT_VESLO_SERVER_TIMEOUT_MS = 10_000;
 async function requestJson<T>(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number } = {},
+  options: {
+    method?: string;
+    token?: string;
+    hostToken?: string;
+    body?: unknown;
+    timeoutMs?: number;
+    extraHeaders?: Record<string, string>;
+  } = {},
 ): Promise<T> {
   const url = `${baseUrl}${path}`;
   const fetchImpl = resolveFetch();
@@ -1149,7 +1171,7 @@ async function requestJson<T>(
     url,
     {
       method: options.method ?? "GET",
-      headers: buildHeaders(options.token, options.hostToken),
+      headers: buildHeaders(options.token, options.hostToken, options.extraHeaders),
       body: options.body ? JSON.stringify(options.body) : undefined,
     },
     options.timeoutMs ?? DEFAULT_VESLO_SERVER_TIMEOUT_MS,
@@ -1256,10 +1278,16 @@ async function requestBinary(
   return { data, contentType, filename };
 }
 
-export function createVesloServerClient(options: { baseUrl: string; token?: string; hostToken?: string }) {
+export function createVesloServerClient(options: {
+  baseUrl: string;
+  token?: string;
+  hostToken?: string;
+  accountId?: string;
+}) {
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
   const token = options.token;
   const hostToken = options.hostToken;
+  const accountId = options.accountId?.trim() || undefined;
 
   const timeouts = {
     health: 3_000,
@@ -1300,6 +1328,35 @@ export function createVesloServerClient(options: { baseUrl: string; token?: stri
     opencodeRouterSlackIdentities: () =>
       requestJsonRaw<VesloOpenCodeRouterSlackIdentitiesResult>(baseUrl, "/veslo-code-router/identities/slack", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
     listWorkspaces: () => requestJson<VesloWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
+    listSessionArchives: () =>
+      requestJson<{ items: VesloSessionArchiveRecord[] }>(baseUrl, "/session-archives", {
+        token,
+        hostToken,
+        extraHeaders: accountId ? { "X-Veslo-Account-Id": accountId } : undefined,
+      }),
+    putSessionArchive: (sessionId: string, payload: Omit<VesloSessionArchiveRecord, "sessionId">) =>
+      requestJson<{ items: VesloSessionArchiveRecord[] }>(
+        baseUrl,
+        `/session-archives/${encodeURIComponent(sessionId)}`,
+        {
+          token,
+          hostToken,
+          method: "PUT",
+          body: payload,
+          extraHeaders: accountId ? { "X-Veslo-Account-Id": accountId } : undefined,
+        },
+      ),
+    deleteSessionArchive: (sessionId: string) =>
+      requestJson<{ items: VesloSessionArchiveRecord[] }>(
+        baseUrl,
+        `/session-archives/${encodeURIComponent(sessionId)}`,
+        {
+          token,
+          hostToken,
+          method: "DELETE",
+          extraHeaders: accountId ? { "X-Veslo-Account-Id": accountId } : undefined,
+        },
+      ),
     activateWorkspace: (workspaceId: string) =>
       requestJson<{ activeId: string; workspace: VesloWorkspaceInfo }>(
         baseUrl,

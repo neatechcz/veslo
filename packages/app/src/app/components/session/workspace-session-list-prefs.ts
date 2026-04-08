@@ -11,7 +11,6 @@ export const SIDEBAR_VIEW_MODE_KEY = "veslo.sidebar-session-view.v1";
 export const SIDEBAR_COLLAPSED_PROJECTS_KEY = "veslo.sidebar-collapsed-projects.v1";
 export const SIDEBAR_PROJECT_ORDER_KEY = "veslo.sidebar-project-order.v1";
 export const SIDEBAR_SHOW_ARCHIVED_KEY = "veslo.sidebar-show-archived.v1";
-export const SIDEBAR_ARCHIVED_SESSION_IDS_KEY = "veslo.sidebar-archived-session-ids.v1";
 export const DEFAULT_SIDEBAR_VIEW_MODE: SidebarViewMode = "by-project";
 
 const resolveStorage = (storage?: SidebarPrefsStorage | null): SidebarPrefsStorage | null => {
@@ -39,18 +38,6 @@ const normalizeProjectOrder = (value: unknown): string[] => {
     const key = raw.trim();
     if (!key || normalized.includes(key)) continue;
     normalized.push(key);
-  }
-  return normalized;
-};
-
-const normalizeSessionIds = (value: unknown): string[] => {
-  if (!Array.isArray(value)) return [];
-  const normalized: string[] = [];
-  for (const raw of value) {
-    if (typeof raw !== "string") continue;
-    const id = raw.trim();
-    if (!id || normalized.includes(id)) continue;
-    normalized.push(id);
   }
   return normalized;
 };
@@ -164,36 +151,6 @@ export const writeProjectOrder = (
     resolvedStorage.setItem(
       SIDEBAR_PROJECT_ORDER_KEY,
       JSON.stringify(normalizeProjectOrder(order)),
-    );
-  } catch {
-    // ignore storage failures
-  }
-};
-
-export const readArchivedSessionIds = (
-  storage?: SidebarPrefsStorage | null,
-): string[] => {
-  const resolvedStorage = resolveStorage(storage);
-  if (!resolvedStorage) return [];
-  try {
-    const raw = resolvedStorage.getItem(SIDEBAR_ARCHIVED_SESSION_IDS_KEY);
-    if (!raw) return [];
-    return normalizeSessionIds(JSON.parse(raw));
-  } catch {
-    return [];
-  }
-};
-
-export const writeArchivedSessionIds = (
-  sessionIds: string[],
-  storage?: SidebarPrefsStorage | null,
-): void => {
-  const resolvedStorage = resolveStorage(storage);
-  if (!resolvedStorage) return;
-  try {
-    resolvedStorage.setItem(
-      SIDEBAR_ARCHIVED_SESSION_IDS_KEY,
-      JSON.stringify(normalizeSessionIds(sessionIds)),
     );
   } catch {
     // ignore storage failures

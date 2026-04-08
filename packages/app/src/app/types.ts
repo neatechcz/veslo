@@ -37,6 +37,16 @@ export type WorkspaceSessionGroup = {
   error?: string | null;
 };
 
+export type SessionArchiveItem = {
+  sessionId: string;
+  title: string;
+  workspaceLabel: string;
+  projectLabel?: string | null;
+  resolvedDirectory?: string | null;
+  archivedAt: number;
+  availableOnThisDevice: boolean;
+};
+
 export type PlaceholderAssistantMessage = {
   id: string;
   sessionID: string;
