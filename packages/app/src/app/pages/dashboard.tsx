@@ -42,7 +42,15 @@ import type {
   VesloServerSettings,
   VesloServerStatus,
 } from "../lib/veslo-server";
-import type { EngineInfo, OrchestratorStatus, VesloServerInfo, OpenCodeRouterInfo, WorkspaceInfo } from "../lib/tauri";
+import { reportError } from "../lib/error-reporter";
+import {
+  setWindowTitle,
+  type EngineInfo,
+  type OpenCodeRouterInfo,
+  type OrchestratorStatus,
+  type VesloServerInfo,
+  type WorkspaceInfo,
+} from "../lib/tauri";
 import { DEFAULT_VESLO_PUBLISHER_BASE_URL, publishVesloBundleJson } from "../lib/publisher";
 
 import Button from "../components/button";
@@ -60,7 +68,6 @@ import SidebarDashboardNav from "../components/session/sidebar-dashboard-nav";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
 import { resolveTitlebarContentInsetClass } from "../components/titlebar-menu-layout";
-import { resolveSettingsTabLabel, resolveVisibleSettingsTab } from "../lib/settings-tab-label";
 import {
   clampLeftSidebarWidth,
   readLeftSidebarWidth,
@@ -71,6 +78,7 @@ import {
   openSessionWithWorkspaceActivation,
 } from "./session-navigation";
 import { resolveDashboardTabSelectionAction, resolveLeftMenuAction } from "./dashboard-menu-navigation";
+import { resolveSettingsTabLabel, resolveVisibleSettingsTab } from "../lib/settings-tab-label";
 import {
   ArrowLeft,
   Box,
@@ -436,6 +444,14 @@ export default function DashboardView(props: DashboardViewProps) {
   const dashboardTitlebarContext = createMemo(() =>
     props.tab === "settings" ? resolveSettingsTabLabel(visibleSettingsTab()) : title(),
   );
+
+  createEffect(() => {
+    void setWindowTitle("").catch((error) => reportError(error, "titlebar.setWindowTitle"));
+  });
+
+  onCleanup(() => {
+    void setWindowTitle("Veslo by Neatech").catch((error) => reportError(error, "titlebar.restoreWindowTitle"));
+  });
 
   const workspaceLabel = (workspace: WorkspaceInfo) =>
     workspace.displayName?.trim() ||

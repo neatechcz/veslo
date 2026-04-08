@@ -246,6 +246,20 @@ test("dashboard centers the titlebar on the active settings subsection", () => {
   assert.doesNotMatch(settingsSource, /tabLabel\(tab\)/);
 });
 
+test("dashboard clears the native window title while centered titlebar context is active", () => {
+  assert.match(
+    dashboardSource,
+    /setWindowTitle\(""\)/,
+    "dashboard should blank the native centered window title so the shared titlebar context does not overlap with the default product label",
+  );
+
+  assert.match(
+    dashboardSource,
+    /setWindowTitle\("Veslo by Neatech"\)/,
+    "dashboard should restore the product name when leaving the shared custom titlebar context",
+  );
+});
+
 test("settings tab labels are localized through a shared helper", () => {
   assert.equal(resolveVisibleSettingsTab("debug", false), "general");
   assert.equal(resolveVisibleSettingsTab("debug", true), "debug");
