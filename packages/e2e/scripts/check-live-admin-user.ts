@@ -16,6 +16,9 @@ function parseArgs(argv: string[]) {
     email: process.env.VESLO_ADMIN_CHECK_EMAIL?.trim() || 'michal.sara@neatech.cz',
     gatewayBase: process.env.VESLO_ADMIN_CHECK_BASE?.trim() || 'https://veslo-ai-gateway-dev.onrender.com',
     timeoutMs: Number.parseInt(process.env.VESLO_ADMIN_CHECK_TIMEOUT_MS || '300000', 10),
+    attemptCreate: process.env.VESLO_ADMIN_CHECK_ATTEMPT_CREATE === '1',
+    createEmail: process.env.VESLO_ADMIN_CHECK_CREATE_EMAIL?.trim() || '',
+    createName: process.env.VESLO_ADMIN_CHECK_CREATE_NAME?.trim() || 'Codex Live Check',
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -35,6 +38,20 @@ function parseArgs(argv: string[]) {
       if (Number.isFinite(parsed) && parsed > 0) {
         result.timeoutMs = parsed;
       }
+      index += 1;
+      continue;
+    }
+    if (arg === '--attempt-create') {
+      result.attemptCreate = true;
+      continue;
+    }
+    if (arg === '--create-email' && argv[index + 1]) {
+      result.createEmail = argv[index + 1].trim();
+      index += 1;
+      continue;
+    }
+    if (arg === '--create-name' && argv[index + 1]) {
+      result.createName = argv[index + 1].trim();
       index += 1;
     }
   }
@@ -72,7 +89,7 @@ async function openBrowser(url: string) {
 }
 
 async function main() {
-  const { email, gatewayBase, timeoutMs } = parseArgs(process.argv.slice(2));
+  const { email, gatewayBase, timeoutMs, attemptCreate, createEmail, createName } = parseArgs(process.argv.slice(2));
   const state = randomBase64Url(32);
   const codeVerifier = randomBase64Url(32);
   const codeChallenge = sha256Base64Url(codeVerifier);
@@ -167,6 +184,35 @@ async function main() {
   const normalizedEmail = email.toLowerCase();
   const match =
     users.find((user) => typeof user.email === 'string' && user.email.trim().toLowerCase() === normalizedEmail) ?? null;
+  const organizations = Array.isArray(sessionPayload?.organizations) ? sessionPayload.organizations : [];
+  const createTargetEmail = (createEmail || email).trim();
+
+  let createStatus: number | null = null;
+  let createPayload: unknown = null;
+  if (attemptCreate && createTargetEmail) {
+    const orgId =
+      (typeof sessionPayload?.activeOrgId === 'string' && sessionPayload.activeOrgId.trim()) ||
+      (typeof organizations[0]?.id === 'string' ? organizations[0].id : '') ||
+      null;
+
+    const createResponse = await fetch(`${gatewayBase}/admin/api/users`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        email: createTargetEmail,
+        name: createName,
+        platformAdmin: false,
+        orgId,
+        orgRole: 'member',
+      }),
+    });
+    createStatus = createResponse.status;
+    createPayload = await createResponse.json().catch(() => null);
+  }
 
   console.log(
     JSON.stringify(
@@ -179,6 +225,10 @@ async function main() {
         found: Boolean(match),
         match,
         usersError: usersPayload?.error ?? null,
+        createAttempted: attemptCreate,
+        createEmail: attemptCreate ? createTargetEmail : null,
+        createStatus,
+        createPayload,
       },
       null,
       2,

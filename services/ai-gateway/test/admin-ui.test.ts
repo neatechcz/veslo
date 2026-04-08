@@ -120,6 +120,7 @@ test("GET /admin/users includes admin-managed ai access controls in the user edi
     assert.match(html, /id="user-ai-access-provider"/)
     assert.match(html, /id="user-ai-access-default-model"/)
     assert.match(html, /id="user-ai-access-allowed-models"/)
+    assert.match(html, /id="user-save-status"/)
   } finally {
     server.close()
     await once(server, "close")
@@ -163,6 +164,29 @@ test("GET /admin/app.js creates platform credentials from the Credentials page",
     assert.match(script, /credential-create-secret/)
     assert.match(script, /credential-create-submit/)
     assert.match(script, /await fetchJson\("\/credentials", \{\s*method: "POST"/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js surfaces inline user save and load failures", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /function setUserSaveStatus\(message, tone = "neutral"\)/)
+    assert.match(script, /function findUserByEmail\(email\)/)
+    assert.match(script, /That email already exists\. Showing the existing user record instead\./)
+    assert.match(script, /Unable to load users:/)
+    assert.match(script, /Unable to save user:/)
+    assert.match(script, /els\.userSaveButton\.disabled = true/)
   } finally {
     server.close()
     await once(server, "close")

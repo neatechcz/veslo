@@ -34,6 +34,11 @@ import {
   shouldAutoCompact,
 } from "./lib/auto-compaction";
 import {
+  parseStoredEngineSourceExplicitPreference,
+  resolveStoredEngineSourcePreference,
+  type EngineSourcePreference,
+} from "./lib/engine-source";
+import {
   parseDefaultModelFromConfig,
   formatConfigWithDefaultModel,
   resolveWorkspaceDefaultModel,
@@ -109,6 +114,9 @@ import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-lo
 import { createSkillReloadGuard } from "./lib/skill-reload-guard";
 import {
   AUTO_COMPACT_CONTEXT_PREF_KEY,
+  ENGINE_CUSTOM_BIN_PATH_PREF_KEY,
+  ENGINE_SOURCE_EXPLICIT_PREF_KEY,
+  ENGINE_SOURCE_PREF_KEY,
   DEFAULT_MODEL,
   HIDE_TITLEBAR_PREF_KEY,
   LANGUAGE_PREF_KEY,
@@ -399,6 +407,7 @@ export default function App() {
   const [engineSource, setEngineSource] = createSignal<"path" | "sidecar" | "custom">(
     isTauriRuntime() ? "sidecar" : "path"
   );
+  const [engineSourceExplicit, setEngineSourceExplicit] = createSignal(false);
 
   const [engineCustomBinPath, setEngineCustomBinPath] = createSignal("");
 
@@ -422,6 +431,16 @@ export default function App() {
   const [vesloAuditStatus, setVesloAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
   const [vesloAuditError, setVesloAuditError] = createSignal<string | null>(null);
   const [devtoolsWorkspaceId, setDevtoolsWorkspaceId] = createSignal<string | null>(null);
+
+  const updateEngineSource = (
+    value: EngineSourcePreference,
+    options?: {
+      explicit?: boolean;
+    },
+  ) => {
+    setEngineSource(value);
+    setEngineSourceExplicit(options?.explicit === true);
+  };
 
   const vesloServerLocalFallbackBaseUrl = createMemo(() => {
     if (!isTauriRuntime()) return "";
@@ -4096,7 +4115,7 @@ export default function App() {
     try {
       setSessionModelOverrideById({});
       setThemeMode("system");
-      setEngineSource(isTauriRuntime() ? "sidecar" : "path");
+      updateEngineSource(isTauriRuntime() ? "sidecar" : "path", { explicit: false });
       setEngineCustomBinPath("");
       setEngineRuntime("veslo-orchestrator");
       setDefaultModel(DEFAULT_MODEL);
@@ -5736,26 +5755,23 @@ export default function App() {
           setClientDirectory(storedClientDir);
         }
 
-        const storedEngineSource = window.localStorage.getItem(
-          "veslo.engineSource"
+        const storedEngineSource = window.localStorage.getItem(ENGINE_SOURCE_PREF_KEY);
+        const storedEngineSourceExplicit = parseStoredEngineSourceExplicitPreference(
+          window.localStorage.getItem(ENGINE_SOURCE_EXPLICIT_PREF_KEY),
         );
-        const storedEngineCustomBinPath = window.localStorage.getItem(
-          "veslo.engineCustomBinPath"
-        );
+        const storedEngineCustomBinPath = window.localStorage.getItem(ENGINE_CUSTOM_BIN_PATH_PREF_KEY);
         if (storedEngineCustomBinPath) {
           setEngineCustomBinPath(storedEngineCustomBinPath);
         }
-        if (
-          storedEngineSource === "path" ||
-          storedEngineSource === "sidecar" ||
-          storedEngineSource === "custom"
-        ) {
-          if (storedEngineSource === "custom" && !(storedEngineCustomBinPath ?? "").trim()) {
-            setEngineSource(isTauriRuntime() ? "sidecar" : "path");
-          } else {
-            setEngineSource(storedEngineSource);
-          }
-        }
+        const restoredEngineSource = resolveStoredEngineSourcePreference({
+          isTauriRuntime: isTauriRuntime(),
+          storedSource: storedEngineSource,
+          storedCustomBinPath: storedEngineCustomBinPath,
+          storedSourceExplicit: storedEngineSourceExplicit,
+        });
+        updateEngineSource(restoredEngineSource.source, {
+          explicit: restoredEngineSource.explicit,
+        });
 
         const storedEngineRuntime = window.localStorage.getItem(
           "veslo.engineRuntime"
@@ -6210,7 +6226,20 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem("veslo.engineSource", engineSource());
+      window.localStorage.setItem(ENGINE_SOURCE_PREF_KEY, engineSource());
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (engineSourceExplicit()) {
+        window.localStorage.setItem(ENGINE_SOURCE_EXPLICIT_PREF_KEY, "1");
+      } else {
+        window.localStorage.removeItem(ENGINE_SOURCE_EXPLICIT_PREF_KEY);
+      }
     } catch {
       // ignore
     }
@@ -6221,9 +6250,9 @@ export default function App() {
     try {
       const value = engineCustomBinPath().trim();
       if (value) {
-        window.localStorage.setItem("veslo.engineCustomBinPath", value);
+        window.localStorage.setItem(ENGINE_CUSTOM_BIN_PATH_PREF_KEY, value);
       } else {
-        window.localStorage.removeItem("veslo.engineCustomBinPath");
+        window.localStorage.removeItem(ENGINE_CUSTOM_BIN_PATH_PREF_KEY);
       }
     } catch {
       // ignore
@@ -6854,7 +6883,7 @@ export default function App() {
       installUpdateAndRestart,
       anyActiveRuns: anyActiveRuns(),
       engineSource: engineSource(),
-      setEngineSource,
+      setEngineSource: (value) => updateEngineSource(value, { explicit: true }),
       engineCustomBinPath: engineCustomBinPath(),
       setEngineCustomBinPath,
       engineRuntime: engineRuntime(),

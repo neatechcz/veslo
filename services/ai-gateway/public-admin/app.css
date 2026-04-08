@@ -333,6 +333,18 @@ a {
   line-height: 1.45;
 }
 
+.editor-note[data-tone="success"] {
+  color: var(--success);
+}
+
+.editor-note[data-tone="error"] {
+  color: var(--danger);
+}
+
+.editor-note[data-tone="pending"] {
+  color: var(--accent);
+}
+
 .ai-access-textarea {
   min-height: 92px;
   resize: vertical;
@@ -363,14 +375,6 @@ a {
 
 .credential-create-status {
   margin: 0;
-}
-
-.credential-create-status[data-tone="success"] {
-  color: var(--success);
-}
-
-.credential-create-status[data-tone="error"] {
-  color: var(--danger);
 }
 
 .credential-create-status[data-tone="pending"] {

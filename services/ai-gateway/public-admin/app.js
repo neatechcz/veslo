@@ -87,6 +87,7 @@ const els = {
   userDisableButton: document.getElementById("user-disable-button"),
   userDeleteButton: document.getElementById("user-delete-button"),
   userSaveButton: document.getElementById("user-save-button"),
+  userSaveStatus: document.getElementById("user-save-status"),
   auditSearch: document.getElementById("audit-search"),
   auditDateRange: document.getElementById("audit-date-range"),
   auditActorFilter: document.getElementById("audit-actor-filter"),
@@ -662,8 +663,17 @@ async function loadUsers() {
         populateUserEditor(user);
       }
     }
+    setUserSaveStatus(
+      state.userMode === "create"
+        ? "Fill in the profile and save to create the user."
+        : "Directory changes and AI access assignments are applied separately.",
+    );
   } catch (error) {
     console.error("loadUsers failed", error);
+    setUserSaveStatus(
+      `Unable to load users: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
   }
 }
 
@@ -867,6 +877,14 @@ function filteredUsers() {
   });
 }
 
+function findUserByEmail(email) {
+  const normalized = typeof email === "string" ? email.trim().toLowerCase() : "";
+  if (!normalized) {
+    return null;
+  }
+  return state.users.find((user) => typeof user.email === "string" && user.email.trim().toLowerCase() === normalized) || null;
+}
+
 function currentUser() {
   if (state.userMode === "create") {
     return null;
@@ -993,6 +1011,7 @@ function enterCreateMode() {
   setActivePage("users");
   showApp();
   renderUsers();
+  setUserSaveStatus("Fill in the profile and save to create the user.");
 }
 
 async function refreshCredentialOperations() {
@@ -1012,6 +1031,15 @@ function setCredentialCreateStatus(message, tone = "neutral") {
     return;
   }
   els.credentialCreateStatus.dataset.tone = tone;
+}
+
+function setUserSaveStatus(message, tone = "neutral") {
+  els.userSaveStatus.textContent = message;
+  if (tone === "neutral") {
+    delete els.userSaveStatus.dataset.tone;
+    return;
+  }
+  els.userSaveStatus.dataset.tone = tone;
 }
 
 function resetCredentialCreateForm() {
@@ -1133,9 +1161,24 @@ async function saveUser() {
     orgId: els.userOrg.value || null,
     orgRole: els.userRole.value === "owner" ? "owner" : "member",
   };
+  const wasCreating = state.userMode === "create";
 
   try {
-    if (state.userMode === "create") {
+    els.userSaveButton.disabled = true;
+    setUserSaveStatus(wasCreating ? "Creating user..." : "Saving user...", "pending");
+    if (wasCreating) {
+      const existingUser = findUserByEmail(payload.email);
+      if (existingUser) {
+        state.userMode = "edit";
+        state.selectedUserId = existingUser.id;
+        renderUsers();
+        await loadUserAiAccess(existingUser.id);
+        populateUserEditor(existingUser);
+        setUserSaveStatus("That email already exists. Showing the existing user record instead.", "error");
+        return;
+      }
+    }
+    if (wasCreating) {
       const created = await fetchJson("/users", {
         method: "POST",
         body: JSON.stringify(payload),
@@ -1164,8 +1207,19 @@ async function saveUser() {
       populateUserEditor(selectedUser);
     }
     await loadAudit();
+    setUserSaveStatus(
+      wasCreating
+        ? "User created. Review AI access separately if needed."
+        : "User changes saved.",
+      "success",
+    );
   } catch (error) {
-    window.alert(`Unable to save user: ${error instanceof Error ? error.message : "unknown_error"}`);
+    setUserSaveStatus(
+      `Unable to save user: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
+  } finally {
+    els.userSaveButton.disabled = false;
   }
 }
 
