@@ -429,6 +429,21 @@ export default function DashboardView(props: DashboardViewProps) {
         return t("nav.automations", currentLocale());
     }
   });
+  const settingsSubsectionLabel = createMemo(() => {
+    switch (props.settingsTab) {
+      case "model":
+        return "Model";
+      case "advanced":
+        return "Advanced";
+      case "debug":
+        return "Debug";
+      default:
+        return "General";
+    }
+  });
+  const dashboardTitlebarContext = createMemo(() =>
+    props.tab === "settings" ? settingsSubsectionLabel() : title(),
+  );
 
   const workspaceLabel = (workspace: WorkspaceInfo) =>
     workspace.displayName?.trim() ||
@@ -1237,6 +1252,7 @@ export default function DashboardView(props: DashboardViewProps) {
       <TitlebarMenuToggles
         leftActive={leftMenuActive()}
         rightActive={rightSidebarVisible()}
+        centerContent={dashboardTitlebarContext()}
         hideTitlebar={props.hideTitlebar}
         leftLabel={leftMenuLabel()}
         onToggleLeft={handleLeftMenuToggle}

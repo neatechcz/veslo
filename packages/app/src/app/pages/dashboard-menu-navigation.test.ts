@@ -214,3 +214,19 @@ test("dashboard header keeps back-to-chat visible even without a selected sessio
     /const\s+returnToSession\s*=\s*\(\)\s*=>\s*\{\s*const\s+sessionId\s*=\s*props\.selectedSessionId\?\.trim\(\);\s*if\s*\(!sessionId\)\s*return;/s,
   );
 });
+
+test("dashboard centers the titlebar on the active settings subsection", () => {
+  assert.match(
+    dashboardSource,
+    /const\s+settingsSubsectionLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>\s*\{[\s\S]*switch\s*\(\s*props\.settingsTab\s*\)\s*\{[\s\S]*case\s+["']model["']:\s*return\s+["']Model["'];[\s\S]*case\s+["']advanced["']:\s*return\s+["']Advanced["'];[\s\S]*case\s+["']debug["']:\s*return\s+["']Debug["'];[\s\S]*default:\s*return\s+["']General["'];[\s\S]*\}\s*\}\s*\)/s,
+  );
+  assert.match(
+    dashboardSource,
+    /const\s+dashboardTitlebarContext\s*=\s*createMemo\s*\(\s*\(\)\s*=>\s*[\r\n\s]*props\.tab\s*===\s*["']settings["']\s*\?\s*settingsSubsectionLabel\(\)\s*:\s*title\(\)\s*,\s*\)/s,
+  );
+  assert.match(
+    dashboardSource,
+    /<TitlebarMenuToggles[\s\S]*centerContent=\{dashboardTitlebarContext\(\)\}/,
+  );
+  assert.doesNotMatch(dashboardSource, /<TitlebarMenuToggles[\s\S]*centerContent=\{title\(\)\}/);
+});
