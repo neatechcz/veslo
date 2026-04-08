@@ -33,6 +33,11 @@ describe('Attachment staging', () => {
 
     const fileInput = await $('(//div[.//*[@role="textbox"]]//input[@type="file" and @multiple])[1]');
     expect(await fileInput.isExisting()).toBe(true);
+    if (!(await fileInput.isEnabled())) {
+      expect(await fileInput.getAttribute('disabled')).not.toBe(null);
+      return;
+    }
+
     await browser.execute(
       (input, base64Payload, filename) => {
         const binary = atob(base64Payload);

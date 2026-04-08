@@ -272,6 +272,10 @@ import {
   pickCollisionSafeName,
   toWorkspaceRelativeFromSessionDir,
 } from "./lib/session-attachment-staging";
+import {
+  routeStagedAttachmentsForModel,
+  type StagedSessionAttachment,
+} from "./lib/attachment-prompt-routing";
 import { resolveArtifactFamilies } from "./components/session/artifact-family-model";
 import { CLOUD_ONLY_MODE, resolveVesloCloudEnvironment } from "./lib/cloud-policy";
 import { isRemoteUiEnabled } from "./lib/runtime-policy";
@@ -1215,6 +1219,15 @@ export default function App() {
     });
   };
 
+  const resolveWorkspaceAbsolutePath = (relativePath: string) => {
+    const workspaceRoot = workspaceProjectDir().trim().replace(/[\\/]+$/, "");
+    const normalizedRelativePath = relativePath.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+    if (!workspaceRoot || !normalizedRelativePath) {
+      throw new Error("Workspace path is not available for staged attachments.");
+    }
+    return `${workspaceRoot}/${normalizedRelativePath}`;
+  };
+
   const resolveCollisionSafeAttachmentPath = async (
     client: NonNullable<ReturnType<typeof vesloServerClient>>,
     fileSessionId: string,
@@ -1252,9 +1265,12 @@ export default function App() {
     throw new Error(`Failed to resolve a unique filename for ${filename}.`);
   };
 
-  const stageAttachmentsIntoSessionDirectory = async (draft: ComposerDraft, sessionID: string): Promise<ComposerDraft> => {
+  const stageAttachmentsIntoSessionDirectory = async (
+    draft: ComposerDraft,
+    sessionID: string,
+  ): Promise<StagedSessionAttachment[]> => {
     const attachmentsToStage = draft.attachments;
-    if (!attachmentsToStage.length) return draft;
+    if (!attachmentsToStage.length) return [];
 
     const client = vesloServerClient();
     const workspaceId = (resolvedDevtoolsWorkspaceId() ?? "").trim();
@@ -1263,7 +1279,7 @@ export default function App() {
     }
 
     const reservedPaths = new Set<string>();
-    const stagedPaths: string[] = [];
+    const stagedAttachments: StagedSessionAttachment[] = [];
     const fileSession = await client.createFileSession(workspaceId, {
       ttlSeconds: 15 * 60,
       write: true,
@@ -1285,31 +1301,19 @@ export default function App() {
         if (!item?.ok) {
           throw new Error(item?.message ?? `Failed to stage ${attachment.name}.`);
         }
-        stagedPaths.push(relativePath);
+        stagedAttachments.push({
+          name: attachment.name,
+          kind: attachment.kind,
+          mimeType: attachment.mimeType,
+          relativePath,
+          absolutePath: resolveWorkspaceAbsolutePath(relativePath),
+        });
       }
     } finally {
       await client.closeFileSession(fileSession.session.id).catch(() => undefined);
     }
 
-    const textBase = draft.resolvedText ?? draft.text;
-    const nextResolvedText = textBase.trim()
-      ? `${textBase}\n${stagedPaths.join("\n")}`
-      : stagedPaths.join("\n");
-    const nextCommand = draft.command
-      ? {
-          ...draft.command,
-          arguments: draft.command.arguments.trim()
-            ? `${draft.command.arguments}\n${stagedPaths.join("\n")}`
-            : stagedPaths.join("\n"),
-        }
-      : draft.command;
-
-    return {
-      ...draft,
-      resolvedText: nextResolvedText,
-      attachments: [],
-      command: nextCommand,
-    };
+    return stagedAttachments;
   };
 
   const buildPromptParts = (draft: ComposerDraft): PartInput[] => {
@@ -1457,7 +1461,7 @@ export default function App() {
     }
   }
 
-  async function sendPrompt(draft?: ComposerDraft) {
+  async function sendPrompt(draft?: ComposerDraft): Promise<boolean> {
     const hasExplicitDraft = Boolean(draft);
     const fallbackDraft = composerDraft();
     const fallbackText = fallbackDraft.text.trim();
@@ -1473,17 +1477,17 @@ export default function App() {
     resolvedDraft = await maybeResolveSkillCommand(resolvedDraft);
 
     const initialContent = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
-    if (!initialContent && !resolvedDraft.attachments.length) return;
+    if (!initialContent && !resolvedDraft.attachments.length) return false;
 
     const c = client();
-    if (!c) return;
+    if (!c) return false;
 
     const compactShortcut = /^\/compact(?:\s+.*)?$/i.test(initialContent);
     const compactCommand = resolvedDraft.command?.name === "compact" || compactShortcut;
     const commandName = compactCommand ? "compact" : (resolvedDraft.command?.name ?? null);
     if (compactCommand && !selectedSessionId()) {
       setError("Select a session with messages before running /compact.");
-      return;
+      return false;
     }
 
     let sessionID = selectedSessionId();
@@ -1491,18 +1495,28 @@ export default function App() {
       await createSessionAndOpen();
       sessionID = selectedSessionId();
     }
-    if (!sessionID) return;
+    if (!sessionID) return false;
+
+    const model = selectedSessionModel();
+    let promptSystem: string | undefined;
 
     try {
-      const stagedDraft = await stageAttachmentsIntoSessionDirectory(resolvedDraft, sessionID);
-      resolvedDraft = stagedDraft;
+      const stagedAttachments = await stageAttachmentsIntoSessionDirectory(resolvedDraft, sessionID);
+      const routedDraft = routeStagedAttachmentsForModel({
+        draft: resolvedDraft,
+        stagedAttachments,
+        model,
+        providers: providers(),
+      });
+      resolvedDraft = routedDraft.draft;
+      promptSystem = routedDraft.system;
     } catch (error) {
       setError(error instanceof Error ? error.message : safeStringify(error));
-      return;
+      return false;
     }
 
     const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
-    if (!content && !resolvedDraft.attachments.length) return;
+    if (!content && !resolvedDraft.attachments.length && !promptSystem) return false;
 
     setBusy(true);
     setBusyLabel("status.running");
@@ -1531,15 +1545,15 @@ export default function App() {
         setPrompt("");
       }
 
-      const model = selectedSessionModel();
       const agent = selectedSessionAgent();
       const parts = buildPromptParts(resolvedDraft);
       const selectedVariant = modelVariant() ?? undefined;
       const reasoningEffort = resolveCodexReasoningEffort(model.modelID, selectedVariant ?? null);
       const requestVariant = reasoningEffort ? undefined : selectedVariant;
-      const promptOverrides = reasoningEffort
-        ? ({ reasoning_effort: reasoningEffort } as const)
-        : undefined;
+      const promptOverrides = {
+        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+        ...(promptSystem ? { system: promptSystem } : {}),
+      };
 
       // Resolve the session directory override so moved sessions operate in the
       // correct folder, not the original private-workspace path.
@@ -1555,7 +1569,7 @@ export default function App() {
             mode: resolvedDraft.mode,
             command: commandName,
           });
-          return;
+          return true;
         }
 
         const command = resolvedDraft.command;
@@ -1576,7 +1590,7 @@ export default function App() {
             agent: agent ?? undefined,
             model: modelString,
             variant: requestVariant,
-            ...(promptOverrides ?? {}),
+            ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
             parts: files.length ? files : undefined,
             directory: sessionDirOverride,
           }),
@@ -1588,7 +1602,7 @@ export default function App() {
           model,
           agent: agent ?? undefined,
           variant: requestVariant,
-          ...(promptOverrides ?? {}),
+          ...promptOverrides,
           parts,
           directory: sessionDirOverride,
         });
@@ -1612,6 +1626,7 @@ export default function App() {
         mode: resolvedDraft.mode,
         command: commandName,
       });
+      return true;
     } catch (e) {
       finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
         sessionID,
@@ -1621,6 +1636,7 @@ export default function App() {
       });
       const message = e instanceof Error ? e.message : safeStringify(e);
       sessionStore.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(message));
+      return false;
     } finally {
       setBusy(false);
       setBusyLabel(null);

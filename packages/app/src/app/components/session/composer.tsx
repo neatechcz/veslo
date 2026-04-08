@@ -32,7 +32,7 @@ type ComposerProps = {
   isStreaming: boolean;
   compactTopSpacing?: boolean;
   compactWidth?: boolean;
-  onSend: (draft: ComposerDraft) => void;
+  onSend: (draft: ComposerDraft) => Promise<boolean>;
   onStop: () => void;
   onDraftChange: (draft: ComposerDraft) => void;
   selectedAgent: string | null;
@@ -929,7 +929,7 @@ export default function Composer(props: ComposerProps) {
     applyHistoryDraft(target);
   };
 
-  const sendDraft = () => {
+  const sendDraft = async () => {
     // Ensure any pending debounce updates are committed before sending
     flushDraftChange();
 
@@ -952,7 +952,8 @@ export default function Composer(props: ComposerProps) {
     }
 
     recordHistory(draft);
-    props.onSend(draft);
+    const sent = await props.onSend(draft);
+    if (!sent) return;
     setSlashOpen(false);
     setSlashQuery("");
     setAttachments([]);
@@ -1361,7 +1362,7 @@ export default function Composer(props: ComposerProps) {
     if (event.key === "Enter") {
       event.preventDefault();
       if (props.busy) return;
-      sendDraft();
+      void sendDraft();
     }
   };
 
@@ -1693,7 +1694,9 @@ export default function Composer(props: ComposerProps) {
                             <button
                               type="button"
                               disabled={!hasDraftContent()}
-                              onClick={sendDraft}
+                              onClick={() => {
+                                void sendDraft();
+                              }}
                               class={`shrink-0 p-1.5 rounded-full transition-colors ${!hasDraftContent()
                                 ? "bg-gray-4 text-gray-10"
                                 : "bg-[#1B29FF] text-white hover:bg-blue-10"

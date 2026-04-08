@@ -22,7 +22,7 @@ test("composer keeps dropped files as attachment chips and does not inject path 
 test("all attachment staging happens in session-directory send pipeline, not in composer", () => {
   assert.match(
     appSource,
-    /const stageAttachmentsIntoSessionDirectory = async \(draft: ComposerDraft, sessionID: string\): Promise<ComposerDraft> =>/,
+    /const stageAttachmentsIntoSessionDirectory = async \(\s*draft: ComposerDraft,\s*sessionID: string,\s*\): Promise<StagedSessionAttachment\[]> =>/,
     "app send pipeline should stage attachments into the active session directory",
   );
 
@@ -58,19 +58,25 @@ test("all attachment staging happens in session-directory send pipeline, not in 
 
   assert.match(
     appSource,
-    /resolvedText: nextResolvedText,/,
-    "send pipeline should append staged paths to resolved text",
+    /absolutePath: resolveWorkspaceAbsolutePath\(relativePath\),/,
+    "staging should record the exact absolute path for each staged attachment",
   );
 
   assert.match(
     appSource,
-    /attachments: \[\],/,
-    "after staging, inline attachment blobs should be removed from outbound provider parts",
+    /const routedDraft = routeStagedAttachmentsForModel\(\{\s*draft: resolvedDraft,\s*stagedAttachments,\s*model,\s*providers: providers\(\),\s*\}\);/s,
+    "send pipeline should route staged attachments only after it knows the selected model capabilities",
   );
 
   assert.match(
     appSource,
-    /const stagedDraft = await stageAttachmentsIntoSessionDirectory\(resolvedDraft, sessionID\);/,
-    "send pipeline should normalize draft after session selection and before provider calls",
+    /const stagedAttachments = await stageAttachmentsIntoSessionDirectory\(resolvedDraft, sessionID\);/,
+    "send pipeline should stage attachments after session selection and before provider calls",
+  );
+
+  assert.doesNotMatch(
+    appSource,
+    /stagedPaths\.join\("\\n"\)/,
+    "staging should not append attachment filenames directly into prompt text",
   );
 });

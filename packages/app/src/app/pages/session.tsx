@@ -182,7 +182,7 @@ export type SessionViewProps = {
   anyActiveRuns: boolean;
   installUpdateAndRestart: () => void;
   createSessionAndOpen: () => Promise<string | undefined>;
-  sendPromptAsync: (draft: ComposerDraft) => Promise<void>;
+  sendPromptAsync: (draft: ComposerDraft) => Promise<boolean>;
   abortSession: (sessionId?: string) => Promise<void>;
   sessionRevertMessageId: string | null;
   undoLastUserMessage: () => Promise<void>;
@@ -410,6 +410,7 @@ export default function SessionView(props: SessionViewProps) {
     workspaceId: string | null;
   } | null>(null);
   const [nearBottom, setNearBottom] = createSignal(true);
+  const [stickToBottom, setStickToBottom] = createSignal(true);
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [searchQuery, setSearchQuery] = createSignal("");
   const [searchQueryDebounced, setSearchQueryDebounced] = createSignal("");
@@ -1700,8 +1701,9 @@ export default function SessionView(props: SessionViewProps) {
   let initialAnchorRafB: number | undefined;
   let initialAnchorGuardTimer: ReturnType<typeof setTimeout> | undefined;
   const attachmentsEnabled = createMemo(() => {
-    if (props.activeWorkspaceDisplay.workspaceType !== "remote") return true;
-    return props.vesloServerStatus === "connected";
+    return props.vesloServerStatus === "connected"
+      && Boolean(props.vesloServerClient)
+      && Boolean(props.vesloServerWorkspaceId?.trim());
   });
   const attachmentsDisabledReason = createMemo(() => {
     if (attachmentsEnabled()) return null;
@@ -3329,10 +3331,22 @@ export default function SessionView(props: SessionViewProps) {
     return null;
   });
 
-  const handleSendPrompt = (draft: ComposerDraft) => {
-    scheduleScrollToLatest("auto");
-    startRun();
-    props.sendPromptAsync(draft).catch(e => reportError(e, "session.sendPrompt"));
+  const handleSendPrompt = async (draft: ComposerDraft) => {
+    try {
+      const accepted = await props.sendPromptAsync(draft);
+      if (!accepted) {
+        setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
+        return false;
+      }
+      setStickToBottom(true);
+      scheduleScrollToLatest("auto");
+      startRun();
+      return true;
+    } catch (e) {
+      reportError(e, "session.sendPrompt");
+      setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
+      return false;
+    }
   };
 
   const handleBrowserAutomationQuickstart = () => {
