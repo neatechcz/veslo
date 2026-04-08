@@ -3,19 +3,20 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
+const appStyles = readFileSync(new URL("../index.css", import.meta.url), "utf8");
 
-test("session send flow requests immediate scroll to latest", () => {
+test("session send flow starts run UI only after the send is accepted", () => {
   assert.match(
     source,
-    /const handleSendPrompt = \(draft: ComposerDraft\) => \{\s*scheduleScrollToLatest\("auto"\);\s*startRun\(\);[\s\S]*?sendPromptAsync/s,
-    "sending a prompt should immediately pin the view to the latest content before run updates stream in",
+    /const handleSendPrompt = async \(draft: ComposerDraft\) => \{\s*try \{\s*const accepted = await props\.sendPromptAsync\(draft\);\s*if \(!accepted\) \{\s*setToastMessage\(props\.error \?\? tr\("session.connect_server_to_attach"\)\);\s*return false;\s*\}\s*setStickToBottom\(true\);\s*scheduleScrollToLatest\("auto"\);\s*startRun\(\);\s*return true;/s,
+    "session should only enter sending state after the prompt enqueue succeeds",
   );
 });
 
 test("message growth keeps bottom pin active when user is already near the latest content", () => {
   assert.match(
     source,
-    /if \(mLen > prevM \|\| tLen > prevT \|\| pCount > prevP\) \{\s*if \(!initialAnchorPending\(\) && nearBottom\(\)\) \{\s*scheduleScrollToLatest\("auto"\);/s,
+    /if \(mLen > prevM \|\| tLen > prevT \|\| pCount > prevP\) \{\s*if \(!initialAnchorPending\(\) && stickToBottom\(\)\) \{\s*scheduleScrollToLatest\("auto"\);/s,
     "newly appended content should continue auto-scroll while the user is already near bottom",
   );
 });
@@ -29,16 +30,68 @@ test("near-bottom detection follows message sentinel visibility instead of raw s
 
   assert.match(
     source,
-    /setNearBottom\(isAtLatest\(container, sentinel\)\);/s,
-    "near-bottom updates should use sentinel-based latest visibility",
+    /const atLatest = isAtLatest\(container, sentinel\);\s*setNearBottom\(atLatest\);\s*setStickToBottom\(atLatest\);/s,
+    "scroll-driven bottom updates should derive both visible bottom state and sticky pin intent from the sentinel",
+  );
+});
+
+test("auto-scroll keeps a sticky bottom intent so streaming growth does not immediately disable pinning", () => {
+  assert.match(
+    source,
+    /const \[stickToBottom, setStickToBottom\] = createSignal\(true\);/,
+    "session should track whether bottom pinning is intentionally active",
+  );
+
+  assert.match(
+    source,
+    /const atLatest = Boolean\(entry\?\.isIntersecting\) \|\| isAtLatest\(container, sentinel\);\s*if \(atLatest\) \{\s*setNearBottom\(true\);\s*setStickToBottom\(true\);\s*return;\s*\}\s*if \(!stickToBottom\(\)\) \{\s*setNearBottom\(false\);\s*\}/s,
+    "observer updates should avoid dropping near-bottom state while sticky pin is still active",
+  );
+
+  assert.match(
+    source,
+    /if \(initialAnchorPending\(\)\) return;\s*if \(!stickToBottom\(\)\) return;\s*scheduleScrollToLatest\("auto"\);/s,
+    "continuous run updates should auto-scroll based on sticky pin intent",
+  );
+
+  assert.match(
+    source,
+    /if \(mLen > prevM \|\| tLen > prevT \|\| pCount > prevP\) \{\s*if \(!initialAnchorPending\(\) && stickToBottom\(\)\) \{\s*scheduleScrollToLatest\("auto"\);/s,
+    "message growth should keep auto-scrolling when sticky pin is active",
   );
 });
 
 test("chat container avoids oversized bottom padding that creates a large blank gap", () => {
   assert.doesNotMatch(
     source,
-    /pt-12 pb-56/,
-    "session chat container should not reserve an excessively tall bottom padding",
+    /pt-0 pb-32/,
+    "session chat container should not keep a bottom padding block that allows scrolling into blank space",
+  );
+
+  assert.match(
+    source,
+    /showWorkspaceSetupEmptyState\(\) \? "pt-8 pb-20" : "pt-0 pb-0"/,
+    "regular chat flow should pin the latest sentinel at the true end of scroll content",
+  );
+});
+
+test("chat container hides scrollbar when latest content is already in view", () => {
+  assert.match(
+    source,
+    /\$\{nearBottom\(\) \? "chat-scrollbar-hidden" : ""\}/,
+    "chat container should toggle a dedicated class that hides the scrollbar while pinned to latest",
+  );
+
+  assert.match(
+    appStyles,
+    /\.chat-scrollbar-hidden\s*\{\s*scrollbar-width:\s*none;\s*-ms-overflow-style:\s*none;\s*\}/s,
+    "chat scrollbar hide class should suppress native scrollbar rendering in Firefox and legacy engines",
+  );
+
+  assert.match(
+    appStyles,
+    /\.chat-scrollbar-hidden::-webkit-scrollbar\s*\{\s*width:\s*0;\s*height:\s*0;\s*\}/s,
+    "chat scrollbar hide class should suppress WebKit scrollbars",
   );
 });
 

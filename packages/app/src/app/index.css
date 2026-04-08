@@ -68,6 +68,16 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+.chat-scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.chat-scrollbar-hidden::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 /* Global clickable elements pointer */
 button,
 [role="button"],

@@ -1715,10 +1715,12 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const scrollToLatest = (behavior: ScrollBehavior = "auto") => {
+    setStickToBottom(true);
     messagesEndEl?.scrollIntoView({ behavior, block: "end" });
   };
 
   const pinToLatestNow = () => {
+    setStickToBottom(true);
     messagesEndEl?.scrollIntoView({ behavior: "auto", block: "end" });
   };
 
@@ -1817,7 +1819,7 @@ export default function SessionView(props: SessionViewProps) {
           return;
         }
 
-        if (nearBottom() && targetStart > currentStart) {
+        if (stickToBottom() && targetStart > currentStart) {
           setMessageWindowStart(targetStart);
         }
       },
@@ -2088,6 +2090,7 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const jumpToLatest = (behavior: ScrollBehavior = "smooth") => {
+    setStickToBottom(true);
     scheduleScrollToLatest(behavior);
   };
 
@@ -2103,7 +2106,9 @@ export default function SessionView(props: SessionViewProps) {
     if (!container || !sentinel) return;
 
     const updateNearBottom = () => {
-      setNearBottom(isAtLatest(container, sentinel));
+      const atLatest = isAtLatest(container, sentinel);
+      setNearBottom(atLatest);
+      setStickToBottom(atLatest);
     };
 
     updateNearBottom();
@@ -2112,7 +2117,15 @@ export default function SessionView(props: SessionViewProps) {
     const observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[0];
-        setNearBottom(Boolean(entry?.isIntersecting) || isAtLatest(container, sentinel));
+        const atLatest = Boolean(entry?.isIntersecting) || isAtLatest(container, sentinel);
+        if (atLatest) {
+          setNearBottom(true);
+          setStickToBottom(true);
+          return;
+        }
+        if (!stickToBottom()) {
+          setNearBottom(false);
+        }
       },
       {
         root: container,
@@ -2151,6 +2164,7 @@ export default function SessionView(props: SessionViewProps) {
         const firstVisit = !topInitializedSessionIds.has(sessionId);
         topInitializedSessionIds.add(sessionId);
         setInitialAnchorPending(true);
+        setStickToBottom(true);
 
         if (!firstVisit) {
           queueMicrotask(() => {
@@ -2372,7 +2386,7 @@ export default function SessionView(props: SessionViewProps) {
     if (!showRunIndicator()) return;
     runProgressSignature();
     if (initialAnchorPending()) return;
-    if (!nearBottom()) return;
+    if (!stickToBottom()) return;
     scheduleScrollToLatest("auto");
   });
 
@@ -2388,7 +2402,7 @@ export default function SessionView(props: SessionViewProps) {
         const [mLen, tLen, pCount] = current;
         const [prevM, prevT, prevP] = previous;
         if (mLen > prevM || tLen > prevT || pCount > prevP) {
-          if (!initialAnchorPending() && nearBottom()) {
+          if (!initialAnchorPending() && stickToBottom()) {
             scheduleScrollToLatest("auto");
           }
           if (showRunIndicator()) {
@@ -3927,7 +3941,7 @@ export default function SessionView(props: SessionViewProps) {
         <div class="flex-1 flex overflow-hidden">
           <div class="flex-1 min-w-0 relative overflow-hidden bg-gray-1">
             <div
-              class={`h-full overflow-y-auto px-8 ${showWorkspaceSetupEmptyState() ? "pt-8 pb-20" : "pt-0 pb-32"} scroll-smooth bg-gray-1 ${initialAnchorPending() ? "invisible" : "visible"}`}
+              class={`h-full overflow-y-auto px-8 ${showWorkspaceSetupEmptyState() ? "pt-8 pb-20" : "pt-0 pb-0"} scroll-smooth bg-gray-1 ${nearBottom() ? "chat-scrollbar-hidden" : ""} ${initialAnchorPending() ? "invisible" : "visible"}`}
               style={{ contain: "layout paint style" }}
               ref={(el) => {
                 chatContainerEl = el;
