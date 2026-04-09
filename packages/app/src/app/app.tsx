@@ -264,6 +264,7 @@ import {
   type VesloSoulStatus,
   type VesloSessionArchiveRecord,
   type VesloSessionLatestRunArtifacts,
+  type VesloServerClient,
   type VesloServerCapabilities,
   type VesloServerDiagnostics,
   type VesloServerStatus,
@@ -1076,13 +1077,14 @@ export default function App() {
     selectedSessionHasEarlierMessages,
     selectedSessionLoadingEarlierMessages,
     hydrateTranscriptSnapshot,
+    hasWarmTranscript,
   } = sessionStore;
 
-  const hydratedVesloServerClient = createMemo(() => {
+  const hydratedVesloServerClient = createMemo<VesloServerClient | null>(() => {
     const client = vesloServerClient();
     if (!client) return null;
 
-    return {
+    const hydratedClient: VesloServerClient = {
       ...client,
       prefetchSessionTranscripts: async (workspaceId, input) => {
         const result = await client.prefetchSessionTranscripts(workspaceId, input);
@@ -1097,6 +1099,8 @@ export default function App() {
         return snapshot;
       },
     };
+
+    return hydratedClient;
   });
 
   const ARTIFACT_SCAN_MESSAGE_WINDOW = 220;
@@ -1891,6 +1895,57 @@ export default function App() {
       return Boolean(id) && id < revert;
     });
     return insertSyntheticSessionErrors(visible, sessionID, errorTurns);
+  });
+
+  const [pendingSessionSwitchPerf, setPendingSessionSwitchPerf] = createSignal<{
+    sessionID: string;
+    startedAt: number;
+    source: "warm-hit" | "cold-miss";
+  } | null>(null);
+  let lastSessionSwitchPerfKey = "";
+
+  createEffect(() => {
+    const view = currentView();
+    const sessionID = selectedSessionId()?.trim() ?? "";
+
+    if (view !== "session" || !sessionID) {
+      if (!sessionID) {
+        setPendingSessionSwitchPerf(null);
+        lastSessionSwitchPerfKey = "";
+      }
+      return;
+    }
+
+    const nextKey = `${view}:${sessionID}`;
+    if (nextKey === lastSessionSwitchPerfKey) return;
+    lastSessionSwitchPerfKey = nextKey;
+
+    setPendingSessionSwitchPerf({
+      sessionID,
+      startedAt: perfNow(),
+      source: hasWarmTranscript(sessionID) ? "warm-hit" : "cold-miss",
+    });
+  });
+
+  createEffect(() => {
+    const pending = pendingSessionSwitchPerf();
+    if (!pending) return;
+    if (currentView() !== "session") return;
+    if (selectedSessionId() !== pending.sessionID) return;
+
+    const messageCount = visibleMessages().length;
+    if (messageCount === 0) return;
+
+    recordPerfLog(developerMode(), "session.switch", "transcript-first-paint", {
+      sessionID: pending.sessionID,
+      source: pending.source,
+      elapsedMs: Math.round((perfNow() - pending.startedAt) * 100) / 100,
+      messageCount,
+    });
+
+    setPendingSessionSwitchPerf((current) =>
+      current?.sessionID === pending.sessionID ? null : current,
+    );
   });
 
   const restorePromptFromUserMessage = (message: MessageWithParts) => {
