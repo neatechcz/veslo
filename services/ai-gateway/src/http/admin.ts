@@ -591,14 +591,23 @@ export function createDefaultAdminService(
     result: "ok" | "warning" | "error";
     summary: string;
   }) {
-    await getAuditRepository().recordEvent({
-      actorUserId: input.actorUserId ?? null,
-      entityType: input.entityType,
-      entityId: input.entityId,
-      action: input.action,
-      result: input.result,
-      summary: input.summary,
-    });
+    try {
+      await getAuditRepository().recordEvent({
+        actorUserId: input.actorUserId ?? null,
+        entityType: input.entityType,
+        entityId: input.entityId,
+        action: input.action,
+        result: input.result,
+        summary: input.summary,
+      });
+    } catch (error) {
+      console.error("admin audit event failed", {
+        action: input.action,
+        entityType: input.entityType,
+        entityId: input.entityId,
+        error,
+      });
+    }
   }
 
   async function listCredentialsWithAlerts(): Promise<CredentialRecord[]> {
@@ -969,8 +978,15 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.get("/admin/api/credentials", async (req, res) => {
-    const payload = await adminService.listCredentials(res.locals.adminToken as string);
-    res.json(payload);
+    try {
+      const payload = await adminService.listCredentials(res.locals.adminToken as string);
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "credential_list_failed" });
+    }
   });
 
   router.post("/admin/api/credentials/:credentialId/revoke", async (req, res) => {
@@ -1022,23 +1038,44 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.get("/admin/api/sessions", async (req, res) => {
-    const payload = await adminService.listSessions(res.locals.adminToken as string);
-    res.json(payload);
+    try {
+      const payload = await adminService.listSessions(res.locals.adminToken as string);
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "session_list_failed" });
+    }
   });
 
   router.get("/admin/api/usage", async (req, res) => {
-    const payload = await adminService.getUsage(res.locals.adminToken as string, {
-      groupBy: normalizeGroupBy(req.query.groupBy),
-      credentialId: typeof req.query.credentialId === "string" && req.query.credentialId.trim() ? req.query.credentialId.trim() : null,
-      userId: typeof req.query.userId === "string" && req.query.userId.trim() ? req.query.userId.trim() : null,
-      orgId: typeof req.query.orgId === "string" && req.query.orgId.trim() ? req.query.orgId.trim() : null,
-    });
-    res.json(payload);
+    try {
+      const payload = await adminService.getUsage(res.locals.adminToken as string, {
+        groupBy: normalizeGroupBy(req.query.groupBy),
+        credentialId: typeof req.query.credentialId === "string" && req.query.credentialId.trim() ? req.query.credentialId.trim() : null,
+        userId: typeof req.query.userId === "string" && req.query.userId.trim() ? req.query.userId.trim() : null,
+        orgId: typeof req.query.orgId === "string" && req.query.orgId.trim() ? req.query.orgId.trim() : null,
+      });
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "usage_lookup_failed" });
+    }
   });
 
   router.get("/admin/api/alerts", async (req, res) => {
-    const payload = await adminService.listAlerts(res.locals.adminToken as string);
-    res.json(payload);
+    try {
+      const payload = await adminService.listAlerts(res.locals.adminToken as string);
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "alert_list_failed" });
+    }
   });
 
   router.post("/admin/api/alerts/:alertId/acknowledge", async (req, res) => {
@@ -1074,8 +1111,15 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.get("/admin/api/audit", async (req, res) => {
-    const payload = await adminService.listAudit(res.locals.adminToken as string);
-    res.json(payload);
+    try {
+      const payload = await adminService.listAudit(res.locals.adminToken as string);
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "audit_list_failed" });
+    }
   });
 
   router.get("/admin/api/users", async (req, res) => {

@@ -317,3 +317,139 @@ test("createDefaultAdminService enriches credential payloads with unresolved lin
     ],
   });
 });
+
+test("createDefaultAdminService keeps user creation successful when audit persistence fails", async () => {
+  const createdUser: AdminUserRecord = {
+    id: "user_created",
+    name: "Created User",
+    email: "created@example.test",
+    emailVerified: false,
+    platformAdmin: false,
+    disabled: false,
+    memberships: [],
+  };
+  const auditCalls: Array<{
+    actorUserId?: string | null;
+    entityType: string;
+    entityId: string;
+    action: string;
+    result: "ok" | "warning" | "error";
+    summary?: string | null;
+  }> = [];
+  const consoleErrors: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    consoleErrors.push(args);
+  };
+
+  try {
+    const service = createDefaultAdminService("http://den.example.test", {
+      denClient: {
+        async startBrowserAuth() {
+          throw new Error("unused");
+        },
+        async exchangeBrowserAuth() {
+          throw new Error("unused");
+        },
+        async getSession() {
+          throw new Error("unused");
+        },
+        async listUsers() {
+          throw new Error("unused");
+        },
+        async createUser() {
+          return createdUser;
+        },
+        async updateUser() {
+          throw new Error("unused");
+        },
+        async disableUser() {
+          throw new Error("unused");
+        },
+        async enableUser() {
+          throw new Error("unused");
+        },
+        async deleteUser() {
+          throw new Error("unused");
+        },
+      },
+      auditRepository: {
+        async recordEvent(input) {
+          auditCalls.push(input);
+          throw new Error("audit_unavailable");
+        },
+      },
+    });
+
+    const result = await service.createUser("admin-token", {
+      email: createdUser.email,
+      name: createdUser.name,
+      platformAdmin: createdUser.platformAdmin,
+      orgId: null,
+      orgRole: "member",
+    });
+
+    assert.deepEqual(result, createdUser);
+    assert.deepEqual(auditCalls, [
+      {
+        actorUserId: "admin-ui",
+        action: "user.create",
+        entityType: "user",
+        entityId: createdUser.id,
+        result: "ok",
+        summary: `Created user ${createdUser.email}.`,
+      },
+    ]);
+    assert.equal(consoleErrors.length, 1);
+    assert.match(String(consoleErrors[0]?.[0] ?? ""), /admin audit event failed/i);
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+test("GET admin read endpoints return JSON 502 payloads when read models fail", async () => {
+  const { service } = createAdminServiceSpy();
+  service.listCredentials = async () => {
+    throw new Error("credential_store_down");
+  };
+  service.listSessions = async () => {
+    throw new Error("session_store_down");
+  };
+  service.getUsage = async () => {
+    throw new Error("usage_store_down");
+  };
+  service.listAlerts = async () => {
+    throw new Error("alert_store_down");
+  };
+  service.listAudit = async () => {
+    throw new Error("audit_store_down");
+  };
+
+  const app = createApp({ admin: service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const cases = [
+      { path: "/admin/api/credentials", expected: { error: "credential_list_failed" } },
+      { path: "/admin/api/sessions", expected: { error: "session_list_failed" } },
+      { path: "/admin/api/usage", expected: { error: "usage_lookup_failed" } },
+      { path: "/admin/api/alerts", expected: { error: "alert_list_failed" } },
+      { path: "/admin/api/audit", expected: { error: "audit_list_failed" } },
+    ];
+
+    for (const entry of cases) {
+      const response = await fetch(`http://127.0.0.1:${port}${entry.path}`, {
+        headers: AUTHORIZATION,
+      });
+
+      assert.equal(response.status, 502);
+      assert.match(response.headers.get("content-type") ?? "", /application\/json/i);
+      assert.deepEqual(await response.json(), entry.expected);
+    }
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
