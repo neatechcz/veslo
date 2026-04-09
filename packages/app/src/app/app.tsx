@@ -79,6 +79,8 @@ import {
   initialSidebarSessionLimit,
   nextSidebarSessionLimit,
 } from "./pages/sidebar-session-pagination";
+import { shouldFallbackFromSessionRoute } from "./lib/session-route-selection-guard";
+import { shouldSyncSidebarFromSessionStore } from "./lib/sidebar-session-sync-guard";
 import ModelPickerModal from "./components/model-picker-modal";
 import ResetModal from "./components/reset-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
@@ -2850,7 +2852,9 @@ export default function App() {
     // When switching workers, the session store can update before the activeWorkspaceId flips.
     // Use connectingWorkspaceId as the authoritative target during the switch so we don't
     // accidentally overwrite another worker's sidebar sessions.
-    const wsId = (workspaceStore.connectingWorkspaceId() ?? workspaceStore.activeWorkspaceId()).trim();
+    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+    const connectingWorkspaceId = workspaceStore.connectingWorkspaceId()?.trim() ?? "";
+    const wsId = (connectingWorkspaceId || activeWorkspaceId).trim();
     if (!wsId) return;
     const status = sidebarSessionStatusByWorkspaceId()[wsId];
 
@@ -2867,6 +2871,24 @@ export default function App() {
             sessionDirectoryMatchesRoot(resolveSessionDirectory(session), activeWorkspaceRoot),
           )
         : allSessions;
+      if (
+        !shouldSyncSidebarFromSessionStore({
+          activeWorkspaceId,
+          connectingWorkspaceId: connectingWorkspaceId || null,
+          targetWorkspaceId: wsId,
+          allSessionCount: allSessions.length,
+          scopedSessionCount: scopedSessions.length,
+        })
+      ) {
+        wsDebug("sidebar:sync:skip-stale-session-store", {
+          wsId,
+          activeWorkspaceId,
+          connectingWorkspaceId: connectingWorkspaceId || null,
+          allSessionCount: allSessions.length,
+          scopedSessionCount: scopedSessions.length,
+        });
+        return;
+      }
       const sorted = sortSessionsByActivity(scopedSessions);
       const requestLimit = sidebarSessionLimitByWorkspaceId()[wsId] ?? initialSidebarSessionLimit();
       const visibleRows = sorted.slice(0, requestLimit);
@@ -7584,9 +7606,22 @@ export default function App() {
         return;
       }
 
+      const sessionIdsInStore = sessions().map((session) => session.id);
+      const sessionIdsInSidebar = sidebarWorkspaceGroups().flatMap((group) =>
+        group.sessions.map((session) => session.id)
+      );
       // If the URL points at a session that no longer exists (e.g. after deletion),
       // route back to /session so the app can fall back safely.
-      if (sessionsLoaded() && !sessions().some((session) => session.id === id)) {
+      // Sidebar-backed ids are accepted here so selection can proceed even when
+      // session store hydration is briefly behind sidebar refreshes.
+      if (
+        shouldFallbackFromSessionRoute({
+          sessionsLoaded: sessionsLoaded(),
+          routeSessionId: id,
+          sessionIdsInStore,
+          sessionIdsInSidebar,
+        })
+      ) {
         if (selectedSessionId() === id) {
           setSelectedSessionId(null);
         }
