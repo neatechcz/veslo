@@ -28,6 +28,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parse } from "jsonc-parser";
 
 import { reportError } from "./lib/error-reporter";
+import { resolveRunningVesloServerHostInfo } from "./lib/veslo-server-host";
 import {
   COMPACTION_THRESHOLD_RATIO,
   resolveCompactionThreshold,
@@ -228,6 +229,7 @@ import {
   schedulerDeleteJob,
   schedulerListJobs,
   vesloServerInfo,
+  vesloServerRestart,
   orchestratorStatus,
   opencodeRouterInfo,
   setWindowDecorations,
@@ -431,6 +433,9 @@ export default function App() {
   const [vesloAuditStatus, setVesloAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
   const [vesloAuditError, setVesloAuditError] = createSignal<string | null>(null);
   const [devtoolsWorkspaceId, setDevtoolsWorkspaceId] = createSignal<string | null>(null);
+  const activeVesloServerHostInfo = createMemo(() =>
+    resolveRunningVesloServerHostInfo(vesloServerHostInfo())
+  );
 
   const updateEngineSource = (
     value: EngineSourcePreference,
@@ -450,7 +455,7 @@ export default function App() {
 
   const vesloServerBaseUrl = createMemo(() => {
     const pref = startupPreference();
-    const hostInfo = vesloServerHostInfo();
+    const hostInfo = activeVesloServerHostInfo();
     const localFallbackUrl = vesloServerLocalFallbackBaseUrl();
     const settingsUrl = normalizeVesloServerUrl(vesloServerSettings().urlOverride ?? "") ?? "";
     const preferredLocalUrl = hostInfo?.baseUrl ?? localFallbackUrl;
@@ -463,7 +468,7 @@ export default function App() {
   const vesloServerAuth = createMemo(
     () => {
       const pref = startupPreference();
-      const hostInfo = vesloServerHostInfo();
+      const hostInfo = activeVesloServerHostInfo();
       const localFallbackUrl = vesloServerLocalFallbackBaseUrl();
       const settingsToken = vesloServerSettings().token?.trim() ?? "";
       const clientToken = hostInfo?.clientToken?.trim() ?? "";
@@ -630,7 +635,7 @@ export default function App() {
 
   createEffect(() => {
     const pref = startupPreference();
-    const info = vesloServerHostInfo();
+    const info = activeVesloServerHostInfo();
     const hostUrl = info?.connectUrl ?? info?.lanUrl ?? info?.mdnsUrl ?? info?.baseUrl ?? "";
     const localFallbackUrl = vesloServerLocalFallbackBaseUrl();
     const resolvedLocalUrl = hostUrl || localFallbackUrl;
@@ -672,6 +677,8 @@ export default function App() {
       return { status: "disconnected" as VesloServerStatus, capabilities: null };
     }
   };
+
+  let ensureLocalVesloServerRunning: () => Promise<boolean> = async () => false;
 
   createEffect(() => {
     if (typeof window === "undefined") return;
@@ -2257,9 +2264,38 @@ export default function App() {
     vesloServerSettings,
     updateVesloServerSettings,
     vesloServerClient,
-    onEngineStable: () => {},
+    onEngineStable: () => {
+      void ensureLocalVesloServerRunning().catch((error) => {
+        const message = error instanceof Error ? error.message : safeStringify(error);
+        setError(addOpencodeCacheHint(message));
+        reportError(error, "veslo-server.ensure");
+      });
+    },
     engineRuntime,
     developerMode,
+  });
+
+  let lastLocalVesloEnsureKey = "";
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (startupPreference() === "server") return;
+    if (!client()) return;
+    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") return;
+
+    const nextKey = [
+      workspaceStore.activeWorkspaceId().trim(),
+      workspaceStore.activeWorkspaceRoot().trim(),
+      baseUrl().trim(),
+    ].join("::");
+    if (!nextKey.replace(/:/g, "")) return;
+    if (nextKey === lastLocalVesloEnsureKey) return;
+    lastLocalVesloEnsureKey = nextKey;
+
+    void ensureLocalVesloServerRunning().catch((error) => {
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      setError(addOpencodeCacheHint(message));
+      reportError(error, "veslo-server.ensure.effect");
+    });
   });
 
   type SidebarWorkspaceSessionsStatus = WorkspaceSessionGroup["status"];
@@ -3158,7 +3194,7 @@ export default function App() {
 
   const resolveSharedBundleWorkerTarget = () => {
     const pref = startupPreference();
-    const hostInfo = vesloServerHostInfo();
+    const hostInfo = activeVesloServerHostInfo();
     const settings = vesloServerSettings();
 
     const localHostUrl = normalizeVesloServerUrl(hostInfo?.baseUrl ?? "") ?? "";
@@ -3919,6 +3955,14 @@ export default function App() {
     if (vesloReconnectBusy()) return false;
     setVesloReconnectBusy(true);
     try {
+      if (
+        isTauriRuntime() &&
+        startupPreference() !== "server" &&
+        workspaceStore.activeWorkspaceDisplay().workspaceType === "local"
+      ) {
+        return await ensureLocalVesloServerRunning();
+      }
+
       let hostInfo = vesloServerHostInfo();
       if (isTauriRuntime()) {
         try {
@@ -3931,8 +3975,9 @@ export default function App() {
       }
 
       // Repair stale local token state by syncing settings token from the live host.
-      if (hostInfo?.clientToken?.trim() && startupPreference() !== "server") {
-        const liveToken = hostInfo.clientToken.trim();
+      const runningHostInfo = resolveRunningVesloServerHostInfo(hostInfo);
+      if (runningHostInfo?.clientToken?.trim() && startupPreference() !== "server") {
+        const liveToken = runningHostInfo.clientToken.trim();
         const settings = vesloServerSettings();
         if ((settings.token?.trim() ?? "") !== liveToken) {
           updateVesloServerSettings({ ...settings, token: liveToken });
@@ -3956,6 +4001,66 @@ export default function App() {
     } finally {
       setVesloReconnectBusy(false);
     }
+  };
+
+  let ensureLocalVesloServerRunningInFlight: Promise<boolean> | null = null;
+  ensureLocalVesloServerRunning = async () => {
+    if (!isTauriRuntime()) return false;
+    if (startupPreference() === "server") return false;
+    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") return false;
+    if (ensureLocalVesloServerRunningInFlight) {
+      return ensureLocalVesloServerRunningInFlight;
+    }
+
+    ensureLocalVesloServerRunningInFlight = (async () => {
+      let info: VesloServerInfo | null = null;
+      try {
+        info = await vesloServerInfo();
+        setVesloServerHostInfo(info);
+      } catch {
+        setVesloServerHostInfo(null);
+      }
+
+      const liveInfo = resolveRunningVesloServerHostInfo(info);
+      if (liveInfo?.baseUrl?.trim()) {
+        const result = await checkVesloServer(
+          liveInfo.baseUrl.trim(),
+          liveInfo.clientToken?.trim() || undefined,
+          liveInfo.hostToken?.trim() || undefined,
+        );
+        setVesloServerStatus(result.status);
+        setVesloServerCapabilities(result.capabilities);
+        setVesloServerCheckedAt(Date.now());
+        if (result.status !== "disconnected") {
+          return true;
+        }
+      }
+
+      const restarted = await vesloServerRestart();
+      setVesloServerHostInfo(restarted);
+      const restartedInfo = resolveRunningVesloServerHostInfo(restarted);
+      const baseUrl = restartedInfo?.baseUrl?.trim() ?? "";
+      if (!baseUrl) {
+        setVesloServerStatus("disconnected");
+        setVesloServerCapabilities(null);
+        setVesloServerCheckedAt(Date.now());
+        return false;
+      }
+
+      const result = await checkVesloServer(
+        baseUrl,
+        restartedInfo?.clientToken?.trim() || undefined,
+        restartedInfo?.hostToken?.trim() || undefined,
+      );
+      setVesloServerStatus(result.status);
+      setVesloServerCapabilities(result.capabilities);
+      setVesloServerCheckedAt(Date.now());
+      return result.status !== "disconnected";
+    })().finally(() => {
+      ensureLocalVesloServerRunningInFlight = null;
+    });
+
+    return ensureLocalVesloServerRunningInFlight;
   };
 
   const restartLocalServer = async () => {
@@ -6883,7 +6988,7 @@ export default function App() {
       installUpdateAndRestart,
       anyActiveRuns: anyActiveRuns(),
       engineSource: engineSource(),
-      setEngineSource: (value) => updateEngineSource(value, { explicit: true }),
+      setEngineSource: (value: EngineSourcePreference) => updateEngineSource(value, { explicit: true }),
       engineCustomBinPath: engineCustomBinPath(),
       setEngineCustomBinPath,
       engineRuntime: engineRuntime(),

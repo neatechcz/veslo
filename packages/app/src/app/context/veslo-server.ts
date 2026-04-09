@@ -20,6 +20,7 @@ import {
   type VesloServerSettings,
   type VesloServerStatus,
 } from "../lib/veslo-server";
+import { resolveRunningVesloServerHostInfo } from "../lib/veslo-server-host";
 import {
   vesloServerInfo,
   orchestratorStatus,
@@ -56,10 +57,11 @@ export function createVesloServerStore(options: {
   const [devtoolsWorkspaceId, setDevtoolsWorkspaceId] = createSignal<string | null>(null);
 
   // -- Derived --
+  const activeHostInfo = createMemo(() => resolveRunningVesloServerHostInfo(hostInfo()));
 
   const baseUrl = createMemo(() => {
     const pref = options.startupPreference();
-    const info = hostInfo();
+    const info = activeHostInfo();
     const settingsUrl = normalizeVesloServerUrl(settings().urlOverride ?? "") ?? "";
 
     if (pref === "local") return info?.baseUrl ?? "";
@@ -69,7 +71,7 @@ export function createVesloServerStore(options: {
 
   const auth = createMemo(() => {
     const pref = options.startupPreference();
-    const info = hostInfo();
+    const info = activeHostInfo();
     const settingsToken = settings().token?.trim() ?? "";
     const clientToken = info?.clientToken?.trim() ?? "";
     const hostToken = info?.hostToken?.trim() ?? "";
@@ -107,7 +109,7 @@ export function createVesloServerStore(options: {
   // Derive URL from preference + host info
   createEffect(() => {
     const pref = options.startupPreference();
-    const info = hostInfo();
+    const info = activeHostInfo();
     const hostUrl = info?.connectUrl ?? info?.lanUrl ?? info?.mdnsUrl ?? info?.baseUrl ?? "";
     const settingsUrl = normalizeVesloServerUrl(settings().urlOverride ?? "") ?? "";
 
