@@ -104,6 +104,36 @@ test("GET /admin/app.js supports transactionId callbacks and forbidden admin acc
   }
 })
 
+test("GET /admin/app.js keeps the stored admin token during transient session verification failures", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(
+      script,
+      /const shouldClearToken = payload\?\.error === "unauthorized" \|\| payload\?\.error === "forbidden"/,
+    )
+    assert.match(
+      script,
+      /if \(shouldClearToken\) {\s*state\.token = ""\s*localStorage\.removeItem\(STORAGE_KEY\)/,
+    )
+    assert.match(script, /setStatus\("Session check failed", "stored token kept"\)/)
+    assert.doesNotMatch(
+      script,
+      /state\.token = ""\s*localStorage\.removeItem\(STORAGE_KEY\)\s*showLogin\(/,
+    )
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin/users includes admin-managed ai access controls in the user editor", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")

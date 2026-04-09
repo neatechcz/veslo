@@ -400,17 +400,23 @@ async function bootstrapSession() {
   setStatus("Checking session", "validating stored token");
   const { response, payload } = await api("/session", { method: "GET" });
   if (!response.ok) {
-    state.token = "";
     state.session = null;
     state.user = null;
-    localStorage.removeItem(STORAGE_KEY);
+    const shouldClearToken = payload?.error === "unauthorized" || payload?.error === "forbidden"
+    if (shouldClearToken) {
+      state.token = ""
+      localStorage.removeItem(STORAGE_KEY)
+    }
     showLogin(
-      payload?.error === "unauthorized"
+      shouldClearToken && payload?.error === "unauthorized"
         ? "Your session expired. Sign in again."
-        : payload?.error === "forbidden"
+        : shouldClearToken && payload?.error === "forbidden"
           ? "You do not have admin access."
           : "Unable to verify session.",
-    );
+    )
+    if (!shouldClearToken) {
+      setStatus("Session check failed", "stored token kept")
+    }
     return;
   }
 
