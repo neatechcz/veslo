@@ -30,6 +30,8 @@ export type SidebarSubagentDecoration = {
   color: string;
 };
 
+export type VisibleSessionIdsChangeHandler = (workspaceId: string, visibleSessionIds: string[]) => void;
+
 export type WorkspaceSessionGroup = {
   workspace: WorkspaceInfo;
   sessions: SidebarSessionItem[];

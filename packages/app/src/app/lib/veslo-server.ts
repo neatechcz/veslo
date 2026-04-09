@@ -1,4 +1,6 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import type { Part } from "@opencode-ai/sdk/v2/client";
+import type { MessageInfo } from "../types";
 import { isTauriRuntime } from "../utils";
 import type { ScheduledJob } from "./tauri";
 import { mergeVesloServerSettingsWithEnv } from "./cloud-policy";
@@ -503,6 +505,28 @@ export type VesloSessionLatestRunArtifacts = {
   workspaceId: string;
   runId: string | null;
   items: VesloSessionArtifactItem[];
+};
+
+export type VesloSessionTranscriptSnapshot = {
+  workspaceId: string;
+  sessionId: string;
+  limit: number;
+  messages: MessageInfo[];
+  partsByMessageId: Record<string, Part[]>;
+  fetchedAt?: number;
+  staleAt?: number;
+};
+
+export type VesloSessionTranscriptPrefetchInput = {
+  visibleSessionIds: string[];
+  selectedSessionId?: string | null;
+  limit?: number;
+};
+
+export type VesloSessionTranscriptPrefetchResult = {
+  workspaceId: string;
+  queuedSessionIds: string[];
+  items: VesloSessionTranscriptSnapshot[];
 };
 
 export type VesloInboxItem = {
@@ -1297,6 +1321,7 @@ export function createVesloServerClient(options: {
     deleteWorkspace: 10_000,
     deleteSession: 12_000,
     sessionArtifacts: 10_000,
+    sessionTranscript: 10_000,
     status: 6_000,
     config: 10_000,
     opencodeRouter: 10_000,
@@ -1380,6 +1405,18 @@ export function createVesloServerClient(options: {
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/artifacts/latest-run`,
         { token, hostToken, timeoutMs: timeouts.sessionArtifacts },
+      ),
+    prefetchSessionTranscripts: (workspaceId: string, input: VesloSessionTranscriptPrefetchInput) =>
+      requestJson<VesloSessionTranscriptPrefetchResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/transcript-prefetch`,
+        { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.sessionTranscript },
+      ),
+    getSessionTranscript: (workspaceId: string, sessionId: string, limit = 140) =>
+      requestJson<VesloSessionTranscriptSnapshot>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript?limit=${encodeURIComponent(String(limit))}`,
+        { token, hostToken, timeoutMs: timeouts.sessionTranscript },
       ),
     exportWorkspace: (workspaceId: string) =>
       requestJson<VesloWorkspaceExport>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/export`, {

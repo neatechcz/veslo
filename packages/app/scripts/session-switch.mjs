@@ -62,6 +62,10 @@ function extractLastText(messages) {
   return null;
 }
 
+function elapsedMs(startedAt) {
+  return Math.round((performance.now() - startedAt) * 100) / 100;
+}
+
 try {
   const client = makeClient({ baseUrl: server.baseUrl, directory: server.cwd });
   await waitForHealthy(client);
@@ -121,6 +125,36 @@ try {
     const text = extractLastText(messages);
     assert.ok(text && text.includes("session B"));
     return { count: messages.length };
+  });
+
+  await step("cold transcript first paint", async () => {
+    const startedAt = performance.now();
+    const messages = await client.session.messages({ sessionID: sessionA.id, limit: 50 });
+    const text = extractLastText(messages);
+
+    assert.ok(text && text.includes("session A"));
+
+    return {
+      sessionID: sessionA.id,
+      elapsedMs: elapsedMs(startedAt),
+      source: "cold-miss",
+      count: messages.length,
+    };
+  });
+
+  await step("warm transcript first paint", async () => {
+    const startedAt = performance.now();
+    const messages = await client.session.messages({ sessionID: sessionA.id, limit: 50 });
+    const text = extractLastText(messages);
+
+    assert.ok(text && text.includes("session A"));
+
+    return {
+      sessionID: sessionA.id,
+      elapsedMs: elapsedMs(startedAt),
+      source: "warm-hit",
+      count: messages.length,
+    };
   });
 
   await step("session.messages switch", async () => {

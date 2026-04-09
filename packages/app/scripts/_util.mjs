@@ -6,12 +6,24 @@ import { realpathSync, statSync } from "node:fs";
 
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
-export function makeClient({ baseUrl, directory }) {
+function resolveAuthHeader(auth) {
+  if (auth?.mode === "veslo" && auth.token) {
+    return `Bearer ${auth.token}`;
+  }
+  if (!auth?.username || !auth?.password) {
+    return null;
+  }
+  return `Basic ${Buffer.from(`${auth.username}:${auth.password}`, "utf8").toString("base64")}`;
+}
+
+export function makeClient({ baseUrl, directory, auth }) {
+  const authHeader = resolveAuthHeader(auth);
   return createOpencodeClient({
     baseUrl,
     directory,
     responseStyle: "data",
     throwOnError: true,
+    headers: authHeader ? { Authorization: authHeader } : undefined,
   });
 }
 

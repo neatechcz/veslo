@@ -35,6 +35,7 @@ import { TOY_UI_CSS, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsRespon
 import { FileSessionStore } from "./file-sessions.js";
 import { createSessionArchiveStore } from "./session-archives.js";
 import { deriveLatestRunArtifactsResponse } from "./session-artifacts.js";
+import { createSessionTranscriptPrefetchStore } from "./session-transcript-prefetch.js";
 import pkg from "../package.json" with { type: "json" };
 
 const SERVER_VERSION = pkg.version;
@@ -46,6 +47,8 @@ const FILE_SESSION_MAX_BATCH_ITEMS = 64;
 const FILE_SESSION_MAX_FILE_BYTES = 5_000_000;
 const FILE_SESSION_CATALOG_DEFAULT_LIMIT = 2000;
 const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
+const SESSION_TRANSCRIPT_DEFAULT_LIMIT = 140;
+const SESSION_TRANSCRIPT_MAX_LIMIT = 200;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
 
 const REDACTED_CONFIG_KEYS = [
@@ -1161,6 +1164,62 @@ function parseSessionCursor(input: string | null): number {
   return Math.floor(parsed);
 }
 
+function parseSessionTranscriptLimit(input: unknown): number {
+  const parsed =
+    typeof input === "number" && Number.isFinite(input)
+      ? input
+      : typeof input === "string"
+        ? Number(input)
+        : Number.NaN;
+  if (!Number.isFinite(parsed) || parsed <= 0) return SESSION_TRANSCRIPT_DEFAULT_LIMIT;
+  return Math.min(Math.floor(parsed), SESSION_TRANSCRIPT_MAX_LIMIT);
+}
+
+function parseVisibleSessionIds(input: unknown): string[] {
+  if (!Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", "visibleSessionIds must be an array");
+  }
+
+  const ids: string[] = [];
+  for (const value of input) {
+    if (typeof value !== "string") {
+      throw new ApiError(400, "invalid_payload", "visibleSessionIds entries must be strings");
+    }
+    const normalized = value.trim();
+    if (!normalized) continue;
+    ids.push(normalized);
+  }
+  return ids;
+}
+
+function resolveSessionTranscriptMessageId(message: unknown): string {
+  if (!message || typeof message !== "object") return "";
+  const record = message as Record<string, unknown>;
+  const fromRoot = typeof record.id === "string" ? record.id.trim() : "";
+  if (fromRoot) return fromRoot;
+  const info = record.info;
+  if (!info || typeof info !== "object") return "";
+  const fromInfo = typeof (info as Record<string, unknown>).id === "string"
+    ? ((info as Record<string, unknown>).id as string).trim()
+    : "";
+  return fromInfo;
+}
+
+function deriveSessionTranscriptPartsByMessageId(messages: unknown[]): Record<string, unknown[]> {
+  const partsByMessageId: Record<string, unknown[]> = {};
+  for (const message of messages) {
+    const messageId = resolveSessionTranscriptMessageId(message);
+    if (!messageId) continue;
+    if (!message || typeof message !== "object") {
+      partsByMessageId[messageId] = [];
+      continue;
+    }
+    const parts = (message as Record<string, unknown>).parts;
+    partsByMessageId[messageId] = Array.isArray(parts) ? parts : [];
+  }
+  return partsByMessageId;
+}
+
 function parseCatalogPathFilter(input: string | null): string | null {
   if (!input) return null;
   const trimmed = input.trim();
@@ -1322,6 +1381,23 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
   const routes: Route[] = [];
   const fileSessions = new FileSessionStore();
   const sessionArchives = createSessionArchiveStore();
+  const sessionTranscriptPrefetch = createSessionTranscriptPrefetchStore({
+    loadTranscript: async ({ workspaceId, sessionId, limit }) => {
+      const workspace = await resolveWorkspace(config, workspaceId);
+      const upstreamMessages = await fetchOpencodeJson(
+        workspace,
+        `/session/${encodeURIComponent(sessionId)}/message?limit=${encodeURIComponent(String(limit))}`,
+        { method: "GET" },
+      );
+      const messages = Array.isArray(upstreamMessages) ? upstreamMessages : [];
+      return {
+        workspaceId: workspace.id,
+        sessionId,
+        messages,
+        partsByMessageId: deriveSessionTranscriptPartsByMessageId(messages),
+      };
+    },
+  });
 
   const serializeFileSession = (session: {
     id: string;
@@ -1705,6 +1781,43 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     });
 
     return jsonResponse({ ok: true });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/sessions/transcript-prefetch", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const visibleSessionIds = parseVisibleSessionIds((body as Record<string, unknown>).visibleSessionIds);
+    const selectedSessionIdRaw = (body as Record<string, unknown>).selectedSessionId;
+    const selectedSessionId = typeof selectedSessionIdRaw === "string" ? selectedSessionIdRaw : undefined;
+    const limit = parseSessionTranscriptLimit((body as Record<string, unknown>).limit);
+    const result = await sessionTranscriptPrefetch.updateInterest({
+      workspaceId: workspace.id,
+      visibleSessionIds,
+      selectedSessionId,
+      limit,
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/transcript", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = (ctx.params.sessionId ?? "").trim();
+    if (!sessionId) {
+      throw new ApiError(400, "invalid_payload", "sessionId is required");
+    }
+    const limit = parseSessionTranscriptLimit(ctx.url.searchParams.get("limit"));
+    const snapshot = await sessionTranscriptPrefetch.getOrLoad({
+      workspaceId: workspace.id,
+      sessionId,
+      limit,
+    });
+    return jsonResponse({
+      workspaceId: workspace.id,
+      sessionId,
+      limit: snapshot.limit,
+      messages: snapshot.messages,
+      partsByMessageId: snapshot.partsByMessageId,
+    });
   });
 
   addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/artifacts/latest-run", "client", async (ctx) => {

@@ -262,6 +262,7 @@ import {
   type VesloSoulStatus,
   type VesloSessionArchiveRecord,
   type VesloSessionLatestRunArtifacts,
+  type VesloServerClient,
   type VesloServerCapabilities,
   type VesloServerDiagnostics,
   type VesloServerStatus,
@@ -1051,7 +1052,32 @@ export default function App() {
     setPendingPermissions,
     selectedSessionHasEarlierMessages,
     selectedSessionLoadingEarlierMessages,
+    hydrateTranscriptSnapshot,
+    hasWarmTranscript,
   } = sessionStore;
+
+  const hydratedVesloServerClient = createMemo<VesloServerClient | null>(() => {
+    const client = vesloServerClient();
+    if (!client) return null;
+
+    const hydratedClient: VesloServerClient = {
+      ...client,
+      prefetchSessionTranscripts: async (workspaceId, input) => {
+        const result = await client.prefetchSessionTranscripts(workspaceId, input);
+        for (const item of result.items) {
+          hydrateTranscriptSnapshot(item);
+        }
+        return result;
+      },
+      getSessionTranscript: async (workspaceId, sessionId, limit = 140) => {
+        const snapshot = await client.getSessionTranscript(workspaceId, sessionId, limit);
+        hydrateTranscriptSnapshot(snapshot);
+        return snapshot;
+      },
+    };
+
+    return hydratedClient;
+  });
 
   const ARTIFACT_SCAN_MESSAGE_WINDOW = 220;
   const artifacts = createMemo(() =>
@@ -1833,6 +1859,57 @@ export default function App() {
       return Boolean(id) && id < revert;
     });
     return insertSyntheticSessionErrors(visible, sessionID, errorTurns);
+  });
+
+  const [pendingSessionSwitchPerf, setPendingSessionSwitchPerf] = createSignal<{
+    sessionID: string;
+    startedAt: number;
+    source: "warm-hit" | "cold-miss";
+  } | null>(null);
+  let lastSessionSwitchPerfKey = "";
+
+  createEffect(() => {
+    const view = currentView();
+    const sessionID = selectedSessionId()?.trim() ?? "";
+
+    if (view !== "session" || !sessionID) {
+      if (!sessionID) {
+        setPendingSessionSwitchPerf(null);
+        lastSessionSwitchPerfKey = "";
+      }
+      return;
+    }
+
+    const nextKey = `${view}:${sessionID}`;
+    if (nextKey === lastSessionSwitchPerfKey) return;
+    lastSessionSwitchPerfKey = nextKey;
+
+    setPendingSessionSwitchPerf({
+      sessionID,
+      startedAt: perfNow(),
+      source: hasWarmTranscript(sessionID) ? "warm-hit" : "cold-miss",
+    });
+  });
+
+  createEffect(() => {
+    const pending = pendingSessionSwitchPerf();
+    if (!pending) return;
+    if (currentView() !== "session") return;
+    if (selectedSessionId() !== pending.sessionID) return;
+
+    const messageCount = visibleMessages().length;
+    if (messageCount === 0) return;
+
+    recordPerfLog(developerMode(), "session.switch", "transcript-first-paint", {
+      sessionID: pending.sessionID,
+      source: pending.source,
+      elapsedMs: Math.round((perfNow() - pending.startedAt) * 100) / 100,
+      messageCount,
+    });
+
+    setPendingSessionSwitchPerf((current) =>
+      current?.sessionID === pending.sessionID ? null : current,
+    );
   });
 
   const restorePromptFromUserMessage = (message: MessageWithParts) => {
@@ -6998,7 +7075,7 @@ export default function App() {
       error: error(),
       vesloServerStatus: vesloStatus,
       vesloServerUrl: vesloServerUrl(),
-      vesloServerClient: vesloServerClient(),
+      vesloServerClient: hydratedVesloServerClient(),
       vesloReconnectBusy: vesloReconnectBusy(),
       reconnectVesloServer,
       vesloServerSettings: vesloServerSettings(),
@@ -7311,7 +7388,7 @@ export default function App() {
     vesloServerStatus: vesloServerStatus(),
     startupPreference: startupPreference(),
     hideTitlebar: hideTitlebar(),
-    vesloServerClient: vesloServerClient(),
+    vesloServerClient: hydratedVesloServerClient(),
     vesloServerSettings: vesloServerSettings(),
     vesloServerHostInfo: vesloServerHostInfo(),
     vesloServerWorkspaceId: vesloServerWorkspaceId(),
@@ -7370,6 +7447,7 @@ export default function App() {
     soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
     openRenameWorkspace,
     selectSession: selectSession,
+    pendingSessionLoad: pendingSessionLoad(),
     setPendingSessionLoad,
     messages: visibleMessages(),
     todos: activeTodos(),
@@ -7583,58 +7661,10 @@ export default function App() {
       </Switch>
 
       <WorkspaceSwitchOverlay
-        open={workspaceSwitchOpen() && !pendingSessionLoad()}
+        open={workspaceSwitchOpen()}
         workspace={workspaceSwitchWorkspace()}
         statusKey={workspaceSwitchStatusKey()}
       />
-
-      <Show when={pendingSessionLoad()}>
-        {(pending) => (
-          <div class="fixed inset-0 z-[65] overflow-hidden bg-gray-1/90 backdrop-blur-[1px] text-gray-12">
-            <div class="absolute inset-0">
-              <div class="absolute inset-0 bg-[radial-gradient(circle_at_top,_var(--tw-gradient-stops))] from-gray-2 via-gray-1 to-gray-1 opacity-80" />
-              <div
-                class="absolute -top-24 right-[-4rem] h-72 w-72 rounded-full bg-indigo-7/20 blur-3xl motion-safe:animate-pulse motion-reduce:opacity-40"
-                style={{ "animation-duration": "6s" }}
-              />
-              <div
-                class="absolute -bottom-28 left-[-5rem] h-80 w-80 rounded-full bg-indigo-6/15 blur-3xl motion-safe:animate-pulse motion-reduce:opacity-40"
-                style={{ "animation-duration": "8s" }}
-              />
-              <div class="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-gray-1 via-gray-1/40 to-transparent" />
-            </div>
-
-            <div class="relative z-10 flex min-h-screen flex-col items-center justify-center px-6 py-10 text-center">
-              <div class="flex flex-col items-center gap-8">
-                <div class="relative h-24 w-24 flex items-center justify-center">
-                  <VesloLogo size={44} class="drop-shadow-sm" />
-                </div>
-
-                <div class="space-y-2">
-                  <h2 class="text-2xl font-semibold tracking-tight">{pending().sessionTitle}</h2>
-                  <p class="text-sm text-gray-10">{pending().workspaceName}</p>
-                </div>
-
-                <div class="flex flex-col items-center gap-3">
-                  <div class="flex items-center gap-2 text-sm text-gray-11">
-                    <span class="relative flex h-2.5 w-2.5">
-                      <span
-                        class="absolute inline-flex h-full w-full rounded-full bg-indigo-7/40 motion-safe:animate-ping motion-reduce:opacity-40"
-                        style={{ "animation-duration": "2.6s" }}
-                      />
-                      <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-indigo-7/70" />
-                    </span>
-                    <span>{t("session.opening_conversation", currentLocale())}</span>
-                  </div>
-                  <div class="h-1 w-56 overflow-hidden rounded-full bg-gray-4/50">
-                    <div class="h-full w-1/2 rounded-full bg-gradient-to-r from-transparent via-indigo-6/50 to-transparent animate-progress-shimmer" />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </Show>
 
       <ModelPickerModal
         open={modelPickerOpen()}

@@ -2,6 +2,7 @@ import { batch, createEffect, createMemo, createSignal, onCleanup } from "solid-
 import { createStore, produce, reconcile } from "solid-js/store";
 
 import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client";
+import type { VesloSessionTranscriptSnapshot } from "../lib/veslo-server";
 
 import type {
   Client,
@@ -41,6 +42,11 @@ import {
 } from "./session-reconnect";
 
 export type SessionStore = ReturnType<typeof createSessionStore>;
+
+type TranscriptFreshness = {
+  fetchedAt: number | null;
+  staleAt: number | null;
+};
 
 type StoreState = {
   sessions: Session[];
@@ -201,6 +207,9 @@ export function createSessionStore(options: {
   const [messageLimitBySession, setMessageLimitBySession] = createSignal<Record<string, number>>({});
   const [messageCompleteBySession, setMessageCompleteBySession] = createSignal<Record<string, boolean>>({});
   const [messageLoadBusyBySession, setMessageLoadBusyBySession] = createSignal<Record<string, boolean>>({});
+  const [transcriptFreshnessBySession, setTranscriptFreshnessBySession] = createSignal<
+    Record<string, TranscriptFreshness>
+  >({});
   const reloadDetectionSet = new Set<string>();
   const invalidToolDetectionSet = new Set<string>();
   const chromeMcpFailureDetectionSet = new Set<string>();
@@ -700,6 +709,67 @@ export function createSessionStore(options: {
     });
   }
 
+  function hydrateTranscriptSnapshot(snapshot: VesloSessionTranscriptSnapshot) {
+    const sessionID = snapshot.sessionId.trim();
+    if (!sessionID) return;
+
+    const nextFetchedAt = typeof snapshot.fetchedAt === "number" ? snapshot.fetchedAt : null;
+    const currentFreshness = transcriptFreshnessBySession()[sessionID];
+    if (
+      currentFreshness?.fetchedAt != null &&
+      nextFetchedAt != null &&
+      nextFetchedAt < currentFreshness.fetchedAt
+    ) {
+      return;
+    }
+
+    const nextMessages: MessageWithParts[] = snapshot.messages
+      .filter((info): info is MessageInfo => Boolean(info?.id))
+      .map((info) => ({
+        info,
+        parts: sortById((snapshot.partsByMessageId[info.id] ?? []).filter((part): part is Part => Boolean(part?.id))),
+      }));
+    const existingMessageCount = getCachedTranscriptMessageCount(sessionID);
+
+    batch(() => {
+      setTranscriptFreshnessBySession((current) => ({
+        ...current,
+        [sessionID]: {
+          fetchedAt: nextFetchedAt,
+          staleAt: typeof snapshot.staleAt === "number" ? snapshot.staleAt : null,
+        },
+      }));
+
+      if (existingMessageCount > nextMessages.length) return;
+
+      setMessagesForSession(sessionID, nextMessages);
+
+      const requestedLimit = Math.max(snapshot.limit || 0, nextMessages.length);
+      const currentLimit = messageLimitBySession()[sessionID] ?? 0;
+      const effectiveLimit = Math.max(requestedLimit, currentLimit);
+      setMessageLimitBySession((current) => ({
+        ...current,
+        [sessionID]: effectiveLimit,
+      }));
+      setMessageCompleteBySession((current) => ({
+        ...current,
+        [sessionID]: nextMessages.length < effectiveLimit,
+      }));
+    });
+  }
+
+  function hasWarmTranscript(sessionID: string) {
+    return (store.messages[sessionID] ?? []).length > 0;
+  }
+
+  function getCachedTranscriptMessageCount(sessionID: string) {
+    return (store.messages[sessionID] ?? []).length;
+  }
+
+  function getTranscriptFreshness(sessionID: string) {
+    return transcriptFreshnessBySession()[sessionID] ?? null;
+  }
+
   async function selectSession(sessionID: string) {
     const c = options.client();
     if (!c) return;
@@ -743,18 +813,6 @@ export function createSessionStore(options: {
     const run = (async () => {
       mark("start");
 
-      mark("checking health");
-      try {
-        await withTimeout(c.global.health(), 3000, "health");
-        mark("health ok");
-      } catch (error) {
-        mark("health FAILED", {
-          error: error instanceof Error ? error.message : safeStringify(error),
-        });
-        throw new Error("Server connection lost. Please reload.");
-      }
-      if (abortIfStale("selection changed after health")) return;
-
       const existingLimit = messageLimitBySession()[sessionID] ?? 0;
       const requestLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, existingLimit);
       setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
@@ -769,30 +827,20 @@ export function createSessionStore(options: {
       setMessageLimitBySession((prev) => ({ ...prev, [sessionID]: requestLimit }));
       setMessageCompleteBySession((prev) => ({ ...prev, [sessionID]: msgs.length < requestLimit }));
 
-      try {
-        mark("calling session.todo");
-        const list = unwrap(await withTimeout(c.session.todo({ sessionID }), 8000, "session.todo"));
-        mark("session.todo done");
-        if (abortIfStale("selection changed before todos applied")) return;
-        setStore("todos", sessionID, list);
-      } catch (error) {
-        mark("session.todo failed/timeout", {
-          error: error instanceof Error ? error.message : safeStringify(error),
-        });
-        if (abortIfStale("selection changed before todo fallback")) return;
-        setStore("todos", sessionID, []);
-      }
+      const model = options.lastUserModelFromMessages(msgs);
+      if (model) {
+        if (abortIfStale("selection changed before model applied")) return;
+        options.setSessionModelState((current) => ({
+          overrides: current.overrides,
+          resolved: { ...current.resolved, [sessionID]: model },
+        }));
 
-      try {
-        mark("calling permission.list");
-        await withTimeout(refreshPendingPermissions(), 6000, "permission.list");
-        mark("permission.list done");
-        if (abortIfStale("selection changed before permissions applied")) return;
-      } catch (error) {
-        mark("permission.list failed/timeout", {
-          error: error instanceof Error ? error.message : safeStringify(error),
+        options.setSessionModelState((current) => {
+          if (!current.overrides[sessionID]) return current;
+          const copy = { ...current.overrides };
+          delete copy[sessionID];
+          return { ...current, overrides: copy };
         });
-        if (abortIfStale("selection changed after permission failure")) return;
       }
 
       finishPerf(perfEnabled, "session.select", "complete", startedAt, {
@@ -802,6 +850,33 @@ export function createSessionStore(options: {
         todoCount: (store.todos[sessionID] ?? []).length,
       });
       setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
+
+      void (async () => {
+        try {
+          mark("calling session.todo");
+          const list = unwrap(await withTimeout(c.session.todo({ sessionID }), 8000, "session.todo"));
+          mark("session.todo done");
+          if (abortIfStale("selection changed before todos applied")) return;
+          setStore("todos", sessionID, list);
+        } catch (error) {
+          mark("session.todo failed/timeout", {
+            error: error instanceof Error ? error.message : safeStringify(error),
+          });
+          if (abortIfStale("selection changed before todo fallback")) return;
+          setStore("todos", sessionID, []);
+        }
+
+        try {
+          mark("calling permission.list");
+          await withTimeout(refreshPendingPermissions(), 6000, "permission.list");
+          mark("permission.list done");
+          if (abortIfStale("selection changed before permissions applied")) return;
+        } catch (error) {
+          mark("permission.list failed/timeout", {
+            error: error instanceof Error ? error.message : safeStringify(error),
+          });
+        }
+      })();
     })();
 
     selectGuard.register(sessionID, version, run);
@@ -1637,5 +1712,9 @@ export function createSessionStore(options: {
     setPendingQuestions,
     selectedSessionHasEarlierMessages,
     selectedSessionLoadingEarlierMessages,
+    hydrateTranscriptSnapshot,
+    hasWarmTranscript,
+    getCachedTranscriptMessageCount,
+    getTranscriptFreshness,
   };
 }
