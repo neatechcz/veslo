@@ -107,13 +107,18 @@ export async function createSessionFromDirectorySelection(
   const selectedDirectory = await Promise.resolve(input.pickDirectory());
   if (selectedDirectory == null || selectedDirectory.trim() === "") return "cancelled";
 
+  // Snapshot the active workspace before ensureWorkspaceForFolder() runs.
+  // Creating a new local workspace can register that workspace as "active"
+  // before its runtime activation has actually happened.
+  const activeWorkspaceIdBeforeEnsure =
+    input.getActiveWorkspaceId?.().trim() || input.activeWorkspaceId.trim();
+
   const workspace = await Promise.resolve(input.ensureWorkspaceForFolder(selectedDirectory));
   const workspaceId = workspace?.id?.trim() ?? "";
   if (!workspaceId) return "blocked";
 
   const created = await createSessionWithWorkspaceActivation({
-    activeWorkspaceId: input.activeWorkspaceId,
-    getActiveWorkspaceId: input.getActiveWorkspaceId,
+    activeWorkspaceId: activeWorkspaceIdBeforeEnsure,
     workspaceId,
     activateWorkspace: input.activateWorkspace,
     createSession: input.createSession,

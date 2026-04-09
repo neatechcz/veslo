@@ -223,6 +223,43 @@ test("picker-driven directory session flow reuses the ensured workspace and crea
   assert.deepEqual(created, ["created"]);
 });
 
+test("picker-driven directory session flow still activates when ensuring a new workspace mutates active workspace state", async () => {
+  const ensured: string[] = [];
+  const activated: string[] = [];
+  const created: string[] = [];
+  let currentActive = "ws-active";
+
+  const result = await createSessionFromDirectorySelection({
+    activeWorkspaceId: currentActive,
+    getActiveWorkspaceId: () => currentActive,
+    pickDirectory: async () => "/tmp/project-side-effect",
+    ensureWorkspaceForFolder: async (folder) => {
+      ensured.push(folder);
+      // Mirrors createLocalWorkspace()/workspace_create: the new workspace is
+      // registered as active before the engine switch has actually happened.
+      currentActive = "ws-project-side-effect";
+      return { id: currentActive, path: folder };
+    },
+    activateWorkspace: async (id) => {
+      activated.push(id);
+      return true;
+    },
+    createSession: async () => {
+      created.push("created");
+      return "sess-side-effect";
+    },
+  });
+
+  assert.equal(result, "created");
+  assert.deepEqual(ensured, ["/tmp/project-side-effect"]);
+  assert.deepEqual(
+    activated,
+    ["ws-project-side-effect"],
+    "creating a new workspace must still force activation before session creation",
+  );
+  assert.deepEqual(created, ["created"]);
+});
+
 test("picker-driven directory session flow stops when ensured workspace cannot activate", async () => {
   const ensured: string[] = [];
   const activated: string[] = [];
