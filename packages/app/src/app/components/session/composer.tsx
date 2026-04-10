@@ -6,7 +6,7 @@ import { ArrowUp, File as FileIcon, Paperclip, Square, Terminal, X, Zap } from "
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { currentLocale, t } from "../../../i18n";
-import { extractFilesFromDataTransfer } from "../../utils/data-transfer-files";
+import { extractFilesFromDataTransfer, isFileDragTransfer } from "../../utils/data-transfer-files";
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
 
 
@@ -1139,16 +1139,6 @@ export default function Composer(props: ComposerProps) {
     emitDraftChange();
   };
 
-  const isFileDragTransfer = (transfer: Pick<DataTransfer, "types" | "files"> | null | undefined) => {
-    if (!transfer) return false;
-    const files = Array.from((transfer.files ?? []) as ArrayLike<File>).filter(Boolean);
-    if (files.length > 0) return true;
-    const types = Array.from((transfer.types ?? []) as ArrayLike<string>)
-      .map((entry) => entry.toLowerCase())
-      .filter(Boolean);
-    return types.includes("files");
-  };
-
   const clearFileDragState = () => {
     fileDragDepth = 0;
     setFileDragOver(false);
@@ -1157,8 +1147,8 @@ export default function Composer(props: ComposerProps) {
   const handleDragEnter = (event: DragEvent) => {
     if (!isFileDragTransfer(event.dataTransfer)) return;
     fileDragDepth += 1;
-    if (attachmentsDisabled()) return;
     event.preventDefault();
+    if (attachmentsDisabled()) return;
     setFileDragOver(true);
   };
 
@@ -1471,8 +1461,8 @@ export default function Composer(props: ComposerProps) {
           onDrop={handleDrop}
           onDragOver={(event: DragEvent) => {
             if (!isFileDragTransfer(event.dataTransfer)) return;
-            if (attachmentsDisabled()) return;
             event.preventDefault();
+            if (attachmentsDisabled()) return;
             setFileDragOver(true);
           }}
         >

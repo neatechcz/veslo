@@ -1722,8 +1722,7 @@ export default function SessionView(props: SessionViewProps) {
   let initialAnchorGuardTimer: ReturnType<typeof setTimeout> | undefined;
   const attachmentsEnabled = createMemo(() => {
     return props.vesloServerStatus === "connected"
-      && Boolean(props.vesloServerClient)
-      && Boolean(props.vesloServerWorkspaceId?.trim());
+      && Boolean(props.vesloServerClient);
   });
   const attachmentsDisabledReason = createMemo(() => {
     if (attachmentsEnabled()) return null;

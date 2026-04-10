@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { extractFilesFromDataTransfer } from "./data-transfer-files.js";
+import { extractFilesFromDataTransfer, isFileDragTransfer } from "./data-transfer-files.js";
 
 test("prefers dataTransfer.files when populated", () => {
   const fileA = { name: "a.png" } as File;
@@ -41,4 +41,22 @@ test("falls back to file items when files is empty", () => {
 
 test("returns empty list for null transfer", () => {
   assert.deepEqual(extractFilesFromDataTransfer(null), []);
+});
+
+test("detects file drags from the Files transfer type even before files resolve", () => {
+  const transfer = {
+    files: [],
+    types: ["Files", "text/plain"],
+  } as unknown as DataTransfer;
+
+  assert.equal(isFileDragTransfer(transfer), true);
+});
+
+test("does not treat plain text drags as file transfers", () => {
+  const transfer = {
+    files: [],
+    types: ["text/plain"],
+  } as unknown as DataTransfer;
+
+  assert.equal(isFileDragTransfer(transfer), false);
 });

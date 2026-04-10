@@ -175,6 +175,7 @@ import {
   preferredSessionWorkspaceRoot,
   sessionDirectoryMatchesRoot,
 } from "./utils";
+import { isFileDragTransfer } from "./utils/data-transfer-files";
 import { createStartupGuard } from "./utils/startup-guard";
 import { computeWorkspaceSwitchOverlayHoldMs } from "./utils/workspace-switch-overlay";
 import {
@@ -568,6 +569,22 @@ export default function App() {
     onCleanup(() => document.removeEventListener("visibilitychange", update));
   });
 
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleGlobalFileDropGuard = (event: DragEvent) => {
+      if (isFileDragTransfer(event.dataTransfer) === false) return;
+      event.preventDefault();
+    };
+
+    window.addEventListener("dragover", handleGlobalFileDropGuard, true);
+    window.addEventListener("drop", handleGlobalFileDropGuard, true);
+    onCleanup(() => {
+      window.removeEventListener("dragover", handleGlobalFileDropGuard, true);
+      window.removeEventListener("drop", handleGlobalFileDropGuard, true);
+    });
+  });
   createEffect(() => {
     if (typeof window === "undefined") return;
     if (!isTauriRuntime()) return;
@@ -1290,6 +1307,55 @@ export default function App() {
     throw new Error(`Failed to resolve a unique filename for ${filename}.`);
   };
 
+  const resolveWorkspaceIdForAttachmentStaging = async (
+    client: NonNullable<ReturnType<typeof vesloServerClient>>,
+  ) => {
+    let workspaceId = (vesloServerWorkspaceId() ?? "").trim();
+    if (workspaceId) return workspaceId;
+
+    const response = await client.listWorkspaces();
+    const items = Array.isArray(response.items) ? response.items : [];
+    const active = workspaceStore.activeWorkspaceDisplay();
+    const activeId = response.activeId?.trim() ?? "";
+
+    const findByPath = (targetPath: string) => {
+      const normalizedTarget = normalizeDirectoryPath(targetPath.trim());
+      if (normalizedTarget === "") return null;
+      return items.find((entry) => {
+        const candidates = [
+          normalizeDirectoryPath((entry.path ?? "").trim()),
+          normalizeDirectoryPath((entry.directory ?? "").trim()),
+          normalizeDirectoryPath((entry.opencode?.directory ?? "").trim()),
+        ].filter(Boolean);
+        return candidates.includes(normalizedTarget);
+      }) ?? null;
+    };
+
+    let resolved = "";
+    if (active.workspaceType === "remote" && active.remoteType === "veslo") {
+      const inferredWorkspaceId =
+        parseVesloWorkspaceIdFromUrl(active.vesloHostUrl ?? "") ??
+        parseVesloWorkspaceIdFromUrl(active.baseUrl ?? "") ??
+        parseVesloWorkspaceIdFromUrl(vesloServerUrl().trim());
+      const storedId = active.vesloWorkspaceId?.trim() || inferredWorkspaceId || envVesloWorkspaceId || "";
+      resolved =
+        (storedId && items.find((entry) => entry.id === storedId)?.id) ||
+        findByPath(active.directory?.trim() ?? active.path?.trim() ?? "")?.id ||
+        activeId ||
+        (items.length === 1 ? items[0]?.id ?? "" : "");
+    } else if (active.workspaceType === "local") {
+      resolved =
+        findByPath(workspaceStore.activeWorkspaceRoot().trim())?.id ||
+        (items.length === 1 ? (activeId || items[0]?.id || "") : "");
+    }
+
+    if (resolved) {
+      setVesloServerWorkspaceId(resolved);
+    }
+
+    return resolved;
+  };
+
   const stageAttachmentsIntoSessionDirectory = async (
     draft: ComposerDraft,
     sessionID: string,
@@ -1298,9 +1364,12 @@ export default function App() {
     if (!attachmentsToStage.length) return [];
 
     const client = vesloServerClient();
-    const workspaceId = (resolvedDevtoolsWorkspaceId() ?? "").trim();
-    if (!client || !workspaceId || vesloServerStatus() !== "connected") {
+    if (!client || vesloServerStatus() !== "connected") {
       throw new Error("Connect to Veslo server before sending attachments.");
+    }
+    const workspaceId = await resolveWorkspaceIdForAttachmentStaging(client);
+    if (!workspaceId) {
+      throw new Error("Veslo server workspace is not ready for attachments.");
     }
 
     const reservedPaths = new Set<string>();

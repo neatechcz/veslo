@@ -45,3 +45,17 @@ test("composer exposes a dedicated file-drag hover state for drop feedback", () 
     "composer should render a visible hover state when files are dragged over the composer",
   );
 });
+
+test("composer prevents browser file-open default before checking attachment availability", () => {
+  assert.match(
+    source,
+    /const handleDragEnter = \(event: DragEvent\) => \{\s*if \(!isFileDragTransfer\(event\.dataTransfer\)\) return;\s*fileDragDepth \+= 1;\s*event\.preventDefault\(\);\s*if \(attachmentsDisabled\(\)\) return;/s,
+    "file drag enter should suppress the browser default even when attachments are currently unavailable",
+  );
+
+  assert.match(
+    source,
+    /onDragOver=\{\(event: DragEvent\) => \{\s*if \(!isFileDragTransfer\(event\.dataTransfer\)\) return;\s*event\.preventDefault\(\);\s*if \(attachmentsDisabled\(\)\) return;/s,
+    "file drag over should suppress browser navigation before it decides whether to show attachment hover UI",
+  );
+});

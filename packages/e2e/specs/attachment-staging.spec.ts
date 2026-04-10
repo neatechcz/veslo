@@ -9,6 +9,31 @@ const __dirname = dirname(__filename);
 const ATTACHMENT_FIXTURE = resolve(__dirname, '..', 'fixtures', 'attachment-staging-test.png');
 const ATTACHMENT_FIXTURE_B64 = readFileSync(ATTACHMENT_FIXTURE).toString('base64');
 
+async function ensureSessionComposer() {
+  const existingTextbox = await $('[role="textbox"]');
+  if (await existingTextbox.isExisting()) return existingTextbox;
+
+  const newSessionButton = await $(
+    '//button[normalize-space()="New session" or normalize-space()="Nová relace"]',
+  );
+  expect(await newSessionButton.isExisting()).toBe(true);
+  await newSessionButton.click();
+
+  await browser.waitUntil(
+    async () => {
+      const textbox = await $('[role="textbox"]');
+      return await textbox.isExisting();
+    },
+    {
+      timeout: 20000,
+      interval: 250,
+      timeoutMsg: 'Session composer did not appear after creating a scratch session.',
+    },
+  );
+
+  return await $('[role="textbox"]');
+}
+
 describe('Attachment staging', () => {
   before(async () => {
     await navigateToHash('/session');
@@ -23,12 +48,12 @@ describe('Attachment staging', () => {
     await root.waitForExist({ timeout: 10000 });
     expect(await root.isDisplayed()).toBe(true);
 
-    const textbox = await $('[role="textbox"]');
+    const textbox = await ensureSessionComposer();
     expect(await textbox.isExisting()).toBe(true);
   });
 
   it('attaches a screenshot fixture and attempts send without inbox path fallback', async () => {
-    const textbox = await $('[role="textbox"]');
+    const textbox = await ensureSessionComposer();
     expect(await textbox.isExisting()).toBe(true);
 
     const fileInput = await $('(//div[.//*[@role="textbox"]]//input[@type="file" and @multiple])[1]');

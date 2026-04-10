@@ -46,6 +46,18 @@ test("all attachment staging happens in session-directory send pipeline, not in 
 
   assert.match(
     appSource,
+    /const resolveWorkspaceIdForAttachmentStaging = async \(\s*client: NonNullable<ReturnType<typeof vesloServerClient>>,\s*\) => \{[\s\S]*const response = await client\.listWorkspaces\(\);/s,
+    "attachment staging should include a dedicated lazy Veslo workspace resolver",
+  );
+
+  assert.match(
+    appSource,
+    /const workspaceId = await resolveWorkspaceIdForAttachmentStaging\(client\);/,
+    "staging should lazily resolve the Veslo workspace id when the UI has not hydrated it yet",
+  );
+
+  assert.match(
+    appSource,
     /await client\.readFileBatch\([^,]+, \[candidatePath\]\)/,
     "staging should probe for filename collisions in the session directory",
   );
@@ -78,5 +90,19 @@ test("all attachment staging happens in session-directory send pipeline, not in 
     appSource,
     /stagedPaths\.join\("\\n"\)/,
     "staging should not append attachment filenames directly into prompt text",
+  );
+});
+
+test("app installs a global file-drop navigation guard for the webview", () => {
+  assert.match(
+    appSource,
+    /window\.addEventListener\("dragover", handleGlobalFileDropGuard, true\);[\s\S]*window\.addEventListener\("drop", handleGlobalFileDropGuard, true\);/s,
+    "app should suppress browser default file navigation at window scope so dropped files cannot replace the whole UI",
+  );
+
+  assert.match(
+    appSource,
+    /const handleGlobalFileDropGuard = \(event: DragEvent\) => \{\s*if \((?:!isFileDragTransfer\(event\.dataTransfer\)|isFileDragTransfer\(event\.dataTransfer\) === false)\) return;\s*event\.preventDefault\(\);\s*\};/s,
+    "global file-drop guard should only intercept actual file drags",
   );
 });

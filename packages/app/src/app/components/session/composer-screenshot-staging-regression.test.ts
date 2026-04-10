@@ -59,8 +59,16 @@ test("composer awaits send confirmation before clearing draft and attachments", 
 test("session page enables attachments only when Veslo server is connected", () => {
   assert.match(
     sessionPageSource,
-    /const attachmentsEnabled = createMemo\(\(\) => \{\s*return props\.vesloServerStatus === "connected"\s*&& Boolean\(props\.vesloServerClient\)\s*&& Boolean\(props\.vesloServerWorkspaceId\?\.trim\(\)\);\s*\}\);/s,
-    "attachment UI availability should require the same client and workspace prerequisites as attachment staging",
+    /const attachmentsEnabled = createMemo\(\(\) => \{\s*return props\.vesloServerStatus === "connected"\s*&& Boolean\(props\.vesloServerClient\);\s*\}\);/s,
+    "attachment UI availability should depend on live Veslo connectivity, not on whether workspace resolution has already completed",
+  );
+});
+
+test("session props do not borrow devtools workspace fallbacks for attachment gating", () => {
+  assert.match(
+    appSource,
+    /const sessionProps = \(\) => \(\{[\s\S]*?vesloServerWorkspaceId: vesloServerWorkspaceId\(\),/s,
+    "session view should use the real Veslo workspace signal, not a devtools-only fallback that can point at the wrong workspace",
   );
 });
 
