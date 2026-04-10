@@ -14,10 +14,18 @@ import { requireSession } from "./http/session.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
 import { desktopAuthV2Router } from "./http/desktop-auth-v2.js"
 import { createAdminRuntimeRouter } from "./http/admin-runtime.js"
+import { createProxyRouter } from "./managed-ai/http/proxy.js"
+import { createUserCredentialsRouter } from "./managed-ai/http/user-credentials.js"
+import {
+  createDefaultProxyDependencies,
+  createDefaultRuntimeState,
+  createDefaultUserCredentialDependencies,
+} from "./managed-ai/runtime/default-runtime.js"
 import { orgsRouter } from "./http/orgs.js"
 import { workersRouter } from "./http/workers.js"
 
 const app = express()
+const managedAiRuntime = env.managedAi.enabled ? createDefaultRuntimeState() : null
 const currentFile = fileURLToPath(import.meta.url)
 const publicDir = path.resolve(path.dirname(currentFile), "../public")
 const desktopCorsOrigins = ["tauri://localhost", "http://localhost:1420", "http://localhost:1421"] as const
@@ -41,6 +49,11 @@ if (corsOrigins.length > 0) {
 app.all("/api/auth/*", toNodeHandler(auth))
 app.use(express.json())
 app.use(express.static(publicDir))
+
+if (managedAiRuntime) {
+  app.use(createUserCredentialsRouter(createDefaultUserCredentialDependencies(managedAiRuntime)))
+  app.use(createProxyRouter(createDefaultProxyDependencies(managedAiRuntime)))
+}
 
 app.get("/health", (_, res) => {
   res.json({ ok: true })

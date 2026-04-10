@@ -9,6 +9,8 @@ import { MySqlCredentialRepository } from "../credentials/mysql-repository.js"
 import { MySqlSecretStore } from "../credentials/mysql-secret-store.js"
 import { DefaultOpenAiOAuthClient, type OpenAiOAuthClient } from "../credentials/openai-oauth.js"
 import type { CredentialRepository } from "../credentials/repository.js"
+import { DenGatewaySessionResolver } from "../auth/gateway-session.js"
+import { DenUserSessionResolver, type UserSessionResolver } from "../auth/user-session.js"
 import type { SecretStore } from "../credentials/secret-store.js"
 import { createManagedAiDb, managedAiDb, resolveManagedAiDb } from "../db.js"
 import { env } from "../../env.js"
@@ -56,6 +58,7 @@ export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): 
 
 export type ProxyDependencies = {
   aiAccess: AiAccessRepository
+  gatewaySessions: DenGatewaySessionResolver
   credentials: CredentialRepository
   usageRepository: UsageRepository
   leaseBroker: LeaseBroker
@@ -66,7 +69,7 @@ export type ProxyDependencies = {
 
 export function createDefaultProxyDependencies(
   runtime: RuntimeState,
-  overrides: Partial<Pick<ProxyDependencies, "openAiTransport" | "anthropicTransport">> & {
+  overrides: Partial<Pick<ProxyDependencies, "gatewaySessions" | "openAiTransport" | "anthropicTransport">> & {
     openAiOAuth?: OpenAiOAuthClient
     now?: () => Date
   } = {},
@@ -78,6 +81,7 @@ export function createDefaultProxyDependencies(
 
   return {
     aiAccess: runtime.aiAccess,
+    gatewaySessions: overrides.gatewaySessions ?? new DenGatewaySessionResolver(),
     credentials: runtime.credentials,
     usageRepository: runtime.usage,
     leaseBroker: new LeaseBroker(
@@ -101,11 +105,16 @@ export function createDefaultProxyDependencies(
 }
 
 export type UserCredentialDependencies = {
+  sessionResolver: UserSessionResolver
   aiAccess: AiAccessRepository
 }
 
-export function createDefaultUserCredentialDependencies(runtime: RuntimeState): UserCredentialDependencies {
+export function createDefaultUserCredentialDependencies(
+  runtime: RuntimeState,
+  overrides: Partial<Pick<UserCredentialDependencies, "sessionResolver">> = {},
+): UserCredentialDependencies {
   return {
+    sessionResolver: overrides.sessionResolver ?? new DenUserSessionResolver(),
     aiAccess: runtime.aiAccess,
   }
 }
