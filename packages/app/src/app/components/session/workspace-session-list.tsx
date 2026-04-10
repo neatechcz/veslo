@@ -58,6 +58,7 @@ import {
   type ProjectDropPosition,
   reorderProjectKeys,
 } from "./workspace-session-list-order";
+import { resolveRenderableProjectGroups } from "./workspace-session-list-render-model";
 import {
   readCollapsedProjectMap,
   readProjectOrder,
@@ -78,6 +79,9 @@ type Props = {
   subagentDecorationsBySessionId?: Record<string, SidebarSubagentDecoration>;
   activeWorkspaceId: string;
   selectedSessionId: string | null;
+  pendingSelectedSessionId?: string | null;
+  pendingSelectedWorkspaceId?: string | null;
+  suspendProjectReorder?: boolean;
   sessionStatusById?: Record<string, string>;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
@@ -241,6 +245,28 @@ export default function WorkspaceSessionList(props: Props) {
       .filter((group) => group.sessions.length > 0),
   );
   const orderedProjectGroups = createMemo(() => applyProjectOrder(visibleProjectGroups(), projectOrder()));
+  const [frozenProjectGroups, setFrozenProjectGroups] = createSignal<ProjectSessionGroup[]>([]);
+  const suspendProjectReorder = createMemo(() => Boolean(props.suspendProjectReorder));
+
+  createEffect(() => {
+    const next = orderedProjectGroups();
+    const suspended = suspendProjectReorder();
+    setFrozenProjectGroups((previous) =>
+      resolveRenderableProjectGroups({
+        suspended,
+        previousGroups: previous,
+        nextGroups: next,
+      }),
+    );
+  });
+
+  const renderProjectGroups = createMemo(() =>
+    resolveRenderableProjectGroups({
+      suspended: suspendProjectReorder(),
+      previousGroups: frozenProjectGroups(),
+      nextGroups: orderedProjectGroups(),
+    }),
+  );
 
   const recentHierarchy = createMemo(() => buildRowHierarchyLookup(visibleRecentRows()));
 
@@ -254,7 +280,7 @@ export default function WorkspaceSessionList(props: Props) {
   const visibleProjectRows = createMemo<FlatSessionRow[]>(() => {
     const expandedParentIds = expandedParentSessionIds();
     const visibleByProject = projectVisibleByKey();
-    return orderedProjectGroups().flatMap((group) => {
+    return renderProjectGroups().flatMap((group) => {
       const projectHierarchy = buildRowHierarchyLookup(group.sessions);
       const projectTreeVisibleRows = group.sessions.filter((row) =>
         rowVisibleByExpansion(row, projectHierarchy, expandedParentIds),
@@ -463,6 +489,17 @@ export default function WorkspaceSessionList(props: Props) {
     return color;
   };
 
+  const isRowSelected = (workspaceId: string, sessionId: string) => {
+    const selectedSessionId = props.selectedSessionId?.trim() ?? "";
+    if (selectedSessionId && selectedSessionId === sessionId) return true;
+
+    const pendingSessionId = props.pendingSelectedSessionId?.trim() ?? "";
+    if (!pendingSessionId || pendingSessionId !== sessionId) return false;
+
+    const pendingWorkspaceId = props.pendingSelectedWorkspaceId?.trim() ?? "";
+    return !pendingWorkspaceId || pendingWorkspaceId === workspaceId;
+  };
+
   const ensureExpandedSessionChildrenVisible = (
     sessionId: string,
     expandedParentSessionIds: ReadonlySet<string>,
@@ -478,7 +515,7 @@ export default function WorkspaceSessionList(props: Props) {
       return;
     }
 
-    const groups = orderedProjectGroups();
+    const groups = renderProjectGroups();
     for (const group of groups) {
       if (!group.sessions.some((row) => row.session.id === sessionId)) continue;
       const required = requiredVisibleCountForExpandedSession(
@@ -1294,7 +1331,7 @@ export default function WorkspaceSessionList(props: Props) {
                       const session = () => row.session;
                       const hasChildren = (sessionId: string) =>
                         (recentHierarchy().childrenByParentId.get(sessionId)?.length ?? 0) > 0;
-                      const isSelected = () => props.selectedSessionId === session().id;
+                      const isSelected = () => isRowSelected(workspace().id, session().id);
                       const isSessionActive = () => (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
                       const isConnecting = () => isConnectingWorkspace(workspace().id);
                       const canRecover = () => canRecoverWorkspace(workspace());
@@ -1454,7 +1491,7 @@ export default function WorkspaceSessionList(props: Props) {
                 </Show>
               </>
             }>
-              <For each={orderedProjectGroups()}>
+              <For each={renderProjectGroups()}>
                 {(project) => {
                 const workspace = () => project.workspace;
                 const isActiveWorkspace = () => props.activeWorkspaceId === workspace().id;
@@ -1620,7 +1657,7 @@ export default function WorkspaceSessionList(props: Props) {
                         <For each={visibleRows()}>
                           {(row) => {
                             const session = () => row.session;
-                            const isSelected = () => props.selectedSessionId === session().id;
+                            const isSelected = () => isRowSelected(workspace().id, session().id);
                             const isSessionActive = () =>
                               (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
                             const label = () => sessionLabelParts(row);

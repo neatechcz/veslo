@@ -103,6 +103,7 @@ import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import { resolveComposerWorkspaceLabel } from "../components/session/composer-workspace-label";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
+import { shouldShowSessionLoadingState } from "../components/session/session-loading-state-model";
 import type { SidebarSectionState } from "../components/session/sidebar";
 import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
 import {
@@ -202,8 +203,10 @@ export type SessionViewProps = {
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
   openRenameWorkspace: (workspaceId: string) => void;
   selectSession: (sessionId: string) => Promise<void> | void;
-  pendingSessionLoad: { sessionTitle: string; workspaceName: string } | null;
-  setPendingSessionLoad: (value: { sessionTitle: string; workspaceName: string } | null) => void;
+  pendingSessionLoad: { sessionId: string; workspaceId: string; sessionTitle: string; workspaceName: string } | null;
+  setPendingSessionLoad: (
+    value: { sessionId: string; workspaceId: string; sessionTitle: string; workspaceName: string } | null
+  ) => void;
   messages: MessageWithParts[];
   todos: TodoItem[];
   busyLabel: string | null;
@@ -687,10 +690,13 @@ export default function SessionView(props: SessionViewProps) {
     () => !hasWorkspaceConfigured() && !props.selectedSessionId && props.messages.length === 0,
   );
   const showSessionLoadingState = createMemo(() =>
-    Boolean(props.selectedSessionId) &&
-    props.messages.length === 0 &&
-    !showWorkspaceSetupEmptyState() &&
-    (Boolean(props.pendingSessionLoad) || props.loadingEarlierMessages)
+    shouldShowSessionLoadingState({
+      hasWorkspaceSetupEmptyState: showWorkspaceSetupEmptyState(),
+      hasPendingSessionLoad: Boolean(props.pendingSessionLoad),
+      selectedSessionId: props.selectedSessionId,
+      messageCount: props.messages.length,
+      loadingEarlierMessages: props.loadingEarlierMessages,
+    })
   );
   const sessionWorkspaceContextLabel = createMemo(() => {
     if (showWorkspaceSetupEmptyState()) return "";
@@ -3434,13 +3440,18 @@ export default function SessionView(props: SessionViewProps) {
     const shouldShowOverlay = sessionId !== props.selectedSessionId;
 
     // Show loading overlay immediately when switching to a different session.
-    if (shouldShowOverlay) {
-      const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
-      const session = group?.sessions.find((s) => s.id === sessionId);
-      const workspaceName = group?.workspace.displayName ?? group?.workspace.name ?? "";
-      const sessionTitle = session?.title ?? "";
-      props.setPendingSessionLoad({ sessionTitle, workspaceName });
-    }
+      if (shouldShowOverlay) {
+        const group = props.workspaceSessionGroups.find((g) => g.workspace.id === workspaceId);
+        const session = group?.sessions.find((s) => s.id === sessionId);
+        const workspaceName = group?.workspace.displayName ?? group?.workspace.name ?? "";
+        const sessionTitle = session?.title ?? "";
+        props.setPendingSessionLoad({
+          sessionId,
+          workspaceId,
+          sessionTitle,
+          workspaceName,
+        });
+      }
 
     void openSessionWithWorkspaceActivation({
       activeWorkspaceId: props.activeWorkspaceId,
@@ -3782,6 +3793,9 @@ export default function SessionView(props: SessionViewProps) {
             archivedSessionIds={props.archivedSessionIds}
             activeWorkspaceId={props.activeWorkspaceId}
             selectedSessionId={props.selectedSessionId}
+            pendingSelectedSessionId={props.pendingSessionLoad?.sessionId ?? null}
+            pendingSelectedWorkspaceId={props.pendingSessionLoad?.workspaceId ?? null}
+            suspendProjectReorder={Boolean(props.pendingSessionLoad)}
             sessionStatusById={props.sessionStatusById}
             connectingWorkspaceId={props.connectingWorkspaceId}
             workspaceConnectionStateById={props.workspaceConnectionStateById}

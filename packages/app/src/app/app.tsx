@@ -6838,6 +6838,8 @@ export default function App() {
 
   // Session loading overlay — shown immediately on session click, hidden after messages load.
   const [pendingSessionLoad, setPendingSessionLoad] = createSignal<{
+    sessionId: string;
+    workspaceId: string;
     sessionTitle: string;
     workspaceName: string;
   } | null>(null);
