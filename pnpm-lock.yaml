@@ -30,6 +30,15 @@ importers:
       '@codemirror/view':
         specifier: ^6.38.0
         version: 6.39.14
+      '@fontsource-variable/ibm-plex-sans':
+        specifier: ^5.2.8
+        version: 5.2.8
+      '@fontsource-variable/source-sans-3':
+        specifier: ^5.2.9
+        version: 5.2.9
+      '@fontsource/ibm-plex-mono':
+        specifier: ^5.2.7
+        version: 5.2.7
       '@opencode-ai/sdk':
         specifier: ^1.1.31
         version: 1.1.39
@@ -1061,6 +1070,15 @@ packages:
   '@fastify/busboy@2.1.1':
     resolution: {integrity: sha512-vBZP4NlzfOlerQTnba4aqZoMhE/a9HY7HRqoOPaETQcSQuWEIyZMHGfVu6w9wGtGK5fED5qRs2DteVCjOH60sA==}
     engines: {node: '>=14'}
+
+  '@fontsource-variable/ibm-plex-sans@5.2.8':
+    resolution: {integrity: sha512-n5PF2iFa0CZT0QYTPzxvZ39opC9LnU0zdoRccoADbs+Dtsd+lbXOZF7RNuIPHcQX1dKjF63sxnRImQIB5eD0Ag==}
+
+  '@fontsource-variable/source-sans-3@5.2.9':
+    resolution: {integrity: sha512-K9fkQbb0BNnRmmaU+Gpr6U4IaYKpNzA8t07J6aam2i+6v84RT72MVpar8OBr3yYAEznj4riKivPQ2nAF2fPKsw==}
+
+  '@fontsource/ibm-plex-mono@5.2.7':
+    resolution: {integrity: sha512-MKAb8qV+CaiMQn2B0dIi1OV3565NYzp3WN5b4oT6LTkk+F0jR6j0ZN+5BKJiIhffDC3rtBULsYZE65+0018z9w==}
 
   '@grammyjs/types@3.23.0':
     resolution: {integrity: sha512-D3jQ4UWERPsyR3op/YFudMMIPNTU47vy7L51uO9/73tMELmjO/+LX5N36/Y0CG5IQfIsz43MxiHI5rgsK0/k+g==}
@@ -5482,6 +5500,12 @@ snapshots:
     optional: true
 
   '@fastify/busboy@2.1.1': {}
+
+  '@fontsource-variable/ibm-plex-sans@5.2.8': {}
+
+  '@fontsource-variable/source-sans-3@5.2.9': {}
+
+  '@fontsource/ibm-plex-mono@5.2.7': {}
 
   '@grammyjs/types@3.23.0': {}
 

@@ -1,0 +1,97 @@
+@import "@fontsource-variable/source-sans-3";
+@import "@fontsource-variable/ibm-plex-sans";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+:root {
+  --veslo-font-reading:
+    "Source Sans 3 Variable",
+    "Source Sans 3",
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  --veslo-font-product:
+    "IBM Plex Sans Variable",
+    "IBM Plex Sans",
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  --veslo-font-mono:
+    "IBM Plex Mono",
+    ui-monospace,
+    "SFMono-Regular",
+    "SF Mono",
+    Consolas,
+    "Liberation Mono",
+    Menlo,
+    monospace;
+
+  --veslo-type-ui-xs: 0.6875rem;
+  --veslo-type-ui-sm: 0.8125rem;
+  --veslo-type-ui-md: 0.875rem;
+  --veslo-type-reading-md: 0.9375rem;
+  --veslo-type-reading-lg: 1.0625rem;
+  --veslo-type-title-sm: 1.25rem;
+  --veslo-type-title-md: 1.5rem;
+  --veslo-type-title-lg: 2rem;
+}
+
+@utility font-reading {
+  font-family: var(--veslo-font-reading);
+}
+
+@utility font-product {
+  font-family: var(--veslo-font-product);
+}
+
+@utility type-ui-xs {
+  font-size: var(--veslo-type-ui-xs);
+  line-height: 1.45;
+}
+
+@utility type-ui-sm {
+  font-size: var(--veslo-type-ui-sm);
+  line-height: 1.5;
+}
+
+@utility type-ui-md {
+  font-size: var(--veslo-type-ui-md);
+  line-height: 1.5;
+}
+
+@utility type-reading-md {
+  font-size: var(--veslo-type-reading-md);
+  line-height: 1.6;
+}
+
+@utility type-reading-lg {
+  font-size: var(--veslo-type-reading-lg);
+  line-height: 1.65;
+}
+
+@utility type-title-sm {
+  font-size: var(--veslo-type-title-sm);
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+@utility type-title-md {
+  font-size: var(--veslo-type-title-md);
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+@utility type-title-lg {
+  font-size: var(--veslo-type-title-lg);
+  line-height: 1.1;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}

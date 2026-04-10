@@ -7,6 +7,10 @@ safelist: [
   ],
   theme: {
     // OVERRIDE the base theme completely instead of extending it
+    fontFamily: {
+      sans: ["var(--veslo-font-product)", "ui-sans-serif", "system-ui", "sans-serif"],
+      mono: ["var(--veslo-font-mono)", "ui-monospace", "SFMono-Regular", "monospace"],
+    },
     colors: {
       ...radixColors,
       dls: {
