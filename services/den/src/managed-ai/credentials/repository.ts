@@ -83,6 +83,9 @@ export interface CredentialRepository {
   listEligibleBindings?(input: ListEligibleBindingsInput): Promise<CredentialBinding[]>
   getCredentialRecordByBindingId?(bindingId: string): Promise<CredentialRecord | null>
   listAdminCredentials?(): Promise<AdminCredentialRecord[]>
+  revokeCredential?(credentialId: string): Promise<boolean>
+  drainCredential?(credentialId: string): Promise<boolean>
+  rotateCredential?(credentialId: string): Promise<boolean>
   createUserCredential?(input: CreateUserCredentialInput): Promise<CredentialRecord>
   createPlatformCredential?(input: CreatePlatformCredentialInput): Promise<CredentialRecord>
   listUserCredentials?(input: ListUserCredentialsInput): Promise<CredentialRecord[]>

@@ -22,6 +22,8 @@ import { env } from "../env.js"
 import { resolveMembershipOrganizations, isPlatformAdmin } from "./org-auth.js"
 import { requireSession } from "./session.js"
 import { createAdminRouter, type AdminRouteDeps, type AdminSessionSnapshot, type AdminUserMembership, type AdminUserRecord } from "./admin.js"
+import { createManagedAiAdminRouteDeps } from "../managed-ai/http/admin.js"
+import type { RuntimeState } from "../managed-ai/runtime/default-runtime.js"
 
 type ListedUserRow = {
   id: string
@@ -589,7 +591,11 @@ async function deleteAdminUser(req: express.Request, res: express.Response) {
   return { ok: true } as const
 }
 
-export function createAdminRuntimeRouter() {
+export type CreateAdminRuntimeRouterOptions = {
+  managedAi?: RuntimeState | null
+}
+
+export function createAdminRuntimeRouter(options: CreateAdminRuntimeRouterOptions = {}) {
   const deps: AdminRouteDeps = {
     getSessionSnapshot: requirePlatformAdminSnapshot,
     listUsers: async (req, res) => {
@@ -604,6 +610,22 @@ export function createAdminRuntimeRouter() {
     disableUser: disableAdminUser,
     enableUser: enableAdminUser,
     deleteUser: deleteAdminUser,
+  }
+
+  if (options.managedAi) {
+    Object.assign(
+      deps,
+      createManagedAiAdminRouteDeps({
+        getAdminSession: requirePlatformAdminSnapshot,
+        aiAccess: options.managedAi.aiAccess,
+        alerts: options.managedAi.alerts,
+        audit: options.managedAi.audit,
+        credentials: options.managedAi.credentials,
+        leases: options.managedAi.leases,
+        secrets: options.managedAi.secrets,
+        usage: options.managedAi.usage,
+      }),
+    )
   }
 
   return createAdminRouter(deps)

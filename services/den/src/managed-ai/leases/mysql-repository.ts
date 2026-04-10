@@ -1,7 +1,8 @@
-import { and, eq } from "drizzle-orm"
+import { and, desc, eq } from "drizzle-orm"
 
-import { sessionLeaseTable } from "../schema.js"
+import { credentialBindingTable, sessionLeaseTable } from "../schema.js"
 import type {
+  AdminSessionRecord,
   CreateSessionLeaseInput,
   LeaseProvider,
   LeaseRepository,
@@ -80,6 +81,45 @@ export class MySqlLeaseRepository implements LeaseRepository {
 
     return this.getActiveLease(input)
   }
+
+  async listAdminSessions(): Promise<AdminSessionRecord[]> {
+    const rows = await this.db
+      .select({
+        id: sessionLeaseTable.id,
+        sessionId: sessionLeaseTable.session_id,
+        provider: sessionLeaseTable.provider,
+        ownerUserId: sessionLeaseTable.owner_user_id,
+        activeBindingId: sessionLeaseTable.active_binding_id,
+        credentialRecordId: credentialBindingTable.credential_record_id,
+        updatedAt: sessionLeaseTable.updated_at,
+      })
+      .from(sessionLeaseTable)
+      .leftJoin(credentialBindingTable, eq(sessionLeaseTable.active_binding_id, credentialBindingTable.id))
+      .orderBy(desc(sessionLeaseTable.updated_at))
+
+    return rows.map((row: {
+      id: string
+      sessionId: string
+      provider: string
+      ownerUserId: string
+      activeBindingId: string
+      credentialRecordId: string | null
+      updatedAt: Date | string
+    }) => ({
+      id: row.id,
+      sessionId: row.sessionId,
+      provider: row.provider as LeaseProvider,
+      userLabel: row.ownerUserId,
+      orgLabel: "Personal",
+      projectLabel: row.sessionId,
+      workerLabel: "local-runtime",
+      credentialId: row.credentialRecordId ?? row.activeBindingId,
+      state: "healthy",
+      retries: 0,
+      lastSeenAt: asDate(row.updatedAt).toISOString(),
+      lastFailoverAt: null,
+    }))
+  }
 }
 
 function mapSessionLease(row: typeof sessionLeaseTable.$inferSelect): SessionLease {
@@ -94,4 +134,8 @@ function mapSessionLease(row: typeof sessionLeaseTable.$inferSelect): SessionLea
 
 function createLeaseId(input: ResolveLeaseInput): string {
   return `lease_${input.ownerUserId}_${input.provider}_${input.sessionId}`
+}
+
+function asDate(value: Date | string): Date {
+  return value instanceof Date ? value : new Date(value)
 }

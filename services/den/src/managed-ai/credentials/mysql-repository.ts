@@ -1,10 +1,12 @@
-import { and, desc, eq, ne } from "drizzle-orm"
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm"
 import { randomUUID } from "node:crypto"
 
 import {
   credentialBindingTable,
   credentialHealthEventTable,
   credentialRecordTable,
+  credentialUsageEventTable,
+  sessionLeaseTable,
 } from "../schema.js"
 import type {
   CreatePlatformCredentialInput,
@@ -81,6 +83,56 @@ export class MySqlCredentialRepository implements CredentialRepository {
     const row = rows[0]
 
     return row ? mapCredentialRecord(row.record) : null
+  }
+
+  async listAdminCredentials() {
+    const [credentialRows, activeLeaseRows, usageRows] = await Promise.all([
+      this.db.select().from(credentialRecordTable).orderBy(desc(credentialRecordTable.updated_at)),
+      this.db
+        .select({
+          credentialRecordId: credentialBindingTable.credential_record_id,
+          activeLeases: sql<number>`count(*)`,
+        })
+        .from(sessionLeaseTable)
+        .innerJoin(credentialBindingTable, eq(sessionLeaseTable.active_binding_id, credentialBindingTable.id))
+        .groupBy(credentialBindingTable.credential_record_id),
+      this.db
+        .select({
+          credentialRecordId: credentialUsageEventTable.credential_record_id,
+          totalTokens: sql<number>`coalesce(sum(${credentialUsageEventTable.input_tokens} + ${credentialUsageEventTable.output_tokens}), 0)`,
+        })
+        .from(credentialUsageEventTable)
+        .groupBy(credentialUsageEventTable.credential_record_id),
+    ])
+
+    const activeLeasesByCredential = new Map(
+      activeLeaseRows.map((row: { credentialRecordId: string; activeLeases: number }) => [
+        row.credentialRecordId,
+        Number(row.activeLeases ?? 0),
+      ]),
+    )
+    const totalTokensByCredential = new Map(
+      usageRows.map((row: { credentialRecordId: string; totalTokens: number }) => [
+        row.credentialRecordId,
+        Number(row.totalTokens ?? 0),
+      ]),
+    )
+
+    return credentialRows.map((row: typeof credentialRecordTable.$inferSelect) => ({
+      id: row.id,
+      name: row.name?.trim() || `${formatProviderLabel(row.provider)} ${row.id}`,
+      provider: row.provider,
+      type: row.credential_type,
+      state: row.state,
+      scope: row.owner_user_id,
+      activeLeases: activeLeasesByCredential.get(row.id) ?? 0,
+      alertCount: 0,
+      lastRefreshAt: asDate(row.updated_at).toISOString(),
+      lastFailureAt: row.state === "healthy" ? null : asDate(row.updated_at).toISOString(),
+      totalTokens: totalTokensByCredential.get(row.id) ?? 0,
+      nextRotationAt: null,
+      linkedAlertIds: [],
+    }))
   }
 
   async createUserCredential(input: CreateUserCredentialInput): Promise<CredentialRecord> {
@@ -204,6 +256,66 @@ export class MySqlCredentialRepository implements CredentialRepository {
     })
   }
 
+  async revokeCredential(credentialId: string): Promise<boolean> {
+    return this.transitionCredentialState(credentialId, "revoked", "admin_revoke")
+  }
+
+  async drainCredential(credentialId: string): Promise<boolean> {
+    return this.transitionCredentialState(credentialId, "draining", "admin_drain")
+  }
+
+  async rotateCredential(credentialId: string): Promise<boolean> {
+    const credential = await this.getCredential(credentialId)
+    if (!credential) {
+      return false
+    }
+
+    const targetBindings = await this.db
+      .select({ id: credentialBindingTable.id })
+      .from(credentialBindingTable)
+      .where(eq(credentialBindingTable.credential_record_id, credentialId))
+      .orderBy(credentialBindingTable.created_at)
+    const targetBindingIds = targetBindings.map((binding: { id: string }) => binding.id)
+
+    if (targetBindingIds.length > 0) {
+      const replacements = await this.db
+        .select({ id: credentialBindingTable.id })
+        .from(credentialBindingTable)
+        .innerJoin(credentialRecordTable, eq(credentialBindingTable.credential_record_id, credentialRecordTable.id))
+        .where(
+          and(
+            eq(credentialBindingTable.owner_user_id, credential.owner_user_id),
+            eq(credentialBindingTable.provider, credential.provider),
+            ne(credentialBindingTable.credential_record_id, credentialId),
+            eq(credentialRecordTable.state, "healthy"),
+          ),
+        )
+        .orderBy(credentialBindingTable.created_at)
+
+      if (replacements.length > 0) {
+        const activeLeases = await this.db
+          .select({ id: sessionLeaseTable.id })
+          .from(sessionLeaseTable)
+          .where(inArray(sessionLeaseTable.active_binding_id, targetBindingIds))
+          .orderBy(sessionLeaseTable.session_id)
+
+        await Promise.all(
+          activeLeases.map((lease: { id: string }, index: number) =>
+            this.db
+              .update(sessionLeaseTable)
+              .set({
+                active_binding_id: replacements[index % replacements.length]!.id,
+                updated_at: new Date(),
+              })
+              .where(eq(sessionLeaseTable.id, lease.id)),
+          ),
+        )
+      }
+    }
+
+    return this.transitionCredentialState(credentialId, "draining", "admin_rotate", credential)
+  }
+
   async markCredentialState(input: MarkCredentialStateInput): Promise<void> {
     const current = await this.getCredentialRecordById(input.credentialRecordId)
     if (!current) {
@@ -226,6 +338,50 @@ export class MySqlCredentialRepository implements CredentialRepository {
       reason: input.reason ?? null,
       created_at: updatedAt,
     })
+  }
+
+  private async transitionCredentialState(
+    credentialId: string,
+    nextState: CredentialRecord["state"],
+    reason: string,
+    loadedCredential: typeof credentialRecordTable.$inferSelect | null = null,
+  ): Promise<boolean> {
+    const credential = loadedCredential ?? await this.getCredential(credentialId)
+    if (!credential) {
+      return false
+    }
+
+    const previousState = credential.state
+    const now = new Date()
+
+    await this.db
+      .update(credentialRecordTable)
+      .set({
+        state: nextState,
+        updated_at: now,
+      })
+      .where(eq(credentialRecordTable.id, credentialId))
+
+    await this.db.insert(credentialHealthEventTable).values({
+      id: `health_${randomUUID()}`,
+      credential_record_id: credentialId,
+      from_state: previousState,
+      to_state: nextState,
+      reason,
+      created_at: now,
+    })
+
+    return true
+  }
+
+  private async getCredential(credentialId: string) {
+    const rows = await this.db
+      .select()
+      .from(credentialRecordTable)
+      .where(eq(credentialRecordTable.id, credentialId))
+      .limit(1)
+
+    return rows[0] ?? null
   }
 }
 
@@ -266,4 +422,16 @@ function mapCredentialBinding(row: {
 
 function asDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value)
+}
+
+function formatProviderLabel(provider: string) {
+  if (provider === "openai") {
+    return "OpenAI"
+  }
+
+  if (provider === "anthropic") {
+    return "Anthropic"
+  }
+
+  return provider
 }

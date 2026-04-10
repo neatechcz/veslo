@@ -4,6 +4,10 @@ import { MySqlLeaseRepository } from "../leases/mysql-repository.js"
 import type { LeaseRepository } from "../leases/repository.js"
 import { MySqlAiAccessRepository } from "../access/mysql-repository.js"
 import type { AiAccessRepository } from "../access/repository.js"
+import { MySqlAlertRepository } from "../alerts/mysql-repository.js"
+import type { AlertRepository } from "../alerts/repository.js"
+import { MySqlAuditRepository } from "../audit/mysql-repository.js"
+import type { AuditRepository } from "../audit/repository.js"
 import { DefaultTokenBroker } from "../credentials/default-token-broker.js"
 import { MySqlCredentialRepository } from "../credentials/mysql-repository.js"
 import { MySqlSecretStore } from "../credentials/mysql-secret-store.js"
@@ -21,6 +25,8 @@ import type { UsageRepository } from "../usage/repository.js"
 
 export type RuntimeState = {
   aiAccess: AiAccessRepository
+  alerts: AlertRepository
+  audit: AuditRepository
   credentials: CredentialRepository
   secrets: SecretStore
   leases: LeaseRepository
@@ -49,6 +55,8 @@ export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): 
 
   return {
     aiAccess: new MySqlAiAccessRepository(db),
+    alerts: new MySqlAlertRepository(db),
+    audit: new MySqlAuditRepository(db),
     credentials: new MySqlCredentialRepository(db),
     secrets: new MySqlSecretStore(db, secretKey),
     leases: new MySqlLeaseRepository(db),

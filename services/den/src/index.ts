@@ -78,7 +78,8 @@ app.get("/v1/me", asyncRoute(async (req, res) => {
 
 app.use("/v1/desktop-auth", desktopAuthRouter)
 app.use("/v2/desktop-auth", desktopAuthV2Router)
-app.use("/v1/admin", createAdminRuntimeRouter())
+app.use("/v1/admin", createAdminRuntimeRouter({ managedAi: managedAiRuntime }))
+app.use("/admin/api", createAdminRuntimeRouter({ managedAi: managedAiRuntime }))
 app.use("/v1/orgs", orgsRouter)
 app.use("/v1/workers", workersRouter)
 app.use(errorMiddleware)
