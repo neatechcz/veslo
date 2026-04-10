@@ -512,6 +512,9 @@ async function ensureTables() {
 
 async function bootstrap() {
   await ensureTables()
+  if (env.managedAi.enabled) {
+    console.log("[den] managed-ai runtime enabled")
+  }
   app.listen(env.port, () => {
     console.log(`den listening on ${env.port} (provisioner=${env.provisionerMode})`)
   })

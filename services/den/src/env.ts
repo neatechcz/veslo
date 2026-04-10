@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { parseManagedAiEnv } from "./managed-ai/env.js"
 
 const schema = z.object({
   DATABASE_URL: z.string().min(1),
@@ -42,9 +43,12 @@ const schema = z.object({
   POLAR_BENEFIT_ID: z.string().optional(),
   POLAR_SUCCESS_URL: z.string().optional(),
   POLAR_RETURN_URL: z.string().optional(),
+  MANAGED_AI_DATABASE_URL: z.string().optional(),
+  MANAGED_AI_SECRET_KEY: z.string().optional(),
+  MANAGED_AI_OPENAI_CLIENT_ID: z.string().optional(),
+  MANAGED_AI_OPENAI_CLIENT_SECRET: z.string().optional(),
+  MANAGED_AI_OPENAI_REDIRECT_BASE: z.string().optional(),
 })
-
-const parsed = schema.parse(process.env)
 
 function normalizeOrigin(origin: string): string {
   const value = origin.trim()
@@ -54,70 +58,74 @@ function normalizeOrigin(origin: string): string {
   return value.replace(/\/+$/, "")
 }
 
-const corsOrigins = parsed.CORS_ORIGINS?.split(",")
-  .map((origin) => normalizeOrigin(origin))
-  .filter(Boolean)
+export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
+  const parsed = schema.parse(input)
+  const corsOrigins = parsed.CORS_ORIGINS?.split(",").map((origin) => normalizeOrigin(origin)).filter(Boolean)
+  const polarFeatureGateEnabled = (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true"
+  const nodeEnv = (input.NODE_ENV ?? "development").toLowerCase()
 
-const polarFeatureGateEnabled = (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true"
-const nodeEnv = (process.env.NODE_ENV ?? "development").toLowerCase()
+  if (nodeEnv === "production" && (corsOrigins ?? []).includes("*")) {
+    throw new Error("CORS_ORIGINS cannot contain '*' in production for DEN")
+  }
 
-if (nodeEnv === "production" && (corsOrigins ?? []).includes("*")) {
-  throw new Error("CORS_ORIGINS cannot contain '*' in production for DEN")
+  return {
+    databaseUrl: parsed.DATABASE_URL,
+    betterAuthSecret: parsed.BETTER_AUTH_SECRET,
+    betterAuthUrl: parsed.BETTER_AUTH_URL,
+    workerTokenEncryptionKey: parsed.WORKER_TOKEN_ENCRYPTION_KEY?.trim() || null,
+    github: {
+      clientId: parsed.GITHUB_CLIENT_ID?.trim() || undefined,
+      clientSecret: parsed.GITHUB_CLIENT_SECRET?.trim() || undefined,
+    },
+    email: {
+      lettrApiKey: parsed.LETTR_API_KEY?.trim() || undefined,
+      address: parsed.AUTH_EMAIL_ADDRESS?.trim() || undefined,
+      fromName: parsed.AUTH_EMAIL_FROM_NAME?.trim() || undefined,
+    },
+    port: Number(parsed.PORT ?? "8788"),
+    corsOrigins: corsOrigins ?? [],
+    desktopAuthRequireEmailVerified:
+      (parsed.DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED ?? "false").toLowerCase() === "true",
+    provisionerMode: parsed.PROVISIONER_MODE ?? "stub",
+    workerUrlTemplate: parsed.WORKER_URL_TEMPLATE,
+    render: {
+      apiBase: parsed.RENDER_API_BASE ?? "https://api.render.com/v1",
+      apiKey: parsed.RENDER_API_KEY,
+      ownerId: parsed.RENDER_OWNER_ID,
+      workerRepo: parsed.RENDER_WORKER_REPO ?? "https://github.com/neatechcz/veslo",
+      workerBranch: parsed.RENDER_WORKER_BRANCH ?? "dev",
+      workerRootDir: parsed.RENDER_WORKER_ROOT_DIR ?? "services/den-worker-runtime",
+      workerPlan: parsed.RENDER_WORKER_PLAN ?? "standard",
+      workerRegion: parsed.RENDER_WORKER_REGION ?? "oregon",
+      workerVesloVersion: parsed.RENDER_WORKER_VESLO_VERSION ?? "0.11.113",
+      workerNamePrefix: parsed.RENDER_WORKER_NAME_PREFIX ?? "den-worker",
+      workerPublicDomainSuffix: parsed.RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX,
+      customDomainReadyTimeoutMs: Number(parsed.RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS ?? "240000"),
+      provisionTimeoutMs: Number(parsed.RENDER_PROVISION_TIMEOUT_MS ?? "900000"),
+      healthcheckTimeoutMs: Number(parsed.RENDER_HEALTHCHECK_TIMEOUT_MS ?? "180000"),
+      pollIntervalMs: Number(parsed.RENDER_POLL_INTERVAL_MS ?? "5000"),
+    },
+    vercel: {
+      apiBase: parsed.VERCEL_API_BASE ?? "https://api.vercel.com",
+      token: parsed.VERCEL_TOKEN,
+      teamId: parsed.VERCEL_TEAM_ID,
+      teamSlug: parsed.VERCEL_TEAM_SLUG,
+      dnsDomain: parsed.VERCEL_DNS_DOMAIN,
+    },
+    polar: {
+      featureGateEnabled: polarFeatureGateEnabled,
+      apiBase: parsed.POLAR_API_BASE ?? "https://api.polar.sh",
+      accessToken: parsed.POLAR_ACCESS_TOKEN,
+      productId: parsed.POLAR_PRODUCT_ID,
+      benefitId: parsed.POLAR_BENEFIT_ID,
+      successUrl: parsed.POLAR_SUCCESS_URL,
+      returnUrl: parsed.POLAR_RETURN_URL,
+    },
+    managedAi: parseManagedAiEnv(parsed),
+  }
 }
 
-export const env = {
-  databaseUrl: parsed.DATABASE_URL,
-  betterAuthSecret: parsed.BETTER_AUTH_SECRET,
-  betterAuthUrl: parsed.BETTER_AUTH_URL,
-  workerTokenEncryptionKey: parsed.WORKER_TOKEN_ENCRYPTION_KEY?.trim() || null,
-  github: {
-    clientId: parsed.GITHUB_CLIENT_ID?.trim() || undefined,
-    clientSecret: parsed.GITHUB_CLIENT_SECRET?.trim() || undefined,
-  },
-  email: {
-    lettrApiKey: parsed.LETTR_API_KEY?.trim() || undefined,
-    address: parsed.AUTH_EMAIL_ADDRESS?.trim() || undefined,
-    fromName: parsed.AUTH_EMAIL_FROM_NAME?.trim() || undefined,
-  },
-  port: Number(parsed.PORT ?? "8788"),
-  corsOrigins: corsOrigins ?? [],
-  desktopAuthRequireEmailVerified: (parsed.DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED ?? "false").toLowerCase() === "true",
-  provisionerMode: parsed.PROVISIONER_MODE ?? "stub",
-  workerUrlTemplate: parsed.WORKER_URL_TEMPLATE,
-  render: {
-    apiBase: parsed.RENDER_API_BASE ?? "https://api.render.com/v1",
-    apiKey: parsed.RENDER_API_KEY,
-    ownerId: parsed.RENDER_OWNER_ID,
-    workerRepo: parsed.RENDER_WORKER_REPO ?? "https://github.com/neatechcz/veslo",
-    workerBranch: parsed.RENDER_WORKER_BRANCH ?? "dev",
-    workerRootDir: parsed.RENDER_WORKER_ROOT_DIR ?? "services/den-worker-runtime",
-    workerPlan: parsed.RENDER_WORKER_PLAN ?? "standard",
-    workerRegion: parsed.RENDER_WORKER_REGION ?? "oregon",
-    workerVesloVersion: parsed.RENDER_WORKER_VESLO_VERSION ?? "0.11.113",
-    workerNamePrefix: parsed.RENDER_WORKER_NAME_PREFIX ?? "den-worker",
-    workerPublicDomainSuffix: parsed.RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX,
-    customDomainReadyTimeoutMs: Number(parsed.RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS ?? "240000"),
-    provisionTimeoutMs: Number(parsed.RENDER_PROVISION_TIMEOUT_MS ?? "900000"),
-    healthcheckTimeoutMs: Number(parsed.RENDER_HEALTHCHECK_TIMEOUT_MS ?? "180000"),
-    pollIntervalMs: Number(parsed.RENDER_POLL_INTERVAL_MS ?? "5000"),
-  },
-  vercel: {
-    apiBase: parsed.VERCEL_API_BASE ?? "https://api.vercel.com",
-    token: parsed.VERCEL_TOKEN,
-    teamId: parsed.VERCEL_TEAM_ID,
-    teamSlug: parsed.VERCEL_TEAM_SLUG,
-    dnsDomain: parsed.VERCEL_DNS_DOMAIN,
-  },
-  polar: {
-    featureGateEnabled: polarFeatureGateEnabled,
-    apiBase: parsed.POLAR_API_BASE ?? "https://api.polar.sh",
-    accessToken: parsed.POLAR_ACCESS_TOKEN,
-    productId: parsed.POLAR_PRODUCT_ID,
-    benefitId: parsed.POLAR_BENEFIT_ID,
-    successUrl: parsed.POLAR_SUCCESS_URL,
-    returnUrl: parsed.POLAR_RETURN_URL,
-  },
-}
+export const env = parseEnv()
 
 export function isAuthEmailConfigured() {
   return Boolean(env.email.lettrApiKey && env.email.address)
