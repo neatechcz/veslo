@@ -1430,27 +1430,27 @@ export default function DashboardView(props: DashboardViewProps) {
                 </Show>
               </button>
             </Show>
-            <div class="px-3 py-1.5 rounded-xl bg-dls-hover text-xs text-dls-secondary font-medium">
+            <div class="font-product type-ui-sm px-3 py-1.5 rounded-xl bg-dls-hover text-dls-secondary font-medium">
               {props.activeWorkspaceDisplay.name}
             </div>
             <Show when={props.activeSoulStatus?.enabled}>
-              <div class="inline-flex items-center gap-1 rounded-full border border-rose-7/40 bg-rose-3/40 px-2 py-1 text-[11px] text-rose-11">
+              <div class="font-product type-ui-xs inline-flex items-center gap-1 rounded-full border border-rose-7/40 bg-rose-3/40 px-2 py-1 text-rose-11">
                 <HeartPulse size={11} />
                 Soul on
               </div>
             </Show>
-            <h1 class="text-lg font-medium">{title()}</h1>
+            <h1 class="font-product type-title-sm">{title()}</h1>
             <Show when={props.developerMode}>
-              <span class="text-xs text-dls-secondary">{props.headerStatus}</span>
+              <span class="font-product type-ui-xs text-dls-secondary">{props.headerStatus}</span>
             </Show>
             <Show when={props.busyHint}>
-              <span class="text-xs text-dls-secondary">{props.busyHint}</span>
+              <span class="font-product type-ui-xs text-dls-secondary">{props.busyHint}</span>
             </Show>
           </div>
           <div class="flex items-center gap-2">
             <button
               type="button"
-              class="inline-flex h-8 items-center gap-1.5 rounded-lg border border-dls-border bg-dls-surface px-2.5 text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)]"
+              class="font-product type-ui-xs inline-flex h-8 items-center gap-1.5 rounded-lg border border-dls-border bg-dls-surface px-2.5 font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)]"
               onClick={returnToSession}
               aria-label={headerBackLabel()}
               title={headerBackLabel()}
@@ -1460,7 +1460,7 @@ export default function DashboardView(props: DashboardViewProps) {
             </button>
             <button
               type="button"
-              class="inline-flex h-8 items-center gap-1.5 rounded-lg border border-dls-border bg-dls-surface px-2.5 text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)]"
+              class="font-product type-ui-xs inline-flex h-8 items-center gap-1.5 rounded-lg border border-dls-border bg-dls-surface px-2.5 font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)]"
               onClick={() => openSettings("general")}
               aria-label={headerSettingsLabel()}
               title={headerSettingsLabel()}

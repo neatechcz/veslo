@@ -1182,11 +1182,11 @@ export default function MessageList(props: MessageListProps) {
 
                                 <Show when={props.showThinking && row.technicalDetail}>
                                   <details class="mt-2">
-                                    <summary class="inline-flex cursor-pointer list-none items-center gap-1 text-[11px] text-gray-10 hover:text-gray-11">
+                                    <summary class="font-product type-ui-xs inline-flex cursor-pointer list-none items-center gap-1 text-gray-10 hover:text-gray-11">
                                       <ChevronDown size={12} class="shrink-0" />
                                       {tr("session.timeline_technical_detail")}
                                     </summary>
-                                    <pre class="mt-1 whitespace-pre-wrap break-all rounded-xl bg-gray-2 px-2 py-1 text-[11px] leading-5 text-gray-10">
+                                    <pre class="font-mono type-ui-xs mt-1 whitespace-pre-wrap break-all rounded-xl bg-gray-2 px-2 py-1 text-gray-10">
                                       <code>{row.technicalDetail}</code>
                                     </pre>
                                   </details>
@@ -1233,8 +1233,8 @@ export default function MessageList(props: MessageListProps) {
                 <div
                   class={`w-full relative ${
                     block.isUser
-                      ? "max-w-[80%] px-5 py-3 rounded-[24px] bg-gray-3 text-gray-12 text-[14px] leading-relaxed font-medium"
-                      : "max-w-[960px] text-[14px] leading-[1.5] text-gray-12 group"
+                      ? "font-reading type-reading-md max-w-[80%] px-5 py-3 rounded-[24px] bg-gray-3 text-gray-12"
+                      : "font-reading type-reading-md max-w-[960px] text-gray-12 group"
                   } ${searchOutlineClass}`}
                 >
                   <StepsContainer
@@ -1286,7 +1286,7 @@ export default function MessageList(props: MessageListProps) {
               >
                 <div class={`w-full relative max-w-[960px] ${searchOutlineClass}`}>
                   <div
-                    class="inline-flex max-w-full items-start gap-2 rounded-[18px] border border-red-7/20 bg-red-1/35 px-3 py-2 text-[13px] leading-5 text-red-12 shadow-sm"
+                    class="font-reading type-reading-md inline-flex max-w-full items-start gap-2 rounded-[18px] border border-red-7/20 bg-red-1/35 px-3 py-2 text-red-12 shadow-sm"
                     role="alert"
                   >
                     <CircleAlert size={14} class="mt-0.5 shrink-0" />
@@ -1307,15 +1307,15 @@ export default function MessageList(props: MessageListProps) {
               <div
                 class={`w-full relative ${
                   block.isUser
-                    ? "max-w-[80%] px-5 py-3 rounded-[24px] bg-gray-3 text-gray-12 text-[14px] leading-relaxed font-medium"
-                    : "max-w-[960px] text-[14px] leading-[1.5] text-gray-12 antialiased group"
+                    ? "font-reading type-reading-md max-w-[80%] px-5 py-3 rounded-[24px] bg-gray-3 text-gray-12"
+                    : "font-reading type-reading-md max-w-[960px] text-gray-12 antialiased group"
                 } ${searchOutlineClass}`}
               >
                 <Show when={attachmentsForMessage(block.message).length > 0}>
                   <div class={block.isUser ? "mb-3 flex flex-wrap gap-2" : "mb-4 flex flex-wrap gap-2"}>
                     <For each={attachmentsForMessage(block.message)}>
                       {(attachment) => (
-                        <div class="flex items-center gap-2 rounded-2xl border border-gray-6 bg-gray-1/70 px-3 py-2 text-xs text-gray-11">
+                        <div class="font-product type-ui-sm flex items-center gap-2 rounded-2xl border border-gray-6 bg-gray-1/70 px-3 py-2 text-gray-11">
                           <Show
                             when={isImageAttachment(attachment.mime)}
                             fallback={<File size={14} class="text-gray-9" />}
@@ -1330,7 +1330,7 @@ export default function MessageList(props: MessageListProps) {
                           </Show>
                           <div class="max-w-[180px]">
                             <div class="truncate text-gray-12">{attachment.filename}</div>
-                            <div class="text-[10px] text-gray-9">{attachment.mime}</div>
+                            <div class="font-product type-ui-xs text-gray-9">{attachment.mime}</div>
                           </div>
                         </div>
                       )}

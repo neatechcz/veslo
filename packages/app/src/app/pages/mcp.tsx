@@ -271,14 +271,14 @@ export default function McpView(props: McpViewProps) {
       {/* ── Header ───────────────────────────────────── */}
       <Show when={showHeader()}>
         <div>
-          <h2 class="text-3xl font-bold text-dls-text">{tr("mcp.apps_title")}</h2>
-          <p class="text-sm text-dls-secondary mt-1.5">
+          <h2 class="font-product type-title-md text-dls-text">{tr("mcp.apps_title")}</h2>
+          <p class="font-reading type-ui-md text-dls-secondary mt-1.5">
             {tr("mcp.apps_subtitle")}
           </p>
           <Show when={connectedCount() > 0}>
             <div class="mt-3 inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
               <div class="w-2 h-2 rounded-full bg-green-9" />
-              <span class="text-xs font-medium text-green-11">
+              <span class="font-product type-ui-xs font-medium text-green-11">
                 {connectedCount()} {connectedCount() === 1 ? tr("mcp.app_connected") : tr("mcp.apps_connected")}
               </span>
             </div>
@@ -290,8 +290,8 @@ export default function McpView(props: McpViewProps) {
       <Show when={props.showMcpReloadBanner}>
         <div class="bg-amber-2 border border-amber-6 rounded-xl px-5 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <div class="text-sm font-medium text-amber-11">{tr("mcp.finish_setup")}</div>
-            <div class="text-xs text-amber-11/70 mt-0.5">
+            <div class="font-product type-ui-md font-medium text-amber-11">{tr("mcp.finish_setup")}</div>
+            <div class="font-reading type-ui-sm text-amber-11/70 mt-0.5">
               {props.reloadBlocked
                 ? tr("mcp.reload_banner_description_blocked")
                 : tr("mcp.finish_setup_hint")}
@@ -319,10 +319,10 @@ export default function McpView(props: McpViewProps) {
       {/* ── Available apps (Quick Connect) ───────────── */}
       <div class="space-y-4">
         <div class="flex items-center justify-between">
-          <h3 class="text-[11px] font-bold text-dls-secondary uppercase tracking-widest">
+          <h3 class="font-product type-ui-xs font-bold text-dls-secondary uppercase tracking-widest">
             {tr("mcp.available_apps")}
           </h3>
-          <span class="text-[11px] text-dls-secondary">{tr("mcp.one_click_connect")}</span>
+          <span class="font-product type-ui-xs text-dls-secondary">{tr("mcp.one_click_connect")}</span>
         </div>
 
         <div class="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
@@ -364,25 +364,25 @@ export default function McpView(props: McpViewProps) {
                     {/* Text */}
                     <div class="min-w-0 flex-1">
                       <div class="flex items-center gap-2">
-                        <h4 class="text-sm font-semibold text-dls-text">{entry.name}</h4>
+                        <h4 class="font-product type-ui-md font-semibold text-dls-text">{entry.name}</h4>
                         <Show when={connected()}>
-                          <span class="text-[10px] font-medium text-green-11 bg-green-3 px-1.5 py-0.5 rounded-md">
+                          <span class="font-product type-ui-xs font-medium text-green-11 bg-green-3 px-1.5 py-0.5 rounded-md">
                             {tr("mcp.connected_badge")}
                           </span>
                         </Show>
                         <Show when={!connected() && quickConnectStatus(entry)}>
                           {(status) => (
-                            <span class={`text-[10px] font-medium px-1.5 py-0.5 rounded-md ${statusBadgeStyle(status().status)}`}>
+                            <span class={`font-product type-ui-xs font-medium px-1.5 py-0.5 rounded-md ${statusBadgeStyle(status().status)}`}>
                               {friendlyStatus(status().status, locale())}
                             </span>
                           )}
                         </Show>
                       </div>
-                      <p class="text-xs text-dls-secondary mt-0.5 line-clamp-2">
+                      <p class="font-reading type-ui-sm text-dls-secondary mt-0.5 line-clamp-2">
                         {entry.description}
                       </p>
                       <Show when={!connected() && !connecting()}>
-                        <div class="mt-2 text-[11px] font-medium text-blue-11 group-hover:text-blue-12 transition-colors">
+                        <div class="font-product type-ui-xs mt-2 font-medium text-blue-11 group-hover:text-blue-12 transition-colors">
                           {tr("mcp.tap_to_connect")}
                         </div>
                       </Show>
@@ -398,11 +398,11 @@ export default function McpView(props: McpViewProps) {
       {/* ── Your connected apps ──────────────────────── */}
       <div class="space-y-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
-          <h3 class="text-[11px] font-bold text-dls-secondary uppercase tracking-widest">
+          <h3 class="font-product type-ui-xs font-bold text-dls-secondary uppercase tracking-widest">
             {tr("mcp.your_apps")}
           </h3>
           <Show when={props.mcpLastUpdatedAt}>
-            <span class="text-[11px] text-dls-secondary tabular-nums">
+            <span class="font-product type-ui-xs text-dls-secondary tabular-nums">
               {tr("mcp.last_synced")} {formatRelativeTime(props.mcpLastUpdatedAt ?? Date.now())}
             </span>
           </Show>
@@ -413,8 +413,8 @@ export default function McpView(props: McpViewProps) {
           fallback={
             <div class="rounded-xl border border-dashed border-dls-border px-5 py-10 text-center">
               <Unplug size={24} class="mx-auto text-dls-secondary/30 mb-3" />
-              <div class="text-sm font-medium text-dls-secondary">{tr("mcp.no_apps_yet")}</div>
-              <div class="text-xs text-dls-secondary/60 mt-1">{tr("mcp.no_apps_hint")}</div>
+              <div class="font-product type-ui-md font-medium text-dls-secondary">{tr("mcp.no_apps_yet")}</div>
+              <div class="font-reading type-ui-sm text-dls-secondary/60 mt-1">{tr("mcp.no_apps_hint")}</div>
             </div>
           }
         >

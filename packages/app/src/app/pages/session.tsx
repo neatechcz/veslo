@@ -4015,14 +4015,14 @@ export default function SessionView(props: SessionViewProps) {
                 <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-gray-6 bg-gray-1 text-gray-11">
                   <MessageCircle size={24} />
                 </div>
-                <h3 class="text-2xl font-semibold text-gray-12">{tr("session.start_new_session")}</h3>
-                <p class="mt-2 text-sm text-gray-10">
+                <h3 class="font-product type-title-md text-gray-12">{tr("session.start_new_session")}</h3>
+                <p class="font-reading type-reading-md mt-2 text-gray-10">
                   {tr("session.start_new_session_description")}
                 </p>
                 <div class="mt-6 flex justify-center">
                   <button
                     type="button"
-                    class="rounded-2xl border border-gray-7 bg-gray-12 px-4 py-3 text-sm font-semibold text-gray-1 transition-colors hover:bg-gray-11"
+                    class="font-product type-ui-md rounded-2xl border border-gray-7 bg-gray-12 px-4 py-3 font-semibold text-gray-1 transition-colors hover:bg-gray-11"
                     onClick={() => {
                       void props.openNewSessionWithDirectory();
                     }}
@@ -4039,15 +4039,15 @@ export default function SessionView(props: SessionViewProps) {
                     <Loader2 size={18} class="animate-spin text-gray-10" />
                   </div>
                   <div class="space-y-2">
-                    <h3 class="text-xl font-medium text-gray-12">
+                    <h3 class="font-product type-title-sm text-gray-12">
                       {props.pendingSessionLoad?.sessionTitle || tr("session.opening_conversation")}
                     </h3>
                     <Show when={props.pendingSessionLoad?.workspaceName}>
                       {(workspaceName) => (
-                        <p class="text-sm text-gray-10">{workspaceName()}</p>
+                        <p class="font-product type-ui-sm text-gray-10">{workspaceName()}</p>
                       )}
                     </Show>
-                    <p class="text-sm text-gray-10">{tr("session.opening_conversation")}</p>
+                    <p class="font-reading type-ui-md text-gray-10">{tr("session.opening_conversation")}</p>
                   </div>
                 </div>
               </div>
@@ -4058,8 +4058,8 @@ export default function SessionView(props: SessionViewProps) {
                   <Zap class="text-dls-secondary" />
                 </div>
               <div class="space-y-2">
-                <h3 class="text-xl font-medium">{tr("session.quickstart_title")}</h3>
-                <p class="text-dls-secondary text-sm max-w-sm mx-auto">
+                <h3 class="font-product type-title-sm">{tr("session.quickstart_title")}</h3>
+                <p class="font-reading type-reading-md text-dls-secondary max-w-sm mx-auto">
                   {tr("session.quickstart_description")}
                 </p>
               </div>
@@ -4071,8 +4071,8 @@ export default function SessionView(props: SessionViewProps) {
                     void handleBrowserAutomationQuickstart();
                   }}
                 >
-                  <div class="text-sm font-semibold text-dls-text">{tr("session.quickstart_browser_title")}</div>
-                  <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
+                  <div class="font-product type-ui-md font-semibold text-dls-text">{tr("session.quickstart_browser_title")}</div>
+                  <div class="font-reading type-ui-sm mt-1 text-dls-secondary">
                     {tr("session.quickstart_browser_description")}
                   </div>
                 </button>
@@ -4083,8 +4083,8 @@ export default function SessionView(props: SessionViewProps) {
                     void handleSoulQuickstart();
                   }}
                 >
-                  <div class="text-sm font-semibold text-dls-text">{tr("session.quickstart_soul_title")}</div>
-                  <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
+                  <div class="font-product type-ui-md font-semibold text-dls-text">{tr("session.quickstart_soul_title")}</div>
+                  <div class="font-reading type-ui-sm mt-1 text-dls-secondary">
                     {tr("session.quickstart_soul_description")}
                   </div>
                 </button>

@@ -191,8 +191,8 @@ export default function OnboardingView(props: OnboardingViewProps) {
               <div class="flex items-center justify-center">
                 <VesloLogo size={48} />
               </div>
-              <h2 class="text-2xl font-bold tracking-tight">{translate("onboarding.language_title")}</h2>
-              <p class="text-gray-11 text-sm leading-relaxed">{translate("onboarding.language_description")}</p>
+              <h2 class="font-product type-title-md tracking-tight">{translate("onboarding.language_title")}</h2>
+              <p class="font-reading type-reading-md text-gray-11">{translate("onboarding.language_description")}</p>
             </div>
 
             <div class="space-y-3">
@@ -207,9 +207,9 @@ export default function OnboardingView(props: OnboardingViewProps) {
                     }`}
                     disabled={props.busy || languageConfirming()}
                   >
-                    <div class="text-base font-medium">{option.nativeName}</div>
+                    <div class="font-product type-ui-md font-medium">{option.nativeName}</div>
                     <Show when={option.label !== option.nativeName}>
-                      <div class="text-xs text-gray-9 mt-1">{option.label}</div>
+                      <div class="font-product type-ui-xs text-gray-9 mt-1">{option.label}</div>
                     </Show>
                   </button>
                 )}
@@ -236,12 +236,12 @@ export default function OnboardingView(props: OnboardingViewProps) {
               <div class="flex items-center justify-center">
                 <VesloLogo size={48} />
               </div>
-              <h2 class="text-2xl font-bold tracking-tight">Sign in to Openwork</h2>
-              <p class="text-gray-11 text-sm leading-relaxed">Sign in with your account to get started.</p>
+              <h2 class="font-product type-title-md tracking-tight">Sign in to Openwork</h2>
+              <p class="font-reading type-reading-md text-gray-11">Sign in with your account to get started.</p>
             </div>
 
             <div class="space-y-4">
-              <label class="flex items-start gap-2 rounded-xl border border-gray-6/70 bg-gray-1/50 px-3 py-2 text-sm text-gray-11">
+              <label class="font-reading type-ui-md flex items-start gap-2 rounded-xl border border-gray-6/70 bg-gray-1/50 px-3 py-2 text-gray-11">
                 <input
                   type="checkbox"
                   class="mt-0.5 h-4 w-4 rounded border-gray-7 bg-gray-2/60"
@@ -249,8 +249,8 @@ export default function OnboardingView(props: OnboardingViewProps) {
                   onChange={(event) => props.onKeepSignedInChange(event.currentTarget.checked)}
                 />
                 <span>
-                  <span class="font-medium text-gray-12">Keep me signed in</span>
-                  <span class="block text-xs text-gray-9">Turn off to require sign in each time you launch Veslo.</span>
+                  <span class="font-product type-ui-md font-medium text-gray-12">Keep me signed in</span>
+                  <span class="font-reading type-ui-sm block text-gray-9">Turn off to require sign in each time you launch Veslo.</span>
                 </span>
               </label>
 
@@ -291,10 +291,10 @@ export default function OnboardingView(props: OnboardingViewProps) {
                 <div class="">
                   <VesloLogo size={48} />
                 </div>
-              <h2 class="text-2xl font-bold tracking-tight">
+              <h2 class="font-product type-title-md tracking-tight">
                 {props.workspaces.length <= 1 ? translate("onboarding.create_first_workspace") : translate("onboarding.create_workspace")}
               </h2>
-              <p class="text-gray-11 text-sm leading-relaxed">
+              <p class="font-reading type-reading-md text-gray-11">
                   {translate("onboarding.workspace_folder_label")}
               </p>
             </div>
@@ -302,12 +302,12 @@ export default function OnboardingView(props: OnboardingViewProps) {
             <div class="space-y-4">
               <div class="bg-gray-2/40 border border-gray-6 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <div class="text-xs font-semibold text-gray-10 uppercase tracking-wider">{translate("onboarding.theme_label")}</div>
-                  <div class="text-sm text-gray-12">{translate("onboarding.theme_current").replace("{mode}", props.themeMode)}</div>
+                  <div class="font-product type-ui-xs font-semibold text-gray-10 uppercase tracking-wider">{translate("onboarding.theme_label")}</div>
+                  <div class="font-product type-ui-md text-gray-12">{translate("onboarding.theme_current").replace("{mode}", props.themeMode)}</div>
                 </div>
                 <div class="flex flex-wrap gap-2">
                   <button
-                    class={`text-xs px-3 py-1 rounded-full border transition-colors ${
+                    class={`font-product type-ui-xs px-3 py-1 rounded-full border transition-colors ${
                       props.themeMode === "system"
                         ? "bg-gray-12/10 text-gray-12 border-gray-6/30"
                         : "text-gray-10 border-gray-6 hover:text-gray-12"
@@ -317,7 +317,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                     {translate("onboarding.theme_system")}
                   </button>
                   <button
-                    class={`text-xs px-3 py-1 rounded-full border transition-colors ${
+                    class={`font-product type-ui-xs px-3 py-1 rounded-full border transition-colors ${
                       props.themeMode === "light"
                         ? "bg-gray-12/10 text-gray-12 border-gray-6/30"
                         : "text-gray-10 border-gray-6 hover:text-gray-12"
@@ -327,7 +327,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                     {translate("onboarding.theme_light")}
                   </button>
                   <button
-                    class={`text-xs px-3 py-1 rounded-full border transition-colors ${
+                    class={`font-product type-ui-xs px-3 py-1 rounded-full border transition-colors ${
                       props.themeMode === "dark"
                         ? "bg-gray-12/10 text-gray-12 border-gray-6/30"
                         : "text-gray-10 border-gray-6 hover:text-gray-12"
@@ -348,9 +348,9 @@ export default function OnboardingView(props: OnboardingViewProps) {
               <div class="rounded-2xl border border-gray-6 bg-gray-1/50 px-4 py-3">
                 <div class="flex items-center justify-between gap-4">
                   <div class="min-w-0">
-                    <div class="text-xs font-semibold text-gray-10 uppercase tracking-wider">Import</div>
-                    <div class="mt-1 text-sm text-gray-12">Use an existing workspace config.</div>
-                    <div class="text-xs text-gray-10">Imports `.opencode` and `opencode.json` only.</div>
+                    <div class="font-product type-ui-xs font-semibold text-gray-10 uppercase tracking-wider">Import</div>
+                    <div class="font-product type-ui-md mt-1 text-gray-12">Use an existing workspace config.</div>
+                    <div class="font-reading type-ui-sm text-gray-10">Imports `.opencode` and `opencode.json` only.</div>
                   </div>
                   <Button
                     variant="secondary"
@@ -366,15 +366,15 @@ export default function OnboardingView(props: OnboardingViewProps) {
               <div class="rounded-2xl border border-gray-6 bg-gray-1/50 px-4 py-3">
                 <div class="flex items-center justify-between gap-4">
                   <div class="min-w-0">
-                    <div class="text-xs font-semibold text-gray-10 uppercase tracking-wider">{translate("onboarding.access_label")}</div>
-                    <div class="mt-1 text-sm text-gray-12">
+                    <div class="font-product type-ui-xs font-semibold text-gray-10 uppercase tracking-wider">{translate("onboarding.access_label")}</div>
+                    <div class="font-product type-ui-md mt-1 text-gray-12">
                       {translate("onboarding.folders_allowed")
                         .replace("{count}", String(props.authorizedDirs.length))
                         .replace("{plural}", props.authorizedDirs.length === 1 ? "" : "s")}
                     </div>
-                    <div class="text-xs text-gray-10">{translate("onboarding.manage_access_hint")}</div>
+                    <div class="font-reading type-ui-sm text-gray-10">{translate("onboarding.manage_access_hint")}</div>
                   </div>
-                  <div class="text-xs text-gray-7 font-mono truncate max-w-[9rem]">
+                  <div class="font-mono type-ui-xs text-gray-7 truncate max-w-[9rem]">
                     <Show when={props.developerMode}>{props.authorizedDirs[0] ?? ""}</Show>
                   </div>
                 </div>
