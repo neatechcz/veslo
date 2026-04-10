@@ -27,8 +27,14 @@ test("session routes the current directory into the centered shared titlebar slo
 test("session clears the native centered window title while custom titlebar context is active", () => {
   assert.match(
     source,
-    /setWindowTitle\(""\)/,
-    "session should explicitly blank the native window title so the default centered product name does not remain visible alongside the custom titlebar content",
+    /acquireBlankNativeWindowTitleLease/,
+    "session should acquire the shared blank native title lease so the default centered product name does not remain visible alongside the custom titlebar content",
+  );
+
+  assert.match(
+    source,
+    /releaseNativeWindowTitleLease\?\.\(\)/,
+    "session should release the shared blank native title lease on cleanup instead of restoring the product title directly",
   );
 });
 

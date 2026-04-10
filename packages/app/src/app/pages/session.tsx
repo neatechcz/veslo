@@ -28,12 +28,12 @@ import {
   obsidianIsAvailable,
   openInObsidian,
   readObsidianMirrorFile,
-  setWindowTitle,
   writeObsidianMirrorFile,
   type EngineInfo,
   type VesloServerInfo,
   type WorkspaceInfo,
 } from "../lib/tauri";
+import { acquireBlankNativeWindowTitleLease } from "../lib/native-window-title-lease";
 
 import {
   Box,
@@ -472,12 +472,14 @@ export default function SessionView(props: SessionViewProps) {
     );
   });
 
-  createEffect(() => {
-    void setWindowTitle("").catch((error) => reportError(error, "titlebar.setWindowTitle"));
+  let releaseNativeWindowTitleLease: (() => void) | null = null;
+
+  onMount(() => {
+    releaseNativeWindowTitleLease = acquireBlankNativeWindowTitleLease();
   });
 
   onCleanup(() => {
-    void setWindowTitle("Veslo by Neatech").catch((error) => reportError(error, "titlebar.restoreWindowTitle"));
+    releaseNativeWindowTitleLease?.();
   });
 
   let commandPaletteInputEl: HTMLInputElement | undefined;

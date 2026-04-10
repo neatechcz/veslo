@@ -249,14 +249,14 @@ test("dashboard centers the titlebar on the active settings subsection", () => {
 test("dashboard clears the native window title while centered titlebar context is active", () => {
   assert.match(
     dashboardSource,
-    /setWindowTitle\(""\)/,
-    "dashboard should blank the native centered window title so the shared titlebar context does not overlap with the default product label",
+    /acquireBlankNativeWindowTitleLease/,
+    "dashboard should acquire the shared blank native title lease so the shared titlebar context does not overlap with the default product label",
   );
 
   assert.match(
     dashboardSource,
-    /setWindowTitle\("Veslo by Neatech"\)/,
-    "dashboard should restore the product name when leaving the shared custom titlebar context",
+    /releaseNativeWindowTitleLease\?\.\(\)/,
+    "dashboard should release the shared blank native title lease instead of restoring the product name directly",
   );
 });
 

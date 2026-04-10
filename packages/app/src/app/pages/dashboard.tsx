@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
 import type {
   DashboardTab,
   McpServerEntry,
@@ -44,15 +44,14 @@ import type {
   VesloServerSettings,
   VesloServerStatus,
 } from "../lib/veslo-server";
-import { reportError } from "../lib/error-reporter";
 import {
-  setWindowTitle,
   type EngineInfo,
   type OpenCodeRouterInfo,
   type OrchestratorStatus,
   type VesloServerInfo,
   type WorkspaceInfo,
 } from "../lib/tauri";
+import { acquireBlankNativeWindowTitleLease } from "../lib/native-window-title-lease";
 import { DEFAULT_VESLO_PUBLISHER_BASE_URL, publishVesloBundleJson } from "../lib/publisher";
 
 import Button from "../components/button";
@@ -452,12 +451,14 @@ export default function DashboardView(props: DashboardViewProps) {
     props.tab === "settings" ? resolveSettingsTabLabel(visibleSettingsTab()) : title(),
   );
 
-  createEffect(() => {
-    void setWindowTitle("").catch((error) => reportError(error, "titlebar.setWindowTitle"));
+  let releaseNativeWindowTitleLease: (() => void) | null = null;
+
+  onMount(() => {
+    releaseNativeWindowTitleLease = acquireBlankNativeWindowTitleLease();
   });
 
   onCleanup(() => {
-    void setWindowTitle("Veslo by Neatech").catch((error) => reportError(error, "titlebar.restoreWindowTitle"));
+    releaseNativeWindowTitleLease?.();
   });
 
   const workspaceLabel = (workspace: WorkspaceInfo) =>
