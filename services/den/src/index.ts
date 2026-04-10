@@ -13,7 +13,9 @@ import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { requireSession } from "./http/session.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
 import { desktopAuthV2Router } from "./http/desktop-auth-v2.js"
-import { createAdminRuntimeRouter } from "./http/admin-runtime.js"
+import { createAdminRuntimeRouter, requirePlatformAdminSnapshot } from "./http/admin-runtime.js"
+import { createManagedAiAdminUiRouter } from "./managed-ai/http/admin.js"
+import { DefaultOpenAiOAuthClient } from "./managed-ai/credentials/openai-oauth.js"
 import { createProxyRouter } from "./managed-ai/http/proxy.js"
 import { createUserCredentialsRouter } from "./managed-ai/http/user-credentials.js"
 import {
@@ -51,6 +53,20 @@ app.use(express.json())
 app.use(express.static(publicDir))
 
 if (managedAiRuntime) {
+  app.use(
+    createManagedAiAdminUiRouter({
+      getAdminSession: requirePlatformAdminSnapshot,
+      openAiOAuth: new DefaultOpenAiOAuthClient({
+        clientId: env.managedAi.openAi.clientId!,
+        clientSecret: env.managedAi.openAi.clientSecret!,
+        redirectBase: env.managedAi.openAi.redirectBase!,
+      }),
+      alerts: managedAiRuntime.alerts,
+      audit: managedAiRuntime.audit,
+      credentials: managedAiRuntime.credentials,
+      secrets: managedAiRuntime.secrets,
+    }),
+  )
   app.use(createUserCredentialsRouter(createDefaultUserCredentialDependencies(managedAiRuntime)))
   app.use(createProxyRouter(createDefaultProxyDependencies(managedAiRuntime)))
 }

@@ -1,7 +1,7 @@
 import { OpenAiOAuthRefreshError } from "./default-token-broker.js"
 
 export type StartOpenAiAuthorizationInput = {
-  userId: string
+  state: string
 }
 
 export type StartOpenAiAuthorizationResult = {
@@ -10,7 +10,6 @@ export type StartOpenAiAuthorizationResult = {
 
 export type ExchangeOpenAiCodeInput = {
   code: string
-  userId: string
 }
 
 export type OpenAiOAuthTokens = {
@@ -54,7 +53,7 @@ export class DefaultOpenAiOAuthClient implements OpenAiOAuthClient {
     authorizeUrl.searchParams.set("client_id", this.deps.clientId)
     authorizeUrl.searchParams.set("redirect_uri", this.redirectBase)
     authorizeUrl.searchParams.set("scope", "openid offline_access")
-    authorizeUrl.searchParams.set("state", input.userId)
+    authorizeUrl.searchParams.set("state", input.state)
 
     return {
       authorizeUrl: authorizeUrl.toString(),

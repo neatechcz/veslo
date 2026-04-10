@@ -46,7 +46,7 @@ export function isBootstrapPlatformAdminEmail(email: string | null) {
   return typeof email === "string" && bootstrapPlatformAdminEmails.has(email.trim().toLowerCase())
 }
 
-async function requirePlatformAdminSnapshot(req: express.Request, res: express.Response): Promise<AdminSessionSnapshot | null> {
+export async function requirePlatformAdminSnapshot(req: express.Request, res: express.Response): Promise<AdminSessionSnapshot | null> {
   const session = await requireSession(req, res)
   if (!session) {
     return null

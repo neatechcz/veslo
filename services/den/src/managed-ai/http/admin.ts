@@ -1,4 +1,8 @@
-import type express from "express"
+import crypto from "node:crypto"
+import { existsSync } from "node:fs"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
+import express from "express"
 
 import type {
   AdminAlertRecord,
@@ -13,6 +17,7 @@ import type {
 import type { AiAccessProvider, AiAccessRepository, UpsertUserAiAccessPolicyInput, UserAiAccessPolicyRecord } from "../access/repository.js"
 import type { AlertRecord, AlertRepository } from "../alerts/repository.js"
 import type { AuditRepository } from "../audit/repository.js"
+import type { OpenAiOAuthClient } from "../credentials/openai-oauth.js"
 import { getPlatformCredentialOwnerUserId } from "../credentials/platform-owner.js"
 import type { CredentialRepository, CredentialRecord } from "../credentials/repository.js"
 import type { SecretStore } from "../credentials/secret-store.js"
@@ -50,6 +55,15 @@ type ManagedAiAdminRouteOptions = {
   leases: LeaseRepository
   secrets: SecretStore
   usage: UsageRepository
+}
+
+type ManagedAiAdminUiOptions = {
+  getAdminSession: (req: express.Request, res: express.Response) => Promise<AdminSessionSnapshot | null>
+  openAiOAuth: OpenAiOAuthClient
+  alerts: AlertRepository
+  audit: AuditRepository
+  credentials: CredentialRepository
+  secrets: SecretStore
 }
 
 export function createManagedAiAdminRouteDeps(
@@ -510,6 +524,114 @@ export function createManagedAiAdminRouteDeps(
   }
 }
 
+export function createManagedAiAdminUiRouter(deps: ManagedAiAdminUiOptions) {
+  const router = express.Router()
+  const currentFile = fileURLToPath(import.meta.url)
+  const publicDir = path.resolve(path.dirname(currentFile), "../../../public-admin")
+  const indexPath = path.join(publicDir, "index.html")
+
+  router.post("/admin/api/credentials/openai/oauth/start", async (req, res) => {
+    const session = await deps.getAdminSession(req, res)
+    if (!session) {
+      return
+    }
+
+    try {
+      const state = createSignedOpenAiState(getAdminActorUserId(session))
+      const payload = await deps.openAiOAuth.startAuthorization({ state })
+      res.json({
+        authorizeUrl: payload.authorizeUrl,
+        state,
+      })
+    } catch (error) {
+      handleRouteError(res, error, "openai_oauth_start_failed")
+    }
+  })
+
+  router.post("/admin/api/credentials/openai/oauth/exchange", async (req, res) => {
+    const session = await deps.getAdminSession(req, res)
+    if (!session) {
+      return
+    }
+
+    const code = typeof req.body?.code === "string" ? req.body.code.trim() : ""
+    const state = typeof req.body?.state === "string" ? req.body.state.trim() : ""
+    if (!code || !state) {
+      res.status(400).json({ error: "invalid_openai_oauth_exchange" })
+      return
+    }
+
+    try {
+      const verifiedActor = verifySignedOpenAiState(state)
+      const actorUserId = getAdminActorUserId(session)
+      if (!verifiedActor || verifiedActor !== actorUserId) {
+        throw new HttpError("invalid_openai_oauth_state", 400)
+      }
+
+      const tokens = await deps.openAiOAuth.exchangeCode({ code })
+      const createPlatformCredential = deps.credentials.createPlatformCredential
+      const listAdminCredentials = deps.credentials.listAdminCredentials
+      if (!createPlatformCredential || !listAdminCredentials) {
+        throw new HttpError("credential_write_unavailable", 503)
+      }
+
+      const stored = await deps.secrets.put({
+        kind: "openai_oauth",
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresAt: tokens.expiresAt,
+      })
+      const created = await createPlatformCredential.call(deps.credentials, {
+        ownerUserId: getPlatformCredentialOwnerUserId("openai"),
+        name: "Shared OpenAI OAuth",
+        provider: "openai",
+        credentialType: "oauth",
+        secretRef: stored.secretRef,
+      })
+
+      await recordAuditEventBestEffort(deps.audit, {
+        actorUserId,
+        action: "credential.openai_oauth.connect",
+        entityType: "credential",
+        entityId: created.id,
+        result: "ok",
+        summary: `Connected shared OpenAI OAuth credential ${created.id}.`,
+      })
+
+      const credential = await getCredentialWithAlertsOrThrow({
+        alerts: deps.alerts,
+        credentials: deps.credentials,
+        credentialId: created.id,
+      })
+      res.json({ credential })
+    } catch (error) {
+      handleRouteError(res, error, "openai_oauth_exchange_failed")
+    }
+  })
+
+  router.use("/admin", express.static(publicDir, { index: false }))
+
+  const sendAdminShell = (_req: express.Request, res: express.Response) => {
+    if (existsSync(indexPath)) {
+      res.sendFile(indexPath)
+      return
+    }
+
+    res.type("html").send(`<!doctype html><html><body><h1>Veslo Admin</h1></body></html>`)
+  }
+
+  router.get("/admin", sendAdminShell)
+  router.get("/admin/*", (req, res, next) => {
+    if (req.path.startsWith("/admin/api/")) {
+      next()
+      return
+    }
+    sendAdminShell(req, res)
+  })
+
+  return router
+}
+
 function handleRouteError<T>(res: express.Response, error: unknown, fallback: string): T | null {
   if (error instanceof HttpError) {
     res.status(error.status).json({ error: error.message })
@@ -650,6 +772,130 @@ function toAdminUserAiAccessRecord(record: UserAiAccessPolicyRecord | null): Adm
     allowedModels: record.allowedModels,
     updatedAt: record.updatedAt.toISOString(),
   }
+}
+
+async function getCredentialWithAlertsOrThrow(input: {
+  alerts: AlertRepository
+  credentials: CredentialRepository
+  credentialId: string
+}) {
+  const listAdminCredentials = input.credentials.listAdminCredentials
+  if (!listAdminCredentials) {
+    throw new HttpError("credential_read_model_unavailable", 503)
+  }
+
+  const [credentials, alerts] = await Promise.all([
+    listAdminCredentials.call(input.credentials),
+    input.alerts.listAlerts(),
+  ])
+  const unresolvedAlertIds = new Map<string, string[]>()
+  for (const alert of alerts) {
+    if (!alert.credentialId || alert.status === "resolved") {
+      continue
+    }
+    const next = unresolvedAlertIds.get(alert.credentialId) ?? []
+    next.push(alert.id)
+    unresolvedAlertIds.set(alert.credentialId, next)
+  }
+
+  const credential = credentials.find((entry) => entry.id === input.credentialId)
+  if (!credential) {
+    throw new HttpError("credential_not_found", 404)
+  }
+
+  const linkedAlertIds = unresolvedAlertIds.get(credential.id) ?? []
+  return {
+    ...credential,
+    alertCount: linkedAlertIds.length,
+    linkedAlertIds,
+  }
+}
+
+async function recordAuditEventBestEffort(
+  audit: AuditRepository,
+  input: {
+    actorUserId?: string | null
+    entityType: string
+    entityId: string
+    action: string
+    result: "ok" | "warning" | "error"
+    summary: string
+  },
+) {
+  try {
+    await audit.recordEvent({
+      actorUserId: input.actorUserId ?? null,
+      entityType: input.entityType,
+      entityId: input.entityId,
+      action: input.action,
+      result: input.result,
+      summary: input.summary,
+    })
+  } catch (error) {
+    console.error("managed ai admin audit event failed", {
+      action: input.action,
+      entityType: input.entityType,
+      entityId: input.entityId,
+      error,
+    })
+  }
+}
+
+function createSignedOpenAiState(actorUserId: string | null) {
+  const value = typeof actorUserId === "string" && actorUserId.trim().length > 0 ? actorUserId.trim() : "unknown-admin"
+  const payload = JSON.stringify({
+    actorUserId: value,
+    nonce: crypto.randomUUID(),
+    issuedAt: Date.now(),
+  })
+  const encoded = Buffer.from(payload, "utf8").toString("base64url")
+  const signature = crypto
+    .createHmac("sha256", openAiStateSecret())
+    .update(encoded)
+    .digest("base64url")
+  return `${encoded}.${signature}`
+}
+
+function verifySignedOpenAiState(state: string) {
+  const [encoded, signature] = state.split(".")
+  if (!encoded || !signature) {
+    return null
+  }
+
+  const expected = crypto
+    .createHmac("sha256", openAiStateSecret())
+    .update(encoded)
+    .digest("base64url")
+
+  const signatureBuffer = new Uint8Array(Buffer.from(signature))
+  const expectedBuffer = new Uint8Array(Buffer.from(expected))
+  if (signatureBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as {
+      actorUserId?: unknown
+      issuedAt?: unknown
+    }
+    if (typeof parsed.actorUserId !== "string" || typeof parsed.issuedAt !== "number") {
+      return null
+    }
+    if (Date.now() - parsed.issuedAt > 15 * 60 * 1000) {
+      return null
+    }
+    return parsed.actorUserId
+  } catch {
+    return null
+  }
+}
+
+function openAiStateSecret() {
+  const secret = process.env.MANAGED_AI_SECRET_KEY?.trim() || process.env.BETTER_AUTH_SECRET?.trim() || ""
+  if (!secret) {
+    throw new HttpError("managed_ai_secret_key_not_configured", 500)
+  }
+  return secret
 }
 
 function _toAdminCredentialRecord(record: CredentialRecord): AdminCredentialRecord {
