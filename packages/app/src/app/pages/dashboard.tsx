@@ -13,7 +13,7 @@ import type {
   HubSkillCard,
   SkillCard,
   StartupPreference,
-  VisibleSessionIdsChangeHandler,
+  LoadedSessionPrefetchInterestChangeHandler,
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
   View,
@@ -517,24 +517,13 @@ export default function DashboardView(props: DashboardViewProps) {
     return workspace?.vesloWorkspaceId?.trim() || id;
   };
 
-  const reportVisibleSessionIds: VisibleSessionIdsChangeHandler = (workspaceId, visibleSessionIds) => {
+  const reportLoadedSessionPrefetchInterest: LoadedSessionPrefetchInterestChangeHandler = (workspaceId, interest) => {
     const client = props.vesloServerClient;
     const serverWorkspaceId = resolveVesloWorkspaceId(workspaceId);
     if (!client || !serverWorkspaceId) return;
 
-    const selectedSessionId = props.selectedSessionId?.trim() || null;
-    const selectedSessionHint =
-      visibleSessionIds.length > 0 &&
-      selectedSessionId &&
-      (workspaceId === props.activeWorkspaceId || visibleSessionIds.includes(selectedSessionId))
-        ? selectedSessionId
-        : null;
-    void client.prefetchSessionTranscripts(serverWorkspaceId, {
-      visibleSessionIds,
-      selectedSessionId: selectedSessionHint,
-      limit: 140,
-    }).catch((error) => {
-      console.warn("[dashboard.visible-session-prefetch] failed", {
+    void client.prefetchSessionTranscripts(serverWorkspaceId, interest).catch((error) => {
+      console.warn("[dashboard.loaded-session-prefetch] failed", {
         workspaceId,
         serverWorkspaceId,
         error: error instanceof Error ? error.message : String(error),
@@ -1385,7 +1374,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onArchiveSession={props.archiveSession}
               onUnarchiveSession={props.unarchiveSession}
               onLoadMoreWorkspaceSessions={props.loadMoreWorkspaceSidebarSessions}
-              onVisibleSessionIdsChange={reportVisibleSessionIds}
+              onLoadedSessionPrefetchInterestChange={reportLoadedSessionPrefetchInterest}
             />
           </div>
           <SidebarDashboardNav

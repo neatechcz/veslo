@@ -16,8 +16,8 @@ import {
 import type { VesloSoulStatus } from "../../lib/veslo-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
 import type {
+  LoadedSessionPrefetchInterestChangeHandler,
   SidebarSubagentDecoration,
-  VisibleSessionIdsChangeHandler,
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
 } from "../../types";
@@ -70,7 +70,7 @@ import {
   writeSidebarViewMode,
   type SidebarViewMode,
 } from "./workspace-session-list-prefs";
-import { deriveVisibleSessionPrefetchIds } from "./workspace-session-list-prefetch";
+import { deriveLoadedSidebarPrefetchInterest } from "./workspace-session-list-prefetch-interest";
 import { currentLocale, t } from "../../../i18n";
 
 type Props = {
@@ -112,7 +112,7 @@ type Props = {
   archivedSessionIds?: string[];
   onArchiveSession?: (workspaceId: string, sessionId: string) => Promise<void> | void;
   onUnarchiveSession?: (workspaceId: string, sessionId: string) => Promise<void> | void;
-  onVisibleSessionIdsChange?: VisibleSessionIdsChangeHandler;
+  onLoadedSessionPrefetchInterestChange?: LoadedSessionPrefetchInterestChangeHandler;
 };
 
 type WorkspaceMenuTarget = {
@@ -177,6 +177,7 @@ export default function WorkspaceSessionList(props: Props) {
   const [projectDropIndicator, setProjectDropIndicator] = createSignal<ProjectDropIndicator | null>(null);
   const [projectPointerDrag, setProjectPointerDrag] = createSignal<ProjectPointerDragState | null>(null);
   const [projectDragPreview, setProjectDragPreview] = createSignal<ProjectDragPreviewState | null>(null);
+  const [lastClickedSessionId, setLastClickedSessionId] = createSignal<string | null>(null);
   const [workspaceMenuTarget, setWorkspaceMenuTarget] = createSignal<WorkspaceMenuTarget | null>(null);
   const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
   const [showArchivedSessions, setShowArchivedSessions] = createSignal<boolean>(readShowArchivedSessions());
@@ -275,8 +276,18 @@ export default function WorkspaceSessionList(props: Props) {
       rowVisibleByExpansion(row, recentHierarchy(), expandedParentSessionIds()),
     ),
   );
+  const recentRowsLoaded = createMemo(() => recentRowsTreeVisible());
 
   const recentRowsVisible = createMemo(() => recentRowsTreeVisible().slice(0, recentVisibleCount()));
+  const projectRowsLoaded = createMemo<FlatSessionRow[]>(() => {
+    const expandedParentIds = expandedParentSessionIds();
+    return renderProjectGroups().flatMap((group) => {
+      const projectHierarchy = buildRowHierarchyLookup(group.sessions);
+      return group.sessions.filter((row) =>
+        rowVisibleByExpansion(row, projectHierarchy, expandedParentIds),
+      );
+    });
+  });
   const visibleProjectRows = createMemo<FlatSessionRow[]>(() => {
     const expandedParentIds = expandedParentSessionIds();
     const visibleByProject = projectVisibleByKey();
@@ -552,6 +563,7 @@ export default function WorkspaceSessionList(props: Props) {
     row: FlatSessionRow,
     hasChildren: (sessionId: string) => boolean,
   ) => {
+    setLastClickedSessionId(row.session.id);
     const action = resolveSessionRowClickAction({
       selectedSessionId: props.selectedSessionId,
       clickedSessionId: row.session.id,
@@ -903,9 +915,9 @@ export default function WorkspaceSessionList(props: Props) {
 
   createEffect(() => {
     const validSessionIds = new Set(
-      visibleProjectGroups().flatMap((group) => group.sessions.map((row) => row.session.id)),
+      projectRowsLoaded().flatMap((row) => [row.session.id]),
     );
-    for (const row of visibleRecentRows()) validSessionIds.add(row.session.id);
+    for (const row of recentRowsLoaded()) validSessionIds.add(row.session.id);
     const pendingId = pendingArchiveConfirmationSessionId();
     if (pendingId && !validSessionIds.has(pendingId)) {
       setPendingArchiveConfirmationSessionId(null);
@@ -925,60 +937,71 @@ export default function WorkspaceSessionList(props: Props) {
     });
   });
 
-  const lastReportedVisibleSessionIdsByWorkspace = new Map<string, string>();
+  const lastReportedLoadedInterestByWorkspace = new Map<string, string>();
 
   createEffect(() => {
-    const callback = props.onVisibleSessionIdsChange;
+    const callback = props.onLoadedSessionPrefetchInterestChange;
     if (!callback) return;
 
-    const selectedSessionId = props.selectedSessionId?.trim() || null;
-    const selectedWorkspaceId = selectedSessionId ? sessionWorkspaceById().get(selectedSessionId) ?? null : null;
-    const rows = sidebarMode() === "by-project" ? visibleProjectRows() : recentRowsVisible();
-    const visibleIdsByWorkspace = new Map<string, string[]>();
-    const currentWorkspaceIds = new Set<string>();
+    const currentRows = sidebarMode() === "by-project" ? projectRowsLoaded() : recentRowsLoaded();
+    const loadedTopLevelRows = currentRows
+      .filter((row) => row.nestingLevel === 0)
+      .map((row) => ({
+        workspaceId: row.workspace.id,
+        sessionId: row.session.id,
+        updatedAt: row.updatedAt,
+      }));
+    const expandedSubagentRows = currentRows
+      .filter((row) => row.nestingLevel > 0)
+      .map((row) => ({
+        workspaceId: row.workspace.id,
+        sessionId: row.session.id,
+        updatedAt: row.updatedAt,
+      }));
+    const loadedInterest = deriveLoadedSidebarPrefetchInterest({
+      selectedSessionId: props.selectedSessionId?.trim() || null,
+      clickedSessionId: lastClickedSessionId(),
+      loadedTopLevelRows,
+      expandedSubagentRows,
+    });
+    const currentWorkspaceIds = new Set(props.workspaceSessionGroups.map((group) => group.workspace.id));
 
-    for (const row of rows) {
-      const workspaceId = row.workspace.id;
-      const ids = visibleIdsByWorkspace.get(workspaceId) ?? [];
-      ids.push(row.session.id);
-      visibleIdsByWorkspace.set(workspaceId, ids);
+    for (const workspaceId of currentWorkspaceIds) {
+      const interest = loadedInterest.get(workspaceId) ?? {
+        clickedSessionId: null,
+        selectedSessionId: null,
+        loadedTopLevelSessionIds: [],
+        expandedSubagentSessionIds: [],
+      };
+      const signature = JSON.stringify(interest);
+      if (lastReportedLoadedInterestByWorkspace.get(workspaceId) === signature) continue;
+      lastReportedLoadedInterestByWorkspace.set(workspaceId, signature);
+      callback(workspaceId, interest);
     }
 
-    for (const group of props.workspaceSessionGroups) {
-      const workspaceId = group.workspace.id;
-      currentWorkspaceIds.add(workspaceId);
-      const rawVisibleSessionIds = visibleIdsByWorkspace.get(workspaceId) ?? [];
-      const visibleSessionIds = deriveVisibleSessionPrefetchIds({
-        selectedSessionId:
-          rawVisibleSessionIds.length > 0 && workspaceId === selectedWorkspaceId ? selectedSessionId : null,
-        visibleSessionIds: rawVisibleSessionIds,
-      });
-      if (!visibleSessionIds.length) {
-        if (lastReportedVisibleSessionIdsByWorkspace.has(workspaceId)) {
-          lastReportedVisibleSessionIdsByWorkspace.delete(workspaceId);
-          props.onVisibleSessionIdsChange?.(workspaceId, []);
-        }
-        continue;
-      }
-      const signature = visibleSessionIds.join("\u0000");
-      if (lastReportedVisibleSessionIdsByWorkspace.get(workspaceId) === signature) continue;
-      lastReportedVisibleSessionIdsByWorkspace.set(workspaceId, signature);
-      props.onVisibleSessionIdsChange?.(workspaceId, visibleSessionIds);
-    }
-
-    for (const workspaceId of Array.from(lastReportedVisibleSessionIdsByWorkspace.keys())) {
+    for (const workspaceId of Array.from(lastReportedLoadedInterestByWorkspace.keys())) {
       if (currentWorkspaceIds.has(workspaceId)) continue;
-      lastReportedVisibleSessionIdsByWorkspace.delete(workspaceId);
-      props.onVisibleSessionIdsChange?.(workspaceId, []);
+      lastReportedLoadedInterestByWorkspace.delete(workspaceId);
+      callback(workspaceId, {
+        clickedSessionId: null,
+        selectedSessionId: null,
+        loadedTopLevelSessionIds: [],
+        expandedSubagentSessionIds: [],
+      });
     }
   });
 
   onCleanup(() => {
-    if (!props.onVisibleSessionIdsChange) return;
-    for (const workspaceId of Array.from(lastReportedVisibleSessionIdsByWorkspace.keys())) {
-      props.onVisibleSessionIdsChange?.(workspaceId, []);
+    if (!props.onLoadedSessionPrefetchInterestChange) return;
+    for (const workspaceId of Array.from(lastReportedLoadedInterestByWorkspace.keys())) {
+      props.onLoadedSessionPrefetchInterestChange?.(workspaceId, {
+        clickedSessionId: null,
+        selectedSessionId: null,
+        loadedTopLevelSessionIds: [],
+        expandedSubagentSessionIds: [],
+      });
     }
-    lastReportedVisibleSessionIdsByWorkspace.clear();
+    lastReportedLoadedInterestByWorkspace.clear();
   });
 
   const showNewSessionLabelText = createMemo(() =>
