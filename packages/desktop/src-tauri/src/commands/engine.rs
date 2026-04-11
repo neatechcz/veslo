@@ -9,13 +9,11 @@ use crate::engine::manager::EngineManager;
 use crate::engine::spawn::{find_free_port, spawn_engine};
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::opencode_router::spawn::resolve_opencode_router_health_port;
-use crate::veslo_server::{
-    manager::VesloServerManager, resolve_connect_url, start_veslo_server,
-};
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{self, OrchestratorSpawnOptions};
 use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
 use crate::utils::truncate_output;
+use crate::veslo_server::{manager::VesloServerManager, resolve_connect_url, start_veslo_server};
 use serde_json::json;
 use std::time::Duration;
 use tauri_plugin_shell::process::CommandEvent;
@@ -103,6 +101,33 @@ fn is_opencode_reachable(base_url: &str) -> bool {
     false
 }
 
+fn format_orchestrator_start_error(
+    waited_ms: u64,
+    health_error: &str,
+    child_exited: bool,
+    stderr: Option<&str>,
+) -> String {
+    let mut message = if child_exited {
+        format!(
+            "Failed to start orchestrator: process exited before health became ready.\n{}",
+            health_error.trim()
+        )
+    } else {
+        format!(
+            "Failed to start orchestrator (waited {waited_ms}ms): {}",
+            health_error.trim()
+        )
+    };
+
+    let stderr = stderr.map(str::trim).filter(|value| !value.is_empty());
+    if let Some(stderr) = stderr {
+        message.push_str("\n\nstderr:\n");
+        message.push_str(stderr);
+    }
+
+    message
+}
+
 #[tauri::command]
 pub fn engine_info(
     manager: State<EngineManager>,
@@ -140,11 +165,7 @@ pub fn engine_info(
                 orchestrator_state.last_stderr.clone(),
             )
         } else {
-            (
-                orchestrator::resolve_orchestrator_data_dir(),
-                None,
-                None,
-            )
+            (orchestrator::resolve_orchestrator_data_dir(), None, None)
         };
 
     let status = orchestrator::resolve_orchestrator_status(&data_dir, orchestrator_stderr.clone());
@@ -506,6 +527,7 @@ pub fn engine_start(
         }
 
         let orchestrator_state_handle = orchestrator_manager.inner.clone();
+        let orchestrator_state_wait_handle = orchestrator_state_handle.clone();
         tauri::async_runtime::spawn(async move {
             while let Some(event) = rx.recv().await {
                 match event {
@@ -557,10 +579,39 @@ pub fn engine_start(
             .filter(|value| *value >= 1_000)
             .unwrap_or(180_000);
 
-        let health = orchestrator::wait_for_orchestrator(&daemon_base_url, health_timeout_ms)
-            .map_err(|e| {
-                format!("Failed to start orchestrator (waited {health_timeout_ms}ms): {e}")
-            })?;
+        let wait_started_at = std::time::Instant::now();
+        let health = loop {
+            let health_error = match orchestrator::fetch_orchestrator_health(&daemon_base_url) {
+                Ok(health) if health.ok => break health,
+                Ok(_) => "Orchestrator reported unhealthy".to_string(),
+                Err(error) => error,
+            };
+            let elapsed_ms = wait_started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
+            let (child_exited, stderr) = orchestrator_state_wait_handle
+                .lock()
+                .map(|state| (state.child_exited, state.last_stderr.clone()))
+                .unwrap_or((false, None));
+
+            if child_exited {
+                return Err(format_orchestrator_start_error(
+                    elapsed_ms,
+                    &health_error,
+                    true,
+                    stderr.as_deref(),
+                ));
+            }
+
+            if elapsed_ms >= health_timeout_ms {
+                return Err(format_orchestrator_start_error(
+                    health_timeout_ms,
+                    &health_error,
+                    false,
+                    stderr.as_deref(),
+                ));
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        };
         let opencode = health
             .opencode
             .ok_or_else(|| "Orchestrator did not report OpenCode status".to_string())?;
@@ -606,8 +657,7 @@ pub fn engine_start(
             opencode_router_health_port,
         ) {
             if let Ok(mut state) = manager.inner.lock() {
-                state.last_stderr =
-                    Some(truncate_output(&format!("Veslo server: {error}"), 8000));
+                state.last_stderr = Some(truncate_output(&format!("Veslo server: {error}"), 8000));
             }
         }
 
@@ -802,4 +852,38 @@ pub fn engine_start(
     }
 
     Ok(EngineManager::snapshot_locked(&mut state))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_orchestrator_start_error;
+
+    #[test]
+    fn formats_orchestrator_timeout_with_captured_stderr() {
+        let message = format_orchestrator_start_error(
+            180_000,
+            "Failed to fetch http://127.0.0.1:59024/health: Connection refused",
+            false,
+            Some("[opencode] wrong platform binary"),
+        );
+
+        assert!(message.contains("Failed to start orchestrator (waited 180000ms)"));
+        assert!(message.contains("Connection refused"));
+        assert!(message.contains("stderr:\n[opencode] wrong platform binary"));
+    }
+
+    #[test]
+    fn formats_orchestrator_early_exit_without_timeout_label() {
+        let message = format_orchestrator_start_error(
+            2_300,
+            "Failed to fetch http://127.0.0.1:59024/health: Connection refused",
+            true,
+            Some("[opencode] wrong platform binary"),
+        );
+
+        assert!(message
+            .contains("Failed to start orchestrator: process exited before health became ready."));
+        assert!(message.contains("Connection refused"));
+        assert!(!message.contains("waited 2300ms"));
+    }
 }

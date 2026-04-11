@@ -11,6 +11,7 @@ import {
   credentialSecretTable,
   credentialUsageEventTable,
   sessionLeaseTable,
+  userAiAccessPolicyTable,
 } from "../src/db/schema.js";
 import { createDb } from "../src/db/index.js";
 
@@ -23,6 +24,7 @@ test("exports required core table names", () => {
     credential_health_event: "credential_health_event",
     credential_usage_event: "credential_usage_event",
     audit_event: "audit_event",
+    user_ai_access_policy: "user_ai_access_policy",
   } as const;
 
   for (const [key, value] of Object.entries(requiredCoreNames)) {
@@ -38,18 +40,26 @@ test("exports required table definitions", () => {
   assert.ok(credentialHealthEventTable);
   assert.ok(credentialUsageEventTable);
   assert.ok(auditEventTable);
+  assert.ok(userAiAccessPolicyTable);
 });
 
 test("gateway tables include BYOK ownership and provider scoped lease columns", () => {
   const credentialRecordColumns = getTableColumns(credentialRecordTable);
   const credentialBindingColumns = getTableColumns(credentialBindingTable);
   const sessionLeaseColumns = getTableColumns(sessionLeaseTable);
+  const userAiAccessPolicyColumns = getTableColumns(userAiAccessPolicyTable);
 
+  assert.ok(credentialRecordColumns.name);
   assert.ok(credentialRecordColumns.owner_user_id);
   assert.ok(credentialBindingColumns.owner_user_id);
   assert.ok(credentialBindingColumns.provider);
   assert.ok(sessionLeaseColumns.owner_user_id);
   assert.ok(sessionLeaseColumns.provider);
+  assert.ok(userAiAccessPolicyColumns.user_id);
+  assert.ok(userAiAccessPolicyColumns.enabled);
+  assert.ok(userAiAccessPolicyColumns.provider);
+  assert.ok(userAiAccessPolicyColumns.default_model);
+  assert.ok(userAiAccessPolicyColumns.allowed_models_json);
 });
 
 test("exports db factory", () => {
@@ -59,6 +69,8 @@ test("exports db factory", () => {
 test("repository modules exist at expected paths", async () => {
   await assert.doesNotReject(async () => import("../src/credentials/repository.js"));
   await assert.doesNotReject(async () => import("../src/leases/repository.js"));
+  await assert.doesNotReject(async () => import("../src/access/repository.js"));
+  await assert.doesNotReject(async () => import("../src/access/mysql-repository.js"));
 });
 
 test("exports drizzle config for ai-gateway migrations", async () => {

@@ -1,5 +1,6 @@
 import { Router } from "express";
 
+import type { AiAccessRepository } from "../access/repository.js";
 import { readBearerToken } from "../auth/user-session.js";
 import type { GatewaySessionResolver } from "../auth/gateway-session.js";
 import type { CredentialRepository } from "../credentials/repository.js";
@@ -11,6 +12,7 @@ import { createAnthropicProxyRouter } from "./providers/anthropic.js";
 import { createOpenAiProxyRouter } from "./providers/openai.js";
 
 export type ProxyDependencies = {
+  aiAccess?: AiAccessRepository;
   gatewaySessions: GatewaySessionResolver;
   credentials: CredentialRepository;
   usageRepository: UsageRepository;
@@ -36,6 +38,14 @@ export function createProxyRouter(deps: ProxyDependencies) {
     }
 
     res.locals.gatewaySession = session;
+    if (deps.aiAccess) {
+      const aiAccess = await deps.aiAccess.getUserAiAccess(session.user.id);
+      if (!aiAccess?.enabled) {
+        res.status(403).json({ error: "ai_access_not_configured" });
+        return;
+      }
+      res.locals.gatewayAiAccess = aiAccess;
+    }
     next();
   });
 

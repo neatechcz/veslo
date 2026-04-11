@@ -19,7 +19,7 @@ import {
   safeStringify,
   writeStartupPreference,
 } from "../utils";
-import { LANGUAGE_PREF_KEY } from "../constants";
+import { LANGUAGE_PREF_KEY, ONBOARDING_COMPLETE_STORAGE_KEY } from "../constants";
 import { reportError } from "../lib/error-reporter";
 import { unwrap } from "../lib/opencode";
 import { readDenAuth, clearDenAuth, validateDenAuth } from "../lib/den-auth";
@@ -1732,7 +1732,7 @@ export function createWorkspaceStore(options: {
   function markOnboardingComplete() {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem("veslo.onboardingComplete", "1");
+      window.localStorage.setItem(ONBOARDING_COMPLETE_STORAGE_KEY, "1");
     } catch {
       // ignore
     }
@@ -1917,7 +1917,7 @@ export function createWorkspaceStore(options: {
     const startupPref = readStartupPreference();
     const onboardingComplete = (() => {
       try {
-        return window.localStorage.getItem("veslo.onboardingComplete") === "1";
+        return window.localStorage.getItem(ONBOARDING_COMPLETE_STORAGE_KEY) === "1";
       } catch {
         return false;
       }

@@ -12,7 +12,10 @@ export class DefaultBindingSelector implements BindingSelector {
   constructor(private readonly credentials: CredentialRepository) {}
 
   async selectInitialBinding(input: ResolveLeaseInput): Promise<string> {
-    const bindings = await this.listEligibleBindings(input);
+    const bindings = await this.listEligibleBindings({
+      ownerUserId: this.resolveBindingOwnerUserId(input),
+      provider: input.provider,
+    });
     if (bindings.length === 0) {
       return this.throwNoEligibleBindings(input);
     }
@@ -28,7 +31,7 @@ export class DefaultBindingSelector implements BindingSelector {
     input: ResolveLeaseInput & { previousBindingId: string },
   ): Promise<string> {
     const replacements = await this.listEligibleBindings({
-      ownerUserId: input.ownerUserId,
+      ownerUserId: this.resolveBindingOwnerUserId(input),
       provider: input.provider,
       excludeBindingId: input.previousBindingId,
     });
@@ -49,10 +52,14 @@ export class DefaultBindingSelector implements BindingSelector {
   }
 
   private throwNoEligibleBindings(input: ResolveLeaseInput): never {
-    throw new Error(`no_eligible_bindings:${input.ownerUserId}:${input.provider}`);
+    throw new Error(`no_eligible_bindings:${this.resolveBindingOwnerUserId(input)}:${input.provider}`);
   }
 
   private poolKey(input: ResolveLeaseInput): string {
-    return `${input.ownerUserId}:${input.provider}`;
+    return `${this.resolveBindingOwnerUserId(input)}:${input.provider}`;
+  }
+
+  private resolveBindingOwnerUserId(input: ResolveLeaseInput): string {
+    return input.bindingOwnerUserId ?? input.ownerUserId;
   }
 }

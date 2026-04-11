@@ -1,5 +1,6 @@
 import type {
   AdminCredentialRecord,
+  CreatePlatformCredentialInput,
   CreateUserCredentialInput,
   CredentialBinding,
   CredentialRecord,
@@ -46,11 +47,26 @@ const credentialRepositoryContractCheck: CredentialRepository = {
   async createUserCredential(_input: CreateUserCredentialInput): Promise<CredentialRecord> {
     return {
       id: "cred_1",
+      name: null,
       ownerUserId: "user_1",
       provider: "openai",
       credentialType: "oauth",
       state: "healthy",
       secretRef: "secret_1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      lastFailureAt: null,
+    };
+  },
+  async createPlatformCredential(_input: CreatePlatformCredentialInput): Promise<CredentialRecord> {
+    return {
+      id: "cred_platform_1",
+      name: "Shared OpenAI key",
+      ownerUserId: "platform:openai",
+      provider: "openai",
+      credentialType: "api_key",
+      state: "healthy",
+      secretRef: "secret_platform_1",
       createdAt: new Date(),
       updatedAt: new Date(),
       lastFailureAt: null,

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import type { AddressInfo } from "node:net";
+import { createServer as createNetServer, type AddressInfo } from "node:net";
 
 import { REDACTED_SECRET_VALUE, startServer } from "./server.js";
 
@@ -24,8 +24,68 @@ function createTestConfig() {
   };
 }
 
+async function withManagedAiEnv<T>(
+  env: {
+    managedAiBaseUrl?: string;
+    legacyAiGatewayBaseUrl?: string;
+  },
+  fn: () => Promise<T>,
+): Promise<T> {
+  const previousManagedAiBaseUrl = process.env.VESLO_MANAGED_AI_BASE_URL;
+  const previousLegacyAiGatewayBaseUrl = process.env.VESLO_AI_GATEWAY_BASE_URL;
+
+  if (env.managedAiBaseUrl === undefined) {
+    delete process.env.VESLO_MANAGED_AI_BASE_URL;
+  } else {
+    process.env.VESLO_MANAGED_AI_BASE_URL = env.managedAiBaseUrl;
+  }
+
+  if (env.legacyAiGatewayBaseUrl === undefined) {
+    delete process.env.VESLO_AI_GATEWAY_BASE_URL;
+  } else {
+    process.env.VESLO_AI_GATEWAY_BASE_URL = env.legacyAiGatewayBaseUrl;
+  }
+
+  try {
+    return await fn();
+  } finally {
+    if (previousManagedAiBaseUrl === undefined) {
+      delete process.env.VESLO_MANAGED_AI_BASE_URL;
+    } else {
+      process.env.VESLO_MANAGED_AI_BASE_URL = previousManagedAiBaseUrl;
+    }
+
+    if (previousLegacyAiGatewayBaseUrl === undefined) {
+      delete process.env.VESLO_AI_GATEWAY_BASE_URL;
+    } else {
+      process.env.VESLO_AI_GATEWAY_BASE_URL = previousLegacyAiGatewayBaseUrl;
+    }
+  }
+}
+
+async function reserveLoopbackPort(): Promise<number> {
+  const probe = createNetServer();
+  probe.listen(0, "127.0.0.1");
+  await once(probe, "listening");
+  const port = (probe.address() as AddressInfo).port;
+  probe.close();
+  await once(probe, "close");
+  return port;
+}
+
+async function listenTestServer(server: ReturnType<typeof createServer>): Promise<number> {
+  const port = await reserveLoopbackPort();
+  server.listen(port, "127.0.0.1");
+  await once(server, "listening");
+  return port;
+}
+
+function stopTestServer(server: ReturnType<typeof startServer>): void {
+  (server as unknown as { stop: (closeActiveConnections?: boolean) => void }).stop(true);
+}
+
 describe("ai gateway proxy routes", () => {
-  test("server proxies ai-gateway provider routes with gateway token and session id", async () => {
+  test("server proxies ai-gateway provider routes to the managed ai base url with gateway token and session id", async () => {
     const requests: Array<{
       method: string;
       pathname: string;
@@ -62,67 +122,77 @@ describe("ai gateway proxy routes", () => {
         model: "gpt-4o-mini",
       }));
     });
-    upstream.listen(0, "127.0.0.1");
-    await once(upstream, "listening");
-    const upstreamPort = (upstream.address() as AddressInfo).port;
+    const upstreamPort = await listenTestServer(upstream);
 
-    const previousBaseUrl = process.env.VESLO_AI_GATEWAY_BASE_URL;
-    process.env.VESLO_AI_GATEWAY_BASE_URL = `http://127.0.0.1:${upstreamPort}`;
-
-    const server = startServer(createTestConfig());
+    const legacyUpstream = createServer((_req, res) => {
+      res.statusCode = 503;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ code: "wrong_upstream", message: "legacy ai gateway should not be used" }));
+    });
+    const legacyPort = await listenTestServer(legacyUpstream);
 
     try {
-      const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/openai/v1/chat/completions`, {
-        method: "POST",
-        headers: {
-          authorization: "Bearer client-token",
-          "content-type": "application/json",
-          "x-veslo-gateway-token": "gateway-access-token",
-          "x-veslo-session-id": "session_123",
-          "x-veslo-client-id": "desktop-app",
-          "x-veslo-host-token": "should-not-forward",
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [{ role: "user", content: "Hello" }],
-        }),
-      });
-
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({
-        id: "chatcmpl_123",
-        object: "chat.completion",
-        model: "gpt-4o-mini",
-      });
-
-      expect(requests).toEqual([
+      await withManagedAiEnv(
         {
-          method: "POST",
-          pathname: "/providers/openai/v1/chat/completions",
-          authorization: "Bearer gateway-access-token",
-          gatewayToken: null,
-          sessionId: "session_123",
-          hostToken: null,
-          clientId: null,
-          body: {
-            model: "gpt-4o-mini",
-            messages: [{ role: "user", content: "Hello" }],
-          },
+          managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}`,
+          legacyAiGatewayBaseUrl: `http://127.0.0.1:${legacyPort}`,
         },
-      ]);
+        async () => {
+          const server = startServer(createTestConfig());
+
+          try {
+            const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/openai/v1/chat/completions`, {
+              method: "POST",
+              headers: {
+                authorization: "Bearer client-token",
+                "content-type": "application/json",
+                "x-veslo-gateway-token": "gateway-access-token",
+                "x-veslo-session-id": "session_123",
+                "x-veslo-client-id": "desktop-app",
+                "x-veslo-host-token": "should-not-forward",
+              },
+              body: JSON.stringify({
+                model: "gpt-4o-mini",
+                messages: [{ role: "user", content: "Hello" }],
+              }),
+            });
+
+            expect(response.status).toBe(200);
+            expect(await response.json()).toEqual({
+              id: "chatcmpl_123",
+              object: "chat.completion",
+              model: "gpt-4o-mini",
+            });
+
+            expect(requests).toEqual([
+              {
+                method: "POST",
+                pathname: "/providers/openai/v1/chat/completions",
+                authorization: "Bearer gateway-access-token",
+                gatewayToken: null,
+                sessionId: "session_123",
+                hostToken: null,
+                clientId: null,
+                body: {
+                  model: "gpt-4o-mini",
+                  messages: [{ role: "user", content: "Hello" }],
+                },
+              },
+            ]);
+          } finally {
+            stopTestServer(server);
+          }
+        },
+      );
     } finally {
-      server.stop(true);
       upstream.close();
+      legacyUpstream.close();
       await once(upstream, "close");
-      if (previousBaseUrl === undefined) {
-        delete process.env.VESLO_AI_GATEWAY_BASE_URL;
-      } else {
-        process.env.VESLO_AI_GATEWAY_BASE_URL = previousBaseUrl;
-      }
+      await once(legacyUpstream, "close");
     }
   });
 
-  test("server proxies ai-gateway credential routes with caller auth", async () => {
+  test("server proxies ai-gateway user ai access routes to the managed ai base url with caller auth", async () => {
     const requests: Array<{
       method: string;
       pathname: string;
@@ -150,71 +220,141 @@ describe("ai gateway proxy routes", () => {
       res.statusCode = 200;
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({
-        credential: {
-          id: "cred_1",
-          provider: "anthropic",
-          credentialType: "api_key",
-          state: "healthy",
-          createdAt: "2026-04-02T10:00:00.000Z",
-          updatedAt: "2026-04-02T10:00:00.000Z",
-          lastFailureAt: null,
+        aiAccess: {
+          id: "ai_access_user_123",
+          userId: "user_123",
+          enabled: true,
+          provider: "openai",
+          defaultModel: "gpt-4o-mini",
+          allowedModels: ["gpt-4o-mini"],
+          updatedAt: "2026-04-08T10:00:00.000Z",
         },
       }));
     });
-    upstream.listen(0, "127.0.0.1");
-    await once(upstream, "listening");
-    const upstreamPort = (upstream.address() as AddressInfo).port;
+    const upstreamPort = await listenTestServer(upstream);
 
-    const previousBaseUrl = process.env.VESLO_AI_GATEWAY_BASE_URL;
-    process.env.VESLO_AI_GATEWAY_BASE_URL = `http://127.0.0.1:${upstreamPort}`;
-
-    const server = startServer(createTestConfig());
+    const legacyUpstream = createServer((_req, res) => {
+      res.statusCode = 503;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ code: "wrong_upstream", message: "legacy ai gateway should not be used" }));
+    });
+    const legacyPort = await listenTestServer(legacyUpstream);
 
     try {
-      const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/anthropic/api-keys`, {
-        method: "POST",
-        headers: {
-          authorization: "Bearer client-token",
-          "content-type": "application/json",
-          "x-veslo-gateway-authorization": "Bearer den-user-token",
-          "x-veslo-client-id": "desktop-app",
-          "x-veslo-host-token": "should-not-forward",
-        },
-        body: JSON.stringify({ apiKey: "sk-ant-secret" }),
-      });
-
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({
-        credential: {
-          id: "cred_1",
-          provider: "anthropic",
-          credentialType: "api_key",
-          state: "healthy",
-          createdAt: "2026-04-02T10:00:00.000Z",
-          updatedAt: "2026-04-02T10:00:00.000Z",
-          lastFailureAt: null,
-        },
-      });
-
-      expect(requests).toEqual([
+      await withManagedAiEnv(
         {
-          method: "POST",
-          pathname: "/api/providers/anthropic/api-keys",
-          authorization: "Bearer den-user-token",
-          hostToken: null,
-          clientId: null,
-          body: { apiKey: "sk-ant-secret" },
+          managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}`,
+          legacyAiGatewayBaseUrl: `http://127.0.0.1:${legacyPort}`,
         },
-      ]);
+        async () => {
+          const server = startServer(createTestConfig());
+
+          try {
+            const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/me/ai-access`, {
+              headers: {
+                authorization: "Bearer client-token",
+                "x-veslo-gateway-authorization": "Bearer den-user-token",
+                "x-veslo-client-id": "desktop-app",
+                "x-veslo-host-token": "should-not-forward",
+              },
+            });
+
+            expect(response.status).toBe(200);
+            expect(await response.json()).toEqual({
+              aiAccess: {
+                id: "ai_access_user_123",
+                userId: "user_123",
+                enabled: true,
+                provider: "openai",
+                defaultModel: "gpt-4o-mini",
+                allowedModels: ["gpt-4o-mini"],
+                updatedAt: "2026-04-08T10:00:00.000Z",
+              },
+            });
+
+            expect(requests).toEqual([
+              {
+                method: "GET",
+                pathname: "/api/me/ai-access",
+                authorization: "Bearer den-user-token",
+                hostToken: null,
+                clientId: null,
+                body: null,
+              },
+            ]);
+          } finally {
+            stopTestServer(server);
+          }
+        },
+      );
     } finally {
-      server.stop(true);
       upstream.close();
+      legacyUpstream.close();
       await once(upstream, "close");
-      if (previousBaseUrl === undefined) {
-        delete process.env.VESLO_AI_GATEWAY_BASE_URL;
-      } else {
-        process.env.VESLO_AI_GATEWAY_BASE_URL = previousBaseUrl;
-      }
+      await once(legacyUpstream, "close");
+    }
+  });
+
+  test("server prefers VESLO_MANAGED_AI_BASE_URL over VESLO_AI_GATEWAY_BASE_URL", async () => {
+    const managedRequests: string[] = [];
+    const legacyRequests: string[] = [];
+
+    const managedUpstream = createServer((_req, res) => {
+      managedRequests.push("managed");
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({
+        aiAccess: {
+          id: "ai_access_user_123",
+          userId: "user_123",
+          enabled: true,
+          provider: "openai",
+          defaultModel: "gpt-4o-mini",
+          allowedModels: ["gpt-4o-mini"],
+          updatedAt: "2026-04-08T10:00:00.000Z",
+        },
+      }));
+    });
+    const managedPort = await listenTestServer(managedUpstream);
+
+    const legacyUpstream = createServer((_req, res) => {
+      legacyRequests.push("legacy");
+      res.statusCode = 500;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ error: "legacy should not be used" }));
+    });
+    const legacyPort = await listenTestServer(legacyUpstream);
+
+    try {
+      await withManagedAiEnv(
+        {
+          managedAiBaseUrl: `http://127.0.0.1:${managedPort}`,
+          legacyAiGatewayBaseUrl: `http://127.0.0.1:${legacyPort}`,
+        },
+        async () => {
+          const server = startServer(createTestConfig());
+
+          try {
+            const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/me/ai-access`, {
+              headers: {
+                authorization: "Bearer client-token",
+                "x-veslo-gateway-authorization": "Bearer den-user-token",
+              },
+            });
+
+            expect(response.status).toBe(200);
+            expect(managedRequests).toEqual(["managed"]);
+            expect(legacyRequests).toEqual([]);
+          } finally {
+            stopTestServer(server);
+          }
+        },
+      );
+    } finally {
+      managedUpstream.close();
+      legacyUpstream.close();
+      await once(managedUpstream, "close");
+      await once(legacyUpstream, "close");
     }
   });
 
@@ -225,23 +365,21 @@ describe("ai gateway proxy routes", () => {
       res.end(JSON.stringify({
         accessToken: "gateway-access-token",
         refreshToken: "provider-refresh-token",
-        credentials: [
-          {
-            id: "cred_1",
-            provider: "openai",
-            credentialType: "oauth",
-            state: "healthy",
-            apiKey: "sk-live-openai",
-            nested: {
-              accessToken: "nested-access-token",
-            },
-          },
-        ],
+        aiAccess: {
+          id: "ai_access_123",
+          userId: "user_123",
+          enabled: true,
+          provider: "openai",
+          defaultModel: "gpt-4o-mini",
+          allowedModels: ["gpt-4o-mini"],
+        },
+        nested: {
+          apiKey: "sk-live-openai",
+          accessToken: "nested-access-token",
+        },
       }));
     });
-    upstream.listen(0, "127.0.0.1");
-    await once(upstream, "listening");
-    const upstreamPort = (upstream.address() as AddressInfo).port;
+    const upstreamPort = await listenTestServer(upstream);
 
     const previousBaseUrl = process.env.VESLO_AI_GATEWAY_BASE_URL;
     process.env.VESLO_AI_GATEWAY_BASE_URL = `http://127.0.0.1:${upstreamPort}`;
@@ -249,7 +387,7 @@ describe("ai gateway proxy routes", () => {
     const server = startServer(createTestConfig());
 
     try {
-      const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/openai/credentials`, {
+      const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/me/ai-access`, {
         headers: {
           authorization: "Bearer client-token",
           "x-veslo-gateway-authorization": "Bearer den-user-token",
@@ -261,10 +399,13 @@ describe("ai gateway proxy routes", () => {
       const payload = await response.json() as {
         accessToken: string;
         refreshToken: string;
-        credentials: Array<{
+        aiAccess: {
+          defaultModel: string;
+        };
+        nested: {
           apiKey: string;
-          nested: { accessToken: string };
-        }>;
+          accessToken: string;
+        };
       };
       const serialized = JSON.stringify(payload);
 
@@ -274,10 +415,11 @@ describe("ai gateway proxy routes", () => {
       expect(serialized).not.toContain("nested-access-token");
       expect(payload.accessToken).toBe(REDACTED_SECRET_VALUE);
       expect(payload.refreshToken).toBe(REDACTED_SECRET_VALUE);
-      expect(payload.credentials[0]?.apiKey).toBe(REDACTED_SECRET_VALUE);
-      expect(payload.credentials[0]?.nested.accessToken).toBe(REDACTED_SECRET_VALUE);
+      expect(payload.aiAccess.defaultModel).toBe("gpt-4o-mini");
+      expect(payload.nested.apiKey).toBe(REDACTED_SECRET_VALUE);
+      expect(payload.nested.accessToken).toBe(REDACTED_SECRET_VALUE);
     } finally {
-      server.stop(true);
+      stopTestServer(server);
       upstream.close();
       await once(upstream, "close");
       if (previousBaseUrl === undefined) {

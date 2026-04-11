@@ -2,7 +2,7 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 use crate::engine::paths::{
-    resolve_opencode_env_override, resolve_opencode_executable,
+    bundled_opencode_executable_names, resolve_opencode_env_override, resolve_opencode_executable,
     resolve_opencode_executable_without_override,
 };
 use crate::platform::command_for_program;
@@ -71,22 +71,21 @@ pub fn resolve_sidecar_candidate(
     let mut candidates = Vec::new();
 
     if let Some(current_bin_dir) = current_bin_dir {
-        candidates.push(current_bin_dir.join(crate::engine::paths::opencode_executable_name()));
+        for executable_name in bundled_opencode_executable_names() {
+            candidates.push(current_bin_dir.join(executable_name));
+        }
     }
 
     if let Some(resource_dir) = resource_dir {
-        candidates.push(
-            resource_dir
-                .join("sidecars")
-                .join(crate::engine::paths::opencode_executable_name()),
-        );
-        candidates.push(resource_dir.join(crate::engine::paths::opencode_executable_name()));
+        for executable_name in bundled_opencode_executable_names() {
+            candidates.push(resource_dir.join("sidecars").join(executable_name));
+            candidates.push(resource_dir.join(executable_name));
+        }
     }
 
-    candidates.push(
-        std::path::PathBuf::from("src-tauri/sidecars")
-            .join(crate::engine::paths::opencode_executable_name()),
-    );
+    for executable_name in bundled_opencode_executable_names() {
+        candidates.push(std::path::PathBuf::from("src-tauri/sidecars").join(executable_name));
+    }
 
     for candidate in candidates {
         if candidate.is_file() {
@@ -185,7 +184,7 @@ mod tests {
         let dir = unique_temp_dir("sidecar-test");
         std::fs::create_dir_all(&dir).expect("create temp dir");
 
-        let sidecar_path = dir.join(crate::engine::paths::opencode_executable_name());
+        let sidecar_path = dir.join(crate::engine::paths::bundled_opencode_executable_names()[1]);
         std::fs::write(&sidecar_path, b"").expect("create fake sidecar");
 
         let (resolved, notes) = resolve_sidecar_candidate(true, None, Some(dir.as_path()));
@@ -210,8 +209,27 @@ mod tests {
         let dir = unique_temp_dir("engine-path-test");
         std::fs::create_dir_all(&dir).expect("create temp dir");
 
-        let sidecar_path = dir.join(crate::engine::paths::opencode_executable_name());
+        let sidecar_path = dir.join(crate::engine::paths::bundled_opencode_executable_names()[1]);
         std::fs::write(&sidecar_path, b"").expect("create fake sidecar");
+
+        let (resolved, in_path, _notes) = resolve_engine_path(true, None, Some(dir.as_path()));
+        assert_eq!(resolved.as_ref(), Some(&sidecar_path));
+        assert!(!in_path);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn resolve_engine_path_prefers_packaged_veslo_code_sidecar() {
+        let _lock = ENV_LOCK.lock().expect("lock env");
+        let _guard = EnvVarGuard::clear("OPENCODE_BIN_PATH");
+
+        let dir = unique_temp_dir("engine-packaged-sidecar-test");
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+
+        let sidecar_path = dir.join("veslo-code");
+        std::fs::write(&sidecar_path, b"").expect("create fake packaged sidecar");
 
         let (resolved, in_path, _notes) = resolve_engine_path(true, None, Some(dir.as_path()));
         assert_eq!(resolved.as_ref(), Some(&sidecar_path));
@@ -235,7 +253,8 @@ mod tests {
 
         let sidecar_dir = unique_temp_dir("sidecar-override-test");
         std::fs::create_dir_all(&sidecar_dir).expect("create sidecar dir");
-        let sidecar_path = sidecar_dir.join(crate::engine::paths::opencode_executable_name());
+        let sidecar_path =
+            sidecar_dir.join(crate::engine::paths::bundled_opencode_executable_names()[1]);
         std::fs::write(&sidecar_path, b"").expect("create fake sidecar");
 
         let (resolved, _in_path, notes) =

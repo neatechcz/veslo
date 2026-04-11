@@ -10,5 +10,5 @@
     "rootDir": ".",
     "types": ["@wdio/globals/types", "@types/mocha"]
   },
-  "include": ["specs/**/*.ts", "helpers/**/*.ts", "wdio.conf.ts"]
+  "include": ["global.d.ts", "specs/**/*.ts", "helpers/**/*.ts", "scripts/**/*.ts", "wdio.conf.ts"]
 }

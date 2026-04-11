@@ -1,3 +1,5 @@
+import { MySqlAiAccessRepository } from "../access/mysql-repository.js";
+import type { AiAccessRepository } from "../access/repository.js";
 import { DenGatewaySessionResolver } from "../auth/gateway-session.js";
 import { DenUserSessionResolver } from "../auth/user-session.js";
 import { DefaultTokenBroker } from "../credentials/default-token-broker.js";
@@ -20,6 +22,7 @@ import { MySqlUsageRepository } from "../usage/mysql-repository.js";
 import type { UsageRepository } from "../usage/repository.js";
 
 export type RuntimeState = {
+  aiAccess: AiAccessRepository;
   credentials: CredentialRepository;
   secrets: SecretStore;
   leases: LeaseRepository;
@@ -37,6 +40,7 @@ export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): 
   const secretKey = options.secretKey ?? env.secretKey;
 
   return {
+    aiAccess: new MySqlAiAccessRepository(db),
     credentials: new MySqlCredentialRepository(db),
     secrets: new MySqlSecretStore(db, secretKey),
     leases: new MySqlLeaseRepository(db),
@@ -57,6 +61,7 @@ export function createDefaultProxyDependencies(
   const openAiOAuth = overrides.openAiOAuth ?? createDefaultOpenAiOAuthClient();
 
   return {
+    aiAccess: runtime.aiAccess,
     gatewaySessions: overrides.gatewaySessions ?? new DenGatewaySessionResolver({ denApiBase: env.denApiBase }),
     credentials: runtime.credentials,
     usageRepository: runtime.usage,
@@ -82,13 +87,11 @@ export function createDefaultProxyDependencies(
 
 export function createDefaultUserCredentialDependencies(
   runtime: RuntimeState,
-  overrides: Partial<Pick<UserCredentialDependencies, "sessionResolver" | "openAiOAuth">> = {},
+  overrides: Partial<Pick<UserCredentialDependencies, "sessionResolver">> = {},
 ): UserCredentialDependencies {
   return {
     sessionResolver: overrides.sessionResolver ?? new DenUserSessionResolver({ denApiBase: env.denApiBase }),
-    openAiOAuth: overrides.openAiOAuth ?? createDefaultOpenAiOAuthClient(),
-    credentials: runtime.credentials,
-    secrets: runtime.secrets,
+    aiAccess: runtime.aiAccess,
   };
 }
 

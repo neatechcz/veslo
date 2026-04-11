@@ -48,3 +48,6 @@ vendor/opencode/
 
 # Local evidence artifacts
 evidence/
+
+# Local Codex runtime artifact
+.codex

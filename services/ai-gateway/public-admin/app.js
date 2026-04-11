@@ -28,6 +28,7 @@ const state = {
   selectedAuditId: null,
   selectedUserId: null,
   userMode: "edit",
+  userAiAccessByUserId: {},
 };
 
 const els = {
@@ -46,6 +47,11 @@ const els = {
   pageEyebrow: document.getElementById("page-eyebrow"),
   navItems: Array.from(document.querySelectorAll("[data-route]")),
   pages: Array.from(document.querySelectorAll("[data-page]")),
+  credentialCreateProvider: document.getElementById("credential-create-provider"),
+  credentialCreateName: document.getElementById("credential-create-name"),
+  credentialCreateSecret: document.getElementById("credential-create-secret"),
+  credentialCreateSubmit: document.getElementById("credential-create-submit"),
+  credentialCreateStatus: document.getElementById("credential-create-status"),
   credentialsTableBody: document.getElementById("credentials-table-body"),
   credentialDetail: document.getElementById("credential-detail"),
   sessionList: document.getElementById("session-list"),
@@ -73,9 +79,15 @@ const els = {
   userRole: document.getElementById("user-role"),
   userPlatformAdmin: document.getElementById("user-platform-admin"),
   userSendInvite: document.getElementById("user-send-invite"),
+  userAiAccessEnabled: document.getElementById("user-ai-access-enabled"),
+  userAiAccessProvider: document.getElementById("user-ai-access-provider"),
+  userAiAccessDefaultModel: document.getElementById("user-ai-access-default-model"),
+  userAiAccessAllowedModels: document.getElementById("user-ai-access-allowed-models"),
+  userAiAccessStatus: document.getElementById("user-ai-access-status"),
   userDisableButton: document.getElementById("user-disable-button"),
   userDeleteButton: document.getElementById("user-delete-button"),
   userSaveButton: document.getElementById("user-save-button"),
+  userSaveStatus: document.getElementById("user-save-status"),
   auditSearch: document.getElementById("audit-search"),
   auditDateRange: document.getElementById("audit-date-range"),
   auditActorFilter: document.getElementById("audit-actor-filter"),
@@ -227,6 +239,56 @@ function formatDate(value) {
   });
 }
 
+function normalizeAiAccess(payload) {
+  if (!payload || typeof payload !== "object") {
+    return {
+      enabled: false,
+      provider: "",
+      defaultModel: "",
+      allowedModels: [],
+      updatedAt: null,
+    };
+  }
+
+  const allowedModels = Array.isArray(payload.allowedModels)
+    ? payload.allowedModels.filter((entry) => typeof entry === "string").map((entry) => entry.trim()).filter(Boolean)
+    : [];
+
+  return {
+    id: typeof payload.id === "string" ? payload.id : "",
+    userId: typeof payload.userId === "string" ? payload.userId : "",
+    enabled: payload.enabled === true,
+    provider: typeof payload.provider === "string" ? payload.provider : "",
+    defaultModel: typeof payload.defaultModel === "string" ? payload.defaultModel : "",
+    allowedModels,
+    updatedAt: typeof payload.updatedAt === "string" ? payload.updatedAt : null,
+  };
+}
+
+function currentUserAiAccess(userId) {
+  return normalizeAiAccess(state.userAiAccessByUserId[userId] || null);
+}
+
+function formatAllowedModels(models) {
+  return (models || []).join("\n");
+}
+
+function parseAllowedModelsInput(value) {
+  return value
+    .split(/[\n,]/g)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function readAiAccessFormValue() {
+  return {
+    enabled: els.userAiAccessEnabled.checked,
+    provider: els.userAiAccessProvider.value || null,
+    defaultModel: els.userAiAccessDefaultModel.value.trim() || null,
+    allowedModels: parseAllowedModelsInput(els.userAiAccessAllowedModels.value),
+  };
+}
+
 function summarizeUser(user) {
   const membership = user.memberships?.[0];
   const orgPart = membership ? `${membership.role} in ${membership.orgName}` : "no org membership";
@@ -271,8 +333,9 @@ function showApp() {
 function setActivePage(page) {
   state.page = page;
   const nextPath = page === "overview" ? "/admin" : `/admin/${page}`;
+  const nextUrl = `${nextPath}${location.search}${location.hash}`;
   if (location.pathname !== nextPath) {
-    history.replaceState(null, "", nextPath);
+    history.replaceState(null, "", nextUrl);
   }
   els.navItems.forEach((item) => item.classList.toggle("active", item.dataset.route === page));
   els.pages.forEach((panel) => {
@@ -445,7 +508,11 @@ async function completeBrowserAuth() {
     });
 
     if (!response.ok) {
-      showLogin(payload?.error || payload?.message || "Browser sign in failed.");
+      showLogin(
+        payload?.error === "forbidden"
+          ? "You do not have admin access."
+          : payload?.error || payload?.message || "Browser sign in failed.",
+      );
       return true;
     }
 
@@ -559,6 +626,31 @@ async function loadAudit() {
   }
 }
 
+async function loadUserAiAccess(userId) {
+  const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
+  if (!resolvedUserId) {
+    return null;
+  }
+
+  const payload = await fetchJson(`/users/${encodeURIComponent(resolvedUserId)}/ai-access`);
+  const aiAccess = normalizeAiAccess(payload?.aiAccess || null);
+  state.userAiAccessByUserId[resolvedUserId] = aiAccess;
+  return aiAccess;
+}
+
+async function saveUserAiAccess(userId) {
+  const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
+  if (!resolvedUserId) {
+    return;
+  }
+
+  const saved = await fetchJson(`/users/${encodeURIComponent(resolvedUserId)}/ai-access`, {
+    method: "PUT",
+    body: JSON.stringify(readAiAccessFormValue()),
+  });
+  state.userAiAccessByUserId[resolvedUserId] = normalizeAiAccess(saved?.aiAccess || null);
+}
+
 async function loadUsers() {
   try {
     const payload = await fetchJson("/users");
@@ -570,8 +662,24 @@ async function loadUsers() {
       state.userMode = "create";
     }
     renderUsers();
+    if (state.userMode !== "create" && state.selectedUserId) {
+      await loadUserAiAccess(state.selectedUserId);
+      const user = currentUser();
+      if (user) {
+        populateUserEditor(user);
+      }
+    }
+    setUserSaveStatus(
+      state.userMode === "create"
+        ? "Fill in the profile and save to create the user."
+        : "Directory changes and AI access assignments are applied separately.",
+    );
   } catch (error) {
     console.error("loadUsers failed", error);
+    setUserSaveStatus(
+      `Unable to load users: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
   }
 }
 
@@ -775,6 +883,14 @@ function filteredUsers() {
   });
 }
 
+function findUserByEmail(email) {
+  const normalized = typeof email === "string" ? email.trim().toLowerCase() : "";
+  if (!normalized) {
+    return null;
+  }
+  return state.users.find((user) => typeof user.email === "string" && user.email.trim().toLowerCase() === normalized) || null;
+}
+
 function currentUser() {
   if (state.userMode === "create") {
     return null;
@@ -793,6 +909,7 @@ function currentAlert() {
 function populateUserEditor(user) {
   const isCreate = state.userMode === "create";
   const membership = user?.memberships?.[0];
+  const aiAccess = user?.id ? currentUserAiAccess(user.id) : normalizeAiAccess(null);
   els.userEditorStatus.textContent = isCreate ? "Create user" : userStatus(user);
   els.userEditorTitle.textContent = isCreate ? "New user" : (user?.name || user?.email || "User");
   els.userName.value = user?.name || "";
@@ -813,6 +930,19 @@ function populateUserEditor(user) {
   els.userDisableButton.textContent = user?.disabled ? "Enable user" : "Disable user";
   els.userDisableButton.disabled = isCreate || !user;
   els.userDeleteButton.disabled = isCreate || !user;
+  els.userAiAccessEnabled.checked = aiAccess.enabled;
+  els.userAiAccessEnabled.disabled = isCreate || !user;
+  els.userAiAccessProvider.value = aiAccess.provider || "";
+  els.userAiAccessProvider.disabled = isCreate || !user;
+  els.userAiAccessDefaultModel.value = aiAccess.defaultModel || "";
+  els.userAiAccessDefaultModel.disabled = isCreate || !user;
+  els.userAiAccessAllowedModels.value = formatAllowedModels(aiAccess.allowedModels);
+  els.userAiAccessAllowedModels.disabled = isCreate || !user;
+  els.userAiAccessStatus.textContent = isCreate
+    ? "Create the user first, then assign provider and models."
+    : aiAccess.updatedAt
+      ? `Assignments updated ${formatDate(aiAccess.updatedAt)}.`
+      : "Assignments are enforced by the gateway for this signed-in user.";
 }
 
 function renderUsers() {
@@ -887,6 +1017,7 @@ function enterCreateMode() {
   setActivePage("users");
   showApp();
   renderUsers();
+  setUserSaveStatus("Fill in the profile and save to create the user.");
 }
 
 async function refreshCredentialOperations() {
@@ -897,6 +1028,66 @@ async function refreshCredentialOperations() {
     loadAudit(),
   ]);
   renderOverview();
+}
+
+function setCredentialCreateStatus(message, tone = "neutral") {
+  els.credentialCreateStatus.textContent = message;
+  if (tone === "neutral") {
+    delete els.credentialCreateStatus.dataset.tone;
+    return;
+  }
+  els.credentialCreateStatus.dataset.tone = tone;
+}
+
+function setUserSaveStatus(message, tone = "neutral") {
+  els.userSaveStatus.textContent = message;
+  if (tone === "neutral") {
+    delete els.userSaveStatus.dataset.tone;
+    return;
+  }
+  els.userSaveStatus.dataset.tone = tone;
+}
+
+function resetCredentialCreateForm() {
+  els.credentialCreateName.value = "";
+  els.credentialCreateSecret.value = "";
+}
+
+async function createCredential() {
+  const provider = els.credentialCreateProvider.value.trim();
+  const name = els.credentialCreateName.value.trim();
+  const secret = els.credentialCreateSecret.value.trim();
+
+  if (!provider || !secret) {
+    setCredentialCreateStatus("Provider and secret are required.", "error");
+    return;
+  }
+
+  els.credentialCreateSubmit.disabled = true;
+  setCredentialCreateStatus("Creating credential", "pending");
+
+  try {
+    const requestBody = { provider, secret };
+    if (name) {
+      requestBody.name = name;
+    }
+
+    const payload = await fetchJson("/credentials", {
+      method: "POST",
+      body: JSON.stringify(requestBody),
+    });
+    state.selectedCredentialId = payload?.credential?.id || state.selectedCredentialId;
+    resetCredentialCreateForm();
+    setCredentialCreateStatus("Credential created and attached to the platform pool.", "success");
+    await refreshCredentialOperations();
+  } catch (error) {
+    setCredentialCreateStatus(
+      `Unable to create credential: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
+  } finally {
+    els.credentialCreateSubmit.disabled = false;
+  }
 }
 
 async function refreshAlertOperations() {
@@ -976,9 +1167,24 @@ async function saveUser() {
     orgId: els.userOrg.value || null,
     orgRole: els.userRole.value === "owner" ? "owner" : "member",
   };
+  const wasCreating = state.userMode === "create";
 
   try {
-    if (state.userMode === "create") {
+    els.userSaveButton.disabled = true;
+    setUserSaveStatus(wasCreating ? "Creating user..." : "Saving user...", "pending");
+    if (wasCreating) {
+      const existingUser = findUserByEmail(payload.email);
+      if (existingUser) {
+        state.userMode = "edit";
+        state.selectedUserId = existingUser.id;
+        renderUsers();
+        await loadUserAiAccess(existingUser.id);
+        populateUserEditor(existingUser);
+        setUserSaveStatus("That email already exists. Showing the existing user record instead.", "error");
+        return;
+      }
+    }
+    if (wasCreating) {
       const created = await fetchJson("/users", {
         method: "POST",
         body: JSON.stringify(payload),
@@ -1000,9 +1206,26 @@ async function saveUser() {
     }
 
     await loadUsers();
+    const selectedUser = currentUser();
+    if (selectedUser?.id) {
+      await saveUserAiAccess(selectedUser.id);
+      await loadUserAiAccess(selectedUser.id);
+      populateUserEditor(selectedUser);
+    }
     await loadAudit();
+    setUserSaveStatus(
+      wasCreating
+        ? "User created. Review AI access separately if needed."
+        : "User changes saved.",
+      "success",
+    );
   } catch (error) {
-    window.alert(`Unable to save user: ${error instanceof Error ? error.message : "unknown_error"}`);
+    setUserSaveStatus(
+      `Unable to save user: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
+  } finally {
+    els.userSaveButton.disabled = false;
   }
 }
 
@@ -1076,6 +1299,7 @@ function bindActions() {
   els.refreshButton.addEventListener("click", () => void bootstrapSession());
   els.createUserButton.addEventListener("click", enterCreateMode);
   els.createUserButtonInline.addEventListener("click", enterCreateMode);
+  els.credentialCreateSubmit.addEventListener("click", () => void createCredential());
   els.userSaveButton.addEventListener("click", () => void saveUser());
   els.userDisableButton.addEventListener("click", () => void toggleUserDisabled());
   els.userDeleteButton.addEventListener("click", () => void deleteUser());
@@ -1135,6 +1359,18 @@ function bindActions() {
     state.userMode = "edit";
     state.selectedUserId = card.dataset.userId;
     renderUsers();
+    if (state.selectedUserId) {
+      void loadUserAiAccess(state.selectedUserId)
+        .then(() => {
+          const user = currentUser();
+          if (user) {
+            populateUserEditor(user);
+          }
+        })
+        .catch(() => {
+          els.userAiAccessStatus.textContent = "Unable to load AI access assignment.";
+        });
+    }
   });
 
   els.auditList.addEventListener("click", (event) => {

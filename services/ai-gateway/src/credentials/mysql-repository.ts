@@ -8,6 +8,7 @@ import {
   credentialRecordTable,
 } from "../db/schema.js";
 import type {
+  CreatePlatformCredentialInput,
   CreateUserCredentialInput,
   CredentialBinding,
   CredentialRecord,
@@ -84,9 +85,36 @@ export class MySqlCredentialRepository implements CredentialRepository {
   }
 
   async createUserCredential(input: CreateUserCredentialInput): Promise<CredentialRecord> {
+    return this.createCredentialRecordAndBinding({
+      ownerUserId: input.ownerUserId,
+      name: input.name ?? null,
+      provider: input.provider,
+      credentialType: input.credentialType,
+      secretRef: input.secretRef,
+    });
+  }
+
+  async createPlatformCredential(input: CreatePlatformCredentialInput): Promise<CredentialRecord> {
+    return this.createCredentialRecordAndBinding({
+      ownerUserId: input.ownerUserId,
+      name: input.name,
+      provider: input.provider,
+      credentialType: input.credentialType,
+      secretRef: input.secretRef,
+    });
+  }
+
+  private async createCredentialRecordAndBinding(input: {
+    ownerUserId: string;
+    name: string | null;
+    provider: string;
+    credentialType: "api_key" | "oauth";
+    secretRef: string;
+  }): Promise<CredentialRecord> {
     const createdAt = new Date();
     const record: CredentialRecord = {
       id: `cred_${randomUUID()}`,
+      name: input.name,
       ownerUserId: input.ownerUserId,
       provider: input.provider,
       credentialType: input.credentialType,
@@ -107,6 +135,7 @@ export class MySqlCredentialRepository implements CredentialRepository {
 
     await this.db.insert(credentialRecordTable).values({
       id: record.id,
+      name: record.name,
       owner_user_id: record.ownerUserId,
       provider: record.provider,
       credential_type: record.credentialType,
@@ -206,6 +235,7 @@ function mapCredentialRecord(row: typeof credentialRecordTable.$inferSelect): Cr
 
   return {
     id: row.id,
+    name: row.name ?? null,
     ownerUserId: row.owner_user_id,
     provider: row.provider,
     credentialType: row.credential_type,

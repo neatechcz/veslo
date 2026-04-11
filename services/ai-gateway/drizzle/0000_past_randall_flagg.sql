@@ -10,6 +10,19 @@ CREATE TABLE `audit_event` (
 	CONSTRAINT `audit_event_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
+CREATE TABLE `user_ai_access_policy` (
+	`id` varchar(64) NOT NULL,
+	`user_id` varchar(64) NOT NULL,
+	`enabled` int NOT NULL DEFAULT 1,
+	`provider` varchar(64),
+	`default_model` varchar(128),
+	`allowed_models_json` text NOT NULL,
+	`created_at` timestamp(3) NOT NULL DEFAULT (now()),
+	`updated_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+	CONSTRAINT `user_ai_access_policy_id` PRIMARY KEY(`id`),
+	CONSTRAINT `user_ai_access_policy_user_id` UNIQUE(`user_id`)
+);
+--> statement-breakpoint
 CREATE TABLE `credential_binding` (
 	`id` varchar(64) NOT NULL,
 	`owner_user_id` varchar(64) NOT NULL,
@@ -32,6 +45,7 @@ CREATE TABLE `credential_health_event` (
 --> statement-breakpoint
 CREATE TABLE `credential_record` (
 	`id` varchar(64) NOT NULL,
+	`name` varchar(255),
 	`owner_user_id` varchar(64) NOT NULL,
 	`provider` varchar(64) NOT NULL,
 	`credential_type` enum('api_key','oauth') NOT NULL,
@@ -83,6 +97,7 @@ CREATE TABLE `session_lease` (
 CREATE INDEX `audit_event_entity` ON `audit_event` (`entity_type`,`entity_id`);--> statement-breakpoint
 CREATE INDEX `audit_event_actor` ON `audit_event` (`actor_user_id`);--> statement-breakpoint
 CREATE INDEX `audit_event_action` ON `audit_event` (`action`);--> statement-breakpoint
+CREATE INDEX `user_ai_access_policy_provider` ON `user_ai_access_policy` (`provider`);--> statement-breakpoint
 CREATE INDEX `credential_binding_owner_provider` ON `credential_binding` (`owner_user_id`,`provider`);--> statement-breakpoint
 CREATE INDEX `credential_binding_credential_record_id` ON `credential_binding` (`credential_record_id`);--> statement-breakpoint
 CREATE INDEX `credential_health_event_credential_record_id` ON `credential_health_event` (`credential_record_id`);--> statement-breakpoint

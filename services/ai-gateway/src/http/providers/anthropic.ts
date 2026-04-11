@@ -2,10 +2,13 @@ import { randomUUID } from "node:crypto";
 
 import { Router, type Response } from "express";
 
+import type { UserAiAccessPolicyRecord } from "../../access/repository.js";
 import type { GatewaySession } from "../../auth/gateway-session.js";
+import { getPlatformCredentialOwnerUserId } from "../../credentials/platform-owner.js";
 import { classifyUpstreamFailure, getUpstreamFailureInput } from "../../leases/error-classifier.js";
 import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js";
 import type { ProviderTransportResponse } from "../../providers/transport.js";
+import { applyAiAccessPolicy } from "./access-policy.js";
 import type { ProxyDependencies } from "../proxy.js";
 
 export function createAnthropicProxyRouter(
@@ -26,14 +29,28 @@ export function createAnthropicProxyRouter(
       return;
     }
 
+    const gatewayAiAccess = res.locals.gatewayAiAccess as UserAiAccessPolicyRecord | undefined;
+    const policyResult = gatewayAiAccess
+      ? applyAiAccessPolicy({
+          routeProvider: "anthropic",
+          aiAccess: gatewayAiAccess,
+          body: req.body,
+        })
+      : { ok: true as const, body: req.body as Record<string, unknown> };
+    if (!policyResult.ok) {
+      res.status(policyResult.status).json({ error: policyResult.error });
+      return;
+    }
+
     const scope: ResolveLeaseInput = {
       ownerUserId: gatewaySession.user.id,
+      bindingOwnerUserId: getPlatformCredentialOwnerUserId("anthropic"),
       provider: "anthropic",
       sessionId,
     };
 
     try {
-      const upstreamResponse = await executeWithRetry(scope, req.body);
+      const upstreamResponse = await executeWithRetry(scope, policyResult.body);
       applyUpstreamResponse(res, upstreamResponse);
     } catch (error) {
       console.error("proxy_request_failed", error);

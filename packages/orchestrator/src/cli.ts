@@ -87,6 +87,7 @@ const DEFAULT_APPROVAL_TIMEOUT = 30000;
 const DEFAULT_OPENCODE_USERNAME = "opencode";
 const DEFAULT_OPENCODE_HOT_RELOAD_DEBOUNCE_MS = 700;
 const DEFAULT_OPENCODE_HOT_RELOAD_COOLDOWN_MS = 1500;
+const DEFAULT_MANAGED_AI_BASE_URL = "https://veslo-ai-gateway-dev.onrender.com";
 
 const SANDBOX_INTERNAL_OPENCODE_PORT = 4096;
 const SANDBOX_INTERNAL_VESLO_PORT = DEFAULT_VESLO_PORT;
@@ -2586,6 +2587,12 @@ async function startVesloServer(options: {
   runId: string;
   logFormat: LogFormat;
 }) {
+  const managedAiBaseUrl = (
+    process.env.VESLO_MANAGED_AI_BASE_URL?.trim() ||
+    process.env.VESLO_AI_GATEWAY_BASE_URL?.trim() ||
+    DEFAULT_MANAGED_AI_BASE_URL
+  ).replace(/\/+$/, "");
+
   const args = [
     "--host",
     options.host,
@@ -2646,6 +2653,7 @@ async function startVesloServer(options: {
       ),
       ...(options.opencodeRouterHealthPort ? { OPENCODE_ROUTER_HEALTH_PORT: String(options.opencodeRouterHealthPort) } : {}),
       ...(options.opencodeRouterDataDir ? { OPENCODE_ROUTER_DATA_DIR: options.opencodeRouterDataDir } : {}),
+      VESLO_MANAGED_AI_BASE_URL: managedAiBaseUrl,
       ...(options.opencodeBaseUrl ? { VESLO_OPENCODE_BASE_URL: options.opencodeBaseUrl } : {}),
       ...(options.opencodeDirectory ? { VESLO_OPENCODE_DIRECTORY: options.opencodeDirectory } : {}),
       ...(options.opencodeUsername ? { VESLO_OPENCODE_USERNAME: options.opencodeUsername } : {}),

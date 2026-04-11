@@ -1,4 +1,5 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { LANGUAGE_PREF_KEY, ONBOARDING_COMPLETE_STORAGE_KEY } from "../constants";
 import { isTauriRuntime } from "../utils";
 
 const DEN_AUTH_STORAGE_KEY = "veslo.den.auth";
@@ -107,6 +108,8 @@ export type AuthCompleteDeepLinkPayload = {
 type DenDesktopSnapshot = {
   authJson?: string | null;
   keepSignedIn?: boolean | null;
+  language?: string | null;
+  onboardingComplete?: boolean | null;
   source?: string | null;
 };
 
@@ -283,6 +286,51 @@ function clearDenAuthFromStorage(store: Storage | null): void {
   }
 }
 
+function readPersistedText(store: Storage | null, key: string): string | null {
+  if (!store) return null;
+  try {
+    const raw = store.getItem(key);
+    const trimmed = raw?.trim() ?? "";
+    return trimmed || null;
+  } catch {
+    return null;
+  }
+}
+
+function readPersistedBoolean(store: Storage | null, key: string): boolean | null {
+  const raw = readPersistedText(store, key)?.toLowerCase();
+  if (!raw) return null;
+  if (raw === "1" || raw === "true") return true;
+  if (raw === "0" || raw === "false") return false;
+  return null;
+}
+
+function writePersistedText(store: Storage | null, key: string, value: string | null): void {
+  if (!store) return;
+  try {
+    if (!value) {
+      store.removeItem(key);
+      return;
+    }
+    store.setItem(key, value);
+  } catch {
+    // ignore
+  }
+}
+
+function writePersistedBoolean(store: Storage | null, key: string, value: boolean | null): void {
+  if (!store) return;
+  try {
+    if (value == null) {
+      store.removeItem(key);
+      return;
+    }
+    store.setItem(key, value ? "1" : "0");
+  } catch {
+    // ignore
+  }
+}
+
 async function invokeDesktopCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const runtimeInvoke = (typeof window !== "undefined"
     ? (window as unknown as { __TAURI_INTERNALS__?: { invoke?: TauriInvoke } }).__TAURI_INTERNALS__
@@ -296,7 +344,12 @@ async function invokeDesktopCommand<T>(command: string, args?: Record<string, un
   return invoke<T>(command, args);
 }
 
-function queueDesktopSnapshotWrite(auth: DenAuthState | null, keepSignedIn: boolean): void {
+function queueDesktopSnapshotWrite(
+  auth: DenAuthState | null,
+  keepSignedIn: boolean,
+  language: string | null,
+  onboardingComplete: boolean | null,
+): void {
   if (!isTauriRuntime()) return;
   const payloadAuth = auth ? JSON.stringify(auth) : null;
   desktopSnapshotWriteQueue = desktopSnapshotWriteQueue
@@ -306,6 +359,8 @@ function queueDesktopSnapshotWrite(auth: DenAuthState | null, keepSignedIn: bool
         await invokeDesktopCommand(DEN_AUTH_SNAPSHOT_WRITE_COMMAND, {
           authJson: payloadAuth,
           keepSignedIn,
+          language,
+          onboardingComplete,
         });
       } catch {
         // ignore desktop snapshot write failures
@@ -315,7 +370,13 @@ function queueDesktopSnapshotWrite(auth: DenAuthState | null, keepSignedIn: bool
 
 function syncDesktopSnapshotFromCurrentState(): void {
   if (!isTauriRuntime()) return;
-  queueDesktopSnapshotWrite(readDenAuth(), readDenKeepSignedIn());
+  const localStore = localStorageAccess();
+  queueDesktopSnapshotWrite(
+    readDenAuth(),
+    readDenKeepSignedIn(),
+    readPersistedText(localStore, LANGUAGE_PREF_KEY),
+    readPersistedBoolean(localStore, ONBOARDING_COMPLETE_STORAGE_KEY),
+  );
 }
 
 function parseSnapshotAuth(snapshot?: DenDesktopSnapshot | null): DenAuthState | null {
@@ -362,6 +423,16 @@ export async function hydrateDenAuthFromDesktopSnapshot(): Promise<boolean> {
     return false;
   }
 
+  writePersistedText(
+    localStore,
+    LANGUAGE_PREF_KEY,
+    typeof snapshot.language === "string" ? snapshot.language.trim() || null : null,
+  );
+  writePersistedBoolean(
+    localStore,
+    ONBOARDING_COMPLETE_STORAGE_KEY,
+    typeof snapshot.onboardingComplete === "boolean" ? snapshot.onboardingComplete : null,
+  );
   writeDenKeepSignedIn(true);
   writeDenAuth(state);
   return true;

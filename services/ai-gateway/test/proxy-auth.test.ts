@@ -198,6 +198,7 @@ test("provider proxy uses resolved gateway user identity instead of trusting x-v
     assert.deepEqual(leaseScopes, [
       {
         ownerUserId: "resolved_user_123",
+        bindingOwnerUserId: "platform:openai",
         provider: "openai",
         sessionId: "session_auth_2",
       },

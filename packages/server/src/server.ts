@@ -705,7 +705,9 @@ async function proxyOpenCodeRouterRequest(input: {
 }
 
 function resolveAiGatewayBaseUrl(): string {
-  const override = process.env.VESLO_AI_GATEWAY_BASE_URL?.trim();
+  const override =
+    process.env.VESLO_MANAGED_AI_BASE_URL?.trim() ||
+    process.env.VESLO_AI_GATEWAY_BASE_URL?.trim();
   if (override) {
     return override.replace(/\/+$/, "");
   }
@@ -1561,49 +1563,11 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     return jsonResponse({ items, activeId: active?.id ?? null });
   });
 
-  addRoute(routes, "POST", "/ai-gateway/providers/openai/oauth/start", "client", async (ctx) => {
+  addRoute(routes, "GET", "/ai-gateway/me/ai-access", "client", async (ctx) => {
     return proxyAiGatewayRequest({
       request: ctx.request,
       url: ctx.url,
-      gatewayPath: "/api/providers/openai/oauth/start",
-      auth: "caller",
-    });
-  });
-
-  addRoute(routes, "POST", "/ai-gateway/providers/openai/oauth/callback", "client", async (ctx) => {
-    return proxyAiGatewayRequest({
-      request: ctx.request,
-      url: ctx.url,
-      gatewayPath: "/api/providers/openai/oauth/callback",
-      auth: "caller",
-    });
-  });
-
-  addRoute(routes, "POST", "/ai-gateway/providers/anthropic/api-keys", "client", async (ctx) => {
-    return proxyAiGatewayRequest({
-      request: ctx.request,
-      url: ctx.url,
-      gatewayPath: "/api/providers/anthropic/api-keys",
-      auth: "caller",
-    });
-  });
-
-  addRoute(routes, "GET", "/ai-gateway/providers/:provider/credentials", "client", async (ctx) => {
-    const provider = resolveAiGatewayProvider(ctx.params.provider);
-    return proxyAiGatewayRequest({
-      request: ctx.request,
-      url: ctx.url,
-      gatewayPath: `/api/providers/${provider}/credentials`,
-      auth: "caller",
-    });
-  });
-
-  addRoute(routes, "DELETE", "/ai-gateway/providers/:provider/credentials/:credentialId", "client", async (ctx) => {
-    const provider = resolveAiGatewayProvider(ctx.params.provider);
-    return proxyAiGatewayRequest({
-      request: ctx.request,
-      url: ctx.url,
-      gatewayPath: `/api/providers/${provider}/credentials/${encodeURIComponent(ctx.params.credentialId ?? "")}`,
+      gatewayPath: "/api/me/ai-access",
       auth: "caller",
     });
   });
@@ -4142,13 +4106,6 @@ function parseInteger(value: string | undefined): number | null {
   if (!value) return null;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : null;
-}
-
-function resolveAiGatewayProvider(provider: string | undefined): "openai" | "anthropic" {
-  if (provider === "openai" || provider === "anthropic") {
-    return provider;
-  }
-  throw new ApiError(400, "invalid_provider", "Unsupported ai gateway provider");
 }
 
 function expandHome(value: string): string {
