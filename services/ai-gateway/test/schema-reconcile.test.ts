@@ -38,8 +38,12 @@ test("ensureAiGatewaySchema repairs managed AI tables and columns for live datab
 
   const sql = statements.join("\n");
   assert.match(sql, /CREATE TABLE IF NOT EXISTS `user_ai_access_policy`/);
-  assert.match(sql, /`created_at` timestamp\(3\) NOT NULL DEFAULT CURRENT_TIMESTAMP\(3\)/);
-  assert.match(sql, /CONSTRAINT `user_ai_access_policy_user_id` UNIQUE\(`user_id`\)/);
+  assert.match(sql, /`id` varchar\(64\) NOT NULL PRIMARY KEY/);
+  assert.match(sql, /`created_at` timestamp\(3\) NOT NULL,/);
+  assert.match(sql, /`updated_at` timestamp\(3\) NOT NULL,/);
+  assert.match(sql, /UNIQUE KEY `user_ai_access_policy_user_id` \(`user_id`\)/);
+  assert.doesNotMatch(sql, /DEFAULT CURRENT_TIMESTAMP/);
+  assert.doesNotMatch(sql, /CONSTRAINT `user_ai_access_policy_id`/);
   assert.match(sql, /CREATE INDEX `user_ai_access_policy_provider` ON `user_ai_access_policy` \(`provider`\)/);
   assert.match(sql, /ALTER TABLE `credential_record` ADD COLUMN `name` varchar\(255\)/);
 });

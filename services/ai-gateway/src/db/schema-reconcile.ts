@@ -68,20 +68,19 @@ async function ensureColumn(db: SchemaReconcileDb, table: string, columnName: st
 }
 
 export async function ensureAiGatewaySchema(db: SchemaReconcileDb) {
-  await db.execute(sql`
+  await db.execute(sql.raw(`
     CREATE TABLE IF NOT EXISTS \`user_ai_access_policy\` (
-      \`id\` varchar(64) NOT NULL,
+      \`id\` varchar(64) NOT NULL PRIMARY KEY,
       \`user_id\` varchar(64) NOT NULL,
       \`enabled\` int NOT NULL DEFAULT 1,
       \`provider\` varchar(64),
       \`default_model\` varchar(128),
       \`allowed_models_json\` text NOT NULL,
-      \`created_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-      \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-      CONSTRAINT \`user_ai_access_policy_id\` PRIMARY KEY(\`id\`),
-      CONSTRAINT \`user_ai_access_policy_user_id\` UNIQUE(\`user_id\`)
+      \`created_at\` timestamp(3) NOT NULL,
+      \`updated_at\` timestamp(3) NOT NULL,
+      UNIQUE KEY \`user_ai_access_policy_user_id\` (\`user_id\`)
     )
-  `);
+  `));
 
   await ensureIndex(db, "user_ai_access_policy", "user_ai_access_policy_provider", ["provider"]);
   await ensureColumn(db, "credential_record", "name", "varchar(255)");
