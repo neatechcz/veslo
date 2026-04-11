@@ -40,7 +40,7 @@ export function createApp(deps: AppDependencies = {}) {
 export async function startServer() {
   const schemaDb = createDb(env.databaseUrl);
   try {
-    await ensureAiGatewaySchema(schemaDb.db);
+    await ensureAiGatewaySchema(schemaDb.client);
   } finally {
     await schemaDb.close();
   }

@@ -19,6 +19,7 @@ export function createDb(databaseUrl: string) {
 
   return {
     db,
+    client,
     close: async () => {
       await client.end();
     },
