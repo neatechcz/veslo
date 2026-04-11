@@ -32,6 +32,18 @@ export type SidebarSubagentDecoration = {
 
 export type VisibleSessionIdsChangeHandler = (workspaceId: string, visibleSessionIds: string[]) => void;
 
+export type LoadedSidebarPrefetchInterest = {
+  clickedSessionId: string | null;
+  selectedSessionId: string | null;
+  loadedTopLevelSessionIds: string[];
+  expandedSubagentSessionIds: string[];
+};
+
+export type LoadedSessionPrefetchInterestChangeHandler = (
+  workspaceId: string,
+  interest: LoadedSidebarPrefetchInterest,
+) => void;
+
 export type WorkspaceSessionGroup = {
   workspace: WorkspaceInfo;
   sessions: SidebarSessionItem[];
