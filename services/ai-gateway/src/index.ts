@@ -1,6 +1,8 @@
 import express from "express";
 import { pathToFileURL } from "node:url";
 
+import { createDb } from "./db/index.js";
+import { ensureAiGatewaySchema } from "./db/schema-reconcile.js";
 import { env } from "./env.js";
 import { createAdminRouter, createDefaultAdminService, type AdminService } from "./http/admin.js";
 import { createProxyRouter, type ProxyDependencies } from "./http/proxy.js";
@@ -35,7 +37,14 @@ export function createApp(deps: AppDependencies = {}) {
   return app;
 }
 
-export function startServer() {
+export async function startServer() {
+  const schemaDb = createDb(env.databaseUrl);
+  try {
+    await ensureAiGatewaySchema(schemaDb.db);
+  } finally {
+    await schemaDb.close();
+  }
+
   const app = createApp();
   return app.listen(env.port, env.host, () => {
     console.log(`ai-gateway listening on http://${env.host}:${env.port}`);
@@ -50,5 +59,9 @@ const isMain =
   import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isMain) {
-  startServer();
+  void startServer().catch((error) => {
+    const message = error instanceof Error ? error.stack ?? error.message : String(error);
+    console.error(`[ai-gateway] bootstrap failed: ${message}`);
+    process.exit(1);
+  });
 }
