@@ -36,9 +36,11 @@ jobs:
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
+          DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
+          DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
         run: |
           missing=0
-          for key in RENDER_API_KEY RENDER_OWNER_ID; do
+          for key in RENDER_API_KEY RENDER_OWNER_ID DEN_DATABASE_URL DEN_BETTER_AUTH_SECRET; do
             if [ -z "${!key}" ]; then
               echo "::error::Missing required secret: $key"
               missing=1
@@ -53,6 +55,8 @@ jobs:
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
+          DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
+          DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
           AI_GATEWAY_RENDER_SERVICE_NAME: ${{ github.event.inputs.service_name }}
           AI_GATEWAY_RENDER_BRANCH: ${{ github.event.inputs.branch }}
         run: |
@@ -239,6 +243,36 @@ jobs:
               _, created = request("POST", "/services", payload)
               service_id = created["service"]["id"]
 
+          _, service = request("GET", f"/services/{service_id}")
+          service_url = (service.get("serviceDetails") or {}).get("url")
+          if not service_url:
+              raise RuntimeError(f"Render service {service_id} has no public URL")
+
+          _, current_env_vars = request("GET", f"/services/{service_id}/env-vars")
+          env_by_key = {}
+          for row in current_env_vars or []:
+              env_var = row.get("envVar") if isinstance(row, dict) else None
+              if not isinstance(env_var, dict):
+                  continue
+              key = env_var.get("key")
+              value = env_var.get("value")
+              if isinstance(key, str) and isinstance(value, str):
+                  env_by_key[key] = value
+
+          env_by_key.update(
+              {
+                  "AI_GATEWAY_DATABASE_URL": os.environ["DEN_DATABASE_URL"],
+                  "AI_GATEWAY_SECRET_KEY": os.environ["DEN_BETTER_AUTH_SECRET"],
+                  "AI_GATEWAY_DEN_API_BASE": "https://den-control-plane-veslo.onrender.com",
+                  "AI_GATEWAY_OPENAI_REDIRECT_BASE": f"{service_url.rstrip('/')}/auth/openai",
+              }
+          )
+          request(
+              "PUT",
+              f"/services/{service_id}/env-vars",
+              [{"key": key, "value": value} for key, value in sorted(env_by_key.items())],
+          )
+
           _, before = request("GET", f"/services/{service_id}/deploys?limit=1")
           before_id = before[0]["deploy"]["id"] if before else None
 
@@ -248,11 +282,6 @@ jobs:
           deploy_id = wait_for_new_deploy(service_id, before_id)
           print(f"New deploy detected: {deploy_id}")
           wait_for_deploy_live(service_id, deploy_id)
-
-          _, service = request("GET", f"/services/{service_id}")
-          service_url = (service.get("serviceDetails") or {}).get("url")
-          if not service_url:
-              raise RuntimeError(f"Render service {service_id} has no public URL")
 
           wait_for_health(f"{service_url.rstrip('/')}/health")
           print(f"Render AI gateway deploy {deploy_id} is live at {service_url}")
