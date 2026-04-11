@@ -15,6 +15,9 @@ function quoteIdentifier(value: string) {
 
 function extractRows(value: unknown): Array<Record<string, unknown>> {
   if (Array.isArray(value)) {
+    if (Array.isArray(value[0])) {
+      return value[0] as Array<Record<string, unknown>>;
+    }
     return value as Array<Record<string, unknown>>;
   }
 
@@ -73,7 +76,7 @@ export async function ensureAiGatewaySchema(db: SchemaReconcileDb) {
       \`provider\` varchar(64),
       \`default_model\` varchar(128),
       \`allowed_models_json\` text NOT NULL,
-      \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+      \`created_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
       \`updated_at\` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
       CONSTRAINT \`user_ai_access_policy_id\` PRIMARY KEY(\`id\`),
       CONSTRAINT \`user_ai_access_policy_user_id\` UNIQUE(\`user_id\`)
