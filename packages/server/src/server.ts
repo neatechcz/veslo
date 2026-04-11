@@ -705,7 +705,9 @@ async function proxyOpenCodeRouterRequest(input: {
 }
 
 function resolveAiGatewayBaseUrl(): string {
-  const override = process.env.VESLO_AI_GATEWAY_BASE_URL?.trim();
+  const override =
+    process.env.VESLO_MANAGED_AI_BASE_URL?.trim() ||
+    process.env.VESLO_AI_GATEWAY_BASE_URL?.trim();
   if (override) {
     return override.replace(/\/+$/, "");
   }

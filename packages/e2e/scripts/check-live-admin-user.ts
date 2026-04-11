@@ -1,5 +1,15 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
+import {
+  createAdminUser,
+  exchangeAdminBrowserSession,
+  findAdminUserByEmail,
+  getAdminSession,
+  listAdminCredentials,
+  listAdminUsers,
+  startAdminBrowserSession,
+  upsertAdminUserAiAccess,
+} from '../helpers/live-admin-client.js';
 import { waitForAdminBrowserCallback } from '../helpers/live-admin-check.js';
 
 type AdminUserRecord = {
@@ -11,6 +21,16 @@ type AdminUserRecord = {
   isPlatformAdmin?: boolean;
 };
 
+function parseList(value: string | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 function parseArgs(argv: string[]) {
   const result = {
     email: process.env.VESLO_ADMIN_CHECK_EMAIL?.trim() || 'michal.sara@neatech.cz',
@@ -19,6 +39,11 @@ function parseArgs(argv: string[]) {
     attemptCreate: process.env.VESLO_ADMIN_CHECK_ATTEMPT_CREATE === '1',
     createEmail: process.env.VESLO_ADMIN_CHECK_CREATE_EMAIL?.trim() || '',
     createName: process.env.VESLO_ADMIN_CHECK_CREATE_NAME?.trim() || 'Codex Live Check',
+    listCredentials: process.env.VESLO_ADMIN_CHECK_LIST_CREDENTIALS === '1',
+    provider: process.env.VESLO_ADMIN_CHECK_PROVIDER?.trim() || '',
+    defaultModel: process.env.VESLO_ADMIN_CHECK_DEFAULT_MODEL?.trim() || '',
+    allowedModels: parseList(process.env.VESLO_ADMIN_CHECK_ALLOWED_MODELS),
+    disableAiAccess: process.env.VESLO_ADMIN_CHECK_DISABLE_AI_ACCESS === '1',
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -53,6 +78,29 @@ function parseArgs(argv: string[]) {
     if (arg === '--create-name' && argv[index + 1]) {
       result.createName = argv[index + 1].trim();
       index += 1;
+      continue;
+    }
+    if (arg === '--list-credentials') {
+      result.listCredentials = true;
+      continue;
+    }
+    if (arg === '--provider' && argv[index + 1]) {
+      result.provider = argv[index + 1].trim();
+      index += 1;
+      continue;
+    }
+    if (arg === '--default-model' && argv[index + 1]) {
+      result.defaultModel = argv[index + 1].trim();
+      index += 1;
+      continue;
+    }
+    if (arg === '--allowed-model' && argv[index + 1]) {
+      result.allowedModels.push(argv[index + 1].trim());
+      index += 1;
+      continue;
+    }
+    if (arg === '--disable-ai-access') {
+      result.disableAiAccess = true;
     }
   }
 
@@ -89,7 +137,19 @@ async function openBrowser(url: string) {
 }
 
 async function main() {
-  const { email, gatewayBase, timeoutMs, attemptCreate, createEmail, createName } = parseArgs(process.argv.slice(2));
+  const {
+    email,
+    gatewayBase,
+    timeoutMs,
+    attemptCreate,
+    createEmail,
+    createName,
+    listCredentials,
+    provider,
+    defaultModel,
+    allowedModels,
+    disableAiAccess,
+  } = parseArgs(process.argv.slice(2));
   const state = randomBase64Url(32);
   const codeVerifier = randomBase64Url(32);
   const codeChallenge = sha256Base64Url(codeVerifier);
@@ -97,40 +157,22 @@ async function main() {
   const callback = await waitForAdminBrowserCallback({
     timeoutMs,
     onReady: async ({ redirectUri }) => {
-      const startResponse = await fetch(`${gatewayBase}/admin/api/auth/browser/start`, {
-        method: 'POST',
-        headers: {
-          accept: 'application/json',
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          intent: 'signin',
-          redirectUri,
-          state,
-          codeChallenge,
-        }),
+      const startPayload = await startAdminBrowserSession(fetch, gatewayBase, {
+        intent: 'signin',
+        redirectUri,
+        state,
+        codeChallenge,
       });
 
-      const startPayload = await startResponse.json().catch(() => null);
-      if (!startResponse.ok) {
-        throw new Error(`Admin auth start failed (${startResponse.status}): ${startPayload?.error || 'unknown_error'}`);
-      }
-
-      const authorizeUrl = typeof startPayload?.authorizeUrl === 'string' ? startPayload.authorizeUrl.trim() : '';
-      const sessionId = typeof startPayload?.sessionId === 'string' ? startPayload.sessionId.trim() : '';
-      if (!authorizeUrl || !sessionId) {
-        throw new Error('Admin auth start returned an incomplete payload.');
-      }
-
-      console.log(`[admin-check] Browser auth started for ${email}`);
+      console.log(`[admin-check] Browser auth started for target ${email}`);
       console.log(`[admin-check] Redirect URI: ${redirectUri}`);
-      console.log(`[admin-check] Opening browser: ${authorizeUrl}`);
+      console.log(`[admin-check] Opening browser: ${startPayload.authorizeUrl}`);
 
       try {
-        await openBrowser(authorizeUrl);
+        await openBrowser(startPayload.authorizeUrl);
       } catch (error) {
         console.warn(`[admin-check] Failed to open the browser automatically: ${error instanceof Error ? error.message : String(error)}`);
-        console.log(`[admin-check] Open this URL manually: ${authorizeUrl}`);
+        console.log(`[admin-check] Open this URL manually: ${startPayload.authorizeUrl}`);
       }
     },
   });
@@ -139,96 +181,66 @@ async function main() {
     throw new Error('Admin browser callback completed without code/sessionId.');
   }
 
-  const exchangeResponse = await fetch(`${gatewayBase}/admin/api/auth/browser/exchange`, {
-    method: 'POST',
-    headers: {
-      accept: 'application/json',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      code: callback.code,
-      sessionId: callback.sessionId,
-      state,
-      codeVerifier,
-    }),
+  const token = await exchangeAdminBrowserSession(fetch, gatewayBase, {
+    code: callback.code,
+    sessionId: callback.sessionId,
+    state,
+    codeVerifier,
   });
-  const exchangePayload = await exchangeResponse.json().catch(() => null);
-  if (!exchangeResponse.ok) {
-    throw new Error(`Admin auth exchange failed (${exchangeResponse.status}): ${exchangePayload?.error || 'unknown_error'}`);
-  }
 
-  const token = typeof exchangePayload?.token === 'string' ? exchangePayload.token.trim() : '';
-  if (!token) {
-    throw new Error('Admin auth exchange succeeded but returned no token.');
-  }
-
-  const [sessionResponse, usersResponse] = await Promise.all([
-    fetch(`${gatewayBase}/admin/api/session`, {
-      headers: {
-        accept: 'application/json',
-        authorization: `Bearer ${token}`,
-      },
-    }),
-    fetch(`${gatewayBase}/admin/api/users`, {
-      headers: {
-        accept: 'application/json',
-        authorization: `Bearer ${token}`,
-      },
-    }),
+  const [sessionPayload, users, credentials] = await Promise.all([
+    getAdminSession(fetch, gatewayBase, token),
+    listAdminUsers(fetch, gatewayBase, token),
+    listCredentials ? listAdminCredentials(fetch, gatewayBase, token) : Promise.resolve([]),
   ]);
 
-  const sessionPayload = await sessionResponse.json().catch(() => null);
-  const usersPayload = await usersResponse.json().catch(() => null);
-
-  const users = Array.isArray(usersPayload?.users) ? (usersPayload.users as AdminUserRecord[]) : [];
-  const normalizedEmail = email.toLowerCase();
-  const match =
-    users.find((user) => typeof user.email === 'string' && user.email.trim().toLowerCase() === normalizedEmail) ?? null;
+  const match = findAdminUserByEmail(users as AdminUserRecord[], email);
   const organizations = Array.isArray(sessionPayload?.organizations) ? sessionPayload.organizations : [];
   const createTargetEmail = (createEmail || email).trim();
 
-  let createStatus: number | null = null;
-  let createPayload: unknown = null;
-  if (attemptCreate && createTargetEmail) {
+  let createdUser: AdminUserRecord | null = null;
+  if (attemptCreate && createTargetEmail && !match) {
     const orgId =
       (typeof sessionPayload?.activeOrgId === 'string' && sessionPayload.activeOrgId.trim()) ||
       (typeof organizations[0]?.id === 'string' ? organizations[0].id : '') ||
       null;
-
-    const createResponse = await fetch(`${gatewayBase}/admin/api/users`, {
-      method: 'POST',
-      headers: {
-        accept: 'application/json',
-        'content-type': 'application/json',
-        authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        email: createTargetEmail,
-        name: createName,
-        platformAdmin: false,
-        orgId,
-        orgRole: 'member',
-      }),
+    createdUser = await createAdminUser(fetch, gatewayBase, token, {
+      email: createTargetEmail,
+      name: createName,
+      platformAdmin: false,
+      orgId,
+      orgRole: 'member',
     });
-    createStatus = createResponse.status;
-    createPayload = await createResponse.json().catch(() => null);
   }
+
+  const targetUser = match ?? createdUser;
+  const shouldUpsertAiAccess = disableAiAccess || provider || defaultModel || allowedModels.length > 0;
+  const aiAccess = shouldUpsertAiAccess && targetUser?.id
+    ? await upsertAdminUserAiAccess(fetch, gatewayBase, token, targetUser.id, {
+        enabled: !disableAiAccess,
+        provider: disableAiAccess ? null : provider || null,
+        defaultModel: disableAiAccess ? null : defaultModel || null,
+        allowedModels: disableAiAccess ? [] : allowedModels,
+      })
+    : null;
 
   console.log(
     JSON.stringify(
       {
         adminUser: sessionPayload?.user?.email ?? sessionPayload?.user?.id ?? null,
-        adminRole: sessionPayload?.membership?.role ?? null,
-        sessionStatus: sessionResponse.status,
-        usersStatus: usersResponse.status,
+        activeOrgId: sessionPayload?.activeOrgId ?? null,
+        organizationCount: organizations.length,
         userCount: users.length,
         found: Boolean(match),
         match,
-        usersError: usersPayload?.error ?? null,
         createAttempted: attemptCreate,
         createEmail: attemptCreate ? createTargetEmail : null,
-        createStatus,
-        createPayload,
+        createdUser,
+        credentialCount: credentials.length,
+        credentials,
+        aiAccessApplied: Boolean(aiAccess),
+        aiAccess,
+        targetUser,
       },
       null,
       2,
