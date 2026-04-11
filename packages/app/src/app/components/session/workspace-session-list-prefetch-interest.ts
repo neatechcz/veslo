@@ -1,4 +1,5 @@
-import type { LoadedSidebarPrefetchInterest } from "../../types.js";
+export type { LoadedSidebarPrefetchInterest } from "../../types.js";
+import type { LoadedSidebarPrefetchInterest as LoadedSidebarPrefetchInterestType } from "../../types.js";
 
 type LoadedSidebarPrefetchRow = {
   workspaceId: string;
@@ -6,7 +7,7 @@ type LoadedSidebarPrefetchRow = {
   updatedAt: number;
 };
 
-type WorkspaceInterest = LoadedSidebarPrefetchInterest;
+type WorkspaceInterest = LoadedSidebarPrefetchInterestType;
 
 const normalizeId = (value: string | null | undefined) => value?.trim() ?? "";
 
