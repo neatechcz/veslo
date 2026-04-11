@@ -167,22 +167,30 @@ jobs:
                               doseq=True,
                           )
                           _, recent_logs = request("GET", f"/logs?{logs_query}")
+                          raw_logs = [
+                              entry
+                              for entry in (recent_logs or {}).get("logs", [])
+                              if isinstance(entry, dict)
+                          ]
+                          raw_logs.sort(key=lambda entry: entry.get("timestamp") or "", reverse=True)
+
                           log_lines = []
-                          for entry in (recent_logs or {}).get("logs", []):
-                              if not isinstance(entry, dict):
-                                  continue
+                          for entry in raw_logs:
                               message = entry.get("message")
                               if not isinstance(message, str) or not message.strip():
                                   continue
                               log_lines.append(
                                   {
                                       "timestamp": entry.get("timestamp"),
-                                      "message": message[:300],
+                                      "message": message[:1000],
                                   }
                               )
-                              if len(log_lines) >= 20:
+                              if len(log_lines) >= 40:
                                   break
-                          print("Render recent logs:", json.dumps(log_lines))
+                          print(
+                              "Render recent logs:",
+                              json.dumps({"deployId": deploy_id, "status": status, "logs": log_lines}),
+                          )
                           raise RuntimeError(f"Render deploy {deploy_id} ended with {status}")
                       return
                   time.sleep(10)
