@@ -1,7 +1,5 @@
-import { sql } from "drizzle-orm";
-
 type SchemaReconcileDb = {
-  execute(query: unknown): Promise<unknown>;
+  query(query: string, values?: readonly unknown[]): Promise<unknown>;
 };
 
 const identifierPattern = /^[a-zA-Z0-9_]+$/;
@@ -32,14 +30,14 @@ function extractRows(value: unknown): Array<Record<string, unknown>> {
 }
 
 async function ensureIndex(db: SchemaReconcileDb, table: string, indexName: string, columns: string[], unique = false) {
-  const existing = await db.execute(sql`
+  const existing = await db.query(`
     SELECT 1
     FROM INFORMATION_SCHEMA.STATISTICS
     WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = ${table}
-      AND INDEX_NAME = ${indexName}
+      AND TABLE_NAME = ?
+      AND INDEX_NAME = ?
     LIMIT 1
-  `);
+  `, [table, indexName]);
 
   if (extractRows(existing).length > 0) {
     return;
@@ -47,28 +45,28 @@ async function ensureIndex(db: SchemaReconcileDb, table: string, indexName: stri
 
   const columnList = columns.map((column) => quoteIdentifier(column)).join(", ");
   const createKeyword = unique ? "CREATE UNIQUE INDEX" : "CREATE INDEX";
-  await db.execute(sql.raw(`${createKeyword} ${quoteIdentifier(indexName)} ON ${quoteIdentifier(table)} (${columnList})`));
+  await db.query(`${createKeyword} ${quoteIdentifier(indexName)} ON ${quoteIdentifier(table)} (${columnList})`);
 }
 
 async function ensureColumn(db: SchemaReconcileDb, table: string, columnName: string, columnDefinition: string) {
-  const existing = await db.execute(sql`
+  const existing = await db.query(`
     SELECT 1
     FROM INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = ${table}
-      AND COLUMN_NAME = ${columnName}
+      AND TABLE_NAME = ?
+      AND COLUMN_NAME = ?
     LIMIT 1
-  `);
+  `, [table, columnName]);
 
   if (extractRows(existing).length > 0) {
     return;
   }
 
-  await db.execute(sql.raw(`ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN ${quoteIdentifier(columnName)} ${columnDefinition}`));
+  await db.query(`ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN ${quoteIdentifier(columnName)} ${columnDefinition}`);
 }
 
 export async function ensureAiGatewaySchema(db: SchemaReconcileDb) {
-  await db.execute(sql.raw(`
+  await db.query(`
     CREATE TABLE IF NOT EXISTS \`user_ai_access_policy\` (
       \`id\` varchar(64) NOT NULL PRIMARY KEY,
       \`user_id\` varchar(64) NOT NULL,
@@ -80,7 +78,7 @@ export async function ensureAiGatewaySchema(db: SchemaReconcileDb) {
       \`updated_at\` timestamp(3) NOT NULL,
       UNIQUE KEY \`user_ai_access_policy_user_id\` (\`user_id\`)
     )
-  `));
+  `);
 
   await ensureIndex(db, "user_ai_access_policy", "user_ai_access_policy_provider", ["provider"]);
   await ensureColumn(db, "credential_record", "name", "varchar(255)");
