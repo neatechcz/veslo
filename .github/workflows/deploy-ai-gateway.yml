@@ -19,6 +19,11 @@ on:
         required: false
         type: string
         default: ""
+      diagnose_only:
+        description: Print sanitized Render topology and exit without deploying
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -35,11 +40,15 @@ jobs:
       - name: Validate required secrets
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_DEN_CONTROL_PLANE_SERVICE_ID: ${{ secrets.RENDER_DEN_CONTROL_PLANE_SERVICE_ID }}
           RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
+          DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
           AI_GATEWAY_DATABASE_URL: ${{ secrets.AI_GATEWAY_DATABASE_URL || secrets.MANAGED_AI_DATABASE_URL }}
           AI_GATEWAY_SECRET_KEY: ${{ secrets.AI_GATEWAY_SECRET_KEY || secrets.DEN_BETTER_AUTH_SECRET }}
+          AI_GATEWAY_DIAGNOSE_ONLY: ${{ github.event.inputs.diagnose_only }}
         run: |
           missing=0
+          diagnose_only="${AI_GATEWAY_DIAGNOSE_ONLY:-false}"
           check_required() {
             key="$1"
             label="${2:-$1}"
@@ -51,8 +60,13 @@ jobs:
 
           check_required RENDER_API_KEY
           check_required RENDER_OWNER_ID
-          check_required AI_GATEWAY_DATABASE_URL "AI_GATEWAY_DATABASE_URL (or MANAGED_AI_DATABASE_URL)"
-          check_required AI_GATEWAY_SECRET_KEY "AI_GATEWAY_SECRET_KEY (or DEN_BETTER_AUTH_SECRET)"
+          if [ "$diagnose_only" = "true" ]; then
+            check_required RENDER_DEN_CONTROL_PLANE_SERVICE_ID
+            check_required DEN_DATABASE_URL
+          else
+            check_required AI_GATEWAY_DATABASE_URL "AI_GATEWAY_DATABASE_URL (or MANAGED_AI_DATABASE_URL)"
+            check_required AI_GATEWAY_SECRET_KEY "AI_GATEWAY_SECRET_KEY (or DEN_BETTER_AUTH_SECRET)"
+          fi
 
           if [ "$missing" -ne 0 ]; then
             exit 1
@@ -61,9 +75,12 @@ jobs:
       - name: Create or update Render AI gateway service
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_DEN_CONTROL_PLANE_SERVICE_ID: ${{ secrets.RENDER_DEN_CONTROL_PLANE_SERVICE_ID }}
           RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
+          DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
           AI_GATEWAY_DATABASE_URL: ${{ secrets.AI_GATEWAY_DATABASE_URL || secrets.MANAGED_AI_DATABASE_URL }}
           AI_GATEWAY_SECRET_KEY: ${{ secrets.AI_GATEWAY_SECRET_KEY || secrets.DEN_BETTER_AUTH_SECRET }}
+          AI_GATEWAY_DIAGNOSE_ONLY: ${{ github.event.inputs.diagnose_only }}
           AI_GATEWAY_RENDER_SERVICE_NAME: ${{ github.event.inputs.service_name }}
           AI_GATEWAY_RENDER_BRANCH: ${{ github.event.inputs.branch }}
         run: |
@@ -85,6 +102,8 @@ jobs:
           region = "oregon"
           build_command = "corepack enable && corepack prepare pnpm@10.27.0 --activate && pnpm install --no-frozen-lockfile && pnpm build"
           start_command = "pnpm start"
+          diagnose_only = (os.environ.get("AI_GATEWAY_DIAGNOSE_ONLY") or "false").lower() == "true"
+          den_service_id = os.environ.get("RENDER_DEN_CONTROL_PLANE_SERVICE_ID") or ""
 
           headers = {
               "Authorization": f"Bearer {api_key}",
@@ -131,6 +150,37 @@ jobs:
                   cursor = next_cursor
 
               return rows[:limit]
+
+          def service_region(service):
+              if not isinstance(service, dict):
+                  return ""
+              details = service.get("serviceDetails") or {}
+              env_details = details.get("envSpecificDetails") or {}
+              return (
+                  details.get("region")
+                  or env_details.get("region")
+                  or service.get("region")
+                  or ""
+              )
+
+          def service_summary(service):
+              if not isinstance(service, dict):
+                  return None
+              details = service.get("serviceDetails") or {}
+              return {
+                  "id": service.get("id"),
+                  "name": service.get("name"),
+                  "type": service.get("type"),
+                  "region": service_region(service),
+                  "repo": service.get("repo"),
+                  "branch": service.get("branch"),
+                  "rootDir": service.get("rootDir"),
+                  "url": details.get("url"),
+              }
+
+          def database_host(database_url):
+              parsed = urllib.parse.urlparse(database_url or "")
+              return parsed.hostname or ""
 
           def wait_for_health(health_url: str, timeout_seconds: int = 180):
               deadline = time.time() + timeout_seconds
@@ -210,6 +260,37 @@ jobs:
 
           services = list_services()
           existing = next((service for service in services if service.get("name") == service_name), None)
+          den_service = None
+          if den_service_id:
+              _, den_service = request("GET", f"/services/{den_service_id}")
+
+          den_region = service_region(den_service)
+          if den_region:
+              region = den_region
+
+          if diagnose_only:
+              candidates = [
+                  service_summary(service)
+                  for service in services
+                  if any(
+                      token in (service.get("name") or "").lower()
+                      for token in ("ai-gateway", "gateway", "den", "mysql", "veslo")
+                  )
+              ]
+              print(
+                  "Render topology diagnostic:",
+                  json.dumps(
+                      {
+                          "databaseHost": database_host(os.environ.get("DEN_DATABASE_URL")),
+                          "denControlPlane": service_summary(den_service),
+                          "aiGateway": service_summary(existing),
+                          "matchingServices": candidates,
+                          "selectedCreateRegion": region,
+                      },
+                      sort_keys=True,
+                  ),
+              )
+              raise SystemExit(0)
 
           if existing:
               service_id = existing["id"]
