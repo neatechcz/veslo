@@ -36,16 +36,23 @@ jobs:
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
-          DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
-          DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
+          AI_GATEWAY_DATABASE_URL: ${{ secrets.AI_GATEWAY_DATABASE_URL || secrets.MANAGED_AI_DATABASE_URL }}
+          AI_GATEWAY_SECRET_KEY: ${{ secrets.AI_GATEWAY_SECRET_KEY || secrets.DEN_BETTER_AUTH_SECRET }}
         run: |
           missing=0
-          for key in RENDER_API_KEY RENDER_OWNER_ID DEN_DATABASE_URL DEN_BETTER_AUTH_SECRET; do
+          check_required() {
+            key="$1"
+            label="${2:-$1}"
             if [ -z "${!key}" ]; then
-              echo "::error::Missing required secret: $key"
+              echo "::error::Missing required secret: $label"
               missing=1
             fi
-          done
+          }
+
+          check_required RENDER_API_KEY
+          check_required RENDER_OWNER_ID
+          check_required AI_GATEWAY_DATABASE_URL "AI_GATEWAY_DATABASE_URL (or MANAGED_AI_DATABASE_URL)"
+          check_required AI_GATEWAY_SECRET_KEY "AI_GATEWAY_SECRET_KEY (or DEN_BETTER_AUTH_SECRET)"
 
           if [ "$missing" -ne 0 ]; then
             exit 1
@@ -55,8 +62,8 @@ jobs:
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
-          DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
-          DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
+          AI_GATEWAY_DATABASE_URL: ${{ secrets.AI_GATEWAY_DATABASE_URL || secrets.MANAGED_AI_DATABASE_URL }}
+          AI_GATEWAY_SECRET_KEY: ${{ secrets.AI_GATEWAY_SECRET_KEY || secrets.DEN_BETTER_AUTH_SECRET }}
           AI_GATEWAY_RENDER_SERVICE_NAME: ${{ github.event.inputs.service_name }}
           AI_GATEWAY_RENDER_BRANCH: ${{ github.event.inputs.branch }}
         run: |
@@ -261,8 +268,8 @@ jobs:
 
           env_by_key.update(
               {
-                  "AI_GATEWAY_DATABASE_URL": os.environ["DEN_DATABASE_URL"],
-                  "AI_GATEWAY_SECRET_KEY": os.environ["DEN_BETTER_AUTH_SECRET"],
+                  "AI_GATEWAY_DATABASE_URL": os.environ["AI_GATEWAY_DATABASE_URL"],
+                  "AI_GATEWAY_SECRET_KEY": os.environ["AI_GATEWAY_SECRET_KEY"],
                   "AI_GATEWAY_DEN_API_BASE": "https://den-control-plane-veslo.onrender.com",
                   "AI_GATEWAY_OPENAI_REDIRECT_BASE": f"{service_url.rstrip('/')}/auth/openai",
               }
