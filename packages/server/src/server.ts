@@ -585,6 +585,7 @@ export function startServer(config: ServerConfig): ServerHandle {
         clearInterval(debugLogFileTick);
         debugLogFileTick = null;
       }
+      debugLogPipeline?.stop();
       clearDebugLogSink();
       return stopServer(...args);
     }) as ServerHandle["stop"];

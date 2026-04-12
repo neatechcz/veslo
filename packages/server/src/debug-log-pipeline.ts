@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { DebugLogBatch, DebugLogBatchLimits, DebugLogEvent } from "./debug-log-events.js";
+import type {
+  DebugLogBatch,
+  DebugLogBatchLimits,
+  DebugLogEvent,
+  DebugLogUploadRetryPolicy,
+} from "./debug-log-events.js";
 import { createDebugLogSpool } from "./debug-log-spool.js";
 
 export interface DebugLogPipelineInput {
@@ -9,12 +14,14 @@ export interface DebugLogPipelineInput {
   batchMaxBytes: number;
   uploader?: {
     upload(batch: DebugLogBatch): Promise<void>;
+    retryPolicy?: Pick<DebugLogUploadRetryPolicy, "initialDelayMs">;
   } | null;
 }
 
 export interface DebugLogPipeline {
   enqueue(events: DebugLogEvent[]): Promise<void>;
   flushOnce(): Promise<void>;
+  stop(): void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,17 +91,45 @@ export function createDebugLogPipeline(input: DebugLogPipelineInput): DebugLogPi
     maxEvents: input.batchMaxEvents,
     maxBytes: input.batchMaxBytes,
   };
+  const retryDelayMs = Math.max(250, input.uploader?.retryPolicy?.initialDelayMs ?? 1_000);
   let flushInFlight: Promise<void> | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let stopped = false;
+
+  function clearRetryTimer() {
+    if (!retryTimer) return;
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+
+  function scheduleRetry() {
+    if (!uploader || stopped || retryTimer) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      void startFlushLoop();
+    }, retryDelayMs);
+  }
+
+  function startFlushLoop(): Promise<void> | null {
+    if (!uploader || stopped) return null;
+    if (!flushInFlight) {
+      flushInFlight = flushLoop().finally(() => {
+        flushInFlight = null;
+      });
+    }
+    return flushInFlight;
+  }
 
   async function flushLoop(): Promise<void> {
-    if (!uploader) return;
-    while (true) {
+    if (!uploader || stopped) return;
+    while (!stopped) {
       const batch = await spool.nextBatch(limits);
       if (!batch) return;
       try {
         await uploader.upload(batch);
         await spool.ackBatch(batch.batchId);
       } catch {
+        scheduleRetry();
         return;
       }
     }
@@ -102,23 +137,23 @@ export function createDebugLogPipeline(input: DebugLogPipelineInput): DebugLogPi
 
   return {
     async enqueue(events) {
-      if (events.length === 0) return;
+      if (events.length === 0 || stopped) return;
       await spool.append(events);
-      if (!flushInFlight) {
-        flushInFlight = flushLoop().finally(() => {
-          flushInFlight = null;
-        });
-      }
+      clearRetryTimer();
+      startFlushLoop();
     },
     async flushOnce() {
+      if (stopped) return;
+      clearRetryTimer();
       if (flushInFlight) {
         await flushInFlight;
         return;
       }
-      flushInFlight = flushLoop().finally(() => {
-        flushInFlight = null;
-      });
-      await flushInFlight;
+      await startFlushLoop();
+    },
+    stop() {
+      stopped = true;
+      clearRetryTimer();
     },
   };
 }
