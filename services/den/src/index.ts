@@ -5,7 +5,7 @@ import { createHash } from "node:crypto"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
-import { sql } from "drizzle-orm"
+import { and, desc, eq, sql } from "drizzle-orm"
 import { auth } from "./auth.js"
 import { db } from "./db/index.js"
 import { DebugLogEventTable } from "./db/schema.js"
@@ -19,7 +19,7 @@ import { desktopAuthV2Router } from "./http/desktop-auth-v2.js"
 import { createAdminRuntimeRouter } from "./http/admin-runtime.js"
 import { orgsRouter } from "./http/orgs.js"
 import { workersRouter } from "./http/workers.js"
-import { encryptDebugLogPayload } from "./security/debug-log-crypto.js"
+import { decryptDebugLogPayload, encryptDebugLogPayload } from "./security/debug-log-crypto.js"
 
 const app = express()
 const currentFile = fileURLToPath(import.meta.url)
@@ -74,6 +74,7 @@ app.use("/v1/workers", workersRouter)
 app.use("/v1/internal/debug-logs", createDebugLogsRouter({
   ingestToken: env.debugLogs.ingestToken ?? "",
   storeBatch: storeDebugLogBatch,
+  readRecent: readRecentDebugLogs,
 }))
 app.use(errorMiddleware)
 
@@ -168,6 +169,84 @@ async function storeDebugLogBatch(batch: DebugLogIngestBatch): Promise<DebugLogS
   })
 
   return { ok: true, acceptedBatchIds: [batch.batchId] }
+}
+
+async function readRecentDebugLogs(input: { limit: number; source: string | null; workspaceId: string | null }) {
+  const filters = []
+  if (input.source) {
+    filters.push(eq(DebugLogEventTable.source, input.source))
+  }
+  if (input.workspaceId) {
+    filters.push(eq(DebugLogEventTable.workspace_id, input.workspaceId))
+  }
+
+  const whereClause =
+    filters.length > 1
+      ? and(...filters)
+      : filters[0]
+
+  const rows = await db
+    .select({
+      id: DebugLogEventTable.id,
+      created_at: DebugLogEventTable.created_at,
+      org_id: DebugLogEventTable.org_id,
+      user_id: DebugLogEventTable.user_id,
+      workspace_id: DebugLogEventTable.workspace_id,
+      worker_id: DebugLogEventTable.worker_id,
+      session_id: DebugLogEventTable.session_id,
+      run_id: DebugLogEventTable.run_id,
+      source: DebugLogEventTable.source,
+      stream: DebugLogEventTable.stream,
+      level: DebugLogEventTable.level,
+      sequence_no: DebugLogEventTable.sequence_no,
+      payload_bytes: DebugLogEventTable.payload_bytes,
+      encryption_key_version: DebugLogEventTable.encryption_key_version,
+      ciphertext: DebugLogEventTable.ciphertext,
+      nonce: DebugLogEventTable.nonce,
+      auth_tag: DebugLogEventTable.auth_tag,
+    })
+    .from(DebugLogEventTable)
+    .where(whereClause)
+    .orderBy(desc(DebugLogEventTable.created_at))
+    .limit(Math.max(1, Math.min(50, input.limit)))
+
+  return {
+    ok: true as const,
+    rows: rows.map((row) => {
+      let payload: unknown
+      try {
+        payload = JSON.parse(
+          decryptDebugLogPayload({
+            keyVersion: row.encryption_key_version,
+            ciphertext: row.ciphertext,
+            nonce: row.nonce,
+            authTag: row.auth_tag,
+          }).toString("utf8"),
+        )
+      } catch (error) {
+        payload = {
+          error: error instanceof Error ? error.message : String(error),
+        }
+      }
+
+      return {
+        id: row.id,
+        created_at: row.created_at,
+        org_id: row.org_id,
+        user_id: row.user_id,
+        workspace_id: row.workspace_id,
+        worker_id: row.worker_id,
+        session_id: row.session_id,
+        run_id: row.run_id,
+        source: row.source,
+        stream: row.stream,
+        level: row.level,
+        sequence_no: row.sequence_no,
+        payload_bytes: row.payload_bytes,
+        payload,
+      }
+    }),
+  }
 }
 
 async function ensureIndex(table: string, indexName: string, columns: string[], unique = false) {
