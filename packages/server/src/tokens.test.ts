@@ -25,6 +25,14 @@ function createTestConfig(): ServerConfig {
     hostTokenSource: "generated",
     logFormat: "pretty",
     logRequests: false,
+    debugLogs: {
+      enabled: false,
+      ingestUrl: null,
+      ingestToken: null,
+      batchMaxEvents: 200,
+      batchMaxBytes: 256 * 1024,
+      spoolMaxBytes: 100 * 1024 * 1024,
+    },
   };
 }
 

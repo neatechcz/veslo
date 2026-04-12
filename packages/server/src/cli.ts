@@ -45,4 +45,5 @@ if (args.verbose) {
   logger.log("info", `Authorized roots: ${config.authorizedRoots.join(", ")}`);
   logger.log("info", `Token source: ${config.tokenSource}`);
   logger.log("info", `Host token source: ${config.hostTokenSource}`);
+  logger.log("info", `Debug log shipping: ${config.debugLogs.enabled ? "enabled" : "disabled"}`);
 }

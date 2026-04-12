@@ -15,6 +15,14 @@ describe("redactSensitiveConfig", () => {
       },
       nested: [{ token: "abc123" }, { keep: "ok" }],
       tokenSource: "generated",
+      debugLogs: {
+        enabled: false,
+        ingestUrl: null,
+        ingestToken: null,
+        batchMaxEvents: 200,
+        batchMaxBytes: 256 * 1024,
+        spoolMaxBytes: 100 * 1024 * 1024,
+      },
     };
 
     const result = redactSensitiveConfig(input) as typeof input;

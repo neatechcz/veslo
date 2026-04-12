@@ -42,6 +42,15 @@ export interface ApprovalConfig {
   timeoutMs: number;
 }
 
+export interface DebugLogConfig {
+  enabled: boolean;
+  ingestUrl: string | null;
+  ingestToken: string | null;
+  batchMaxEvents: number;
+  batchMaxBytes: number;
+  spoolMaxBytes: number;
+}
+
 export interface ServerConfig {
   host: string;
   port: number;
@@ -58,6 +67,7 @@ export interface ServerConfig {
   hostTokenSource: "cli" | "env" | "file" | "generated";
   logFormat: LogFormat;
   logRequests: boolean;
+  debugLogs: DebugLogConfig;
 }
 
 export interface Capabilities {

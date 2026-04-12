@@ -1,6 +1,13 @@
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
-import type { ApprovalMode, ApprovalConfig, ServerConfig, WorkspaceConfig, LogFormat } from "./types.js";
+import type {
+  ApprovalMode,
+  ApprovalConfig,
+  DebugLogConfig,
+  ServerConfig,
+  WorkspaceConfig,
+  LogFormat,
+} from "./types.js";
 import { buildWorkspaceInfos } from "./workspaces.js";
 import { parseList, readJsonFile, shortId } from "./utils.js";
 
@@ -47,6 +54,9 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_TIMEOUT_MS = 30000;
 const DEFAULT_LOG_FORMAT: LogFormat = "pretty";
 const DEFAULT_LOG_REQUESTS = true;
+const DEFAULT_DEBUG_LOG_BATCH_MAX_EVENTS = 200;
+const DEFAULT_DEBUG_LOG_BATCH_MAX_BYTES = 256 * 1024;
+const DEFAULT_DEBUG_LOG_SPOOL_MAX_BYTES = 100 * 1024 * 1024;
 
 function normalizeLogFormat(value: string | undefined): LogFormat | undefined {
   if (!value) return undefined;
@@ -62,6 +72,13 @@ function parseBoolean(value: string | undefined): boolean | undefined {
   if (["true", "1", "yes", "on"].includes(normalized)) return true;
   if (["false", "0", "no", "off"].includes(normalized)) return false;
   return undefined;
+}
+
+function parsePositiveInteger(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) return undefined;
+  return parsed;
 }
 
 export function parseCliArgs(argv: string[]): CliArgs {
@@ -303,6 +320,23 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
   const envLogRequests = parseBoolean(process.env.VESLO_LOG_REQUESTS);
   const logRequests = cli.logRequests ?? envLogRequests ?? fileConfig.logRequests ?? DEFAULT_LOG_REQUESTS;
 
+  const debugLogIngestUrl = process.env.VESLO_LOG_INGEST_URL?.trim() || null;
+  const debugLogIngestToken = process.env.VESLO_LOG_INGEST_TOKEN?.trim() || null;
+  const debugLogBatchMaxEvents =
+    parsePositiveInteger(process.env.VESLO_LOG_BATCH_MAX_EVENTS) ?? DEFAULT_DEBUG_LOG_BATCH_MAX_EVENTS;
+  const debugLogBatchMaxBytes =
+    parsePositiveInteger(process.env.VESLO_LOG_BATCH_MAX_BYTES) ?? DEFAULT_DEBUG_LOG_BATCH_MAX_BYTES;
+  const debugLogSpoolMaxBytes =
+    parsePositiveInteger(process.env.VESLO_LOG_SPOOL_MAX_BYTES) ?? DEFAULT_DEBUG_LOG_SPOOL_MAX_BYTES;
+  const debugLogs: DebugLogConfig = {
+    enabled: Boolean(debugLogIngestUrl && debugLogIngestToken),
+    ingestUrl: debugLogIngestUrl,
+    ingestToken: debugLogIngestToken,
+    batchMaxEvents: debugLogBatchMaxEvents,
+    batchMaxBytes: debugLogBatchMaxBytes,
+    spoolMaxBytes: debugLogSpoolMaxBytes,
+  };
+
   const authorizedRoots =
     fileConfig.authorizedRoots?.length
       ? fileConfig.authorizedRoots.map((root) => resolve(configDir, root))
@@ -327,5 +361,6 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     hostTokenSource,
     logFormat,
     logRequests,
+    debugLogs,
   };
 }
