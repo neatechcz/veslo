@@ -21,7 +21,17 @@ test("uploader posts idempotent batches with bearer auth", async () => {
   await uploader.upload({
     batchId: "batch-1",
     events: [
-      { id: "evt-1", source: "engine", stream: "stdout", timestamp: 1, sequenceNo: 1, payload: { text: "hello" } },
+      {
+        id: "evt-1",
+        userId: "usr_1",
+        orgId: "org_1",
+        workspaceId: "ws_1",
+        source: "engine",
+        stream: "stdout",
+        timestamp: 1,
+        sequenceNo: 1,
+        payload: { text: "hello" },
+      },
     ],
   });
 

@@ -5,6 +5,8 @@ import type {
   DebugLogUploadRetryPolicy,
 } from "./debug-log-events.js";
 
+type FetchLike = (url: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -33,7 +35,7 @@ function getRetryDelay(policy: DebugLogUploadRetryPolicy, attempt: number): numb
 export function createDebugLogUploader(input: {
   ingestUrl: string;
   ingestToken: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: FetchLike;
   sleepImpl?: (ms: number) => Promise<void>;
   retryPolicy?: Partial<DebugLogUploadRetryPolicy>;
 }) {
