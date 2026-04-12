@@ -55,9 +55,6 @@ export function createDefaultProxyDependencies(
     now?: () => Date;
   } = {},
 ): ProxyDependencies {
-  const notConfiguredFetch: typeof fetch = async () => {
-    throw new Error("provider_transport_not_configured");
-  };
   const openAiOAuth = overrides.openAiOAuth ?? createDefaultOpenAiOAuthClient();
 
   return {
@@ -80,8 +77,8 @@ export function createDefaultProxyDependencies(
         })),
       }),
     }),
-    openAiTransport: overrides.openAiTransport ?? new OpenAiTransport({ fetchImpl: notConfiguredFetch }),
-    anthropicTransport: overrides.anthropicTransport ?? new AnthropicTransport({ fetchImpl: notConfiguredFetch }),
+    openAiTransport: overrides.openAiTransport ?? new OpenAiTransport(),
+    anthropicTransport: overrides.anthropicTransport ?? new AnthropicTransport(),
   };
 }
 

@@ -308,6 +308,52 @@ test("createDefaultRuntimeState uses MySQL-backed runtime stores", () => {
   assert.ok(runtime.leases instanceof MySqlLeaseRepository);
 });
 
+test("default proxy dependencies wire hosted provider transports to global fetch", async () => {
+  const runtime = createPersistentRuntime();
+  const originalFetch = globalThis.fetch;
+  const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
+
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    fetchCalls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ id: `provider_${fetchCalls.length}`, ok: true }), {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "x-request-id": `provider_req_${fetchCalls.length}`,
+      },
+    });
+  }) as typeof fetch;
+
+  try {
+    const proxy = createDefaultProxyDependencies(runtime, {
+      gatewaySessions: {
+        async resolveSession() {
+          throw new Error("gateway_session_not_used");
+        },
+      },
+    });
+
+    await proxy.openAiTransport.chatCompletions({
+      upstreamAuth: { kind: "api-key", value: "sk-openai-runtime" },
+      body: { model: "gpt-4o-mini", messages: [{ role: "user", content: "hello" }] },
+    });
+    await proxy.anthropicTransport.messages({
+      upstreamAuth: { kind: "api-key", value: "sk-ant-runtime" },
+      body: { model: "claude-3-7-sonnet-latest", max_tokens: 64, messages: [{ role: "user", content: "hello" }] },
+    });
+
+    assert.equal(fetchCalls.length, 2);
+    assert.equal(fetchCalls[0]?.url, "https://api.openai.com/v1/chat/completions");
+    assert.equal(fetchCalls[0]?.init?.method, "POST");
+    assert.equal((fetchCalls[0]?.init?.headers as Record<string, string>)?.authorization, "Bearer sk-openai-runtime");
+    assert.equal(fetchCalls[1]?.url, "https://api.anthropic.com/v1/messages");
+    assert.equal(fetchCalls[1]?.init?.method, "POST");
+    assert.equal((fetchCalls[1]?.init?.headers as Record<string, string>)?.["x-api-key"], "sk-ant-runtime");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("runtime-backed dependencies keep platform credentials and leases across app re-instantiation", async () => {
   const runtime = createPersistentRuntime();
   let persistedBindingId = "";
