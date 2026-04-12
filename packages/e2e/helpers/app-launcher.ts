@@ -9,6 +9,9 @@ const __dirname = dirname(__filename);
 const WEBDRIVER_PORT = 4445;
 const LAUNCH_TIMEOUT = parseInt(process.env.E2E_LAUNCH_TIMEOUT ?? '30000', 10);
 const POLL_INTERVAL = 250;
+const REAL_PROFILE_ENV = process.env.E2E_USE_EXISTING_PROFILE?.trim() === '1';
+const CUSTOM_BINARY_PATH = process.env.E2E_TAURI_BINARY?.trim() ?? '';
+const CUSTOM_OPENCODE_HOME = process.env.E2E_OPENCODE_HOME?.trim() ?? '';
 
 let appProcess: ChildProcess | null = null;
 let appProcessOwnedByHarness = false;
@@ -18,6 +21,11 @@ function resolveDesktopRoot(): string {
 }
 
 function resolveBinaryPath(): string {
+  if (CUSTOM_BINARY_PATH) {
+    if (existsSync(CUSTOM_BINARY_PATH)) return CUSTOM_BINARY_PATH;
+    throw new Error(`Tauri binary not found at ${CUSTOM_BINARY_PATH}. Check E2E_TAURI_BINARY.`);
+  }
+
   const desktopRoot = resolveDesktopRoot();
   const platform = process.platform;
   const tauriTarget = join(desktopRoot, 'src-tauri', 'target', 'debug');
@@ -86,13 +94,23 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   console.log(`[e2e] WebDriver port: ${port}`);
 
   const tmpDir = join(resolveDesktopRoot(), '..', 'e2e', '.tmp-opencode-home');
+  const env = {
+    ...process.env,
+    TAURI_WEBDRIVER_PORT: String(port),
+  } as NodeJS.ProcessEnv;
+
+  if (CUSTOM_OPENCODE_HOME) {
+    env.OPENCODE_HOME = CUSTOM_OPENCODE_HOME;
+    console.log(`[e2e] Using custom OPENCODE_HOME: ${CUSTOM_OPENCODE_HOME}`);
+  } else if (!REAL_PROFILE_ENV) {
+    env.OPENCODE_HOME = tmpDir;
+    console.log(`[e2e] Using isolated OPENCODE_HOME: ${tmpDir}`);
+  } else {
+    console.log('[e2e] Using the app\'s existing profile and OPENCODE_HOME.');
+  }
 
   appProcess = spawn(binaryPath, [], {
-    env: {
-      ...process.env,
-      TAURI_WEBDRIVER_PORT: String(port),
-      OPENCODE_HOME: tmpDir,
-    },
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   appProcessOwnedByHarness = true;

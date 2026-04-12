@@ -6966,6 +6966,7 @@ export default function App() {
 
   const workspaceSwitchOpen = createMemo(() => {
     if (booting()) return true;
+    if (pendingSessionLoad()) return false;
     if (workspaceStore.connectingWorkspaceId()) return workspaceSwitchDelayElapsed();
     if (workspaceSwitchHoldOpen()) return true;
     if (!busy() || !busyLabel()) return false;
