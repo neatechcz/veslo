@@ -26,4 +26,8 @@ test("sidebar session surfaces expose the loaded-interest prefetch callback", ()
   assert.match(dashboardPageSource, /parseVesloWorkspaceIdFromUrl\(workspace\.vesloHostUrl \?\? ""\)/);
   assert.doesNotMatch(listSource, /deriveVisibleSessionPrefetchIds\(/);
   assert.doesNotMatch(listSource, /lastReportedVisibleSessionIdsByWorkspace/);
+  assert.match(
+    listSource,
+    /const currentRows = sidebarMode\(\) === "by-project" \? visibleProjectRows\(\) : recentRowsVisible\(\);/,
+  );
 });

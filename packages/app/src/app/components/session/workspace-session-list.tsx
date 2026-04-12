@@ -943,7 +943,7 @@ export default function WorkspaceSessionList(props: Props) {
     const callback = props.onLoadedSessionPrefetchInterestChange;
     if (!callback) return;
 
-    const currentRows = sidebarMode() === "by-project" ? projectRowsLoaded() : recentRowsLoaded();
+    const currentRows = sidebarMode() === "by-project" ? visibleProjectRows() : recentRowsVisible();
     const loadedTopLevelRows = currentRows
       .filter((row) => row.nestingLevel === 0)
       .map((row) => ({
