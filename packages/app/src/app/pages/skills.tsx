@@ -481,8 +481,8 @@ export default function SkillsView(props: SkillsViewProps) {
       </Show>
 
       <div class="space-y-2">
-        <h2 class="text-3xl font-bold text-dls-text">{translate("skills.title")}</h2>
-        <p class="text-sm text-dls-secondary">{translate("skills.subtitle")}</p>
+        <h2 class="font-product type-title-md text-dls-text">{translate("skills.title")}</h2>
+        <p class="font-reading type-ui-md text-dls-secondary">{translate("skills.subtitle")}</p>
       </div>
 
       <div class="rounded-2xl border border-dls-border bg-dls-surface px-5 py-5 shadow-[0_8px_26px_rgba(17,24,39,0.05)]">
@@ -491,7 +491,7 @@ export default function SkillsView(props: SkillsViewProps) {
             type="button"
             onClick={handleNewSkill}
             disabled={!canCreateInChat()}
-            class={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-medium transition-colors ${
+            class={`font-product type-ui-sm inline-flex items-center gap-1.5 rounded-lg px-4 py-2 font-medium transition-colors ${
               canCreateInChat()
                 ? "bg-dls-text text-dls-surface hover:opacity-90"
                 : "bg-dls-active text-dls-secondary"
@@ -504,12 +504,12 @@ export default function SkillsView(props: SkillsViewProps) {
 
         <div class="mt-4 grid grid-cols-2 gap-3">
           <div class="rounded-lg border border-dls-border bg-dls-hover px-3 py-2.5">
-            <div class="text-[11px] text-dls-secondary">{translate("skills.stat_installed")}</div>
-            <div class="mt-1 text-base font-semibold text-dls-text">{props.skills.length}</div>
+            <div class="font-product type-ui-xs text-dls-secondary">{translate("skills.stat_installed")}</div>
+            <div class="font-product type-ui-md mt-1 font-semibold text-dls-text">{props.skills.length}</div>
           </div>
           <div class="rounded-lg border border-dls-border bg-dls-hover px-3 py-2.5">
-            <div class="text-[11px] text-dls-secondary">{translate("skills.stat_hub_available")}</div>
-            <div class="mt-1 text-base font-semibold text-dls-text">{availableHubSkills().length}</div>
+            <div class="font-product type-ui-xs text-dls-secondary">{translate("skills.stat_hub_available")}</div>
+            <div class="font-product type-ui-md mt-1 font-semibold text-dls-text">{availableHubSkills().length}</div>
           </div>
         </div>
       </div>
@@ -519,7 +519,7 @@ export default function SkillsView(props: SkillsViewProps) {
           type="button"
           onClick={() => props.refreshSkills({ force: true })}
           disabled={props.busy}
-          class={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
+          class={`font-product type-ui-xs flex items-center gap-1.5 font-medium transition-colors ${
             props.busy
               ? "text-dls-secondary"
               : "text-dls-secondary hover:text-dls-text"
@@ -535,14 +535,14 @@ export default function SkillsView(props: SkillsViewProps) {
             value={searchQuery()}
             onInput={(event) => setSearchQuery(event.currentTarget.value)}
             placeholder={translate("skills.search_placeholder_full")}
-            class="bg-dls-hover border border-dls-border rounded-lg py-1.5 pl-9 pr-4 text-xs w-56 focus:w-72 focus:outline-none transition-all"
+            class="font-reading type-ui-sm bg-dls-hover border border-dls-border rounded-lg py-1.5 pl-9 pr-4 w-56 focus:w-72 focus:outline-none transition-all"
           />
         </div>
         <button
           type="button"
           onClick={handleNewSkill}
           disabled={newSkillDisabled()}
-          class={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+          class={`font-product type-ui-xs flex items-center gap-1.5 px-3 py-1.5 font-medium rounded-lg transition-colors ${
             newSkillDisabled()
               ? "bg-dls-active text-dls-secondary"
               : "bg-dls-text text-dls-surface hover:opacity-90"
@@ -555,7 +555,7 @@ export default function SkillsView(props: SkillsViewProps) {
           type="button"
           onClick={openInstallFromLink}
           disabled={props.busy}
-          class={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors border ${
+          class={`font-product type-ui-xs flex items-center gap-1.5 px-3 py-1.5 font-medium rounded-lg transition-colors border ${
             props.busy
               ? "border-dls-border bg-dls-hover text-dls-secondary"
               : "border-dls-border bg-dls-surface text-dls-text hover:bg-dls-active"
@@ -568,12 +568,12 @@ export default function SkillsView(props: SkillsViewProps) {
       </div>
 
       <Show when={props.accessHint}>
-        <div class="text-xs text-dls-secondary">{props.accessHint}</div>
+        <div class="font-product type-ui-xs text-dls-secondary">{props.accessHint}</div>
       </Show>
       <Show
         when={!props.accessHint && !props.canInstallSkillCreator && !props.canUseDesktopTools}
       >
-        <div class="text-xs text-dls-secondary">{translate("skills.host_mode_only")}</div>
+        <div class="font-product type-ui-xs text-dls-secondary">{translate("skills.host_mode_only")}</div>
       </Show>
 
       <Show when={props.skillsStatus}>
@@ -583,13 +583,13 @@ export default function SkillsView(props: SkillsViewProps) {
       </Show>
 
       <div class="space-y-4">
-        <h3 class="text-[11px] font-bold text-dls-secondary uppercase tracking-widest">
+        <h3 class="font-product type-ui-xs font-bold text-dls-secondary uppercase tracking-widest">
           {translate("skills.installed")}
         </h3>
         <Show
           when={filteredSkills().length}
           fallback={
-            <div class="rounded-xl border border-dls-border bg-dls-surface px-5 py-6 text-sm text-dls-secondary">
+            <div class="font-reading type-ui-md rounded-xl border border-dls-border bg-dls-surface px-5 py-6 text-dls-secondary">
               {translate("skills.no_skills")}
             </div>
           }
@@ -616,19 +616,19 @@ export default function SkillsView(props: SkillsViewProps) {
                     </div>
                     <div class="min-w-0">
                       <div class="flex items-center gap-2 mb-0.5">
-                        <h4 class="text-sm font-semibold text-dls-text truncate">{skill.name}</h4>
+                        <h4 class="font-product type-ui-md font-semibold text-dls-text truncate">{skill.name}</h4>
                         <Show when={isVesloInjectedSkill(skill)}>
-                          <span class="rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-dls-secondary">
+                          <span class="font-product type-ui-xs rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 font-semibold uppercase tracking-wide text-dls-secondary">
                             Veslo
                           </span>
                         </Show>
                       </div>
                       <Show when={skill.description}>
-                        <p class="text-xs text-dls-secondary line-clamp-1">
+                        <p class="font-reading type-ui-sm text-dls-secondary line-clamp-1">
                           {skill.description}
                         </p>
                       </Show>
-                      <div class="mt-1 text-[11px] font-mono text-dls-secondary truncate">{skill.path}</div>
+                      <div class="font-mono type-ui-xs mt-1 text-dls-secondary truncate">{skill.path}</div>
                     </div>
                   </div>
                   <div class="flex items-center gap-1">
@@ -736,14 +736,14 @@ export default function SkillsView(props: SkillsViewProps) {
                         <span class="rounded-md border border-dls-border bg-dls-hover px-2 py-1 font-mono">
                           {skill.source.owner}/{skill.source.repo}
                         </span>
-                        <Show when={skill.trigger}>
-                          <span
-                            class="inline-block max-w-full rounded-md border border-dls-border bg-dls-hover px-2 py-1 truncate"
-                            title={translate("skills.trigger_title", { trigger: skill.trigger })}
-                          >
-                            {translate("skills.trigger_label")} {skill.trigger}
-                          </span>
-                        </Show>
+	                        <Show when={skill.trigger}>
+	                          <span
+	                            class="inline-block max-w-full rounded-md border border-dls-border bg-dls-hover px-2 py-1 truncate"
+	                            title={translate("skills.trigger_title", { trigger: skill.trigger ?? "" })}
+	                          >
+	                            {translate("skills.trigger_label")} {skill.trigger}
+	                          </span>
+	                        </Show>
                       </div>
                     </div>
                   </div>

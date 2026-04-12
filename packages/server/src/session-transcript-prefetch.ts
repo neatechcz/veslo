@@ -25,8 +25,10 @@ export type SessionTranscriptLoadResult = {
 
 export type SessionTranscriptPrefetchInterest = {
   workspaceId: string;
-  visibleSessionIds: string[];
+  clickedSessionId?: string | null;
   selectedSessionId?: string | null;
+  loadedTopLevelSessionIds: string[];
+  expandedSubagentSessionIds: string[];
   limit?: number;
 };
 
@@ -42,7 +44,6 @@ type SessionTranscriptPrefetchOptions = {
   defaultLimit?: number;
   staleTtlMs?: number;
   autoPrefetchOnInterest?: boolean;
-  maxPrefetchPerUpdate?: number;
 };
 
 type CacheEntry = {
@@ -58,7 +59,6 @@ type InFlightLoad = {
 const DEFAULT_LIMIT = 140;
 const DEFAULT_STALE_TTL_MS = 20_000;
 const DEFAULT_MAX_ENTRIES_PER_WORKSPACE = 24;
-const DEFAULT_MAX_PREFETCH_PER_UPDATE = 3;
 
 const normalizeId = (value: string | null | undefined) => value?.trim() ?? "";
 
@@ -86,7 +86,6 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
   const maxEntriesPerWorkspace = toPositiveInt(options.maxEntriesPerWorkspace, DEFAULT_MAX_ENTRIES_PER_WORKSPACE);
   const defaultLimit = toPositiveInt(options.defaultLimit, DEFAULT_LIMIT);
   const staleTtlMs = toPositiveInt(options.staleTtlMs, DEFAULT_STALE_TTL_MS);
-  const maxPrefetchPerUpdate = toPositiveInt(options.maxPrefetchPerUpdate, DEFAULT_MAX_PREFETCH_PER_UPDATE);
   const autoPrefetchOnInterest = options.autoPrefetchOnInterest ?? true;
 
   const queueByWorkspace = new Map<string, string[]>();
@@ -169,15 +168,21 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
   };
 
   const normalizeInterestQueue = (input: SessionTranscriptPrefetchInterest) => {
-    const selected = normalizeId(input.selectedSessionId);
-    const unique = new Set<string>();
-    if (selected) unique.add(selected);
-    for (const value of input.visibleSessionIds) {
+    const ordered: string[] = [];
+    const seen = new Set<string>();
+    const push = (value: string | null | undefined) => {
       const normalized = normalizeId(value);
-      if (!normalized) continue;
-      unique.add(normalized);
-    }
-    return Array.from(unique);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      ordered.push(normalized);
+    };
+
+    push(input.clickedSessionId);
+    push(input.selectedSessionId);
+    for (const value of input.expandedSubagentSessionIds) push(value);
+    for (const value of input.loadedTopLevelSessionIds) push(value);
+
+    return ordered;
   };
 
   const removeFromQueue = (workspaceId: string, sessionId: string) => {
@@ -241,8 +246,7 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
     if (existing) return existing;
 
     const run = (async () => {
-      let remaining = maxPrefetchPerUpdate;
-      while (remaining > 0) {
+      while (true) {
         const queue = queueByWorkspace.get(workspaceId) ?? [];
         if (queue.length === 0) break;
         const sessionId = normalizeId(queue[0]);
@@ -263,9 +267,9 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
         try {
           await ensureLoaded({ workspaceId, sessionId, limit });
         } catch {
-          break;
+          removeFromQueue(workspaceId, sessionId);
+          continue;
         }
-        remaining -= 1;
       }
     })();
 

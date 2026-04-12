@@ -517,8 +517,10 @@ export type VesloSessionTranscriptSnapshot = {
 };
 
 export type VesloSessionTranscriptPrefetchInput = {
-  visibleSessionIds: string[];
+  clickedSessionId?: string | null;
   selectedSessionId?: string | null;
+  loadedTopLevelSessionIds: string[];
+  expandedSubagentSessionIds: string[];
   limit?: number;
 };
 

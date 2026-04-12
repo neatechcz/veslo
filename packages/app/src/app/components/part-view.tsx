@@ -254,6 +254,9 @@ export default function PartView(props: Props) {
 
   const textClass = () => (tone() === "dark" ? "text-gray-12" : "text-gray-12");
   const subtleTextClass = () => (tone() === "dark" ? "text-gray-12/70" : "text-gray-11");
+  const readingTextClass = () => `font-reading type-reading-md ${textClass()}`.trim();
+  const productTextClass = () => `font-product type-ui-sm ${textClass()}`.trim();
+  const subtleProductTextClass = () => `font-product type-ui-xs ${subtleTextClass()}`.trim();
   const panelBgClass = () => (tone() === "dark" ? "bg-gray-2/10" : "bg-gray-2/30");
   const toolOnly = () => true;
   const showToolOutput = () => developerMode();
@@ -557,7 +560,7 @@ export default function PartView(props: Props) {
               ref={(el) => {
                 textContainerEl = el;
               }}
-              class={`whitespace-pre-wrap break-words text-[13px] leading-[1.5] max-h-[22rem] overflow-hidden ${textClass()}`.trim()}
+              class={`font-reading type-reading-md whitespace-pre-wrap break-words max-h-[22rem] overflow-hidden ${textClass()}`.trim()}
             >
               {collapsedPreviewText()}
             </div>
@@ -583,7 +586,7 @@ export default function PartView(props: Props) {
               ref={(el) => {
                 textContainerEl = el;
               }}
-              class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}
+              class={`whitespace-pre-wrap break-words ${readingTextClass()}`.trim()}
             >
               {renderTextWithLinks()}
             </div>
@@ -593,7 +596,7 @@ export default function PartView(props: Props) {
           <Show when={renderedMarkdown() === null}>
             <div
               ref={(el) => { textContainerEl = el; }}
-              class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}
+              class={`whitespace-pre-wrap break-words ${readingTextClass()}`.trim()}
             >
               {renderTextWithLinks()}
             </div>
@@ -601,12 +604,12 @@ export default function PartView(props: Props) {
           <Show when={typeof renderedMarkdown() === "string" && renderedMarkdown()}>
             <div
               ref={(el) => { textContainerEl = el; }}
-              class={`markdown-content max-w-none ${textClass()}
+              class={`markdown-content font-reading type-reading-md max-w-none ${textClass()}
                 [&_strong]:font-semibold
                 [&_em]:italic
-                [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-4
-                [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-3
-                [&_h3]:text-lg [&_h3]:font-bold [&_h3]:my-2
+                [&_h1]:font-product [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-4
+                [&_h2]:font-product [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-3
+                [&_h3]:font-product [&_h3]:text-lg [&_h3]:font-bold [&_h3]:my-2
                 [&_p]:my-2 [&_p]:leading-[1.5]
                 [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-2
                 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-2
@@ -639,14 +642,14 @@ export default function PartView(props: Props) {
                 <File size={16} />
               </div>
               <div class="min-w-0 flex-1">
-                <div class={`text-sm font-medium truncate ${textClass()}`.trim()}>{info().title}</div>
+                <div class={`truncate ${productTextClass()}`.trim()}>{info().title}</div>
                 <Show when={info().detail}>
-                  <div class={`text-[11px] truncate ${subtleTextClass()}`.trim()}>{info().detail}</div>
+                  <div class={`truncate ${subtleProductTextClass()}`.trim()}>{info().detail}</div>
                 </Show>
               </div>
               <Show when={info().mime}>
                 <div
-                  class={`text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full max-w-[160px] truncate ${
+                  class={`font-product type-ui-xs uppercase tracking-wide px-2 py-0.5 rounded-full max-w-[160px] truncate ${
                     tone() === "dark"
                       ? "bg-gray-12/10 text-gray-12/80"
                       : "bg-gray-1/70 text-gray-9"
@@ -671,8 +674,8 @@ export default function PartView(props: Props) {
           }
         >
           <details class={`rounded-lg ${panelBgClass()} p-2`.trim()}>
-            <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>Thinking</summary>
-            <pre class={`mt-2 whitespace-pre-wrap break-words text-xs text-gray-12`.trim()}>
+            <summary class={`font-product type-ui-xs cursor-pointer ${subtleTextClass()}`.trim()}>Thinking</summary>
+            <pre class={`font-mono type-ui-sm mt-2 whitespace-pre-wrap break-words text-gray-12`.trim()}>
               {clampText(String((p() as { text: string }).text), 2000)}
             </pre>
           </details>
@@ -684,13 +687,13 @@ export default function PartView(props: Props) {
           <div class="grid gap-3">
             <div class="flex items-start justify-between gap-3">
               <div class="space-y-1">
-                <div class={`text-xs font-medium text-gray-12`.trim()}>
+                <div class={`font-product type-ui-sm text-gray-12`.trim()}>
                   {toolTitle()}
                 </div>
-                <div class={`text-[11px] ${subtleTextClass()}`.trim()}>{toolName()}</div>
+                <div class={`font-product type-ui-xs ${subtleTextClass()}`.trim()}>{toolName()}</div>
               </div>
               <div
-                class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                class={`font-product type-ui-xs rounded-full px-2 py-0.5 font-medium ${
                   toolStatus() === "completed"
                     ? "bg-green-3/15 text-green-12"
                     : toolStatus() === "running"
@@ -705,12 +708,12 @@ export default function PartView(props: Props) {
             </div>
 
             <Show when={toolSubtitle()}>
-              <div class={`text-xs ${subtleTextClass()}`.trim()}>{toolSubtitle()}</div>
+              <div class={`font-product type-ui-xs ${subtleTextClass()}`.trim()}>{toolSubtitle()}</div>
             </Show>
 
             <Show when={diagnostics().length > 0}>
               <div class={`rounded-lg border ${panelBgClass()} p-2`.trim()}>
-                <div class={`text-[11px] font-medium ${subtleTextClass()}`.trim()}>Diagnostics</div>
+                <div class={`font-product type-ui-xs font-medium ${subtleTextClass()}`.trim()}>Diagnostics</div>
                 <div class="mt-2 grid gap-2">
                   <For each={diagnostics()}>
                     {(diag: any) => (
@@ -738,7 +741,7 @@ export default function PartView(props: Props) {
 
             <Show when={diffText()}>
               <div class={`rounded-lg border ${panelBgClass()} p-2`.trim()}>
-                <div class={`text-[11px] font-medium ${subtleTextClass()}`.trim()}>Diff</div>
+                <div class={`font-product type-ui-xs font-medium ${subtleTextClass()}`.trim()}>Diff</div>
                 <div class="mt-2 grid gap-1 rounded-md overflow-hidden">
                   <For each={diffLines()}>
                     {(line) => (

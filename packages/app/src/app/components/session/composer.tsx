@@ -1633,7 +1633,7 @@ export default function Composer(props: ComposerProps) {
                 <div class="flex-1 min-w-0">
                   <div class="relative">
                     <Show when={!hasDraftContent()}>
-                      <div class="absolute left-0 top-0 text-gray-9 text-[14px] leading-relaxed pointer-events-none">
+                      <div class="font-reading type-reading-md absolute left-0 top-0 text-gray-9 pointer-events-none">
                         {translate("session.placeholder")}
                       </div>
                     </Show>
@@ -1646,7 +1646,7 @@ export default function Composer(props: ComposerProps) {
                       onKeyDown={handleKeyDown}
                       onPaste={handlePaste}
                       onClick={handleEditorClick}
-                      class="bg-transparent border-none p-0 pb-2 pr-2 text-gray-12 focus:ring-0 text-[14px] leading-relaxed whitespace-pre-wrap break-words resize-none min-h-[24px] max-h-40 overflow-y-auto overflow-x-hidden outline-none"
+                      class="font-reading type-reading-md bg-transparent border-none p-0 pb-2 pr-2 text-gray-12 focus:ring-0 whitespace-pre-wrap break-words resize-none min-h-[24px] max-h-40 overflow-y-auto overflow-x-hidden outline-none"
                     />
 
                     <div class="mt-3 flex items-center justify-between gap-3 pt-2">
@@ -1687,7 +1687,7 @@ export default function Composer(props: ComposerProps) {
                         <button
                           type="button"
                           disabled={props.busy}
-                          class={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[12px] font-medium transition-colors ${
+                          class={`font-product type-ui-sm inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 font-medium transition-colors ${
                             isReadonly()
                               ? "border-blue-6 bg-blue-3 text-blue-11"
                               : "border-gray-6/80 bg-gray-2 text-gray-10 hover:text-gray-11"
@@ -1702,7 +1702,7 @@ export default function Composer(props: ComposerProps) {
                         <Show when={props.canChooseSessionFolder}>
                           <button
                             type="button"
-                            class="inline-flex shrink-0 items-center rounded-md border border-gray-6 bg-gray-2 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-11"
+                            class="font-product type-ui-xs inline-flex shrink-0 items-center rounded-md border border-gray-6 bg-gray-2 px-2 py-1 font-bold uppercase tracking-widest text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-11"
                             onClick={() => {
                               void props.onChooseSessionFolder();
                             }}

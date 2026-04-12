@@ -279,7 +279,7 @@ export default function SessionSidebar(props: SidebarProps) {
     <div class="flex flex-col h-full overflow-hidden">
       <div class="px-4 pt-4 shrink-0">
         <button
-          class="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-gray-12 text-gray-1 text-sm font-medium shadow-lg shadow-gray-12/10 hover:bg-gray-11 transition-colors"
+          class="font-product type-ui-md w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-gray-12 text-gray-1 font-medium shadow-lg shadow-gray-12/10 hover:bg-gray-11 transition-colors"
           onClick={props.onCreateSession}
           disabled={props.newTaskDisabled}
         >
@@ -291,13 +291,13 @@ export default function SessionSidebar(props: SidebarProps) {
       <div class="flex-1 overflow-y-auto px-4 py-4 space-y-6">
         <div>
           <div class="flex items-center justify-between px-2 mb-2">
-            <div class="text-xs text-gray-10 font-semibold uppercase tracking-wider">Workspaces</div>
+            <div class="font-product type-ui-xs text-gray-10 font-semibold uppercase tracking-wider">Workspaces</div>
           </div>
           <div class="space-y-4">
             <Show
               when={props.workspaceGroups.length > 0}
               fallback={
-                <div class="px-3 py-2 rounded-lg border border-dashed border-gray-6 text-xs text-gray-9">
+                <div class="font-product type-ui-sm px-3 py-2 rounded-lg border border-dashed border-gray-6 text-gray-9">
                   No workspaces in this session yet. Add one to get started.
                 </div>
               }
@@ -369,23 +369,23 @@ export default function SessionSidebar(props: SidebarProps) {
                             <div class="min-w-0 space-y-0.5">
                               <div class="flex items-center gap-2">
                                 <span class={`h-2 w-2 rounded-full ${connectionDotClass()}`} />
-                                <span class="text-xs font-semibold truncate">
+                                <span class="font-product type-ui-sm font-semibold truncate">
                                   {workspaceLabel(group.workspace)}
                                 </span>
                                 <Show when={group.workspace.workspaceType === "remote"}>
-                                  <span class="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-3 text-gray-11">
+                                  <span class="font-product type-ui-xs uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-3 text-gray-11">
                                     {isSandboxWorkspace() ? "Sandbox" : "Remote"}
                                   </span>
                                 </Show>
                               </div>
                               <Show when={pathLabel()}>
-                                <div class="text-[9px] text-gray-8/80 font-mono truncate">{pathLabel()}</div>
+                                <div class="font-mono type-ui-xs text-gray-8/80 truncate">{pathLabel()}</div>
                               </Show>
                               <Show when={detailLabel() && detailLabel() !== pathLabel()}>
-                                <div class="text-[9px] text-gray-7/80 truncate">{detailLabel()}</div>
+                                <div class="font-product type-ui-xs text-gray-7/80 truncate">{detailLabel()}</div>
                               </Show>
                             </div>
-                            <div class="flex items-center gap-2 text-[10px] shrink-0">
+                            <div class="font-product type-ui-xs flex items-center gap-2 shrink-0">
                               <Show when={isConnecting() || connectionStatus() === "connecting"}>
                                 <Loader2 size={12} class="text-gray-10 animate-spin" />
                               </Show>
@@ -429,7 +429,7 @@ export default function SessionSidebar(props: SidebarProps) {
                       <Show when={!collapsed()}>
                         <div class="space-y-1 pl-2 pb-2">
                           <Show when={connectionStatus() === "error" && connectionMessage()}>
-                            <div class="mx-3 rounded-lg border border-red-7/30 bg-red-1/40 px-3 py-2 text-[11px] text-red-11">
+                            <div class="font-product type-ui-xs mx-3 rounded-lg border border-red-7/30 bg-red-1/40 px-3 py-2 text-red-11">
                               {connectionMessage()}
                             </div>
                           </Show>
@@ -437,7 +437,7 @@ export default function SessionSidebar(props: SidebarProps) {
                             <Show when={group.workspace.workspaceType === "remote"}>
                               <button
                                 type="button"
-                                class="inline-flex items-center gap-1.5 rounded-md border border-gray-6 px-2 py-1 text-[10px] text-gray-10 hover:text-gray-12 hover:border-gray-7 hover:bg-gray-2 transition-colors"
+                                class="font-product type-ui-xs inline-flex items-center gap-1.5 rounded-md border border-gray-6 px-2 py-1 text-gray-10 hover:text-gray-12 hover:border-gray-7 hover:bg-gray-2 transition-colors"
                                 onClick={() => props.onEditWorkspace(group.workspace.id)}
                                 disabled={isActivelyConnecting()}
                               >
@@ -446,7 +446,7 @@ export default function SessionSidebar(props: SidebarProps) {
                               </button>
                               <button
                                 type="button"
-                                class="inline-flex items-center gap-1.5 rounded-md border border-gray-6 px-2 py-1 text-[10px] text-gray-10 hover:text-gray-12 hover:border-gray-7 hover:bg-gray-2 transition-colors"
+                                class="font-product type-ui-xs inline-flex items-center gap-1.5 rounded-md border border-gray-6 px-2 py-1 text-gray-10 hover:text-gray-12 hover:border-gray-7 hover:bg-gray-2 transition-colors"
                                 onClick={() => props.onTestWorkspaceConnection(group.workspace.id)}
                                 disabled={isActivelyConnecting()}
                               >
@@ -457,7 +457,7 @@ export default function SessionSidebar(props: SidebarProps) {
                             <Show when={group.workspace.sandboxContainerName?.trim() && props.onStopSandbox}>
                               <button
                                 type="button"
-                                class="inline-flex items-center gap-1.5 rounded-md border border-gray-6 px-2 py-1 text-[10px] text-gray-10 hover:text-gray-12 hover:border-gray-7 hover:bg-gray-2 transition-colors"
+                                class="font-product type-ui-xs inline-flex items-center gap-1.5 rounded-md border border-gray-6 px-2 py-1 text-gray-10 hover:text-gray-12 hover:border-gray-7 hover:bg-gray-2 transition-colors"
                                 onClick={() => props.onStopSandbox?.(group.workspace.id)}
                                 disabled={isActivelyConnecting()}
                               >
@@ -467,7 +467,7 @@ export default function SessionSidebar(props: SidebarProps) {
                             </Show>
                             <button
                               type="button"
-                              class="inline-flex items-center gap-1.5 rounded-md border border-gray-6 px-2 py-1 text-[10px] text-gray-10 hover:text-gray-12 hover:border-gray-7 hover:bg-gray-2 transition-colors"
+                              class="font-product type-ui-xs inline-flex items-center gap-1.5 rounded-md border border-gray-6 px-2 py-1 text-gray-10 hover:text-gray-12 hover:border-gray-7 hover:bg-gray-2 transition-colors"
                               onClick={() => props.onForgetWorkspace(group.workspace.id)}
                               disabled={isActivelyConnecting()}
                             >
@@ -608,7 +608,7 @@ export default function SessionSidebar(props: SidebarProps) {
           <Show when={realTodos().length > 0}>
             <div class="rounded-2xl border border-gray-6 bg-gray-2/30" id="sidebar-progress">
               <button
-                class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12 font-medium"
+                class="font-product type-ui-md w-full px-4 py-3 flex items-center justify-between text-gray-12 font-medium"
                 onClick={() => props.onToggleSection("progress")}
               >
                 <span>Progress</span>

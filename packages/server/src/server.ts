@@ -1175,21 +1175,27 @@ function parseSessionTranscriptLimit(input: unknown): number {
   return Math.min(Math.floor(parsed), SESSION_TRANSCRIPT_MAX_LIMIT);
 }
 
-function parseVisibleSessionIds(input: unknown): string[] {
+function parseSessionIdArray(input: unknown, fieldName: string): string[] {
   if (!Array.isArray(input)) {
-    throw new ApiError(400, "invalid_payload", "visibleSessionIds must be an array");
+    throw new ApiError(400, "invalid_payload", `${fieldName} must be an array`);
   }
 
   const ids: string[] = [];
   for (const value of input) {
     if (typeof value !== "string") {
-      throw new ApiError(400, "invalid_payload", "visibleSessionIds entries must be strings");
+      throw new ApiError(400, "invalid_payload", `${fieldName} entries must be strings`);
     }
     const normalized = value.trim();
     if (!normalized) continue;
     ids.push(normalized);
   }
   return ids;
+}
+
+function parseOptionalSessionId(input: unknown): string | undefined {
+  if (typeof input !== "string") return undefined;
+  const normalized = input.trim();
+  return normalized ? normalized : undefined;
 }
 
 function resolveSessionTranscriptMessageId(message: unknown): string {
@@ -1786,14 +1792,21 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
   addRoute(routes, "POST", "/workspace/:id/sessions/transcript-prefetch", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
-    const visibleSessionIds = parseVisibleSessionIds((body as Record<string, unknown>).visibleSessionIds);
-    const selectedSessionIdRaw = (body as Record<string, unknown>).selectedSessionId;
-    const selectedSessionId = typeof selectedSessionIdRaw === "string" ? selectedSessionIdRaw : undefined;
+    const payload = body as Record<string, unknown>;
+    const clickedSessionId = parseOptionalSessionId(payload.clickedSessionId);
+    const selectedSessionId = parseOptionalSessionId(payload.selectedSessionId);
+    const loadedTopLevelSessionIds = parseSessionIdArray(payload.loadedTopLevelSessionIds, "loadedTopLevelSessionIds");
+    const expandedSubagentSessionIds = parseSessionIdArray(
+      payload.expandedSubagentSessionIds,
+      "expandedSubagentSessionIds",
+    );
     const limit = parseSessionTranscriptLimit((body as Record<string, unknown>).limit);
     const result = await sessionTranscriptPrefetch.updateInterest({
       workspaceId: workspace.id,
-      visibleSessionIds,
+      clickedSessionId,
       selectedSessionId,
+      loadedTopLevelSessionIds,
+      expandedSubagentSessionIds,
       limit,
     });
     return jsonResponse(result);

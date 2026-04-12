@@ -203,10 +203,11 @@ const obsidianishLivePreview = () => {
 
 const editorTheme = EditorView.theme({
     "&": {
-      fontSize: "14px",
+      fontSize: "var(--veslo-type-reading-md)",
+      lineHeight: "1.6",
     },
     ".cm-scroller": {
-      fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial",
+      fontFamily: "var(--veslo-font-reading)",
     },
     ".cm-content": {
       padding: "12px 14px",

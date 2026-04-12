@@ -2020,24 +2020,24 @@ export default function SettingsView(props: SettingsViewProps) {
                         </div>
                       </div>
                       <div class="space-y-1">
-                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">
                           {props.engineInfo?.baseUrl ?? "Base URL unavailable"}
                         </div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">
                           {props.engineInfo?.projectDir ?? "No project directory"}
                         </div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate">PID: {props.engineInfo?.pid ?? "—"}</div>
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">PID: {props.engineInfo?.pid ?? "—"}</div>
                       </div>
                       <div class="grid gap-2">
                         <div>
-                          <div class="text-[11px] text-gray-9 mb-1">Last stdout</div>
-                          <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
+                          <div class="font-product type-ui-xs text-gray-9 mb-1">Last stdout</div>
+                          <pre class="font-mono type-ui-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
                             {engineStdout()}
                           </pre>
                         </div>
                         <div>
-                          <div class="text-[11px] text-gray-9 mb-1">Last stderr</div>
-                          <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
+                          <div class="font-product type-ui-xs text-gray-9 mb-1">Last stderr</div>
+                          <pre class="font-mono type-ui-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
                             {engineStderr()}
                           </pre>
                         </div>
@@ -2047,40 +2047,40 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                       <div class="flex items-center justify-between gap-3">
                         <div>
-                          <div class="text-sm font-medium text-gray-12">Orchestrator daemon</div>
-                          <div class="text-xs text-gray-10">Workspace orchestration layer.</div>
+                          <div class="font-product type-ui-md font-medium text-gray-12">Orchestrator daemon</div>
+                          <div class="font-reading type-ui-sm text-gray-10">Workspace orchestration layer.</div>
                         </div>
-                        <div class={`text-xs px-2 py-1 rounded-full border ${orchestratorStatusStyle()}`}>
+                        <div class={`font-product type-ui-xs px-2 py-1 rounded-full border ${orchestratorStatusStyle()}`}>
                           {orchestratorStatusLabel()}
                         </div>
                       </div>
                       <div class="space-y-1">
-                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">
                           {props.orchestratorStatus?.dataDir ?? "Data directory unavailable"}
                         </div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">
                           Daemon: {props.orchestratorStatus?.daemon?.baseUrl ?? "—"}
                         </div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">
                           OpenCode: {props.orchestratorStatus?.opencode?.baseUrl ?? "—"}
                         </div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">
                           Version: {props.orchestratorStatus?.cliVersion ?? "—"}
                         </div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">
                           Sidecar: {orchestratorSidecarSummary()}
                         </div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate" title={orchestratorBinaryPath()}>
+                        <div class="font-mono type-ui-xs text-gray-7 truncate" title={orchestratorBinaryPath()}>
                           Opencode binary: {formatOrchestratorBinary(props.orchestratorStatus?.binaries?.opencode ?? null)}
                         </div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">
                           Active workspace: {props.orchestratorStatus?.activeId ?? "—"}
                         </div>
                       </div>
                       <Show when={props.orchestratorStatus?.lastError}>
                         <div>
-                          <div class="text-[11px] text-gray-9 mb-1">Last error</div>
-                          <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
+                          <div class="font-product type-ui-xs text-gray-9 mb-1">Last error</div>
+                          <pre class="font-mono type-ui-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
                             {props.orchestratorStatus?.lastError}
                           </pre>
                         </div>
@@ -2090,29 +2090,29 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                       <div class="flex items-center justify-between gap-3">
                         <div>
-                          <div class="text-sm font-medium text-gray-12">OpenCode SDK</div>
-                          <div class="text-xs text-gray-10">UI connection diagnostics.</div>
+                          <div class="font-product type-ui-md font-medium text-gray-12">OpenCode SDK</div>
+                          <div class="font-reading type-ui-sm text-gray-10">UI connection diagnostics.</div>
                         </div>
-                        <div class={`text-xs px-2 py-1 rounded-full border ${opencodeConnectStatusStyle()}`}>
+                        <div class={`font-product type-ui-xs px-2 py-1 rounded-full border ${opencodeConnectStatusStyle()}`}>
                           {opencodeConnectStatusLabel()}
                         </div>
                       </div>
                       <div class="space-y-1">
-                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">
                           {props.opencodeConnectStatus?.baseUrl ?? "Base URL unavailable"}
                         </div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">
                           {props.opencodeConnectStatus?.directory ?? "No project directory"}
                         </div>
-                        <div class="text-[11px] text-gray-7">
+                        <div class="font-product type-ui-xs text-gray-7">
                           Last attempt: {opencodeConnectTimestamp() ?? "—"}
                         </div>
                         <Show when={props.opencodeConnectStatus?.reason}>
-                          <div class="text-[11px] text-gray-7">Reason: {props.opencodeConnectStatus?.reason}</div>
+                          <div class="font-product type-ui-xs text-gray-7">Reason: {props.opencodeConnectStatus?.reason}</div>
                         </Show>
                         <Show when={props.opencodeConnectStatus?.metrics}>
                           {(metrics) => (
-                            <div class="pt-1 space-y-1 text-[11px] text-gray-7">
+                            <div class="font-product type-ui-xs pt-1 space-y-1 text-gray-7">
                               <Show when={metrics().healthyMs != null}>
                                 <div>Healthy: {Math.round(metrics().healthyMs as number)}ms</div>
                               </Show>
@@ -2136,8 +2136,8 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                       <Show when={props.opencodeConnectStatus?.error}>
                         <div>
-                          <div class="text-[11px] text-gray-9 mb-1">Last error</div>
-                          <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
+                          <div class="font-product type-ui-xs text-gray-9 mb-1">Last error</div>
+                          <pre class="font-mono type-ui-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
                             {props.opencodeConnectStatus?.error}
                           </pre>
                         </div>
@@ -2147,29 +2147,29 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                       <div class="flex items-center justify-between gap-3">
                         <div>
-                          <div class="text-sm font-medium text-gray-12">Veslo server</div>
-                          <div class="text-xs text-gray-10">Config and approvals sidecar.</div>
+                          <div class="font-product type-ui-md font-medium text-gray-12">Veslo server</div>
+                          <div class="font-reading type-ui-sm text-gray-10">Config and approvals sidecar.</div>
                         </div>
-                        <div class={`text-xs px-2 py-1 rounded-full border ${vesloStatusStyle()}`}>
+                        <div class={`font-product type-ui-xs px-2 py-1 rounded-full border ${vesloStatusStyle()}`}>
                           {vesloStatusLabel()}
                         </div>
                       </div>
                       <div class="space-y-1">
-                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">
                           {(props.vesloServerHostInfo?.baseUrl ?? props.vesloServerUrl) || "Base URL unavailable"}
                         </div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate">PID: {props.vesloServerHostInfo?.pid ?? "—"}</div>
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">PID: {props.vesloServerHostInfo?.pid ?? "—"}</div>
                       </div>
                       <div class="grid gap-2">
                         <div>
-                          <div class="text-[11px] text-gray-9 mb-1">Last stdout</div>
-                          <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
+                          <div class="font-product type-ui-xs text-gray-9 mb-1">Last stdout</div>
+                          <pre class="font-mono type-ui-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
                             {vesloStdout()}
                           </pre>
                         </div>
                         <div>
-                          <div class="text-[11px] text-gray-9 mb-1">Last stderr</div>
-                          <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
+                          <div class="font-product type-ui-xs text-gray-9 mb-1">Last stderr</div>
+                          <pre class="font-mono type-ui-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
                             {vesloStderr()}
                           </pre>
                         </div>
@@ -2179,24 +2179,24 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                       <div class="flex items-center justify-between gap-3">
                         <div>
-                          <div class="text-sm font-medium text-gray-12">OpenCodeRouter sidecar</div>
-                          <div class="text-xs text-gray-10">Bridge runtime (currently hidden from end-user UI).</div>
+                          <div class="font-product type-ui-md font-medium text-gray-12">OpenCodeRouter sidecar</div>
+                          <div class="font-reading type-ui-sm text-gray-10">Bridge runtime (currently hidden from end-user UI).</div>
                         </div>
-                        <div class={`text-xs px-2 py-1 rounded-full border ${opencodeRouterStatusStyle()}`}>
+                        <div class={`font-product type-ui-xs px-2 py-1 rounded-full border ${opencodeRouterStatusStyle()}`}>
                           {opencodeRouterStatusLabel()}
                         </div>
                       </div>
                       <div class="space-y-1">
-                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">
                           {props.opencodeRouterInfo?.opencodeUrl?.trim() || "OpenCode URL unavailable"}
                         </div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">
                           {props.opencodeRouterInfo?.workspacePath?.trim() || "No worker directory"}
                         </div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">
                           Health port: {props.opencodeRouterInfo?.healthPort ?? "—"}
                         </div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate">PID: {props.opencodeRouterInfo?.pid ?? "—"}</div>
+                        <div class="font-mono type-ui-xs text-gray-7 truncate">PID: {props.opencodeRouterInfo?.pid ?? "—"}</div>
                       </div>
                       <div class="flex items-center gap-2">
                         <Button
@@ -2220,20 +2220,20 @@ export default function SettingsView(props: SettingsViewProps) {
                         </Show>
                       </div>
                       <Show when={opencodeRouterRestartError()}>
-                        <div class="text-xs text-red-11 bg-red-3/50 border border-red-6 rounded-lg p-2">
+                        <div class="font-product type-ui-sm text-red-11 bg-red-3/50 border border-red-6 rounded-lg p-2">
                           {opencodeRouterRestartError()}
                         </div>
                       </Show>
                       <div class="grid gap-2">
                         <div>
-                          <div class="text-[11px] text-gray-9 mb-1">Last stdout</div>
-                          <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
+                          <div class="font-product type-ui-xs text-gray-9 mb-1">Last stdout</div>
+                          <pre class="font-mono type-ui-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
                             {opencodeRouterStdout()}
                           </pre>
                         </div>
                         <div>
-                          <div class="text-[11px] text-gray-9 mb-1">Last stderr</div>
-                          <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
+                          <div class="font-product type-ui-xs text-gray-9 mb-1">Last stderr</div>
+                          <pre class="font-mono type-ui-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
                             {opencodeRouterStderr()}
                           </pre>
                         </div>
@@ -2243,17 +2243,17 @@ export default function SettingsView(props: SettingsViewProps) {
 
                   <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                     <div class="flex items-center justify-between gap-3">
-                      <div class="text-sm font-medium text-gray-12">Veslo server diagnostics</div>
-                      <div class="text-[11px] text-gray-8 font-mono truncate">
+                      <div class="font-product type-ui-md font-medium text-gray-12">Veslo server diagnostics</div>
+                      <div class="font-mono type-ui-xs text-gray-8 truncate">
                         {props.vesloServerDiagnostics?.version ?? "—"}
                       </div>
                     </div>
                     <Show
                       when={props.vesloServerDiagnostics}
-                      fallback={<div class="text-xs text-gray-9">Diagnostics unavailable.</div>}
+                      fallback={<div class="font-product type-ui-sm text-gray-9">Diagnostics unavailable.</div>}
                     >
                       {(diag) => (
-                        <div class="grid md:grid-cols-2 gap-2 text-xs text-gray-11">
+                        <div class="font-product type-ui-sm grid md:grid-cols-2 gap-2 text-gray-11">
                           <div>Started: {formatUptime(diag().uptimeMs)}</div>
                           <div>Read-only: {diag().readOnly ? "true" : "false"}</div>
                           <div>
@@ -2271,17 +2271,17 @@ export default function SettingsView(props: SettingsViewProps) {
 
                   <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                     <div class="flex items-center justify-between gap-3">
-                      <div class="text-sm font-medium text-gray-12">Veslo server capabilities</div>
-                      <div class="text-[11px] text-gray-8 font-mono truncate">
+                      <div class="font-product type-ui-md font-medium text-gray-12">Veslo server capabilities</div>
+                      <div class="font-mono type-ui-xs text-gray-8 truncate">
                         {props.vesloServerWorkspaceId ? `Worker ${props.vesloServerWorkspaceId}` : "Worker unresolved"}
                       </div>
                     </div>
                     <Show
                       when={props.vesloServerCapabilities}
-                      fallback={<div class="text-xs text-gray-9">Capabilities unavailable. Connect with a client token.</div>}
+                      fallback={<div class="font-product type-ui-sm text-gray-9">Capabilities unavailable. Connect with a client token.</div>}
                     >
                       {(caps) => (
-                        <div class="grid md:grid-cols-2 gap-2 text-xs text-gray-11">
+                        <div class="font-product type-ui-sm grid md:grid-cols-2 gap-2 text-gray-11">
                           <div>Skills: {formatCapability(caps().skills)}</div>
                           <div>Plugins: {formatCapability(caps().plugins)}</div>
                           <div>MCP: {formatCapability(caps().mcp)}</div>
