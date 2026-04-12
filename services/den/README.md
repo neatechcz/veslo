@@ -88,6 +88,10 @@ pnpm db:migrate
 - `GET /v1/me`
 - `GET /v1/orgs`
 - `GET /v1/orgs/:orgId/members`
+- `GET /v1/orgs/:orgId/skills/catalog`
+  - Authenticated and org-scoped.
+  - Requires member access to the target organization.
+  - Currently returns a mock `{ items: [] }` payload.
 - `POST /v1/orgs/:orgId/members`
 - `PATCH /v1/orgs/:orgId/members/:memberId`
 - `DELETE /v1/orgs/:orgId/members/:memberId`
