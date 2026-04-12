@@ -48,3 +48,55 @@ test("expanded subagents are included newest-first and deduplicated per workspac
     expandedSubagentSessionIds: ["child-newer", "child-older"],
   });
 });
+
+test("normalizes ids, filters blanks, and deduplicates duplicate top-level rows", () => {
+  const result = deriveLoadedSidebarPrefetchInterest({
+    selectedSessionId: "  selected-a  ",
+    clickedSessionId: "  clicked-a  ",
+    loadedTopLevelRows: [
+      { workspaceId: "  ws-a  ", sessionId: "  selected-a  ", updatedAt: 30 },
+      { workspaceId: "ws-a", sessionId: "clicked-a", updatedAt: 25 },
+      { workspaceId: "ws-a", sessionId: "  top-a  ", updatedAt: 20 },
+      { workspaceId: "ws-a", sessionId: "top-a", updatedAt: 10 },
+      { workspaceId: "ws-a", sessionId: "   ", updatedAt: 5 },
+      { workspaceId: "   ", sessionId: "ignored", updatedAt: 1 },
+    ],
+    expandedSubagentRows: [
+      { workspaceId: " ws-a ", sessionId: " sub-a ", updatedAt: 15 },
+      { workspaceId: "ws-a", sessionId: "sub-a", updatedAt: 14 },
+      { workspaceId: "ws-a", sessionId: "   ", updatedAt: 13 },
+    ],
+  });
+
+  assert.deepEqual(result.get("ws-a"), {
+    clickedSessionId: "clicked-a",
+    selectedSessionId: "selected-a",
+    loadedTopLevelSessionIds: ["selected-a", "clicked-a", "top-a"],
+    expandedSubagentSessionIds: ["sub-a"],
+  });
+});
+
+test("does not misattribute ambiguous clicked or selected ids across workspaces", () => {
+  const result = deriveLoadedSidebarPrefetchInterest({
+    selectedSessionId: "shared",
+    clickedSessionId: "shared",
+    loadedTopLevelRows: [
+      { workspaceId: "ws-a", sessionId: "shared", updatedAt: 30 },
+      { workspaceId: "ws-b", sessionId: "shared", updatedAt: 20 },
+    ],
+    expandedSubagentRows: [],
+  });
+
+  assert.deepEqual(result.get("ws-a"), {
+    clickedSessionId: null,
+    selectedSessionId: null,
+    loadedTopLevelSessionIds: ["shared"],
+    expandedSubagentSessionIds: [],
+  });
+  assert.deepEqual(result.get("ws-b"), {
+    clickedSessionId: null,
+    selectedSessionId: null,
+    loadedTopLevelSessionIds: ["shared"],
+    expandedSubagentSessionIds: [],
+  });
+});

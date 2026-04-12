@@ -32,18 +32,28 @@ const ensureWorkspaceInterest = (
   return interest;
 };
 
-const findWorkspaceForSession = (
+const recordSessionWorkspace = (
+  sessionWorkspaces: Map<string, Set<string>>,
   sessionId: string,
-  rows: LoadedSidebarPrefetchRow[],
+  workspaceId: string,
+) => {
+  const normalizedSessionId = normalizeId(sessionId);
+  const normalizedWorkspaceId = normalizeId(workspaceId);
+  if (!normalizedSessionId || !normalizedWorkspaceId) return;
+  const workspaces = sessionWorkspaces.get(normalizedSessionId) ?? new Set<string>();
+  workspaces.add(normalizedWorkspaceId);
+  sessionWorkspaces.set(normalizedSessionId, workspaces);
+};
+
+const findUniqueWorkspaceForSession = (
+  sessionId: string,
+  sessionWorkspaces: Map<string, Set<string>>,
 ) => {
   const normalizedSessionId = normalizeId(sessionId);
   if (!normalizedSessionId) return null;
-  for (const row of rows) {
-    if (normalizeId(row.sessionId) !== normalizedSessionId) continue;
-    const workspaceId = normalizeId(row.workspaceId);
-    if (workspaceId) return workspaceId;
-  }
-  return null;
+  const workspaces = sessionWorkspaces.get(normalizedSessionId);
+  if (!workspaces || workspaces.size !== 1) return null;
+  return workspaces.values().next().value ?? null;
 };
 
 export function deriveLoadedSidebarPrefetchInterest(input: {
@@ -53,16 +63,22 @@ export function deriveLoadedSidebarPrefetchInterest(input: {
   expandedSubagentRows: LoadedSidebarPrefetchRow[];
 }) {
   const interests = new Map<string, WorkspaceInterest>();
-  const loadedRows: LoadedSidebarPrefetchRow[] = [];
+  const sessionWorkspaces = new Map<string, Set<string>>();
+  const seenTopLevelSessionIdsByWorkspace = new Map<string, Set<string>>();
 
   for (const row of input.loadedTopLevelRows) {
     const workspaceId = normalizeId(row.workspaceId);
     const sessionId = normalizeId(row.sessionId);
     if (!workspaceId || !sessionId) continue;
-    loadedRows.push({ workspaceId, sessionId, updatedAt: Number.isFinite(row.updatedAt) ? row.updatedAt : 0 });
+    recordSessionWorkspace(sessionWorkspaces, sessionId, workspaceId);
     const interest = ensureWorkspaceInterest(interests, workspaceId);
     if (!interest) continue;
-    interest.loadedTopLevelSessionIds.push(sessionId);
+    const seenTopLevelSessionIds = seenTopLevelSessionIdsByWorkspace.get(workspaceId) ?? new Set<string>();
+    if (!seenTopLevelSessionIds.has(sessionId)) {
+      seenTopLevelSessionIds.add(sessionId);
+      seenTopLevelSessionIdsByWorkspace.set(workspaceId, seenTopLevelSessionIds);
+      interest.loadedTopLevelSessionIds.push(sessionId);
+    }
   }
 
   const expandedByWorkspace = new Map<string, Array<LoadedSidebarPrefetchRow & { index: number }>>();
@@ -70,20 +86,24 @@ export function deriveLoadedSidebarPrefetchInterest(input: {
     const workspaceId = normalizeId(row.workspaceId);
     const sessionId = normalizeId(row.sessionId);
     if (!workspaceId || !sessionId) return;
-    loadedRows.push({ workspaceId, sessionId, updatedAt: Number.isFinite(row.updatedAt) ? row.updatedAt : 0 });
+    recordSessionWorkspace(sessionWorkspaces, sessionId, workspaceId);
     const bucket = expandedByWorkspace.get(workspaceId) ?? [];
     bucket.push({ workspaceId, sessionId, updatedAt: Number.isFinite(row.updatedAt) ? row.updatedAt : 0, index });
     expandedByWorkspace.set(workspaceId, bucket);
     ensureWorkspaceInterest(interests, workspaceId);
   });
 
-  const clickedWorkspaceId = input.clickedSessionId ? findWorkspaceForSession(input.clickedSessionId, loadedRows) : null;
+  const clickedWorkspaceId = input.clickedSessionId
+    ? findUniqueWorkspaceForSession(input.clickedSessionId, sessionWorkspaces)
+    : null;
   if (clickedWorkspaceId) {
     const interest = ensureWorkspaceInterest(interests, clickedWorkspaceId);
     if (interest) interest.clickedSessionId = normalizeId(input.clickedSessionId);
   }
 
-  const selectedWorkspaceId = input.selectedSessionId ? findWorkspaceForSession(input.selectedSessionId, loadedRows) : null;
+  const selectedWorkspaceId = input.selectedSessionId
+    ? findUniqueWorkspaceForSession(input.selectedSessionId, sessionWorkspaces)
+    : null;
   if (selectedWorkspaceId) {
     const interest = ensureWorkspaceInterest(interests, selectedWorkspaceId);
     if (interest) interest.selectedSessionId = normalizeId(input.selectedSessionId);
