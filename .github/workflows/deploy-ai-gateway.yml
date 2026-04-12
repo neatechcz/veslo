@@ -24,6 +24,11 @@ on:
         required: false
         type: boolean
         default: false
+      diagnose_logs:
+        description: Print recent sanitized Render logs and exit without deploying
+        required: false
+        type: boolean
+        default: false
       replace_mismatched_region:
         description: Delete and recreate the AI Gateway service if it is in the wrong Render region
         required: false
@@ -51,6 +56,7 @@ jobs:
           AI_GATEWAY_DATABASE_URL: ${{ secrets.AI_GATEWAY_DATABASE_URL || secrets.MANAGED_AI_DATABASE_URL || secrets.DEN_DATABASE_URL }}
           AI_GATEWAY_SECRET_KEY: ${{ secrets.AI_GATEWAY_SECRET_KEY || secrets.DEN_BETTER_AUTH_SECRET }}
           AI_GATEWAY_DIAGNOSE_ONLY: ${{ github.event.inputs.diagnose_only }}
+          AI_GATEWAY_DIAGNOSE_LOGS: ${{ github.event.inputs.diagnose_logs }}
         run: |
           missing=0
           diagnose_only="${AI_GATEWAY_DIAGNOSE_ONLY:-false}"
@@ -86,6 +92,7 @@ jobs:
           AI_GATEWAY_DATABASE_URL: ${{ secrets.AI_GATEWAY_DATABASE_URL || secrets.MANAGED_AI_DATABASE_URL || secrets.DEN_DATABASE_URL }}
           AI_GATEWAY_SECRET_KEY: ${{ secrets.AI_GATEWAY_SECRET_KEY || secrets.DEN_BETTER_AUTH_SECRET }}
           AI_GATEWAY_DIAGNOSE_ONLY: ${{ github.event.inputs.diagnose_only }}
+          AI_GATEWAY_DIAGNOSE_LOGS: ${{ github.event.inputs.diagnose_logs }}
           AI_GATEWAY_REPLACE_MISMATCHED_REGION: ${{ github.event.inputs.replace_mismatched_region }}
           AI_GATEWAY_RENDER_SERVICE_NAME: ${{ github.event.inputs.service_name }}
           AI_GATEWAY_RENDER_BRANCH: ${{ github.event.inputs.branch }}
@@ -109,6 +116,7 @@ jobs:
           build_command = "corepack enable && corepack prepare pnpm@10.27.0 --activate && pnpm install --no-frozen-lockfile && pnpm build"
           start_command = "pnpm start"
           diagnose_only = (os.environ.get("AI_GATEWAY_DIAGNOSE_ONLY") or "false").lower() == "true"
+          diagnose_logs = (os.environ.get("AI_GATEWAY_DIAGNOSE_LOGS") or "false").lower() == "true"
           replace_mismatched_region = (
               (os.environ.get("AI_GATEWAY_REPLACE_MISMATCHED_REGION") or "false").lower() == "true"
           )
@@ -236,6 +244,40 @@ jobs:
                       return latest["id"]
               raise RuntimeError("No new deploy appeared after triggering")
 
+          def recent_log_lines(service_id: str, limit: int = 80):
+              logs_query = urllib.parse.urlencode(
+                  {
+                      "ownerId": owner_id,
+                      "resource": [service_id],
+                      "type": ["app", "build"],
+                      "direction": "backward",
+                      "limit": str(limit),
+                  },
+                  doseq=True,
+              )
+              _, recent_logs = request("GET", f"/logs?{logs_query}")
+              raw_logs = [
+                  entry
+                  for entry in (recent_logs or {}).get("logs", [])
+                  if isinstance(entry, dict)
+              ]
+              raw_logs.sort(key=lambda entry: entry.get("timestamp") or "", reverse=True)
+
+              log_lines = []
+              for entry in raw_logs:
+                  message = entry.get("message")
+                  if not isinstance(message, str) or not message.strip():
+                      continue
+                  log_lines.append(
+                      {
+                          "timestamp": entry.get("timestamp"),
+                          "message": message[:1000],
+                      }
+                  )
+                  if len(log_lines) >= min(limit, 40):
+                      break
+              return log_lines
+
           def wait_for_deploy_live(service_id: str, deploy_id: str):
               terminal = {"live", "update_failed", "build_failed", "canceled"}
               started = time.time()
@@ -246,40 +288,9 @@ jobs:
                   if latest and latest.get("id") == deploy_id and latest.get("status") in terminal:
                       status = latest.get("status")
                       if status != "live":
-                          logs_query = urllib.parse.urlencode(
-                              {
-                                  "ownerId": owner_id,
-                                  "resource": [service_id],
-                                  "type": ["app", "build"],
-                                  "direction": "backward",
-                                  "limit": "60",
-                              },
-                              doseq=True,
-                          )
-                          _, recent_logs = request("GET", f"/logs?{logs_query}")
-                          raw_logs = [
-                              entry
-                              for entry in (recent_logs or {}).get("logs", [])
-                              if isinstance(entry, dict)
-                          ]
-                          raw_logs.sort(key=lambda entry: entry.get("timestamp") or "", reverse=True)
-
-                          log_lines = []
-                          for entry in raw_logs:
-                              message = entry.get("message")
-                              if not isinstance(message, str) or not message.strip():
-                                  continue
-                              log_lines.append(
-                                  {
-                                      "timestamp": entry.get("timestamp"),
-                                      "message": message[:1000],
-                                  }
-                              )
-                              if len(log_lines) >= 40:
-                                  break
                           print(
                               "Render recent logs:",
-                              json.dumps({"deployId": deploy_id, "status": status, "logs": log_lines}),
+                              json.dumps({"deployId": deploy_id, "status": status, "logs": recent_log_lines(service_id)}),
                           )
                           raise RuntimeError(f"Render deploy {deploy_id} ended with {status}")
                       return
@@ -315,6 +326,21 @@ jobs:
                           "aiGateway": service_summary(existing),
                           "matchingServices": candidates,
                           "selectedCreateRegion": region,
+                      },
+                      sort_keys=True,
+                  ),
+              )
+              raise SystemExit(0)
+
+          if diagnose_logs:
+              if not existing:
+                  raise RuntimeError(f"Render service {service_name} was not found")
+              print(
+                  "Render logs diagnostic:",
+                  json.dumps(
+                      {
+                          "service": service_summary(existing),
+                          "logs": recent_log_lines(existing["id"]),
                       },
                       sort_keys=True,
                   ),
