@@ -23,7 +23,7 @@ import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./sc
 import { provisionWorkspaceInternalSystem } from "./internal-system.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
-import { recordAudit, readAuditEntries, readLastAudit, registerDebugLogSink, resolveVesloDataDir } from "./audit.js";
+import { clearDebugLogSink, recordAudit, readAuditEntries, readLastAudit, registerDebugLogSink, resolveVesloDataDir } from "./audit.js";
 import { createDebugLogPipeline, normalizeDebugLogEvents, type DebugLogPipeline } from "./debug-log-pipeline.js";
 import { createDebugLogUploader } from "./debug-log-uploader.js";
 import { ReloadEventStore } from "./events.js";
@@ -537,6 +537,16 @@ export function startServer(config: ServerConfig) {
   (serverOptions as { idleTimeout?: number }).idleTimeout = 120;
 
   const server = Bun.serve(serverOptions);
+  const stopServer = server.stop.bind(server);
+  try {
+    server.stop = ((...args: Parameters<typeof server.stop>) => {
+      clearDebugLogSink();
+      return stopServer(...args);
+    }) as typeof server.stop;
+  } catch {
+    // If the runtime does not allow patching stop, the server still runs correctly;
+    // the explicit sink reset in the patched path is the intended cleanup path.
+  }
 
   return server;
 }

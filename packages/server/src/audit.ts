@@ -28,6 +28,10 @@ export function registerDebugLogSink(sink: DebugLogSink | null): void {
   debugLogSink = sink;
 }
 
+export function clearDebugLogSink(): void {
+  debugLogSink = null;
+}
+
 export function auditLogPath(workspaceId: string): string {
   return join(resolveVesloDataDir(), "audit", `${workspaceId}.jsonl`);
 }

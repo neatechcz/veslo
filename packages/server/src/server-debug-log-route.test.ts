@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { recordAudit, registerDebugLogSink } from "./audit.js";
 import { startServer } from "./server.js";
 
 const tempDirs: string[] = [];
@@ -53,5 +54,57 @@ describe("debug log route", () => {
       body: JSON.stringify({ events: [] }),
     });
     expect(unauthenticated.status).toBe(401);
+  });
+
+  test("server stop clears the debug sink before the next audit write", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-debug-log-route-"));
+    tempDirs.push(workspaceRoot);
+
+    const server = startServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "client-token",
+      hostToken: "host-token",
+      approval: { mode: "auto", timeoutMs: 1000 },
+      corsOrigins: ["*"],
+      workspaces: [{ id: "ws_1", name: "Workspace", path: workspaceRoot, workspaceType: "local" }],
+      authorizedRoots: [workspaceRoot],
+      readOnly: false,
+      startedAt: Date.now(),
+      tokenSource: "cli",
+      hostTokenSource: "cli",
+      logFormat: "pretty",
+      logRequests: false,
+      debugLogs: {
+        enabled: true,
+        ingestUrl: null,
+        ingestToken: null,
+        batchMaxEvents: 100,
+        batchMaxBytes: 65536,
+        spoolMaxBytes: 10485760,
+      },
+    });
+    runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
+
+    let calls = 0;
+    registerDebugLogSink({
+      enqueue() {
+        calls += 1;
+      },
+    });
+
+    server.stop(true);
+
+    await recordAudit(workspaceRoot, {
+      id: "audit-1",
+      workspaceId: "ws_1",
+      actor: { type: "host" },
+      action: "debug.test",
+      target: "debug",
+      summary: "verify sink cleanup",
+      timestamp: Date.now(),
+    });
+
+    expect(calls).toBe(0);
   });
 });
