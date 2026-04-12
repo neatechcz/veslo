@@ -405,6 +405,35 @@ async function ensureTables() {
     await ensureIndex("audit_event", "audit_event_worker_id", ["worker_id"])
 
     await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`debug_log_event\` (
+        \`id\` varchar(64) NOT NULL,
+        \`org_id\` varchar(64) NOT NULL,
+        \`user_id\` varchar(64) NOT NULL,
+        \`workspace_id\` varchar(64) NOT NULL,
+        \`worker_id\` varchar(64),
+        \`session_id\` varchar(64),
+        \`run_id\` varchar(64),
+        \`source\` varchar(64) NOT NULL,
+        \`stream\` varchar(32) NOT NULL,
+        \`level\` varchar(16),
+        \`sequence_no\` int NOT NULL,
+        \`content_sha256\` varchar(128) NOT NULL,
+        \`payload_bytes\` int NOT NULL,
+        \`encryption_key_version\` varchar(64) NOT NULL,
+        \`ciphertext\` text NOT NULL,
+        \`nonce\` varchar(64) NOT NULL,
+        \`encrypted_data_key\` text,
+        \`compression\` varchar(32),
+        \`expires_at\` timestamp(3) NOT NULL,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        CONSTRAINT \`debug_log_event_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await ensureIndex("debug_log_event", "debug_log_event_org_id", ["org_id"])
+    await ensureIndex("debug_log_event", "debug_log_event_workspace_id", ["workspace_id"])
+    await ensureIndex("debug_log_event", "debug_log_event_expires_at", ["expires_at"])
+
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`desktop_auth_handoff\` (
         \`id\` varchar(64) NOT NULL,
         \`code\` varchar(255) NOT NULL,

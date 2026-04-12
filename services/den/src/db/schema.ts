@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm"
 import {
   boolean,
+  int,
   index,
   json,
   mysqlEnum,
@@ -313,4 +314,35 @@ export const AuditEventTable = mysqlTable(
     created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [index("audit_event_org_id").on(table.org_id), index("audit_event_worker_id").on(table.worker_id)],
+)
+
+export const DebugLogEventTable = mysqlTable(
+  "debug_log_event",
+  {
+    id: id().primaryKey(),
+    org_id: varchar("org_id", { length: 64 }).notNull(),
+    user_id: varchar("user_id", { length: 64 }).notNull(),
+    workspace_id: varchar("workspace_id", { length: 64 }).notNull(),
+    worker_id: varchar("worker_id", { length: 64 }),
+    session_id: varchar("session_id", { length: 64 }),
+    run_id: varchar("run_id", { length: 64 }),
+    source: varchar("source", { length: 64 }).notNull(),
+    stream: varchar("stream", { length: 32 }).notNull(),
+    level: varchar("level", { length: 16 }),
+    sequence_no: int("sequence_no").notNull(),
+    content_sha256: varchar("content_sha256", { length: 128 }).notNull(),
+    payload_bytes: int("payload_bytes").notNull(),
+    encryption_key_version: varchar("encryption_key_version", { length: 64 }).notNull(),
+    ciphertext: text("ciphertext").notNull(),
+    nonce: varchar("nonce", { length: 64 }).notNull(),
+    encrypted_data_key: text("encrypted_data_key"),
+    compression: varchar("compression", { length: 32 }),
+    expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("debug_log_event_org_id").on(table.org_id),
+    index("debug_log_event_workspace_id").on(table.workspace_id),
+    index("debug_log_event_expires_at").on(table.expires_at),
+  ],
 )

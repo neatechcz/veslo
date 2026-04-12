@@ -39,6 +39,9 @@ const schema = z.object({
   POLAR_BENEFIT_ID: z.string().optional(),
   POLAR_SUCCESS_URL: z.string().optional(),
   POLAR_RETURN_URL: z.string().optional(),
+  DEN_LOG_MASTER_KEY: z.string().optional(),
+  DEN_LOG_MASTER_KEY_VERSION: z.string().optional(),
+  DEN_LOG_INGEST_TOKEN: z.string().optional(),
 })
 
 const parsed = schema.parse(process.env)
@@ -108,5 +111,10 @@ export const env = {
     benefitId: parsed.POLAR_BENEFIT_ID,
     successUrl: parsed.POLAR_SUCCESS_URL,
     returnUrl: parsed.POLAR_RETURN_URL,
+  },
+  debugLogs: {
+    masterKey: parsed.DEN_LOG_MASTER_KEY?.trim() || null,
+    masterKeyVersion: parsed.DEN_LOG_MASTER_KEY_VERSION?.trim() || "v1",
+    ingestToken: parsed.DEN_LOG_INGEST_TOKEN?.trim() || null,
   },
 }
