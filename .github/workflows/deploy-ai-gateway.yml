@@ -24,6 +24,11 @@ on:
         required: false
         type: boolean
         default: false
+      replace_mismatched_region:
+        description: Delete and recreate the AI Gateway service if it is in the wrong Render region
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -43,7 +48,7 @@ jobs:
           RENDER_DEN_CONTROL_PLANE_SERVICE_ID: ${{ secrets.RENDER_DEN_CONTROL_PLANE_SERVICE_ID }}
           RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
           DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
-          AI_GATEWAY_DATABASE_URL: ${{ secrets.AI_GATEWAY_DATABASE_URL || secrets.MANAGED_AI_DATABASE_URL }}
+          AI_GATEWAY_DATABASE_URL: ${{ secrets.AI_GATEWAY_DATABASE_URL || secrets.MANAGED_AI_DATABASE_URL || secrets.DEN_DATABASE_URL }}
           AI_GATEWAY_SECRET_KEY: ${{ secrets.AI_GATEWAY_SECRET_KEY || secrets.DEN_BETTER_AUTH_SECRET }}
           AI_GATEWAY_DIAGNOSE_ONLY: ${{ github.event.inputs.diagnose_only }}
         run: |
@@ -64,7 +69,7 @@ jobs:
             check_required RENDER_DEN_CONTROL_PLANE_SERVICE_ID
             check_required DEN_DATABASE_URL
           else
-            check_required AI_GATEWAY_DATABASE_URL "AI_GATEWAY_DATABASE_URL (or MANAGED_AI_DATABASE_URL)"
+            check_required AI_GATEWAY_DATABASE_URL "AI_GATEWAY_DATABASE_URL (or MANAGED_AI_DATABASE_URL or DEN_DATABASE_URL)"
             check_required AI_GATEWAY_SECRET_KEY "AI_GATEWAY_SECRET_KEY (or DEN_BETTER_AUTH_SECRET)"
           fi
 
@@ -78,9 +83,10 @@ jobs:
           RENDER_DEN_CONTROL_PLANE_SERVICE_ID: ${{ secrets.RENDER_DEN_CONTROL_PLANE_SERVICE_ID }}
           RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
           DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
-          AI_GATEWAY_DATABASE_URL: ${{ secrets.AI_GATEWAY_DATABASE_URL || secrets.MANAGED_AI_DATABASE_URL }}
+          AI_GATEWAY_DATABASE_URL: ${{ secrets.AI_GATEWAY_DATABASE_URL || secrets.MANAGED_AI_DATABASE_URL || secrets.DEN_DATABASE_URL }}
           AI_GATEWAY_SECRET_KEY: ${{ secrets.AI_GATEWAY_SECRET_KEY || secrets.DEN_BETTER_AUTH_SECRET }}
           AI_GATEWAY_DIAGNOSE_ONLY: ${{ github.event.inputs.diagnose_only }}
+          AI_GATEWAY_REPLACE_MISMATCHED_REGION: ${{ github.event.inputs.replace_mismatched_region }}
           AI_GATEWAY_RENDER_SERVICE_NAME: ${{ github.event.inputs.service_name }}
           AI_GATEWAY_RENDER_BRANCH: ${{ github.event.inputs.branch }}
         run: |
@@ -103,6 +109,9 @@ jobs:
           build_command = "corepack enable && corepack prepare pnpm@10.27.0 --activate && pnpm install --no-frozen-lockfile && pnpm build"
           start_command = "pnpm start"
           diagnose_only = (os.environ.get("AI_GATEWAY_DIAGNOSE_ONLY") or "false").lower() == "true"
+          replace_mismatched_region = (
+              (os.environ.get("AI_GATEWAY_REPLACE_MISMATCHED_REGION") or "false").lower() == "true"
+          )
           den_service_id = os.environ.get("RENDER_DEN_CONTROL_PLANE_SERVICE_ID") or ""
 
           headers = {
@@ -181,6 +190,26 @@ jobs:
           def database_host(database_url):
               parsed = urllib.parse.urlparse(database_url or "")
               return parsed.hostname or ""
+
+          def create_service(payload):
+              last_error = None
+              for _ in range(12):
+                  try:
+                      return request("POST", "/services", payload)
+                  except RuntimeError as err:
+                      last_error = err
+                      if " 409" not in str(err) and "(409)" not in str(err):
+                          raise
+                      time.sleep(10)
+              raise RuntimeError(f"Timed out waiting for Render service name to become reusable: {last_error}")
+
+          def wait_for_service_deleted(name):
+              for _ in range(60):
+                  services_after_delete = list_services()
+                  if not any(service.get("name") == name for service in services_after_delete):
+                      return services_after_delete
+                  time.sleep(5)
+              raise RuntimeError(f"Timed out waiting for Render service {name} to be deleted")
 
           def wait_for_health(health_url: str, timeout_seconds: int = 180):
               deadline = time.time() + timeout_seconds
@@ -293,6 +322,28 @@ jobs:
               raise SystemExit(0)
 
           if existing:
+              existing_region = service_region(existing)
+              if den_region and existing_region and existing_region != den_region:
+                  mismatch = {
+                      "name": service_name,
+                      "serviceId": existing.get("id"),
+                      "currentRegion": existing_region,
+                      "requiredRegion": den_region,
+                      "databaseHost": database_host(os.environ.get("AI_GATEWAY_DATABASE_URL")),
+                  }
+                  if not replace_mismatched_region:
+                      raise RuntimeError(
+                          "Render AI Gateway service is in the wrong region for the private database: "
+                          f"{json.dumps(mismatch, sort_keys=True)}. "
+                          "Rerun with replace_mismatched_region=true to delete and recreate the service in the required region."
+                      )
+
+                  print("Replacing Render AI gateway service for region migration:", json.dumps(mismatch, sort_keys=True))
+                  request("DELETE", f"/services/{existing['id']}")
+                  services = wait_for_service_deleted(service_name)
+                  existing = None
+
+          if existing:
               service_id = existing["id"]
               patch = {}
               if existing.get("repo") != repo:
@@ -328,7 +379,7 @@ jobs:
                   },
               }
               print("Creating Render service:", json.dumps({"name": service_name, "branch": branch, "rootDir": root_dir}))
-              _, created = request("POST", "/services", payload)
+              _, created = create_service(payload)
               service_id = created["service"]["id"]
 
           _, service = request("GET", f"/services/{service_id}")
