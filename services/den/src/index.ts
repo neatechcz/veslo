@@ -1,21 +1,25 @@
 import "dotenv/config"
 import cors from "cors"
 import express from "express"
+import { createHash } from "node:crypto"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 import { sql } from "drizzle-orm"
 import { auth } from "./auth.js"
 import { db } from "./db/index.js"
+import { DebugLogEventTable } from "./db/schema.js"
 import { shouldWidenVarcharColumn } from "./db/schema-reconcile.js"
 import { env } from "./env.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
+import { createDebugLogsRouter, type DebugLogIngestBatch, type DebugLogStoreBatchResult } from "./http/debug-logs.js"
 import { requireSession } from "./http/session.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
 import { desktopAuthV2Router } from "./http/desktop-auth-v2.js"
 import { createAdminRuntimeRouter } from "./http/admin-runtime.js"
 import { orgsRouter } from "./http/orgs.js"
 import { workersRouter } from "./http/workers.js"
+import { encryptDebugLogPayload } from "./security/debug-log-crypto.js"
 
 const app = express()
 const currentFile = fileURLToPath(import.meta.url)
@@ -46,7 +50,6 @@ app.get("/health", (_, res) => {
   res.json({ ok: true })
 })
 
-
 app.get("/v1/me", asyncRoute(async (req, res) => {
   const checkedSession = await requireSession(req, res)
   if (!checkedSession) {
@@ -68,6 +71,10 @@ app.use("/v2/desktop-auth", desktopAuthV2Router)
 app.use("/v1/admin", createAdminRuntimeRouter())
 app.use("/v1/orgs", orgsRouter)
 app.use("/v1/workers", workersRouter)
+app.use("/v1/internal/debug-logs", createDebugLogsRouter({
+  ingestToken: env.debugLogs.ingestToken ?? "",
+  storeBatch: storeDebugLogBatch,
+}))
 app.use(errorMiddleware)
 
 const identifierPattern = /^[a-zA-Z0-9_]+$/
@@ -113,6 +120,54 @@ function toNullableNumber(value: unknown) {
     return Number.isFinite(parsed) ? parsed : null
   }
   return null
+}
+
+const debugLogRetentionMs = 30 * 24 * 60 * 60 * 1000
+
+async function storeDebugLogBatch(batch: DebugLogIngestBatch): Promise<DebugLogStoreBatchResult> {
+  if (batch.events.length === 0) {
+    return { ok: true, acceptedBatchIds: [batch.batchId] }
+  }
+
+  const expiresAt = new Date(Date.now() + debugLogRetentionMs)
+  const rows = batch.events.map((event) => {
+    const serializedPayload = JSON.stringify(event.payload)
+    if (serializedPayload === undefined) {
+      throw new Error("invalid_debug_log_payload")
+    }
+
+    const encryptedPayload = encryptDebugLogPayload(Buffer.from(serializedPayload))
+    return {
+      id: event.id,
+      org_id: event.orgId,
+      user_id: event.userId,
+      workspace_id: event.workspaceId,
+      worker_id: event.workerId ?? null,
+      session_id: event.sessionId ?? null,
+      run_id: event.runId ?? null,
+      source: event.source,
+      stream: event.stream,
+      level: event.level ?? null,
+      sequence_no: event.sequenceNo,
+      content_sha256: createHash("sha256").update(serializedPayload).digest("hex"),
+      payload_bytes: Buffer.byteLength(serializedPayload),
+      encryption_key_version: encryptedPayload.keyVersion,
+      ciphertext: encryptedPayload.ciphertext,
+      nonce: encryptedPayload.nonce,
+      auth_tag: encryptedPayload.authTag,
+      encrypted_data_key: null,
+      compression: null,
+      expires_at: expiresAt,
+    }
+  })
+
+  await db.insert(DebugLogEventTable).values(rows).onDuplicateKeyUpdate({
+    set: {
+      id: sql`id`,
+    },
+  })
+
+  return { ok: true, acceptedBatchIds: [batch.batchId] }
 }
 
 async function ensureIndex(table: string, indexName: string, columns: string[], unique = false) {
@@ -422,6 +477,7 @@ async function ensureTables() {
         \`encryption_key_version\` varchar(64) NOT NULL,
         \`ciphertext\` text NOT NULL,
         \`nonce\` varchar(64) NOT NULL,
+        \`auth_tag\` varchar(64) NOT NULL,
         \`encrypted_data_key\` text,
         \`compression\` varchar(32),
         \`expires_at\` timestamp(3) NOT NULL,
@@ -432,6 +488,7 @@ async function ensureTables() {
     await ensureIndex("debug_log_event", "debug_log_event_org_id", ["org_id"])
     await ensureIndex("debug_log_event", "debug_log_event_workspace_id", ["workspace_id"])
     await ensureIndex("debug_log_event", "debug_log_event_expires_at", ["expires_at"])
+    await ensureColumn("debug_log_event", "auth_tag", "varchar(64) NOT NULL")
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`desktop_auth_handoff\` (

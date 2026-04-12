@@ -335,6 +335,7 @@ export const DebugLogEventTable = mysqlTable(
     encryption_key_version: varchar("encryption_key_version", { length: 64 }).notNull(),
     ciphertext: text("ciphertext").notNull(),
     nonce: varchar("nonce", { length: 64 }).notNull(),
+    auth_tag: varchar("auth_tag", { length: 64 }).notNull(),
     encrypted_data_key: text("encrypted_data_key"),
     compression: varchar("compression", { length: 32 }),
     expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
