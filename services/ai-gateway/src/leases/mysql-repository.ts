@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 
 import type { AiGatewayDb } from "../db/index.js";
@@ -92,5 +93,14 @@ function mapSessionLease(row: typeof sessionLeaseTable.$inferSelect): SessionLea
 }
 
 function createLeaseId(input: ResolveLeaseInput): string {
-  return `lease_${input.ownerUserId}_${input.provider}_${input.sessionId}`;
+  const digest = createHash("sha256")
+    .update(input.ownerUserId)
+    .update("\0")
+    .update(input.provider)
+    .update("\0")
+    .update(input.sessionId)
+    .digest("base64url")
+    .slice(0, 32);
+
+  return `lease_${input.provider}_${digest}`;
 }
