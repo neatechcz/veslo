@@ -2,6 +2,7 @@ import { dirname, join } from "node:path";
 import { appendFile, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import type { AuditEntry } from "./types.js";
+import type { DebugLogEvent } from "./debug-log-events.js";
 import { ensureDir, exists } from "./utils.js";
 
 function expandHome(value: string): string {
@@ -11,10 +12,20 @@ function expandHome(value: string): string {
   return value;
 }
 
-function resolveVesloDataDir(): string {
+export function resolveVesloDataDir(): string {
   const override = process.env.VESLO_DATA_DIR?.trim();
   if (override) return expandHome(override);
   return join(homedir(), ".veslo", "veslo-server");
+}
+
+type DebugLogSink = {
+  enqueue(events: DebugLogEvent[]): Promise<void> | void;
+};
+
+let debugLogSink: DebugLogSink | null = null;
+
+export function registerDebugLogSink(sink: DebugLogSink | null): void {
+  debugLogSink = sink;
 }
 
 export function auditLogPath(workspaceId: string): string {
@@ -39,12 +50,25 @@ export async function recordAudit(workspaceRoot: string, entry: AuditEntry): Pro
     const path = legacyAuditLogPath(workspaceRoot);
     await ensureDir(dirname(path));
     await appendFile(path, JSON.stringify(entry) + "\n", "utf8");
-    return;
+  } else {
+    const path = auditLogPath(workspaceId);
+    await ensureDir(dirname(path));
+    await appendFile(path, JSON.stringify(entry) + "\n", "utf8");
   }
 
-  const path = auditLogPath(workspaceId);
-  await ensureDir(dirname(path));
-  await appendFile(path, JSON.stringify(entry) + "\n", "utf8");
+  const debugEvent: DebugLogEvent = {
+    id: entry.id,
+    userId: entry.actor.clientId ?? entry.actor.tokenHash ?? "unknown",
+    orgId: workspaceId || "unknown",
+    workspaceId: workspaceId || "unknown",
+    source: "audit",
+    stream: "event",
+    level: "info",
+    timestamp: entry.timestamp,
+    sequenceNo: entry.timestamp,
+    payload: { auditEntry: entry },
+  };
+  void Promise.resolve(debugLogSink?.enqueue([debugEvent])).catch(() => undefined);
 }
 
 export async function readLastAudit(workspaceRoot: string, workspaceId: string): Promise<AuditEntry | null> {

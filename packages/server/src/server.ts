@@ -23,7 +23,9 @@ import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./sc
 import { provisionWorkspaceInternalSystem } from "./internal-system.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
-import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
+import { recordAudit, readAuditEntries, readLastAudit, registerDebugLogSink, resolveVesloDataDir } from "./audit.js";
+import { createDebugLogPipeline, normalizeDebugLogEvents, type DebugLogPipeline } from "./debug-log-pipeline.js";
+import { createDebugLogUploader } from "./debug-log-uploader.js";
 import { ReloadEventStore } from "./events.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { opencodeConfigPath, vesloConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
@@ -330,7 +332,22 @@ export function startServer(config: ServerConfig) {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
-  const routes = createRoutes(config, approvals, tokens);
+  const debugLogPipeline = config.debugLogs.enabled
+    ? createDebugLogPipeline({
+        spoolDir: join(resolveVesloDataDir(), "debug-logs"),
+        spoolMaxBytes: config.debugLogs.spoolMaxBytes,
+        batchMaxEvents: config.debugLogs.batchMaxEvents,
+        batchMaxBytes: config.debugLogs.batchMaxBytes,
+        uploader: config.debugLogs.ingestUrl && config.debugLogs.ingestToken
+          ? createDebugLogUploader({
+              ingestUrl: config.debugLogs.ingestUrl,
+              ingestToken: config.debugLogs.ingestToken,
+            })
+          : null,
+      })
+    : null;
+  registerDebugLogSink(debugLogPipeline);
+  const routes = createRoutes(config, approvals, tokens, debugLogPipeline);
   const logger = createServerLogger(config);
 
   const serverOptions: {
@@ -1377,7 +1394,12 @@ export function serializeWorkspace(workspace: ServerConfig["workspaces"][number]
   };
 }
 
-function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: TokenService): Route[] {
+function createRoutes(
+  config: ServerConfig,
+  approvals: ApprovalService,
+  tokens: TokenService,
+  debugLogPipeline: DebugLogPipeline | null,
+): Route[] {
   const routes: Route[] = [];
   const fileSessions = new FileSessionStore();
   const sessionArchives = createSessionArchiveStore();
@@ -1438,6 +1460,25 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "GET", "/health", "none", async () => {
     return jsonResponse({ ok: true, version: SERVER_VERSION, uptimeMs: Date.now() - config.startedAt });
+  });
+
+  addRoute(routes, "POST", "/internal/debug-logs", "host", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    const rawEvents = body.events;
+    if (!Array.isArray(rawEvents)) {
+      throw new ApiError(400, "invalid_payload", "events must be an array");
+    }
+
+    let events: ReturnType<typeof normalizeDebugLogEvents>;
+    try {
+      events = normalizeDebugLogEvents(rawEvents);
+    } catch (error) {
+      throw new ApiError(400, "invalid_payload", error instanceof Error ? error.message : "Invalid debug log events");
+    }
+    if (debugLogPipeline) {
+      await debugLogPipeline.enqueue(events);
+    }
+    return jsonResponse({ ok: true, queued: events.length });
   });
 
   addRoute(routes, "GET", "/w/:id/health", "none", async () => {
