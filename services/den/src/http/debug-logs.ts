@@ -43,6 +43,22 @@ function parseBearerToken(headerValue: string): string | null {
   return match?.[1]?.trim() || null
 }
 
+function collectErrorDetails(error: unknown): string[] {
+  const details: string[] = []
+  let current = error
+  while (current && typeof current === "object" && "cause" in current) {
+    const cause = current.cause
+    if (!(cause instanceof Error)) {
+      break
+    }
+    if (cause.message && !details.includes(cause.message)) {
+      details.push(cause.message)
+    }
+    current = cause
+  }
+  return details
+}
+
 export function createDebugLogsRouter(input: {
   ingestToken: string
   storeBatch: (batch: DebugLogIngestBatch) => Promise<DebugLogStoreBatchResult>
@@ -78,7 +94,9 @@ export function createDebugLogsRouter(input: {
       res.json(result)
     } catch (error) {
       const message = error instanceof Error ? error.message : "debug_log_ingest_failed"
-      res.status(500).json({ error: "internal_error", message })
+      const details = collectErrorDetails(error)
+      console.error("[den] debug log ingest failed", error)
+      res.status(500).json(details.length > 0 ? { error: "internal_error", message, details } : { error: "internal_error", message })
     }
   })
 
@@ -107,7 +125,9 @@ export function createDebugLogsRouter(input: {
       res.json(result)
     } catch (error) {
       const message = error instanceof Error ? error.message : "debug_log_query_failed"
-      res.status(500).json({ error: "internal_error", message })
+      const details = collectErrorDetails(error)
+      console.error("[den] debug log query failed", error)
+      res.status(500).json(details.length > 0 ? { error: "internal_error", message, details } : { error: "internal_error", message })
     }
   })
 

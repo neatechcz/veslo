@@ -104,3 +104,43 @@ test("debug log inspect route requires bearer auth and returns recent rows", asy
     await once(server, "close")
   }
 })
+
+test("debug log ingest route includes nested error details for internal failures", async () => {
+  const app = express()
+  app.use(express.json())
+  app.use(
+    createDebugLogsRouter({
+      ingestToken: "ingest-token",
+      async storeBatch() {
+        throw new Error("outer failure", {
+          cause: new Error("inner failure"),
+        })
+      },
+    }),
+  )
+
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer ingest-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ batchId: "batch-1", events: [] }),
+    })
+
+    assert.equal(response.status, 500)
+    assert.deepEqual(await response.json(), {
+      error: "internal_error",
+      message: "outer failure",
+      details: ["inner failure"],
+    })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
