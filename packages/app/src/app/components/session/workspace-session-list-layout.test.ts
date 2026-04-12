@@ -80,29 +80,41 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
   );
 });
 
-test("by-project rows keep the branch toggle centered under the title without overlay chrome", () => {
-  assert.match(
-    source,
-    /sessionBranchToggle\(session\(\)\.id, hasChildren\(session\(\)\.id\)\)/,
-    "by-project rows should reuse the shared branch toggle renderer",
-  );
-
+test("by-project rows keep the title wrapper without a branch toggle button", () => {
   assert.match(
     source,
     /<div class="relative min-w-0 flex-1">/,
-    "by-project rows should keep the title/content wrapper around the under-title toggle and label",
+    "by-project rows should keep the title/content wrapper around the label",
   );
 
   assert.match(
     source,
-    /<div class="relative min-w-0 flex-1">[\s\S]*sessionBranchToggle\(session\(\)\.id, hasChildren\(session\(\)\.id\)\)[\s\S]*<div class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-11 truncate font-medium"/,
-    "by-project rows should keep the toggle in the shared under-title slot without moving it into the title line",
+    /<div class="relative min-w-0 flex-1">[\s\S]*<div class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-12 truncate"/,
+    "by-project rows should keep the title line structure after removing the dedicated toggle",
   );
 
-  assert.match(
+  assert.doesNotMatch(
+    source,
+    /sessionBranchToggle\(session\(\)\.id, hasChildren\(session\(\)\.id\)\)/,
+    "by-project rows should not render a shared branch toggle helper",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /<div class="relative min-w-0 flex-1">[\s\S]*<div class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-11 truncate font-medium"/,
+    "by-project row titles should no longer force a medium font weight",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /<div class="relative min-w-0 flex-1">[\s\S]*<div class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-11 truncate"/,
+    "by-project row titles should no longer use the muted gray-11 text tone",
+  );
+
+  assert.doesNotMatch(
     source,
     /class="pointer-events-none absolute left-1\/2 top-\[1\.375rem\] -translate-x-1\/2 -translate-y-1\/2"[\s\S]*class="pointer-events-auto inline-flex h-4 w-4 items-center justify-center rounded-\[4px\] text-gray-9 transition-colors hover:bg-gray-4\/70 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"/,
-    "by-project rows should keep the under-title position while shrinking the interactive area to a square button",
+    "by-project rows should not render the under-title square toggle button",
   );
 
   assert.doesNotMatch(

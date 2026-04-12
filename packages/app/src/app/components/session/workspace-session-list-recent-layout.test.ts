@@ -120,17 +120,35 @@ test("session hover action uses archive icon instead of three dots", () => {
   );
 });
 
-test("recent rows keep metadata tucked closer to the title line while keeping the toggle under the title", () => {
+test("recent rows keep metadata tucked closer to the title line without a branch toggle button", () => {
   assert.match(
     source,
-    /<div class="relative min-w-0 flex-1">[\s\S]*sessionBranchToggle\(session\(\)\.id, hasChildren\(session\(\)\.id\)\)[\s\S]*<div class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-11 truncate font-medium"[\s\S]*<div class="mt-px flex items-center gap-1 text-\[11px\] text-gray-10 min-w-0">/s,
-    "recent rows should keep the branch toggle in the under-title slot and leave the metadata row directly underneath",
+    /<div class="relative min-w-0 flex-1">[\s\S]*<div class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-12 truncate"[\s\S]*<div class="mt-px flex items-center gap-1 text-\[11px\] text-gray-10 min-w-0">/s,
+    "recent rows should keep the label and metadata stack tight even after removing the branch toggle button",
   );
 
-  assert.match(
+  assert.doesNotMatch(
+    source,
+    /sessionBranchToggle\(session\(\)\.id, hasChildren\(session\(\)\.id\)\)/,
+    "recent rows should not render a dedicated branch toggle helper",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /<div class="relative min-w-0 flex-1">[\s\S]*<div class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-11 truncate font-medium"[\s\S]*<div class="mt-px flex items-center gap-1 text-\[11px\] text-gray-10 min-w-0">/s,
+    "recent row titles should no longer force a medium font weight",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /<div class="relative min-w-0 flex-1">[\s\S]*<div class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-11 truncate"[\s\S]*<div class="mt-px flex items-center gap-1 text-\[11px\] text-gray-10 min-w-0">/s,
+    "recent row titles should no longer use the muted gray-11 text tone",
+  );
+
+  assert.doesNotMatch(
     source,
     /class="pointer-events-none absolute left-1\/2 top-\[1\.375rem\] -translate-x-1\/2 -translate-y-1\/2"[\s\S]*class="pointer-events-auto inline-flex h-4 w-4 items-center justify-center rounded-\[4px\] text-gray-9 transition-colors hover:bg-gray-4\/70 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"/,
-    "recent rows should keep the under-title position while shrinking the interactive area to a square button",
+    "recent rows should not keep the under-title square toggle button",
   );
 
   assert.match(

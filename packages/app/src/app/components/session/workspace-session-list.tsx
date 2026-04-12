@@ -1,8 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import {
   Archive,
-  ChevronDown,
-  ChevronRight,
   Folder,
   FolderPlus,
   HeartPulse,
@@ -587,38 +585,6 @@ export default function WorkspaceSessionList(props: Props) {
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
     handleSessionRowClick(row, hasChildren);
-  };
-
-  const isParentExpanded = (sessionId: string) => expandedParentSessionIds().has(sessionId.trim());
-
-  const sessionBranchToggleLabel = (sessionId: string) =>
-    isParentExpanded(sessionId) ? tr("sidebar.collapse_session_branch") : tr("sidebar.expand_session_branch");
-
-  const handleSessionExpandToggle = (event: MouseEvent, sessionId: string) => {
-    event.stopPropagation();
-    const normalizedId = sessionId.trim();
-    if (!normalizedId) return;
-    toggleExpandedParentSession(normalizedId);
-  };
-
-  const sessionBranchToggle = (sessionId: string, hasChildren: boolean) => {
-    if (!hasChildren) return null;
-
-    return (
-      <div class="pointer-events-none absolute left-1/2 top-[1.375rem] -translate-x-1/2 -translate-y-1/2">
-        <button
-          type="button"
-          class="pointer-events-auto inline-flex h-4 w-4 items-center justify-center rounded-[4px] text-gray-9 transition-colors hover:bg-gray-4/70 hover:text-gray-11 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-7"
-          aria-label={sessionBranchToggleLabel(sessionId)}
-          title={sessionBranchToggleLabel(sessionId)}
-          onClick={(event) => handleSessionExpandToggle(event, sessionId)}
-        >
-          <Show when={isParentExpanded(sessionId)} fallback={<ChevronRight size={12} />}>
-            <ChevronDown size={12} />
-          </Show>
-        </button>
-      </div>
-    );
   };
 
   const handleSessionArchiveAction = async (event: MouseEvent, sessionId: string) => {
@@ -1383,13 +1349,12 @@ export default function WorkspaceSessionList(props: Props) {
                             onKeyDown={(event) => handleSessionRowKeyDown(event, row, hasChildren)}
                           >
                             <div class="relative min-w-0 flex-1">
-                              {sessionBranchToggle(session().id, hasChildren(session().id))}
                               <div class="flex items-center gap-1.5 min-w-0">
                                 <Show when={isSessionActive()}>
                                   <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
                                 </Show>
                                 <span
-                                  class="text-[13px] text-gray-11 truncate font-medium"
+                                  class="text-[13px] text-gray-12 truncate"
                                   title={sessionLabelTitle(row)}
                                 >
                                   <Show when={label().decoratedName} fallback={label().description ?? ""}>
@@ -1704,13 +1669,12 @@ export default function WorkspaceSessionList(props: Props) {
                                   onKeyDown={(event) => handleSessionRowKeyDown(event, row, hasChildren)}
                                 >
                                   <div class="relative min-w-0 flex-1">
-                                    {sessionBranchToggle(session().id, hasChildren(session().id))}
                                     <div class="flex items-center gap-1.5 min-w-0">
                                       <Show when={isSessionActive()}>
                                         <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
                                       </Show>
                                       <span
-                                        class="text-[13px] text-gray-11 truncate font-medium"
+                                        class="text-[13px] text-gray-12 truncate"
                                         title={sessionLabelTitle(row)}
                                       >
                                         <Show when={label().decoratedName} fallback={label().description ?? ""}>
