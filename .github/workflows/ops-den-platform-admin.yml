@@ -39,6 +39,7 @@ jobs:
         run: pnpm install --filter @neatech/den... --frozen-lockfile
 
       - name: Grant platform admin role
+        working-directory: services/den
         env:
           DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
           TARGET_EMAIL: ${{ inputs.email }}
