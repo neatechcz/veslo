@@ -332,33 +332,6 @@ async function ensureVarcharColumnMinimumLength(
   )
 }
 
-async function ensureBigIntColumn(table: string, columnName: string, nullable: boolean) {
-  const metadataResult = await db.execute(sql`
-    SELECT DATA_TYPE
-    FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = ${table}
-      AND COLUMN_NAME = ${columnName}
-    LIMIT 1
-  `)
-
-  const metadataRow = extractRows(metadataResult)[0]
-  const dataType = typeof readRowValueCaseInsensitive(metadataRow, "DATA_TYPE") === "string"
-    ? String(readRowValueCaseInsensitive(metadataRow, "DATA_TYPE")).toLowerCase()
-    : null
-
-  if (dataType === "bigint" || !dataType) {
-    return
-  }
-
-  const nullableClause = nullable ? "NULL" : "NOT NULL"
-  await db.execute(
-    sql.raw(
-      `ALTER TABLE ${quoteIdentifier(table)} MODIFY COLUMN ${quoteIdentifier(columnName)} bigint ${nullableClause}`,
-    ),
-  )
-}
-
 async function ensureTables() {
   try {
     // Auth tables (Better Auth requires these with snake_case columns)
@@ -597,7 +570,7 @@ async function ensureTables() {
     await ensureIndex("debug_log_event", "debug_log_event_workspace_id", ["workspace_id"])
     await ensureIndex("debug_log_event", "debug_log_event_expires_at", ["expires_at"])
     await ensureColumn("debug_log_event", "auth_tag", "varchar(64) NOT NULL")
-    await ensureBigIntColumn("debug_log_event", "sequence_no", false)
+    await db.execute(sql.raw("ALTER TABLE `debug_log_event` MODIFY COLUMN `sequence_no` bigint NOT NULL"))
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`desktop_auth_handoff\` (
