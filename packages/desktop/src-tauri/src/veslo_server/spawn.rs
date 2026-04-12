@@ -10,6 +10,13 @@ use tauri_plugin_shell::ShellExt;
 const DEFAULT_VESLO_PORT: u16 = 8787;
 const VESLO_SERVER_DEV_WATCH_ENV: &str = "VESLO_SERVER_DEV_WATCH";
 const VESLO_SERVER_DEV_DIR_ENV: &str = "VESLO_SERVER_DEV_DIR";
+const DEBUG_LOG_ENV_KEYS: [&str; 5] = [
+    "VESLO_LOG_INGEST_URL",
+    "VESLO_LOG_INGEST_TOKEN",
+    "VESLO_LOG_BATCH_MAX_EVENTS",
+    "VESLO_LOG_BATCH_MAX_BYTES",
+    "VESLO_LOG_SPOOL_MAX_BYTES",
+];
 
 fn parse_dev_watch_flag(value: Option<&str>) -> bool {
     matches!(
@@ -32,9 +39,26 @@ fn resolve_dev_watch_dir() -> PathBuf {
 }
 
 fn build_veslo_server_dev_watch_args(mut server_args: Vec<String>) -> Vec<String> {
-    let mut args = vec!["--watch".to_string(), "src/cli.ts".to_string(), "--".to_string()];
+    let mut args = vec![
+        "--watch".to_string(),
+        "src/cli.ts".to_string(),
+        "--".to_string(),
+    ];
     args.append(&mut server_args);
     args
+}
+
+fn debug_log_env_overrides() -> Vec<(&'static str, String)> {
+    DEBUG_LOG_ENV_KEYS
+        .iter()
+        .filter_map(|key| {
+            std::env::var(key)
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .map(|value| (*key, value))
+        })
+        .collect()
 }
 
 pub fn resolve_veslo_port() -> Result<u16, String> {
@@ -157,24 +181,51 @@ pub fn spawn_veslo_server(
         }
     }
 
+    for (key, value) in debug_log_env_overrides() {
+        command = command.env(key, value);
+    }
+
     for (key, value) in crate::bun_env::bun_env_overrides() {
         command = command.env(key, value);
     }
 
-    command
-        .spawn()
-        .map_err(|e| {
-            if use_dev_watch {
-                format!("Failed to start Veslo server in dev watch mode: {e}")
-            } else {
-                format!("Failed to start Veslo server: {e}")
-            }
-        })
+    command.spawn().map_err(|e| {
+        if use_dev_watch {
+            format!("Failed to start Veslo server in dev watch mode: {e}")
+        } else {
+            format!("Failed to start Veslo server: {e}")
+        }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvVarGuard {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
 
     #[test]
     fn parses_dev_watch_flag_truthy_values() {
@@ -198,5 +249,24 @@ mod tests {
             "0.0.0.0".to_string(),
         ];
         assert_eq!(build_veslo_server_dev_watch_args(args), expected);
+    }
+
+    #[test]
+    fn includes_debug_log_shipping_env_overrides() {
+        let _lock = ENV_LOCK.lock().expect("lock env");
+        let _url = EnvVarGuard::set(
+            "VESLO_LOG_INGEST_URL",
+            "https://den.example/v1/internal/debug-logs",
+        );
+        let _token = EnvVarGuard::set("VESLO_LOG_INGEST_TOKEN", "ingest-token");
+
+        let overrides = debug_log_env_overrides();
+
+        assert!(overrides.iter().any(|(key, value)| {
+            *key == "VESLO_LOG_INGEST_URL" && value == "https://den.example/v1/internal/debug-logs"
+        }));
+        assert!(overrides
+            .iter()
+            .any(|(key, value)| *key == "VESLO_LOG_INGEST_TOKEN" && value == "ingest-token"));
     }
 }

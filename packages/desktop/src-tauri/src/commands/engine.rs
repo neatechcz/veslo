@@ -9,13 +9,13 @@ use crate::engine::manager::EngineManager;
 use crate::engine::spawn::{find_free_port, spawn_engine};
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::opencode_router::spawn::resolve_opencode_router_health_port;
-use crate::veslo_server::{
-    manager::VesloServerManager, resolve_connect_url, start_veslo_server,
-};
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{self, OrchestratorSpawnOptions};
 use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
 use crate::utils::truncate_output;
+use crate::veslo_server::{
+    forward_debug_log_line, manager::VesloServerManager, resolve_connect_url, start_veslo_server,
+};
 use serde_json::json;
 use std::time::Duration;
 use tauri_plugin_shell::process::CommandEvent;
@@ -140,11 +140,7 @@ pub fn engine_info(
                 orchestrator_state.last_stderr.clone(),
             )
         } else {
-            (
-                orchestrator::resolve_orchestrator_data_dir(),
-                None,
-                None,
-            )
+            (orchestrator::resolve_orchestrator_data_dir(), None, None)
         };
 
     let status = orchestrator::resolve_orchestrator_status(&data_dir, orchestrator_stderr.clone());
@@ -506,6 +502,7 @@ pub fn engine_start(
         }
 
         let orchestrator_state_handle = orchestrator_manager.inner.clone();
+        let veslo_state_handle = veslo_manager.inner.clone();
         tauri::async_runtime::spawn(async move {
             while let Some(event) = rx.recv().await {
                 match event {
@@ -516,6 +513,7 @@ pub fn engine_start(
                                 + &line;
                             state.last_stdout = Some(truncate_output(&next, 8000));
                         }
+                        forward_debug_log_line(&veslo_state_handle, "orchestrator", "stdout", line);
                     }
                     CommandEvent::Stderr(line_bytes) => {
                         let line = String::from_utf8_lossy(&line_bytes).to_string();
@@ -524,10 +522,19 @@ pub fn engine_start(
                                 + &line;
                             state.last_stderr = Some(truncate_output(&next, 8000));
                         }
+                        forward_debug_log_line(&veslo_state_handle, "orchestrator", "stderr", line);
                     }
-                    CommandEvent::Terminated(_) => {
+                    CommandEvent::Terminated(payload) => {
                         if let Ok(mut state) = orchestrator_state_handle.try_lock() {
                             state.child_exited = true;
+                        }
+                        if let Some(code) = payload.code {
+                            forward_debug_log_line(
+                                &veslo_state_handle,
+                                "orchestrator",
+                                "stderr",
+                                format!("veslo-orchestrator exited (code {code})."),
+                            );
                         }
                     }
                     CommandEvent::Error(message) => {
@@ -537,6 +544,12 @@ pub fn engine_start(
                                 + &message;
                             state.last_stderr = Some(truncate_output(&next, 8000));
                         }
+                        forward_debug_log_line(
+                            &veslo_state_handle,
+                            "orchestrator",
+                            "stderr",
+                            message,
+                        );
                     }
                     _ => {}
                 }
@@ -596,6 +609,12 @@ pub fn engine_start(
             }
         };
 
+        let orchestrator_buffered_logs = orchestrator_manager
+            .inner
+            .lock()
+            .ok()
+            .map(|state| (state.last_stdout.clone(), state.last_stderr.clone()));
+
         if let Err(error) = start_veslo_server(
             &app,
             &veslo_manager,
@@ -606,14 +625,24 @@ pub fn engine_start(
             opencode_router_health_port,
         ) {
             if let Ok(mut state) = manager.inner.lock() {
-                state.last_stderr =
-                    Some(truncate_output(&format!("Veslo server: {error}"), 8000));
+                state.last_stderr = Some(truncate_output(&format!("Veslo server: {error}"), 8000));
+            }
+        } else {
+            let veslo_state_handle = veslo_manager.inner.clone();
+            if let Some((stdout, stderr)) = orchestrator_buffered_logs {
+                if let Some(stdout) = stdout {
+                    forward_debug_log_line(&veslo_state_handle, "orchestrator", "stdout", stdout);
+                }
+                if let Some(stderr) = stderr {
+                    forward_debug_log_line(&veslo_state_handle, "orchestrator", "stderr", stderr);
+                }
             }
         }
 
         if let Err(error) = opencodeRouter_start(
             app.clone(),
             opencode_router_manager,
+            veslo_manager,
             project_dir.clone(),
             Some(opencode_connect_url),
             opencode_username.clone(),
@@ -659,6 +688,7 @@ pub fn engine_start(
     let output_state = std::sync::Arc::new(std::sync::Mutex::new(OutputState::default()));
     let output_state_handle = output_state.clone();
     let state_handle = manager.inner.clone();
+    let veslo_state_handle = veslo_manager.inner.clone();
 
     tauri::async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
@@ -673,6 +703,7 @@ pub fn engine_start(
                             state.last_stdout.as_deref().unwrap_or_default().to_string() + &line;
                         state.last_stdout = Some(truncate_output(&next, 8000));
                     }
+                    forward_debug_log_line(&veslo_state_handle, "engine", "stdout", line);
                 }
                 CommandEvent::Stderr(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
@@ -684,6 +715,7 @@ pub fn engine_start(
                             state.last_stderr.as_deref().unwrap_or_default().to_string() + &line;
                         state.last_stderr = Some(truncate_output(&next, 8000));
                     }
+                    forward_debug_log_line(&veslo_state_handle, "engine", "stderr", line);
                 }
                 CommandEvent::Terminated(payload) => {
                     if let Ok(mut output) = output_state_handle.lock() {
@@ -692,6 +724,14 @@ pub fn engine_start(
                     }
                     if let Ok(mut state) = state_handle.try_lock() {
                         state.child_exited = true;
+                    }
+                    if let Some(code) = payload.code {
+                        forward_debug_log_line(
+                            &veslo_state_handle,
+                            "engine",
+                            "stderr",
+                            format!("OpenCode exited (code {code})."),
+                        );
                     }
                 }
                 CommandEvent::Error(message) => {
@@ -703,6 +743,7 @@ pub fn engine_start(
                     if let Ok(mut state) = state_handle.try_lock() {
                         state.child_exited = true;
                     }
+                    forward_debug_log_line(&veslo_state_handle, "engine", "stderr", message);
                 }
                 _ => {}
             }
@@ -777,6 +818,11 @@ pub fn engine_start(
         }
     };
 
+    let buffered_engine_logs = output_state
+        .lock()
+        .ok()
+        .map(|output| (output.stdout.clone(), output.stderr.clone()));
+
     if let Err(error) = start_veslo_server(
         &app,
         &veslo_manager,
@@ -787,11 +833,22 @@ pub fn engine_start(
         opencode_router_health_port,
     ) {
         state.last_stderr = Some(truncate_output(&format!("Veslo server: {error}"), 8000));
+    } else {
+        let veslo_state_handle = veslo_manager.inner.clone();
+        if let Some((stdout, stderr)) = buffered_engine_logs {
+            if !stdout.is_empty() {
+                forward_debug_log_line(&veslo_state_handle, "engine", "stdout", stdout);
+            }
+            if !stderr.is_empty() {
+                forward_debug_log_line(&veslo_state_handle, "engine", "stderr", stderr);
+            }
+        }
     }
 
     if let Err(error) = opencodeRouter_start(
         app.clone(),
         opencode_router_manager,
+        veslo_manager,
         project_dir.clone(),
         Some(opencode_connect_url),
         opencode_username,

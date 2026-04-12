@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use gethostname::gethostname;
 use local_ip_address::local_ip;
@@ -12,10 +13,12 @@ use uuid::Uuid;
 use crate::types::VesloServerInfo;
 use crate::utils::truncate_output;
 
+pub mod log_sink;
 pub mod manager;
 pub mod spawn;
 
-use manager::VesloServerManager;
+use log_sink::{dispatch_debug_log_line, resolve_debug_log_target};
+use manager::{VesloServerManager, VesloServerState};
 use spawn::{resolve_veslo_port, spawn_veslo_server};
 
 const PERSISTED_STATE_FILE_NAME: &str = "veslo-server-state.json";
@@ -80,11 +83,18 @@ fn server_health_ok(base_url: &str) -> bool {
         .timeout(std::time::Duration::from_millis(1200))
         .build();
 
-    agent.get(&url).call().map(|response| response.status() == 200).unwrap_or(false)
+    agent
+        .get(&url)
+        .call()
+        .map(|response| response.status() == 200)
+        .unwrap_or(false)
 }
 
 fn persisted_state_to_info(state: PersistedVesloServerState) -> Option<VesloServerInfo> {
-    let base_url = state.base_url.clone().filter(|value| !value.trim().is_empty())?;
+    let base_url = state
+        .base_url
+        .clone()
+        .filter(|value| !value.trim().is_empty())?;
     if !server_health_ok(&base_url) {
         return None;
     }
@@ -123,15 +133,21 @@ pub fn read_persisted_veslo_server_info(dir: &Path) -> Result<Option<VesloServer
     Ok(info)
 }
 
-pub fn recover_persisted_veslo_server_info(app: &AppHandle) -> Result<Option<VesloServerInfo>, String> {
+pub fn recover_persisted_veslo_server_info(
+    app: &AppHandle,
+) -> Result<Option<VesloServerInfo>, String> {
     let dir = persisted_state_dir(app)?;
     read_persisted_veslo_server_info(&dir)
 }
 
 fn persist_veslo_server_info(app: &AppHandle, info: &VesloServerInfo) -> Result<(), String> {
     let dir = persisted_state_dir(app)?;
-    fs::create_dir_all(&dir)
-        .map_err(|e| format!("Failed to create persisted state dir {}: {e}", dir.display()))?;
+    fs::create_dir_all(&dir).map_err(|e| {
+        format!(
+            "Failed to create persisted state dir {}: {e}",
+            dir.display()
+        )
+    })?;
     let path = persisted_state_path(&dir);
     let state = PersistedVesloServerState {
         host: info.host.clone(),
@@ -150,6 +166,20 @@ fn persist_veslo_server_info(app: &AppHandle, info: &VesloServerInfo) -> Result<
             .map_err(|e| format!("Failed to serialize {}: {e}", path.display()))?,
     )
     .map_err(|e| format!("Failed to write {}: {e}", path.display()))
+}
+
+pub fn forward_debug_log_line(
+    state_handle: &Arc<Mutex<VesloServerState>>,
+    source: &'static str,
+    stream: &'static str,
+    line: String,
+) {
+    let target = state_handle.try_lock().ok().and_then(|state| {
+        resolve_debug_log_target(state.base_url.as_deref(), state.host_token.as_deref())
+    });
+    if let Some(target) = target {
+        dispatch_debug_log_line(target, source, stream, line);
+    }
 }
 
 pub fn start_veslo_server(
@@ -274,7 +304,8 @@ mod tests {
 
     #[test]
     fn read_persisted_server_info_returns_none_without_state() {
-        let dir = std::env::temp_dir().join(format!("veslo-server-state-missing-{}", Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("veslo-server-state-missing-{}", Uuid::new_v4()));
         fs::create_dir_all(&dir).expect("create test dir");
 
         let recovered = read_persisted_veslo_server_info(&dir).expect("read persisted state");
@@ -331,7 +362,10 @@ mod tests {
         let recovered = read_persisted_veslo_server_info(&dir)
             .expect("read persisted state")
             .expect("recover live server info");
-        assert_eq!(recovered.base_url.as_deref(), Some(expected_base_url.as_str()));
+        assert_eq!(
+            recovered.base_url.as_deref(),
+            Some(expected_base_url.as_str())
+        );
         assert_eq!(recovered.client_token.as_deref(), Some("client-token"));
         assert_eq!(recovered.host_token.as_deref(), Some("host-token"));
         assert!(recovered.running);

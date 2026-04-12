@@ -11,6 +11,7 @@ use crate::opencode_router::spawn::{
 };
 use crate::types::OpenCodeRouterInfo;
 use crate::utils::truncate_output;
+use crate::veslo_server::{forward_debug_log_line, manager::VesloServerManager};
 
 /// Check if opencodeRouter health endpoint is responding on given port
 fn check_health_endpoint(port: u16) -> Option<serde_json::Value> {
@@ -192,6 +193,7 @@ pub async fn opencodeRouter_info(
 pub fn opencodeRouter_start(
     app: AppHandle,
     manager: State<OpenCodeRouterManager>,
+    veslo_manager: State<VesloServerManager>,
     workspace_path: String,
     opencode_url: Option<String>,
     opencode_username: Option<String>,
@@ -247,6 +249,8 @@ pub fn opencodeRouter_start(
             &mut startup_stderr,
         ) {
             Ok(()) => {
+                let startup_stdout_snapshot = startup_stdout.clone();
+                let startup_stderr_snapshot = startup_stderr.clone();
                 state.child = Some(child);
                 state.child_exited = false;
                 state.workspace_path = Some(workspace_path.clone());
@@ -256,6 +260,24 @@ pub fn opencodeRouter_start(
                 state.last_stderr = startup_stderr;
 
                 let state_handle = manager.inner.clone();
+                let veslo_state_handle = veslo_manager.inner.clone();
+
+                if let Some(stdout) = startup_stdout_snapshot {
+                    forward_debug_log_line(
+                        &veslo_state_handle,
+                        "opencode-router",
+                        "stdout",
+                        stdout,
+                    );
+                }
+                if let Some(stderr) = startup_stderr_snapshot {
+                    forward_debug_log_line(
+                        &veslo_state_handle,
+                        "opencode-router",
+                        "stderr",
+                        stderr,
+                    );
+                }
 
                 tauri::async_runtime::spawn(async move {
                     while let Some(event) = rx.recv().await {
@@ -271,6 +293,12 @@ pub fn opencodeRouter_start(
                                         + &line;
                                     state.last_stdout = Some(truncate_output(&next, 8000));
                                 }
+                                forward_debug_log_line(
+                                    &veslo_state_handle,
+                                    "opencode-router",
+                                    "stdout",
+                                    line,
+                                );
                             }
                             CommandEvent::Stderr(line_bytes) => {
                                 let line = String::from_utf8_lossy(&line_bytes).to_string();
@@ -283,6 +311,12 @@ pub fn opencodeRouter_start(
                                         + &line;
                                     state.last_stderr = Some(truncate_output(&next, 8000));
                                 }
+                                forward_debug_log_line(
+                                    &veslo_state_handle,
+                                    "opencode-router",
+                                    "stderr",
+                                    line,
+                                );
                             }
                             CommandEvent::Terminated(payload) => {
                                 if let Ok(mut state) = state_handle.try_lock() {
@@ -290,6 +324,12 @@ pub fn opencodeRouter_start(
                                     if let Some(code) = payload.code {
                                         let next = format!("OpenCodeRouter exited (code {code}).");
                                         state.last_stderr = Some(truncate_output(&next, 8000));
+                                        forward_debug_log_line(
+                                            &veslo_state_handle,
+                                            "opencode-router",
+                                            "stderr",
+                                            next,
+                                        );
                                     }
                                 }
                             }
@@ -304,6 +344,12 @@ pub fn opencodeRouter_start(
                                         + &message;
                                     state.last_stderr = Some(truncate_output(&next, 8000));
                                 }
+                                forward_debug_log_line(
+                                    &veslo_state_handle,
+                                    "opencode-router",
+                                    "stderr",
+                                    message,
+                                );
                             }
                             _ => {}
                         }
