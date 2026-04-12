@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm"
 import {
+  bigint,
   boolean,
   int,
   index,
@@ -329,7 +330,7 @@ export const DebugLogEventTable = mysqlTable(
     source: varchar("source", { length: 64 }).notNull(),
     stream: varchar("stream", { length: 32 }).notNull(),
     level: varchar("level", { length: 16 }),
-    sequence_no: int("sequence_no").notNull(),
+    sequence_no: bigint("sequence_no", { mode: "number" }).notNull(),
     content_sha256: varchar("content_sha256", { length: 128 }).notNull(),
     payload_bytes: int("payload_bytes").notNull(),
     encryption_key_version: varchar("encryption_key_version", { length: 64 }).notNull(),
