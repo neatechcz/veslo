@@ -454,12 +454,6 @@ export default function SkillsView(props: SkillsViewProps) {
     }
   };
 
-  const newSkillDisabled = createMemo(
-    () =>
-      props.busy ||
-      (!props.canInstallSkillCreator && !props.canUseDesktopTools)
-  );
-
   const canCreateInChat = createMemo(
     () => !props.busy && (props.canInstallSkillCreator || props.canUseDesktopTools)
   );
@@ -538,19 +532,6 @@ export default function SkillsView(props: SkillsViewProps) {
             class="font-reading type-ui-sm bg-dls-hover border border-dls-border rounded-lg py-1.5 pl-9 pr-4 w-56 focus:w-72 focus:outline-none transition-all"
           />
         </div>
-        <button
-          type="button"
-          onClick={handleNewSkill}
-          disabled={newSkillDisabled()}
-          class={`font-product type-ui-xs flex items-center gap-1.5 px-3 py-1.5 font-medium rounded-lg transition-colors ${
-            newSkillDisabled()
-              ? "bg-dls-active text-dls-secondary"
-              : "bg-dls-text text-dls-surface hover:opacity-90"
-          }`}
-        >
-          <Plus size={14} />
-          {translate("skills.new_skill")}
-        </button>
         <button
           type="button"
           onClick={openInstallFromLink}
@@ -712,9 +693,11 @@ export default function SkillsView(props: SkillsViewProps) {
         <Show
           when={filteredHubSkills().length}
           fallback={
-            <div class="rounded-xl border border-dls-border bg-dls-surface px-5 py-6 text-sm text-dls-secondary">
-              {translate("skills.org_catalog_placeholder")}
-            </div>
+            <Show when={!props.hubSkillsStatus}>
+              <div class="rounded-xl border border-dls-border bg-dls-surface px-5 py-6 text-sm text-dls-secondary">
+                {translate("skills.org_catalog_placeholder")}
+              </div>
+            </Show>
           }
         >
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">

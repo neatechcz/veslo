@@ -135,6 +135,22 @@ test("GET /hub/skills returns items from den org catalog", async () => {
   ]);
 });
 
+test("GET /hub/skills returns empty org catalog when den base URL is not configured", async () => {
+  const server = await startFixture();
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/hub/skills`, {
+    headers: {
+      Authorization: "Bearer client-token",
+      "x-veslo-den-token": "den-token",
+      "x-veslo-den-org-id": "org_1",
+    },
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as { items: unknown[] };
+  expect(payload).toEqual({ items: [] });
+});
+
 test("GET /capabilities does not expose hub repo metadata", async () => {
   const server = await startFixture({ denApiBase: "https://den.example" });
 

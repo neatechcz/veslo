@@ -79,8 +79,19 @@ async function parseSkillEntry(
   entryName: string,
   scope: "project" | "global",
 ): Promise<SkillItem | null> {
-  const content = await readFile(skillPath, "utf8");
-  const { data, body } = parseFrontmatter(content);
+  let content: string;
+  try {
+    content = await readFile(skillPath, "utf8");
+  } catch {
+    return null;
+  }
+  let parsed: { data: Record<string, unknown>; body: string };
+  try {
+    parsed = parseFrontmatter(content);
+  } catch {
+    return null;
+  }
+  const { data, body } = parsed;
   const name = typeof data.name === "string" ? data.name : entryName;
   const description = typeof data.description === "string" ? data.description : "";
   const disableModelInvocation =
@@ -126,7 +137,12 @@ async function parseSkillEntry(
 
 async function listSkillsInDir(dir: string, scope: "project" | "global"): Promise<SkillItem[]> {
   if (!(await exists(dir))) return [];
-  const entries = await readdir(dir, { withFileTypes: true });
+  let entries: Dirent[];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
   const items: SkillItem[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;

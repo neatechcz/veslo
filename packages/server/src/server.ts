@@ -3470,7 +3470,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
     const denApiBase = config.denApiBase?.trim() || "";
     if (!denApiBase) {
-      throw new ApiError(503, "den_catalog_unavailable", "Den catalog base URL is not configured");
+      return jsonResponse({ items: [] });
     }
 
     const items = await fetchOrgSkillsCatalog({
