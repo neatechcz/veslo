@@ -35,7 +35,7 @@
   --veslo-type-ui-xs: 0.6875rem;
   --veslo-type-ui-sm: 0.8125rem;
   --veslo-type-ui-md: 0.875rem;
-  --veslo-type-reading-md: 0.9375rem;
+  --veslo-type-reading-md: 0.8125rem;
   --veslo-type-reading-lg: 1.0625rem;
   --veslo-type-title-sm: 1.25rem;
   --veslo-type-title-md: 1.5rem;
@@ -67,7 +67,7 @@
 
 @utility type-reading-md {
   font-size: var(--veslo-type-reading-md);
-  line-height: 1.6;
+  line-height: 1.45;
 }
 
 @utility type-reading-lg {

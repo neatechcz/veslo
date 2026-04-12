@@ -22,6 +22,10 @@ test("composer input and rendered parts use reading typography", () => {
   assert.match(partView, /font-reading/);
 });
 
+test("rendered chat markdown keeps the tighter reading line-height", () => {
+  assert.match(partView, /\[&_p\]:leading-\[1\.45\]/);
+});
+
 test("session page headings use product title styles", () => {
   assert.match(sessionPage, /font-product/);
   assert.match(sessionPage, /type-title-sm|type-title-md/);

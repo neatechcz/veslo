@@ -610,7 +610,7 @@ export default function PartView(props: Props) {
                 [&_h1]:font-product [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-4
                 [&_h2]:font-product [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-3
                 [&_h3]:font-product [&_h3]:text-lg [&_h3]:font-bold [&_h3]:my-2
-                [&_p]:my-2 [&_p]:leading-[1.5]
+                [&_p]:my-2 [&_p]:leading-[1.45]
                 [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-2
                 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-2
                 [&_li]:my-1

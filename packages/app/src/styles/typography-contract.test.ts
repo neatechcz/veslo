@@ -47,6 +47,11 @@ test("typography contract defines semantic font and type utilities", () => {
   assert.match(typography, /--veslo-type-reading-md:/);
 });
 
+test("reading body copy uses compact 13px metrics", () => {
+  assert.match(typography, /--veslo-type-reading-md:\s*0\.8125rem;/);
+  assert.match(typography, /@utility type-reading-md\s*\{[\s\S]*?line-height:\s*1\.45;/);
+});
+
 test("tailwind maps sans and mono to the Veslo typography variables", () => {
   assert.match(tailwind, /fontFamily:/);
   assert.match(tailwind, /sans:\s*\["var\(--veslo-font-product\)"/);
