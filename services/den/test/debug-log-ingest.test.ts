@@ -98,7 +98,7 @@ test("debug log inspect route requires bearer auth and returns recent rows", asy
         },
       ],
     })
-    assert.deepEqual(calls, [{ limit: 5, source: "audit", workspaceId: "ws_1" }])
+    assert.deepEqual(calls, [{ limit: 5, source: "audit", workspaceId: "ws_1", userId: null }])
   } finally {
     server.close()
     await once(server, "close")
@@ -139,6 +139,75 @@ test("debug log ingest route includes nested error details for internal failures
       message: "outer failure",
       details: ["inner failure"],
     })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("debug log ingest route accepts authenticated user bearer tokens and overwrites user ids", async () => {
+  const storedBatches: Array<{ batchId: string; userIds: string[] }> = []
+  const app = express()
+  app.use(express.json())
+  app.use(
+    createDebugLogsRouter({
+      ingestToken: "ingest-token",
+      async requireSession(req, res) {
+        if (req.header("authorization") === "Bearer user-token") {
+          return {
+            user: {
+              id: "usr_real",
+              email: null,
+              emailVerified: true,
+              name: "Real User",
+            },
+          }
+        }
+        res.status(401).json({ error: "unauthorized" })
+        return null
+      },
+      async storeBatch(batch) {
+        storedBatches.push({
+          batchId: batch.batchId,
+          userIds: batch.events.map((event) => event.userId),
+        })
+        return { ok: true, acceptedBatchIds: [batch.batchId] }
+      },
+    }),
+  )
+
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer user-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        batchId: "batch-user",
+        events: [{
+          id: "evt-1",
+          userId: "spoofed",
+          orgId: "org_1",
+          workspaceId: "ws_1",
+          source: "audit",
+          stream: "event",
+          timestamp: Date.now(),
+          sequenceNo: 1,
+          payload: { text: "hello" },
+        }],
+      }),
+    })
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(storedBatches, [{
+      batchId: "batch-user",
+      userIds: ["usr_real"],
+    }])
   } finally {
     server.close()
     await once(server, "close")

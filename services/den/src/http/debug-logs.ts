@@ -1,6 +1,12 @@
 import express from "express"
 import { z } from "zod"
 
+type DebugLogSession = {
+  user: {
+    id: string
+  }
+}
+
 const debugLogEventSchema = z.object({
   id: z.string().min(1),
   userId: z.string().min(1),
@@ -32,6 +38,7 @@ export type DebugLogRecentQuery = {
   limit: number
   source: string | null
   workspaceId: string | null
+  userId: string | null
 }
 export type DebugLogRecentResult = {
   ok: true
@@ -63,21 +70,34 @@ export function createDebugLogsRouter(input: {
   ingestToken: string
   storeBatch: (batch: DebugLogIngestBatch) => Promise<DebugLogStoreBatchResult>
   readRecent?: (query: DebugLogRecentQuery) => Promise<DebugLogRecentResult>
+  requireSession?: (req: express.Request, res: express.Response) => Promise<DebugLogSession | null>
 }) {
   const router = express.Router()
 
-  const requireIngestToken = (req: express.Request, res: express.Response) => {
+  const requireAuthorization = async (req: express.Request, res: express.Response) => {
     const providedToken = parseBearerToken(req.header("authorization") ?? "")
-    if (!providedToken || providedToken !== input.ingestToken) {
-      res.status(401).json({ error: "unauthorized" })
-      return false
+    if (providedToken && providedToken === input.ingestToken) {
+      return { kind: "internal" as const }
     }
-    return true
+    if (input.requireSession) {
+      const session = await input.requireSession(req, res)
+      if (session?.user?.id) {
+        return { kind: "user" as const, userId: session.user.id }
+      }
+      if (res.headersSent) {
+        return null
+      }
+    }
+    if (!res.headersSent) {
+      res.status(401).json({ error: "unauthorized" })
+    }
+    return null
   }
 
   router.post("/", async (req, res) => {
     try {
-      if (!requireIngestToken(req, res)) {
+      const auth = await requireAuthorization(req, res)
+      if (!auth) {
         return
       }
 
@@ -90,7 +110,17 @@ export function createDebugLogsRouter(input: {
         return
       }
 
-      const result = await input.storeBatch(parsed.data)
+      const batch = auth.kind === "user"
+        ? {
+            ...parsed.data,
+            events: parsed.data.events.map((event) => ({
+              ...event,
+              userId: auth.userId,
+            })),
+          }
+        : parsed.data
+
+      const result = await input.storeBatch(batch)
       res.json(result)
     } catch (error) {
       const message = error instanceof Error ? error.message : "debug_log_ingest_failed"
@@ -102,7 +132,8 @@ export function createDebugLogsRouter(input: {
 
   router.get("/recent", async (req, res) => {
     try {
-      if (!requireIngestToken(req, res)) {
+      const auth = await requireAuthorization(req, res)
+      if (!auth) {
         return
       }
 
@@ -121,6 +152,7 @@ export function createDebugLogsRouter(input: {
         limit,
         source: typeof rawSource === "string" && rawSource.trim() ? rawSource.trim() : null,
         workspaceId: typeof rawWorkspaceId === "string" && rawWorkspaceId.trim() ? rawWorkspaceId.trim() : null,
+        userId: auth.kind === "user" ? auth.userId : null,
       })
       res.json(result)
     } catch (error) {

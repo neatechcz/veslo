@@ -73,6 +73,7 @@ app.use("/v1/orgs", orgsRouter)
 app.use("/v1/workers", workersRouter)
 app.use("/v1/internal/debug-logs", createDebugLogsRouter({
   ingestToken: env.debugLogs.ingestToken ?? "",
+  requireSession,
   storeBatch: storeDebugLogBatch,
   readRecent: readRecentDebugLogs,
 }))
@@ -173,8 +174,11 @@ async function storeDebugLogBatch(batch: DebugLogIngestBatch): Promise<DebugLogS
   return { ok: true, acceptedBatchIds: [batch.batchId] }
 }
 
-async function readRecentDebugLogs(input: { limit: number; source: string | null; workspaceId: string | null }) {
+async function readRecentDebugLogs(input: { limit: number; source: string | null; workspaceId: string | null; userId: string | null }) {
   const filters = []
+  if (input.userId) {
+    filters.push(eq(DebugLogEventTable.user_id, input.userId))
+  }
   if (input.source) {
     filters.push(eq(DebugLogEventTable.source, input.source))
   }
