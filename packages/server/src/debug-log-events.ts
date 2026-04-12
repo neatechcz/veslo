@@ -26,6 +26,20 @@ export interface DebugLogBatchLimits {
   maxBytes: number;
 }
 
+export interface DebugLogUploadRequest extends DebugLogBatch {}
+
+export interface DebugLogUploadResponse {
+  ok?: boolean;
+  acceptedBatchIds: string[];
+}
+
+export interface DebugLogUploadRetryPolicy {
+  maxAttempts: number;
+  initialDelayMs: number;
+  maxDelayMs: number;
+  multiplier: number;
+}
+
 export function serializeDebugLogEvent(event: DebugLogEvent): string {
   return JSON.stringify(event);
 }
