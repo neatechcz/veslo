@@ -1730,11 +1730,20 @@ export function createVesloServerClient(options: {
           body: payload,
         },
       ),
-    listHubSkills: () =>
-      requestJson<{ items: VesloHubSkillItem[] }>(baseUrl, `/hub/skills`, {
+    listHubSkills: (options?: { denToken?: string; denOrgId?: string }) => {
+      const denToken = options?.denToken?.trim() ?? "";
+      const denOrgId = options?.denOrgId?.trim() ?? "";
+      const extraHeaders = {
+        ...(denToken ? { "x-veslo-den-token": denToken } : {}),
+        ...(denOrgId ? { "x-veslo-den-org-id": denOrgId } : {}),
+      };
+
+      return requestJson<{ items: VesloHubSkillItem[] }>(baseUrl, `/hub/skills`, {
         token,
         hostToken,
-      }),
+        ...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
+      });
+    },
     installHubSkill: (
       workspaceId: string,
       name: string,

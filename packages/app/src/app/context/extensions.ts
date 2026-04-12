@@ -30,6 +30,7 @@ import type {
   VesloServerClient,
   VesloServerStatus,
 } from "../lib/veslo-server";
+import { readDenAuth } from "../lib/den-auth";
 
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
 
@@ -107,7 +108,22 @@ export function createExtensionsStore(options: {
       setHubSkillsStatus(null);
 
       if (canUseVesloServer) {
-        const response = await (vesloClient as any).listHubSkills();
+        const denAuth = readDenAuth();
+        const denToken = denAuth?.token?.trim() ?? "";
+        const denOrgId = denAuth?.orgId?.trim() ?? "";
+
+        if (!denToken || !denOrgId) {
+          setHubSkills([]);
+          setHubSkillsStatus("Skills for your organization will be available here.");
+          hubSkillsLoaded = true;
+          hubSkillsRoot = root;
+          return;
+        }
+
+        const response = await (vesloClient as any).listHubSkills({
+          denToken,
+          denOrgId,
+        });
         if (refreshHubSkillsAborted) return;
         const next: HubSkillCard[] = Array.isArray(response?.items)
           ? response.items.map((entry: any) => ({
