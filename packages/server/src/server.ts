@@ -435,6 +435,12 @@ export function startServer(config: ServerConfig) {
         url.pathname = mount.restPath;
       }
 
+      // Session archives are global per-account metadata, but mounted clients may
+      // still call them relative to /w/:id.
+      if (mount && (mount.restPath === "/session-archives" || mount.restPath.startsWith("/session-archives/"))) {
+        url.pathname = mount.restPath;
+      }
+
       if (url.pathname === "/opencode" || url.pathname.startsWith("/opencode/")) {
         authMode = "client";
         proxyBaseUrl = config.workspaces[0]?.baseUrl?.trim() || undefined;
