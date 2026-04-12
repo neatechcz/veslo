@@ -30,8 +30,6 @@ export type SidebarSubagentDecoration = {
   color: string;
 };
 
-export type VisibleSessionIdsChangeHandler = (workspaceId: string, visibleSessionIds: string[]) => void;
-
 export type LoadedSidebarPrefetchInterest = {
   clickedSessionId: string | null;
   selectedSessionId: string | null;

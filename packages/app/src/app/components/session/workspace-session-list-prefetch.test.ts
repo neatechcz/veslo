@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-test("sidebar session surfaces expose the visible-session prefetch callback", () => {
+test("sidebar session surfaces expose the loaded-interest prefetch callback", () => {
   const listSource = readFileSync(new URL("./workspace-session-list.tsx", import.meta.url), "utf8");
   const sessionPageSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
   const dashboardPageSource = readFileSync(new URL("../../pages/dashboard.tsx", import.meta.url), "utf8");
