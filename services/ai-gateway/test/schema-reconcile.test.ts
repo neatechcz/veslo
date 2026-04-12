@@ -26,6 +26,32 @@ test("ensureAiGatewaySchema repairs managed AI tables and columns for live datab
   assert.match(sql, /ALTER TABLE `credential_record` ADD COLUMN `name` varchar\(255\)/);
 });
 
+test("ensureAiGatewaySchema creates credential tables before repairing columns", async () => {
+  const statements: string[] = [];
+  const db = {
+    async query(statement: string) {
+      statements.push(statement);
+      return [[], []];
+    },
+  };
+
+  await ensureAiGatewaySchema(db);
+
+  const createCredentialRecordIndex = statements.findIndex((statement) =>
+    /CREATE TABLE IF NOT EXISTS `credential_record`/.test(statement),
+  );
+  const alterCredentialRecordIndex = statements.findIndex((statement) =>
+    /ALTER TABLE `credential_record` ADD COLUMN `name`/.test(statement),
+  );
+
+  assert.notEqual(createCredentialRecordIndex, -1);
+  assert.notEqual(alterCredentialRecordIndex, -1);
+  assert.ok(
+    createCredentialRecordIndex < alterCredentialRecordIndex,
+    "credential_record must exist before schema reconciliation alters its columns",
+  );
+});
+
 test("ensureAiGatewaySchema treats mysql2 [rows, fields] metadata as existing rows", async () => {
   const statements: string[] = [];
   const db = {
