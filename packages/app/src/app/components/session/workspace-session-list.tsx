@@ -60,11 +60,9 @@ import { resolveRenderableProjectGroups } from "./workspace-session-list-render-
 import {
   readCollapsedProjectMap,
   readProjectOrder,
-  readShowArchivedSessions,
   readSidebarViewMode,
   writeCollapsedProjectMap,
   writeProjectOrder,
-  writeShowArchivedSessions,
   writeSidebarViewMode,
   type SidebarViewMode,
 } from "./workspace-session-list-prefs";
@@ -105,6 +103,7 @@ type Props = {
   onImportWorkspaceConfig: () => void;
   onQuickNewSession?: () => void;
   onOpenSessionSearch?: () => void;
+  onOpenArchivedSessions?: () => void;
   onAddDirectorySession?: () => void;
   onLoadMoreWorkspaceSessions?: (workspaceId: string) => Promise<boolean> | boolean | Promise<void> | void;
   archivedSessionIds?: string[];
@@ -178,13 +177,15 @@ export default function WorkspaceSessionList(props: Props) {
   const [lastClickedSessionId, setLastClickedSessionId] = createSignal<string | null>(null);
   const [workspaceMenuTarget, setWorkspaceMenuTarget] = createSignal<WorkspaceMenuTarget | null>(null);
   const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
-  const [showArchivedSessions, setShowArchivedSessions] = createSignal<boolean>(readShowArchivedSessions());
+  const [moreActionsMenuOpen, setMoreActionsMenuOpen] = createSignal(false);
   const [pendingArchiveConfirmationSessionId, setPendingArchiveConfirmationSessionId] = createSignal<string | null>(
     null,
   );
   const [sidebarControlsWidth, setSidebarControlsWidth] = createSignal(0);
   let workspaceMenuRef: HTMLDivElement | undefined;
   let addWorkspaceMenuRef: HTMLDivElement | undefined;
+  let moreActionsMenuRef: HTMLDivElement | undefined;
+  let moreActionsButtonRef: HTMLButtonElement | undefined;
   let pendingArchiveConfirmButtonRef: HTMLButtonElement | undefined;
   let sidebarControlsRef: HTMLDivElement | undefined;
   let scrollContainerRef: HTMLDivElement | undefined;
@@ -222,8 +223,7 @@ export default function WorkspaceSessionList(props: Props) {
   const isSessionArchived = (sessionId: string) => archivedSessionIdSet().has(sessionId.trim());
   const isArchiveConfirmationPending = (sessionId: string) =>
     pendingArchiveConfirmationSessionId() === sessionId.trim();
-  const shouldShowSessionRow = (row: FlatSessionRow) =>
-    showArchivedSessions() || !isSessionArchived(row.session.id);
+  const shouldShowSessionRow = (row: FlatSessionRow) => !isSessionArchived(row.session.id);
 
   const recentRows = createMemo<FlatSessionRow[]>(() =>
     buildRecentRows(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
@@ -610,14 +610,6 @@ export default function WorkspaceSessionList(props: Props) {
 
     setPendingArchiveConfirmationSessionId(null);
     await Promise.resolve(props.onArchiveSession?.(workspaceId, id));
-  };
-
-  const toggleShowArchived = () => {
-    setShowArchivedSessions((current) => {
-      const next = !current;
-      writeShowArchivedSessions(next);
-      return next;
-    });
   };
 
   const handleSessionRowContextMenu = (
@@ -1017,6 +1009,36 @@ export default function WorkspaceSessionList(props: Props) {
     onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
   });
 
+  createEffect(() => {
+    if (!moreActionsMenuOpen()) return;
+    const closeMenu = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (moreActionsMenuRef && target && moreActionsMenuRef.contains(target)) return;
+      setMoreActionsMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", closeMenu);
+    onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
+  });
+
+  createEffect(() => {
+    if (!moreActionsMenuOpen()) return;
+    const handleMoreActionsEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setMoreActionsMenuOpen(false);
+      moreActionsButtonRef?.focus();
+    };
+    window.addEventListener("keydown", handleMoreActionsEscape);
+    onCleanup(() => window.removeEventListener("keydown", handleMoreActionsEscape));
+  });
+
+  createEffect(() => {
+    if (!moreActionsMenuOpen()) return;
+    queueMicrotask(() => {
+      const firstAction = moreActionsMenuRef?.querySelector<HTMLButtonElement>('[role="menuitem"], [role="menuitemradio"]');
+      firstAction?.focus();
+    });
+  });
+
   const workspaceMenuOpen = (anchorKey: string) => workspaceMenuTarget()?.anchorKey === anchorKey;
 
   const connectionStateFor = (workspaceId: string) =>
@@ -1169,15 +1191,26 @@ export default function WorkspaceSessionList(props: Props) {
     </Show>
   );
 
+  const topRailButtonClass =
+    `inline-flex h-8 w-full min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-gray-6 bg-gray-1 px-2 text-[12px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60 ${sidebarControlTooltipClass}`;
+
+  const overflowActionClass = (active = false) =>
+    `flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs transition-colors ${
+      active
+        ? "bg-gray-3 text-gray-12"
+        : "text-gray-11 hover:bg-gray-3 hover:text-gray-12"
+    }`;
+
   return (
     <div class="flex h-full min-h-0 flex-col">
       <div class="mb-3 flex flex-nowrap items-center gap-1" ref={(el) => (sidebarControlsRef = el)}>
         <div class="relative flex min-w-0 flex-1" ref={(el) => (addWorkspaceMenuRef = el)}>
           <button
             type="button"
-            class={`inline-flex h-8 w-full min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-gray-6 bg-gray-1 px-2 text-[12px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 ${sidebarControlTooltipClass}`}
+            class={topRailButtonClass}
             data-tooltip={tr("sidebar.new_session")}
             onClick={() => {
+              setMoreActionsMenuOpen(false);
               if (props.onQuickNewSession) {
                 props.onQuickNewSession();
                 return;
@@ -1233,73 +1266,109 @@ export default function WorkspaceSessionList(props: Props) {
             </div>
           </Show>
         </div>
-        <div class="inline-flex shrink-0 items-center gap-1 rounded-full border border-gray-6 bg-gray-1 p-0.5 shadow-sm">
+        <div class="flex min-w-0 flex-1">
           <button
             type="button"
-            class={`inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
-              sidebarMode() === "by-project"
-                ? "bg-gray-4/90 text-gray-12"
-                : "text-gray-9 hover:bg-gray-3 hover:text-gray-11"
-            } ${sidebarControlTooltipClass}`}
-            data-tooltip={tr("sidebar.by_project")}
-            aria-pressed={sidebarMode() === "by-project"}
-            onClick={() => setSidebarMode("by-project")}
+            class={topRailButtonClass}
+            data-tooltip={tr("sidebar.add_directory_or_project")}
+            disabled={!props.onAddDirectorySession || props.newTaskDisabled}
+            onClick={() => {
+              setAddWorkspaceMenuOpen(false);
+              setMoreActionsMenuOpen(false);
+              props.onAddDirectorySession?.();
+            }}
           >
-            <span class="sr-only">{tr("sidebar.by_project")}</span>
-            <Folder size={14} />
-          </button>
-          <button
-            type="button"
-            class={`inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
-              sidebarMode() === "recent"
-                ? "bg-gray-4/90 text-gray-12"
-                : "text-gray-9 hover:bg-gray-3 hover:text-gray-11"
-            } ${sidebarControlTooltipClass}`}
-            data-tooltip={tr("sidebar.recent")}
-            aria-pressed={sidebarMode() === "recent"}
-            onClick={() => setSidebarMode("recent")}
-          >
-            <span class="sr-only">{tr("sidebar.recent")}</span>
-            <List size={14} />
+            <span class="sr-only">{tr("sidebar.add_directory_or_project")}</span>
+            <FolderPlus size={12} />
+            <span class="truncate">{tr("sidebar.add_directory_or_project")}</span>
           </button>
         </div>
-        <div class="ml-auto flex shrink-0 items-center gap-1">
+        <div
+          class="relative flex min-w-0 flex-1"
+          ref={(el) => (moreActionsMenuRef = el)}
+          onFocusOut={(event) => {
+            const nextFocus = event.relatedTarget as Node | null;
+            if (nextFocus && moreActionsMenuRef?.contains(nextFocus)) return;
+            setMoreActionsMenuOpen(false);
+          }}
+        >
           <button
             type="button"
-            class={`inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-6 bg-gray-1 shadow-sm transition-colors ${sidebarControlTooltipClass} ${
-              showArchivedSessions()
-                ? "text-gray-12 bg-gray-4/90"
-                : "text-gray-9 hover:bg-gray-3 hover:text-gray-11"
-            }`}
-            data-tooltip={tr("sidebar.show_archived")}
-            aria-pressed={showArchivedSessions()}
-            onClick={toggleShowArchived}
+            class={topRailButtonClass}
+            data-tooltip={tr("sidebar.more_actions")}
+            ref={(el) => (moreActionsButtonRef = el)}
+            aria-haspopup="menu"
+            aria-expanded={moreActionsMenuOpen()}
+            aria-controls="sidebar-more-actions-menu"
+            onClick={() => {
+              setAddWorkspaceMenuOpen(false);
+              setMoreActionsMenuOpen((prev) => !prev);
+            }}
           >
-            <span class="sr-only">{tr("sidebar.show_archived")}</span>
-            <Archive size={13} />
+            <span class="sr-only">{tr("sidebar.more_actions")}</span>
+            <MoreHorizontal size={14} />
           </button>
-          <Show when={props.onOpenSessionSearch}>
-            <button
-              type="button"
-              class={`inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-9 shadow-sm transition-colors hover:bg-gray-3 hover:text-gray-11 ${sidebarControlTooltipClass}`}
-              data-tooltip={tr("session.command_palette_search_sessions")}
-              onClick={() => props.onOpenSessionSearch?.()}
+          <Show when={moreActionsMenuOpen()}>
+            <div
+              id="sidebar-more-actions-menu"
+              role="menu"
+              class="absolute right-0 top-full z-20 mt-2 min-w-[14rem] overflow-hidden rounded-xl border border-gray-6 bg-gray-1 p-1 shadow-xl"
             >
-              <span class="sr-only">{tr("session.command_palette_search_sessions")}</span>
-              <Search size={13} />
-            </button>
-          </Show>
-          <Show when={props.onAddDirectorySession}>
-            <button
-              type="button"
-              class={`inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-9 shadow-sm transition-colors hover:bg-gray-3 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed ${sidebarControlTooltipClass}`}
-              data-tooltip={tr("sidebar.add_directory_session")}
-              disabled={props.newTaskDisabled}
-              onClick={() => props.onAddDirectorySession?.()}
-            >
-              <span class="sr-only">{tr("sidebar.add_directory_session")}</span>
-              <FolderPlus size={13} />
-            </button>
+              <Show when={props.onOpenArchivedSessions}>
+                <button
+                  type="button"
+                  role="menuitem"
+                  class={overflowActionClass()}
+                  onClick={() => {
+                    props.onOpenArchivedSessions?.();
+                    setMoreActionsMenuOpen(false);
+                  }}
+                >
+                  <Archive size={13} />
+                  {tr("sidebar.archived_items")}
+                </button>
+              </Show>
+              <Show when={props.onOpenSessionSearch}>
+                <button
+                  type="button"
+                  role="menuitem"
+                  class={overflowActionClass()}
+                  onClick={() => {
+                    props.onOpenSessionSearch?.();
+                    setMoreActionsMenuOpen(false);
+                  }}
+                >
+                  <Search size={13} />
+                  {tr("session.command_palette_search_sessions")}
+                </button>
+              </Show>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={sidebarMode() === "by-project"}
+                class={overflowActionClass(sidebarMode() === "by-project")}
+                onClick={() => {
+                  setSidebarMode("by-project");
+                  setMoreActionsMenuOpen(false);
+                }}
+              >
+                <Folder size={13} />
+                {tr("sidebar.by_project")}
+              </button>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={sidebarMode() === "recent"}
+                class={overflowActionClass(sidebarMode() === "recent")}
+                onClick={() => {
+                  setSidebarMode("recent");
+                  setMoreActionsMenuOpen(false);
+                }}
+              >
+                <List size={13} />
+                {tr("sidebar.recent")}
+              </button>
+            </div>
           </Show>
         </div>
       </div>

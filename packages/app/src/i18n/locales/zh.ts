@@ -758,10 +758,18 @@ export default {
 
   // ==================== Sidebar ====================
   "sidebar.add_directory_session": "添加目录并打开会话",
+  "sidebar.add_directory_or_project": "添加目录 / 项目",
+  "sidebar.archived_items": "已归档项目",
+  "sidebar.by_project": "按项目",
+  "sidebar.connect_remote": "连接远程端",
+  "sidebar.create_session_in_project": "在此项目中创建会话",
+  "sidebar.expand_session_branch": "展开会话分支",
   "sidebar.archive_confirm": "确认",
+  "sidebar.more_actions": "更多操作",
   "sidebar.loading_more": "正在加载更多...",
   "sidebar.load_more": "加载更多（+20）",
   "sidebar.more_ellipsis": "…",
+  "sidebar.recent": "最近",
   "sidebar.reorder_project": "拖动以重新排序项目",
 
   // ==================== Common ====================

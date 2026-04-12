@@ -18,6 +18,26 @@ test("project header click toggles collapse and does not activate workspace", ()
   );
 });
 
+test("sidebar session list no longer persists archived visibility locally", () => {
+  assert.doesNotMatch(
+    source,
+    /readShowArchivedSessions|writeShowArchivedSessions|SIDEBAR_SHOW_ARCHIVED_KEY/,
+    "sidebar should no longer read or write archived visibility local-storage helpers",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /showArchivedSessions\(\)|toggleShowArchived/,
+    "sidebar should no longer expose show-archived signal or toggle helpers",
+  );
+
+  assert.match(
+    source,
+    /const shouldShowSessionRow = \(row: FlatSessionRow\) =>\s*!isSessionArchived\(row\.session\.id\);/,
+    "sidebar rows should always hide archived sessions instead of toggling them inline",
+  );
+});
+
 test("by-project mode wires project-group drag and drop reorder handlers", () => {
   assert.match(
     source,

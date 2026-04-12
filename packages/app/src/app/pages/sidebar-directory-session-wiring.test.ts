@@ -37,6 +37,22 @@ test("dashboard wires the directory-picked session callback into WorkspaceSessio
   );
 });
 
+test("session wires archived-items navigation into WorkspaceSessionList", () => {
+  assert.match(
+    sessionSource,
+    /onOpenArchivedSessions=\{\(\) => openSettings\("general"\)\}/,
+    "Session should route archived items into the existing settings general archive surface",
+  );
+});
+
+test("dashboard wires archived-items navigation into WorkspaceSessionList", () => {
+  assert.match(
+    dashboardSource,
+    /onOpenArchivedSessions=\{\(\) => openSettings\("general"\)\}/,
+    "Dashboard should route archived items into the existing settings general archive surface",
+  );
+});
+
 test("session view props expose workspace sidebar paging controls", () => {
   assert.match(
     sessionSource,

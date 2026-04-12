@@ -10,7 +10,6 @@ export type SidebarViewMode = "by-project" | "recent";
 export const SIDEBAR_VIEW_MODE_KEY = "veslo.sidebar-session-view.v1";
 export const SIDEBAR_COLLAPSED_PROJECTS_KEY = "veslo.sidebar-collapsed-projects.v1";
 export const SIDEBAR_PROJECT_ORDER_KEY = "veslo.sidebar-project-order.v1";
-export const SIDEBAR_SHOW_ARCHIVED_KEY = "veslo.sidebar-show-archived.v1";
 export const DEFAULT_SIDEBAR_VIEW_MODE: SidebarViewMode = "by-project";
 
 const resolveStorage = (storage?: SidebarPrefsStorage | null): SidebarPrefsStorage | null => {
@@ -65,31 +64,6 @@ export const writeSidebarViewMode = (
 
   try {
     resolvedStorage.setItem(SIDEBAR_VIEW_MODE_KEY, value);
-  } catch {
-    // ignore storage failures
-  }
-};
-
-export const readShowArchivedSessions = (
-  storage?: SidebarPrefsStorage | null,
-): boolean => {
-  const resolvedStorage = resolveStorage(storage);
-  if (!resolvedStorage) return false;
-  try {
-    return resolvedStorage.getItem(SIDEBAR_SHOW_ARCHIVED_KEY) === "true";
-  } catch {
-    return false;
-  }
-};
-
-export const writeShowArchivedSessions = (
-  value: boolean,
-  storage?: SidebarPrefsStorage | null,
-): void => {
-  const resolvedStorage = resolveStorage(storage);
-  if (!resolvedStorage) return;
-  try {
-    resolvedStorage.setItem(SIDEBAR_SHOW_ARCHIVED_KEY, value ? "true" : "false");
   } catch {
     // ignore storage failures
   }

@@ -33,26 +33,14 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
 
   assert.match(
     source,
-    /data-tooltip=\{tr\("sidebar\.new_session"\)\}[\s\S]*data-tooltip=\{tr\("sidebar\.by_project"\)\}[\s\S]*data-tooltip=\{tr\("sidebar\.recent"\)\}[\s\S]*data-tooltip=\{tr\("session\.command_palette_search_sessions"\)\}[\s\S]*data-tooltip=\{tr\("sidebar\.add_directory_session"\)\}/,
-    "control row should keep new, folder, recents, search, and add-directory actions in order",
+    /data-tooltip=\{tr\("sidebar\.new_session"\)\}[\s\S]*data-tooltip=\{tr\("sidebar\.add_directory_or_project"\)\}[\s\S]*data-tooltip=\{tr\("sidebar\.more_actions"\)\}/,
+    "control row should keep new, add-directory-or-project, and overflow actions in order",
   );
 
   assert.match(
     source,
-    /<div class="ml-auto flex shrink-0 items-center gap-1">/,
-    "search and add-directory actions should stay in a right-aligned action cluster",
-  );
-
-  assert.match(
-    source,
-    /inline-flex shrink-0 items-center gap-1 rounded-full border border-gray-6 bg-gray-1 p-0\.5 shadow-sm/,
-    "the by-project/recent segmented control should use compact padding so its outer height matches neighboring h-8 controls",
-  );
-
-  assert.doesNotMatch(
-    source,
-    /inline-flex shrink-0 items-center gap-1 rounded-full border border-gray-6 bg-gray-1 p-1 shadow-sm/,
-    "the segmented control should not regress to p-1 because that makes the first two top controls taller than the rest",
+    /data-tooltip=\{tr\("sidebar\.more_actions"\)\}[\s\S]*<span class="sr-only">\{tr\("sidebar\.more_actions"\)\}<\/span>/,
+    "overflow control should expose a tooltip and accessible label",
   );
 
   assert.doesNotMatch(
@@ -75,8 +63,20 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
 
   assert.match(
     source,
+    /MoreHorizontal/,
+    "workspace session list should import and render the overflow icon",
+  );
+
+  assert.match(
+    source,
     /onAddDirectorySession/,
     "workspace session list should expose a dedicated callback for picker-driven directory sessions",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /data-tooltip=\{tr\("sidebar\.show_archived"\)\}/,
+    "show archived should no longer be a top-level control",
   );
 });
 

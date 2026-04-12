@@ -1,18 +1,19 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
   DEFAULT_SIDEBAR_VIEW_MODE,
   readProjectOrder,
   readCollapsedProjectMap,
-  readShowArchivedSessions,
   readSidebarViewMode,
   writeProjectOrder,
   writeCollapsedProjectMap,
-  writeShowArchivedSessions,
   writeSidebarViewMode,
   type SidebarPrefsStorage,
 } from "./workspace-session-list-prefs.js";
+
+const source = readFileSync(new URL("./workspace-session-list-prefs.ts", import.meta.url), "utf8");
 
 const createMemoryStorage = (initial?: Record<string, string>): SidebarPrefsStorage & { snapshot: () => Record<string, string> } => {
   const map = new Map<string, string>(Object.entries(initial ?? {}));
@@ -103,13 +104,8 @@ test("writeProjectOrder persists normalized string array", () => {
   );
 });
 
-test("show archived defaults to false", () => {
-  const storage = createMemoryStorage();
-  assert.equal(readShowArchivedSessions(storage), false);
-});
-
-test("show archived round-trips true value", () => {
-  const storage = createMemoryStorage();
-  writeShowArchivedSessions(true, storage);
-  assert.equal(readShowArchivedSessions(storage), true);
+test("prefs source no longer defines archived visibility helpers", () => {
+  assert.doesNotMatch(source, /SIDEBAR_SHOW_ARCHIVED_KEY/);
+  assert.doesNotMatch(source, /readShowArchivedSessions/);
+  assert.doesNotMatch(source, /writeShowArchivedSessions/);
 });
