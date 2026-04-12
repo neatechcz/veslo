@@ -79,7 +79,6 @@ export interface Capabilities {
     skills: {
       read: boolean;
       install: boolean;
-      repo: { owner: string; name: string; ref: string };
     };
   };
   plugins: { read: boolean; write: boolean };

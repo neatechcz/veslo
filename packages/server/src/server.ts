@@ -16,7 +16,8 @@ import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { addMcp, listMcp, removeMcp } from "./mcp.js";
 import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
-import { installHubSkill, listHubSkills } from "./skill-hub.js";
+import { installHubSkill } from "./skill-hub.js";
+import { fetchOrgSkillsCatalog } from "./den-catalog.js";
 import { resolveSkillMatch } from "./skill-resolver.js";
 import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
 import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
@@ -806,7 +807,6 @@ function buildCapabilities(config: ServerConfig): Capabilities {
       skills: {
         read: true,
         install: writeEnabled,
-        repo: { owner: "different-ai", name: "openwork-hub", ref: "main" },
       },
     },
     plugins: { read: true, write: writeEnabled },
@@ -3438,8 +3438,28 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     return jsonResponse(result);
   });
 
-  addRoute(routes, "GET", "/hub/skills", "client", async () => {
-    const items = await listHubSkills();
+  addRoute(routes, "GET", "/hub/skills", "client", async (ctx) => {
+    const denToken = ctx.request.headers.get("x-veslo-den-token")?.trim() || "";
+    if (!denToken) {
+      throw new ApiError(401, "den_token_required", "Missing Den token header (x-veslo-den-token)");
+    }
+
+    const denOrgId = ctx.request.headers.get("x-veslo-den-org-id")?.trim() || "";
+    if (!denOrgId) {
+      throw new ApiError(400, "den_org_required", "Missing Den org header (x-veslo-den-org-id)");
+    }
+
+    const denApiBase = config.denApiBase?.trim() || "";
+    if (!denApiBase) {
+      throw new ApiError(503, "den_catalog_unavailable", "Den catalog base URL is not configured");
+    }
+
+    const items = await fetchOrgSkillsCatalog({
+      baseUrl: denApiBase,
+      orgId: denOrgId,
+      denToken,
+    });
+
     return jsonResponse({ items });
   });
 
