@@ -1,0 +1,149 @@
+name: Inspect Den Debug Logs
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "How many rows to inspect"
+        required: false
+        default: "10"
+      source:
+        description: "Optional source filter (for example audit, engine, opencode-router)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    if: github.repository == 'neatechcz/veslo'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Den dependencies
+        run: pnpm install --filter @neatech/den... --frozen-lockfile
+
+      - name: Query latest debug logs
+        env:
+          DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
+          DEN_LOG_MASTER_KEY: ${{ secrets.DEN_LOG_MASTER_KEY }}
+          DEN_LOG_MASTER_KEY_VERSION: ${{ vars.DEN_LOG_MASTER_KEY_VERSION }}
+          DEBUG_LOG_LIMIT: ${{ inputs.limit }}
+          DEBUG_LOG_SOURCE: ${{ inputs.source }}
+        run: |
+          cd services/den
+          node <<'NODE'
+          const crypto = require("node:crypto");
+          const mysql = require("mysql2/promise");
+
+          (async () => {
+            const databaseUrl = process.env.DATABASE_URL;
+            const masterKeyRaw = (process.env.DEN_LOG_MASTER_KEY || "").trim();
+            const keyVersion = (process.env.DEN_LOG_MASTER_KEY_VERSION || "v1").trim() || "v1";
+            const limit = Math.max(1, Math.min(50, Number.parseInt(process.env.DEBUG_LOG_LIMIT || "10", 10) || 10));
+            const sourceFilter = (process.env.DEBUG_LOG_SOURCE || "").trim();
+
+            if (!databaseUrl) {
+              throw new Error("DATABASE_URL is required");
+            }
+
+            const hexLike = /^[0-9a-fA-F]+$/.test(masterKeyRaw) && masterKeyRaw.length % 2 === 0;
+            const masterKey = masterKeyRaw
+              ? Buffer.from(masterKeyRaw, hexLike ? "hex" : "utf8")
+              : null;
+
+            if (!masterKey || masterKey.length !== 32) {
+              throw new Error("DEN_LOG_MASTER_KEY must be present and decode to 32 bytes");
+            }
+
+            function decryptRow(row) {
+              if (String(row.encryption_key_version) !== keyVersion) {
+                return { error: `unsupported_key_version:${row.encryption_key_version}` };
+              }
+              try {
+                const decipher = crypto.createDecipheriv(
+                  "aes-256-gcm",
+                  masterKey,
+                  Buffer.from(String(row.nonce), "base64"),
+                );
+                decipher.setAuthTag(Buffer.from(String(row.auth_tag), "base64"));
+                const payload = Buffer.concat([
+                  decipher.update(Buffer.from(String(row.ciphertext), "base64")),
+                  decipher.final(),
+                ]);
+                return JSON.parse(payload.toString("utf8"));
+              } catch (error) {
+                return { error: error instanceof Error ? error.message : String(error) };
+              }
+            }
+
+            const connection = await mysql.createConnection(databaseUrl);
+            try {
+              const where = [];
+              const params = [];
+              if (sourceFilter) {
+                where.push("source = ?");
+                params.push(sourceFilter);
+              }
+
+              const query = `
+                SELECT
+                  id,
+                  created_at,
+                  org_id,
+                  user_id,
+                  workspace_id,
+                  source,
+                  stream,
+                  level,
+                  sequence_no,
+                  payload_bytes,
+                  encryption_key_version,
+                  ciphertext,
+                  nonce,
+                  auth_tag
+                FROM debug_log_event
+                ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
+                ORDER BY created_at DESC
+                LIMIT ?
+              `;
+              params.push(limit);
+
+              const [rows] = await connection.execute(query, params);
+              const output = rows.map((row) => {
+                const payload = decryptRow(row);
+                return {
+                  id: row.id,
+                  created_at: row.created_at,
+                  org_id: row.org_id,
+                  user_id: row.user_id,
+                  workspace_id: row.workspace_id,
+                  source: row.source,
+                  stream: row.stream,
+                  level: row.level,
+                  sequence_no: row.sequence_no,
+                  payload_bytes: row.payload_bytes,
+                  payload,
+                };
+              });
+
+              console.log(JSON.stringify({ count: output.length, rows: output }, null, 2));
+            } finally {
+              await connection.end();
+            }
+          })().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          NODE

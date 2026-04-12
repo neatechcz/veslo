@@ -30,6 +30,9 @@ jobs:
           RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
           DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
+          DEN_LOG_MASTER_KEY: ${{ secrets.DEN_LOG_MASTER_KEY }}
+          DEN_LOG_INGEST_TOKEN: ${{ secrets.DEN_LOG_INGEST_TOKEN }}
+          DEN_LOG_MASTER_KEY_VERSION: ${{ vars.DEN_LOG_MASTER_KEY_VERSION }}
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
           POLAR_ACCESS_TOKEN: ${{ secrets.POLAR_ACCESS_TOKEN }}
@@ -74,6 +77,20 @@ jobs:
             missing=1
           fi
 
+          debug_log_enabled=0
+          if [ -n "$DEN_LOG_MASTER_KEY" ] || [ -n "$DEN_LOG_INGEST_TOKEN" ] || [ -n "$DEN_LOG_MASTER_KEY_VERSION" ]; then
+            debug_log_enabled=1
+          fi
+
+          if [ "$debug_log_enabled" -eq 1 ]; then
+            for key in DEN_LOG_MASTER_KEY DEN_LOG_INGEST_TOKEN; do
+              if [ -z "${!key}" ]; then
+                echo "::error::Missing required debug log secret: $key"
+                missing=1
+              fi
+            done
+          fi
+
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
@@ -85,6 +102,9 @@ jobs:
           RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
           DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
+          DEN_LOG_MASTER_KEY: ${{ secrets.DEN_LOG_MASTER_KEY }}
+          DEN_LOG_INGEST_TOKEN: ${{ secrets.DEN_LOG_INGEST_TOKEN }}
+          DEN_LOG_MASTER_KEY_VERSION: ${{ vars.DEN_LOG_MASTER_KEY_VERSION }}
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
           DEN_RENDER_CONTROL_PLANE_REPO: ${{ vars.DEN_RENDER_CONTROL_PLANE_REPO }}
@@ -144,6 +164,9 @@ jobs:
           polar_access_token = os.environ.get("POLAR_ACCESS_TOKEN") or ""
           polar_product_id = os.environ.get("POLAR_PRODUCT_ID") or ""
           polar_benefit_id = os.environ.get("POLAR_BENEFIT_ID") or ""
+          debug_log_master_key = os.environ.get("DEN_LOG_MASTER_KEY") or ""
+          debug_log_ingest_token = os.environ.get("DEN_LOG_INGEST_TOKEN") or ""
+          debug_log_master_key_version = os.environ.get("DEN_LOG_MASTER_KEY_VERSION") or "v1"
           github_client_id = os.environ.get("DEN_GITHUB_CLIENT_ID") or ""
           github_client_secret = os.environ.get("DEN_GITHUB_CLIENT_SECRET") or ""
 
@@ -164,6 +187,12 @@ jobs:
               raise RuntimeError(
                   "DEN_POLAR_FEATURE_GATE_ENABLED=true requires POLAR_ACCESS_TOKEN, POLAR_PRODUCT_ID, and POLAR_BENEFIT_ID"
               )
+
+          if bool(debug_log_master_key) != bool(debug_log_ingest_token):
+              raise RuntimeError(
+                  "DEN_LOG_MASTER_KEY and DEN_LOG_INGEST_TOKEN must either both be set or both be empty"
+              )
+          debug_log_enabled = bool(debug_log_master_key and debug_log_ingest_token)
 
           def normalize_origin(value: str) -> str:
               trimmed = value.strip()
@@ -286,6 +315,15 @@ jobs:
               {"key": "POLAR_SUCCESS_URL", "value": polar_success_url},
               {"key": "POLAR_RETURN_URL", "value": polar_return_url},
           ]
+
+          if debug_log_enabled:
+              env_vars.extend(
+                  [
+                      {"key": "DEN_LOG_MASTER_KEY", "value": debug_log_master_key},
+                      {"key": "DEN_LOG_MASTER_KEY_VERSION", "value": debug_log_master_key_version},
+                      {"key": "DEN_LOG_INGEST_TOKEN", "value": debug_log_ingest_token},
+                  ]
+              )
 
           request("PUT", f"/services/{service_id}/env-vars", env_vars)
 
