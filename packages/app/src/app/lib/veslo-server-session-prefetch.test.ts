@@ -44,11 +44,19 @@ test("veslo server client exposes transcript prefetch methods", async () => {
     const prefetch = await (client as {
       prefetchSessionTranscripts: (
         workspaceId: string,
-        input: { visibleSessionIds: string[]; selectedSessionId?: string | null; limit?: number },
+        input: {
+          clickedSessionId?: string | null;
+          selectedSessionId?: string | null;
+          loadedTopLevelSessionIds: string[];
+          expandedSubagentSessionIds: string[];
+          limit?: number;
+        },
       ) => Promise<unknown>;
     }).prefetchSessionTranscripts("ws 1", {
-      visibleSessionIds: ["sess-a", "sess-b"],
+      clickedSessionId: "sess-clicked",
       selectedSessionId: "sess-a",
+      loadedTopLevelSessionIds: ["sess-a", "sess-b"],
+      expandedSubagentSessionIds: ["sub-2", "sub-1"],
       limit: 12,
     });
     const transcript = await (client as {
@@ -61,8 +69,10 @@ test("veslo server client exposes transcript prefetch methods", async () => {
     assert.equal(calls[0]?.method, "POST");
     assert.equal(calls[0]?.headers.get("authorization"), "Bearer token-123");
     assert.deepEqual(JSON.parse(calls[0]?.body ?? "{}"), {
-      visibleSessionIds: ["sess-a", "sess-b"],
+      clickedSessionId: "sess-clicked",
       selectedSessionId: "sess-a",
+      loadedTopLevelSessionIds: ["sess-a", "sess-b"],
+      expandedSubagentSessionIds: ["sub-2", "sub-1"],
       limit: 12,
     });
 

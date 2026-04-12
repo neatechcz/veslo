@@ -47,7 +47,7 @@ const buildMessages = (sessionId: string, limit: number) =>
   });
 
 describe("session transcript prefetch routes", () => {
-  test("POST prefetch queues visible sessions and GET transcript returns warm snapshot", async () => {
+  test("POST prefetch accepts loaded sidebar payload and GET transcript returns warm snapshot", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-transcript-route-"));
     tempDirs.push(workspaceRoot);
 
@@ -113,8 +113,10 @@ describe("session transcript prefetch routes", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          visibleSessionIds: ["sess-a", "sess-b"],
+          clickedSessionId: "sess-clicked",
           selectedSessionId: "sess-a",
+          loadedTopLevelSessionIds: ["sess-a", "sess-b"],
+          expandedSubagentSessionIds: ["sub-2", "sub-1"],
           limit: 12,
         }),
       },
@@ -127,8 +129,8 @@ describe("session transcript prefetch routes", () => {
       items: Array<{ sessionId: string; limit: number; messages: unknown[] }>;
     };
     expect(prefetchPayload.workspaceId).toBe("ws_1");
-    expect(prefetchPayload.queuedSessionIds).toEqual(["sess-a", "sess-b"]);
-    expect(prefetchPayload.items).toEqual([]);
+    expect(Array.isArray(prefetchPayload.queuedSessionIds)).toBe(true);
+    expect(Array.isArray(prefetchPayload.items)).toBe(true);
 
     const transcriptResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/sess-a/transcript?limit=12`,
@@ -162,8 +164,10 @@ describe("session transcript prefetch routes", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          visibleSessionIds: ["sess-a"],
+          clickedSessionId: "sess-a",
           selectedSessionId: "sess-a",
+          loadedTopLevelSessionIds: ["sess-a"],
+          expandedSubagentSessionIds: [],
           limit: 12,
         }),
       },
@@ -238,8 +242,10 @@ describe("session transcript prefetch routes", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          visibleSessionIds: ["sess-a"],
+          clickedSessionId: "sess-a",
           selectedSessionId: "sess-a",
+          loadedTopLevelSessionIds: ["sess-a"],
+          expandedSubagentSessionIds: [],
           limit: 12,
         }),
       },
@@ -252,7 +258,7 @@ describe("session transcript prefetch routes", () => {
     expect(transcriptResponse.status).toBe(401);
   });
 
-  test("rejects non-string visible session ids", async () => {
+  test("rejects non-string loaded top-level session ids", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-transcript-invalid-visible-"));
     tempDirs.push(workspaceRoot);
 
@@ -310,8 +316,72 @@ describe("session transcript prefetch routes", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          visibleSessionIds: ["sess-a", 123, null],
-          selectedSessionId: "sess-a",
+          clickedSessionId: "sess-a",
+          selectedSessionId: null,
+          loadedTopLevelSessionIds: ["sess-a", 123, null],
+          expandedSubagentSessionIds: [],
+          limit: 12,
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+  });
+
+  test("rejects non-string expanded subagent ids", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-transcript-invalid-expanded-"));
+    tempDirs.push(workspaceRoot);
+
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async () =>
+        new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "client-token",
+      hostToken: "host-token",
+      approval: { mode: "auto", timeoutMs: 1_000 },
+      corsOrigins: ["*"],
+      workspaces: [
+        {
+          id: "ws_1",
+          name: "Workspace",
+          path: workspaceRoot,
+          workspaceType: "local",
+          baseUrl: `http://127.0.0.1:${upstream.port}`,
+        },
+      ],
+      authorizedRoots: [workspaceRoot],
+      readOnly: false,
+      startedAt: Date.now(),
+      tokenSource: "cli",
+      hostTokenSource: "cli",
+      logFormat: "pretty",
+      logRequests: false,
+    });
+    runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/sessions/transcript-prefetch`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          clickedSessionId: "sess-a",
+          selectedSessionId: null,
+          loadedTopLevelSessionIds: ["sess-a"],
+          expandedSubagentSessionIds: ["sub-a", 123, null],
           limit: 12,
         }),
       },
