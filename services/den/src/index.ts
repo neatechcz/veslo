@@ -130,6 +130,7 @@ async function storeDebugLogBatch(batch: DebugLogIngestBatch): Promise<DebugLogS
     return { ok: true, acceptedBatchIds: [batch.batchId] }
   }
 
+  const createdAt = new Date()
   const expiresAt = new Date(Date.now() + debugLogRetentionMs)
   const rows = batch.events.map((event) => {
     const serializedPayload = JSON.stringify(event.payload)
@@ -159,6 +160,7 @@ async function storeDebugLogBatch(batch: DebugLogIngestBatch): Promise<DebugLogS
       encrypted_data_key: null,
       compression: null,
       expires_at: expiresAt,
+      created_at: createdAt,
     }
   })
 
