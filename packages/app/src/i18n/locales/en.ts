@@ -1382,6 +1382,7 @@ export default {
   "skills.install_skills": "Install skills",
   "skills.refresh_hub": "Refresh hub",
   "skills.no_hub_skills": "No hub skills available.",
+  "skills.org_catalog_placeholder": "Skills for your organization will be available here.",
   "skills.from_hub": "From Hub",
   "skills.trigger_label": "Trigger:",
   "skills.installing_hub": "Installing",

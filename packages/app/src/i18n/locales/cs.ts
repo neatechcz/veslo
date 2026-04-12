@@ -1378,6 +1378,7 @@ export default {
   "skills.install_skills": "Instalovat skills",
   "skills.refresh_hub": "Obnovit hub",
   "skills.no_hub_skills": "Žádné hub skills nejsou dostupné.",
+  "skills.org_catalog_placeholder": "Zde budou dostupné skills pro vaši organizaci.",
   "skills.from_hub": "Z hubu",
   "skills.trigger_label": "Trigger:",
   "skills.installing_hub": "Instaluji",

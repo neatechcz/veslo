@@ -19,10 +19,7 @@ type SkillBundleV1 = {
 };
 
 const VESLO_DEFAULT_SKILL_NAMES = new Set([
-  "workspace-guide",
-  "get-started",
   "skill-creator",
-  "command-creator",
   "agent-creator",
   "plugin-creator",
 ]);
@@ -216,17 +213,6 @@ export default function SkillsView(props: SkillsViewProps) {
       },
     ];
 
-    if (!skillCreatorInstalled()) {
-      items.unshift({
-        id: "skill-creator",
-        title: translate("skills.install_skill_creator"),
-        description: translate("skills.install_skill_creator_hint"),
-        icon: Sparkles,
-        onClick: installSkillCreator,
-        disabled: props.busy || installingSkillCreator() || !props.canInstallSkillCreator,
-      });
-    }
-
     return items;
   });
 
@@ -411,14 +397,7 @@ export default function SkillsView(props: SkillsViewProps) {
   };
 
   const recommendedDisabledReason = (id: string) => {
-    if (id === "skill-creator") {
-      if (skillCreatorInstalled()) return translate("skills.installed_label");
-      if (props.busy || installingSkillCreator()) return translate("skills.installing_skill_creator");
-      if (!props.canInstallSkillCreator) {
-        return props.accessHint ?? translate("skills.host_only_error");
-      }
-      return null;
-    }
+    void id;
 
     if (!props.canUseDesktopTools) {
       return translate("skills.desktop_required");
@@ -481,8 +460,6 @@ export default function SkillsView(props: SkillsViewProps) {
       (!props.canInstallSkillCreator && !props.canUseDesktopTools)
   );
 
-  const workspaceLabel = createMemo(() => props.workspaceName.trim() || translate("skills.worker_fallback"));
-
   const canCreateInChat = createMemo(
     () => !props.busy && (props.canInstallSkillCreator || props.canUseDesktopTools)
   );
@@ -509,14 +486,7 @@ export default function SkillsView(props: SkillsViewProps) {
       </div>
 
       <div class="rounded-2xl border border-dls-border bg-dls-surface px-5 py-5 shadow-[0_8px_26px_rgba(17,24,39,0.05)]">
-        <div class="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-          <div class="min-w-0 space-y-1">
-            <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-dls-secondary">{translate("skills.worker_profile")}</div>
-            <div class="text-xl font-semibold text-dls-text truncate">{workspaceLabel()}</div>
-            <p class="text-sm text-dls-secondary">
-              {translate("skills.worker_description")}
-            </p>
-          </div>
+        <div class="flex justify-end">
           <button
             type="button"
             onClick={handleNewSkill}
@@ -532,7 +502,7 @@ export default function SkillsView(props: SkillsViewProps) {
           </button>
         </div>
 
-        <div class="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div class="mt-4 grid grid-cols-2 gap-3">
           <div class="rounded-lg border border-dls-border bg-dls-hover px-3 py-2.5">
             <div class="text-[11px] text-dls-secondary">{translate("skills.stat_installed")}</div>
             <div class="mt-1 text-base font-semibold text-dls-text">{props.skills.length}</div>
@@ -540,18 +510,6 @@ export default function SkillsView(props: SkillsViewProps) {
           <div class="rounded-lg border border-dls-border bg-dls-hover px-3 py-2.5">
             <div class="text-[11px] text-dls-secondary">{translate("skills.stat_hub_available")}</div>
             <div class="mt-1 text-base font-semibold text-dls-text">{availableHubSkills().length}</div>
-          </div>
-          <div class="rounded-lg border border-dls-border bg-dls-hover px-3 py-2.5">
-            <div class="text-[11px] text-dls-secondary">{translate("skills.stat_skill_creator")}</div>
-            <div class="mt-1 text-base font-semibold text-dls-text">
-              {skillCreatorInstalled() ? translate("skills.stat_installed") : translate("skills.stat_not_installed")}
-            </div>
-          </div>
-          <div class="rounded-lg border border-dls-border bg-dls-hover px-3 py-2.5">
-            <div class="text-[11px] text-dls-secondary">{translate("skills.stat_mode")}</div>
-            <div class="mt-1 text-base font-semibold text-dls-text">
-              {props.canUseDesktopTools ? translate("skills.stat_local") : translate("skills.stat_server")}
-            </div>
           </div>
         </div>
       </div>
@@ -755,7 +713,7 @@ export default function SkillsView(props: SkillsViewProps) {
           when={filteredHubSkills().length}
           fallback={
             <div class="rounded-xl border border-dls-border bg-dls-surface px-5 py-6 text-sm text-dls-secondary">
-              {translate("skills.no_hub_skills")}
+              {translate("skills.org_catalog_placeholder")}
             </div>
           }
         >
@@ -855,18 +813,13 @@ export default function SkillsView(props: SkillsViewProps) {
                   <div class="w-10 h-10 rounded-lg flex items-center justify-center shadow-sm border border-dls-border bg-dls-hover">
                     <item.icon size={20} class="text-dls-secondary" />
                   </div>
-                  <div class="min-w-0">
-                    <div class="flex items-center gap-2 mb-0.5">
-                      <h4 class="text-sm font-semibold text-dls-text truncate">{item.title}</h4>
-                    </div>
-                    <p class="text-xs text-dls-secondary line-clamp-2">{item.description}</p>
-                    <Show when={item.id === "skill-creator" && !props.canInstallSkillCreator && !skillCreatorInstalled()}>
-                      <div class="mt-1 text-[11px] text-dls-secondary">
-                        {props.accessHint ?? translate("skills.host_only_error")}
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-2 mb-0.5">
+                        <h4 class="text-sm font-semibold text-dls-text truncate">{item.title}</h4>
                       </div>
-                    </Show>
+                      <p class="text-xs text-dls-secondary line-clamp-2">{item.description}</p>
+                    </div>
                   </div>
-                </div>
                 <button
                   type="button"
                   class={`p-1.5 rounded-md transition-colors ${
@@ -887,12 +840,7 @@ export default function SkillsView(props: SkillsViewProps) {
                   disabled={item.disabled}
                   title={item.title}
                 >
-                  <Show
-                    when={item.id === "skill-creator" && installingSkillCreator()}
-                    fallback={<Plus size={16} />}
-                  >
-                    <Loader2 size={16} class="animate-spin" />
-                  </Show>
+                  <Plus size={16} />
                 </button>
               </div>
             )}

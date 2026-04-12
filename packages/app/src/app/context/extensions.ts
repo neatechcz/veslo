@@ -106,6 +106,7 @@ export function createExtensionsStore(options: {
 
     try {
       setHubSkillsStatus(null);
+      const orgCatalogPlaceholder = translate("skills.org_catalog_placeholder");
 
       if (canUseVesloServer) {
         const denAuth = readDenAuth();
@@ -114,7 +115,7 @@ export function createExtensionsStore(options: {
 
         if (!denToken || !denOrgId) {
           setHubSkills([]);
-          setHubSkillsStatus("Skills for your organization will be available here.");
+          setHubSkillsStatus(orgCatalogPlaceholder);
           hubSkillsLoaded = true;
           hubSkillsRoot = root;
           return;
@@ -134,35 +135,15 @@ export function createExtensionsStore(options: {
             }))
           : [];
         setHubSkills(next);
-        if (!next.length) setHubSkillsStatus("No hub skills found.");
+        if (!next.length) setHubSkillsStatus(orgCatalogPlaceholder);
         hubSkillsLoaded = true;
         hubSkillsRoot = root;
         return;
       }
 
-      // Browser fallback: fetch directly from GitHub (public catalog).
-      const listingRes = await fetch("https://api.github.com/repos/different-ai/openwork-hub/contents/skills?ref=main", {
-        headers: { Accept: "application/vnd.github+json" },
-      });
-      if (!listingRes.ok) {
-        throw new Error(`Failed to fetch hub catalog (${listingRes.status})`);
-      }
-      const listing = (await listingRes.json()) as any;
-      const dirs: string[] = Array.isArray(listing)
-        ? listing
-            .filter((entry) => entry && entry.type === "dir" && typeof entry.name === "string")
-            .map((entry) => String(entry.name))
-        : [];
-
-      const next: HubSkillCard[] = dirs.map((dirName) => ({
-        name: dirName,
-        source: { owner: "different-ai", repo: "openwork-hub", ref: "main", path: `skills/${dirName}` },
-      }));
-
       if (refreshHubSkillsAborted) return;
-      const sorted = next.slice().sort((a, b) => a.name.localeCompare(b.name));
-      setHubSkills(sorted);
-      if (!sorted.length) setHubSkillsStatus("No hub skills found.");
+      setHubSkills([]);
+      setHubSkillsStatus(orgCatalogPlaceholder);
       hubSkillsLoaded = true;
       hubSkillsRoot = root;
     } catch (e) {
