@@ -257,6 +257,7 @@ import {
   deriveLocalVesloServerUrlFromOpencodeBaseUrl,
   hydrateVesloServerSettingsFromEnv,
   normalizeVesloServerUrl,
+  resolveSessionArchiveClientOptions,
   readVesloServerSettings,
   writeVesloServerSettings,
   clearVesloServerSettings,
@@ -503,14 +504,18 @@ export default function App() {
   });
 
   const vesloArchiveClient = createMemo(() => {
-    const baseUrl =
-      normalizeVesloServerUrl(vesloServerSettings().urlOverride ?? "") ??
-      normalizeVesloServerUrl(cloudEnvironment.vesloUrl) ??
-      "";
-    const token = vesloServerSettings().token?.trim() || cloudEnvironment.token?.trim() || "";
-    const accountId = authenticatedAccountId()?.trim() ?? "";
-    if (!baseUrl || !token || !accountId) return null;
-    return createVesloServerClient({ baseUrl, token, accountId });
+    const auth = vesloServerAuth();
+    const resolved = resolveSessionArchiveClientOptions({
+      accountId: authenticatedAccountId(),
+      activeBaseUrl: vesloServerBaseUrl(),
+      activeToken: auth.token,
+      settingsUrl: vesloServerSettings().urlOverride,
+      settingsToken: vesloServerSettings().token,
+      cloudUrl: cloudEnvironment.vesloUrl,
+      cloudToken: cloudEnvironment.token,
+    });
+    if (!resolved) return null;
+    return createVesloServerClient(resolved);
   });
 
   const devtoolsVesloClient = createMemo(() => vesloServerClient());
@@ -546,7 +551,7 @@ export default function App() {
     if (bundleInvite?.bundleUrl) {
       setPendingSharedBundleInvite({
         bundleUrl: bundleInvite.bundleUrl,
-        intent: normalizeSharedBundleImportIntent(bundleInvite.intent),
+        intent: bundleInvite.intent,
         source: bundleInvite.source,
         orgId: bundleInvite.orgId,
         label: bundleInvite.label,

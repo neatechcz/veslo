@@ -645,6 +645,45 @@ export function normalizeVesloServerUrl(input: string) {
   return withProtocol.replace(/\/+$/, "");
 }
 
+export function resolveSessionArchiveClientOptions(options: {
+  accountId?: string | null;
+  activeBaseUrl?: string | null;
+  activeToken?: string | null;
+  settingsUrl?: string | null;
+  settingsToken?: string | null;
+  cloudUrl?: string | null;
+  cloudToken?: string | null;
+}) {
+  const accountId = options.accountId?.trim() ?? "";
+  if (!accountId) return null;
+
+  const candidates = [
+    {
+      baseUrl: normalizeVesloServerUrl(options.activeBaseUrl ?? ""),
+      token: options.activeToken?.trim() ?? "",
+    },
+    {
+      baseUrl: normalizeVesloServerUrl(options.settingsUrl ?? ""),
+      token: options.settingsToken?.trim() ?? "",
+    },
+    {
+      baseUrl: normalizeVesloServerUrl(options.cloudUrl ?? ""),
+      token: options.cloudToken?.trim() ?? "",
+    },
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate.baseUrl || !candidate.token) continue;
+    return {
+      baseUrl: candidate.baseUrl,
+      token: candidate.token,
+      accountId,
+    };
+  }
+
+  return null;
+}
+
 function isLikelyLocalHostname(hostname: string) {
   const normalized = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
   if (!normalized) return false;

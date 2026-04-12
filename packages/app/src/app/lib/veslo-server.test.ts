@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createVesloServerClient,
   deriveLocalVesloServerUrlFromOpencodeBaseUrl,
+  resolveSessionArchiveClientOptions,
 } from "./veslo-server.js";
 
 test("deriveLocalVesloServerUrlFromOpencodeBaseUrl rewrites local loopback hosts to Veslo port", () => {
@@ -24,6 +25,42 @@ test("deriveLocalVesloServerUrlFromOpencodeBaseUrl returns null for non-local ho
 test("deriveLocalVesloServerUrlFromOpencodeBaseUrl accepts explicit target port", () => {
   const derived = deriveLocalVesloServerUrlFromOpencodeBaseUrl("http://localhost:64792", 9999);
   assert.equal(derived, "http://localhost:9999");
+});
+
+test("resolveSessionArchiveClientOptions prefers active server credentials", () => {
+  const resolved = resolveSessionArchiveClientOptions({
+    accountId: " usr_123 ",
+    activeBaseUrl: "active.veslo.example/ ",
+    activeToken: " active-token ",
+    settingsUrl: "settings.veslo.example",
+    settingsToken: "settings-token",
+    cloudUrl: "cloud.veslo.example",
+    cloudToken: "cloud-token",
+  });
+
+  assert.deepEqual(resolved, {
+    baseUrl: "http://active.veslo.example",
+    token: "active-token",
+    accountId: "usr_123",
+  });
+});
+
+test("resolveSessionArchiveClientOptions falls back to stored settings when active auth is unavailable", () => {
+  const resolved = resolveSessionArchiveClientOptions({
+    accountId: "usr_123",
+    activeBaseUrl: "http://127.0.0.1:8787",
+    activeToken: " ",
+    settingsUrl: "settings.veslo.example/",
+    settingsToken: "settings-token",
+    cloudUrl: "cloud.veslo.example",
+    cloudToken: "cloud-token",
+  });
+
+  assert.deepEqual(resolved, {
+    baseUrl: "http://settings.veslo.example",
+    token: "settings-token",
+    accountId: "usr_123",
+  });
 });
 
 test("session archive requests include the account id header", async () => {
