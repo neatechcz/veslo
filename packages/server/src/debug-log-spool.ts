@@ -45,6 +45,15 @@ export function createDebugLogSpool(input: { dir: string; maxBytes: number }): D
     return entries.filter((entry) => entry.endsWith(".json")).sort();
   }
 
+  async function readEventsForFiles(fileNames: string[]): Promise<DebugLogEvent[]> {
+    return Promise.all(
+      fileNames.map(async (fileName) => {
+        const raw = await readFile(join(eventDir, fileName), "utf8");
+        return parseDebugLogEvent(raw);
+      }),
+    );
+  }
+
   async function currentSpoolBytes(): Promise<number> {
     let total = 0;
     for (const fileName of await listEventFiles()) {
@@ -87,11 +96,19 @@ export function createDebugLogSpool(input: { dir: string; maxBytes: number }): D
       await ensureLayout();
       const now = Date.now();
       const manifest = pruneExpiredLeases(await readManifest(), now);
+      const existingLease = Object.entries(manifest.leases).sort((left, right) => left[1].leasedAt - right[1].leasedAt)[0];
+      if (existingLease) {
+        const [batchId, lease] = existingLease;
+        return {
+          batchId,
+          events: await readEventsForFiles(lease.files),
+        };
+      }
+
       const leasedFiles = new Set(Object.values(manifest.leases).flatMap((lease) => lease.files));
       const pendingFiles = (await listEventFiles()).filter((fileName) => !leasedFiles.has(fileName));
 
       const selectedFiles: string[] = [];
-      const events: DebugLogEvent[] = [];
       let totalBytes = 0;
 
       for (const fileName of pendingFiles) {
@@ -99,13 +116,12 @@ export function createDebugLogSpool(input: { dir: string; maxBytes: number }): D
         const eventBytes = Buffer.byteLength(raw, "utf8");
         if (
           selectedFiles.length > 0 &&
-          (events.length + 1 > limits.maxEvents || totalBytes + eventBytes > limits.maxBytes)
+          (selectedFiles.length + 1 > limits.maxEvents || totalBytes + eventBytes > limits.maxBytes)
         ) {
           break;
         }
 
         selectedFiles.push(fileName);
-        events.push(parseDebugLogEvent(raw));
         totalBytes += eventBytes;
       }
 
@@ -119,7 +135,10 @@ export function createDebugLogSpool(input: { dir: string; maxBytes: number }): D
       const batchId = randomUUID();
       manifest.leases[batchId] = { files: selectedFiles, leasedAt: now };
       await writeManifest(manifest);
-      return { batchId, events };
+      return {
+        batchId,
+        events: await readEventsForFiles(selectedFiles),
+      };
     },
 
     async ackBatch(batchId) {
