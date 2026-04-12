@@ -743,7 +743,8 @@ export default function DashboardView(props: DashboardViewProps) {
   };
 
   const openSettings = (tab: SettingsTab = "general") => {
-    handleDashboardTabSelection("settings", tab);
+    props.setSettingsTab(tab);
+    props.setTab("settings");
   };
 
   const openSoulForWorkspace = (workspaceId?: string) => {

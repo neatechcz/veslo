@@ -175,6 +175,10 @@ test("dashboard routes active nav re-clicks through the session return helper", 
   assert.match(dashboardSource, /props\.setTab\s*\(\s*nextTab\s*\)/);
   assert.match(
     dashboardSource,
+    /const\s+openSettings\s*=\s*\(\s*tab:\s*SettingsTab\s*=\s*["']general["']\s*\)\s*=>\s*\{\s*props\.setSettingsTab\s*\(\s*tab\s*\)\s*;\s*props\.setTab\s*\(\s*["']settings["']\s*\)\s*;\s*\}/s,
+  );
+  assert.doesNotMatch(
+    dashboardSource,
     /const\s+openSettings\s*=\s*\(\s*tab:\s*SettingsTab\s*=\s*["']general["']\s*\)\s*=>\s*\{\s*handleDashboardTabSelection\s*\(\s*["']settings["']\s*,\s*tab\s*\)\s*;\s*\}/s,
   );
   assert.match(
