@@ -1793,15 +1793,20 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
     const payload = body as Record<string, unknown>;
-    parseOptionalSessionId(payload.clickedSessionId);
+    const clickedSessionId = parseOptionalSessionId(payload.clickedSessionId);
     const selectedSessionId = parseOptionalSessionId(payload.selectedSessionId);
     const loadedTopLevelSessionIds = parseSessionIdArray(payload.loadedTopLevelSessionIds, "loadedTopLevelSessionIds");
-    parseSessionIdArray(payload.expandedSubagentSessionIds, "expandedSubagentSessionIds");
+    const expandedSubagentSessionIds = parseSessionIdArray(
+      payload.expandedSubagentSessionIds,
+      "expandedSubagentSessionIds",
+    );
     const limit = parseSessionTranscriptLimit((body as Record<string, unknown>).limit);
     const result = await sessionTranscriptPrefetch.updateInterest({
       workspaceId: workspace.id,
-      visibleSessionIds: loadedTopLevelSessionIds,
+      clickedSessionId,
       selectedSessionId,
+      loadedTopLevelSessionIds,
+      expandedSubagentSessionIds,
       limit,
     });
     return jsonResponse(result);

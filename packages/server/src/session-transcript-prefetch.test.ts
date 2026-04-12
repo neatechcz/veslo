@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createSessionTranscriptPrefetchStore } from "./session-transcript-prefetch.js";
 
 describe("session transcript prefetch core", () => {
-  test("prioritizes selected session and deduplicates queue order", async () => {
+  test("prioritizes clicked, selected, expanded, and loaded sessions in queue order", async () => {
     const store = createSessionTranscriptPrefetchStore({
       loadTranscript: async ({ workspaceId, sessionId }) => ({
         workspaceId,
@@ -15,19 +15,104 @@ describe("session transcript prefetch core", () => {
 
     const result = await store.updateInterest({
       workspaceId: "ws_local",
-      visibleSessionIds: ["sess-b", "sess-c", "sess-b", " ", "sess-a"],
-      selectedSessionId: "sess-a",
+      clickedSessionId: "sess-clicked",
+      selectedSessionId: "sess-selected",
+      expandedSubagentSessionIds: ["exp-b", "sess-selected", "exp-a", "exp-b"],
+      loadedTopLevelSessionIds: ["top-c", "sess-clicked", "top-b", "top-a", "top-b"],
       limit: 140,
     });
 
-    expect(store.debugQueue("ws_local")).toEqual(["sess-a", "sess-b", "sess-c"]);
-    expect(result.queuedSessionIds).toEqual(["sess-a", "sess-b", "sess-c"]);
+    expect(store.debugQueue("ws_local")).toEqual([
+      "sess-clicked",
+      "sess-selected",
+      "exp-b",
+      "exp-a",
+      "top-c",
+      "top-b",
+      "top-a",
+    ]);
+    expect(result.queuedSessionIds).toEqual([
+      "sess-clicked",
+      "sess-selected",
+      "exp-b",
+      "exp-a",
+      "top-c",
+      "top-b",
+      "top-a",
+    ]);
     expect(result.items).toEqual([]);
+  });
+
+  test("drains the whole loaded set instead of stopping after a prefix", async () => {
+    const calls: string[] = [];
+    const store = createSessionTranscriptPrefetchStore({
+      loadTranscript: async ({ workspaceId, sessionId }) => {
+        calls.push(sessionId);
+        return {
+          workspaceId,
+          sessionId,
+          messages: [],
+          partsByMessageId: {},
+        };
+      },
+      autoPrefetchOnInterest: false,
+    });
+
+    await store.updateInterest({
+      workspaceId: "ws_local",
+      clickedSessionId: null,
+      selectedSessionId: null,
+      expandedSubagentSessionIds: [],
+      loadedTopLevelSessionIds: ["sess-a", "sess-b", "sess-c", "sess-d", "sess-e"],
+      limit: 140,
+    });
+
+    await store.prefetchWorkspace("ws_local");
+
+    expect(calls).toEqual(["sess-a", "sess-b", "sess-c", "sess-d", "sess-e"]);
+    expect(store.debugQueue("ws_local")).toEqual([]);
+    expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-e" })?.sessionId).toBe("sess-e");
+  });
+
+  test("drops a failed background load and keeps draining later queue items", async () => {
+    const calls: string[] = [];
+    const store = createSessionTranscriptPrefetchStore({
+      loadTranscript: async ({ workspaceId, sessionId }) => {
+        calls.push(sessionId);
+        if (sessionId === "sess-b") {
+          throw new Error("boom");
+        }
+        return {
+          workspaceId,
+          sessionId,
+          messages: [],
+          partsByMessageId: {},
+        };
+      },
+      autoPrefetchOnInterest: false,
+    });
+
+    await store.updateInterest({
+      workspaceId: "ws_local",
+      clickedSessionId: null,
+      selectedSessionId: null,
+      expandedSubagentSessionIds: [],
+      loadedTopLevelSessionIds: ["sess-a", "sess-b", "sess-c"],
+      limit: 140,
+    });
+
+    await store.prefetchWorkspace("ws_local");
+
+    expect(calls).toEqual(["sess-a", "sess-b", "sess-c"]);
+    expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a" })?.sessionId).toBe("sess-a");
+    expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-b" })).toBeNull();
+    expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-c" })?.sessionId).toBe("sess-c");
+    expect(store.debugQueue("ws_local")).toEqual([]);
   });
 
   test("deduplicates in-flight loads for the same workspace/session", async () => {
     let calls = 0;
-    let release: (() => void) | null = null;
+    let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -52,7 +137,7 @@ describe("session transcript prefetch core", () => {
     await Promise.resolve();
     expect(calls).toBe(1);
 
-    release?.();
+    release();
     const [s1, s2, s3] = await Promise.all([p1, p2, p3]);
 
     expect(calls).toBe(1);
@@ -85,7 +170,7 @@ describe("session transcript prefetch core", () => {
 
   test("does not let a lower-limit in-flight load satisfy a higher-limit caller", async () => {
     let calls = 0;
-    let releaseFirst: (() => void) | null = null;
+    let releaseFirst: () => void = () => {};
     const firstGate = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
@@ -109,7 +194,7 @@ describe("session transcript prefetch core", () => {
     await Promise.resolve();
     const high = store.getOrLoad({ workspaceId: "ws_local", sessionId: "sess-a", limit: 200 });
 
-    releaseFirst?.();
+    releaseFirst();
     const [, highSnapshot] = await Promise.all([low, high]);
 
     expect(calls).toBe(2);
@@ -137,8 +222,10 @@ describe("session transcript prefetch core", () => {
 
     const interest = await store.updateInterest({
       workspaceId: "ws_local",
-      visibleSessionIds: ["sess-a"],
+      clickedSessionId: null,
       selectedSessionId: "sess-a",
+      loadedTopLevelSessionIds: ["sess-a"],
+      expandedSubagentSessionIds: [],
       limit: 200,
     });
 
