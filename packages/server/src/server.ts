@@ -25,6 +25,7 @@ import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { clearDebugLogSink, recordAudit, readAuditEntries, readLastAudit, registerDebugLogSink, resolveVesloDataDir } from "./audit.js";
 import { createDebugLogPipeline, normalizeDebugLogEvents, type DebugLogPipeline } from "./debug-log-pipeline.js";
+import { collectFileBackedDebugLogEvents } from "./debug-log-files.js";
 import { createDebugLogUploader } from "./debug-log-uploader.js";
 import { ReloadEventStore } from "./events.js";
 import { parseFrontmatter } from "./frontmatter.js";
@@ -69,6 +70,11 @@ type LogAttributes = Record<string, unknown>;
 
 type ServerLogger = {
   log: (level: LogLevel, message: string, attributes?: LogAttributes) => void;
+};
+
+type ServerHandle = {
+  port: number;
+  stop: (...args: any[]) => void;
 };
 
 function normalizeConfigKey(input: string): string {
@@ -328,7 +334,8 @@ type SoulStatus = {
   heartbeatPath: string;
 };
 
-export function startServer(config: ServerConfig) {
+export function startServer(config: ServerConfig): ServerHandle {
+  const logger = createServerLogger(config);
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
@@ -345,10 +352,43 @@ export function startServer(config: ServerConfig) {
             })
           : null,
       })
-    : null;
+        : null;
   registerDebugLogSink(debugLogPipeline);
+  let debugLogFileTick: ReturnType<typeof setInterval> | null = null;
+  let debugLogFileTickInFlight: Promise<void> | null = null;
+  let debugLogFileTickStopped = false;
+  const refreshFileBackedDebugLogs = async () => {
+    if (!debugLogPipeline || debugLogFileTickInFlight || debugLogFileTickStopped) return;
+    debugLogFileTickInFlight = (async () => {
+      for (const workspace of config.workspaces) {
+        if (debugLogFileTickStopped) return;
+        const events = await collectFileBackedDebugLogEvents({
+          workspaceRoot: workspace.path,
+          workspaceId: workspace.id,
+          userId: "veslo-server",
+          orgId: workspace.id,
+        });
+        if (debugLogFileTickStopped) return;
+        if (events.length > 0) {
+          await debugLogPipeline.enqueue(events);
+        }
+      }
+    })().catch((error) => {
+      logger.log("warn", "Debug log file refresh failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }).finally(() => {
+      debugLogFileTickInFlight = null;
+    });
+    await debugLogFileTickInFlight;
+  };
+  if (debugLogPipeline) {
+    void refreshFileBackedDebugLogs();
+    debugLogFileTick = setInterval(() => {
+      void refreshFileBackedDebugLogs();
+    }, 10_000);
+  }
   const routes = createRoutes(config, approvals, tokens, debugLogPipeline);
-  const logger = createServerLogger(config);
 
   const serverOptions: {
     hostname: string;
@@ -536,13 +576,18 @@ export function startServer(config: ServerConfig) {
 
   (serverOptions as { idleTimeout?: number }).idleTimeout = 120;
 
-  const server = Bun.serve(serverOptions);
+  const server = Bun.serve(serverOptions) as ServerHandle;
   const stopServer = server.stop.bind(server);
   try {
     server.stop = ((...args: Parameters<typeof server.stop>) => {
+      debugLogFileTickStopped = true;
+      if (debugLogFileTick) {
+        clearInterval(debugLogFileTick);
+        debugLogFileTick = null;
+      }
       clearDebugLogSink();
       return stopServer(...args);
-    }) as typeof server.stop;
+    }) as ServerHandle["stop"];
   } catch {
     // If the runtime does not allow patching stop, the server still runs correctly;
     // the explicit sink reset in the patched path is the intended cleanup path.
