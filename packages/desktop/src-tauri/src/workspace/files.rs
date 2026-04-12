@@ -235,6 +235,12 @@ description: Guide users through the get started setup and Chrome DevTools demo.
 const ENTERPRISE_ARCHIVE_URL: &str =
     "https://github.com/different-ai/openwork-enterprise/archive/refs/heads/main.zip";
 const ENTERPRISE_SEED_MARKER: &str = ".veslo-enterprise-creators";
+const ENTERPRISE_ALLOWED_CREATORS: [&str; 3] =
+    ["skill-creator", "plugin-creator", "agent-creator"];
+
+fn is_allowed_enterprise_creator_skill_name(skill_name: &str) -> bool {
+    ENTERPRISE_ALLOWED_CREATORS.contains(&skill_name)
+}
 
 fn seed_enterprise_creator_skills(root: &PathBuf, skill_root: &PathBuf) -> Result<(), String> {
     let marker_path = root.join(".opencode").join(ENTERPRISE_SEED_MARKER);
@@ -304,10 +310,8 @@ fn seed_enterprise_creator_skills(root: &PathBuf, skill_root: &PathBuf) -> Resul
         }
 
         let skill_name = &parts[3];
-        if !skill_name.ends_with("-creator") {
-            continue;
-        }
-        if existing.contains(skill_name) {
+        if !is_allowed_enterprise_creator_skill_name(skill_name) || existing.contains(skill_name)
+        {
             continue;
         }
 
@@ -414,9 +418,7 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
     let skill_root = root.join(".opencode").join("skills");
     fs::create_dir_all(&skill_root)
         .map_err(|e| format!("Failed to create .opencode/skills: {e}"))?;
-    seed_workspace_guide(&skill_root)?;
     if preset == "starter" {
-        seed_get_started_skill(&skill_root)?;
         if let Err(err) = seed_enterprise_creator_skills(&root, &skill_root) {
             println!("[workspace] Failed to seed creator skills: {err}");
         }
@@ -606,5 +608,19 @@ mod tests {
         mcp.insert("context7".to_string(), serde_json::json!({ "type": "remote" }));
 
         assert!(!has_chrome_mcp_alias(&mcp));
+    }
+
+    #[test]
+    fn enterprise_creator_allowlist_accepts_required_creators() {
+        assert!(is_allowed_enterprise_creator_skill_name("skill-creator"));
+        assert!(is_allowed_enterprise_creator_skill_name("plugin-creator"));
+        assert!(is_allowed_enterprise_creator_skill_name("agent-creator"));
+    }
+
+    #[test]
+    fn enterprise_creator_allowlist_rejects_non_allowed_skills() {
+        assert!(!is_allowed_enterprise_creator_skill_name("command-creator"));
+        assert!(!is_allowed_enterprise_creator_skill_name("workspace-guide"));
+        assert!(!is_allowed_enterprise_creator_skill_name("get-started"));
     }
 }
