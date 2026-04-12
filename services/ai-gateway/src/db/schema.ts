@@ -17,7 +17,7 @@ export const CoreTableNames = {
   session_lease: "session_lease",
   credential_health_event: "credential_health_event",
   credential_usage_event: "credential_usage_event",
-  audit_event: "audit_event",
+  audit_event: "ai_gateway_audit_event",
   user_ai_access_policy: "user_ai_access_policy",
 } as const;
 
