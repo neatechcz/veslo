@@ -41,7 +41,8 @@ Defaults to `~/.config/veslo/server.json` (override with `VESLO_SERVER_CONFIG` o
       "directory": "/Users/susan/Finance"
     }
   ],
-  "corsOrigins": ["http://localhost:5173"]
+  "corsOrigins": ["http://localhost:5173"],
+  "denApiBase": "https://den.example"
 }
 ```
 
@@ -59,6 +60,7 @@ Defaults to `~/.config/veslo/server.json` (override with `VESLO_SERVER_CONFIG` o
 - `VESLO_OPENCODE_DIRECTORY`
 - `VESLO_OPENCODE_USERNAME`
 - `VESLO_OPENCODE_PASSWORD`
+- `VESLO_DEN_API_BASE` Den API base URL used for org-scoped extension catalog fetches
 
 Token management (scoped tokens):
 

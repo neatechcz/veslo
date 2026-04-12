@@ -45,6 +45,7 @@ interface FileConfig {
   readOnly?: boolean;
   opencodeUsername?: string;
   opencodePassword?: string;
+  denApiBase?: string;
   logFormat?: LogFormat;
   logRequests?: boolean;
 }
@@ -336,6 +337,8 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     batchMaxBytes: debugLogBatchMaxBytes,
     spoolMaxBytes: debugLogSpoolMaxBytes,
   };
+  const denApiBaseRaw = process.env.VESLO_DEN_API_BASE?.trim() || fileConfig.denApiBase?.trim() || "";
+  const denApiBase = denApiBaseRaw ? denApiBaseRaw.replace(/\/+$/, "") : undefined;
 
   const authorizedRoots =
     fileConfig.authorizedRoots?.length
@@ -362,5 +365,6 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     logFormat,
     logRequests,
     debugLogs,
+    denApiBase,
   };
 }

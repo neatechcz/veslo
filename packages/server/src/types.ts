@@ -68,6 +68,7 @@ export interface ServerConfig {
   logFormat: LogFormat;
   logRequests: boolean;
   debugLogs: DebugLogConfig;
+  denApiBase?: string;
 }
 
 export interface Capabilities {
