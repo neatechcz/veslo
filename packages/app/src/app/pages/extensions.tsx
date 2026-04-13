@@ -6,10 +6,6 @@ import McpView, { type McpViewProps } from "./mcp";
 import { currentLocale, t } from "../../i18n";
 
 export type ExtensionsViewProps = McpViewProps & {
-  refreshMcpServers: () => void;
-  initialSection?: "mcp" | "plugins";
-  setDashboardTab?: (tab: "mcp" | "plugins") => void;
-  [key: string]: unknown;
 };
 
 export default function ExtensionsView(props: ExtensionsViewProps) {

@@ -1538,12 +1538,9 @@ export default function DashboardView(props: DashboardViewProps) {
 
             <Match when={props.tab === "plugins" || props.tab === "mcp"}>
               <ExtensionsView
-                initialSection={props.tab === "plugins" ? "plugins" : "mcp"}
-                setDashboardTab={props.setTab}
                 busy={props.busy}
                 activeWorkspaceRoot={props.activeWorkspaceRoot}
                 isRemoteWorkspace={props.isRemoteWorkspace}
-                refreshMcpServers={props.refreshMcpServers}
                 mcpServers={props.mcpServers}
                 mcpStatus={props.mcpStatus}
                 mcpLastUpdatedAt={props.mcpLastUpdatedAt}
