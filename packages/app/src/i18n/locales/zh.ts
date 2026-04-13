@@ -318,6 +318,13 @@ export default {
   "plugins.placeholder": "opencode-wakatime",
   "plugins.add_hint": "添加 npm 包名称，例如 opencode-wakatime",
 
+  // ==================== Extensions ====================
+  "extensions.title": "扩展",
+  "extensions.subtitle": "为此工作区连接 MCP 应用和服务器。",
+  "extensions.apps_connected_one": "已连接 1 个应用",
+  "extensions.apps_connected_other": "已连接多个应用",
+  "extensions.apps_mcp": "应用（MCP）",
+
   // ==================== MCP (Model Context Protocol) ====================
   "mcp.title": "MCP（测试版）",
   "mcp.description": "MCP 服务器让您使用自己的凭据连接服务。",

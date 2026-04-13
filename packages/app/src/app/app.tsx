@@ -7632,6 +7632,7 @@ export default function App() {
 
   const resolveDashboardTab = (value?: string | null) => {
     const normalized = value?.trim().toLowerCase() ?? "";
+    if (normalized === "plugins") return "mcp";
     if (dashboardTabs.has(normalized as DashboardTab)) {
       return normalized as DashboardTab;
     }

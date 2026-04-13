@@ -1353,7 +1353,7 @@ export default {
 
   // ==================== Extensions ====================
   "extensions.title": "Extensions",
-  "extensions.subtitle": "Apps (MCP) and OpenCode plugins live in one place.",
+  "extensions.subtitle": "Connect MCP apps and servers for this workspace.",
   "extensions.apps_connected_one": "app connected",
   "extensions.apps_connected_other": "apps connected",
   "extensions.plugin_one": "plugin",

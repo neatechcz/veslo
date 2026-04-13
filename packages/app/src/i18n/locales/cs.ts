@@ -1349,7 +1349,7 @@ export default {
 
   // ==================== Rozšíření ====================
   "extensions.title": "Rozšíření",
-  "extensions.subtitle": "Aplikace (MCP) a OpenCode pluginy na jednom místě.",
+  "extensions.subtitle": "Připojte MCP aplikace a servery pro tento workspace.",
   "extensions.apps_connected_one": "aplikace připojena",
   "extensions.apps_connected_other": "aplikací připojeno",
   "extensions.plugin_one": "plugin",
