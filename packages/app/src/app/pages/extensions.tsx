@@ -1,34 +1,19 @@
-import { Show, createEffect, createMemo, createSignal, on } from "solid-js";
+import { Show, createMemo } from "solid-js";
 
-import { Box, Cpu } from "lucide-solid";
+import { Box } from "lucide-solid";
 
-import Button from "../components/button";
 import McpView, { type McpViewProps } from "./mcp";
-import PluginsView, { type PluginsViewProps } from "./plugins";
 import { currentLocale, t } from "../../i18n";
 
-export type ExtensionsSection = "all" | "mcp" | "plugins";
-
-export type ExtensionsViewProps = McpViewProps &
-  PluginsViewProps & {
-    refreshMcpServers: () => void;
-    initialSection?: ExtensionsSection;
-    setDashboardTab?: (tab: "mcp" | "plugins") => void;
-  };
+export type ExtensionsViewProps = McpViewProps & {
+  refreshMcpServers: () => void;
+  initialSection?: "mcp" | "plugins";
+  setDashboardTab?: (tab: "mcp" | "plugins") => void;
+  [key: string]: unknown;
+};
 
 export default function ExtensionsView(props: ExtensionsViewProps) {
   const tr = (key: string) => t(key, currentLocale());
-  const [section, setSection] = createSignal<ExtensionsSection>(props.initialSection ?? "all");
-
-  createEffect(
-    on(
-      () => props.initialSection,
-      (nextSection, previousSection) => {
-        if (!nextSection || nextSection === previousSection) return;
-        setSection(nextSection);
-      },
-    ),
-  );
 
   const connectedAppsCount = createMemo(() =>
     props.mcpServers.filter((entry) => {
@@ -37,25 +22,6 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
       return status?.status === "connected";
     }).length,
   );
-
-  const pluginCount = createMemo(() => props.pluginList.length);
-
-  const refreshAll = () => {
-    props.refreshMcpServers();
-    props.refreshPlugins();
-  };
-
-  const selectSection = (nextSection: ExtensionsSection) => {
-    setSection(nextSection);
-    if (nextSection === "mcp" || nextSection === "plugins") {
-      props.setDashboardTab?.(nextSection);
-    }
-  };
-
-  const pillClass = (active: boolean) =>
-    `px-3 py-1 rounded-full text-xs font-medium border transition-colors flex items-center gap-2 ${
-      active ? "bg-gray-12/10 text-gray-12 border-gray-6/20" : "text-gray-10 border-gray-6 hover:text-gray-12"
-    }`;
 
   return (
     <section class="space-y-6 animate-in fade-in duration-300">
@@ -74,111 +40,37 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
                 </span>
               </div>
             </Show>
-            <Show when={pluginCount() > 0}>
-              <div class="inline-flex items-center gap-2 rounded-full bg-gray-3 px-3 py-1">
-                <Cpu size={14} class="text-gray-11" />
-                <span class="text-xs font-medium text-gray-11">
-                  {pluginCount()} {pluginCount() === 1 ? tr("extensions.plugin_one") : tr("extensions.plugin_other")}
-                </span>
-              </div>
-            </Show>
           </div>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2">
-          <div class="flex items-center gap-2">
-            <button
-              type="button"
-              class={pillClass(section() === "all")}
-              aria-pressed={section() === "all"}
-              onClick={() => selectSection("all")}
-            >
-              {tr("extensions.all")}
-            </button>
-            <button
-              type="button"
-              class={pillClass(section() === "mcp")}
-              aria-pressed={section() === "mcp"}
-              onClick={() => selectSection("mcp")}
-            >
-              <Box size={14} />
-              {tr("extensions.apps")}
-            </button>
-            <button
-              type="button"
-              class={pillClass(section() === "plugins")}
-              aria-pressed={section() === "plugins"}
-              onClick={() => selectSection("plugins")}
-            >
-              <Cpu size={14} />
-              {tr("extensions.plugins")}
-            </button>
-          </div>
-          <Button variant="ghost" onClick={refreshAll}>
-            {tr("extensions.refresh")}
-          </Button>
         </div>
       </div>
 
-      <Show when={section() === "all" || section() === "mcp"}>
-        <div class="space-y-4">
-          <div class="flex items-center gap-2 text-sm font-medium text-gray-12">
-            <Box size={16} class="text-gray-11" />
-            <span>{tr("extensions.apps_mcp")}</span>
-          </div>
-          <McpView
-            showHeader={false}
-            busy={props.busy}
-            activeWorkspaceRoot={props.activeWorkspaceRoot}
-            isRemoteWorkspace={props.isRemoteWorkspace}
-            mcpServers={props.mcpServers}
-            mcpStatus={props.mcpStatus}
-            mcpLastUpdatedAt={props.mcpLastUpdatedAt}
-            mcpStatuses={props.mcpStatuses}
-            mcpConnectingName={props.mcpConnectingName}
-            selectedMcp={props.selectedMcp}
-            setSelectedMcp={props.setSelectedMcp}
-            quickConnect={props.quickConnect}
-            connectMcp={props.connectMcp}
-            authorizeMcp={props.authorizeMcp}
-            logoutMcpAuth={props.logoutMcpAuth}
-            removeMcp={props.removeMcp}
-            showMcpReloadBanner={props.showMcpReloadBanner}
-            reloadBlocked={props.reloadBlocked}
-            reloadMcpEngine={props.reloadMcpEngine}
-          />
+      <div class="space-y-4">
+        <div class="flex items-center gap-2 text-sm font-medium text-gray-12">
+          <Box size={16} class="text-gray-11" />
+          <span>{tr("extensions.apps_mcp")}</span>
         </div>
-      </Show>
-
-      <Show when={section() === "all" || section() === "plugins"}>
-        <div class="space-y-4">
-          <div class="flex items-center gap-2 text-sm font-medium text-gray-12">
-            <Cpu size={16} class="text-gray-11" />
-            <span>{tr("extensions.plugins_opencode")}</span>
-          </div>
-          <PluginsView
-            busy={props.busy}
-            activeWorkspaceRoot={props.activeWorkspaceRoot}
-            canEditPlugins={props.canEditPlugins}
-            canUseGlobalScope={props.canUseGlobalScope}
-            accessHint={props.accessHint}
-            pluginScope={props.pluginScope}
-            setPluginScope={props.setPluginScope}
-            pluginConfigPath={props.pluginConfigPath}
-            pluginList={props.pluginList}
-            pluginInput={props.pluginInput}
-            setPluginInput={props.setPluginInput}
-            pluginStatus={props.pluginStatus}
-            activePluginGuide={props.activePluginGuide}
-            setActivePluginGuide={props.setActivePluginGuide}
-            isPluginInstalled={props.isPluginInstalled}
-            suggestedPlugins={props.suggestedPlugins}
-            refreshPlugins={props.refreshPlugins}
-            addPlugin={props.addPlugin}
-            removePlugin={props.removePlugin}
-          />
-        </div>
-      </Show>
+        <McpView
+          showHeader={false}
+          busy={props.busy}
+          activeWorkspaceRoot={props.activeWorkspaceRoot}
+          isRemoteWorkspace={props.isRemoteWorkspace}
+          mcpServers={props.mcpServers}
+          mcpStatus={props.mcpStatus}
+          mcpLastUpdatedAt={props.mcpLastUpdatedAt}
+          mcpStatuses={props.mcpStatuses}
+          mcpConnectingName={props.mcpConnectingName}
+          selectedMcp={props.selectedMcp}
+          setSelectedMcp={props.setSelectedMcp}
+          quickConnect={props.quickConnect}
+          connectMcp={props.connectMcp}
+          authorizeMcp={props.authorizeMcp}
+          logoutMcpAuth={props.logoutMcpAuth}
+          removeMcp={props.removeMcp}
+          showMcpReloadBanner={props.showMcpReloadBanner}
+          reloadBlocked={props.reloadBlocked}
+          reloadMcpEngine={props.reloadMcpEngine}
+        />
+      </div>
     </section>
   );
 }

@@ -35,41 +35,6 @@ export type McpDirectoryInfo = {
 
 export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
   {
-    name: "Notion",
-    description: "Pages, databases, and project docs in sync.",
-    url: "https://mcp.notion.com/mcp",
-    type: "remote",
-    oauth: true,
-  },
-  {
-    name: "Linear",
-    description: "Plan sprints and ship tickets faster.",
-    url: "https://mcp.linear.app/mcp",
-    type: "remote",
-    oauth: true,
-  },
-  {
-    name: "Sentry",
-    description: "Track releases and resolve production errors.",
-    url: "https://mcp.sentry.dev/mcp",
-    type: "remote",
-    oauth: true,
-  },
-  {
-    name: "Stripe",
-    description: "Inspect payments, invoices, and subscriptions.",
-    url: "https://mcp.stripe.com",
-    type: "remote",
-    oauth: true,
-  },
-  {
-    name: "Context7",
-    description: "Search product docs with richer context.",
-    url: "https://mcp.context7.com/mcp",
-    type: "remote",
-    oauth: false,
-  },
-  {
     id: "chrome-devtools",
     name: "Control Chrome",
     description: "Drive Chrome tabs with browser automation.",

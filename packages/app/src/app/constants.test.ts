@@ -9,3 +9,10 @@ test("Control Chrome quick connect enables isolated profile mode", () => {
   assert.equal(controlChrome.type, "local");
   assert.ok(controlChrome.command?.includes("--isolated"));
 });
+
+test("built-in MCP quick connect list contains only Control Chrome", () => {
+  assert.deepEqual(
+    MCP_QUICK_CONNECT.map((entry) => entry.id ?? entry.name),
+    ["chrome-devtools"],
+  );
+});

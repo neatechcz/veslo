@@ -1,9 +1,8 @@
-import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
+import { For, Show, createMemo, createSignal } from "solid-js";
 
 import type { McpServerEntry, McpStatusMap } from "../types";
 import type { McpDirectoryInfo } from "../constants";
-import { formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
-import { readOpencodeConfig, type OpencodeConfigFile } from "../lib/tauri";
+import { formatRelativeTime } from "../utils";
 import { quickConnectEntryKey } from "../mcp";
 
 import Button from "../components/button";
@@ -14,17 +13,13 @@ import {
   CheckCircle2,
   ChevronDown,
   CircleAlert,
-  Code2,
   CreditCard,
-  ExternalLink,
-  FolderOpen,
   Globe,
   Loader2,
   MonitorSmartphone,
   Plug2,
   Plus,
   RefreshCw,
-  Settings2,
   Unplug,
   Zap,
 } from "lucide-solid";
@@ -137,90 +132,7 @@ export default function McpView(props: McpViewProps) {
 
   const [removeOpen, setRemoveOpen] = createSignal(false);
   const [removeTarget, setRemoveTarget] = createSignal<string | null>(null);
-
-  const [configScope, setConfigScope] = createSignal<"project" | "global">("project");
-  const [projectConfig, setProjectConfig] = createSignal<OpencodeConfigFile | null>(null);
-  const [globalConfig, setGlobalConfig] = createSignal<OpencodeConfigFile | null>(null);
-  const [configError, setConfigError] = createSignal<string | null>(null);
-  const [revealBusy, setRevealBusy] = createSignal(false);
-  const [showAdvanced, setShowAdvanced] = createSignal(false);
   const [addMcpModalOpen, setAddMcpModalOpen] = createSignal(false);
-
-  const selectedEntry = createMemo(() =>
-    props.mcpServers.find((entry) => entry.name === props.selectedMcp) ?? null,
-  );
-
-  const quickConnectList = createMemo(() => props.quickConnect);
-
-  let configRequestId = 0;
-  createEffect(() => {
-    const root = props.activeWorkspaceRoot.trim();
-    const nextId = (configRequestId += 1);
-
-    if (!isTauriRuntime()) {
-      setProjectConfig(null);
-      setGlobalConfig(null);
-      setConfigError(null);
-      return;
-    }
-
-    void (async () => {
-      try {
-        setConfigError(null);
-        const [project, global] = await Promise.all([
-          root ? readOpencodeConfig("project", root) : Promise.resolve(null),
-          readOpencodeConfig("global", root),
-        ]);
-        if (nextId !== configRequestId) return;
-        setProjectConfig(project);
-        setGlobalConfig(global);
-      } catch (e) {
-        if (nextId !== configRequestId) return;
-        setProjectConfig(null);
-        setGlobalConfig(null);
-        setConfigError(e instanceof Error ? e.message : tr("mcp.config_load_failed"));
-      }
-    })();
-  });
-
-  const activeConfig = createMemo(() =>
-    configScope() === "project" ? projectConfig() : globalConfig(),
-  );
-
-  const revealLabel = () =>
-    isWindowsPlatform() ? tr("mcp.open_file") : tr("mcp.reveal_in_finder");
-
-  const canRevealConfig = () => {
-    if (!isTauriRuntime() || revealBusy()) return false;
-    if (configScope() === "project" && !props.activeWorkspaceRoot.trim()) return false;
-    return Boolean(activeConfig()?.exists);
-  };
-
-  const revealConfig = async () => {
-    if (!isTauriRuntime() || revealBusy()) return;
-    const root = props.activeWorkspaceRoot.trim();
-
-    if (configScope() === "project" && !root) {
-      setConfigError(tr("mcp.pick_workspace_error"));
-      return;
-    }
-
-    setRevealBusy(true);
-    setConfigError(null);
-    try {
-      const resolved = await readOpencodeConfig(configScope(), root);
-      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
-      if (isWindowsPlatform()) {
-        await openPath(resolved.path);
-      } else {
-        await revealItemInDir(resolved.path);
-      }
-    } catch (e) {
-      setConfigError(e instanceof Error ? e.message : tr("mcp.reveal_config_failed"));
-    } finally {
-      setRevealBusy(false);
-    }
-  };
 
   const quickConnectStatus = (entry: McpDirectoryInfo) => {
     const key = quickConnectEntryKey(entry);
@@ -326,7 +238,7 @@ export default function McpView(props: McpViewProps) {
         </div>
 
         <div class="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
-          <For each={quickConnectList()}>
+          <For each={props.quickConnect}>
             {(entry) => {
               const connected = () => isQuickConnectConnected(entry);
               const connecting = () => props.mcpConnectingName === entry.name;
@@ -495,20 +407,6 @@ export default function McpView(props: McpViewProps) {
                           )}
                         </Show>
 
-                        {/* Technical details */}
-                        <details class="group">
-                          <summary class="flex items-center gap-1.5 text-[11px] text-dls-secondary cursor-pointer hover:text-dls-text transition-colors list-none">
-                            <Code2 size={11} />
-                            {tr("mcp.technical_details")}
-                            <ChevronDown size={10} class="group-open:rotate-180 transition-transform" />
-                          </summary>
-                          <div class="mt-1.5 rounded-lg bg-dls-hover px-3 py-2 text-[11px] font-mono text-dls-secondary break-all">
-                            {entry.config.type === "remote"
-                              ? entry.config.url
-                              : entry.config.command?.join(" ")}
-                          </div>
-                        </details>
-
                         <Show when={supportsOauth(entry) && status() !== "connected"}>
                           <div class="pt-1 flex items-center justify-between gap-3">
                             <div class="text-xs text-dls-secondary">
@@ -606,98 +504,11 @@ export default function McpView(props: McpViewProps) {
         }}
       />
 
-      {/* ── Advanced: Config editor ───────────────────── */}
-      <div class="rounded-xl border border-dls-border bg-dls-surface overflow-hidden">
-        <button
-          type="button"
-          class="w-full flex items-center justify-between px-5 py-4 hover:bg-dls-hover transition-colors"
-          onClick={() => setShowAdvanced(!showAdvanced())}
-        >
-          <div class="flex items-center gap-3">
-            <Settings2 size={16} class="text-dls-secondary" />
-            <div class="text-left">
-              <div class="text-sm font-medium text-dls-text">{tr("mcp.advanced_settings")}</div>
-              <div class="text-xs text-dls-secondary">{tr("mcp.advanced_settings_hint")}</div>
-            </div>
-          </div>
-          <div class={`transition-transform ${showAdvanced() ? "rotate-180" : ""}`}>
-            <ChevronDown size={16} class="text-dls-secondary" />
-          </div>
-        </button>
-
-        <Show when={showAdvanced()}>
-          <div class="border-t border-dls-border px-5 py-4 space-y-4 animate-in fade-in slide-in-from-top-1 duration-200">
-            {/* Scope toggle */}
-            <div class="flex items-center gap-1.5">
-              <button
-                class={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  configScope() === "project"
-                    ? "bg-dls-active text-dls-text"
-                    : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
-                }`}
-                onClick={() => setConfigScope("project")}
-              >
-                {tr("mcp.scope_project")}
-              </button>
-              <button
-                class={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  configScope() === "global"
-                    ? "bg-dls-active text-dls-text"
-                    : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
-                }`}
-                onClick={() => setConfigScope("global")}
-              >
-                {tr("mcp.scope_global")}
-              </button>
-            </div>
-
-            {/* Config path */}
-            <div class="flex flex-col gap-1 text-xs">
-              <div class="text-dls-secondary">{tr("mcp.config_file")}</div>
-              <div class="text-dls-secondary/80 font-mono text-[11px] truncate">
-                {activeConfig()?.path ?? tr("mcp.config_not_loaded")}
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div class="flex items-center justify-between gap-3">
-              <div class="flex items-center gap-2">
-                <Button variant="secondary" onClick={revealConfig} disabled={!canRevealConfig()}>
-                  <Show
-                    when={revealBusy()}
-                    fallback={<><FolderOpen size={14} /> {revealLabel()}</>}
-                  >
-                    <Loader2 size={14} class="animate-spin" />
-                    {tr("mcp.opening_label")}
-                  </Show>
-                </Button>
-                <a
-                  href="https://opencode.ai/docs/mcp-servers/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="inline-flex items-center gap-1 text-xs text-dls-secondary hover:text-dls-text transition-colors"
-                >
-                  {tr("mcp.docs_link")}
-                  <ExternalLink size={11} />
-                </a>
-              </div>
-              <Show when={activeConfig() && activeConfig()!.exists === false}>
-                <div class="text-[11px] text-dls-secondary">{tr("mcp.file_not_found")}</div>
-              </Show>
-            </div>
-
-            <Show when={configError()}>
-              <div class="text-xs text-red-11">{configError()}</div>
-            </Show>
-
-            <div class="border-t border-dls-border pt-4">
-              <Button variant="secondary" onClick={() => setAddMcpModalOpen(true)}>
-                <Plus size={14} />
-                {tr("mcp.add_modal_title")}
-              </Button>
-            </div>
-          </div>
-        </Show>
+      <div class="flex justify-end">
+        <Button variant="secondary" onClick={() => setAddMcpModalOpen(true)}>
+          <Plus size={14} />
+          {tr("mcp.add_modal_title")}
+        </Button>
       </div>
 
       <AddMcpModal
