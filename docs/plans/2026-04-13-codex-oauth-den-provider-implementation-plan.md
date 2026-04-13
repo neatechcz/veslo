@@ -2,90 +2,158 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add a DEN-managed `codex_oauth` pseudo-provider so Veslo/OpenCode prompts route through DEN/Render using a server-side Codex/ChatGPT OAuth credential instead of user-managed provider API keys.
+**Goal:** Route Veslo/OpenCode prompts through DEN using a DEN-hosted Codex CLI worker profile instead of sending raw OpenAI, Anthropic, or Codex OAuth tokens from the desktop app.
 
-**Architecture:** Keep Veslo desktop talking to local OpenCode, and keep OpenCode talking to a gateway-compatible DEN provider endpoint. Add `codex_oauth` as the managed provider identity, store the Codex OAuth credential server-side, route requests through a Codex runtime adapter, and keep existing lease, policy, usage, audit, and alert behavior.
+**Architecture:** Veslo desktop continues to configure local OpenCode with a DEN gateway provider endpoint and a DEN gateway token. DEN validates the user/session, applies managed-AI policy, leases a `codex_oauth` runtime profile, converts the provider-compatible request into a Codex CLI prompt, runs `codex exec` in an isolated worker environment, and wraps the final answer back into an OpenAI-compatible non-streaming response.
 
-**Tech Stack:** TypeScript, Express, Node test runner, Drizzle/MySQL, SolidJS app utilities, static DEN admin UI, OpenCode provider config JSON.
+**Tech Stack:** TypeScript, Express, Node test runner, Node child processes, Drizzle/MySQL, static DEN admin UI, SolidJS app utilities, Codex CLI `codex exec`.
 
 ---
+
+## Live Gate Result
+
+The first direct-HTTP compatibility gate is complete.
+
+- Commit: `e6abf56a chore: add codex oauth runtime probe`
+- Live result on 2026-04-13: `https://api.openai.com/v1/chat/completions` returned HTTP 429 `insufficient_quota` when called with the local Codex/ChatGPT OAuth access token.
+- Decision: do not implement a direct bearer-token HTTP transport for `codex_oauth`. Implement the DEN-hosted Codex CLI worker path instead.
 
 ## Ground Rules
 
 - Do not modify `vendor/opencode`.
 - Do not commit secrets, OAuth tokens, API keys, or local auth cache contents.
 - Keep `openai` and `anthropic` API-key paths intact as legacy/fallback paths unless a task explicitly says otherwise.
-- Do not present `codex_oauth` as a raw Anthropic/OpenAI API credential. It is a Codex/ChatGPT runtime credential.
+- Do not present `codex_oauth` as a raw Anthropic/OpenAI API credential. It is a Codex runtime profile.
+- Do not read or write a developer's local `~/.codex/auth.json` from production code.
+- Use an explicit worker `CODEX_HOME` or secure runtime secret mount for live worker environments.
 - Run focused tests after each task and commit each task separately.
 
-## Task 1: Live Codex OAuth Compatibility Gate
+## Task 1: Add a Codex CLI Worker Probe
 
 **Files:**
-- Create: `services/den/scripts/probe-codex-oauth-runtime.ts`
-- Test: no committed unit test; this is a live diagnostic script.
+- Create: `services/den/scripts/probe-codex-cli-worker.ts`
 
-**Step 1: Add the probe script**
+**Step 1: Write the probe script**
 
-Create `services/den/scripts/probe-codex-oauth-runtime.ts`:
+Create `services/den/scripts/probe-codex-cli-worker.ts`:
 
 ```ts
-const accessToken = process.env.MANAGED_AI_CODEX_ACCESS_TOKEN?.trim() ?? ""
-const baseUrl = (process.env.MANAGED_AI_CODEX_TEST_BASE_URL ?? "https://api.openai.com").replace(/\/+$/, "")
-const model = process.env.MANAGED_AI_CODEX_TEST_MODEL?.trim() || "gpt-5.4"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import { spawn } from "node:child_process"
 
-if (!accessToken) {
-  throw new Error("MANAGED_AI_CODEX_ACCESS_TOKEN is required")
+const command = process.env.MANAGED_AI_CODEX_COMMAND?.trim() || "codex"
+const model = process.env.MANAGED_AI_CODEX_TEST_MODEL?.trim()
+const timeoutMs = Number.parseInt(process.env.MANAGED_AI_CODEX_TIMEOUT_MS ?? "120000", 10)
+const prompt = process.env.MANAGED_AI_CODEX_TEST_PROMPT?.trim() || "Reply with exactly one word: ok"
+const codexHome = process.env.MANAGED_AI_CODEX_HOME?.trim()
+
+if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+  throw new Error("MANAGED_AI_CODEX_TIMEOUT_MS must be a positive integer")
 }
 
-const response = await fetch(`${baseUrl}/v1/chat/completions`, {
-  method: "POST",
-  headers: {
-    authorization: `Bearer ${accessToken}`,
-    "content-type": "application/json",
-  },
-  body: JSON.stringify({
-    model,
-    messages: [{ role: "user", content: "Reply with the single word: ok" }],
-    max_tokens: 8,
-  }),
-})
+const scratchDir = await mkdtemp(path.join(tmpdir(), "veslo-codex-worker-"))
+const outputFile = path.join(scratchDir, "last-message.txt")
 
-const text = await response.text()
-console.log(JSON.stringify({
-  ok: response.ok,
-  status: response.status,
-  contentType: response.headers.get("content-type"),
-  body: text.slice(0, 2000),
-}, null, 2))
+try {
+  const args = [
+    "exec",
+    "--cd",
+    scratchDir,
+    "--skip-git-repo-check",
+    "--sandbox",
+    "read-only",
+    "--ask-for-approval",
+    "never",
+    "--ephemeral",
+    "--output-last-message",
+    outputFile,
+  ]
+  if (model) {
+    args.push("--model", model)
+  }
+  args.push(prompt)
 
-if (!response.ok) {
-  process.exitCode = 1
+  const result = await runCodex(command, args, timeoutMs, codexHome)
+  const finalMessage = result.exitCode === 0 ? await readFile(outputFile, "utf8").catch(() => "") : ""
+
+  console.log(JSON.stringify({
+    ok: result.exitCode === 0,
+    exitCode: result.exitCode,
+    signal: result.signal,
+    timedOut: result.timedOut,
+    stdout: result.stdout.slice(-2000),
+    stderr: result.stderr.slice(-2000),
+    finalMessage: finalMessage.slice(0, 2000),
+  }, null, 2))
+
+  if (result.exitCode !== 0 || result.timedOut) {
+    process.exitCode = 1
+  }
+} finally {
+  await rm(scratchDir, { recursive: true, force: true })
+}
+
+function runCodex(command: string, args: string[], timeoutMs: number, codexHome?: string) {
+  return new Promise<{
+    exitCode: number | null
+    signal: NodeJS.Signals | null
+    timedOut: boolean
+    stdout: string
+    stderr: string
+  }>((resolve, reject) => {
+    const child = spawn(command, args, {
+      env: {
+        ...process.env,
+        ...(codexHome ? { CODEX_HOME: codexHome } : {}),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+
+    let stdout = ""
+    let stderr = ""
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill("SIGTERM")
+    }, timeoutMs)
+
+    child.stdout.setEncoding("utf8")
+    child.stderr.setEncoding("utf8")
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk
+    })
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk
+    })
+    child.on("error", (error) => {
+      clearTimeout(timer)
+      reject(error)
+    })
+    child.on("close", (exitCode, signal) => {
+      clearTimeout(timer)
+      resolve({ exitCode, signal, timedOut, stdout, stderr })
+    })
+  })
 }
 ```
 
-**Step 2: Run the probe without a token to verify safe failure**
+**Step 2: Run the live probe locally**
 
-Run: `pnpm --dir services/den exec tsx scripts/probe-codex-oauth-runtime.ts`
-
-Expected: FAIL with `MANAGED_AI_CODEX_ACCESS_TOKEN is required`.
-
-**Step 3: Run the live probe with a real short-lived access token**
-
-Run with the token supplied from the admin OAuth exchange environment, not pasted into shell history if avoidable:
+Run:
 
 ```bash
-MANAGED_AI_CODEX_ACCESS_TOKEN=<redacted> pnpm --dir services/den exec tsx scripts/probe-codex-oauth-runtime.ts
+pnpm --dir services/den exec node --import tsx scripts/probe-codex-cli-worker.ts
 ```
 
-Expected if direct HTTP is viable: HTTP 200 and a response body with a model answer.
+Expected: If the current environment has a valid Codex login and network access, the command exits 0 and `finalMessage` contains `ok`. If the command fails because of sandboxed network, rerun with escalation. If it fails because there is no valid Codex login, record that as a worker provisioning blocker.
 
-Expected if direct HTTP is not viable: HTTP 401/403 or a clear upstream auth error. If this happens, stop broad implementation and switch the adapter task to a DEN-hosted Codex CLI worker implementation with a separate reviewed plan.
-
-**Step 4: Commit**
+**Step 3: Commit**
 
 ```bash
-git add services/den/scripts/probe-codex-oauth-runtime.ts
-git commit -m "chore: add codex oauth runtime probe"
+git add services/den/scripts/probe-codex-cli-worker.ts
+git commit -m "chore: add codex cli worker probe"
 ```
 
 ## Task 2: Add Shared `codex_oauth` Provider Identity
@@ -98,21 +166,18 @@ git commit -m "chore: add codex oauth runtime probe"
 - Modify: `services/den/src/managed-ai/http/admin.ts`
 - Test: `services/den/test/admin-managed-ai-user-access.test.ts`
 
-**Step 1: Write the failing tests**
+**Step 1: Write failing user-access tests**
 
-Add a test in `services/den/test/admin-managed-ai-user-access.test.ts` proving that admin AI access accepts `codex_oauth`:
+Add a test proving admin AI access accepts `codex_oauth`:
 
 ```ts
 test("admin can assign codex_oauth managed AI access", async () => {
-  const app = createTestApp()
-  const response = await fetchJson(app, "/admin/api/users/user_1/ai-access", {
-    method: "PUT",
-    body: {
-      enabled: true,
-      provider: "codex_oauth",
-      defaultModel: "gpt-5.4",
-      allowedModels: ["gpt-5.4"],
-    },
+  const response = await putUserAiAccess({
+    userId: "user_1",
+    enabled: true,
+    provider: "codex_oauth",
+    defaultModel: "gpt-5.4",
+    allowedModels: ["gpt-5.4"],
   })
 
   assert.equal(response.status, 200)
@@ -123,9 +188,13 @@ test("admin can assign codex_oauth managed AI access", async () => {
 
 Adjust helper names to match the existing test file.
 
-**Step 2: Run the test to verify it fails**
+**Step 2: Run the test to verify failure**
 
-Run: `pnpm --dir services/den exec tsx --test test/admin-managed-ai-user-access.test.ts`
+Run:
+
+```bash
+pnpm --dir services/den exec tsx --test test/admin-managed-ai-user-access.test.ts
+```
 
 Expected: FAIL with `invalid_ai_access_provider` or equivalent.
 
@@ -134,10 +203,9 @@ Expected: FAIL with `invalid_ai_access_provider` or equivalent.
 Create `services/den/src/managed-ai/providers/ids.ts`:
 
 ```ts
-export const MANAGED_AI_PROVIDERS = ["openai", "anthropic", "codex_oauth"] as const
-export type ManagedAiProvider = (typeof MANAGED_AI_PROVIDERS)[number]
-
 export const CODEX_OAUTH_PROVIDER = "codex_oauth" as const
+export const MANAGED_AI_PROVIDERS = ["openai", "anthropic", CODEX_OAUTH_PROVIDER] as const
+export type ManagedAiProvider = (typeof MANAGED_AI_PROVIDERS)[number]
 
 export function isManagedAiProvider(value: unknown): value is ManagedAiProvider {
   return value === "openai" || value === "anthropic" || value === CODEX_OAUTH_PROVIDER
@@ -157,280 +225,81 @@ export function formatManagedAiProviderLabel(provider: string): string {
 
 **Step 4: Wire provider types**
 
-Modify `services/den/src/managed-ai/leases/repository.ts`:
+Modify the repositories and admin validation so AI access and leases accept `codex_oauth`, but generic API-key credential creation still only accepts API-key providers.
 
-```ts
-import type { ManagedAiProvider } from "../providers/ids.js"
+**Step 5: Run focused tests and commit**
 
-export type LeaseProvider = ManagedAiProvider
-```
-
-Modify `services/den/src/managed-ai/access/repository.ts`:
-
-```ts
-import { MANAGED_AI_PROVIDERS, type ManagedAiProvider } from "../providers/ids.js"
-
-export const AiAccessProviders = MANAGED_AI_PROVIDERS
-export type AiAccessProvider = ManagedAiProvider
-```
-
-Modify `services/den/src/managed-ai/credentials/platform-owner.ts`:
-
-```ts
-export const PLATFORM_CREDENTIAL_OWNER_BY_PROVIDER: Record<LeaseProvider, string> = {
-  openai: "platform:openai",
-  anthropic: "platform:anthropic",
-  codex_oauth: "platform:codex_oauth",
-}
-```
-
-**Step 5: Update admin validation**
-
-Modify `services/den/src/managed-ai/http/admin.ts`:
-
-- Import `formatManagedAiProviderLabel`, `isApiKeyCredentialProvider`, and `isManagedAiProvider`.
-- Keep generic secret credential creation restricted to API-key providers:
-
-```ts
-function parseCredentialProvider(value: unknown): LeaseProvider | null {
-  return isApiKeyCredentialProvider(value) ? value : null
-}
-
-function parseAiAccessProvider(value: unknown): AiAccessProvider | null {
-  return isManagedAiProvider(value) ? value : null
-}
-
-function formatProviderLabel(provider: string) {
-  return formatManagedAiProviderLabel(provider)
-}
-```
-
-**Step 6: Run focused tests**
-
-Run: `pnpm --dir services/den exec tsx --test test/admin-managed-ai-user-access.test.ts`
-
-Expected: PASS.
-
-**Step 7: Commit**
+Run:
 
 ```bash
+pnpm --dir services/den exec tsx --test test/admin-managed-ai-user-access.test.ts
 git add services/den/src/managed-ai/providers/ids.ts services/den/src/managed-ai/leases/repository.ts services/den/src/managed-ai/access/repository.ts services/den/src/managed-ai/credentials/platform-owner.ts services/den/src/managed-ai/http/admin.ts services/den/test/admin-managed-ai-user-access.test.ts
 git commit -m "feat: add codex oauth managed provider id"
 ```
 
-## Task 3: Add `codex_oauth` Secret and Token Broker Support
+Expected: PASS before commit.
+
+## Task 3: Add Codex CLI Worker Transport
 
 **Files:**
-- Modify: `services/den/src/managed-ai/credentials/secret-store.ts`
-- Modify: `services/den/src/managed-ai/credentials/default-token-broker.ts`
-- Modify: `services/den/src/managed-ai/runtime/default-runtime.ts`
-- Test: `services/den/test/managed-ai-token-broker.test.ts`
+- Create: `services/den/src/managed-ai/providers/codex-cli-worker-transport.ts`
+- Modify: `services/den/src/managed-ai/providers/transport.ts`
+- Test: `services/den/test/managed-ai-codex-cli-worker-transport.test.ts`
 
-**Step 1: Write failing token broker tests**
+**Step 1: Write failing transport tests**
 
-Add tests in `services/den/test/managed-ai-token-broker.test.ts`:
+Create `services/den/test/managed-ai-codex-cli-worker-transport.test.ts` with tests that use a fake `spawnCodex` function:
 
 ```ts
-test("returns live codex oauth access tokens before proxying", async () => {
-  const secretStore = new EncryptedSecretStore("test_secret_key_32_bytes_minimum____", {
-    secret_1: {
-      kind: "codex_oauth",
-      accessToken: "codex_access",
-      refreshToken: "codex_refresh",
-      expiresAt: "2026-04-01T13:00:00.000Z",
+test("converts chat completion messages into a codex prompt and wraps the final answer", async () => {
+  const transport = new CodexCliWorkerTransport({
+    spawnCodex: async (input) => {
+      assert.match(input.prompt, /system: You are concise/)
+      assert.match(input.prompt, /user: Say ok/)
+      return { exitCode: 0, signal: null, timedOut: false, finalMessage: "ok", stdout: "", stderr: "" }
     },
   })
-  const credentials = new InMemoryCredentialRepository(
-    new Map([
-      [
-        "binding_codex",
-        createCredentialRecord({
-          provider: "codex_oauth",
-          credentialType: "oauth",
-        }),
+
+  const response = await transport.chatCompletions({
+    body: {
+      model: "gpt-5.4",
+      messages: [
+        { role: "system", content: "You are concise" },
+        { role: "user", content: "Say ok" },
       ],
-    ]),
+    },
+  })
+
+  assert.equal(response.status, 200)
+  assert.equal(response.body.choices[0].message.content, "ok")
+  assert.equal(response.body.model, "gpt-5.4")
+})
+
+test("rejects streaming requests until streaming is implemented", async () => {
+  const transport = new CodexCliWorkerTransport({ spawnCodex: async () => unreachable() })
+  await assert.rejects(
+    () => transport.chatCompletions({ body: { model: "gpt-5.4", stream: true, messages: [] } }),
+    /codex_streaming_not_supported/,
   )
-
-  const broker = new DefaultTokenBroker({
-    credentials,
-    secrets: secretStore,
-    now: () => new Date("2026-04-01T12:00:00.000Z"),
-  })
-
-  assert.deepEqual(await broker.getUpstreamAuth({ bindingId: "binding_codex" }), {
-    kind: "oauth",
-    value: "codex_access",
-  })
 })
 ```
 
-Add a second test proving expired `codex_oauth` uses `refreshCodexOAuth` and stores the refreshed secret.
-
 **Step 2: Run the test to verify failure**
 
-Run: `pnpm --dir services/den exec tsx --test test/managed-ai-token-broker.test.ts`
-
-Expected: FAIL because `codex_oauth` is not a valid stored secret kind.
-
-**Step 3: Extend stored secret types**
-
-Modify `services/den/src/managed-ai/credentials/secret-store.ts`:
-
-```ts
-export type StoredSecret =
-  | { kind: "api_key"; apiKey: string }
-  | { kind: "openai_oauth"; accessToken: string; refreshToken: string; expiresAt: string }
-  | { kind: "codex_oauth"; accessToken: string; refreshToken: string; expiresAt: string }
-```
-
-**Step 4: Extend token broker refresh**
-
-Modify `services/den/src/managed-ai/credentials/default-token-broker.ts`:
-
-- Add a `CodexOAuthSecret` type.
-- Add `refreshCodexOAuth?: (input) => Promise<CodexOAuthSecret>` to `DefaultTokenBrokerDeps`.
-- Route `secret.kind === "codex_oauth"` through `refreshCodexOAuth`.
-- Keep `openai_oauth` behavior unchanged.
-
-**Step 5: Wire default runtime**
-
-Modify `services/den/src/managed-ai/runtime/default-runtime.ts` so `refreshCodexOAuth` uses the same OAuth client initially:
-
-```ts
-refreshCodexOAuth: async ({ secret }) => ({
-  kind: "codex_oauth",
-  ...(await openAiOAuth.refreshToken({ refreshToken: secret.refreshToken })),
-}),
-```
-
-**Step 6: Run focused tests**
-
-Run: `pnpm --dir services/den exec tsx --test test/managed-ai-token-broker.test.ts`
-
-Expected: PASS.
-
-**Step 7: Commit**
+Run:
 
 ```bash
-git add services/den/src/managed-ai/credentials/secret-store.ts services/den/src/managed-ai/credentials/default-token-broker.ts services/den/src/managed-ai/runtime/default-runtime.ts services/den/test/managed-ai-token-broker.test.ts
-git commit -m "feat: support codex oauth secrets"
+pnpm --dir services/den exec tsx --test test/managed-ai-codex-cli-worker-transport.test.ts
 ```
 
-## Task 4: Add DEN Admin Codex OAuth Credential Routes
+Expected: FAIL because the transport does not exist.
 
-**Files:**
-- Modify: `services/den/src/managed-ai/http/admin.ts`
-- Test: `services/den/test/admin-managed-ai-openai-oauth.test.ts`
-
-**Step 1: Write failing route tests**
-
-Add tests to `services/den/test/admin-managed-ai-openai-oauth.test.ts` or split into `services/den/test/admin-managed-ai-codex-oauth.test.ts`:
-
-```ts
-test("POST /admin/api/credentials/codex/oauth/exchange persists the platform Codex OAuth credential", async () => {
-  // Mirror the existing OpenAI OAuth exchange test, but assert:
-  // secret.kind === "codex_oauth"
-  // ownerUserId === "platform:codex_oauth"
-  // provider === "codex_oauth"
-  // credentialType === "oauth"
-  // name === "Shared Codex OAuth"
-  // audit action === "credential.codex_oauth.connect"
-})
-```
-
-**Step 2: Run the test to verify failure**
-
-Run: `pnpm --dir services/den exec tsx --test test/admin-managed-ai-openai-oauth.test.ts`
-
-Expected: FAIL with 404 for `/credentials/codex/oauth/start` or `/exchange`.
-
-**Step 3: Add routes**
-
-Modify `createManagedAiAdminUiRouter` in `services/den/src/managed-ai/http/admin.ts`:
-
-- Add `POST /admin/api/credentials/codex/oauth/start`.
-- Add `POST /admin/api/credentials/codex/oauth/exchange`.
-- Reuse signed state helpers, but use Codex-specific storage/action names.
-- Store:
-
-```ts
-await deps.secrets.put({
-  kind: "codex_oauth",
-  accessToken: tokens.accessToken,
-  refreshToken: tokens.refreshToken,
-  expiresAt: tokens.expiresAt,
-})
-```
-
-- Create platform credential:
-
-```ts
-{
-  ownerUserId: getPlatformCredentialOwnerUserId("codex_oauth"),
-  name: "Shared Codex OAuth",
-  provider: "codex_oauth",
-  credentialType: "oauth",
-  secretRef: stored.secretRef,
-}
-```
-
-**Step 4: Run focused tests**
-
-Run: `pnpm --dir services/den exec tsx --test test/admin-managed-ai-openai-oauth.test.ts`
-
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add services/den/src/managed-ai/http/admin.ts services/den/test/admin-managed-ai-openai-oauth.test.ts
-git commit -m "feat: add codex oauth admin credential flow"
-```
-
-## Task 5: Add Codex Runtime Transport and Proxy Route
-
-**Files:**
-- Create: `services/den/src/managed-ai/providers/codex-oauth-transport.ts`
-- Create: `services/den/src/managed-ai/http/providers/codex-oauth.ts`
-- Modify: `services/den/src/managed-ai/providers/transport.ts`
-- Modify: `services/den/src/managed-ai/http/proxy.ts`
-- Modify: `services/den/src/managed-ai/runtime/default-runtime.ts`
-- Test: `services/den/test/managed-ai-codex-oauth-proxy.test.ts`
-
-**Step 1: Write failing proxy tests**
-
-Create `services/den/test/managed-ai-codex-oauth-proxy.test.ts` with a fake Codex transport:
-
-```ts
-test("POST /providers/codex_oauth/v1/chat/completions forwards with sticky codex oauth lease", async () => {
-  // Build the same app shape as existing managed-ai proxy tests.
-  // Assert:
-  // - request requires bearer gateway auth
-  // - x-veslo-session-id is required
-  // - lease scope provider is "codex_oauth"
-  // - binding owner is "platform:codex_oauth"
-  // - fake transport receives upstreamAuth.value === "codex_access"
-  // - response body is forwarded to the caller
-  // - usage provider is "codex_oauth"
-})
-```
-
-Use `services/den/test/managed-ai-proxy-usage.test.ts` and `services/den/test/managed-ai-proxy-auth.test.ts` as the structural reference.
-
-**Step 2: Run the test to verify failure**
-
-Run: `pnpm --dir services/den exec tsx --test test/managed-ai-codex-oauth-proxy.test.ts`
-
-Expected: FAIL because the route and transport do not exist.
-
-**Step 3: Add transport interface**
+**Step 3: Add the transport interface**
 
 Modify `services/den/src/managed-ai/providers/transport.ts`:
 
 ```ts
 export type CodexChatCompletionsTransportInput = {
-  upstreamAuth: UpstreamAuth
   body: unknown
 }
 
@@ -439,64 +308,77 @@ export interface CodexOAuthProviderTransport {
 }
 ```
 
-**Step 4: Add HTTP transport**
+**Step 4: Implement the worker transport**
 
-Create `services/den/src/managed-ai/providers/codex-oauth-transport.ts`:
+Create `services/den/src/managed-ai/providers/codex-cli-worker-transport.ts`.
 
-```ts
-import {
-  headersToRecord,
-  ProviderTransportError,
-  readProviderResponseBody,
-  type CodexChatCompletionsTransportInput,
-  type CodexOAuthProviderTransport,
-  type ProviderTransportResponse,
-} from "./transport.js"
+Required behavior:
 
-export class CodexOAuthTransport implements CodexOAuthProviderTransport {
-  private readonly baseUrl: string
-  private readonly fetchImpl: typeof fetch
+- Extract `model`, `messages`, and `stream` from OpenAI-compatible chat completion bodies.
+- Throw `ProviderTransportError("codex_streaming_not_supported", { statusCode: 400 })` for `stream: true`.
+- Convert text-only messages into a plain prompt transcript.
+- Spawn `codex exec --cd <scratch> --skip-git-repo-check --sandbox read-only --ask-for-approval never --ephemeral --output-last-message <file> --model <model> <prompt>`.
+- Use optional env config:
+  - `MANAGED_AI_CODEX_COMMAND`
+  - `MANAGED_AI_CODEX_HOME`
+  - `MANAGED_AI_CODEX_WORKDIR`
+  - `MANAGED_AI_CODEX_TIMEOUT_MS`
+- Return an OpenAI-compatible object with `id`, `object`, `created`, `model`, one assistant message choice, and `usage: null`.
+- Never include raw tokens, full stderr, or local auth paths in returned errors.
 
-  constructor(deps: { baseUrl?: string; fetchImpl?: typeof fetch } = {}) {
-    this.baseUrl = (deps.baseUrl ?? "https://api.openai.com").replace(/\/+$/, "")
-    this.fetchImpl = deps.fetchImpl ?? fetch
-  }
+**Step 5: Run focused tests and commit**
 
-  async chatCompletions(input: CodexChatCompletionsTransportInput): Promise<ProviderTransportResponse> {
-    const response = await this.fetchImpl(`${this.baseUrl}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${input.upstreamAuth.value}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(input.body),
-    })
+Run:
 
-    const body = await readProviderResponseBody(response)
-    const headers = headersToRecord(response.headers)
-    if (!response.ok) {
-      throw new ProviderTransportError(`codex_oauth_upstream_${response.status}`, {
-        statusCode: response.status,
-        body,
-        headers,
-      })
-    }
-    return { status: response.status, body, headers }
-  }
-}
+```bash
+pnpm --dir services/den exec tsx --test test/managed-ai-codex-cli-worker-transport.test.ts
+git add services/den/src/managed-ai/providers/transport.ts services/den/src/managed-ai/providers/codex-cli-worker-transport.ts services/den/test/managed-ai-codex-cli-worker-transport.test.ts
+git commit -m "feat: add codex cli worker transport"
 ```
 
-If Task 1 proved direct HTTP is not viable, replace this with a fail-fast transport and stop for a CLI-worker-specific plan before continuing.
+Expected: PASS before commit.
 
-**Step 5: Add proxy route**
+## Task 4: Add Codex OAuth Proxy Route
 
-Create `services/den/src/managed-ai/http/providers/codex-oauth.ts` by copying the OpenAI route shape and changing:
+**Files:**
+- Create: `services/den/src/managed-ai/http/providers/codex-oauth.ts`
+- Modify: `services/den/src/managed-ai/http/proxy.ts`
+- Modify: `services/den/src/managed-ai/runtime/default-runtime.ts`
+- Test: `services/den/test/managed-ai-codex-oauth-proxy.test.ts`
+
+**Step 1: Write failing proxy tests**
+
+Create `services/den/test/managed-ai-codex-oauth-proxy.test.ts` using a fake Codex transport. Assert:
+
+- `POST /providers/codex_oauth/v1/chat/completions` requires gateway auth.
+- `x-veslo-session-id` is required.
+- AI access policy must allow provider `codex_oauth`.
+- Lease scope provider is `codex_oauth`.
+- Binding owner is `platform:codex_oauth`.
+- Fake transport receives the policy-filtered body.
+- Response body is forwarded to OpenCode.
+- Usage records provider `codex_oauth`.
+
+**Step 2: Run the test to verify failure**
+
+Run:
+
+```bash
+pnpm --dir services/den exec tsx --test test/managed-ai-codex-oauth-proxy.test.ts
+```
+
+Expected: FAIL because the route does not exist.
+
+**Step 3: Implement the proxy route**
+
+Create the route by following `services/den/src/managed-ai/http/providers/openai.ts`, with these differences:
 
 - route provider: `codex_oauth`
 - binding owner: `getPlatformCredentialOwnerUserId("codex_oauth")`
-- transport: `deps.codexOAuthTransport.chatCompletions`
-- usage provider: `codex_oauth`
+- transport call: `deps.codexOAuthTransport.chatCompletions({ body })`
+- no upstream bearer token lookup for the MVP worker route
 - request id prefix: `codex_oauth_req_`
+- usage provider: `codex_oauth`
 
 Modify `services/den/src/managed-ai/http/proxy.ts`:
 
@@ -504,69 +386,52 @@ Modify `services/den/src/managed-ai/http/proxy.ts`:
 router.use("/providers/codex_oauth", createCodexOAuthProxyRouter(deps))
 ```
 
-**Step 6: Wire runtime dependencies**
+Modify `services/den/src/managed-ai/runtime/default-runtime.ts` to instantiate `new CodexCliWorkerTransport()`.
 
-Modify `services/den/src/managed-ai/runtime/default-runtime.ts` to add `codexOAuthTransport` to `ProxyDependencies` and instantiate `new CodexOAuthTransport(...)`.
+**Step 4: Run focused tests and commit**
 
-**Step 7: Run focused tests**
-
-Run: `pnpm --dir services/den exec tsx --test test/managed-ai-codex-oauth-proxy.test.ts`
-
-Expected: PASS.
-
-**Step 8: Commit**
+Run:
 
 ```bash
-git add services/den/src/managed-ai/providers/transport.ts services/den/src/managed-ai/providers/codex-oauth-transport.ts services/den/src/managed-ai/http/providers/codex-oauth.ts services/den/src/managed-ai/http/proxy.ts services/den/src/managed-ai/runtime/default-runtime.ts services/den/test/managed-ai-codex-oauth-proxy.test.ts
-git commit -m "feat: proxy codex oauth provider requests"
+pnpm --dir services/den exec tsx --test test/managed-ai-codex-oauth-proxy.test.ts
+git add services/den/src/managed-ai/http/providers/codex-oauth.ts services/den/src/managed-ai/http/proxy.ts services/den/src/managed-ai/runtime/default-runtime.ts services/den/test/managed-ai-codex-oauth-proxy.test.ts
+git commit -m "feat: proxy codex oauth through cli worker"
 ```
 
-## Task 6: Update Veslo Desktop Provider Routing
+Expected: PASS before commit.
+
+## Task 5: Update Veslo Desktop Provider Routing
 
 **Files:**
 - Modify: `packages/app/src/app/utils/providers.ts`
-- Modify: `packages/app/src/app/lib/ai-access.ts`
-- Modify: `packages/app/src/app/lib/opencode.ts`
 - Test: `packages/app/src/app/utils/providers.test.ts`
 - Test: `packages/app/src/app/lib/ai-access.test.ts`
 - Test: `packages/app/src/app/lib/provider-routing.test.ts`
 
 **Step 1: Write failing app tests**
 
-Add to `packages/app/src/app/utils/providers.test.ts`:
+Add tests proving `codex_oauth` is gateway-owned and formats as:
 
-```ts
-test("identifies codex oauth as gateway-owned provider", () => {
-  assert.equal(isGatewayOwnedProvider("codex_oauth"), true)
-})
-```
-
-Add to `packages/app/src/app/lib/ai-access.test.ts` a `codex_oauth` managed access case:
-
-```ts
-test("formatManagedAiAccessConfig routes codex oauth through the gateway", () => {
-  const content = formatManagedAiAccessConfig("{}", {
-    profile: {
-      userId: "user_123",
-      providerId: "codex_oauth",
-      defaultModel: { providerID: "codex_oauth", modelID: "gpt-5.4" },
-      allowedModels: ["gpt-5.4"],
-      updatedAt: null,
-    },
-    serverBaseUrl: "https://veslo.example.test",
-    gatewayAccessToken: "den_token_123",
-  })
-  const parsed = JSON.parse(content)
-  assert.equal(parsed.model, "codex_oauth/gpt-5.4")
-  assert.equal(parsed.provider.codex_oauth.options.baseURL, "https://veslo.example.test/ai-gateway/providers/codex_oauth/v1")
-})
+```json
+{
+  "model": "codex_oauth/gpt-5.4",
+  "provider": {
+    "codex_oauth": {
+      "options": {
+        "baseURL": "https://veslo.example.test/ai-gateway/providers/codex_oauth/v1"
+      }
+    }
+  }
+}
 ```
 
 **Step 2: Run focused app tests to verify failure**
 
-Run: `pnpm --dir packages/app test -- app/utils/providers.test.ts app/lib/ai-access.test.ts app/lib/provider-routing.test.ts`
+Run:
 
-If the app package uses a different focused test script, use the existing package test convention from `packages/app/package.json`.
+```bash
+pnpm --dir packages/app test -- app/utils/providers.test.ts app/lib/ai-access.test.ts app/lib/provider-routing.test.ts
+```
 
 Expected: FAIL because `codex_oauth` is not gateway-owned yet.
 
@@ -575,29 +440,22 @@ Expected: FAIL because `codex_oauth` is not gateway-owned yet.
 Modify `packages/app/src/app/utils/providers.ts`:
 
 ```ts
-export const GATEWAY_OWNED_PROVIDER_IDS = ["openai", "anthropic", "codex_oauth"] as const;
+export const GATEWAY_OWNED_PROVIDER_IDS = ["openai", "anthropic", "codex_oauth"] as const
 ```
 
-Consider changing `isGatewayOAuthProvider` to return true for `openai` and `codex_oauth` only if it is still used in a UI path.
+**Step 4: Run focused app tests and commit**
 
-**Step 4: Verify `applyGatewayProviderRouting` works unchanged**
-
-No route-specific code should be required in `packages/app/src/app/lib/opencode.ts` because the base URL is already built from `providerId`. Only adjust tests/types if TypeScript requires it.
-
-**Step 5: Run focused app tests**
-
-Run: `pnpm --dir packages/app test -- app/utils/providers.test.ts app/lib/ai-access.test.ts app/lib/provider-routing.test.ts`
-
-Expected: PASS.
-
-**Step 6: Commit**
+Run:
 
 ```bash
-git add packages/app/src/app/utils/providers.ts packages/app/src/app/lib/ai-access.ts packages/app/src/app/lib/opencode.ts packages/app/src/app/utils/providers.test.ts packages/app/src/app/lib/ai-access.test.ts packages/app/src/app/lib/provider-routing.test.ts
+pnpm --dir packages/app test -- app/utils/providers.test.ts app/lib/ai-access.test.ts app/lib/provider-routing.test.ts
+git add packages/app/src/app/utils/providers.ts packages/app/src/app/utils/providers.test.ts packages/app/src/app/lib/ai-access.test.ts packages/app/src/app/lib/provider-routing.test.ts
 git commit -m "feat: route codex oauth provider from desktop"
 ```
 
-## Task 7: Update DEN Admin UI Copy and Controls
+Expected: PASS before commit.
+
+## Task 6: Update DEN Admin UI Copy and Controls
 
 **Files:**
 - Modify: `services/den/public-admin/index.html`
@@ -606,105 +464,102 @@ git commit -m "feat: route codex oauth provider from desktop"
 
 **Step 1: Write failing UI shell tests**
 
-Modify `services/den/test/admin-managed-ai-ui.test.ts`:
+Modify `services/den/test/admin-managed-ai-ui.test.ts` to assert:
 
-- Replace expectations for Anthropic key controls with Codex OAuth controls.
-- Assert that `GET /admin/credentials` contains `credential-codex-connect`.
-- Assert that `GET /admin/app.js` contains `/credentials/codex/oauth/start` and `/credentials/codex/oauth/exchange`.
-- Assert the user AI access provider select contains `codex_oauth`.
+- the credentials page contains primary `Codex / ChatGPT` runtime profile copy
+- the user AI access provider select contains `codex_oauth`
+- legacy OpenAI/Anthropic API-key controls are labeled as fallback, not primary
 
 **Step 2: Run the UI test to verify failure**
 
-Run: `pnpm --dir services/den exec tsx --test test/admin-managed-ai-ui.test.ts`
-
-Expected: FAIL because UI still references OpenAI OAuth and Anthropic key as the primary flow.
-
-**Step 3: Update HTML**
-
-Modify `services/den/public-admin/index.html`:
-
-- Change platform credential headline to `Connect Codex / ChatGPT OAuth`.
-- Add a button with `id="credential-codex-connect"`.
-- Add status text with `id="credential-codex-status"`.
-- Keep legacy OpenAI/Anthropic controls only if explicitly labeled as fallback/legacy, or hide them from the primary flow.
-- Add `<option value="codex_oauth">Codex OAuth</option>` to `#user-ai-access-provider`.
-
-**Step 4: Update admin JS**
-
-Modify `services/den/public-admin/app.js`:
-
-- Add `CODEX_OAUTH_STORAGE_KEY`.
-- Add `credentialCodexConnect` and `credentialCodexStatus` element references.
-- Add `readPendingCodexOAuth`, `writePendingCodexOAuth`, and `clearPendingCodexOAuth` based on the existing OpenAI helpers.
-- Add `isCodexOAuthCallback()` for `/admin/oauth/codex/callback`.
-- Add `connectCodexCredential()` using `/credentials/codex/oauth/start`.
-- Add `finishCodexOAuth()` using `/credentials/codex/oauth/exchange`.
-- Update credential summary to look for `entry.provider === "codex_oauth" && entry.type === "oauth"`.
-
-**Step 5: Run focused UI tests**
-
-Run: `pnpm --dir services/den exec tsx --test test/admin-managed-ai-ui.test.ts`
-
-Expected: PASS.
-
-**Step 6: Commit**
+Run:
 
 ```bash
+pnpm --dir services/den exec tsx --test test/admin-managed-ai-ui.test.ts
+```
+
+Expected: FAIL because UI still presents raw provider credentials as primary.
+
+**Step 3: Update UI**
+
+Update the static admin UI to show `codex_oauth` as the primary managed-AI assignment option and label API-key credentials as fallback/legacy.
+
+Do not add a fake browser OAuth exchange unless worker auth materialization has been implemented. For the MVP, the credential/control should make clear that the Codex worker profile is provisioned server-side and validated by the worker probe.
+
+**Step 4: Run focused UI tests and commit**
+
+Run:
+
+```bash
+pnpm --dir services/den exec tsx --test test/admin-managed-ai-ui.test.ts
 git add services/den/public-admin/index.html services/den/public-admin/app.js services/den/test/admin-managed-ai-ui.test.ts
 git commit -m "feat: add codex oauth admin controls"
 ```
 
-## Task 8: Full Verification and Live Gate
+Expected: PASS before commit.
+
+## Task 7: Full Verification and Live Gate
 
 **Files:**
 - No planned code edits.
 
 **Step 1: Run DEN focused tests**
 
-Run: `pnpm --dir services/den test`
+Run:
+
+```bash
+pnpm --dir services/den test
+```
 
 Expected: all DEN tests pass.
 
 **Step 2: Build DEN**
 
-Run: `pnpm --dir services/den build`
+Run:
+
+```bash
+pnpm --dir services/den build
+```
 
 Expected: TypeScript build exits 0.
 
 **Step 3: Run app focused tests**
 
-Run the focused app tests from Task 6 using the actual `packages/app` script.
+Run:
+
+```bash
+pnpm --dir packages/app test -- app/utils/providers.test.ts app/lib/ai-access.test.ts app/lib/provider-routing.test.ts
+```
 
 Expected: all focused tests pass.
 
-**Step 4: Run desktop E2E only if launching Veslo**
+**Step 4: Run local Codex CLI worker live gate**
 
-If this work changes desktop runtime behavior and you need to launch/test Veslo internally, follow AGENTS.md:
+Run:
 
 ```bash
-cd packages/desktop
-pnpm tauri build --debug --no-bundle -- --features e2e
-cd ../e2e
-pnpm test --spec ./specs/admin-managed-ai-access.spec.ts
+pnpm --dir services/den exec node --import tsx scripts/probe-codex-cli-worker.ts
 ```
 
-Do not run the Next.js web app.
+Expected: exits 0 and returns `ok` when a valid Codex login is provisioned for the worker environment.
 
 **Step 5: Run live Render gate**
 
 After deployment, verify:
 
-- Admin can connect a Codex OAuth credential.
-- Credential appears in `/admin/credentials` as `codex_oauth`.
-- User can be assigned provider `codex_oauth` and a Codex-runtime model.
+- Render worker environment has a valid Codex runtime profile or mounted `CODEX_HOME`.
+- Admin can assign provider `codex_oauth` and a Codex-runtime model to a user.
 - Veslo desktop config routes the provider to `/ai-gateway/providers/codex_oauth/v1`.
 - A prompt returns a model response through OpenCode.
 - Usage is recorded under provider `codex_oauth`.
 
-**Step 6: Commit any final test/doc fixes**
+**Step 6: Desktop E2E only if launching Veslo**
+
+If launching/testing Veslo internally, follow AGENTS.md and do not run the Next.js web app:
 
 ```bash
-git status --short
-git add <only-files-you-changed>
-git commit -m "test: verify codex oauth managed ai"
+cd packages/desktop
+pnpm tauri build --debug --no-bundle -- --features e2e
+cd ../e2e
+pnpm test --spec ./specs/<target>.spec.ts
 ```
