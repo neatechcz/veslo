@@ -352,6 +352,7 @@ export default {
   "mcp.reload_banner_blocked_hint": "Stop the running task to activate.",
   "mcp.available_apps": "Available apps",
   "mcp.one_click_connect": "One-click connect",
+  "mcp.org_catalog_placeholder": "Org-provided MCP apps will appear here.",
   "mcp.tap_to_connect": "Tap to connect",
   "mcp.connected_badge": "Connected",
   "mcp.your_apps": "Your apps",
@@ -1353,7 +1354,7 @@ export default {
 
   // ==================== Extensions ====================
   "extensions.title": "Extensions",
-  "extensions.subtitle": "Apps (MCP) and OpenCode plugins live in one place.",
+  "extensions.subtitle": "Connect MCP apps and servers for this workspace.",
   "extensions.apps_connected_one": "app connected",
   "extensions.apps_connected_other": "apps connected",
   "extensions.plugin_one": "plugin",

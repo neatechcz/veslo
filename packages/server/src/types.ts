@@ -80,6 +80,10 @@ export interface Capabilities {
       read: boolean;
       install: boolean;
     };
+    mcp: {
+      read: boolean;
+      install: boolean;
+    };
   };
   plugins: { read: boolean; write: boolean };
   mcp: { read: boolean; write: boolean };
@@ -184,6 +188,22 @@ export interface HubSkillItem {
     repo: string;
     ref: string;
     path: string;
+  };
+}
+
+export interface HubMcpItem {
+  id: string;
+  name: string;
+  description?: string;
+  config: {
+    type: "remote" | "local";
+    url?: string;
+    command?: string[];
+    oauth?: boolean;
+  };
+  source: {
+    scope: "org";
+    orgId: string;
   };
 }
 

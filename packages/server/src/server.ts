@@ -14,10 +14,10 @@ import type {
 } from "./types.js";
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
-import { addMcp, listMcp, removeMcp } from "./mcp.js";
+import { addMcp, installHubMcp, listMcp, removeMcp } from "./mcp.js";
 import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
 import { installHubSkill } from "./skill-hub.js";
-import { fetchOrgSkillsCatalog } from "./den-catalog.js";
+import { fetchOrgMcpCatalog, fetchOrgSkillsCatalog } from "./den-catalog.js";
 import { resolveSkillMatch } from "./skill-resolver.js";
 import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
 import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
@@ -811,6 +811,10 @@ function buildCapabilities(config: ServerConfig): Capabilities {
     skills: { read: true, write: writeEnabled, source: "veslo" },
     hub: {
       skills: {
+        read: true,
+        install: writeEnabled,
+      },
+      mcp: {
         read: true,
         install: writeEnabled,
       },
@@ -3482,6 +3486,31 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     return jsonResponse({ items });
   });
 
+  addRoute(routes, "GET", "/hub/mcp", "client", async (ctx) => {
+    const denToken = ctx.request.headers.get("x-veslo-den-token")?.trim() || "";
+    if (!denToken) {
+      throw new ApiError(401, "den_token_required", "Missing Den token header (x-veslo-den-token)");
+    }
+
+    const denOrgId = ctx.request.headers.get("x-veslo-den-org-id")?.trim() || "";
+    if (!denOrgId) {
+      throw new ApiError(400, "den_org_required", "Missing Den org header (x-veslo-den-org-id)");
+    }
+
+    const denApiBase = config.denApiBase?.trim() || "";
+    if (!denApiBase) {
+      return jsonResponse({ items: [] });
+    }
+
+    const items = await fetchOrgMcpCatalog({
+      baseUrl: denApiBase,
+      orgId: denOrgId,
+      denToken,
+    });
+
+    return jsonResponse({ items });
+  });
+
   addRoute(routes, "GET", "/workspace/:id/skills", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
@@ -3640,6 +3669,66 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const items = await listMcp(workspace.path);
     return jsonResponse({ items });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/mcp/hub/:name", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const catalogName = String(ctx.params.name ?? "").trim();
+    if (!catalogName) {
+      throw new ApiError(400, "invalid_mcp_name", "MCP name is required");
+    }
+
+    const denToken = ctx.request.headers.get("x-veslo-den-token")?.trim() || "";
+    if (!denToken) {
+      throw new ApiError(401, "den_token_required", "Missing Den token header (x-veslo-den-token)");
+    }
+
+    const denOrgId = ctx.request.headers.get("x-veslo-den-org-id")?.trim() || "";
+    if (!denOrgId) {
+      throw new ApiError(400, "den_org_required", "Missing Den org header (x-veslo-den-org-id)");
+    }
+
+    const denApiBase = config.denApiBase?.trim() || "";
+    if (!denApiBase) {
+      throw new ApiError(503, "den_catalog_misconfigured", "Den catalog base URL is missing");
+    }
+
+    const items = await fetchOrgMcpCatalog({
+      baseUrl: denApiBase,
+      orgId: denOrgId,
+      denToken,
+    });
+    const item = items.find((entry) => entry.id === catalogName || entry.name === catalogName);
+    if (!item) {
+      throw new ApiError(404, "hub_mcp_not_found", `Hub MCP not found: ${catalogName}`);
+    }
+
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "mcp.install_hub",
+      summary: `Install hub MCP ${catalogName}`,
+      paths: [opencodeConfigPath(workspace.path)],
+    });
+
+    const result = await installHubMcp(workspace.path, item);
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "mcp.install_hub",
+      target: "opencode.json",
+      summary: `Installed hub MCP ${result.name}`,
+      timestamp: Date.now(),
+    });
+    emitReloadEvent(ctx.reloadEvents, workspace, "mcp", {
+      type: "mcp",
+      name: result.name,
+      action: result.action,
+    });
+
+    return jsonResponse({ ok: true, ...result });
   });
 
   addRoute(routes, "POST", "/workspace/:id/mcp", "client", async (ctx) => {

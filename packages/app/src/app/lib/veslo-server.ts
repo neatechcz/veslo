@@ -13,6 +13,10 @@ export type VesloServerCapabilities = {
       read: boolean;
       install: boolean;
     };
+    mcp?: {
+      read: boolean;
+      install: boolean;
+    };
   };
   plugins: { read: boolean; write: boolean };
   mcp: { read: boolean; write: boolean };
@@ -127,6 +131,22 @@ export type VesloHubSkillItem = {
     repo: string;
     ref: string;
     path: string;
+  };
+};
+
+export type VesloHubMcpItem = {
+  id: string;
+  name: string;
+  description?: string;
+  config: {
+    type: "remote" | "local";
+    url?: string;
+    command?: string[];
+    oauth?: boolean;
+  };
+  source: {
+    scope: "org";
+    orgId: string;
   };
 };
 
@@ -1785,6 +1805,20 @@ export function createVesloServerClient(options: {
         ...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
       });
     },
+    listHubMcp: (options?: { denToken?: string; denOrgId?: string }) => {
+      const denToken = options?.denToken?.trim() ?? "";
+      const denOrgId = options?.denOrgId?.trim() ?? "";
+      const extraHeaders = {
+        ...(denToken ? { "x-veslo-den-token": denToken } : {}),
+        ...(denOrgId ? { "x-veslo-den-org-id": denOrgId } : {}),
+      };
+
+      return requestJson<{ items: VesloHubMcpItem[] }>(baseUrl, `/hub/mcp`, {
+        token,
+        hostToken,
+        ...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
+      });
+    },
     installHubSkill: (
       workspaceId: string,
       name: string,
@@ -1803,6 +1837,29 @@ export function createVesloServerClient(options: {
           },
         },
       ),
+    installHubMcp: (
+      workspaceId: string,
+      name: string,
+      options?: { denToken?: string; denOrgId?: string },
+    ) => {
+      const denToken = options?.denToken?.trim() ?? "";
+      const denOrgId = options?.denOrgId?.trim() ?? "";
+      const extraHeaders = {
+        ...(denToken ? { "x-veslo-den-token": denToken } : {}),
+        ...(denOrgId ? { "x-veslo-den-org-id": denOrgId } : {}),
+      };
+
+      return requestJson<{ ok: boolean; name: string; path: string; action: "added" | "updated"; written: number; skipped: number }>(
+        baseUrl,
+        `/workspace/${workspaceId}/mcp/hub/${encodeURIComponent(name)}`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          ...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
+        },
+      );
+    },
     getSkill: (workspaceId: string, name: string, options?: { includeGlobal?: boolean }) => {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
       return requestJson<VesloSkillContent>(

@@ -4,7 +4,16 @@ import { applyEdits, modify } from "jsonc-parser";
 import { join } from "@tauri-apps/api/path";
 import { currentLocale, t } from "../../i18n";
 
-import type { Client, HubSkillCard, PluginScope, ReloadReason, ReloadTrigger, SkillCard } from "../types";
+import type {
+  Client,
+  HubMcpCard,
+  HubMcpItem,
+  HubSkillCard,
+  PluginScope,
+  ReloadReason,
+  ReloadTrigger,
+  SkillCard,
+} from "../types";
 import { addOpencodeCacheHint, isTauriRuntime } from "../utils";
 import skillCreatorTemplate from "../data/skill-creator.md?raw";
 import {
@@ -58,6 +67,8 @@ export function createExtensionsStore(options: {
 
   const [hubSkills, setHubSkills] = createSignal<HubSkillCard[]>([]);
   const [hubSkillsStatus, setHubSkillsStatus] = createSignal<string | null>(null);
+  const [hubMcpCards, setHubMcpCards] = createSignal<HubMcpCard[]>([]);
+  const [hubMcpStatus, setHubMcpStatus] = createSignal<string | null>(null);
 
   const formatSkillPath = (location: string) => location.replace(/[/\\]SKILL\.md$/i, "");
 
@@ -79,10 +90,97 @@ export function createExtensionsStore(options: {
   let refreshSkillsAborted = false;
   let refreshPluginsAborted = false;
   let refreshHubSkillsAborted = false;
+  let refreshHubMcpInFlight = false;
+  let refreshHubMcpAborted = false;
   let skillsLoaded = false;
   let hubSkillsLoaded = false;
+  let hubMcpLoaded = false;
   let skillsRoot = "";
   let hubSkillsRoot = "";
+  let hubMcpRoot = "";
+  let hubMcpContextKey = "";
+
+  async function refreshHubMcp(optionsOverride?: { force?: boolean }) {
+    const root = options.activeWorkspaceRoot().trim();
+    const vesloClient = options.vesloServerClient();
+    const vesloCapabilities = options.vesloServerCapabilities();
+    const canUseVesloServer =
+      options.vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloCapabilities?.hub?.mcp?.read &&
+      typeof (vesloClient as any).listHubMcp === "function";
+    const denAuth = readDenAuth();
+    const denToken = denAuth?.token?.trim() ?? "";
+    const denOrgId = denAuth?.orgId?.trim() ?? "";
+    const nextContextKey = JSON.stringify({
+      root,
+      canUseVesloServer,
+      denOrgId,
+      hasDenToken: denToken.length > 0,
+    });
+
+    if (root !== hubMcpRoot || nextContextKey !== hubMcpContextKey) {
+      hubMcpLoaded = false;
+    }
+
+    if (!optionsOverride?.force && hubMcpLoaded) return;
+    if (refreshHubMcpInFlight) return;
+
+    refreshHubMcpInFlight = true;
+    refreshHubMcpAborted = false;
+
+    try {
+      setHubMcpStatus(null);
+      const orgCatalogPlaceholder = translate("mcp.org_catalog_placeholder");
+
+      if (canUseVesloServer) {
+        if (!denToken || !denOrgId) {
+          setHubMcpCards([]);
+          setHubMcpStatus(orgCatalogPlaceholder);
+          hubMcpRoot = root;
+          hubMcpContextKey = nextContextKey;
+          return;
+        }
+
+        const response = await (vesloClient as any).listHubMcp({
+          denToken,
+          denOrgId,
+        });
+        if (refreshHubMcpAborted) return;
+        const next: HubMcpCard[] = Array.isArray(response?.items)
+          ? response.items.map((entry: HubMcpItem) => ({
+              id: String(entry.id ?? entry.name ?? ""),
+              name: String(entry.name ?? ""),
+              description: typeof entry.description === "string" ? entry.description : undefined,
+              type: entry.config.type,
+              url: typeof entry.config.url === "string" ? entry.config.url : undefined,
+              command: Array.isArray(entry.config.command)
+                ? entry.config.command.filter((part): part is string => typeof part === "string")
+                : undefined,
+              oauth: entry.config.oauth !== false,
+            }))
+          : [];
+        setHubMcpCards(next);
+        if (!next.length) setHubMcpStatus(orgCatalogPlaceholder);
+        hubMcpLoaded = true;
+        hubMcpRoot = root;
+        hubMcpContextKey = nextContextKey;
+        return;
+      }
+
+      if (refreshHubMcpAborted) return;
+      setHubMcpCards([]);
+      setHubMcpStatus(orgCatalogPlaceholder);
+      hubMcpRoot = root;
+      hubMcpContextKey = nextContextKey;
+    } catch (e) {
+      if (refreshHubMcpAborted) return;
+      setHubMcpCards([]);
+      setHubMcpStatus(e instanceof Error ? e.message : "Failed to load hub MCP.");
+    } finally {
+      refreshHubMcpInFlight = false;
+    }
+  }
 
   async function refreshHubSkills(optionsOverride?: { force?: boolean }) {
     const root = options.activeWorkspaceRoot().trim();
@@ -138,6 +236,7 @@ export function createExtensionsStore(options: {
         if (!next.length) setHubSkillsStatus(orgCatalogPlaceholder);
         hubSkillsLoaded = true;
         hubSkillsRoot = root;
+        void refreshHubMcp({ force: true });
         return;
       }
 
@@ -146,6 +245,7 @@ export function createExtensionsStore(options: {
       setHubSkillsStatus(orgCatalogPlaceholder);
       hubSkillsLoaded = true;
       hubSkillsRoot = root;
+      void refreshHubMcp({ force: true });
     } catch (e) {
       if (refreshHubSkillsAborted) return;
       setHubSkills([]);
@@ -189,6 +289,59 @@ export function createExtensionsStore(options: {
         return { ok: false, message: "Install failed." };
       }
       return { ok: true, message: `Installed ${trimmed}.` };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      options.setError(addOpencodeCacheHint(message));
+      return { ok: false, message };
+    } finally {
+      options.setBusy(false);
+    }
+  }
+
+  async function installHubMcp(name: string): Promise<{ ok: boolean; message: string; entry?: HubMcpCard }> {
+    const trimmed = name.trim();
+    if (!trimmed) return { ok: false, message: "MCP name is required." };
+
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const vesloClient = options.vesloServerClient();
+    const vesloWorkspaceId = options.vesloServerWorkspaceId();
+    const vesloCapabilities = options.vesloServerCapabilities();
+    const canUseVesloServer =
+      options.vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.hub?.mcp?.install &&
+      typeof (vesloClient as any).installHubMcp === "function";
+
+    if (!canUseVesloServer) {
+      if (isRemoteWorkspace) {
+        return { ok: false, message: "Veslo server unavailable. Connect to install MCP." };
+      }
+      return { ok: false, message: "Hub install requires Veslo server." };
+    }
+
+    options.setBusy(true);
+    options.setError(null);
+    setHubMcpStatus(null);
+
+    try {
+      const selectedEntry = hubMcpCards().find((entry) => entry.id === trimmed || entry.name === trimmed);
+      const denAuth = readDenAuth();
+      const denToken = denAuth?.token?.trim() ?? "";
+      const denOrgId = denAuth?.orgId?.trim() ?? "";
+      if (!denToken || !denOrgId) {
+        return { ok: false, message: "Missing Den auth context." };
+      }
+
+      const result = await (vesloClient as any).installHubMcp(vesloWorkspaceId, trimmed, {
+        denToken,
+        denOrgId,
+      });
+      await refreshHubMcp({ force: true });
+      if (!result?.ok) {
+        return { ok: false, message: "Install failed." };
+      }
+      return { ok: true, message: `Installed ${trimmed}.`, ...(selectedEntry ? { entry: selectedEntry } : {}) };
     } catch (e) {
       const message = e instanceof Error ? e.message : translate("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
@@ -1097,6 +1250,7 @@ export function createExtensionsStore(options: {
     refreshSkillsAborted = true;
     refreshPluginsAborted = true;
     refreshHubSkillsAborted = true;
+    refreshHubMcpAborted = true;
   }
 
   return {
@@ -1104,6 +1258,8 @@ export function createExtensionsStore(options: {
     skillsStatus,
     hubSkills,
     hubSkillsStatus,
+    hubMcpCards,
+    hubMcpStatus,
     pluginScope,
     setPluginScope,
     pluginConfig,
@@ -1119,6 +1275,7 @@ export function createExtensionsStore(options: {
     isPluginInstalledByName,
     refreshSkills,
     refreshHubSkills,
+    refreshHubMcp,
     refreshPlugins,
     addPlugin,
     removePlugin,
@@ -1129,6 +1286,7 @@ export function createExtensionsStore(options: {
     uninstallSkill,
     readSkill,
     saveSkill,
+    installHubMcp,
     abortRefreshes,
   };
 }

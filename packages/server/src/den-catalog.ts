@@ -1,5 +1,5 @@
 import { ApiError } from "./errors.js";
-import type { HubSkillItem } from "./types.js";
+import type { HubMcpItem, HubSkillItem } from "./types.js";
 
 type DenCatalogPayload = {
   items?: unknown;
@@ -38,6 +38,55 @@ function toHubSkillItem(item: unknown, index: number): HubSkillItem {
       repo: source.repo,
       ref: source.ref,
       path: source.path,
+    },
+  };
+}
+
+function toHubMcpItem(item: unknown, index: number): HubMcpItem {
+  if (!item || typeof item !== "object") {
+    throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
+  }
+
+  const payload = item as Record<string, unknown>;
+  const config = payload.config as Record<string, unknown> | undefined;
+  const source = payload.source as Record<string, unknown> | undefined;
+  if (
+    typeof payload.id !== "string" ||
+    typeof payload.name !== "string" ||
+    (payload.description !== undefined && typeof payload.description !== "string") ||
+    !config ||
+    (config.type !== "remote" && config.type !== "local") ||
+    !source ||
+    source.scope !== "org" ||
+    typeof source.orgId !== "string"
+  ) {
+    throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
+  }
+
+  if (config.type === "remote" && typeof config.url !== "string") {
+    throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
+  }
+
+  if (
+    config.type === "local" &&
+    (!Array.isArray(config.command) || config.command.some((part) => typeof part !== "string"))
+  ) {
+    throw new ApiError(502, "den_catalog_invalid_payload", `Invalid Den catalog item at index ${index}`);
+  }
+
+  return {
+    id: payload.id,
+    name: payload.name,
+    ...(typeof payload.description === "string" ? { description: payload.description } : {}),
+    config: {
+      type: config.type,
+      ...(typeof config.url === "string" ? { url: config.url } : {}),
+      ...(Array.isArray(config.command) ? { command: config.command as string[] } : {}),
+      ...(typeof config.oauth === "boolean" ? { oauth: config.oauth } : {}),
+    },
+    source: {
+      scope: "org",
+      orgId: source.orgId,
     },
   };
 }
@@ -103,4 +152,67 @@ export async function fetchOrgSkillsCatalog(input: {
   }
 
   return payload.items.map((item, index) => toHubSkillItem(item, index));
+}
+
+export async function fetchOrgMcpCatalog(input: {
+  baseUrl: string;
+  orgId: string;
+  denToken: string;
+}): Promise<HubMcpItem[]> {
+  const baseUrl = normalizeBaseUrl(input.baseUrl);
+  if (!baseUrl) {
+    throw new ApiError(500, "den_catalog_misconfigured", "Den catalog base URL is missing");
+  }
+
+  const orgId = input.orgId.trim();
+  if (!orgId) {
+    throw new ApiError(400, "den_org_required", "Den organization id is required");
+  }
+
+  const denToken = input.denToken.trim();
+  if (!denToken) {
+    throw new ApiError(401, "den_token_required", "Den token is required");
+  }
+
+  const url = `${baseUrl}/v1/orgs/${encodeURIComponent(orgId)}/mcp/catalog`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${denToken}`,
+      },
+    });
+  } catch (error) {
+    throw new ApiError(
+      502,
+      "den_catalog_fetch_failed",
+      "Failed to fetch Den org MCP catalog",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => "");
+    throw new ApiError(
+      502,
+      "den_catalog_fetch_failed",
+      `Failed to fetch Den org MCP catalog (${response.status})`,
+      details || url,
+    );
+  }
+
+  let payload: DenCatalogPayload;
+  try {
+    payload = await response.json() as DenCatalogPayload;
+  } catch {
+    throw new ApiError(502, "den_catalog_invalid_payload", "Den org MCP catalog returned invalid JSON");
+  }
+
+  if (!payload || typeof payload !== "object" || !Array.isArray(payload.items)) {
+    throw new ApiError(502, "den_catalog_invalid_payload", "Den org MCP catalog payload must contain items array");
+  }
+
+  return payload.items.map((item, index) => toHubMcpItem(item, index));
 }
