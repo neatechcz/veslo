@@ -48,9 +48,38 @@ const model = process.env.MANAGED_AI_CODEX_TEST_MODEL?.trim()
 const timeoutMs = Number.parseInt(process.env.MANAGED_AI_CODEX_TIMEOUT_MS ?? "120000", 10)
 const prompt = process.env.MANAGED_AI_CODEX_TEST_PROMPT?.trim() || "Reply with exactly one word: ok"
 const codexHome = process.env.MANAGED_AI_CODEX_HOME?.trim()
+const allowHostHome = process.env.MANAGED_AI_CODEX_ALLOW_HOST_HOME?.trim() === "1"
 
 if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
   throw new Error("MANAGED_AI_CODEX_TIMEOUT_MS must be a positive integer")
+}
+
+if (!codexHome) {
+  console.log(JSON.stringify({
+    ok: false,
+    exitCode: null,
+    signal: null,
+    timedOut: false,
+    stdout: "",
+    stderr: "MANAGED_AI_CODEX_HOME is required",
+    finalMessage: "",
+  }, null, 2))
+  process.exitCode = 1
+  process.exit(1)
+}
+
+if (process.env.HOME && path.resolve(codexHome) === path.resolve(process.env.HOME, ".codex") && !allowHostHome) {
+  console.log(JSON.stringify({
+    ok: false,
+    exitCode: null,
+    signal: null,
+    timedOut: false,
+    stdout: "",
+    stderr: "MANAGED_AI_CODEX_HOME points at the host default; set MANAGED_AI_CODEX_ALLOW_HOST_HOME=1 for deliberate local testing",
+    finalMessage: "",
+  }, null, 2))
+  process.exitCode = 1
+  process.exit(1)
 }
 
 const scratchDir = await mkdtemp(path.join(tmpdir(), "veslo-codex-worker-"))
@@ -58,14 +87,14 @@ const outputFile = path.join(scratchDir, "last-message.txt")
 
 try {
   const args = [
+    "--ask-for-approval",
+    "never",
     "exec",
     "--cd",
     scratchDir,
     "--skip-git-repo-check",
     "--sandbox",
     "read-only",
-    "--ask-for-approval",
-    "never",
     "--ephemeral",
     "--output-last-message",
     outputFile,
@@ -103,11 +132,22 @@ function runCodex(command: string, args: string[], timeoutMs: number, codexHome?
     stdout: string
     stderr: string
   }>((resolve, reject) => {
+    const childEnv: NodeJS.ProcessEnv = {}
+    for (const key of ["PATH", "HOME", "USER", "TMPDIR", "TEMP", "TMP", "SystemRoot", "ComSpec", "LANG", "LC_ALL", "LC_CTYPE", "TZ"] as const) {
+      const value = process.env[key]
+      if (value) {
+        childEnv[key] = value
+      }
+    }
+    delete childEnv.OPENAI_API_KEY
+    delete childEnv.ANTHROPIC_API_KEY
+    delete childEnv.CODEX_HOME
+    if (codexHome) {
+      childEnv.CODEX_HOME = codexHome
+    }
+
     const child = spawn(command, args, {
-      env: {
-        ...process.env,
-        ...(codexHome ? { CODEX_HOME: codexHome } : {}),
-      },
+      env: childEnv,
       stdio: ["ignore", "pipe", "pipe"],
     })
 
@@ -144,10 +184,12 @@ function runCodex(command: string, args: string[], timeoutMs: number, codexHome?
 Run:
 
 ```bash
-pnpm --dir services/den exec node --import tsx scripts/probe-codex-cli-worker.ts
+MANAGED_AI_CODEX_HOME=/path/to/worker-codex-home pnpm --dir services/den exec node --import tsx scripts/probe-codex-cli-worker.ts
 ```
 
-Expected: If the current environment has a valid Codex login and network access, the command exits 0 and `finalMessage` contains `ok`. If the command fails because of sandboxed network, rerun with escalation. If it fails because there is no valid Codex login, record that as a worker provisioning blocker.
+Expected: If the worker home is provisioned correctly and the current environment has a valid Codex login and network access, the command exits 0 and `finalMessage` contains `ok`. If the command fails because of sandboxed network, rerun with escalation. If it fails because there is no valid Codex login in the explicit worker home, record that as a worker provisioning blocker.
+
+For deliberate local developer testing against the current host Codex profile, set `MANAGED_AI_CODEX_ALLOW_HOST_HOME=1` together with `MANAGED_AI_CODEX_HOME=$HOME/.codex`.
 
 **Step 3: Commit**
 
@@ -320,7 +362,8 @@ Required behavior:
 - Spawn `codex --ask-for-approval never exec --cd <scratch> --skip-git-repo-check --sandbox read-only --ephemeral --output-last-message <file> --model <model> <prompt>`.
 - Use optional env config:
   - `MANAGED_AI_CODEX_COMMAND`
-  - `MANAGED_AI_CODEX_HOME`
+  - `MANAGED_AI_CODEX_HOME` (required)
+  - `MANAGED_AI_CODEX_ALLOW_HOST_HOME` (set to `1` only for deliberate local testing against the current host profile)
   - `MANAGED_AI_CODEX_WORKDIR`
   - `MANAGED_AI_CODEX_TIMEOUT_MS`
 - Return an OpenAI-compatible object with `id`, `object`, `created`, `model`, one assistant message choice, and `usage: null`.

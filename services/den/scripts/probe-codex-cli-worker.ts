@@ -27,6 +27,7 @@ const command = process.env.MANAGED_AI_CODEX_COMMAND?.trim() || "codex"
 const model = process.env.MANAGED_AI_CODEX_TEST_MODEL?.trim() || ""
 const prompt = process.env.MANAGED_AI_CODEX_TEST_PROMPT?.trim() || "Reply with exactly one word: ok"
 const codexHome = process.env.MANAGED_AI_CODEX_HOME?.trim() || ""
+const allowHostHome = process.env.MANAGED_AI_CODEX_ALLOW_HOST_HOME?.trim() === "1"
 const timeoutMs = Number.parseInt(process.env.MANAGED_AI_CODEX_TIMEOUT_MS ?? "120000", 10)
 
 if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -35,6 +36,10 @@ if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
   process.exitCode = 1
 } else if (!codexHome) {
   summary.stderr = "MANAGED_AI_CODEX_HOME is required"
+  printSummary(summary)
+  process.exitCode = 1
+} else if (isHostDefaultCodexHome(codexHome) && !allowHostHome) {
+  summary.stderr = "MANAGED_AI_CODEX_HOME points at the host default; set MANAGED_AI_CODEX_ALLOW_HOST_HOME=1 for deliberate local testing"
   printSummary(summary)
   process.exitCode = 1
 } else {
@@ -182,6 +187,15 @@ function buildCodexChildEnv(codexHomeDir: string | undefined) {
   }
 
   return env
+}
+
+function isHostDefaultCodexHome(codexHomeDir: string) {
+  const homeDir = process.env.HOME?.trim()
+  if (!homeDir) {
+    return false
+  }
+
+  return path.resolve(codexHomeDir) === path.resolve(homeDir, ".codex")
 }
 
 async function readTextFile(filePath: string) {
