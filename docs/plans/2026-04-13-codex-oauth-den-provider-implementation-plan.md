@@ -108,7 +108,7 @@ try {
   const finalMessage = result.exitCode === 0 ? await readFile(outputFile, "utf8").catch(() => "") : ""
 
   console.log(JSON.stringify({
-    ok: result.exitCode === 0,
+    ok: result.exitCode === 0 && !result.timedOut && finalMessage.trim().length > 0,
     exitCode: result.exitCode,
     signal: result.signal,
     timedOut: result.timedOut,
@@ -117,7 +117,7 @@ try {
     finalMessage: finalMessage.slice(0, 2000),
   }, null, 2))
 
-  if (result.exitCode !== 0 || result.timedOut) {
+  if (result.exitCode !== 0 || result.timedOut || !finalMessage.trim()) {
     process.exitCode = 1
   }
 } finally {
