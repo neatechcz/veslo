@@ -230,13 +230,10 @@ description: Guide users through the get started setup and Chrome DevTools demo.
     Ok(())
 }
 
-
-
 const ENTERPRISE_ARCHIVE_URL: &str =
     "https://github.com/different-ai/openwork-enterprise/archive/refs/heads/main.zip";
 const ENTERPRISE_SEED_MARKER: &str = ".veslo-enterprise-creators";
-const ENTERPRISE_ALLOWED_CREATORS: [&str; 3] =
-    ["skill-creator", "plugin-creator", "agent-creator"];
+const ENTERPRISE_ALLOWED_CREATORS: [&str; 3] = ["skill-creator", "plugin-creator", "agent-creator"];
 
 fn is_allowed_enterprise_creator_skill_name(skill_name: &str) -> bool {
     ENTERPRISE_ALLOWED_CREATORS.contains(&skill_name)
@@ -310,8 +307,7 @@ fn seed_enterprise_creator_skills(root: &PathBuf, skill_root: &PathBuf) -> Resul
         }
 
         let skill_name = &parts[3];
-        if !is_allowed_enterprise_creator_skill_name(skill_name) || existing.contains(skill_name)
-        {
+        if !is_allowed_enterprise_creator_skill_name(skill_name) || existing.contains(skill_name) {
             continue;
         }
 
@@ -499,7 +495,7 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
         _ => vec![],
     };
 
-    let should_seed_chrome_mcp = matches!(preset, "starter");
+    let should_seed_chrome_mcp = true;
 
     if !required_plugins.is_empty() {
         let plugins_value = config
@@ -585,11 +581,25 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_workspace_root(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("veslo-workspace-files-{name}-{unique}"));
+        fs::create_dir_all(&root).expect("create temp workspace root");
+        root
+    }
 
     #[test]
     fn has_chrome_mcp_alias_matches_chrome_devtools_key() {
         let mut mcp = serde_json::Map::new();
-        mcp.insert("chrome-devtools".to_string(), serde_json::json!({ "type": "local" }));
+        mcp.insert(
+            "chrome-devtools".to_string(),
+            serde_json::json!({ "type": "local" }),
+        );
 
         assert!(has_chrome_mcp_alias(&mcp));
     }
@@ -597,7 +607,10 @@ mod tests {
     #[test]
     fn has_chrome_mcp_alias_matches_control_chrome_key() {
         let mut mcp = serde_json::Map::new();
-        mcp.insert("control-chrome".to_string(), serde_json::json!({ "type": "local" }));
+        mcp.insert(
+            "control-chrome".to_string(),
+            serde_json::json!({ "type": "local" }),
+        );
 
         assert!(has_chrome_mcp_alias(&mcp));
     }
@@ -605,7 +618,10 @@ mod tests {
     #[test]
     fn has_chrome_mcp_alias_is_false_without_known_aliases() {
         let mut mcp = serde_json::Map::new();
-        mcp.insert("context7".to_string(), serde_json::json!({ "type": "remote" }));
+        mcp.insert(
+            "context7".to_string(),
+            serde_json::json!({ "type": "remote" }),
+        );
 
         assert!(!has_chrome_mcp_alias(&mcp));
     }
@@ -622,5 +638,71 @@ mod tests {
         assert!(!is_allowed_enterprise_creator_skill_name("command-creator"));
         assert!(!is_allowed_enterprise_creator_skill_name("workspace-guide"));
         assert!(!is_allowed_enterprise_creator_skill_name("get-started"));
+    }
+
+    #[test]
+    fn ensure_workspace_files_seeds_chrome_for_non_starter_presets() {
+        let root = temp_workspace_root("automation");
+        let root_str = root.to_string_lossy().to_string();
+
+        ensure_workspace_files(&root_str, "automation").expect("seed workspace files");
+
+        let config_raw =
+            fs::read_to_string(root.join("opencode.jsonc")).expect("read generated config");
+        let config: serde_json::Value =
+            serde_json::from_str(&config_raw).expect("parse generated config");
+        let command = config
+            .get("mcp")
+            .and_then(|value| value.get("chrome-devtools"))
+            .and_then(|value| value.get("command"))
+            .and_then(|value| value.as_array())
+            .cloned()
+            .expect("chrome-devtools command array");
+
+        assert_eq!(
+            command,
+            vec![
+                serde_json::Value::String("npx".to_string()),
+                serde_json::Value::String("-y".to_string()),
+                serde_json::Value::String("chrome-devtools-mcp@latest".to_string()),
+                serde_json::Value::String("--isolated".to_string()),
+            ]
+        );
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn ensure_workspace_files_preserves_existing_chrome_alias_without_duplicate() {
+        let root = temp_workspace_root("alias");
+        let config_path = root.join("opencode.jsonc");
+        fs::write(
+            &config_path,
+            r#"{
+  "mcp": {
+    "control-chrome": {
+      "type": "local",
+      "command": ["existing"]
+    }
+  }
+}"#,
+        )
+        .expect("write existing config");
+
+        let root_str = root.to_string_lossy().to_string();
+        ensure_workspace_files(&root_str, "minimal").expect("seed workspace files");
+
+        let config_raw = fs::read_to_string(&config_path).expect("read updated config");
+        let config: serde_json::Value =
+            serde_json::from_str(&config_raw).expect("parse updated config");
+        let mcp = config
+            .get("mcp")
+            .and_then(|value| value.as_object())
+            .expect("mcp object");
+
+        assert!(mcp.contains_key("control-chrome"));
+        assert!(!mcp.contains_key("chrome-devtools"));
+
+        fs::remove_dir_all(root).ok();
     }
 }
