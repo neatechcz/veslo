@@ -317,7 +317,7 @@ Required behavior:
 - Extract `model`, `messages`, and `stream` from OpenAI-compatible chat completion bodies.
 - Throw `ProviderTransportError("codex_streaming_not_supported", { statusCode: 400 })` for `stream: true`.
 - Convert text-only messages into a plain prompt transcript.
-- Spawn `codex exec --cd <scratch> --skip-git-repo-check --sandbox read-only --ask-for-approval never --ephemeral --output-last-message <file> --model <model> <prompt>`.
+- Spawn `codex --ask-for-approval never exec --cd <scratch> --skip-git-repo-check --sandbox read-only --ephemeral --output-last-message <file> --model <model> <prompt>`.
 - Use optional env config:
   - `MANAGED_AI_CODEX_COMMAND`
   - `MANAGED_AI_CODEX_HOME`

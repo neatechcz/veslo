@@ -47,14 +47,14 @@ async function main() {
 
   try {
     const args = [
+      "--ask-for-approval",
+      "never",
       "exec",
       "--cd",
       scratchDir,
       "--skip-git-repo-check",
       "--sandbox",
       "read-only",
-      "--ask-for-approval",
-      "never",
       "--ephemeral",
       "--output-last-message",
       outputFile,
