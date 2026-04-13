@@ -33,6 +33,10 @@ if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
   summary.stderr = "MANAGED_AI_CODEX_TIMEOUT_MS must be a positive integer"
   printSummary(summary)
   process.exitCode = 1
+} else if (!codexHome) {
+  summary.stderr = "MANAGED_AI_CODEX_HOME is required"
+  printSummary(summary)
+  process.exitCode = 1
 } else {
   await main()
 }
@@ -62,7 +66,7 @@ async function main() {
 
     args.push(prompt)
 
-    const result = await runCodex(command, args, timeoutMs, codexHome || undefined, scratchDir)
+    const result = await runCodex(command, args, timeoutMs, codexHome, scratchDir)
     summary.exitCode = result.exitCode
     summary.signal = result.signal
     summary.timedOut = result.timedOut
@@ -88,7 +92,7 @@ function runCodex(
   commandName: string,
   args: string[],
   timeoutMsValue: number,
-  codexHomeDir: string | undefined,
+  codexHomeDir: string,
   cwd: string,
 ) {
   return new Promise<{
