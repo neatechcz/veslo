@@ -351,6 +351,7 @@ export default {
   "mcp.reload_banner_blocked_hint": "Zastavte běžící úkol, aby šlo aktivovat.",
   "mcp.available_apps": "Dostupné aplikace",
   "mcp.one_click_connect": "Připojení jedním kliknutím",
+  "mcp.org_catalog_placeholder": "Zde budou dostupné MCP aplikace pro vaši organizaci.",
   "mcp.tap_to_connect": "Klepnutím připojit",
   "mcp.connected_badge": "Připojeno",
   "mcp.your_apps": "Vaše aplikace",

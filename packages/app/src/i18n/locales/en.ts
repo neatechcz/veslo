@@ -352,6 +352,7 @@ export default {
   "mcp.reload_banner_blocked_hint": "Stop the running task to activate.",
   "mcp.available_apps": "Available apps",
   "mcp.one_click_connect": "One-click connect",
+  "mcp.org_catalog_placeholder": "Org-provided MCP apps will appear here.",
   "mcp.tap_to_connect": "Tap to connect",
   "mcp.connected_badge": "Connected",
   "mcp.your_apps": "Your apps",

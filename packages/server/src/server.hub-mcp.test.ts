@@ -232,3 +232,52 @@ test("POST /workspace/:id/mcp/hub/:name installs catalog MCP config", async () =
   expect(configRaw).toContain("\"demo\"");
   expect(configRaw).toContain("https://mcp.example.test/demo");
 });
+
+test("POST /workspace/:id/mcp/hub/:name preserves oauth false in config", async () => {
+  const denServer = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async () =>
+      new Response(JSON.stringify({
+        items: [
+          {
+            id: "no-auth-demo",
+            name: "No Auth Demo",
+            description: "Remote MCP without OAuth.",
+            config: {
+              type: "remote",
+              url: "https://mcp.example.test/no-auth",
+              oauth: false,
+            },
+            source: {
+              scope: "org",
+              orgId: "org_1",
+            },
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+  runningServers.push(denServer as { stop?: (closeActiveConnections?: boolean) => void });
+
+  const { server, workspaceRoot } = await startFixture({ denApiBase: `http://127.0.0.1:${denServer.port}` });
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/mcp/hub/no-auth-demo`, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer client-token",
+      "x-veslo-den-token": "den-token",
+      "x-veslo-den-org-id": "org_1",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({}),
+  });
+
+  expect(response.status).toBe(200);
+  const configRaw = await readFile(join(workspaceRoot, "opencode.jsonc"), "utf8");
+  expect(configRaw).toContain("\"no-auth-demo\"");
+  expect(configRaw).toContain("https://mcp.example.test/no-auth");
+  expect(configRaw).toContain("\"oauth\": false");
+});

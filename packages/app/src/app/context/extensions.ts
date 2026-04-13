@@ -98,6 +98,7 @@ export function createExtensionsStore(options: {
   let skillsRoot = "";
   let hubSkillsRoot = "";
   let hubMcpRoot = "";
+  let hubMcpContextKey = "";
 
   async function refreshHubMcp(optionsOverride?: { force?: boolean }) {
     const root = options.activeWorkspaceRoot().trim();
@@ -108,8 +109,17 @@ export function createExtensionsStore(options: {
       vesloClient &&
       vesloCapabilities?.hub?.mcp?.read &&
       typeof (vesloClient as any).listHubMcp === "function";
+    const denAuth = readDenAuth();
+    const denToken = denAuth?.token?.trim() ?? "";
+    const denOrgId = denAuth?.orgId?.trim() ?? "";
+    const nextContextKey = JSON.stringify({
+      root,
+      canUseVesloServer,
+      denOrgId,
+      hasDenToken: denToken.length > 0,
+    });
 
-    if (root !== hubMcpRoot) {
+    if (root !== hubMcpRoot || nextContextKey !== hubMcpContextKey) {
       hubMcpLoaded = false;
     }
 
@@ -121,18 +131,14 @@ export function createExtensionsStore(options: {
 
     try {
       setHubMcpStatus(null);
-      const orgCatalogPlaceholder = translate("skills.org_catalog_placeholder");
+      const orgCatalogPlaceholder = translate("mcp.org_catalog_placeholder");
 
       if (canUseVesloServer) {
-        const denAuth = readDenAuth();
-        const denToken = denAuth?.token?.trim() ?? "";
-        const denOrgId = denAuth?.orgId?.trim() ?? "";
-
         if (!denToken || !denOrgId) {
           setHubMcpCards([]);
           setHubMcpStatus(orgCatalogPlaceholder);
-          hubMcpLoaded = true;
           hubMcpRoot = root;
+          hubMcpContextKey = nextContextKey;
           return;
         }
 
@@ -158,14 +164,15 @@ export function createExtensionsStore(options: {
         if (!next.length) setHubMcpStatus(orgCatalogPlaceholder);
         hubMcpLoaded = true;
         hubMcpRoot = root;
+        hubMcpContextKey = nextContextKey;
         return;
       }
 
       if (refreshHubMcpAborted) return;
       setHubMcpCards([]);
       setHubMcpStatus(orgCatalogPlaceholder);
-      hubMcpLoaded = true;
       hubMcpRoot = root;
+      hubMcpContextKey = nextContextKey;
     } catch (e) {
       if (refreshHubMcpAborted) return;
       setHubMcpCards([]);
