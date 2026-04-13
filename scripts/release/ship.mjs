@@ -2,7 +2,7 @@
 /**
  * release:ship
  *
- * Pushes the current tag + dev branch to origin, then prints the
+ * Pushes the current tag + main branch to origin, then prints the
  * GitHub Actions workflow URL. Optionally tails the workflow run.
  *
  * Flags:
@@ -77,10 +77,10 @@ heading("Pushing tag to origin");
 run(`git push origin ${tag}`);
 success(`Pushed ${tag}`);
 
-// ── Step 3: Push dev ────────────────────────────────────────────────
-heading("Pushing dev to origin");
-run("git push origin dev");
-success("Pushed dev");
+// ── Step 3: Push main ───────────────────────────────────────────────
+heading("Pushing main to origin");
+run("git push origin main");
+success("Pushed main");
 
 // ── Step 4: Print workflow URL ──────────────────────────────────────
 heading("GitHub Actions");

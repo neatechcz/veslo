@@ -1041,22 +1041,22 @@ jobs:
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
     steps:
-      - name: Checkout dev
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
-          ref: dev
+          ref: main
           fetch-depth: 0
 
       - name: Update AUR packaging files
         run: scripts/aur/update-aur.sh "$RELEASE_TAG"
 
-      - name: Commit packaging update to dev
+      - name: Commit packaging update to main
         shell: bash
         run: |
           set -euo pipefail
 
           if ! git status --porcelain -- packaging/aur/PKGBUILD packaging/aur/.SRCINFO | grep -q .; then
-            echo "AUR packaging already up to date in dev."
+            echo "AUR packaging already up to date in main."
             exit 0
           fi
 
@@ -1065,7 +1065,7 @@ jobs:
           git -c user.name="Veslo Release Bot" \
               -c user.email="release-bot@users.noreply.github.com" \
               commit -m "chore(aur): update PKGBUILD for ${version}"
-          git push origin HEAD:dev
+          git push origin HEAD:main
 
       - name: Publish to AUR
         env:

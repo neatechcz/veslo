@@ -47,7 +47,7 @@ heading("Checking git state");
 
 if (!ci) {
   const branch = run("git rev-parse --abbrev-ref HEAD", { readOnly: true });
-  if (branch !== "dev") fail(`Must be on 'dev' branch (currently on '${branch}')`);
+  if (branch !== "main") fail(`Must be on 'main' branch (currently on '${branch}')`);
   success(`On branch ${branch}`);
 }
 
@@ -55,14 +55,14 @@ const dirty = run("git status --porcelain", { readOnly: true });
 if (dirty && !ci) fail(`Working tree is dirty:\n${dirty}`);
 success("Working tree clean");
 
-heading("Syncing with origin/dev");
-run("git fetch origin dev", { readOnly: true });
-const behind = run("git rev-list HEAD..origin/dev --count", { readOnly: true });
+heading("Syncing with origin/main");
+run("git fetch origin main", { readOnly: true });
+const behind = run("git rev-list HEAD..origin/main --count", { readOnly: true });
 if (behind !== "0" && !dryRun) {
-  log(`Behind origin/dev by ${behind} commits — pulling…`);
-  run("git pull --rebase origin dev");
+  log(`Behind origin/main by ${behind} commits — pulling…`);
+  run("git pull --rebase origin main");
 }
-success("Up to date with origin/dev");
+success("Up to date with origin/main");
 
 // ── Step 2: Bump versions ───────────────────────────────────────────
 heading(`Bumping versions (${bumpType})`);

@@ -4,7 +4,7 @@ Veslo releases should be deterministic, easy to reproduce, and fully verifiable 
 
 ## Preflight
 
-- Sync the default branch (currently `dev`).
+- Sync the default branch (currently `main`).
 - Run `pnpm release:review` and fix any mismatches.
 - If you are building sidecar assets, set `SOURCE_DATE_EPOCH` to the tag timestamp for deterministic manifests.
 
