@@ -1,6 +1,6 @@
-import { For, Show, createMemo, createSignal } from "solid-js";
+import { For, Show, createMemo, createSignal, onMount } from "solid-js";
 
-import type { McpServerEntry, McpStatusMap } from "../types";
+import type { HubMcpCard, McpServerEntry, McpStatusMap } from "../types";
 import type { McpDirectoryInfo } from "../constants";
 import { formatRelativeTime } from "../utils";
 import { quickConnectEntryKey } from "../mcp";
@@ -38,6 +38,11 @@ export type McpViewProps = {
   selectedMcp: string | null;
   setSelectedMcp: (name: string | null) => void;
   quickConnect: McpDirectoryInfo[];
+  hubMcpCards: HubMcpCard[];
+  hubMcpStatus: string | null;
+  refreshHubMcp: () => void;
+  installHubMcp: (name: string) => Promise<{ ok: boolean; message: string }>;
+  refreshMcpServers: () => void;
   connectMcp: (entry: McpDirectoryInfo) => void;
   authorizeMcp: (entry: McpServerEntry) => void;
   logoutMcpAuth: (name: string) => Promise<void> | void;
@@ -134,6 +139,20 @@ export default function McpView(props: McpViewProps) {
   const [removeTarget, setRemoveTarget] = createSignal<string | null>(null);
   const [addMcpModalOpen, setAddMcpModalOpen] = createSignal(false);
 
+  const orgCatalogQuickConnect = createMemo(() =>
+    props.hubMcpCards
+      .filter((entry) => entry.name.trim() !== "Control Chrome")
+      .map<McpDirectoryInfo>((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        description: entry.description?.trim() || entry.name,
+        type: entry.type,
+        url: entry.url,
+        command: entry.command,
+        oauth: entry.oauth,
+      })),
+  );
+
   const quickConnectStatus = (entry: McpDirectoryInfo) => {
     const key = quickConnectEntryKey(entry);
     return props.mcpStatuses[key];
@@ -177,6 +196,10 @@ export default function McpView(props: McpViewProps) {
       setLogoutTarget(null);
     }
   };
+
+  onMount(() => {
+    props.refreshHubMcp();
+  });
 
   return (
     <section class="space-y-8 animate-in fade-in duration-300">
@@ -304,7 +327,69 @@ export default function McpView(props: McpViewProps) {
               );
             }}
           </For>
+          <For each={orgCatalogQuickConnect()}>
+            {(entry) => {
+              const connected = () => isQuickConnectConnected(entry);
+              const connecting = () => props.mcpConnectingName === entry.name;
+              const Icon = serviceIcon(entry.name);
+
+              return (
+                <button
+                  type="button"
+                  disabled={connected() || !canConnect() || connecting()}
+                  onClick={() => {
+                    if (connected()) return;
+                    void props.installHubMcp(entry.name).then((result) => {
+                      if (result.ok) {
+                        props.refreshMcpServers();
+                      }
+                    });
+                  }}
+                  class={`group text-left rounded-xl border p-4 transition-all ${
+                    connected()
+                      ? "border-green-6 bg-green-2"
+                      : "border-dls-border bg-dls-surface hover:bg-dls-hover hover:shadow-[0_4px_16px_rgba(17,24,39,0.06)]"
+                  }`}
+                >
+                  <div class="flex items-start gap-3">
+                    <div class={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border ${
+                      connected() ? "bg-green-3 border-green-6" : serviceIconBg(entry.name)
+                    }`}>
+                      <Show
+                        when={!connecting()}
+                        fallback={<Loader2 size={18} class="animate-spin text-dls-secondary" />}
+                      >
+                        <Show
+                          when={!connected()}
+                          fallback={<CheckCircle2 size={18} class="text-green-11" />}
+                        >
+                          <Icon size={18} class={serviceColor(entry.name)} />
+                        </Show>
+                      </Show>
+                    </div>
+
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center gap-2">
+                        <h4 class="font-product type-ui-md font-semibold text-dls-text">{entry.name}</h4>
+                        <Show when={connected()}>
+                          <span class="font-product type-ui-xs font-medium text-green-11 bg-green-3 px-1.5 py-0.5 rounded-md">
+                            {tr("mcp.connected")}
+                          </span>
+                        </Show>
+                      </div>
+                      <p class="font-reading type-ui-sm text-dls-secondary mt-1 line-clamp-2">
+                        {entry.description}
+                      </p>
+                    </div>
+                  </div>
+                </button>
+              );
+            }}
+          </For>
         </div>
+        <Show when={!orgCatalogQuickConnect().length && props.hubMcpStatus}>
+          <div class="text-xs text-dls-secondary">{props.hubMcpStatus}</div>
+        </Show>
       </div>
 
       {/* ── Your connected apps ──────────────────────── */}

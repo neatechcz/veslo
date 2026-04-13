@@ -10,6 +10,7 @@ import type {
   SessionArchiveItem,
   ScheduledJob,
   SidebarSubagentDecoration,
+  HubMcpCard,
   HubSkillCard,
   SkillCard,
   StartupPreference,
@@ -215,12 +216,16 @@ export type DashboardViewProps = {
   skillsStatus: string | null;
   hubSkills: HubSkillCard[];
   hubSkillsStatus: string | null;
+  hubMcpCards: HubMcpCard[];
+  hubMcpStatus: string | null;
   skillsAccessHint?: string | null;
   canInstallSkillCreator: boolean;
   canUseDesktopTools: boolean;
   importLocalSkill: () => void;
   installSkillCreator: () => Promise<{ ok: boolean; message: string }>;
   installHubSkill: (name: string) => Promise<{ ok: boolean; message: string }>;
+  refreshHubMcp: () => void;
+  installHubMcp: (name: string) => Promise<{ ok: boolean; message: string }>;
   revealSkillsFolder: () => void;
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
@@ -1549,6 +1554,11 @@ export default function DashboardView(props: DashboardViewProps) {
                 selectedMcp={props.selectedMcp}
                 setSelectedMcp={props.setSelectedMcp}
                 quickConnect={props.quickConnect}
+                hubMcpCards={props.hubMcpCards}
+                hubMcpStatus={props.hubMcpStatus}
+                refreshHubMcp={props.refreshHubMcp}
+                installHubMcp={props.installHubMcp}
+                refreshMcpServers={props.refreshMcpServers}
                 connectMcp={props.connectMcp}
                 authorizeMcp={props.authorizeMcp}
                 logoutMcpAuth={props.logoutMcpAuth}
@@ -1556,23 +1566,6 @@ export default function DashboardView(props: DashboardViewProps) {
                 showMcpReloadBanner={props.showMcpReloadBanner}
                 reloadBlocked={props.mcpReloadBlocked}
                 reloadMcpEngine={props.reloadMcpEngine}
-                canEditPlugins={props.canEditPlugins}
-                canUseGlobalScope={props.canUseGlobalPluginScope}
-                accessHint={props.pluginsAccessHint}
-                pluginScope={props.pluginScope}
-                setPluginScope={props.setPluginScope}
-                pluginConfigPath={props.pluginConfigPath}
-                pluginList={props.pluginList}
-                pluginInput={props.pluginInput}
-                setPluginInput={props.setPluginInput}
-                pluginStatus={props.pluginStatus}
-                activePluginGuide={props.activePluginGuide}
-                setActivePluginGuide={props.setActivePluginGuide}
-                isPluginInstalled={props.isPluginInstalled}
-                suggestedPlugins={props.suggestedPlugins}
-                refreshPlugins={props.refreshPlugins}
-                addPlugin={props.addPlugin}
-                removePlugin={props.removePlugin}
               />
             </Match>
 

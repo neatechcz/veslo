@@ -6,6 +6,7 @@ import McpView, { type McpViewProps } from "./mcp";
 import { currentLocale, t } from "../../i18n";
 
 export type ExtensionsViewProps = McpViewProps & {
+  refreshMcpServers: () => void;
 };
 
 export default function ExtensionsView(props: ExtensionsViewProps) {
@@ -58,6 +59,11 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
           selectedMcp={props.selectedMcp}
           setSelectedMcp={props.setSelectedMcp}
           quickConnect={props.quickConnect}
+          hubMcpCards={props.hubMcpCards}
+          hubMcpStatus={props.hubMcpStatus}
+          refreshHubMcp={props.refreshHubMcp}
+          installHubMcp={props.installHubMcp}
+          refreshMcpServers={props.refreshMcpServers}
           connectMcp={props.connectMcp}
           authorizeMcp={props.authorizeMcp}
           logoutMcpAuth={props.logoutMcpAuth}

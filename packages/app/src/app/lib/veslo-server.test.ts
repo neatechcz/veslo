@@ -164,3 +164,77 @@ test("listHubSkills forwards den auth context headers when provided", async () =
     globalThis.fetch = previousFetch;
   }
 });
+
+test("listHubMcp forwards den auth context headers when provided", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; headers: Headers }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+    });
+    return new Response(JSON.stringify({ items: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    await client.listHubMcp({
+      denToken: "den-token",
+      denOrgId: "org_123",
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.url, "https://veslo.example/hub/mcp");
+    assert.equal(calls[0]?.headers.get("authorization"), "Bearer token-123");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-token"), "den-token");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-org-id"), "org_123");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("installHubMcp forwards den auth context headers when provided", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; headers: Headers; method?: string }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method,
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+    });
+    return new Response(JSON.stringify({ ok: true, name: "demo", path: "opencode.json" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    await client.installHubMcp("workspace-1", "catalog-item", {
+      denToken: "den-token",
+      denOrgId: "org_123",
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.url, "https://veslo.example/workspace/workspace-1/mcp/hub/catalog-item");
+    assert.equal(calls[0]?.method, "POST");
+    assert.equal(calls[0]?.headers.get("authorization"), "Bearer token-123");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-token"), "den-token");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-org-id"), "org_123");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});

@@ -228,6 +228,32 @@ export type HubSkillCard = {
   };
 };
 
+export type HubMcpItem = {
+  id: string;
+  name: string;
+  description?: string;
+  config: {
+    type: "remote" | "local";
+    url?: string;
+    command?: string[];
+    oauth?: boolean;
+  };
+  source: {
+    scope: "org";
+    orgId: string;
+  };
+};
+
+export type HubMcpCard = {
+  id: string;
+  name: string;
+  description?: string;
+  type: "remote" | "local";
+  url?: string;
+  command?: string[];
+  oauth: boolean;
+};
+
 export type PluginInstallStep = {
   title: string;
   description: string;
