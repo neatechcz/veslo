@@ -69,7 +69,7 @@ async function main() {
     summary.stdout = tail(result.stdout)
     summary.stderr = tail(result.stderr)
     summary.finalMessage = tail(await readTextFile(outputFile))
-    summary.ok = result.exitCode === 0 && !result.timedOut
+    summary.ok = result.exitCode === 0 && !result.timedOut && summary.finalMessage.trim().length > 0
     printSummary(summary)
 
     if (!summary.ok) {
@@ -98,12 +98,10 @@ function runCodex(
     stdout: string
     stderr: string
   }>((resolve, reject) => {
+    const childEnv = buildCodexChildEnv(codexHomeDir)
     const child = spawn(commandName, args, {
       cwd,
-      env: {
-        ...process.env,
-        ...(codexHomeDir ? { CODEX_HOME: codexHomeDir } : {}),
-      },
+      env: childEnv,
       stdio: ["ignore", "pipe", "pipe"],
     })
 
@@ -145,6 +143,41 @@ function runCodex(
       resolve({ exitCode, signal, timedOut, stdout, stderr })
     })
   })
+}
+
+function buildCodexChildEnv(codexHomeDir: string | undefined) {
+  const env: NodeJS.ProcessEnv = {}
+  const allowedKeys = [
+    "PATH",
+    "HOME",
+    "USER",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "SystemRoot",
+    "ComSpec",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TZ",
+  ] as const
+
+  for (const key of allowedKeys) {
+    const value = process.env[key]
+    if (value) {
+      env[key] = value
+    }
+  }
+
+  delete env.OPENAI_API_KEY
+  delete env.ANTHROPIC_API_KEY
+  delete env.CODEX_HOME
+
+  if (codexHomeDir) {
+    env.CODEX_HOME = codexHomeDir
+  }
+
+  return env
 }
 
 async function readTextFile(filePath: string) {
