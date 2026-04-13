@@ -2,7 +2,7 @@ import { minimatch } from "minimatch";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { McpItem } from "./types.js";
+import type { HubMcpItem, McpItem } from "./types.js";
 import { readJsoncFile, updateJsoncTopLevel } from "./jsonc.js";
 import { opencodeConfigPath } from "./workspace-files.js";
 import { validateMcpConfig, validateMcpName } from "./validators.js";
@@ -93,4 +93,32 @@ export async function removeMcp(workspaceRoot: string, name: string): Promise<bo
   delete mcpMap[name];
   await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { mcp: mcpMap });
   return true;
+}
+
+export async function installHubMcp(
+  workspaceRoot: string,
+  item: HubMcpItem,
+): Promise<{ name: string; action: "added" | "updated" }> {
+  const name = item.id.trim() || item.name.trim();
+  validateMcpName(name);
+
+  const config: Record<string, unknown> = {
+    type: item.config.type,
+    enabled: true,
+  };
+
+  if (item.config.type === "remote") {
+    config.url = item.config.url;
+    if (item.config.oauth === true) {
+      config.oauth = true;
+    }
+  }
+
+  if (item.config.type === "local") {
+    config.command = item.config.command;
+  }
+
+  validateMcpConfig(config);
+  const result = await addMcp(workspaceRoot, name, config);
+  return { name, action: result.action };
 }
