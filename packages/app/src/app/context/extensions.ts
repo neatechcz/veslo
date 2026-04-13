@@ -291,7 +291,7 @@ export function createExtensionsStore(options: {
     }
   }
 
-  async function installHubMcp(name: string): Promise<{ ok: boolean; message: string }> {
+  async function installHubMcp(name: string): Promise<{ ok: boolean; message: string; entry?: HubMcpCard }> {
     const trimmed = name.trim();
     if (!trimmed) return { ok: false, message: "MCP name is required." };
 
@@ -318,6 +318,7 @@ export function createExtensionsStore(options: {
     setHubMcpStatus(null);
 
     try {
+      const selectedEntry = hubMcpCards().find((entry) => entry.id === trimmed || entry.name === trimmed);
       const denAuth = readDenAuth();
       const denToken = denAuth?.token?.trim() ?? "";
       const denOrgId = denAuth?.orgId?.trim() ?? "";
@@ -333,7 +334,7 @@ export function createExtensionsStore(options: {
       if (!result?.ok) {
         return { ok: false, message: "Install failed." };
       }
-      return { ok: true, message: `Installed ${trimmed}.` };
+      return { ok: true, message: `Installed ${trimmed}.`, ...(selectedEntry ? { entry: selectedEntry } : {}) };
     } catch (e) {
       const message = e instanceof Error ? e.message : translate("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));

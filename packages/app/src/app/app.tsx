@@ -122,6 +122,7 @@ import {
   SUGGESTED_PLUGINS,
   THINKING_PREF_KEY,
   VARIANT_PREF_KEY,
+  type McpDirectoryInfo,
 } from "./constants";
 import { parseMcpServersFromContent, quickConnectEntryKey, removeMcpFromConfig, validateMcpServerName } from "./mcp";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "./types";
@@ -2342,7 +2343,7 @@ export default function App() {
 
   // MCP OAuth modal state
   const [mcpAuthModalOpen, setMcpAuthModalOpen] = createSignal(false);
-  const [mcpAuthEntry, setMcpAuthEntry] = createSignal<(typeof MCP_QUICK_CONNECT)[number] | null>(null);
+  const [mcpAuthEntry, setMcpAuthEntry] = createSignal<McpDirectoryInfo | null>(null);
   const [mcpAuthNeedsReload, setMcpAuthNeedsReload] = createSignal(false);
 
   const extensionsStore = createExtensionsStore({
@@ -5377,6 +5378,93 @@ export default function App() {
     }
   }
 
+  async function ensureMcpRuntimeContext() {
+    const projectDir = workspaceProjectDir().trim();
+
+    let activeClient = client();
+    if (!activeClient) {
+      const vesloBaseUrl = vesloServerBaseUrl().trim();
+      const auth = vesloServerAuth();
+      if (vesloBaseUrl && auth.token) {
+        const opencodeUrl = `${vesloBaseUrl.replace(/\/+$/, "")}/opencode`;
+        activeClient = createClient(opencodeUrl, undefined, { token: auth.token, mode: "veslo" });
+        setClient(activeClient);
+      }
+    }
+    if (!activeClient) {
+      throw new Error(t("mcp.connect_server_first", currentLocale()));
+    }
+
+    let resolvedProjectDir = projectDir;
+    if (!resolvedProjectDir) {
+      try {
+        const pathInfo = unwrap(await activeClient.path.get());
+        const discoveredRaw = normalizeDirectoryQueryPath(pathInfo.directory ?? "");
+        const discovered = discoveredRaw.replace(/^\/private\/tmp(?=\/|$)/, "/tmp");
+        if (discovered) {
+          resolvedProjectDir = discovered;
+          workspaceStore.setProjectDir(discovered);
+        }
+      } catch {
+        // ignore
+      }
+    }
+    if (!resolvedProjectDir) {
+      throw new Error(t("mcp.pick_workspace_first", currentLocale()));
+    }
+
+    return { activeClient, resolvedProjectDir };
+  }
+
+  function buildMcpAddConfig(entry: McpDirectoryInfo) {
+    const entryType = entry.type ?? "remote";
+    if (entryType === "remote") {
+      if (!entry.url) {
+        throw new Error("Missing MCP URL.");
+      }
+      return {
+        type: "remote" as const,
+        url: entry.url,
+        enabled: true,
+        ...(entry.oauth ? { oauth: {} } : {}),
+      };
+    }
+
+    if (!entry.command?.length) {
+      throw new Error("Missing MCP command.");
+    }
+
+    return {
+      type: "local" as const,
+      command: entry.command,
+      enabled: true,
+    };
+  }
+
+  async function activateInstalledMcp(entry: McpDirectoryInfo, slug = quickConnectEntryKey(entry)) {
+    const { activeClient, resolvedProjectDir } = await ensureMcpRuntimeContext();
+    const status = unwrap(
+      await activeClient.mcp.add({
+        directory: resolvedProjectDir,
+        name: slug,
+        config: buildMcpAddConfig(entry),
+      }),
+    );
+
+    setMcpStatuses(status as McpStatusMap);
+    await refreshMcpServers();
+
+    if (entry.oauth) {
+      setMcpAuthEntry(entry);
+      setMcpAuthNeedsReload(true);
+      setMcpAuthModalOpen(true);
+    } else {
+      setMcpStatus(t("mcp.connected", currentLocale()));
+    }
+
+    await refreshMcpServers();
+  }
+
   async function connectMcp(entry: (typeof MCP_QUICK_CONNECT)[number]) {
     const startedAt = perfNow();
     const isRemoteWorkspace =
@@ -5437,51 +5525,12 @@ export default function App() {
       return;
     }
 
-    let activeClient = client();
-    if (!activeClient) {
-      const vesloBaseUrl = vesloServerBaseUrl().trim();
-      const auth = vesloServerAuth();
-      if (vesloBaseUrl && auth.token) {
-        const opencodeUrl = `${vesloBaseUrl.replace(/\/+$/, "")}/opencode`;
-        activeClient = createClient(opencodeUrl, undefined, { token: auth.token, mode: "veslo" });
-        setClient(activeClient);
-      }
-    }
-    if (!activeClient) {
-      setMcpStatus(t("mcp.connect_server_first", currentLocale()));
-      finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
-        reason: "no-active-client",
-      });
-      return;
-    }
-
-    let resolvedProjectDir = projectDir;
-    if (!resolvedProjectDir) {
-      try {
-        const pathInfo = unwrap(await activeClient.path.get());
-        const discoveredRaw = normalizeDirectoryQueryPath(pathInfo.directory ?? "");
-        const discovered = discoveredRaw.replace(/^\/private\/tmp(?=\/|$)/, "/tmp");
-        if (discovered) {
-          resolvedProjectDir = discovered;
-          workspaceStore.setProjectDir(discovered);
-        }
-      } catch {
-        // ignore
-      }
-    }
-    if (!resolvedProjectDir) {
-      setMcpStatus(t("mcp.pick_workspace_first", currentLocale()));
-      finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
-        reason: "missing-workspace-after-discovery",
-      });
-      return;
-    }
-
     const slug = quickConnectEntryKey(entry);
 
     try {
       setMcpStatus(null);
       setMcpConnectingName(entry.name);
+      const { resolvedProjectDir } = await ensureMcpRuntimeContext();
 
       const mcpEntryConfig: Record<string, unknown> = {
         type: entryType,
@@ -5543,40 +5592,7 @@ export default function App() {
         }
       }
 
-      const mcpAddConfig =
-        entryType === "remote"
-          ? {
-            type: "remote" as const,
-            url: entry.url!,
-            enabled: true,
-            ...(entry.oauth ? { oauth: {} } : {}),
-          }
-          : {
-            type: "local" as const,
-            command: entry.command!,
-            enabled: true,
-          };
-
-      const status = unwrap(
-        await activeClient.mcp.add({
-          directory: resolvedProjectDir,
-          name: slug,
-          config: mcpAddConfig,
-        }),
-      );
-
-      setMcpStatuses(status as McpStatusMap);
-      await refreshMcpServers();
-
-      if (entry.oauth) {
-        setMcpAuthEntry(entry);
-        setMcpAuthNeedsReload(true);
-        setMcpAuthModalOpen(true);
-      } else {
-        setMcpStatus(t("mcp.connected", currentLocale()));
-      }
-
-      await refreshMcpServers();
+      await activateInstalledMcp(entry, slug);
       finishPerf(developerMode(), "mcp.connect", "done", startedAt, {
         name: entry.name,
         type: entryType,
@@ -5616,6 +5632,43 @@ export default function App() {
     );
     setMcpAuthNeedsReload(false);
     setMcpAuthModalOpen(true);
+  }
+
+  async function installHubMcpAndActivate(name: string): Promise<{ ok: boolean; message: string }> {
+    const result = await installHubMcp(name);
+    if (!result.ok) {
+      return result;
+    }
+
+    const selectedEntry = result.entry ?? hubMcpCards().find((entry) => entry.id === name || entry.name === name);
+    if (!selectedEntry) {
+      await refreshMcpServers();
+      return result;
+    }
+
+    const entry: McpDirectoryInfo = {
+      id: selectedEntry.id,
+      name: selectedEntry.name,
+      description: selectedEntry.description ?? "",
+      type: selectedEntry.type,
+      ...(selectedEntry.url ? { url: selectedEntry.url } : {}),
+      ...(selectedEntry.command ? { command: selectedEntry.command } : {}),
+      oauth: selectedEntry.oauth,
+    };
+
+    try {
+      setMcpStatus(null);
+      setMcpConnectingName(entry.name);
+      await activateInstalledMcp(entry, entry.id || quickConnectEntryKey(entry));
+      return result;
+    } catch (error) {
+      await refreshMcpServers();
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      setMcpStatus(message);
+      return { ok: false, message };
+    } finally {
+      setMcpConnectingName(null);
+    }
   }
 
   async function logoutMcpAuth(name: string) {
@@ -7404,7 +7457,7 @@ export default function App() {
       hubMcpCards: hubMcpCards(),
       hubMcpStatus: hubMcpStatus(),
       refreshHubMcp: () => refreshHubMcp().catch(e => reportError(e, "skills.refreshHubMcp")),
-      installHubMcp: (name: string) => installHubMcp(name).catch(e => {
+      installHubMcp: (name: string) => installHubMcpAndActivate(name).catch(e => {
         reportError(e, "skills.installHubMcp");
         return { ok: false, message: e instanceof Error ? e.message : safeStringify(e) };
       }),
