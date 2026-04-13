@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import path from "node:path"
 
 type ProbeSummary = {
@@ -190,12 +190,31 @@ function buildCodexChildEnv(codexHomeDir: string | undefined) {
 }
 
 function isHostDefaultCodexHome(codexHomeDir: string) {
-  const homeDir = process.env.HOME?.trim()
-  if (!homeDir) {
-    return false
+  const codexHomeResolved = path.resolve(codexHomeDir)
+  const hostDefaultCodexHomes = new Set<string>()
+
+  const homeEnv = process.env.HOME?.trim()
+  if (homeEnv) {
+    hostDefaultCodexHomes.add(path.resolve(homeEnv, ".codex"))
   }
 
-  return path.resolve(codexHomeDir) === path.resolve(homeDir, ".codex")
+  const userProfileEnv = process.env.USERPROFILE?.trim()
+  if (userProfileEnv) {
+    hostDefaultCodexHomes.add(path.resolve(userProfileEnv, ".codex"))
+  }
+
+  const homeDriveEnv = process.env.HOMEDRIVE?.trim()
+  const homePathEnv = process.env.HOMEPATH?.trim()
+  if (homeDriveEnv && homePathEnv) {
+    hostDefaultCodexHomes.add(path.resolve(`${homeDriveEnv}${homePathEnv}`, ".codex"))
+  }
+
+  const homeDir = homedir().trim()
+  if (homeDir) {
+    hostDefaultCodexHomes.add(path.resolve(homeDir, ".codex"))
+  }
+
+  return hostDefaultCodexHomes.has(codexHomeResolved)
 }
 
 async function readTextFile(filePath: string) {

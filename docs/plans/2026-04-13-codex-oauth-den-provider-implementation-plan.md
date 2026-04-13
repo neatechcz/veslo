@@ -39,7 +39,7 @@ Create `services/den/scripts/probe-codex-cli-worker.ts`:
 
 ```ts
 import { mkdtemp, readFile, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import path from "node:path"
 import { spawn } from "node:child_process"
 
@@ -68,7 +68,7 @@ if (!codexHome) {
   process.exit(1)
 }
 
-if (process.env.HOME && path.resolve(codexHome) === path.resolve(process.env.HOME, ".codex") && !allowHostHome) {
+if (isHostDefaultCodexHome(codexHome) && !allowHostHome) {
   console.log(JSON.stringify({
     ok: false,
     exitCode: null,
@@ -80,6 +80,34 @@ if (process.env.HOME && path.resolve(codexHome) === path.resolve(process.env.HOM
   }, null, 2))
   process.exitCode = 1
   process.exit(1)
+}
+
+function isHostDefaultCodexHome(codexHomeDir: string) {
+  const codexHomeResolved = path.resolve(codexHomeDir)
+  const hostDefaultCodexHomes = new Set<string>()
+
+  const homeEnv = process.env.HOME?.trim()
+  if (homeEnv) {
+    hostDefaultCodexHomes.add(path.resolve(homeEnv, ".codex"))
+  }
+
+  const userProfileEnv = process.env.USERPROFILE?.trim()
+  if (userProfileEnv) {
+    hostDefaultCodexHomes.add(path.resolve(userProfileEnv, ".codex"))
+  }
+
+  const homeDriveEnv = process.env.HOMEDRIVE?.trim()
+  const homePathEnv = process.env.HOMEPATH?.trim()
+  if (homeDriveEnv && homePathEnv) {
+    hostDefaultCodexHomes.add(path.resolve(`${homeDriveEnv}${homePathEnv}`, ".codex"))
+  }
+
+  const homeDir = homedir().trim()
+  if (homeDir) {
+    hostDefaultCodexHomes.add(path.resolve(homeDir, ".codex"))
+  }
+
+  return hostDefaultCodexHomes.has(codexHomeResolved)
 }
 
 const scratchDir = await mkdtemp(path.join(tmpdir(), "veslo-codex-worker-"))
@@ -581,10 +609,10 @@ Expected: all focused tests pass.
 Run:
 
 ```bash
-pnpm --dir services/den exec node --import tsx scripts/probe-codex-cli-worker.ts
+MANAGED_AI_CODEX_HOME=/path/to/worker-codex-home pnpm --dir services/den exec node --import tsx scripts/probe-codex-cli-worker.ts
 ```
 
-Expected: exits 0 and returns `ok` when a valid Codex login is provisioned for the worker environment.
+Expected: exits 0 and returns `ok` when a valid Codex login is provisioned for the explicit worker environment. For deliberate local developer testing against the current host Codex profile, set `MANAGED_AI_CODEX_ALLOW_HOST_HOME=1` together with `MANAGED_AI_CODEX_HOME=$HOME/.codex`.
 
 **Step 5: Run live Render gate**
 
