@@ -238,10 +238,10 @@ importers:
         specifier: 1.9.9
         version: 1.9.9
       veslo-code-router:
-        specifier: 2026.3.7
+        specifier: 2026.4.0
         version: link:../opencode-router
       veslo-server:
-        specifier: 2026.3.7
+        specifier: 2026.4.0
         version: link:../server
     devDependencies:
       '@opentui/core-darwin-arm64':
