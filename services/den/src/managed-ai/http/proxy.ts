@@ -6,9 +6,10 @@ import type { GatewaySessionResolver } from "../auth/gateway-session.js"
 import type { CredentialRepository } from "../credentials/repository.js"
 import type { TokenBroker } from "../credentials/token-broker.js"
 import type { LeaseBroker } from "../leases/lease-broker.js"
-import type { AnthropicProviderTransport, OpenAiProviderTransport } from "../providers/transport.js"
+import type { AnthropicProviderTransport, CodexOAuthProviderTransport, OpenAiProviderTransport } from "../providers/transport.js"
 import type { UsageRepository } from "../usage/repository.js"
 import { createAnthropicProxyRouter } from "./providers/anthropic.js"
+import { createCodexOAuthProxyRouter } from "./providers/codex-oauth.js"
 import { createOpenAiProxyRouter } from "./providers/openai.js"
 
 export type ProxyDependencies = {
@@ -20,6 +21,7 @@ export type ProxyDependencies = {
   tokenBroker: TokenBroker
   openAiTransport: OpenAiProviderTransport
   anthropicTransport: AnthropicProviderTransport
+  codexOAuthTransport: CodexOAuthProviderTransport
 }
 
 export function createProxyRouter(deps: ProxyDependencies) {
@@ -52,6 +54,7 @@ export function createProxyRouter(deps: ProxyDependencies) {
 
   router.use("/providers/openai", createOpenAiProxyRouter(deps))
   router.use("/providers/anthropic", createAnthropicProxyRouter(deps))
+  router.use("/providers/codex_oauth", createCodexOAuthProxyRouter(deps))
 
   return router
 }
