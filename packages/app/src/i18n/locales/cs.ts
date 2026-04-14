@@ -673,6 +673,8 @@ export default {
   "settings.updates_hint": "Udržujte Veslo aktuální.",
   "settings.automatic_checks_label": "Automatické kontroly",
   "settings.automatic_checks_hint": "Jednou denně (tiše)",
+  "settings.auto_update_label": "Automatická aktualizace",
+  "settings.auto_update_hint": "Stahovat aktualizace automaticky (s výzvou k restartu).",
   "settings.last_checked_time": "Naposledy zkontrolováno {time}",
   "settings.published_date": "Publikováno {date}",
   "settings.update_not_supported_hint": "Aktualizace nejsou v tomto prostředí podporovány.",
@@ -702,6 +704,9 @@ export default {
   "settings.stop_active_runs_reset_hint": "Pro reset zastavte aktivní běhy",
   "settings.stop_runs_to_update": "Pro aktualizaci zastavte aktivní běhy",
   "settings.stop_runs_to_reset": "Pro reset zastavte aktivní běhy",
+  "settings.retry": "Zkusit znovu",
+  "settings.hide_titlebar_label": "Skrýt titlebar",
+  "settings.hide_titlebar_hint": "Skryje titlebar okna. Užitečné pro dlaždicové správce oken na Linuxu (Hyprland, i3, sway).",
   "settings.updates_not_supported": "Aktualizace nejsou v tomto prostředí podporovány.",
   "settings.updates_desktop_only": "Aktualizace jsou dostupné jen v desktopové aplikaci.",
   // ==================== Reload ====================
