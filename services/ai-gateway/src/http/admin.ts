@@ -21,6 +21,7 @@ import { createDb } from "../db/index.js";
 import { credentialBindingTable, credentialHealthEventTable, credentialRecordTable, credentialUsageEventTable, sessionLeaseTable, type CredentialState } from "../db/schema.js";
 import { env } from "../env.js";
 import type { AdminSessionRecord, LeaseProvider } from "../leases/repository.js";
+import { isAiGatewayProvider, isApiKeyCredentialProvider } from "../providers/ids.js";
 import { MySqlUsageRepository } from "../usage/mysql-repository.js";
 import type { AggregateUsageInput, UsageAggregateResponse, UsageGroupBy as RepositoryUsageGroupBy, UsageRepository } from "../usage/repository.js";
 
@@ -445,6 +446,10 @@ function formatProviderLabel(provider: string) {
 
   if (provider === "anthropic") {
     return "Anthropic";
+  }
+
+  if (provider === "codex_oauth") {
+    return "Codex OAuth";
   }
 
   return provider;
@@ -974,7 +979,7 @@ function validateUserAiAccessInput(input: UpdateUserAiAccessInput & { userId: st
 }
 
 function parseAiAccessProvider(value: unknown): AiAccessProvider | null {
-  return value === "openai" || value === "anthropic" ? value : null;
+  return isAiGatewayProvider(value) ? value : null;
 }
 
 function normalizeAllowedModels(value: unknown): string[] {
@@ -1477,5 +1482,5 @@ export function createAdminRouter(adminService: AdminService) {
 }
 
 function parseCredentialProvider(value: unknown): LeaseProvider | null {
-  return value === "openai" || value === "anthropic" ? value : null;
+  return isApiKeyCredentialProvider(value) ? value : null;
 }

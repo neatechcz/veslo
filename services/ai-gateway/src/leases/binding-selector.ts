@@ -1,4 +1,5 @@
 import type { CredentialRepository } from "../credentials/repository.js";
+import { CODEX_OAUTH_PROVIDER, CODEX_OAUTH_WORKER_BINDING_ID } from "../providers/ids.js";
 import type { ResolveLeaseInput } from "./repository.js";
 
 export type BindingSelector = {
@@ -12,6 +13,10 @@ export class DefaultBindingSelector implements BindingSelector {
   constructor(private readonly credentials: CredentialRepository) {}
 
   async selectInitialBinding(input: ResolveLeaseInput): Promise<string> {
+    if (input.provider === CODEX_OAUTH_PROVIDER) {
+      return CODEX_OAUTH_WORKER_BINDING_ID;
+    }
+
     const bindings = await this.listEligibleBindings({
       ownerUserId: this.resolveBindingOwnerUserId(input),
       provider: input.provider,
@@ -30,6 +35,10 @@ export class DefaultBindingSelector implements BindingSelector {
   async selectReplacementBinding(
     input: ResolveLeaseInput & { previousBindingId: string },
   ): Promise<string> {
+    if (input.provider === CODEX_OAUTH_PROVIDER) {
+      return CODEX_OAUTH_WORKER_BINDING_ID;
+    }
+
     const replacements = await this.listEligibleBindings({
       ownerUserId: this.resolveBindingOwnerUserId(input),
       provider: input.provider,

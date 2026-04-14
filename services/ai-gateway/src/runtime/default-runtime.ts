@@ -17,6 +17,7 @@ import { LeaseBroker } from "../leases/lease-broker.js";
 import { MySqlLeaseRepository } from "../leases/mysql-repository.js";
 import type { LeaseRepository } from "../leases/repository.js";
 import { AnthropicTransport } from "../providers/anthropic-transport.js";
+import { CodexCliWorkerTransport } from "../providers/codex-cli-worker-transport.js";
 import { OpenAiTransport } from "../providers/openai-transport.js";
 import { MySqlUsageRepository } from "../usage/mysql-repository.js";
 import type { UsageRepository } from "../usage/repository.js";
@@ -50,7 +51,7 @@ export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): 
 
 export function createDefaultProxyDependencies(
   runtime: RuntimeState,
-  overrides: Partial<Pick<ProxyDependencies, "gatewaySessions" | "openAiTransport" | "anthropicTransport">> & {
+  overrides: Partial<Pick<ProxyDependencies, "gatewaySessions" | "openAiTransport" | "anthropicTransport" | "codexOAuthTransport">> & {
     openAiOAuth?: OpenAiOAuthClient;
     now?: () => Date;
   } = {},
@@ -79,6 +80,7 @@ export function createDefaultProxyDependencies(
     }),
     openAiTransport: overrides.openAiTransport ?? new OpenAiTransport(),
     anthropicTransport: overrides.anthropicTransport ?? new AnthropicTransport(),
+    codexOAuthTransport: overrides.codexOAuthTransport ?? new CodexCliWorkerTransport(),
   };
 }
 

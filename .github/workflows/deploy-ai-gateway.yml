@@ -55,6 +55,7 @@ jobs:
           DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
           AI_GATEWAY_DATABASE_URL: ${{ secrets.AI_GATEWAY_DATABASE_URL || secrets.MANAGED_AI_DATABASE_URL || secrets.DEN_DATABASE_URL }}
           AI_GATEWAY_SECRET_KEY: ${{ secrets.AI_GATEWAY_SECRET_KEY || secrets.DEN_BETTER_AUTH_SECRET }}
+          AI_GATEWAY_CODEX_AUTH_JSON: ${{ secrets.MANAGED_AI_CODEX_AUTH_JSON }}
           AI_GATEWAY_DIAGNOSE_ONLY: ${{ github.event.inputs.diagnose_only }}
           AI_GATEWAY_DIAGNOSE_LOGS: ${{ github.event.inputs.diagnose_logs }}
         run: |
@@ -77,6 +78,7 @@ jobs:
           else
             check_required AI_GATEWAY_DATABASE_URL "AI_GATEWAY_DATABASE_URL (or MANAGED_AI_DATABASE_URL or DEN_DATABASE_URL)"
             check_required AI_GATEWAY_SECRET_KEY "AI_GATEWAY_SECRET_KEY (or DEN_BETTER_AUTH_SECRET)"
+            check_required AI_GATEWAY_CODEX_AUTH_JSON "MANAGED_AI_CODEX_AUTH_JSON"
           fi
 
           if [ "$missing" -ne 0 ]; then
@@ -91,6 +93,11 @@ jobs:
           DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
           AI_GATEWAY_DATABASE_URL: ${{ secrets.AI_GATEWAY_DATABASE_URL || secrets.MANAGED_AI_DATABASE_URL || secrets.DEN_DATABASE_URL }}
           AI_GATEWAY_SECRET_KEY: ${{ secrets.AI_GATEWAY_SECRET_KEY || secrets.DEN_BETTER_AUTH_SECRET }}
+          AI_GATEWAY_CODEX_AUTH_JSON: ${{ secrets.MANAGED_AI_CODEX_AUTH_JSON }}
+          AI_GATEWAY_CODEX_COMMAND: ${{ vars.AI_GATEWAY_CODEX_COMMAND }}
+          AI_GATEWAY_CODEX_HOME: ${{ vars.AI_GATEWAY_CODEX_HOME }}
+          AI_GATEWAY_CODEX_TIMEOUT_MS: ${{ vars.AI_GATEWAY_CODEX_TIMEOUT_MS }}
+          AI_GATEWAY_CODEX_WORKDIR: ${{ vars.AI_GATEWAY_CODEX_WORKDIR }}
           AI_GATEWAY_DIAGNOSE_ONLY: ${{ github.event.inputs.diagnose_only }}
           AI_GATEWAY_DIAGNOSE_LOGS: ${{ github.event.inputs.diagnose_logs }}
           AI_GATEWAY_REPLACE_MISMATCHED_REGION: ${{ github.event.inputs.replace_mismatched_region }}
@@ -430,6 +437,11 @@ jobs:
                   "AI_GATEWAY_SECRET_KEY": os.environ["AI_GATEWAY_SECRET_KEY"],
                   "AI_GATEWAY_DEN_API_BASE": "https://den-control-plane-veslo.onrender.com",
                   "AI_GATEWAY_OPENAI_REDIRECT_BASE": f"{service_url.rstrip('/')}/auth/openai",
+                  "AI_GATEWAY_CODEX_AUTH_JSON": os.environ["AI_GATEWAY_CODEX_AUTH_JSON"],
+                  "AI_GATEWAY_CODEX_COMMAND": os.environ.get("AI_GATEWAY_CODEX_COMMAND") or "codex",
+                  "AI_GATEWAY_CODEX_HOME": os.environ.get("AI_GATEWAY_CODEX_HOME") or "/tmp/veslo-ai-gateway-codex-home",
+                  "AI_GATEWAY_CODEX_TIMEOUT_MS": os.environ.get("AI_GATEWAY_CODEX_TIMEOUT_MS") or "180000",
+                  "AI_GATEWAY_CODEX_WORKDIR": os.environ.get("AI_GATEWAY_CODEX_WORKDIR") or "/tmp",
               }
           )
           request(

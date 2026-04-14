@@ -232,6 +232,44 @@ test("PUT /admin/api/users/:userId/ai-access persists the admin managed policy",
   }
 });
 
+test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", async () => {
+  const app = createAdminUserAccessApp();
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        ...ADMIN_AUTHORIZATION,
+      },
+      body: JSON.stringify({
+        enabled: true,
+        provider: "codex_oauth",
+        defaultModel: "gpt-5.4",
+        allowedModels: ["gpt-5.4"],
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      aiAccess: {
+        ...AI_ACCESS_PAYLOAD,
+        userId: "user_123",
+        enabled: true,
+        provider: "codex_oauth",
+        defaultModel: "gpt-5.4",
+        allowedModels: ["gpt-5.4"],
+      },
+    });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
 test("GET /api/me/ai-access returns the signed-in user's effective ai access policy", async () => {
   const app = createAdminUserAccessApp();
   const server = app.listen(0, "127.0.0.1");

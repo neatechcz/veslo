@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { CredentialBinding, CredentialRecord, CredentialRepository, ListEligibleBindingsInput } from "../src/credentials/repository.js";
 import { DefaultBindingSelector } from "../src/leases/binding-selector.js";
+import { CODEX_OAUTH_WORKER_BINDING_ID } from "../src/providers/ids.js";
 
 class TestCredentialRepository implements CredentialRepository {
   public readonly listEligibleBindingsCalls: ListEligibleBindingsInput[] = [];
@@ -99,4 +100,27 @@ test("replacement selection excludes the failed binding", async () => {
       excludeBindingId: "binding_alpha",
     },
   ]);
+});
+
+test("codex_oauth uses the server-side worker binding without requiring a credential pool", async () => {
+  const repository = new TestCredentialRepository([]);
+  const selector = new DefaultBindingSelector(repository);
+
+  const bindingId = await selector.selectInitialBinding({
+    ownerUserId: "user_1",
+    bindingOwnerUserId: "platform:codex_oauth",
+    provider: "codex_oauth",
+    sessionId: "session_codex",
+  });
+  const replacementBindingId = await selector.selectReplacementBinding({
+    ownerUserId: "user_1",
+    bindingOwnerUserId: "platform:codex_oauth",
+    provider: "codex_oauth",
+    sessionId: "session_codex",
+    previousBindingId: bindingId,
+  });
+
+  assert.equal(bindingId, CODEX_OAUTH_WORKER_BINDING_ID);
+  assert.equal(replacementBindingId, CODEX_OAUTH_WORKER_BINDING_ID);
+  assert.deepEqual(repository.listEligibleBindingsCalls, []);
 });

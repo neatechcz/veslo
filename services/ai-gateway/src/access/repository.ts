@@ -1,6 +1,8 @@
-export const AiAccessProviders = ["openai", "anthropic"] as const;
+import type { AiGatewayProvider } from "../providers/ids.js";
 
-export type AiAccessProvider = (typeof AiAccessProviders)[number];
+export const AiAccessProviders = ["openai", "anthropic", "codex_oauth"] as const;
+
+export type AiAccessProvider = AiGatewayProvider;
 
 export type UserAiAccessPolicyRecord = {
   id: string;

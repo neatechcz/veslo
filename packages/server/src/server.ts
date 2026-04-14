@@ -1592,6 +1592,16 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     });
   });
 
+  addRoute(routes, "POST", "/ai-gateway/providers/codex_oauth/v1/chat/completions", "client", async (ctx) => {
+    return proxyAiGatewayRequest({
+      request: ctx.request,
+      url: ctx.url,
+      gatewayPath: "/providers/codex_oauth/v1/chat/completions",
+      auth: "gateway-token",
+      requireSessionId: true,
+    });
+  });
+
   addRoute(routes, "GET", "/tokens", "host", async () => {
     const items = await tokens.list();
     return jsonResponse({ items });

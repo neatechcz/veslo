@@ -321,6 +321,9 @@ importers:
 
   services/ai-gateway:
     dependencies:
+      '@openai/codex':
+        specifier: 0.120.0
+        version: 0.120.0
       dotenv:
         specifier: ^16.4.5
         version: 16.6.1

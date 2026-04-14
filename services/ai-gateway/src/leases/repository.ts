@@ -1,4 +1,6 @@
-export type LeaseProvider = "openai" | "anthropic";
+import type { AiGatewayProvider } from "../providers/ids.js";
+
+export type LeaseProvider = AiGatewayProvider;
 
 export type SessionLease = {
   id: string;

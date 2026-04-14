@@ -25,6 +25,7 @@ test("GET /admin/credentials serves the admin shell with an admin-only platform 
     assert.match(html, /id="credential-create-name"/)
     assert.match(html, /id="credential-create-secret"/)
     assert.match(html, /id="credential-create-submit"/)
+    assert.match(html, /Codex \/ ChatGPT runtime profile/)
   } finally {
     server.close()
     await once(server, "close")
@@ -151,6 +152,7 @@ test("GET /admin/users includes admin-managed ai access controls in the user edi
     assert.match(html, /id="user-ai-access-default-model"/)
     assert.match(html, /id="user-ai-access-allowed-models"/)
     assert.match(html, /id="user-save-status"/)
+    assert.match(html, /<option value="codex_oauth">Codex \/ ChatGPT runtime<\/option>/)
   } finally {
     server.close()
     await once(server, "close")
