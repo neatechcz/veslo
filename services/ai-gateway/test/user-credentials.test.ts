@@ -191,6 +191,35 @@ test("GET /api/me/ai-access returns the signed-in user's admin-managed ai access
   }
 });
 
+test("GET /ai-gateway/me/ai-access returns the signed-in user's admin-managed ai access", async () => {
+  const runtime = createUserAiAccessApp({});
+  const server = runtime.app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/ai-gateway/me/ai-access`, {
+      headers: runtime.authHeader,
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      aiAccess: {
+        id: "ai_access_user_123",
+        userId: "user_123",
+        enabled: true,
+        provider: "openai",
+        defaultModel: "gpt-4o-mini",
+        allowedModels: ["gpt-4o-mini"],
+        updatedAt: "2026-04-08T10:05:00.000Z",
+      },
+    });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
 test("legacy user BYOK credential routes are no longer exposed", async () => {
   const runtime = createUserAiAccessApp({});
   const server = runtime.app.listen(0, "127.0.0.1");

@@ -32,7 +32,9 @@ export function createApp(deps: AppDependencies = {}) {
 
   app.use(createAdminRouter(deps.admin ?? createDefaultAdminService(env.denApiBase)));
   app.use(createUserCredentialsRouter(deps.userCredentials ?? createDefaultUserCredentialDependencies(runtime)));
-  app.use(createProxyRouter(deps.proxy ?? createDefaultProxyDependencies(runtime)));
+  const proxyDeps = deps.proxy ?? createDefaultProxyDependencies(runtime);
+  app.use(createProxyRouter(proxyDeps));
+  app.use("/ai-gateway", createProxyRouter(proxyDeps));
 
   return app;
 }

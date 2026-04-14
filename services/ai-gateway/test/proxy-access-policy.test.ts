@@ -432,3 +432,113 @@ test("provider proxy applies the admin default model when the request omits mode
     await once(server, "close");
   }
 });
+
+test("desktop-compatible provider proxy alias applies the admin default model", async () => {
+  const openAiCalls: Array<{ upstreamAuth: UpstreamAuth; body: Record<string, unknown> }> = [];
+
+  const app = createApp({
+    proxy: {
+      gatewaySessions: {
+        async resolveSession() {
+          return createGatewaySessionUser();
+        },
+      },
+      aiAccess: {
+        async getUserAiAccess() {
+          return createAiAccess({
+            provider: "openai",
+            defaultModel: "gpt-4o-mini",
+            allowedModels: [],
+          });
+        },
+        async upsertUserAiAccess() {
+          throw new Error("unused");
+        },
+      },
+      credentials: {
+        async getCredentialRecordById() {
+          return null;
+        },
+        async listHealthyCredentialRecordIds() {
+          return [];
+        },
+        async getCredentialRecordByBindingId(bindingId: string) {
+          return bindingId === "binding_openai_alias"
+            ? createCredentialRecord("binding_openai_alias", "openai")
+            : null;
+        },
+        async markCredentialState() {},
+      },
+      usageRepository: {
+        async recordUsage() {},
+      },
+      leaseBroker: {
+        async getOrCreateActiveLease() {
+          return {
+            id: "lease_openai_alias",
+            ownerUserId: "user_gateway",
+            provider: "openai",
+            sessionId: "session_policy_alias",
+            activeBindingId: "binding_openai_alias",
+          };
+        },
+        async handleUpstreamFailure() {
+          assert.fail("failure handler should not run in the happy path");
+        },
+      } as never,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          return { kind: "oauth", value: "oauth_token_alias" };
+        },
+      },
+      openAiTransport: {
+        async chatCompletions(input: { upstreamAuth: UpstreamAuth; body: Record<string, unknown> }) {
+          openAiCalls.push(input);
+          return {
+            status: 200,
+            body: {
+              id: "chatcmpl_policy_alias",
+              object: "chat.completion",
+              model: String(input.body.model),
+            },
+          };
+        },
+      },
+      anthropicTransport: {
+        async messages() {
+          assert.fail("anthropic transport should not run for openai test");
+        },
+      },
+    } as NonNullable<AppDependencies["proxy"]>,
+  });
+
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/ai-gateway/providers/openai/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        ...GATEWAY_AUTH_HEADER,
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_policy_alias",
+      },
+      body: JSON.stringify({
+        messages: [{ role: "user", content: "Hello" }],
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      id: "chatcmpl_policy_alias",
+      object: "chat.completion",
+      model: "gpt-4o-mini",
+    });
+    assert.equal(openAiCalls.length, 1);
+    assert.equal(openAiCalls[0]?.body.model, "gpt-4o-mini");
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
