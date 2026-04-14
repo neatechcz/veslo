@@ -637,8 +637,8 @@ export default function SettingsView(props: SettingsViewProps) {
   const startupLabel = createMemo(() => "Connect to cloud server");
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "model", "advanced"];
-    if (props.developerMode) tabs.push("debug");
+    const tabs: SettingsTab[] = ["general", "archived"];
+    if (props.developerMode) tabs.push("model", "advanced", "debug");
     return tabs;
   });
 
@@ -996,6 +996,67 @@ export default function SettingsView(props: SettingsViewProps) {
       <Switch>
         <Match when={activeTab() === "general"}>
           <div class="space-y-6">
+            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+              <div>
+                <div class="text-sm font-medium text-gray-12">Appearance</div>
+                <div class="text-xs text-gray-9">Match the system or force light/dark mode.</div>
+              </div>
+
+              <div class="flex flex-wrap gap-2">
+                <Button
+                  variant={props.themeMode === "system" ? "secondary" : "outline"}
+                  class="text-xs h-8 py-0 px-3"
+                  onClick={() => props.setThemeMode("system")}
+                  disabled={props.busy}
+                >
+                  System
+                </Button>
+                <Button
+                  variant={props.themeMode === "light" ? "secondary" : "outline"}
+                  class="text-xs h-8 py-0 px-3"
+                  onClick={() => props.setThemeMode("light")}
+                  disabled={props.busy}
+                >
+                  Light
+                </Button>
+                <Button
+                  variant={props.themeMode === "dark" ? "secondary" : "outline"}
+                  class="text-xs h-8 py-0 px-3"
+                  onClick={() => props.setThemeMode("dark")}
+                  disabled={props.busy}
+                >
+                  Dark
+                </Button>
+              </div>
+
+              <div class="space-y-2">
+                <div class="text-xs font-medium text-gray-11">{translate("settings.language")}</div>
+                <div class="text-xs text-gray-9">{translate("settings.language.description")}</div>
+                <div class="flex flex-wrap gap-2">
+                  <For each={LANGUAGE_OPTIONS}>
+                    {(option) => (
+                      <Button
+                        variant={props.language === option.value ? "secondary" : "outline"}
+                        class="text-xs h-8 py-0 px-3"
+                        onClick={() => props.setLanguage(option.value)}
+                        disabled={props.busy}
+                      >
+                        {option.nativeName}
+                      </Button>
+                    )}
+                  </For>
+                </div>
+              </div>
+
+              <div class="text-xs text-gray-8">
+                System mode follows your OS preference automatically.
+              </div>
+            </div>
+          </div>
+        </Match>
+
+        <Match when={activeTab() === "archived"}>
+          <div class="space-y-6">
             <Show when={props.sessionArchives !== undefined}>
               <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
                 <div class="flex items-start justify-between gap-4">
@@ -1011,11 +1072,14 @@ export default function SettingsView(props: SettingsViewProps) {
                   </div>
                 </div>
 
-                <Show when={archivedSessionRows().length > 0} fallback={
-                  <div class="rounded-xl border border-dashed border-gray-7/50 bg-gray-1/40 px-3 py-4 text-xs text-gray-9">
-                    {translate("settings.archived_sessions_empty")}
-                  </div>
-                }>
+                <Show
+                  when={archivedSessionRows().length > 0}
+                  fallback={
+                    <div class="rounded-xl border border-dashed border-gray-7/50 bg-gray-1/40 px-3 py-4 text-xs text-gray-9">
+                      {translate("settings.archived_sessions_empty")}
+                    </div>
+                  }
+                >
                   <div class="space-y-2">
                     <For each={archivedSessionRows()}>
                       {(item) => (
@@ -1051,7 +1115,11 @@ export default function SettingsView(props: SettingsViewProps) {
                 </Show>
               </div>
             </Show>
+          </div>
+        </Match>
 
+        <Match when={activeTab() === "model"}>
+          <div class="space-y-6">
             <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
               <div class="flex items-start justify-between gap-4">
                 <div>
@@ -1121,67 +1189,6 @@ export default function SettingsView(props: SettingsViewProps) {
               </div>
             </div>
 
-            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
-              <div>
-                <div class="text-sm font-medium text-gray-12">Appearance</div>
-                <div class="text-xs text-gray-9">Match the system or force light/dark mode.</div>
-              </div>
-
-              <div class="flex flex-wrap gap-2">
-                <Button
-                  variant={props.themeMode === "system" ? "secondary" : "outline"}
-                  class="text-xs h-8 py-0 px-3"
-                  onClick={() => props.setThemeMode("system")}
-                  disabled={props.busy}
-                >
-                  System
-                </Button>
-                <Button
-                  variant={props.themeMode === "light" ? "secondary" : "outline"}
-                  class="text-xs h-8 py-0 px-3"
-                  onClick={() => props.setThemeMode("light")}
-                  disabled={props.busy}
-                >
-                  Light
-                </Button>
-                <Button
-                  variant={props.themeMode === "dark" ? "secondary" : "outline"}
-                  class="text-xs h-8 py-0 px-3"
-                  onClick={() => props.setThemeMode("dark")}
-                  disabled={props.busy}
-                >
-                  Dark
-                </Button>
-              </div>
-
-              <div class="space-y-2">
-                <div class="text-xs font-medium text-gray-11">{translate("settings.language")}</div>
-                <div class="text-xs text-gray-9">{translate("settings.language.description")}</div>
-                <div class="flex flex-wrap gap-2">
-                  <For each={LANGUAGE_OPTIONS}>
-                    {(option) => (
-                      <Button
-                        variant={props.language === option.value ? "secondary" : "outline"}
-                        class="text-xs h-8 py-0 px-3"
-                        onClick={() => props.setLanguage(option.value)}
-                        disabled={props.busy}
-                      >
-                        {option.nativeName}
-                      </Button>
-                    )}
-                  </For>
-                </div>
-              </div>
-
-              <div class="text-xs text-gray-8">
-                System mode follows your OS preference automatically.
-              </div>
-            </div>
-          </div>
-        </Match>
-
-        <Match when={activeTab() === "model"}>
-          <div class="space-y-6">
             <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
               <div>
                 <div class="text-sm font-medium text-gray-12">{translate("settings.model_title")}</div>

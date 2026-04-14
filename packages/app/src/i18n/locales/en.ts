@@ -558,6 +558,7 @@ export default {
   "settings.sidecar_unsupported": "Sidecar is available on Windows",
   "settings.sidecar_unavailable_detail": "Sidecar is bundled when available.",
   "settings.general": "General",
+  "settings.archived": "Archived",
   "settings.archived_sessions_label": "Archived sessions",
   "settings.archived_sessions_description": "Browse archived sessions across all workspaces and unarchive them here.",
   "settings.archived_sessions_empty": "No archived sessions yet.",
