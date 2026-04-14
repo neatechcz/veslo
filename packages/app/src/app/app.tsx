@@ -5426,7 +5426,7 @@ export default function App() {
         type: "remote" as const,
         url: entry.url,
         enabled: true,
-        ...(entry.oauth ? { oauth: {} } : {}),
+        ...(entry.oauth ? { oauth: {} } : { oauth: false }),
       };
     }
 
