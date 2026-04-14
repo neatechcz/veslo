@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import type { AiGatewayDb } from "../db/index.js";
 import { userAiAccessPolicyTable } from "../db/schema.js";
+import { isAiGatewayProvider } from "../providers/ids.js";
 import type {
   AiAccessProvider,
   AiAccessRepository,
@@ -90,7 +91,7 @@ function mapUserAiAccessPolicy(row: typeof userAiAccessPolicyTable.$inferSelect)
 }
 
 function parseProvider(value: string | null): AiAccessProvider | null {
-  return value === "openai" || value === "anthropic" ? value : null;
+  return isAiGatewayProvider(value) ? value : null;
 }
 
 function parseAllowedModelsJson(value: string): string[] {
