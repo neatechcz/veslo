@@ -11,7 +11,12 @@ test("settings exposes archived and model tabs with the expected content split",
   assert.match(source, /const tabs: SettingsTab\[\] = \["general", "archived"\]/);
   assert.match(source, /if \(props\.developerMode\) tabs\.push\("debug"\);/);
   assert.match(source, /<Match when=\{activeTab\(\) === "archived"\}>/);
-  assert.match(generalSection, /<div class="text-sm font-medium text-gray-12">Appearance<\/div>/);
+  assert.match(generalSection, /translate\("settings\.appearance_title"\)/);
+  assert.match(generalSection, /translate\("settings\.appearance_hint"\)/);
+  assert.match(generalSection, /translate\("settings\.theme_system"\)/);
+  assert.match(generalSection, /translate\("settings\.theme_light"\)/);
+  assert.match(generalSection, /translate\("settings\.theme_dark"\)/);
+  assert.doesNotMatch(generalSection, /System mode follows your OS preference automatically\./);
   assert.doesNotMatch(generalSection, /Providers/);
   assert.doesNotMatch(generalSection, /settings\.archived_sessions_label/);
 });

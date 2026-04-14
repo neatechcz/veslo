@@ -29,7 +29,8 @@ test("settings tab list includes archived between general and model", () => {
 test("settings keeps appearance controls in general and provider wiring in model", () => {
   const modelSection = source.match(/<Match when=\{activeTab\(\) === "model"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
 
-  assert.match(generalSection, /Appearance/);
+  assert.match(generalSection, /translate\("settings\.appearance_title"\)/);
+  assert.doesNotMatch(generalSection, /System mode follows your OS preference automatically\./);
   assert.doesNotMatch(generalSection, /Providers/);
   assert.match(modelSection, /Providers/);
   assert.doesNotMatch(archivedSection, /Providers/);
