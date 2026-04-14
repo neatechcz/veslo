@@ -150,6 +150,14 @@ test("formatManagedAiAccessConfig routes codex_oauth through the gateway", () =>
     model?: string;
     provider?: {
       codex_oauth?: {
+        name?: string;
+        npm?: string;
+        env?: string[];
+        models?: Record<string, {
+          name?: string;
+          tool_call?: boolean;
+          reasoning?: boolean;
+        }>;
         options?: {
           baseURL?: string;
           headers?: Record<string, string>;
@@ -159,6 +167,12 @@ test("formatManagedAiAccessConfig routes codex_oauth through the gateway", () =>
   };
 
   assert.equal(parsed.model, "codex_oauth/gpt-5.4");
+  assert.equal(parsed.provider?.codex_oauth?.name, "Veslo Codex OAuth");
+  assert.equal(parsed.provider?.codex_oauth?.npm, "@ai-sdk/openai-compatible");
+  assert.deepEqual(parsed.provider?.codex_oauth?.env, []);
+  assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.name, "gpt-5.4");
+  assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.tool_call, true);
+  assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.reasoning, true);
   assert.equal(
     parsed.provider?.codex_oauth?.options?.baseURL,
     "https://veslo.example.test/ai-gateway/providers/codex_oauth/v1",

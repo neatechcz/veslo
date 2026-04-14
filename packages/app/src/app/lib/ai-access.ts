@@ -75,5 +75,6 @@ export function formatManagedAiAccessConfig(
     providerId: input.profile.providerId,
     serverBaseUrl: input.serverBaseUrl,
     gatewayAccessToken: input.gatewayAccessToken,
+    models: [input.profile.defaultModel.modelID, ...input.profile.allowedModels],
   })}\n`;
 }

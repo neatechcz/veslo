@@ -208,3 +208,105 @@ test("provider proxy uses resolved gateway user identity instead of trusting x-v
     await once(server, "close");
   }
 });
+
+test("provider proxy accepts the OpenCode gateway token header", async () => {
+  const resolvedSessions: string[] = [];
+
+  const app = createApp({
+    proxy: {
+      gatewaySessions: {
+        async resolveSession(token: string) {
+          resolvedSessions.push(token);
+          return {
+            token,
+            user: {
+              id: "resolved_user_456",
+              email: "user@example.test",
+            },
+          };
+        },
+      },
+      credentials: {
+        async getCredentialRecordById() {
+          return null;
+        },
+        async listHealthyCredentialRecordIds() {
+          return [];
+        },
+        async getCredentialRecordByBindingId() {
+          return null;
+        },
+        async markCredentialState() {},
+      },
+      usageRepository: {
+        async recordUsage() {},
+      },
+      leaseBroker: {
+        async getOrCreateActiveLease(input: { ownerUserId: string; provider: string; sessionId: string }) {
+          return {
+            id: "lease_proxy_auth_header",
+            ownerUserId: input.ownerUserId,
+            provider: input.provider,
+            sessionId: input.sessionId,
+            activeBindingId: "binding_openai_primary",
+          };
+        },
+        async handleUpstreamFailure() {
+          assert.fail("failure handler should not be reached in the happy path");
+        },
+      } as never,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          return { kind: "oauth" as const, value: "oauth_token_live" };
+        },
+      },
+      openAiTransport: {
+        async chatCompletions() {
+          return {
+            status: 200,
+            body: {
+              id: "chatcmpl_proxy_auth_header",
+              object: "chat.completion",
+              model: "gpt-4o-mini",
+            },
+          };
+        },
+      },
+      anthropicTransport: {
+        async messages() {
+          assert.fail("anthropic transport should not be reached in openai test");
+        },
+      },
+    } as NonNullable<AppDependencies["proxy"]>,
+  });
+
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/providers/openai/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-veslo-gateway-token": "gateway-access-token",
+        "x-veslo-session-id": "session_auth_header",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: "Hello" }],
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      id: "chatcmpl_proxy_auth_header",
+      object: "chat.completion",
+      model: "gpt-4o-mini",
+    });
+    assert.deepEqual(resolvedSessions, ["gateway-access-token"]);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});

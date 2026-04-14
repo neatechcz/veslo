@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 
 import type { AiAccessRepository } from "../access/repository.js";
 import { readBearerToken } from "../auth/user-session.js";
@@ -27,7 +27,7 @@ export type ProxyDependencies = {
 export function createProxyRouter(deps: ProxyDependencies) {
   const router = Router();
   router.use("/providers", async (req, res, next) => {
-    const token = readBearerToken(req.header("authorization"));
+    const token = readGatewayAccessToken(req);
     if (!token) {
       res.status(401).json({ error: "unauthorized" });
       return;
@@ -56,4 +56,18 @@ export function createProxyRouter(deps: ProxyDependencies) {
   router.use("/providers/codex_oauth", createCodexOAuthProxyRouter(deps));
 
   return router;
+}
+
+function readGatewayAccessToken(req: Request) {
+  const bearerToken = readBearerToken(req.header("authorization"));
+  if (bearerToken) {
+    return bearerToken;
+  }
+
+  const gatewayTokenHeader = req.header("x-veslo-gateway-token")?.trim() ?? "";
+  if (!gatewayTokenHeader) {
+    return null;
+  }
+
+  return readBearerToken(gatewayTokenHeader) ?? gatewayTokenHeader;
 }

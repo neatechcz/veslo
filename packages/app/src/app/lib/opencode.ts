@@ -211,6 +211,7 @@ export function applyGatewayProviderRouting(
     providerId: GatewayOwnedProviderId;
     serverBaseUrl: string;
     gatewayAccessToken: string;
+    models?: string[];
   },
 ) {
   const providerId = input.providerId.trim().toLowerCase();
@@ -233,11 +234,42 @@ export function applyGatewayProviderRouting(
   const existingProvider = readConfigObject(providerRoot[providerId]);
   const existingOptions = sanitizeGatewayProviderOptions(existingProvider.options);
   const existingHeaders = sanitizeGatewayProviderHeaders(existingOptions.headers);
+  const existingModels = readConfigObject(existingProvider.models);
+  const assignedModels = Array.from(
+    new Set((input.models ?? []).map((value) => value.trim()).filter(Boolean)),
+  );
+
+  const codexProviderFields = providerId === "codex_oauth"
+    ? {
+        name: typeof existingProvider.name === "string" && existingProvider.name.trim()
+          ? existingProvider.name
+          : "Veslo Codex OAuth",
+        npm: typeof existingProvider.npm === "string" && existingProvider.npm.trim()
+          ? existingProvider.npm
+          : "@ai-sdk/openai-compatible",
+        env: Array.isArray(existingProvider.env) ? existingProvider.env : [],
+        models: assignedModels.reduce<Record<string, unknown>>(
+          (models, modelId) => {
+            models[modelId] = readConfigObject(models[modelId]);
+            if (!Object.keys(models[modelId] as Record<string, unknown>).length) {
+              models[modelId] = {
+                name: modelId,
+                tool_call: true,
+                reasoning: true,
+              };
+            }
+            return models;
+          },
+          { ...existingModels },
+        ),
+      }
+    : {};
 
   parsed.provider = {
     ...providerRoot,
     [providerId]: {
       ...existingProvider,
+      ...codexProviderFields,
       options: {
         ...existingOptions,
         baseURL: `${serverBaseUrl}/ai-gateway/providers/${providerId}/v1`,
