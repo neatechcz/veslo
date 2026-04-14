@@ -1377,7 +1377,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onImportWorkspaceConfig={props.importWorkspaceConfig}
               onQuickNewSession={props.openNewSessionWithDirectory}
               onAddDirectorySession={props.openDirectorySessionFromPicker}
-              onOpenArchivedSessions={() => openSettings("general")}
+              onOpenArchivedSessions={() => openSettings("archived")}
               onArchiveSession={props.archiveSession}
               onUnarchiveSession={props.unarchiveSession}
               onLoadMoreWorkspaceSessions={props.loadMoreWorkspaceSidebarSessions}
