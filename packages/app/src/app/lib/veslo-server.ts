@@ -589,7 +589,7 @@ export type VesloReloadEvent = {
   timestamp: number;
 };
 
-export type VesloGatewayProvider = "openai" | "anthropic";
+export type VesloGatewayProvider = "openai" | "anthropic" | "codex_oauth";
 
 export type VesloUserAiAccess = {
   id: string;

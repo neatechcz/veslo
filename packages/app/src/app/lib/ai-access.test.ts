@@ -126,3 +126,45 @@ test("formatManagedAiAccessConfig writes admin-managed default model and gateway
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
 });
+
+test("formatManagedAiAccessConfig routes codex_oauth through the gateway", () => {
+  const content = formatManagedAiAccessConfig(
+    "{}",
+    {
+      profile: {
+        userId: "user_123",
+        providerId: "codex_oauth",
+        defaultModel: {
+          providerID: "codex_oauth",
+          modelID: "gpt-5.4",
+        },
+        allowedModels: ["gpt-5.4"],
+        updatedAt: null,
+      },
+      serverBaseUrl: "https://veslo.example.test",
+      gatewayAccessToken: "den_token_123",
+    },
+  );
+
+  const parsed = JSON.parse(content) as {
+    model?: string;
+    provider?: {
+      codex_oauth?: {
+        options?: {
+          baseURL?: string;
+          headers?: Record<string, string>;
+        };
+      };
+    };
+  };
+
+  assert.equal(parsed.model, "codex_oauth/gpt-5.4");
+  assert.equal(
+    parsed.provider?.codex_oauth?.options?.baseURL,
+    "https://veslo.example.test/ai-gateway/providers/codex_oauth/v1",
+  );
+  assert.deepEqual(parsed.provider?.codex_oauth?.options?.headers, {
+    "x-veslo-gateway-token": "den_token_123",
+    "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
+  });
+});

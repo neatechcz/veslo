@@ -82,6 +82,44 @@ test("anthropic provider config points at ai-gateway anthropic route", () => {
   });
 });
 
+test("codex_oauth provider config points at ai-gateway codex route", () => {
+  const updated = applyGatewayProviderRouting(
+    JSON.stringify({
+      provider: {
+        codex_oauth: {
+          options: {
+            apiKey: "sk-provider-secret",
+          },
+        },
+      },
+    }),
+    {
+      providerId: "codex_oauth",
+      serverBaseUrl: "http://127.0.0.1:4318/",
+      gatewayAccessToken: "gateway-access-token",
+    },
+  );
+
+  const parsed = JSON.parse(updated) as {
+    provider?: {
+      codex_oauth?: {
+        options?: {
+          apiKey?: string;
+          baseURL?: string;
+          headers?: Record<string, string>;
+        };
+      };
+    };
+  };
+
+  assert.equal(parsed.provider?.codex_oauth?.options?.baseURL, "http://127.0.0.1:4318/ai-gateway/providers/codex_oauth/v1");
+  assert.equal(parsed.provider?.codex_oauth?.options?.apiKey, undefined);
+  assert.deepEqual(parsed.provider?.codex_oauth?.options?.headers, {
+    "x-veslo-gateway-token": "gateway-access-token",
+    "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
+  });
+});
+
 test("gateway access token is stored as a gateway credential, not a raw provider secret", () => {
   const updated = applyGatewayProviderRouting(
     JSON.stringify({
