@@ -138,7 +138,7 @@ describe('Sidebar overflow actions', () => {
     await root.waitForExist({ timeout: 10000 });
   });
 
-  it('shows the approved top rail and routes archived items to settings', async () => {
+  it('shows the approved top rail and routes archived items to the archived settings tab', async () => {
     const locale = await getLocale();
     const copy = UI_COPY[locale];
 
@@ -185,7 +185,7 @@ describe('Sidebar overflow actions', () => {
       {
         timeout: 10000,
         interval: 250,
-        timeoutMsg: 'Archived items did not navigate to settings/general.',
+        timeoutMsg: 'Archived items did not navigate to settings.',
       },
     );
 
@@ -199,5 +199,6 @@ describe('Sidebar overflow actions', () => {
     );
 
     expect(await bodyContainsLabel(copy.archivedSection)).toBe(true);
+    expect(await bodyContainsLabel('Providers')).toBe(false);
   });
 });
