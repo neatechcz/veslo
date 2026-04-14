@@ -1484,7 +1484,7 @@ export default function DashboardView(props: DashboardViewProps) {
         <div class="flex-1 overflow-y-auto">
         <header class="h-14 flex items-center justify-between px-6 md:px-10 border-b border-dls-border sticky top-0 bg-dls-surface z-10">
           <div class="flex items-center gap-3">
-            <Show when={showUpdatePill()}>
+            <Show when={showUpdatePill() && props.tab !== "settings"}>
               <button
                 type="button"
                 class={`md:hidden flex items-center gap-1.5 rounded-full border bg-dls-surface px-2.5 py-1 text-xs font-medium shadow-sm transition-colors active:scale-[0.99] focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)] ${updatePillBorderTone()} ${updatePillButtonTone()}`}
@@ -1522,7 +1522,7 @@ export default function DashboardView(props: DashboardViewProps) {
             </Show>
             <h1 class="font-product type-title-sm">{title()}</h1>
             <Show when={showSettingsHeaderUpdateControls()}>
-              <div class="hidden md:flex items-center gap-2">
+              <div class="flex items-center gap-2">
                 <div
                   class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs font-medium ${settingsHeaderUpdateTone()}`}
                   title={settingsHeaderUpdateTitle()}
