@@ -191,113 +191,6 @@ export default function SettingsView(props: SettingsViewProps) {
     return Math.floor(clamped * 100);
   });
 
-  const isMacToolbar = createMemo(() => {
-    if (props.isWindows) return false;
-    if (typeof navigator === "undefined") return false;
-    const platform =
-      typeof (navigator as any).userAgentData?.platform === "string"
-        ? (navigator as any).userAgentData.platform
-        : typeof navigator.platform === "string"
-          ? navigator.platform
-          : "";
-    const ua = typeof navigator.userAgent === "string" ? navigator.userAgent : "";
-    return /mac/i.test(platform) || /mac/i.test(ua);
-  });
-
-  const showUpdateToolbar = createMemo(() => {
-    if (!isTauriRuntime()) return false;
-    if (props.updateEnv && props.updateEnv.supported === false) return false;
-    return isMacToolbar();
-  });
-
-  const updateToolbarTone = createMemo(() => {
-    switch (updateState()) {
-      case "available":
-        return "bg-amber-7/10 text-amber-11 border-amber-7/20";
-      case "ready":
-        return "bg-green-7/10 text-green-11 border-green-7/20";
-      case "error":
-        return "bg-red-7/10 text-red-11 border-red-7/20";
-      case "checking":
-      case "downloading":
-        return "bg-gray-4/60 text-gray-11 border-gray-7/50";
-      default:
-        return "bg-gray-4/60 text-gray-11 border-gray-7/50";
-    }
-  });
-
-  const updateToolbarSpinning = createMemo(() => updateState() === "checking" || updateState() === "downloading");
-
-  const updateToolbarLabel = createMemo(() => {
-    const state = updateState();
-    const version = updateVersion();
-    if (state === "available") {
-      return `${translate("settings.update_available")}${version ?? ""}`;
-    }
-    if (state === "ready") {
-      return `${translate("settings.update_ready")}${version ?? ""}`;
-    }
-    if (state === "downloading") {
-      const downloaded = updateDownloadedBytes() ?? 0;
-      const percent = updateDownloadPercent();
-      if (percent != null) return `${translate("settings.update_downloading")} ${percent}%`;
-      return `${translate("settings.update_downloading")} ${formatBytes(downloaded)}`;
-    }
-    if (state === "checking") {
-      return translate("settings.update_checking");
-    }
-    if (state === "error") {
-      return translate("settings.update_error");
-    }
-    return translate("settings.update_uptodate");
-  });
-
-  const updateToolbarTitle = createMemo(() => {
-    const state = updateState();
-    const version = updateVersion();
-    if (state !== "downloading") return updateToolbarLabel();
-
-    const downloaded = updateDownloadedBytes() ?? 0;
-    const total = updateTotalBytes();
-    const percent = updateDownloadPercent();
-
-    if (total != null && percent != null) {
-      return `${translate("settings.update_downloading")} ${formatBytes(downloaded)} / ${formatBytes(total)} (${percent}%)${version ? ` · v${version}` : ""}`;
-    }
-
-    return `${translate("settings.update_downloading")} ${formatBytes(downloaded)}${version ? ` · v${version}` : ""}`;
-  });
-
-  const updateToolbarActionLabel = createMemo(() => {
-    const state = updateState();
-    if (state === "available") return translate("settings.download_update");
-    if (state === "ready") return translate("settings.install_restart");
-    if (state === "error") return translate("settings.retry");
-    if (state === "idle") return translate("settings.check_update");
-    return null;
-  });
-
-  const updateToolbarDisabled = createMemo(() => {
-    const state = updateState();
-    if (state === "checking" || state === "downloading") return true;
-    if (state === "ready" && props.anyActiveRuns) return true;
-    return props.busy;
-  });
-
-  const handleUpdateToolbarAction = () => {
-    if (updateToolbarDisabled()) return;
-    const state = updateState();
-    if (state === "available") {
-      props.downloadUpdate();
-      return;
-    }
-    if (state === "ready") {
-      props.installUpdateAndRestart();
-      return;
-    }
-    props.checkForUpdates();
-  };
-
   const notionStatusLabel = () => {
     switch (props.notionStatus) {
       case "connected":
@@ -950,7 +843,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
   return (
     <section class="space-y-6">
-      <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between rounded-2xl border border-gray-6/40 bg-gray-1/40 px-3 py-2">
+      <div class="flex flex-wrap gap-2 rounded-2xl border border-gray-6/40 bg-gray-1/40 px-3 py-2">
         <div class="flex flex-wrap gap-2">
           <For each={availableTabs()}>
             {(tab) => (
@@ -967,30 +860,6 @@ export default function SettingsView(props: SettingsViewProps) {
             )}
           </For>
         </div>
-        <Show when={showUpdateToolbar()}>
-          <div class="flex flex-wrap items-center gap-2">
-            <div
-              class={`text-xs px-2 py-1 rounded-full border flex items-center gap-2 ${updateToolbarTone()}`}
-              title={updateToolbarTitle()}
-            >
-              <Show when={updateToolbarSpinning()}>
-                <RefreshCcw size={12} class="animate-spin" />
-              </Show>
-              <span class="tabular-nums whitespace-nowrap">{updateToolbarLabel()}</span>
-            </div>
-            <Show when={updateToolbarActionLabel()}>
-              <Button
-                variant="outline"
-                class="text-xs h-8 py-0 px-3 rounded-full border-gray-6/60 bg-gray-1/70 hover:bg-gray-2/70"
-                onClick={handleUpdateToolbarAction}
-                disabled={updateToolbarDisabled()}
-                title={updateState() === "ready" && props.anyActiveRuns ? "Stop active runs to update" : ""}
-              >
-                {updateToolbarActionLabel()}
-              </Button>
-            </Show>
-          </div>
-        </Show>
       </div>
 
       <Switch>
@@ -1493,18 +1362,15 @@ export default function SettingsView(props: SettingsViewProps) {
                           </button>
                         </div>
 
-                        <div class="flex items-center justify-between gap-3 bg-gray-1 p-3 rounded-xl border border-gray-6">
-                          <div class="space-y-0.5">
-                            <div class="text-sm text-gray-12">
-                              <Switch>
-                                <Match when={updateState() === "checking"}>{translate("settings.update_checking")}</Match>
-                                <Match when={updateState() === "available"}>{translate("settings.update_available")}{updateVersion()}</Match>
-                                <Match when={updateState() === "downloading"}>{translate("settings.update_downloading")}</Match>
-                                <Match when={updateState() === "ready"}>{translate("settings.update_ready")}{updateVersion()}</Match>
-                                <Match when={updateState() === "error"}>{translate("settings.update_error")}</Match>
-                                <Match when={true}>{translate("settings.update_uptodate")}</Match>
-                              </Switch>
-                            </div>
+                        <Show
+                          when={
+                            Boolean(updateLastCheckedAt()) ||
+                            (updateState() === "available" && Boolean(updateDate())) ||
+                            updateState() === "downloading" ||
+                            updateState() === "error"
+                          }
+                        >
+                          <div class="space-y-2 rounded-xl border border-gray-6 bg-gray-1 p-3">
                             <Show when={updateState() === "idle" && updateLastCheckedAt()}>
                               <div class="text-xs text-gray-7">
                                 {translate("settings.last_checked_time").replace("{time}", formatRelativeTime(updateLastCheckedAt() as number))}
@@ -1527,41 +1393,7 @@ export default function SettingsView(props: SettingsViewProps) {
                               <div class="text-xs text-red-11">{updateErrorMessage()}</div>
                             </Show>
                           </div>
-
-                          <div class="flex items-center gap-2">
-                            <Button
-                              variant="outline"
-                              class="text-xs h-9 py-0 px-4 rounded-full border-gray-6/60 bg-gray-1/70 hover:bg-gray-2/70"
-                              onClick={props.checkForUpdates}
-                              disabled={props.busy || updateState() === "checking" || updateState() === "downloading"}
-                            >
-                              {translate("settings.check_update")}
-                            </Button>
-
-                            <Show when={updateState() === "available"}>
-                              <Button
-                                variant="secondary"
-                                class="text-xs h-9 py-0 px-4 rounded-full"
-                                onClick={props.downloadUpdate}
-                                disabled={props.busy || updateState() === "downloading"}
-                              >
-                                {translate("settings.download_update")}
-                              </Button>
-                            </Show>
-
-                            <Show when={updateState() === "ready"}>
-                              <Button
-                                variant="secondary"
-                                class="text-xs h-9 py-0 px-4 rounded-full"
-                                onClick={props.installUpdateAndRestart}
-                                disabled={props.busy || props.anyActiveRuns}
-                                title={props.anyActiveRuns ? translate("settings.stop_runs_to_update") : ""}
-                              >
-                                {translate("settings.install_restart")}
-                              </Button>
-                            </Show>
-                          </div>
-                        </div>
+                        </Show>
 
                         <Show when={updateState() === "available" && updateNotes()}>
                           <div class="rounded-xl bg-gray-1/20 border border-gray-6 p-3 text-xs text-gray-11 whitespace-pre-wrap max-h-40 overflow-auto">

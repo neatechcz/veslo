@@ -16,9 +16,13 @@ test("settings exposes archived and model tabs with the expected content split",
   assert.doesNotMatch(generalSection, /settings\.archived_sessions_label/);
 });
 
-test("settings keeps the update controls in the top header row", () => {
-  assert.match(source, /flex flex-col gap-3 md:flex-row md:items-center md:justify-between rounded-2xl border border-gray-6\/40 bg-gray-1\/40 px-3 py-2/);
-  assert.match(source, /updateToolbarLabel\(\)[\s\S]*updateToolbarActionLabel\(\)/);
+test("settings removes the compact update controls from the body layout", () => {
+  assert.doesNotMatch(
+    source,
+    /flex flex-col gap-3 md:flex-row md:items-center md:justify-between rounded-2xl border border-gray-6\/40 bg-gray-1\/40 px-3 py-2/,
+  );
+  assert.doesNotMatch(source, /updateToolbarLabel\(\)|updateToolbarActionLabel\(\)|handleUpdateToolbarAction/);
+  assert.doesNotMatch(generalSection, /settings\.check_update|settings\.download_update|settings\.install_restart/);
   assert.doesNotMatch(source, /"Checking for updates"|"Up to date"|"Check"|"Download"|"Install"|"Retry"|"Last checked"/);
 });
 

@@ -1294,6 +1294,80 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const headerSettingsLabel = createMemo(() => t("dashboard.settings", currentLocale()));
   const headerBackLabel = createMemo(() => t("session.back", currentLocale()));
+  const translate = (key: string) => t(key, currentLocale());
+
+  const showSettingsHeaderUpdateControls = createMemo(() => {
+    if (props.tab !== "settings") return false;
+    if (!isTauriRuntime()) return false;
+    if (props.updateEnv && props.updateEnv.supported === false) return false;
+    return true;
+  });
+
+  const settingsHeaderUpdateTone = createMemo(() => {
+    switch (props.updateStatus?.state ?? "idle") {
+      case "available":
+        return "border-amber-7/35 bg-amber-3/20 text-amber-11";
+      case "ready":
+        return props.anyActiveRuns
+          ? "border-amber-7/35 bg-amber-3/20 text-amber-11"
+          : "border-green-7/35 bg-green-3/20 text-green-11";
+      case "error":
+        return "border-red-7/35 bg-red-3/20 text-red-11";
+      default:
+        return "border-dls-border bg-dls-surface text-dls-secondary";
+    }
+  });
+
+  const settingsHeaderUpdateLabel = createMemo(() => {
+    const state = props.updateStatus?.state ?? "idle";
+    const version = props.updateStatus?.version ?? "";
+    if (state === "available") return `${translate("settings.update_available")}${version}`;
+    if (state === "ready") return `${translate("settings.update_ready")}${version}`;
+    if (state === "downloading") {
+      const percent = updateDownloadPercent();
+      return percent == null ? translate("settings.update_downloading") : `${translate("settings.update_downloading")} ${percent}%`;
+    }
+    if (state === "checking") return translate("settings.update_checking");
+    if (state === "error") return translate("settings.update_error");
+    return translate("settings.update_uptodate");
+  });
+
+  const settingsHeaderUpdateActionLabel = createMemo(() => {
+    const state = props.updateStatus?.state ?? "idle";
+    if (state === "available") return translate("settings.download_update");
+    if (state === "ready") return translate("settings.install_restart");
+    if (state === "error") return translate("settings.retry");
+    if (state === "checking" || state === "downloading") return null;
+    return translate("settings.check_update");
+  });
+
+  const settingsHeaderUpdateDisabled = createMemo(() => {
+    const state = props.updateStatus?.state ?? "idle";
+    if (state === "checking" || state === "downloading") return true;
+    if (state === "ready" && props.anyActiveRuns) return true;
+    return props.busy;
+  });
+
+  const settingsHeaderUpdateTitle = createMemo(() => {
+    if (props.updateStatus?.state === "ready" && props.anyActiveRuns) {
+      return translate("settings.stop_runs_to_update");
+    }
+    return settingsHeaderUpdateLabel();
+  });
+
+  const handleSettingsHeaderUpdateAction = () => {
+    if (settingsHeaderUpdateDisabled()) return;
+    const state = props.updateStatus?.state ?? "idle";
+    if (state === "available") {
+      props.downloadUpdate();
+      return;
+    }
+    if (state === "ready") {
+      props.installUpdateAndRestart();
+      return;
+    }
+    props.checkForUpdates();
+  };
 
   const returnToSession = () => {
     const sessionId = props.selectedSessionId?.trim();
@@ -1447,6 +1521,32 @@ export default function DashboardView(props: DashboardViewProps) {
               </div>
             </Show>
             <h1 class="font-product type-title-sm">{title()}</h1>
+            <Show when={showSettingsHeaderUpdateControls()}>
+              <div class="hidden md:flex items-center gap-2">
+                <div
+                  class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs font-medium ${settingsHeaderUpdateTone()}`}
+                  title={settingsHeaderUpdateTitle()}
+                >
+                  <Show when={props.updateStatus?.state === "checking" || props.updateStatus?.state === "downloading"}>
+                    <Loader2 size={12} class="animate-spin shrink-0" />
+                  </Show>
+                  <span class="tabular-nums whitespace-nowrap">{settingsHeaderUpdateLabel()}</span>
+                </div>
+                <Show when={settingsHeaderUpdateActionLabel()}>
+                  {(label) => (
+                    <Button
+                      variant="outline"
+                      class="text-xs h-8 py-0 px-3 rounded-full border-dls-border bg-dls-surface hover:bg-dls-hover"
+                      onClick={handleSettingsHeaderUpdateAction}
+                      disabled={settingsHeaderUpdateDisabled()}
+                      title={props.updateStatus?.state === "ready" && props.anyActiveRuns ? translate("settings.stop_runs_to_update") : label()}
+                    >
+                      {label()}
+                    </Button>
+                  )}
+                </Show>
+              </div>
+            </Show>
             <Show when={props.developerMode}>
               <span class="font-product type-ui-xs text-dls-secondary">{props.headerStatus}</span>
             </Show>
