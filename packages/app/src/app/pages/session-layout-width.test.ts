@@ -83,3 +83,16 @@ test("auto-collapsed right sidebar is restored when width can fit both sidebars 
   assert.equal(next.mode, "wide");
   assert.deepEqual(next.docked, { left: true, right: true });
 });
+
+test("left resize can keep the left menu open as an overlay when chat width falls below the minimum", () => {
+  const state = createInitialSidebarLayoutState({ left: true, right: true });
+
+  const next = reconcileSidebarLayoutForRootWidth(state, 760, 420, {
+    overlayOnNarrow: "left",
+  });
+
+  assert.equal(next.mode, "narrow");
+  assert.deepEqual(next.docked, { left: false, right: false });
+  assert.equal(next.overlay, "left");
+  assert.deepEqual(next.dockedPreference, { left: true, right: true });
+});

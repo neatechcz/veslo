@@ -13,6 +13,10 @@ export type SidebarLayoutState = {
   overlay: SidebarSide | null;
 };
 
+export type ApplyAvailableWidthOptions = {
+  overlayOnNarrow?: SidebarSide | null;
+};
+
 // Match the narrower chat-column direction while keeping a small hysteresis buffer.
 export const SESSION_CHAT_MIN_WIDTH = 360;
 export const SESSION_CHAT_MIN_WIDTH_EXIT = 392;
@@ -52,6 +56,7 @@ export const deriveSidebarLayoutMode = (
 export const applyAvailableWidth = (
   state: SidebarLayoutState,
   availableChatWidth: number,
+  options?: ApplyAvailableWidthOptions,
 ): SidebarLayoutState => {
   const nextMode = deriveSidebarLayoutMode(state.mode, availableChatWidth);
   if (nextMode === state.mode) return state;
@@ -61,7 +66,7 @@ export const applyAvailableWidth = (
       ...state,
       mode: "narrow",
       docked: hiddenDockedVisibility,
-      overlay: null,
+      overlay: options?.overlayOnNarrow ?? null,
     };
   }
 

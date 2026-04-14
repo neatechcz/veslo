@@ -518,7 +518,10 @@ export default function SessionView(props: SessionViewProps) {
   const applySidebarModeForRootWidth = (rootWidth: number) => {
     if (rootWidth <= 0) return;
     setSidebarLayoutState((current) =>
-      reconcileSidebarLayoutForRootWidth(current, rootWidth, leftSidebarWidth()),
+      reconcileSidebarLayoutForRootWidth(current, rootWidth, leftSidebarWidth(), {
+        overlayOnNarrow:
+          leftSidebarResizing() && current.mode === "wide" && current.docked.left ? "left" : null,
+      }),
     );
   };
 

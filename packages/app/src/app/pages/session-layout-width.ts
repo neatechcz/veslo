@@ -1,4 +1,7 @@
-import type { SidebarLayoutState } from "../components/session/sidebar-layout-model";
+import type {
+  ApplyAvailableWidthOptions,
+  SidebarLayoutState,
+} from "../components/session/sidebar-layout-model";
 import {
   LEFT_SIDEBAR_WIDTH_DEFAULT,
   clampLeftSidebarWidth,
@@ -44,6 +47,7 @@ export const reconcileSidebarLayoutForRootWidth = (
   state: SidebarLayoutState,
   rootWidth: number,
   leftSidebarDockedWidth = LEFT_SIDEBAR_DOCKED_WIDTH,
+  options?: ApplyAvailableWidthOptions,
 ): SidebarLayoutState => {
   let nextState = state;
 
@@ -61,5 +65,5 @@ export const reconcileSidebarLayoutForRootWidth = (
   }
 
   const availableChatWidth = availableChatWidthForLayout(rootWidth, nextState, leftSidebarDockedWidth);
-  return applyAvailableWidth(nextState, availableChatWidth);
+  return applyAvailableWidth(nextState, availableChatWidth, options);
 };
