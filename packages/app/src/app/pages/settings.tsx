@@ -3,7 +3,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onMou
 import { formatBytes, formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
 
 import Button from "../components/button";
-import { CircleAlert, Copy, Download, FolderOpen, PlugZap, RefreshCcw, Smartphone, X, Zap } from "lucide-solid";
+import { CircleAlert, Copy, Download, FolderOpen, Loader2, PlugZap, RefreshCcw, Smartphone, X, Zap } from "lucide-solid";
 import type { OpencodeConnectStatus, ProviderListItem, SessionArchiveItem, SettingsTab, StartupPreference } from "../types";
 import type {
   VesloAuditEntry,
@@ -190,6 +190,74 @@ export default function SettingsView(props: SettingsViewProps) {
     const clamped = Math.max(0, Math.min(1, downloaded / total));
     return Math.floor(clamped * 100);
   });
+
+  const showGeneralUpdateControls = createMemo(() => {
+    if (!isTauriRuntime()) return false;
+    if (props.updateEnv && props.updateEnv.supported === false) return false;
+    return true;
+  });
+
+  const generalUpdateTone = createMemo(() => {
+    switch (updateState()) {
+      case "available":
+        return "border-amber-7/35 bg-amber-3/20 text-amber-11";
+      case "ready":
+        return props.anyActiveRuns
+          ? "border-amber-7/35 bg-amber-3/20 text-amber-11"
+          : "border-green-7/35 bg-green-3/20 text-green-11";
+      case "error":
+        return "border-red-7/35 bg-red-3/20 text-red-11";
+      default:
+        return "border-dls-border bg-dls-surface text-dls-secondary";
+    }
+  });
+
+  const generalUpdateLabel = createMemo(() => {
+    const version = updateVersion() ?? "";
+    if (updateState() === "available") return `${translate("settings.update_available")}${version}`;
+    if (updateState() === "ready") return `${translate("settings.update_ready")}${version}`;
+    if (updateState() === "downloading") {
+      const percent = updateDownloadPercent();
+      return percent == null ? translate("settings.update_downloading") : `${translate("settings.update_downloading")} ${percent}%`;
+    }
+    if (updateState() === "checking") return translate("settings.update_checking");
+    if (updateState() === "error") return translate("settings.update_error");
+    return translate("settings.update_uptodate");
+  });
+
+  const generalUpdateActionLabel = createMemo(() => {
+    if (updateState() === "available") return translate("settings.download_update");
+    if (updateState() === "ready") return translate("settings.install_restart");
+    if (updateState() === "error") return translate("settings.retry");
+    if (updateState() === "checking" || updateState() === "downloading") return null;
+    return translate("settings.check_update");
+  });
+
+  const generalUpdateDisabled = createMemo(() => {
+    if (updateState() === "checking" || updateState() === "downloading") return true;
+    if (updateState() === "ready" && props.anyActiveRuns) return true;
+    return props.busy;
+  });
+
+  const generalUpdateTitle = createMemo(() => {
+    if (updateState() === "ready" && props.anyActiveRuns) {
+      return translate("settings.stop_runs_to_update");
+    }
+    return generalUpdateLabel();
+  });
+
+  const handleGeneralUpdateAction = () => {
+    if (generalUpdateDisabled()) return;
+    if (updateState() === "available") {
+      props.downloadUpdate();
+      return;
+    }
+    if (updateState() === "ready") {
+      props.installUpdateAndRestart();
+      return;
+    }
+    props.checkForUpdates();
+  };
 
   const notionStatusLabel = () => {
     switch (props.notionStatus) {
@@ -865,6 +933,51 @@ export default function SettingsView(props: SettingsViewProps) {
       <Switch>
         <Match when={activeTab() === "general"}>
           <div class="space-y-6">
+            <Show when={showGeneralUpdateControls()}>
+              <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <div class="text-sm font-medium text-gray-12">{translate("settings.version")}</div>
+                    <div class="text-xs text-gray-10">{translate("settings.check_for_updates")}</div>
+                  </div>
+                  <Show when={props.appVersion}>
+                    {(version) => <div class="text-xs text-gray-7 font-mono">v{version()}</div>}
+                  </Show>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2">
+                  <div
+                    class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs font-medium ${generalUpdateTone()}`}
+                    title={generalUpdateTitle()}
+                  >
+                    <Show when={updateState() === "checking" || updateState() === "downloading"}>
+                      <Loader2 size={12} class="animate-spin shrink-0" />
+                    </Show>
+                    <span class="tabular-nums whitespace-nowrap">{generalUpdateLabel()}</span>
+                  </div>
+                  <Show when={generalUpdateActionLabel()}>
+                    {(label) => (
+                      <Button
+                        variant="outline"
+                        class="text-xs h-8 py-0 px-3 rounded-full border-dls-border bg-dls-surface hover:bg-dls-hover"
+                        onClick={handleGeneralUpdateAction}
+                        disabled={generalUpdateDisabled()}
+                        title={updateState() === "ready" && props.anyActiveRuns ? translate("settings.stop_runs_to_update") : label()}
+                      >
+                        {label()}
+                      </Button>
+                    )}
+                  </Show>
+                </div>
+
+                <Show when={updateState() === "idle" && updateLastCheckedAt()}>
+                  <div class="text-xs text-gray-9">
+                    {translate("settings.last_checked_time").replace("{time}", formatRelativeTime(updateLastCheckedAt() as number))}
+                  </div>
+                </Show>
+              </div>
+            </Show>
+
             <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
               <div>
                 <div class="text-sm font-medium text-gray-12">{translate("settings.appearance_title")}</div>

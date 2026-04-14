@@ -22,8 +22,9 @@ test("settings renders archived sessions inside the archived tab only", () => {
   assert.doesNotMatch(generalMatch[0], /settings\.archived_sessions_label/);
 });
 
-test("settings tab list includes archived between general and model", () => {
-  assert.match(source, /const tabs: SettingsTab\[] = \["general", "archived", "model", "advanced"\]/);
+test("settings tab list starts with general and archived before optional debug", () => {
+  assert.match(source, /const tabs: SettingsTab\[] = \["general", "archived"\]/);
+  assert.match(source, /if \(props\.developerMode\) tabs\.push\("debug"\);/);
 });
 
 test("settings keeps appearance controls in general and provider wiring in model", () => {

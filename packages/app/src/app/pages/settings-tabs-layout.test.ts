@@ -11,6 +11,14 @@ test("settings exposes archived and model tabs with the expected content split",
   assert.match(source, /const tabs: SettingsTab\[\] = \["general", "archived"\]/);
   assert.match(source, /if \(props\.developerMode\) tabs\.push\("debug"\);/);
   assert.match(source, /<Match when=\{activeTab\(\) === "archived"\}>/);
+  assert.match(source, /const\s+showGeneralUpdateControls\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
+  assert.match(source, /const\s+generalUpdateLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
+  assert.match(source, /const\s+generalUpdateActionLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
+  assert.match(source, /const\s+handleGeneralUpdateAction\s*=\s*\(\)\s*=>/);
+  assert.match(
+    generalSection,
+    /<Show when=\{showGeneralUpdateControls\(\)\}>[\s\S]*generalUpdateLabel\(\)[\s\S]*generalUpdateActionLabel\(\)[\s\S]*onClick=\{handleGeneralUpdateAction\}[\s\S]*translate\("settings\.appearance_title"\)/,
+  );
   assert.match(generalSection, /translate\("settings\.appearance_title"\)/);
   assert.match(generalSection, /translate\("settings\.appearance_hint"\)/);
   assert.match(generalSection, /translate\("settings\.theme_system"\)/);
@@ -21,13 +29,15 @@ test("settings exposes archived and model tabs with the expected content split",
   assert.doesNotMatch(generalSection, /settings\.archived_sessions_label/);
 });
 
-test("settings removes the compact update controls from the body layout", () => {
+test("settings keeps compact update controls in general instead of a floating toolbar layout", () => {
   assert.doesNotMatch(
     source,
     /flex flex-col gap-3 md:flex-row md:items-center md:justify-between rounded-2xl border border-gray-6\/40 bg-gray-1\/40 px-3 py-2/,
   );
   assert.doesNotMatch(source, /updateToolbarLabel\(\)|updateToolbarActionLabel\(\)|handleUpdateToolbarAction/);
-  assert.doesNotMatch(generalSection, /settings\.check_update|settings\.download_update|settings\.install_restart/);
+  assert.match(source, /translate\("settings\.check_update"\)/);
+  assert.match(source, /translate\("settings\.download_update"\)/);
+  assert.match(source, /translate\("settings\.install_restart"\)/);
   assert.doesNotMatch(source, /"Checking for updates"|"Up to date"|"Check"|"Download"|"Install"|"Retry"|"Last checked"/);
 });
 

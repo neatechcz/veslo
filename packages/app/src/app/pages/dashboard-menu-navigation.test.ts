@@ -295,20 +295,14 @@ test("dashboard header keeps back-to-chat visible even without a selected sessio
   );
 });
 
-test("dashboard header shows update controls next to the settings title", () => {
-  assert.match(dashboardSource, /const\s+showSettingsHeaderUpdateControls\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
-  assert.match(dashboardSource, /props\.tab\s*===\s*["']settings["']/);
-  assert.match(dashboardSource, /const\s+settingsHeaderUpdateLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
-  assert.match(dashboardSource, /const\s+settingsHeaderUpdateActionLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
-  assert.match(dashboardSource, /const\s+handleSettingsHeaderUpdateAction\s*=\s*\(\)\s*=>/);
-  assert.match(
-    headerSource,
-    /<Show when=\{showSettingsHeaderUpdateControls\(\)\}>[\s\S]*settingsHeaderUpdateLabel\(\)[\s\S]*settingsHeaderUpdateActionLabel\(\)[\s\S]*onClick=\{handleSettingsHeaderUpdateAction\}/,
-  );
-  assert.doesNotMatch(
-    headerSource,
-    /<Show when=\{showSettingsHeaderUpdateControls\(\)\}>[\s\S]*class="hidden md:flex items-center gap-2"/,
-  );
+test("dashboard header no longer shows settings update controls", () => {
+  assert.doesNotMatch(dashboardSource, /const\s+showSettingsHeaderUpdateControls\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
+  assert.doesNotMatch(dashboardSource, /const\s+settingsHeaderUpdateLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
+  assert.doesNotMatch(dashboardSource, /const\s+settingsHeaderUpdateActionLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
+  assert.doesNotMatch(dashboardSource, /const\s+handleSettingsHeaderUpdateAction\s*=\s*\(\)\s*=>/);
+  assert.doesNotMatch(headerSource, /showSettingsHeaderUpdateControls\(\)/);
+  assert.doesNotMatch(headerSource, /settingsHeaderUpdateLabel\(\)/);
+  assert.doesNotMatch(headerSource, /settingsHeaderUpdateActionLabel\(\)/);
 });
 
 test("dashboard centers the titlebar on the active settings subsection", () => {
