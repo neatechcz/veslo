@@ -181,7 +181,7 @@ export type DashboardTab =
   | "config"
   | "settings";
 
-export type SettingsTab = "general" | "model" | "advanced" | "debug";
+export type SettingsTab = "general" | "archived" | "model" | "advanced" | "debug";
 
 export type WorkspacePreset = "starter" | "automation" | "minimal";
 
