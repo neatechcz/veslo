@@ -10,6 +10,10 @@ export type MessagesTransportInput = {
   body: unknown
 }
 
+export type CodexChatCompletionsTransportInput = {
+  body: unknown
+}
+
 export type ProviderTransportResponse = {
   status: number
   body: unknown
@@ -45,6 +49,10 @@ export interface OpenAiProviderTransport {
 
 export interface AnthropicProviderTransport {
   messages(input: MessagesTransportInput): Promise<ProviderTransportResponse>
+}
+
+export interface CodexOAuthProviderTransport {
+  chatCompletions(input: CodexChatCompletionsTransportInput): Promise<ProviderTransportResponse>
 }
 
 export function headersToRecord(headers: Headers): Record<string, string> {
