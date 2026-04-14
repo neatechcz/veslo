@@ -637,8 +637,8 @@ export default function SettingsView(props: SettingsViewProps) {
   const startupLabel = createMemo(() => "Connect to cloud server");
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "archived"];
-    if (props.developerMode) tabs.push("model", "advanced", "debug");
+    const tabs: SettingsTab[] = ["general", "archived", "model", "advanced"];
+    if (props.developerMode) tabs.push("debug");
     return tabs;
   });
 
@@ -1188,7 +1188,6 @@ export default function SettingsView(props: SettingsViewProps) {
                 API keys are stored locally by OpenCode. Set your default model in the <span class="font-medium">Model</span> tab.
               </div>
             </div>
-
             <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
               <div>
                 <div class="text-sm font-medium text-gray-12">{translate("settings.model_title")}</div>

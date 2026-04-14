@@ -3,12 +3,13 @@ import { currentLocale, t } from "../../i18n";
 
 const settingsTabLabelKeyByTab: Record<SettingsTab, string> = {
   general: "settings.general",
+  archived: "settings.archived",
   model: "settings.model",
   advanced: "settings.advanced",
   debug: "settings.debug",
 };
 
-const visibleSettingsTabs: SettingsTab[] = ["general", "model", "advanced"];
+const visibleSettingsTabs: SettingsTab[] = ["general", "archived", "model", "advanced"];
 
 export const resolveVisibleSettingsTab = (settingsTab: SettingsTab, developerMode: boolean) => {
   const tabs = developerMode ? [...visibleSettingsTabs, "debug"] : visibleSettingsTabs;

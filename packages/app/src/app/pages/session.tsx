@@ -3811,7 +3811,7 @@ export default function SessionView(props: SessionViewProps) {
             onImportWorkspaceConfig={props.importWorkspaceConfig}
             onQuickNewSession={props.openNewSessionWithDirectory}
             onAddDirectorySession={props.openDirectorySessionFromPicker}
-            onOpenArchivedSessions={() => openSettings("general")}
+            onOpenArchivedSessions={() => openSettings("archived")}
             onArchiveSession={props.archiveSession}
             onUnarchiveSession={props.unarchiveSession}
             onLoadMoreWorkspaceSessions={props.loadMoreWorkspaceSidebarSessions}

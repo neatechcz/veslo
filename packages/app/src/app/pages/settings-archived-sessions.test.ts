@@ -4,17 +4,35 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./settings.tsx", import.meta.url), "utf8");
 const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
+const archivedSection = source.match(/<Match when=\{activeTab\(\) === "archived"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
 
-test("settings renders a cloud-backed archived sessions section", () => {
-  assert.match(source, /<Match when=\{activeTab\(\) === "archived"\}>/);
-  assert.match(source, /settings\.archived_sessions_label/);
-  assert.match(source, /settings\.archived_sessions_description/);
-  assert.match(source, /settings\.archived_sessions_archived_at/);
-  assert.match(source, /props\.sessionArchives/);
-  assert.match(source, /props\.onUnarchiveSession/);
-  assert.match(source, /archivedSessionRows/);
-  assert.match(source, /formatRelativeTime/);
-  assert.doesNotMatch(generalSection, /settings\.archived_sessions_label/);
+test("settings renders archived sessions inside the archived tab only", () => {
+  const archivedMatch = source.match(/<Match when=\{activeTab\(\) === "archived"\}>[\s\S]*?<\/Match>/);
+  const generalMatch = source.match(/<Match when=\{activeTab\(\) === "general"\}>[\s\S]*?<\/Match>/);
+
+  assert.ok(archivedMatch, "archived tab branch should exist");
+  assert.ok(generalMatch, "general tab branch should exist");
+  assert.match(archivedMatch[0], /settings\.archived_sessions_label/);
+  assert.match(archivedMatch[0], /settings\.archived_sessions_description/);
+  assert.match(archivedMatch[0], /settings\.archived_sessions_archived_at/);
+  assert.match(archivedMatch[0], /props\.sessionArchives/);
+  assert.match(archivedMatch[0], /props\.onUnarchiveSession/);
+  assert.match(archivedMatch[0], /archivedSessionRows/);
+  assert.match(archivedMatch[0], /formatRelativeTime/);
+  assert.doesNotMatch(generalMatch[0], /settings\.archived_sessions_label/);
+});
+
+test("settings tab list includes archived between general and model", () => {
+  assert.match(source, /const tabs: SettingsTab\[] = \["general", "archived", "model", "advanced"\]/);
+});
+
+test("settings keeps appearance controls in general and provider wiring in model", () => {
+  const modelSection = source.match(/<Match when=\{activeTab\(\) === "model"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
+
+  assert.match(generalSection, /Appearance/);
+  assert.doesNotMatch(generalSection, /Providers/);
+  assert.match(modelSection, /Providers/);
+  assert.doesNotMatch(archivedSection, /Providers/);
 });
 
 test("settings exposes unavailable-on-this-device copy for archived sessions", () => {

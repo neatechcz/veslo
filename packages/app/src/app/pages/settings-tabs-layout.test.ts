@@ -8,8 +8,8 @@ const csLocaleSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.m
 const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
 
 test("settings exposes archived and model tabs with the expected content split", () => {
-  assert.match(source, /const tabs: SettingsTab\[\] = \["general", "archived"\];/);
-  assert.match(source, /if \(props\.developerMode\) tabs\.push\("model", "advanced", "debug"\);/);
+  assert.match(source, /const tabs: SettingsTab\[\] = \["general", "archived", "model", "advanced"\]/);
+  assert.match(source, /if \(props\.developerMode\) tabs\.push\("debug"\);/);
   assert.match(source, /<Match when=\{activeTab\(\) === "archived"\}>/);
   assert.match(source, /<Match when=\{activeTab\(\) === "model"\}>/);
   assert.match(source, /<Match when=\{activeTab\(\) === "advanced"\}>/);
