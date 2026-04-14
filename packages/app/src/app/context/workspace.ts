@@ -54,6 +54,7 @@ import type { OpencodeConnectStatus, ProviderListItem } from "../types";
 import { t, currentLocale, isLanguage } from "../../i18n";
 import { mapConfigProvidersToList } from "../utils/providers";
 import { withTimeoutOrThrow } from "../utils/promise-timeout";
+import { connectOrRecoverLocalBootstrap } from "../utils/bootstrap-local-recovery";
 import {
   activateVesloHostWorkspaceWithTimeout,
   runWorkspaceEngineRestartWithTimeouts,
@@ -2111,40 +2112,71 @@ export function createWorkspaceStore(options: {
 
     bootTrace("activeWorkspacePath=", activeWorkspacePath().trim() || "(empty)");
     if (activeWorkspacePath().trim()) {
+      const workspacePath = activeWorkspacePath().trim();
       options.setStartupPreference("local");
 
       if (info?.running && info.baseUrl) {
-        _wsLog("[workspace:bootstrap] engine already running, connectToServer...", { baseUrl: info.baseUrl, projectDir: info.projectDir });
+        const engineBaseUrl = info.baseUrl;
+        _wsLog("[workspace:bootstrap] engine already running, connectToServer...", { baseUrl: engineBaseUrl, projectDir: info.projectDir });
         bootTrace("engine running, connectToServer...");
         options.setOnboardingStep("connecting");
-        const ok = await connectToServer(
-          info.baseUrl,
-          (activeWorkspacePath().trim() || info.projectDir || undefined),
-          {
-            workspaceId: activeWorkspace?.id || undefined,
-            workspaceType: "local",
-            targetRoot: activeWorkspacePath().trim() || undefined,
-            reason: "bootstrap-local",
-          },
-          engineStore.engineAuth() ?? undefined,
-        );
-        bootTrace("connectToServer ok=", ok);
+        let ok = false;
+        try {
+          ok = await connectOrRecoverLocalBootstrap({
+            connect: async () => {
+              const connected = await connectToServer(
+                engineBaseUrl,
+                (workspacePath || info.projectDir || undefined),
+                {
+                  workspaceId: activeWorkspace?.id || undefined,
+                  workspaceType: "local",
+                  targetRoot: workspacePath || undefined,
+                  reason: "bootstrap-local",
+                },
+                engineStore.engineAuth() ?? undefined,
+              );
+              bootTrace("connectToServer ok=", connected);
+              return connected;
+            },
+            onRecover: (cause) => {
+              const reason = cause.kind === "connect-threw"
+                ? cause.error instanceof Error
+                  ? cause.error.message
+                  : String(cause.error)
+                : "connectToServer returned false";
+              _wsLog("[workspace:bootstrap] local reattach failed, recovering with startHost...", {
+                baseUrl: engineBaseUrl,
+                workspacePath,
+                reason,
+              });
+              bootTrace("local reattach failed, recovering with startHost:", reason);
+            },
+            startHost: async () => {
+              return await withTimeoutOrThrow(
+                engineStore.startHost({ workspacePath }),
+                { timeoutMs: START_HOST_TIMEOUT_MS, label: "bootstrap_startHost" },
+              );
+            },
+          });
+        } catch (e) {
+          _wsLog("[workspace:bootstrap] recovery startHost FAILED/TIMED OUT:", e instanceof Error ? e.message : String(e));
+          bootTrace("recovery startHost timed out or failed:", e instanceof Error ? e.message : String(e));
+        }
         if (!ok) {
-          options.setStartupPreference(null);
-          options.setOnboardingStep(resolveWelcomeOnboardingStep());
+          options.setOnboardingStep("local");
           return;
         }
         markOnboardingComplete();
         return;
       }
 
-      _wsLog("[workspace:bootstrap] startHost...", { workspacePath: activeWorkspacePath().trim() });
+      _wsLog("[workspace:bootstrap] startHost...", { workspacePath });
       bootTrace("startHost...");
       options.setOnboardingStep("connecting");
       let ok = false;
       try {
         ok = await withTimeoutOrThrow(
-          engineStore.startHost({ workspacePath: activeWorkspacePath().trim() }),
+          engineStore.startHost({ workspacePath }),
           { timeoutMs: START_HOST_TIMEOUT_MS, label: "bootstrap_startHost" },
         );
       } catch (e) {
@@ -2227,7 +2259,7 @@ export function createWorkspaceStore(options: {
         targetRoot: activeWorkspacePath().trim() || undefined,
         reason: "attach-local",
       },
-      engineAuth() ?? undefined,
+      engineStore.engineAuth() ?? undefined,
     );
     if (!ok) {
       options.setStartupPreference(null);
