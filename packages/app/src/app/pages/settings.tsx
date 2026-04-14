@@ -637,7 +637,7 @@ export default function SettingsView(props: SettingsViewProps) {
   const startupLabel = createMemo(() => "Connect to cloud server");
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "model", "advanced"];
+    const tabs: SettingsTab[] = ["general", "archived", "model", "advanced"];
     if (props.developerMode) tabs.push("debug");
     return tabs;
   });
@@ -996,62 +996,6 @@ export default function SettingsView(props: SettingsViewProps) {
       <Switch>
         <Match when={activeTab() === "general"}>
           <div class="space-y-6">
-            <Show when={props.sessionArchives !== undefined}>
-              <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
-                <div class="flex items-start justify-between gap-4">
-                  <div>
-                    <div class="flex items-center gap-2">
-                      <RefreshCcw size={16} class="text-gray-11" />
-                      <div class="text-sm font-medium text-gray-12">{translate("settings.archived_sessions_label")}</div>
-                    </div>
-                    <div class="text-xs text-gray-9 mt-1">{translate("settings.archived_sessions_description")}</div>
-                  </div>
-                  <div class="text-xs px-2 py-1 rounded-full border bg-gray-4/60 text-gray-11 border-gray-7/50">
-                    {archivedSessionRows().length}
-                  </div>
-                </div>
-
-                <Show when={archivedSessionRows().length > 0} fallback={
-                  <div class="rounded-xl border border-dashed border-gray-7/50 bg-gray-1/40 px-3 py-4 text-xs text-gray-9">
-                    {translate("settings.archived_sessions_empty")}
-                  </div>
-                }>
-                  <div class="space-y-2">
-                    <For each={archivedSessionRows()}>
-                      {(item) => (
-                        <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-3 space-y-3">
-                          <div class="flex items-start justify-between gap-3">
-                            <div class="min-w-0 space-y-1">
-                              <div class="flex flex-wrap items-center gap-2">
-                                <div class="text-sm font-medium text-gray-12 truncate">{formatArchivedSessionTitle(item)}</div>
-                                <Show when={!item.availableOnThisDevice}>
-                                  <span class="rounded-full border border-amber-7/40 bg-amber-2 px-2 py-0.5 text-[11px] font-medium text-amber-11">
-                                    {translate("settings.archived_sessions_unavailable_on_device")}
-                                  </span>
-                                </Show>
-                              </div>
-                              <div class="text-[11px] text-gray-8 truncate">{formatArchivedSessionLocation(item)}</div>
-                              <div class="text-[11px] text-gray-8">
-                                {translate("settings.archived_sessions_archived_at")} {formatRelativeTime(item.archivedAt)}
-                              </div>
-                            </div>
-                            <Button
-                              variant="outline"
-                              class="text-xs h-8 py-0 px-3 shrink-0"
-                              onClick={() => void handleUnarchiveArchivedSession(item.sessionId)}
-                              disabled={props.busy || !props.onUnarchiveSession}
-                            >
-                              {translate("settings.archived_sessions_unarchive")}
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-              </div>
-            </Show>
-
             <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
               <div class="flex items-start justify-between gap-4">
                 <div>
@@ -1177,6 +1121,66 @@ export default function SettingsView(props: SettingsViewProps) {
                 System mode follows your OS preference automatically.
               </div>
             </div>
+          </div>
+        </Match>
+
+        <Match when={activeTab() === "archived"}>
+          <div class="space-y-6">
+            <Show when={props.sessionArchives !== undefined}>
+              <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <RefreshCcw size={16} class="text-gray-11" />
+                      <div class="text-sm font-medium text-gray-12">{translate("settings.archived_sessions_label")}</div>
+                    </div>
+                    <div class="text-xs text-gray-9 mt-1">{translate("settings.archived_sessions_description")}</div>
+                  </div>
+                  <div class="text-xs px-2 py-1 rounded-full border bg-gray-4/60 text-gray-11 border-gray-7/50">
+                    {archivedSessionRows().length}
+                  </div>
+                </div>
+
+                <Show when={archivedSessionRows().length > 0} fallback={
+                  <div class="rounded-xl border border-dashed border-gray-7/50 bg-gray-1/40 px-3 py-4 text-xs text-gray-9">
+                    {translate("settings.archived_sessions_empty")}
+                  </div>
+                }>
+                  <div class="space-y-2">
+                    <For each={archivedSessionRows()}>
+                      {(item) => (
+                        <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-3 space-y-3">
+                          <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0 space-y-1">
+                              <div class="flex flex-wrap items-center gap-2">
+                                <div class="text-sm font-medium text-gray-12 truncate">{formatArchivedSessionTitle(item)}</div>
+                                <Show when={!item.availableOnThisDevice}>
+                                  <span class="rounded-full border border-amber-7/40 bg-amber-2 px-2 py-0.5 text-[11px] font-medium text-amber-11">
+                                    {translate("settings.archived_sessions_unavailable_on_device")}
+                                  </span>
+                                </Show>
+                              </div>
+                              <div class="text-[11px] text-gray-8 truncate">{formatArchivedSessionLocation(item)}</div>
+                              <div class="text-[11px] text-gray-8">
+                                {translate("settings.archived_sessions_archived_at")} {formatRelativeTime(item.archivedAt)}
+                              </div>
+                            </div>
+                            <Button
+                              variant="outline"
+                              class="text-xs h-8 py-0 px-3 shrink-0"
+                              onClick={() => void handleUnarchiveArchivedSession(item.sessionId)}
+                              disabled={props.busy || !props.onUnarchiveSession}
+                            >
+                              {translate("settings.archived_sessions_unarchive")}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </div>
+            </Show>
           </div>
         </Match>
 
