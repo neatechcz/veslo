@@ -42,6 +42,39 @@ test("converts chat completion messages into a codex prompt and wraps the final 
   assert.equal((response.body as { choices: Array<{ message: { content: string } }> }).choices[0]?.message.content, "ok")
 })
 
+test("returns OpenAI-compatible SSE chunks when Codex chat completion requests streaming", async () => {
+  const transport = new CodexCliWorkerTransport({
+    spawnCodex: async ({ prompt, model }) => {
+      assert.equal(model, "gpt-5.4")
+      assert.equal(prompt, "user: Say stream ok.")
+      return {
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        finalMessage: "stream ok",
+        stdout: "",
+        stderr: "",
+      }
+    },
+    now: () => new Date("2026-04-13T10:00:00.000Z"),
+    randomId: () => "codex-stream-test-id",
+  })
+
+  const response = await transport.chatCompletions({
+    body: {
+      model: "gpt-5.4",
+      stream: true,
+      messages: [{ role: "user", content: "Say stream ok." }],
+    },
+  })
+
+  assert.equal(response.status, 200)
+  assert.equal(response.headers?.["content-type"], "text/event-stream")
+  assert.match(String(response.body), /"object":"chat\.completion\.chunk"/)
+  assert.match(String(response.body), /"content":"stream ok"/)
+  assert.match(String(response.body), /data: \[DONE\]/)
+})
+
 test("materializes Codex auth JSON into the worker CODEX_HOME without logging secrets", async () => {
   const codexHome = await mkdtemp(path.join(tmpdir(), "veslo-ai-gateway-codex-home-test-"))
   const authJson = JSON.stringify({

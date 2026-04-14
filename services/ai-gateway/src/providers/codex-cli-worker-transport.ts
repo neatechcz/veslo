@@ -69,13 +69,6 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
       })
     }
 
-    if (body.stream === true) {
-      throw new ProviderTransportError("codex_streaming_not_supported", {
-        statusCode: 400,
-        code: "streaming_not_supported",
-      })
-    }
-
     const model = getString(body, "model") ?? "unknown"
     const prompt = formatPrompt(readMessages(body.messages))
     const result = await this.spawnCodex({ prompt, model })
@@ -92,11 +85,30 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
     }
 
     const created = Math.floor(this.now().getTime() / 1000)
+    const id = `chatcmpl_${this.randomId()}`
+
+    if (body.stream === true) {
+      return {
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        },
+        body: buildStreamingChatCompletionBody({
+          id,
+          created,
+          model,
+          content: result.finalMessage,
+        }),
+      }
+    }
+
     return {
       status: 200,
       headers: { "content-type": "application/json" },
       body: {
-        id: `chatcmpl_${this.randomId()}`,
+        id,
         object: "chat.completion",
         created,
         model,
@@ -175,6 +187,53 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
       await rm(scratchDir, { recursive: true, force: true })
     }
   }
+}
+
+function buildStreamingChatCompletionBody(input: {
+  id: string
+  created: number
+  model: string
+  content: string
+}): string {
+  const contentChunk = {
+    id: input.id,
+    object: "chat.completion.chunk",
+    created: input.created,
+    model: input.model,
+    choices: [
+      {
+        index: 0,
+        delta: {
+          role: "assistant",
+          content: input.content,
+        },
+        finish_reason: null,
+      },
+    ],
+  }
+  const doneChunk = {
+    id: input.id,
+    object: "chat.completion.chunk",
+    created: input.created,
+    model: input.model,
+    choices: [
+      {
+        index: 0,
+        delta: {},
+        finish_reason: "stop",
+      },
+    ],
+  }
+
+  return [
+    `data: ${JSON.stringify(contentChunk)}`,
+    "",
+    `data: ${JSON.stringify(doneChunk)}`,
+    "",
+    "data: [DONE]",
+    "",
+    "",
+  ].join("\n")
 }
 
 export async function materializeCodexAuthJson(input: {
