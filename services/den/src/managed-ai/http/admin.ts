@@ -22,6 +22,11 @@ import { getPlatformCredentialOwnerUserId } from "../credentials/platform-owner.
 import type { CredentialRepository, CredentialRecord } from "../credentials/repository.js"
 import type { SecretStore } from "../credentials/secret-store.js"
 import type { LeaseProvider, LeaseRepository } from "../leases/repository.js"
+import {
+  formatManagedAiProviderLabel,
+  isApiKeyCredentialProvider,
+  isManagedAiProvider,
+} from "../providers/ids.js"
 import type { UsageRepository } from "../usage/repository.js"
 
 class HttpError extends Error {
@@ -715,11 +720,11 @@ function validateUserAiAccessInput(input: UpdateUserAiAccessInput & { userId: st
 }
 
 function parseCredentialProvider(value: unknown): LeaseProvider | null {
-  return value === "openai" || value === "anthropic" ? value : null
+  return isApiKeyCredentialProvider(value) ? value : null
 }
 
 function parseAiAccessProvider(value: unknown): AiAccessProvider | null {
-  return value === "openai" || value === "anthropic" ? value : null
+  return isManagedAiProvider(value) ? value : null
 }
 
 function normalizeAllowedModels(value: unknown): string[] {
@@ -747,15 +752,7 @@ function normalizeGroupBy(value: unknown): AdminUsageResponse["groupBy"] {
 }
 
 function formatProviderLabel(provider: string) {
-  if (provider === "openai") {
-    return "OpenAI"
-  }
-
-  if (provider === "anthropic") {
-    return "Anthropic"
-  }
-
-  return provider
+  return formatManagedAiProviderLabel(provider)
 }
 
 function toAdminUserAiAccessRecord(record: UserAiAccessPolicyRecord | null): AdminUserAiAccessRecord | null {

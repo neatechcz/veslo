@@ -8,6 +8,7 @@ import type {
   UpsertUserAiAccessPolicyInput,
   UserAiAccessPolicyRecord,
 } from "./repository.js"
+import { isManagedAiProvider } from "../providers/ids.js"
 
 export class MySqlAiAccessRepository implements AiAccessRepository {
   constructor(private readonly db: any) {}
@@ -89,7 +90,7 @@ function mapUserAiAccessPolicy(row: typeof userAiAccessPolicyTable.$inferSelect)
 }
 
 function parseProvider(value: string | null): AiAccessProvider | null {
-  return value === "openai" || value === "anthropic" ? value : null
+  return isManagedAiProvider(value) ? value : null
 }
 
 function parseAllowedModelsJson(value: string): string[] {

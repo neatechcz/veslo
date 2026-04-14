@@ -1,6 +1,8 @@
-export const AiAccessProviders = ["openai", "anthropic"] as const
+import { MANAGED_AI_PROVIDERS, type ManagedAiProvider } from "../providers/ids.js"
 
-export type AiAccessProvider = (typeof AiAccessProviders)[number]
+export const AiAccessProviders = MANAGED_AI_PROVIDERS
+
+export type AiAccessProvider = ManagedAiProvider
 
 export type UserAiAccessPolicyRecord = {
   id: string

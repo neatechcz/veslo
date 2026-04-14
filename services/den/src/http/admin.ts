@@ -1,5 +1,6 @@
 import express from "express"
 import { OrgRole } from "../db/schema.js"
+import type { ManagedAiProvider } from "../managed-ai/providers/ids.js"
 
 export type AdminSessionOrganization = {
   id: string
@@ -43,7 +44,7 @@ export type AdminUserAiAccessRecord = {
   id: string
   userId: string
   enabled: boolean
-  provider: "openai" | "anthropic" | null
+  provider: ManagedAiProvider | null
   defaultModel: string | null
   allowedModels: string[]
   updatedAt: string
@@ -68,7 +69,7 @@ export type AdminCredentialRecord = {
 export type AdminSessionRecord = {
   id: string
   sessionId: string
-  provider: "openai" | "anthropic"
+  provider: ManagedAiProvider
   userLabel: string
   orgLabel: string
   projectLabel: string

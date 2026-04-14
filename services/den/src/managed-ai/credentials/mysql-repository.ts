@@ -19,6 +19,7 @@ import type {
   MarkCredentialStateInput,
   RevokeUserCredentialInput,
 } from "./repository.js"
+import { formatManagedAiProviderLabel } from "../providers/ids.js"
 
 export class MySqlCredentialRepository implements CredentialRepository {
   constructor(private readonly db: any) {}
@@ -425,13 +426,5 @@ function asDate(value: Date | string): Date {
 }
 
 function formatProviderLabel(provider: string) {
-  if (provider === "openai") {
-    return "OpenAI"
-  }
-
-  if (provider === "anthropic") {
-    return "Anthropic"
-  }
-
-  return provider
+  return formatManagedAiProviderLabel(provider)
 }

@@ -281,8 +281,8 @@ export function isManagedAiProvider(value: unknown): value is ManagedAiProvider 
   return value === "openai" || value === "anthropic" || value === CODEX_OAUTH_PROVIDER
 }
 
-export function isApiKeyCredentialProvider(value: unknown): value is "anthropic" {
-  return value === "anthropic"
+export function isApiKeyCredentialProvider(value: unknown): value is "openai" | "anthropic" {
+  return value === "openai" || value === "anthropic"
 }
 
 export function formatManagedAiProviderLabel(provider: string): string {
