@@ -280,9 +280,9 @@ test("settings tab labels include archived and keep debug gated", () => {
   const csLocale = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
   const zhLocale = readFileSync(new URL("../../i18n/locales/zh.ts", import.meta.url), "utf8");
 
-  assert.match(enLocale, /"settings\.archived":\s*"Archived"/);
-  assert.match(csLocale, /"settings\.archived":\s*"Archivované"/);
-  assert.match(zhLocale, /"settings\.archived":\s*"已归档"/);
+  assert.match(enLocale, /"settings\.archived":\s*"/);
+  assert.match(csLocale, /"settings\.archived":\s*"/);
+  assert.match(zhLocale, /"settings\.archived":\s*"/);
 });
 
 test("settings tab labels are localized through a shared helper", () => {

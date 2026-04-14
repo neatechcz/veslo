@@ -8,6 +8,7 @@ type LocaleCopy = {
   addDirectoryProject: string;
   moreActions: string;
   archivedItems: string;
+  archivedTab: string;
   searchSessions: string;
   byProject: string;
   recent: string;
@@ -20,6 +21,7 @@ const UI_COPY: Record<'en' | 'cs' | 'zh', LocaleCopy> = {
     addDirectoryProject: 'Add directory / project',
     moreActions: 'More actions',
     archivedItems: 'Archived items',
+    archivedTab: 'Archived',
     searchSessions: 'Search sessions',
     byProject: 'By project',
     recent: 'Recent',
@@ -30,6 +32,7 @@ const UI_COPY: Record<'en' | 'cs' | 'zh', LocaleCopy> = {
     addDirectoryProject: 'Přidat adresář / projekt',
     moreActions: 'Další akce',
     archivedItems: 'Archivované položky',
+    archivedTab: 'Archivované',
     searchSessions: 'Hledat relace',
     byProject: 'Podle projektu',
     recent: 'Nedávné',
@@ -40,6 +43,7 @@ const UI_COPY: Record<'en' | 'cs' | 'zh', LocaleCopy> = {
     addDirectoryProject: '添加目录 / 项目',
     moreActions: '更多操作',
     archivedItems: '已归档项目',
+    archivedTab: '已归档',
     searchSessions: 'Search sessions',
     byProject: '按项目',
     recent: '最近',
@@ -126,6 +130,17 @@ async function bodyContainsLabel(label: string): Promise<boolean> {
   }, label);
 }
 
+async function getSettingsTabButtonClass(label: string): Promise<string | null> {
+  return browser.execute((expectedLabel: string) => {
+    const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
+    const button = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(
+      (candidate) => normalize(candidate.textContent ?? '') === normalize(expectedLabel),
+    );
+
+    return button?.className ?? null;
+  }, label);
+}
+
 describe('Sidebar overflow actions', () => {
   before(async () => {
     await navigateToHash('/session');
@@ -199,6 +214,10 @@ describe('Sidebar overflow actions', () => {
     );
 
     expect(await bodyContainsLabel(copy.archivedSection)).toBe(true);
-    expect(await bodyContainsLabel('Providers')).toBe(false);
+
+    const archivedTabClass = await getSettingsTabButtonClass(copy.archivedTab);
+    expect(archivedTabClass).not.toBeNull();
+    expect(archivedTabClass).toContain('bg-gray-12/10');
+    expect(archivedTabClass).toContain('text-white');
   });
 });
