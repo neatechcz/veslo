@@ -45,6 +45,18 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
 
   assert.match(
     source,
+    /<div class="relative shrink-0" ref=\{\(el\) => \(addWorkspaceMenuRef = el\)\}>[\s\S]*data-tooltip=\{tr\("sidebar\.new_session"\)\}/,
+    "new-session wrapper should shrink to content width instead of stretching across the rail",
+  );
+
+  assert.match(
+    source,
+    /const naturalTopRailButtonClass =[\s\S]*h-8[\s\S]*rounded-full[\s\S]*px-2/,
+    "new-session should use a dedicated content-width button class",
+  );
+
+  assert.match(
+    source,
     /<div[\s\S]*class="relative shrink-0"[\s\S]*data-tooltip=\{tr\("sidebar\.more_actions"\)\}/,
     "overflow control wrapper should shrink to its compact circular size instead of taking a third of the rail",
   );
@@ -75,7 +87,13 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
 
   assert.match(
     source,
-    /<Plus size=\{12\} \/>[\s\S]*<FolderPlus size=\{16\} \/>/,
+    /<div class="flex min-w-0 flex-1">[\s\S]*data-tooltip=\{tr\("sidebar\.add_directory_or_project"\)\}[\s\S]*<FolderPlus size=\{18\} \/>/,
+    "add-directory CTA should stay as the expanding middle control and use a larger folder icon",
+  );
+
+  assert.match(
+    source,
+    /<Plus size=\{12\} \/>[\s\S]*<FolderPlus size=\{18\} \/>/,
     "add-directory icon should be visibly larger than the new-session plus icon",
   );
 

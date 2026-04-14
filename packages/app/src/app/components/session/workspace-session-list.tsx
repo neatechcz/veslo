@@ -1194,6 +1194,9 @@ export default function WorkspaceSessionList(props: Props) {
   const topRailButtonClass =
     `inline-flex h-8 w-full min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-gray-6 bg-gray-1 px-2 text-[12px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60 ${sidebarControlTooltipClass}`;
 
+  const naturalTopRailButtonClass =
+    `inline-flex h-8 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-gray-6 bg-gray-1 px-2 text-[12px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60 ${sidebarControlTooltipClass}`;
+
   const compactTopRailButtonClass =
     `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60 ${sidebarControlTooltipClass}`;
 
@@ -1207,10 +1210,10 @@ export default function WorkspaceSessionList(props: Props) {
   return (
     <div class="flex h-full min-h-0 flex-col">
       <div class="mb-3 flex flex-nowrap items-center gap-1" ref={(el) => (sidebarControlsRef = el)}>
-        <div class="relative flex min-w-0 flex-1" ref={(el) => (addWorkspaceMenuRef = el)}>
+        <div class="relative shrink-0" ref={(el) => (addWorkspaceMenuRef = el)}>
           <button
             type="button"
-            class={topRailButtonClass}
+            class={naturalTopRailButtonClass}
             data-tooltip={tr("sidebar.new_session")}
             onClick={() => {
               setMoreActionsMenuOpen(false);
@@ -1282,7 +1285,7 @@ export default function WorkspaceSessionList(props: Props) {
             }}
           >
             <span class="sr-only">{tr("sidebar.add_directory_or_project")}</span>
-            <FolderPlus size={16} />
+            <FolderPlus size={18} />
             <span class="truncate">{tr("sidebar.add_directory_or_project")}</span>
           </button>
         </div>
