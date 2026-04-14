@@ -130,6 +130,11 @@ jobs:
           RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
           DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
+          MANAGED_AI_DATABASE_URL: ${{ secrets.MANAGED_AI_DATABASE_URL || secrets.DEN_DATABASE_URL }}
+          MANAGED_AI_SECRET_KEY: ${{ secrets.MANAGED_AI_SECRET_KEY || secrets.DEN_BETTER_AUTH_SECRET }}
+          MANAGED_AI_OPENAI_CLIENT_ID: ${{ secrets.MANAGED_AI_OPENAI_CLIENT_ID }}
+          MANAGED_AI_OPENAI_CLIENT_SECRET: ${{ secrets.MANAGED_AI_OPENAI_CLIENT_SECRET }}
+          MANAGED_AI_OPENAI_REDIRECT_BASE: ${{ vars.MANAGED_AI_OPENAI_REDIRECT_BASE }}
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
           DEN_LETTR_API_KEY: ${{ secrets.DEN_LETTR_API_KEY }}
@@ -251,6 +256,11 @@ jobs:
               control_plane_branch = configured_control_plane_branch or selected_branch
           control_plane_root_dir = os.environ.get("DEN_RENDER_CONTROL_PLANE_ROOT_DIR") or "services/den"
           worker_repo = os.environ.get("DEN_RENDER_WORKER_REPO") or f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'neatechcz/veslo')}"
+          managed_ai_database_url = os.environ.get("MANAGED_AI_DATABASE_URL") or os.environ["DEN_DATABASE_URL"]
+          managed_ai_secret_key = os.environ.get("MANAGED_AI_SECRET_KEY") or os.environ["DEN_BETTER_AUTH_SECRET"]
+          managed_ai_openai_client_id = os.environ.get("MANAGED_AI_OPENAI_CLIENT_ID") or ""
+          managed_ai_openai_client_secret = os.environ.get("MANAGED_AI_OPENAI_CLIENT_SECRET") or ""
+          managed_ai_openai_redirect_base = os.environ.get("MANAGED_AI_OPENAI_REDIRECT_BASE") or ""
           configured_cors_origins = os.environ.get("DEN_CORS_ORIGINS") or ""
           worker_public_domain_suffix = os.environ.get("DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX") or "veslo.studio"
           custom_domain_ready_timeout_ms = os.environ.get("DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS") or "240000"
@@ -422,6 +432,11 @@ jobs:
               {"key": "DATABASE_URL", "value": os.environ["DEN_DATABASE_URL"]},
               {"key": "BETTER_AUTH_SECRET", "value": os.environ["DEN_BETTER_AUTH_SECRET"]},
               {"key": "BETTER_AUTH_URL", "value": service_url},
+              {"key": "MANAGED_AI_DATABASE_URL", "value": managed_ai_database_url},
+              {"key": "MANAGED_AI_SECRET_KEY", "value": managed_ai_secret_key},
+              {"key": "MANAGED_AI_OPENAI_CLIENT_ID", "value": managed_ai_openai_client_id},
+              {"key": "MANAGED_AI_OPENAI_CLIENT_SECRET", "value": managed_ai_openai_client_secret},
+              {"key": "MANAGED_AI_OPENAI_REDIRECT_BASE", "value": managed_ai_openai_redirect_base},
               {"key": "GITHUB_CLIENT_ID", "value": github_client_id},
               {"key": "GITHUB_CLIENT_SECRET", "value": github_client_secret},
               {"key": "LETTR_API_KEY", "value": lettr_api_key},

@@ -28,6 +28,18 @@ export interface OpenAiOAuthClient {
   refreshToken(input: RefreshOpenAiTokenInput): Promise<OpenAiOAuthTokens>
 }
 
+export function createUnavailableOpenAiOAuthClient(message = "managed_ai_openai_oauth_not_configured"): OpenAiOAuthClient {
+  async function reject(): Promise<never> {
+    throw new Error(message)
+  }
+
+  return {
+    startAuthorization: reject,
+    exchangeCode: reject,
+    refreshToken: reject,
+  }
+}
+
 export type DefaultOpenAiOAuthClientDeps = {
   clientId: string
   clientSecret: string

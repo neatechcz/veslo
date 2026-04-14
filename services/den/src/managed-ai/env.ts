@@ -29,10 +29,12 @@ export function parseManagedAiEnv(env: ManagedAiEnvInput): ManagedAiEnv {
   const clientSecret = readOptionalEnv(env.MANAGED_AI_OPENAI_CLIENT_SECRET)
   const redirectBase = readOptionalEnv(env.MANAGED_AI_OPENAI_REDIRECT_BASE)
 
-  const configuredValues = [databaseUrl, secretKey, clientId, clientSecret, redirectBase]
-  const configuredCount = configuredValues.filter((value): value is string => Boolean(value)).length
+  const coreValues = [databaseUrl, secretKey]
+  const openAiOAuthValues = [clientId, clientSecret, redirectBase]
+  const configuredCoreCount = coreValues.filter((value): value is string => Boolean(value)).length
+  const configuredOpenAiOAuthCount = openAiOAuthValues.filter((value): value is string => Boolean(value)).length
 
-  if (configuredCount === 0) {
+  if (configuredCoreCount === 0 && configuredOpenAiOAuthCount === 0) {
     return {
       enabled: false,
       databaseUrl: null,
@@ -45,9 +47,15 @@ export function parseManagedAiEnv(env: ManagedAiEnvInput): ManagedAiEnv {
     }
   }
 
-  if (configuredCount !== configuredValues.length) {
+  if (configuredCoreCount !== coreValues.length) {
     throw new Error(
-      "managed-ai env vars must be configured together: set MANAGED_AI_DATABASE_URL, MANAGED_AI_SECRET_KEY, MANAGED_AI_OPENAI_CLIENT_ID, MANAGED_AI_OPENAI_CLIENT_SECRET, and MANAGED_AI_OPENAI_REDIRECT_BASE or leave them unset",
+      "managed-ai core env vars must be configured together: set MANAGED_AI_DATABASE_URL and MANAGED_AI_SECRET_KEY or leave them unset",
+    )
+  }
+
+  if (configuredOpenAiOAuthCount !== 0 && configuredOpenAiOAuthCount !== openAiOAuthValues.length) {
+    throw new Error(
+      "managed-ai OpenAI OAuth fallback env vars must be configured together: set MANAGED_AI_OPENAI_CLIENT_ID, MANAGED_AI_OPENAI_CLIENT_SECRET, and MANAGED_AI_OPENAI_REDIRECT_BASE or leave them unset",
     )
   }
 

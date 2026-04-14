@@ -41,6 +41,23 @@ test("managed ai env parses explicit database, secret key, and OpenAI OAuth conf
   })
 })
 
+test("managed ai env allows codex-only runtime without OpenAI OAuth fallback config", () => {
+  const parsed = parseEnv({
+    ...baseEnv,
+    MANAGED_AI_DATABASE_URL: "mysql://root:root@127.0.0.1:3306/veslo_ai_gateway",
+    MANAGED_AI_SECRET_KEY: "abcdefghijklmnopqrstuvwxyz123456",
+  })
+
+  assert.equal(parsed.managedAi.enabled, true)
+  assert.equal(parsed.managedAi.databaseUrl, "mysql://root:root@127.0.0.1:3306/veslo_ai_gateway")
+  assert.equal(parsed.managedAi.secretKey, "abcdefghijklmnopqrstuvwxyz123456")
+  assert.deepEqual(parsed.managedAi.openAi, {
+    clientId: null,
+    clientSecret: null,
+    redirectBase: null,
+  })
+})
+
 test("managed ai env stays disabled when no managed AI env vars are provided", () => {
   const parsed = parseEnv(baseEnv)
 
@@ -54,7 +71,7 @@ test("managed ai env stays disabled when no managed AI env vars are provided", (
   })
 })
 
-test("managed ai env rejects partial managed AI configuration", () => {
+test("managed ai env rejects partial core managed AI configuration", () => {
   assert.throws(
     () =>
       parseEnv({
@@ -62,5 +79,18 @@ test("managed ai env rejects partial managed AI configuration", () => {
         MANAGED_AI_DATABASE_URL: "mysql://root:root@127.0.0.1:3306/veslo_ai_gateway",
       }),
     /managed-ai/i,
+  )
+})
+
+test("managed ai env rejects partial OpenAI OAuth fallback configuration", () => {
+  assert.throws(
+    () =>
+      parseEnv({
+        ...baseEnv,
+        MANAGED_AI_DATABASE_URL: "mysql://root:root@127.0.0.1:3306/veslo_ai_gateway",
+        MANAGED_AI_SECRET_KEY: "abcdefghijklmnopqrstuvwxyz123456",
+        MANAGED_AI_OPENAI_CLIENT_ID: "openai-client",
+      }),
+    /OpenAI OAuth/i,
   )
 })

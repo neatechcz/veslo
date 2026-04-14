@@ -11,7 +11,11 @@ import type { AuditRepository } from "../audit/repository.js"
 import { DefaultTokenBroker } from "../credentials/default-token-broker.js"
 import { MySqlCredentialRepository } from "../credentials/mysql-repository.js"
 import { MySqlSecretStore } from "../credentials/mysql-secret-store.js"
-import { DefaultOpenAiOAuthClient, type OpenAiOAuthClient } from "../credentials/openai-oauth.js"
+import {
+  DefaultOpenAiOAuthClient,
+  createUnavailableOpenAiOAuthClient,
+  type OpenAiOAuthClient,
+} from "../credentials/openai-oauth.js"
 import type { CredentialRepository } from "../credentials/repository.js"
 import { DenGatewaySessionResolver } from "../auth/gateway-session.js"
 import { DenUserSessionResolver, type UserSessionResolver } from "../auth/user-session.js"
@@ -133,7 +137,7 @@ export function createDefaultUserCredentialDependencies(
 function createDefaultOpenAiOAuthClient() {
   const config = env.managedAi.openAi
   if (!config.clientId || !config.clientSecret || !config.redirectBase) {
-    throw new Error("managed_ai_openai_oauth_not_configured")
+    return createUnavailableOpenAiOAuthClient()
   }
 
   return new DefaultOpenAiOAuthClient({

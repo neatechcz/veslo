@@ -15,7 +15,10 @@ import { desktopAuthRouter } from "./http/desktop-auth.js"
 import { desktopAuthV2Router } from "./http/desktop-auth-v2.js"
 import { createAdminRuntimeRouter, requirePlatformAdminSnapshot } from "./http/admin-runtime.js"
 import { createManagedAiAdminUiRouter } from "./managed-ai/http/admin.js"
-import { DefaultOpenAiOAuthClient } from "./managed-ai/credentials/openai-oauth.js"
+import {
+  DefaultOpenAiOAuthClient,
+  createUnavailableOpenAiOAuthClient,
+} from "./managed-ai/credentials/openai-oauth.js"
 import { createProxyRouter } from "./managed-ai/http/proxy.js"
 import { createUserCredentialsRouter } from "./managed-ai/http/user-credentials.js"
 import {
@@ -56,11 +59,7 @@ if (managedAiRuntime) {
   app.use(
     createManagedAiAdminUiRouter({
       getAdminSession: requirePlatformAdminSnapshot,
-      openAiOAuth: new DefaultOpenAiOAuthClient({
-        clientId: env.managedAi.openAi.clientId!,
-        clientSecret: env.managedAi.openAi.clientSecret!,
-        redirectBase: env.managedAi.openAi.redirectBase!,
-      }),
+      openAiOAuth: createOpenAiOAuthClient(),
       alerts: managedAiRuntime.alerts,
       audit: managedAiRuntime.audit,
       credentials: managedAiRuntime.credentials,
@@ -99,6 +98,19 @@ app.use("/admin/api", createAdminRuntimeRouter({ managedAi: managedAiRuntime }))
 app.use("/v1/orgs", orgsRouter)
 app.use("/v1/workers", workersRouter)
 app.use(errorMiddleware)
+
+function createOpenAiOAuthClient() {
+  const config = env.managedAi.openAi
+  if (!config.clientId || !config.clientSecret || !config.redirectBase) {
+    return createUnavailableOpenAiOAuthClient()
+  }
+
+  return new DefaultOpenAiOAuthClient({
+    clientId: config.clientId,
+    clientSecret: config.clientSecret,
+    redirectBase: config.redirectBase,
+  })
+}
 
 const identifierPattern = /^[a-zA-Z0-9_]+$/
 
