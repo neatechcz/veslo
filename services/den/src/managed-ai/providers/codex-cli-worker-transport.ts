@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import path from "node:path"
 
@@ -30,6 +30,7 @@ export type CodexCliWorkerTransportDeps = {
   command?: string
   codexHome?: string
   allowHostHome?: boolean
+  authJson?: string
   workDir?: string
   timeoutMs?: number
   now?: () => Date
@@ -41,6 +42,7 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
   private readonly command: string
   private readonly codexHome: string
   private readonly allowHostHome: boolean
+  private readonly authJson: string
   private readonly workDir: string
   private readonly timeoutMs: number
   private readonly now: () => Date
@@ -50,6 +52,7 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
     this.command = deps.command?.trim() || process.env.MANAGED_AI_CODEX_COMMAND?.trim() || "codex"
     this.codexHome = deps.codexHome?.trim() || process.env.MANAGED_AI_CODEX_HOME?.trim() || ""
     this.allowHostHome = deps.allowHostHome ?? process.env.MANAGED_AI_CODEX_ALLOW_HOST_HOME?.trim() === "1"
+    this.authJson = deps.authJson?.trim() || process.env.MANAGED_AI_CODEX_AUTH_JSON?.trim() || ""
     this.workDir = deps.workDir?.trim() || process.env.MANAGED_AI_CODEX_WORKDIR?.trim() || tmpdir()
     this.timeoutMs = deps.timeoutMs ?? parseTimeoutMs(process.env.MANAGED_AI_CODEX_TIMEOUT_MS)
     this.now = deps.now ?? (() => new Date())
@@ -127,6 +130,11 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
       })
     }
 
+    await materializeCodexAuthJson({
+      codexHome: this.codexHome,
+      authJson: this.authJson,
+    })
+
     const scratchDir = await mkdtemp(path.join(this.workDir, "veslo-codex-worker-"))
     const outputFile = path.join(scratchDir, "last-message.txt")
 
@@ -167,6 +175,34 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
       await rm(scratchDir, { recursive: true, force: true })
     }
   }
+}
+
+export async function materializeCodexAuthJson(input: {
+  codexHome: string
+  authJson: string
+}) {
+  const authJson = input.authJson.trim()
+  if (!authJson) {
+    return false
+  }
+
+  try {
+    const parsed = JSON.parse(authJson)
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("codex_worker_auth_json_invalid")
+    }
+  } catch {
+    throw new ProviderTransportError("codex_worker_auth_json_invalid", {
+      statusCode: 503,
+      code: "codex_worker_auth_json_invalid",
+    })
+  }
+
+  await mkdir(input.codexHome, { recursive: true, mode: 0o700 })
+  const authPath = path.join(input.codexHome, "auth.json")
+  await writeFile(authPath, `${authJson}\n`, { mode: 0o600 })
+  await chmod(authPath, 0o600)
+  return true
 }
 
 function parseTimeoutMs(value: string | undefined): number {

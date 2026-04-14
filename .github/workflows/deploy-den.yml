@@ -135,6 +135,7 @@ jobs:
           MANAGED_AI_OPENAI_CLIENT_ID: ${{ secrets.MANAGED_AI_OPENAI_CLIENT_ID }}
           MANAGED_AI_OPENAI_CLIENT_SECRET: ${{ secrets.MANAGED_AI_OPENAI_CLIENT_SECRET }}
           MANAGED_AI_OPENAI_REDIRECT_BASE: ${{ vars.MANAGED_AI_OPENAI_REDIRECT_BASE }}
+          MANAGED_AI_CODEX_AUTH_JSON: ${{ secrets.MANAGED_AI_CODEX_AUTH_JSON }}
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
           DEN_LETTR_API_KEY: ${{ secrets.DEN_LETTR_API_KEY }}
@@ -204,6 +205,16 @@ jobs:
           RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
           DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
+          MANAGED_AI_DATABASE_URL: ${{ secrets.MANAGED_AI_DATABASE_URL || secrets.DEN_DATABASE_URL }}
+          MANAGED_AI_SECRET_KEY: ${{ secrets.MANAGED_AI_SECRET_KEY || secrets.DEN_BETTER_AUTH_SECRET }}
+          MANAGED_AI_OPENAI_CLIENT_ID: ${{ secrets.MANAGED_AI_OPENAI_CLIENT_ID }}
+          MANAGED_AI_OPENAI_CLIENT_SECRET: ${{ secrets.MANAGED_AI_OPENAI_CLIENT_SECRET }}
+          MANAGED_AI_OPENAI_REDIRECT_BASE: ${{ vars.MANAGED_AI_OPENAI_REDIRECT_BASE }}
+          MANAGED_AI_CODEX_HOME: ${{ vars.MANAGED_AI_CODEX_HOME }}
+          MANAGED_AI_CODEX_WORKDIR: ${{ vars.MANAGED_AI_CODEX_WORKDIR }}
+          MANAGED_AI_CODEX_TIMEOUT_MS: ${{ vars.MANAGED_AI_CODEX_TIMEOUT_MS }}
+          MANAGED_AI_CODEX_COMMAND: ${{ vars.MANAGED_AI_CODEX_COMMAND }}
+          MANAGED_AI_CODEX_AUTH_JSON: ${{ secrets.MANAGED_AI_CODEX_AUTH_JSON }}
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
           DEN_LETTR_API_KEY: ${{ secrets.DEN_LETTR_API_KEY }}
@@ -261,6 +272,11 @@ jobs:
           managed_ai_openai_client_id = os.environ.get("MANAGED_AI_OPENAI_CLIENT_ID") or ""
           managed_ai_openai_client_secret = os.environ.get("MANAGED_AI_OPENAI_CLIENT_SECRET") or ""
           managed_ai_openai_redirect_base = os.environ.get("MANAGED_AI_OPENAI_REDIRECT_BASE") or ""
+          managed_ai_codex_home = os.environ.get("MANAGED_AI_CODEX_HOME") or "/tmp/veslo-codex-home"
+          managed_ai_codex_workdir = os.environ.get("MANAGED_AI_CODEX_WORKDIR") or "/tmp"
+          managed_ai_codex_timeout_ms = os.environ.get("MANAGED_AI_CODEX_TIMEOUT_MS") or "180000"
+          managed_ai_codex_command = os.environ.get("MANAGED_AI_CODEX_COMMAND") or "codex"
+          managed_ai_codex_auth_json = os.environ.get("MANAGED_AI_CODEX_AUTH_JSON") or ""
           configured_cors_origins = os.environ.get("DEN_CORS_ORIGINS") or ""
           worker_public_domain_suffix = os.environ.get("DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX") or "veslo.studio"
           custom_domain_ready_timeout_ms = os.environ.get("DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS") or "240000"
@@ -408,6 +424,8 @@ jobs:
               )
           else:
               desktop_auth_require_email_verified = configured_desktop_auth_require_email_verified.lower() == "true"
+          if not managed_ai_codex_auth_json:
+              managed_ai_codex_auth_json = current_env_by_key.get("MANAGED_AI_CODEX_AUTH_JSON", "")
 
           if bool(lettr_api_key) != bool(auth_email_address):
               raise RuntimeError(
@@ -437,6 +455,11 @@ jobs:
               {"key": "MANAGED_AI_OPENAI_CLIENT_ID", "value": managed_ai_openai_client_id},
               {"key": "MANAGED_AI_OPENAI_CLIENT_SECRET", "value": managed_ai_openai_client_secret},
               {"key": "MANAGED_AI_OPENAI_REDIRECT_BASE", "value": managed_ai_openai_redirect_base},
+              {"key": "MANAGED_AI_CODEX_HOME", "value": managed_ai_codex_home},
+              {"key": "MANAGED_AI_CODEX_WORKDIR", "value": managed_ai_codex_workdir},
+              {"key": "MANAGED_AI_CODEX_TIMEOUT_MS", "value": managed_ai_codex_timeout_ms},
+              {"key": "MANAGED_AI_CODEX_COMMAND", "value": managed_ai_codex_command},
+              {"key": "MANAGED_AI_CODEX_AUTH_JSON", "value": managed_ai_codex_auth_json},
               {"key": "GITHUB_CLIENT_ID", "value": github_client_id},
               {"key": "GITHUB_CLIENT_SECRET", "value": github_client_secret},
               {"key": "LETTR_API_KEY", "value": lettr_api_key},
