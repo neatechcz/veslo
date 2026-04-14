@@ -1194,6 +1194,9 @@ export default function WorkspaceSessionList(props: Props) {
   const topRailButtonClass =
     `inline-flex h-8 w-full min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-gray-6 bg-gray-1 px-2 text-[12px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60 ${sidebarControlTooltipClass}`;
 
+  const compactTopRailButtonClass =
+    `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60 ${sidebarControlTooltipClass}`;
+
   const overflowActionClass = (active = false) =>
     `flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs transition-colors ${
       active
@@ -1279,12 +1282,12 @@ export default function WorkspaceSessionList(props: Props) {
             }}
           >
             <span class="sr-only">{tr("sidebar.add_directory_or_project")}</span>
-            <FolderPlus size={12} />
+            <FolderPlus size={16} />
             <span class="truncate">{tr("sidebar.add_directory_or_project")}</span>
           </button>
         </div>
         <div
-          class="relative flex min-w-0 flex-1"
+          class="relative shrink-0"
           ref={(el) => (moreActionsMenuRef = el)}
           onFocusOut={(event) => {
             const nextFocus = event.relatedTarget as Node | null;
@@ -1294,7 +1297,7 @@ export default function WorkspaceSessionList(props: Props) {
         >
           <button
             type="button"
-            class={topRailButtonClass}
+            class={compactTopRailButtonClass}
             data-tooltip={tr("sidebar.more_actions")}
             ref={(el) => (moreActionsButtonRef = el)}
             aria-haspopup="menu"

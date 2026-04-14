@@ -43,6 +43,18 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
     "overflow control should expose a tooltip and accessible label",
   );
 
+  assert.match(
+    source,
+    /<div[\s\S]*class="relative shrink-0"[\s\S]*data-tooltip=\{tr\("sidebar\.more_actions"\)\}/,
+    "overflow control wrapper should shrink to its compact circular size instead of taking a third of the rail",
+  );
+
+  assert.match(
+    source,
+    /const compactTopRailButtonClass =[\s\S]*h-8 w-8[\s\S]*rounded-full/,
+    "overflow control should use a dedicated compact circular button class",
+  );
+
   assert.doesNotMatch(
     source,
     /min-w-\[9rem\]/,
@@ -59,6 +71,12 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
     source,
     /FolderPlus/,
     "workspace session list should import and render the add-directory icon",
+  );
+
+  assert.match(
+    source,
+    /<Plus size=\{12\} \/>[\s\S]*<FolderPlus size=\{16\} \/>/,
+    "add-directory icon should be visibly larger than the new-session plus icon",
   );
 
   assert.match(
