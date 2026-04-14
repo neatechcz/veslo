@@ -8,13 +8,10 @@ const csLocaleSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.m
 const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
 
 test("settings exposes archived and model tabs with the expected content split", () => {
-  assert.match(source, /const tabs: SettingsTab\[\] = \["general", "archived", "model", "advanced"\]/);
+  assert.match(source, /const tabs: SettingsTab\[\] = \["general", "archived"\]/);
   assert.match(source, /if \(props\.developerMode\) tabs\.push\("debug"\);/);
   assert.match(source, /<Match when=\{activeTab\(\) === "archived"\}>/);
-  assert.match(source, /<Match when=\{activeTab\(\) === "model"\}>/);
-  assert.match(source, /<Match when=\{activeTab\(\) === "advanced"\}>/);
   assert.match(generalSection, /<div class="text-sm font-medium text-gray-12">Appearance<\/div>/);
-  assert.match(source, /<Match when=\{activeTab\(\) === "model"\}>[\s\S]*Providers/);
   assert.doesNotMatch(generalSection, /Providers/);
   assert.doesNotMatch(generalSection, /settings\.archived_sessions_label/);
 });
@@ -22,6 +19,7 @@ test("settings exposes archived and model tabs with the expected content split",
 test("settings keeps the update controls in the top header row", () => {
   assert.match(source, /flex flex-col gap-3 md:flex-row md:items-center md:justify-between rounded-2xl border border-gray-6\/40 bg-gray-1\/40 px-3 py-2/);
   assert.match(source, /updateToolbarLabel\(\)[\s\S]*updateToolbarActionLabel\(\)/);
+  assert.doesNotMatch(source, /"Checking for updates"|"Up to date"|"Check"|"Download"|"Install"|"Retry"|"Last checked"/);
 });
 
 test("settings locales include the archived tab label", () => {

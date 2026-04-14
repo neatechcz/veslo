@@ -627,6 +627,8 @@ export default {
   "settings.updates_hint": "保持 Veslo 为最新版本。",
   "settings.automatic_checks_label": "自动检查",
   "settings.automatic_checks_hint": "每天一次（安静）",
+  "settings.auto_update_label": "自动更新",
+  "settings.auto_update_hint": "自动下载更新（会提示重启）。",
   "settings.last_checked_time": "上次检查 {time}",
   "settings.published_date": "发布时间 {date}",
   "settings.update_not_supported_hint": "此环境不支持更新。",
@@ -656,6 +658,9 @@ export default {
   "settings.stop_active_runs_reset_hint": "停止活动运行以重置",
   "settings.stop_runs_to_update": "停止活动运行以更新",
   "settings.stop_runs_to_reset": "停止活动运行以重置",
+  "settings.retry": "重试",
+  "settings.hide_titlebar_label": "隐藏标题栏",
+  "settings.hide_titlebar_hint": "隐藏窗口标题栏。适合 Linux 平铺窗口管理器（Hyprland、i3、sway）。",
   "settings.updates_not_supported": "此环境不支持更新。",
   "settings.updates_desktop_only": "更新仅在桌面应用中可用。",
 

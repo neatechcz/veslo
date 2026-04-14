@@ -232,24 +232,24 @@ export default function SettingsView(props: SettingsViewProps) {
     const state = updateState();
     const version = updateVersion();
     if (state === "available") {
-      return `Update available${version ? ` · v${version}` : ""}`;
+      return `${translate("settings.update_available")}${version ?? ""}`;
     }
     if (state === "ready") {
-      return `Ready to install${version ? ` · v${version}` : ""}`;
+      return `${translate("settings.update_ready")}${version ?? ""}`;
     }
     if (state === "downloading") {
       const downloaded = updateDownloadedBytes() ?? 0;
       const percent = updateDownloadPercent();
-      if (percent != null) return `Downloading ${percent}%`;
-      return `Downloading ${formatBytes(downloaded)}`;
+      if (percent != null) return `${translate("settings.update_downloading")} ${percent}%`;
+      return `${translate("settings.update_downloading")} ${formatBytes(downloaded)}`;
     }
     if (state === "checking") {
-      return "Checking for updates";
+      return translate("settings.update_checking");
     }
     if (state === "error") {
-      return "Update check failed";
+      return translate("settings.update_error");
     }
-    return "Up to date";
+    return translate("settings.update_uptodate");
   });
 
   const updateToolbarTitle = createMemo(() => {
@@ -262,18 +262,18 @@ export default function SettingsView(props: SettingsViewProps) {
     const percent = updateDownloadPercent();
 
     if (total != null && percent != null) {
-      return `Downloading ${formatBytes(downloaded)} / ${formatBytes(total)} (${percent}%)${version ? ` · v${version}` : ""}`;
+      return `${translate("settings.update_downloading")} ${formatBytes(downloaded)} / ${formatBytes(total)} (${percent}%)${version ? ` · v${version}` : ""}`;
     }
 
-    return `Downloading ${formatBytes(downloaded)}${version ? ` · v${version}` : ""}`;
+    return `${translate("settings.update_downloading")} ${formatBytes(downloaded)}${version ? ` · v${version}` : ""}`;
   });
 
   const updateToolbarActionLabel = createMemo(() => {
     const state = updateState();
-    if (state === "available") return "Download";
-    if (state === "ready") return "Install";
-    if (state === "error") return "Retry";
-    if (state === "idle") return "Check";
+    if (state === "available") return translate("settings.download_update");
+    if (state === "ready") return translate("settings.install_restart");
+    if (state === "error") return translate("settings.retry");
+    if (state === "idle") return translate("settings.check_update");
     return null;
   });
 
@@ -637,7 +637,7 @@ export default function SettingsView(props: SettingsViewProps) {
   const startupLabel = createMemo(() => "Connect to cloud server");
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "archived", "model", "advanced"];
+    const tabs: SettingsTab[] = ["general", "archived"];
     if (props.developerMode) tabs.push("debug");
     return tabs;
   });
@@ -1446,8 +1446,8 @@ export default function SettingsView(props: SettingsViewProps) {
             <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
               <div class="flex items-start justify-between gap-4">
                 <div>
-                  <div class="text-sm font-medium text-gray-12">Updates</div>
-                  <div class="text-xs text-gray-10">Keep Veslo up to date.</div>
+                  <div class="text-sm font-medium text-gray-12">{translate("settings.updates_title")}</div>
+                  <div class="text-xs text-gray-10">{translate("settings.updates_hint")}</div>
                 </div>
                 <div class="text-xs text-gray-7 font-mono">{props.appVersion ? `v${props.appVersion}` : ""}</div>
               </div>
@@ -1461,8 +1461,8 @@ export default function SettingsView(props: SettingsViewProps) {
                       <>
                         <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6">
                           <div class="space-y-0.5">
-                            <div class="text-sm text-gray-12">Background checks</div>
-                            <div class="text-xs text-gray-7">Veslo always checks on launch. Also checks once per day (quiet).</div>
+                            <div class="text-sm text-gray-12">{translate("settings.automatic_checks_label")}</div>
+                            <div class="text-xs text-gray-7">{translate("settings.automatic_checks_hint")}</div>
                           </div>
                           <button
                             class={`min-w-[70px] px-4 py-1.5 rounded-full text-xs font-medium border shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-colors ${
@@ -1472,14 +1472,14 @@ export default function SettingsView(props: SettingsViewProps) {
                             }`}
                             onClick={props.toggleUpdateAutoCheck}
                           >
-                            {props.updateAutoCheck ? "On" : "Off"}
+                            {props.updateAutoCheck ? translate("settings.on") : translate("settings.off")}
                           </button>
                         </div>
 
                         <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6">
                           <div class="space-y-0.5">
-                            <div class="text-sm text-gray-12">Auto-update</div>
-                            <div class="text-xs text-gray-7">Download updates automatically (prompts to restart)</div>
+                            <div class="text-sm text-gray-12">{translate("settings.auto_update_label")}</div>
+                            <div class="text-xs text-gray-7">{translate("settings.auto_update_hint")}</div>
                           </div>
                           <button
                             class={`min-w-[70px] px-4 py-1.5 rounded-full text-xs font-medium border shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-colors ${
@@ -1489,7 +1489,7 @@ export default function SettingsView(props: SettingsViewProps) {
                             }`}
                             onClick={props.toggleUpdateAutoDownload}
                           >
-                            {props.updateAutoDownload ? "On" : "Off"}
+                            {props.updateAutoDownload ? translate("settings.on") : translate("settings.off")}
                           </button>
                         </div>
 
@@ -1497,21 +1497,23 @@ export default function SettingsView(props: SettingsViewProps) {
                           <div class="space-y-0.5">
                             <div class="text-sm text-gray-12">
                               <Switch>
-                                <Match when={updateState() === "checking"}>Checking...</Match>
-                                <Match when={updateState() === "available"}>Update available: v{updateVersion()}</Match>
-                                <Match when={updateState() === "downloading"}>Downloading...</Match>
-                                <Match when={updateState() === "ready"}>Ready to install: v{updateVersion()}</Match>
-                                <Match when={updateState() === "error"}>Update check failed</Match>
-                                <Match when={true}>Up to date</Match>
+                                <Match when={updateState() === "checking"}>{translate("settings.update_checking")}</Match>
+                                <Match when={updateState() === "available"}>{translate("settings.update_available")}{updateVersion()}</Match>
+                                <Match when={updateState() === "downloading"}>{translate("settings.update_downloading")}</Match>
+                                <Match when={updateState() === "ready"}>{translate("settings.update_ready")}{updateVersion()}</Match>
+                                <Match when={updateState() === "error"}>{translate("settings.update_error")}</Match>
+                                <Match when={true}>{translate("settings.update_uptodate")}</Match>
                               </Switch>
                             </div>
                             <Show when={updateState() === "idle" && updateLastCheckedAt()}>
                               <div class="text-xs text-gray-7">
-                                Last checked {formatRelativeTime(updateLastCheckedAt() as number)}
+                                {translate("settings.last_checked_time").replace("{time}", formatRelativeTime(updateLastCheckedAt() as number))}
                               </div>
                             </Show>
                             <Show when={updateState() === "available" && updateDate()}>
-                              <div class="text-xs text-gray-7">Published {updateDate()}</div>
+                              <div class="text-xs text-gray-7">
+                                {translate("settings.published_date").replace("{date}", updateDate() ?? "")}
+                              </div>
                             </Show>
                             <Show when={updateState() === "downloading"}>
                               <div class="text-xs text-gray-7">
@@ -1533,7 +1535,7 @@ export default function SettingsView(props: SettingsViewProps) {
                               onClick={props.checkForUpdates}
                               disabled={props.busy || updateState() === "checking" || updateState() === "downloading"}
                             >
-                              Check
+                              {translate("settings.check_update")}
                             </Button>
 
                             <Show when={updateState() === "available"}>
@@ -1543,7 +1545,7 @@ export default function SettingsView(props: SettingsViewProps) {
                                 onClick={props.downloadUpdate}
                                 disabled={props.busy || updateState() === "downloading"}
                               >
-                                Download
+                                {translate("settings.download_update")}
                               </Button>
                             </Show>
 
@@ -1553,9 +1555,9 @@ export default function SettingsView(props: SettingsViewProps) {
                                 class="text-xs h-9 py-0 px-4 rounded-full"
                                 onClick={props.installUpdateAndRestart}
                                 disabled={props.busy || props.anyActiveRuns}
-                                title={props.anyActiveRuns ? "Stop active runs to update" : ""}
+                                title={props.anyActiveRuns ? translate("settings.stop_runs_to_update") : ""}
                               >
-                                Install & Restart
+                                {translate("settings.install_restart")}
                               </Button>
                             </Show>
                           </div>
@@ -1570,13 +1572,13 @@ export default function SettingsView(props: SettingsViewProps) {
                     }
                   >
                     <div class="rounded-xl bg-gray-1/20 border border-gray-6 p-3 text-sm text-gray-11">
-                      {props.updateEnv?.reason ?? "Updates are not supported in this environment."}
+                      {props.updateEnv?.reason ?? translate("settings.updates_not_supported")}
                     </div>
                   </Show>
                 }
               >
                 <div class="rounded-xl bg-gray-1/20 border border-gray-6 p-3 text-sm text-gray-11">
-                  Updates are only available in the desktop app.
+                  {translate("settings.updates_desktop_only")}
                 </div>
               </Show>
             </div>
@@ -1584,16 +1586,14 @@ export default function SettingsView(props: SettingsViewProps) {
             <Show when={isTauriRuntime()}>
               <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
                 <div>
-                  <div class="text-sm font-medium text-gray-12">Appearance</div>
-                  <div class="text-xs text-gray-10">Customize window appearance.</div>
+                  <div class="text-sm font-medium text-gray-12">{translate("settings.appearance_title")}</div>
+                  <div class="text-xs text-gray-10">{translate("settings.appearance_hint")}</div>
                 </div>
 
                 <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                   <div class="min-w-0">
-                    <div class="text-sm text-gray-12">Hide titlebar</div>
-                    <div class="text-xs text-gray-7">
-                      Hide the window titlebar. Useful for tiling window managers on Linux (Hyprland, i3, sway).
-                    </div>
+                    <div class="text-sm text-gray-12">{translate("settings.hide_titlebar_label")}</div>
+                    <div class="text-xs text-gray-7">{translate("settings.hide_titlebar_hint")}</div>
                   </div>
                   <Button
                     variant="outline"
@@ -1601,7 +1601,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     onClick={props.toggleHideTitlebar}
                     disabled={props.busy}
                   >
-                    {props.hideTitlebar ? "On" : "Off"}
+                    {props.hideTitlebar ? translate("settings.on") : translate("settings.off")}
                   </Button>
                 </div>
               </div>

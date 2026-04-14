@@ -1,15 +1,13 @@
 import type { SettingsTab } from "../types";
 import { currentLocale, t } from "../../i18n";
 
-const settingsTabLabelKeyByTab: Record<SettingsTab, string> = {
+const settingsTabLabelKeyByTab: Partial<Record<SettingsTab, string>> = {
   general: "settings.general",
   archived: "settings.archived",
-  model: "settings.model",
-  advanced: "settings.advanced",
   debug: "settings.debug",
 };
 
-const visibleSettingsTabs: SettingsTab[] = ["general", "archived", "model", "advanced"];
+const visibleSettingsTabs: SettingsTab[] = ["general", "archived"];
 
 export const resolveVisibleSettingsTab = (settingsTab: SettingsTab, developerMode: boolean) => {
   const tabs = developerMode ? [...visibleSettingsTabs, "debug"] : visibleSettingsTabs;
@@ -17,6 +15,6 @@ export const resolveVisibleSettingsTab = (settingsTab: SettingsTab, developerMod
 };
 
 export const resolveSettingsTabLabel = (tab: SettingsTab) => {
-  const key = settingsTabLabelKeyByTab[tab] ?? settingsTabLabelKeyByTab.general;
+  const key = settingsTabLabelKeyByTab[tab] ?? settingsTabLabelKeyByTab.general ?? "settings.general";
   return t(key, currentLocale());
 };

@@ -676,6 +676,8 @@ export default {
   "settings.updates_hint": "Keep Veslo up to date.",
   "settings.automatic_checks_label": "Automatic checks",
   "settings.automatic_checks_hint": "Once per day (quiet)",
+  "settings.auto_update_label": "Auto-update",
+  "settings.auto_update_hint": "Download updates automatically (prompts to restart).",
   "settings.last_checked_time": "Last checked {time}",
   "settings.published_date": "Published {date}",
   "settings.update_not_supported_hint": "Updates are not supported in this environment.",
@@ -705,6 +707,9 @@ export default {
   "settings.stop_active_runs_reset_hint": "Stop active runs to reset",
   "settings.stop_runs_to_update": "Stop active runs to update",
   "settings.stop_runs_to_reset": "Stop active runs to reset",
+  "settings.retry": "Retry",
+  "settings.hide_titlebar_label": "Hide titlebar",
+  "settings.hide_titlebar_hint": "Hide the window titlebar. Useful for tiling window managers on Linux (Hyprland, i3, sway).",
   "settings.updates_not_supported": "Updates are not supported in this environment.",
   "settings.updates_desktop_only": "Updates are only available in the desktop app.",
 
