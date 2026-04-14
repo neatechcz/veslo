@@ -305,6 +305,10 @@ test("dashboard header shows update controls next to the settings title", () => 
     headerSource,
     /<Show when=\{showSettingsHeaderUpdateControls\(\)\}>[\s\S]*settingsHeaderUpdateLabel\(\)[\s\S]*settingsHeaderUpdateActionLabel\(\)[\s\S]*onClick=\{handleSettingsHeaderUpdateAction\}/,
   );
+  assert.doesNotMatch(
+    headerSource,
+    /<Show when=\{showSettingsHeaderUpdateControls\(\)\}>[\s\S]*class="hidden md:flex items-center gap-2"/,
+  );
 });
 
 test("dashboard centers the titlebar on the active settings subsection", () => {
