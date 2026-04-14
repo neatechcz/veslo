@@ -8,6 +8,16 @@ export type DashboardTabSelectionAction =
   | { kind: "open-dashboard-tab"; tab: DashboardTab }
   | { kind: "return-to-session"; sessionId: string };
 
+type DashboardEscapeShortcutInput = {
+  key: string;
+  defaultPrevented: boolean;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+  modalOpen: boolean;
+};
+
 type ResolveLeftMenuActionInput = {
   tab: DashboardTab;
   selectedSessionId: string | null | undefined;
@@ -56,4 +66,12 @@ export function resolveDashboardTabSelectionAction(
   }
 
   return { kind: "open-dashboard-tab", tab: input.nextTab };
+}
+
+export function shouldReturnToSessionOnEscape(input: DashboardEscapeShortcutInput): boolean {
+  if (input.key !== "Escape") return false;
+  if (input.defaultPrevented) return false;
+  if (input.metaKey || input.ctrlKey || input.altKey || input.shiftKey) return false;
+  if (input.modalOpen) return false;
+  return true;
 }

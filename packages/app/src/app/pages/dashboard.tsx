@@ -79,7 +79,11 @@ import {
   createSessionWithWorkspaceActivation,
   openSessionWithWorkspaceActivation,
 } from "./session-navigation";
-import { resolveDashboardTabSelectionAction, resolveLeftMenuAction } from "./dashboard-menu-navigation";
+import {
+  resolveDashboardTabSelectionAction,
+  resolveLeftMenuAction,
+  shouldReturnToSessionOnEscape,
+} from "./dashboard-menu-navigation";
 import { resolveSettingsTabLabel, resolveVisibleSettingsTab } from "../lib/settings-tab-label";
 import {
   ArrowLeft,
@@ -1373,6 +1377,27 @@ export default function DashboardView(props: DashboardViewProps) {
     const sessionId = props.selectedSessionId?.trim();
     props.setView("session", sessionId);
   };
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!shouldReturnToSessionOnEscape({
+        key: event.key,
+        defaultPrevented: event.defaultPrevented,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+        modalOpen: Boolean(window.document.querySelector(".fixed.inset-0.z-50")),
+      })) {
+        return;
+      }
+      event.preventDefault();
+      returnToSession();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  });
 
   return (
     <div class={`flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden ${titlebarContentInsetClass()}`}>

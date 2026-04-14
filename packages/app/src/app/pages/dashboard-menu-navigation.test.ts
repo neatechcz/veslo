@@ -15,6 +15,19 @@ const resolveDashboardTabSelectionAction = (
     }) => unknown;
   }
 ).resolveDashboardTabSelectionAction;
+const shouldReturnToSessionOnEscape = (
+  dashboardMenuNavigation as {
+    shouldReturnToSessionOnEscape?: (input: {
+      key: string;
+      defaultPrevented: boolean;
+      metaKey: boolean;
+      ctrlKey: boolean;
+      altKey: boolean;
+      shiftKey: boolean;
+      modalOpen: boolean;
+    }) => boolean;
+  }
+).shouldReturnToSessionOnEscape;
 
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
 const settingsSource = readFileSync(new URL("./settings.tsx", import.meta.url), "utf8");
@@ -117,6 +130,42 @@ test("keeps opening dashboard tabs when selecting a different destination", () =
   assert.deepEqual(result, { kind: "open-dashboard-tab", tab: "scheduled" });
 });
 
+test("dashboard escape returns to session when no modal or modifier blocks it", () => {
+  assert.equal(typeof shouldReturnToSessionOnEscape, "function");
+  if (typeof shouldReturnToSessionOnEscape !== "function") return;
+
+  const result = shouldReturnToSessionOnEscape({
+    key: "Escape",
+    defaultPrevented: false,
+    metaKey: false,
+    ctrlKey: false,
+    altKey: false,
+    shiftKey: false,
+    modalOpen: false,
+  });
+
+  assert.equal(result, true);
+});
+
+test("dashboard escape stays inactive when the event is already handled, modified, or blocked by a modal", () => {
+  assert.equal(typeof shouldReturnToSessionOnEscape, "function");
+  if (typeof shouldReturnToSessionOnEscape !== "function") return;
+
+  const cases = [
+    { key: "Enter", defaultPrevented: false, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, modalOpen: false },
+    { key: "Escape", defaultPrevented: true, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, modalOpen: false },
+    { key: "Escape", defaultPrevented: false, metaKey: true, ctrlKey: false, altKey: false, shiftKey: false, modalOpen: false },
+    { key: "Escape", defaultPrevented: false, metaKey: false, ctrlKey: true, altKey: false, shiftKey: false, modalOpen: false },
+    { key: "Escape", defaultPrevented: false, metaKey: false, ctrlKey: false, altKey: true, shiftKey: false, modalOpen: false },
+    { key: "Escape", defaultPrevented: false, metaKey: false, ctrlKey: false, altKey: false, shiftKey: true, modalOpen: false },
+    { key: "Escape", defaultPrevented: false, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, modalOpen: true },
+  ];
+
+  for (const input of cases) {
+    assert.equal(shouldReturnToSessionOnEscape(input), false);
+  }
+});
+
 test("dashboard routes the left titlebar button through the helper", () => {
   assert.match(leftMenuHandlerSource, /const\s+leftMenuAction\s*=\s*createMemo\s*\(\s*\(\)\s*=>\s*resolveLeftMenuAction\s*\(\s*\{/s);
   assert.match(leftMenuHandlerSource, /const\s+leftMenuLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>\s*leftMenuAction\(\)\.kind\s*===\s*["']return-to-session["']/s);
@@ -196,6 +245,29 @@ test("dashboard routes active nav re-clicks through the session return helper", 
   assert.match(
     dashboardSource,
     /onClick\s*=\s*\{\s*\(\)\s*=>\s*handleDashboardTabSelection\s*\(\s*["']scheduled["']\s*\)\s*\}/,
+  );
+});
+
+test("dashboard wires escape to the same return-to-session action as the header back button", () => {
+  assert.match(
+    dashboardSource,
+    /import\s*\{[^}]*shouldReturnToSessionOnEscape[^}]*\}\s*from\s*["']\.\/dashboard-menu-navigation["'];/,
+  );
+  assert.match(
+    dashboardSource,
+    /createEffect\(\(\)\s*=>\s*\{\s*if\s*\(\s*typeof window === ["']undefined["']\s*\)\s*return;\s*const onKeyDown = \(event: KeyboardEvent\) => \{/s,
+  );
+  assert.match(
+    dashboardSource,
+    /shouldReturnToSessionOnEscape\(\s*\{\s*key:\s*event\.key,\s*defaultPrevented:\s*event\.defaultPrevented,\s*metaKey:\s*event\.metaKey,\s*ctrlKey:\s*event\.ctrlKey,\s*altKey:\s*event\.altKey,\s*shiftKey:\s*event\.shiftKey,\s*modalOpen:\s*Boolean\(window\.document\.querySelector\(\s*["']\.fixed\.inset-0\.z-50["']\s*\)\),?\s*\}\s*\)/s,
+  );
+  assert.match(
+    dashboardSource,
+    /event\.preventDefault\(\);\s*returnToSession\(\);/s,
+  );
+  assert.match(
+    dashboardSource,
+    /window\.addEventListener\(\s*["']keydown["']\s*,\s*onKeyDown\s*\);/s,
   );
 });
 
