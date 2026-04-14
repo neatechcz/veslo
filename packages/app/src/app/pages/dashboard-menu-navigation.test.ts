@@ -223,6 +223,18 @@ test("dashboard header keeps back-to-chat visible even without a selected sessio
   );
 });
 
+test("dashboard header shows update controls next to the settings title", () => {
+  assert.match(dashboardSource, /const\s+showSettingsHeaderUpdateControls\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
+  assert.match(dashboardSource, /props\.tab\s*===\s*["']settings["']/);
+  assert.match(dashboardSource, /const\s+settingsHeaderUpdateLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
+  assert.match(dashboardSource, /const\s+settingsHeaderUpdateActionLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
+  assert.match(dashboardSource, /const\s+handleSettingsHeaderUpdateAction\s*=\s*\(\)\s*=>/);
+  assert.match(
+    headerSource,
+    /<Show when=\{showSettingsHeaderUpdateControls\(\)\}>[\s\S]*settingsHeaderUpdateLabel\(\)[\s\S]*settingsHeaderUpdateActionLabel\(\)[\s\S]*onClick=\{handleSettingsHeaderUpdateAction\}/,
+  );
+});
+
 test("dashboard centers the titlebar on the active settings subsection", () => {
   assert.match(
     dashboardSource,
