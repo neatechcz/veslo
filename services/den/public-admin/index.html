@@ -117,6 +117,7 @@
               <input class="input" type="search" placeholder="Search provider, state, or secret ref" />
               <select class="input">
                 <option>All providers</option>
+                <option>Codex / ChatGPT</option>
                 <option>OpenAI</option>
                 <option>Anthropic</option>
                 <option>Google</option>
@@ -129,33 +130,34 @@
               </select>
             </div>
             <div class="credential-create-card detail-card">
-              <p class="eyebrow">Platform credentials</p>
-              <h3>Connect OpenAI or store the shared Anthropic key</h3>
+              <p class="eyebrow">Primary runtime profile</p>
+              <h3>Codex / ChatGPT runtime profile</h3>
+              <p class="editor-note">Server-side Codex worker profile routes Veslo prompts through DEN. Provision the worker with <code>MANAGED_AI_CODEX_HOME</code> and validate it with the Codex probe.</p>
               <div class="stack">
                 <div class="detail-card">
-                  <p class="eyebrow">OpenAI</p>
-                  <h4>Shared OAuth connection</h4>
-                  <p class="editor-note" id="credential-openai-status">Connect the platform OpenAI account with OAuth.</p>
+                  <p class="eyebrow">Legacy OpenAI fallback</p>
+                  <h4>Provider OAuth fallback</h4>
+                  <p class="editor-note" id="credential-openai-status">Fallback only: connect platform OpenAI OAuth if Codex worker routing is disabled.</p>
                   <div class="button-row">
-                    <button class="button button-primary" id="credential-openai-connect" type="button">Connect OpenAI</button>
+                    <button class="button button-primary" id="credential-openai-connect" type="button">Connect OpenAI fallback</button>
                   </div>
                 </div>
                 <div class="detail-card">
-                  <p class="eyebrow">Anthropic</p>
-                  <h4>Shared API key</h4>
+                  <p class="eyebrow">Legacy Anthropic fallback</p>
+                  <h4>Provider API-key fallback</h4>
                   <div class="credential-create-grid">
                     <label>
                       <span>Display name</span>
-                      <input class="input" id="credential-anthropic-name" type="text" placeholder="Shared Anthropic key" />
+                      <input class="input" id="credential-anthropic-name" type="text" placeholder="Shared Anthropic fallback key" />
                     </label>
                   </div>
                   <label class="credential-create-secret-field">
                     <span>API secret</span>
-                    <textarea class="input ai-access-textarea" id="credential-anthropic-secret" placeholder="Paste the Anthropic API key."></textarea>
+                    <textarea class="input ai-access-textarea" id="credential-anthropic-secret" placeholder="Paste the Anthropic fallback API key."></textarea>
                   </label>
                   <div class="button-row">
-                    <button class="button button-primary" id="credential-anthropic-submit" type="button">Save Anthropic key</button>
-                    <p class="editor-note credential-create-status" id="credential-anthropic-status">Secrets stay encrypted and are assigned to the Anthropic platform pool.</p>
+                    <button class="button button-primary" id="credential-anthropic-submit" type="button">Save Anthropic fallback key</button>
+                    <p class="editor-note credential-create-status" id="credential-anthropic-status">Fallback only: API-key pool for legacy direct provider routing.</p>
                   </div>
                 </div>
               </div>
@@ -497,19 +499,20 @@
                       <span>Assigned provider</span>
                       <select id="user-ai-access-provider" class="input">
                         <option value="">Not assigned</option>
-                        <option value="openai">OpenAI</option>
-                        <option value="anthropic">Anthropic</option>
+                        <option value="codex_oauth">Codex / ChatGPT runtime</option>
+                        <option value="openai">OpenAI legacy fallback</option>
+                        <option value="anthropic">Anthropic legacy fallback</option>
                       </select>
                     </label>
                     <label>
                       <span>Default model</span>
-                      <input id="user-ai-access-default-model" class="input" placeholder="gpt-4o-mini" />
+                      <input id="user-ai-access-default-model" class="input" placeholder="gpt-5.4" />
                     </label>
                     <label>
                       <span>Allowed models</span>
                       <textarea id="user-ai-access-allowed-models" class="input ai-access-textarea" placeholder="One model per line or comma-separated"></textarea>
                     </label>
-                    <p id="user-ai-access-status" class="editor-note muted">Assignments are enforced by the gateway for this signed-in user.</p>
+                    <p id="user-ai-access-status" class="editor-note muted">Assignments are enforced by DEN and route codex_oauth prompts through the server-side worker.</p>
                   </section>
                 </form>
                 <div class="button-row">

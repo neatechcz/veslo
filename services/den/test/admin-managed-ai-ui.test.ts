@@ -67,7 +67,7 @@ function createUiApp() {
   return app
 }
 
-test("GET /admin/credentials serves the DEN admin shell with OpenAI connect and Anthropic key controls", async () => {
+test("GET /admin/credentials serves the DEN admin shell with Codex runtime controls and fallback provider credentials", async () => {
   const app = createUiApp()
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -82,12 +82,17 @@ test("GET /admin/credentials serves the DEN admin shell with OpenAI connect and 
     assert.match(html, /Credentials/i)
     assert.match(html, /Users/i)
     assert.match(html, /Sign in with Browser/i)
+    assert.match(html, /Codex \/ ChatGPT runtime profile/i)
+    assert.match(html, /Server-side Codex worker profile/i)
+    assert.match(html, /Legacy OpenAI fallback/i)
+    assert.match(html, /Legacy Anthropic fallback/i)
     assert.match(html, /id="credential-openai-connect"/)
     assert.match(html, /id="credential-openai-status"/)
     assert.match(html, /id="credential-anthropic-name"/)
     assert.match(html, /id="credential-anthropic-secret"/)
     assert.match(html, /id="credential-anthropic-submit"/)
     assert.match(html, /id="user-ai-access-provider"/)
+    assert.match(html, /<option value="codex_oauth">Codex \/ ChatGPT runtime<\/option>/)
   } finally {
     server.close()
     await once(server, "close")
@@ -111,6 +116,8 @@ test("GET /admin/app.js uses DEN desktop auth and OpenAI OAuth credential routes
     assert.match(script, /\/credentials\/openai\/oauth\/exchange/)
     assert.match(script, /credential-openai-connect/)
     assert.match(script, /credential-anthropic-submit/)
+    assert.match(script, /Fallback only: connect platform OpenAI OAuth/)
+    assert.match(script, /Anthropic legacy fallback/)
     assert.match(
       script,
       /const shouldClearToken = payload\?\.error === "unauthorized" \|\| payload\?\.error === "forbidden"/,

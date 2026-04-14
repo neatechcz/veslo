@@ -408,7 +408,7 @@ function setActivePage(page) {
 
   const titles = {
     overview: ["Veslo managed AI", "Overview", "Inspect credentials, sessions, usage, alerts, users, and audit events from one place."],
-    credentials: ["Veslo managed AI", "Credentials", "Connect OpenAI, store the shared Anthropic key, and inspect platform credential health."],
+    credentials: ["Veslo managed AI", "Credentials", "Use the Codex/ChatGPT runtime profile first; OpenAI and Anthropic credentials are legacy fallbacks."],
     sessions: ["Veslo managed AI", "Sessions", "Review sticky leases, rebinding history, and worker ownership."],
     usage: ["Veslo managed AI", "Usage", "Analyze total token usage first, then break it down by credential, user, or org."],
     alerts: ["Veslo managed AI", "Alerts", "Triage credential failures, usage spikes, and session anomalies."],
@@ -798,11 +798,11 @@ function renderCredentials() {
   if (openAiCredential) {
     const tone = openAiCredential.state === "healthy" ? "success" : openAiCredential.state === "revoked" ? "error" : "pending";
     setOpenAiCredentialStatus(
-      `OpenAI connected as ${openAiCredential.name} (${openAiCredential.state}).`,
+      `Legacy OpenAI fallback connected as ${openAiCredential.name} (${openAiCredential.state}).`,
       tone,
     );
   } else {
-    setOpenAiCredentialStatus("Connect the platform OpenAI account with OAuth.");
+    setOpenAiCredentialStatus("Fallback only: connect platform OpenAI OAuth if Codex worker routing is disabled.");
   }
 
   const rows = state.credentials.map((credential) => {
@@ -1154,12 +1154,12 @@ async function createAnthropicCredential() {
   const secret = els.credentialAnthropicSecret.value.trim();
 
   if (!secret) {
-    setAnthropicCredentialStatus("Anthropic secret is required.", "error");
+    setAnthropicCredentialStatus("Anthropic legacy fallback secret is required.", "error");
     return;
   }
 
   els.credentialAnthropicSubmit.disabled = true;
-  setAnthropicCredentialStatus("Saving Anthropic credential", "pending");
+  setAnthropicCredentialStatus("Saving Anthropic legacy fallback", "pending");
 
   try {
     const requestBody = { provider: "anthropic", secret };
@@ -1173,11 +1173,11 @@ async function createAnthropicCredential() {
     });
     state.selectedCredentialId = payload?.credential?.id || state.selectedCredentialId;
     resetAnthropicCredentialForm();
-    setAnthropicCredentialStatus("Anthropic credential saved to the platform pool.", "success");
+    setAnthropicCredentialStatus("Anthropic legacy fallback saved to the platform pool.", "success");
     await refreshCredentialOperations();
   } catch (error) {
     setAnthropicCredentialStatus(
-      `Unable to save Anthropic credential: ${error instanceof Error ? error.message : "unknown_error"}`,
+      `Unable to save Anthropic legacy fallback: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
   } finally {
