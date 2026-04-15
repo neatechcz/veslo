@@ -25,6 +25,8 @@ const shouldReturnToSessionOnEscape = (
       altKey: boolean;
       shiftKey: boolean;
       modalOpen: boolean;
+      targetTagName: string | null;
+      targetIsContentEditable: boolean;
     }) => boolean;
   }
 ).shouldReturnToSessionOnEscape;
@@ -142,6 +144,8 @@ test("dashboard escape returns to session when no modal or modifier blocks it", 
     altKey: false,
     shiftKey: false,
     modalOpen: false,
+    targetTagName: null,
+    targetIsContentEditable: false,
   });
 
   assert.equal(result, true);
@@ -152,17 +156,42 @@ test("dashboard escape stays inactive when the event is already handled, modifie
   if (typeof shouldReturnToSessionOnEscape !== "function") return;
 
   const cases = [
-    { key: "Enter", defaultPrevented: false, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, modalOpen: false },
-    { key: "Escape", defaultPrevented: true, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, modalOpen: false },
-    { key: "Escape", defaultPrevented: false, metaKey: true, ctrlKey: false, altKey: false, shiftKey: false, modalOpen: false },
-    { key: "Escape", defaultPrevented: false, metaKey: false, ctrlKey: true, altKey: false, shiftKey: false, modalOpen: false },
-    { key: "Escape", defaultPrevented: false, metaKey: false, ctrlKey: false, altKey: true, shiftKey: false, modalOpen: false },
-    { key: "Escape", defaultPrevented: false, metaKey: false, ctrlKey: false, altKey: false, shiftKey: true, modalOpen: false },
-    { key: "Escape", defaultPrevented: false, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, modalOpen: true },
+    { key: "Enter", defaultPrevented: false, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, modalOpen: false, targetTagName: null, targetIsContentEditable: false },
+    { key: "Escape", defaultPrevented: true, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, modalOpen: false, targetTagName: null, targetIsContentEditable: false },
+    { key: "Escape", defaultPrevented: false, metaKey: true, ctrlKey: false, altKey: false, shiftKey: false, modalOpen: false, targetTagName: null, targetIsContentEditable: false },
+    { key: "Escape", defaultPrevented: false, metaKey: false, ctrlKey: true, altKey: false, shiftKey: false, modalOpen: false, targetTagName: null, targetIsContentEditable: false },
+    { key: "Escape", defaultPrevented: false, metaKey: false, ctrlKey: false, altKey: true, shiftKey: false, modalOpen: false, targetTagName: null, targetIsContentEditable: false },
+    { key: "Escape", defaultPrevented: false, metaKey: false, ctrlKey: false, altKey: false, shiftKey: true, modalOpen: false, targetTagName: null, targetIsContentEditable: false },
+    { key: "Escape", defaultPrevented: false, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, modalOpen: true, targetTagName: null, targetIsContentEditable: false },
   ];
 
   for (const input of cases) {
     assert.equal(shouldReturnToSessionOnEscape(input), false);
+  }
+});
+
+test("dashboard escape stays inactive when typing inside editable controls", () => {
+  assert.equal(typeof shouldReturnToSessionOnEscape, "function");
+  if (typeof shouldReturnToSessionOnEscape !== "function") return;
+
+  const cases = [
+    { targetTagName: "INPUT", targetIsContentEditable: false },
+    { targetTagName: "TEXTAREA", targetIsContentEditable: false },
+    { targetTagName: "SELECT", targetIsContentEditable: false },
+    { targetTagName: "DIV", targetIsContentEditable: true },
+  ];
+
+  for (const editableTarget of cases) {
+    assert.equal(shouldReturnToSessionOnEscape({
+      key: "Escape",
+      defaultPrevented: false,
+      metaKey: false,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      modalOpen: false,
+      ...editableTarget,
+    }), false);
   }
 });
 
@@ -257,9 +286,10 @@ test("dashboard wires escape to the same return-to-session action as the header 
     dashboardSource,
     /createEffect\(\(\)\s*=>\s*\{\s*if\s*\(\s*typeof window === ["']undefined["']\s*\)\s*return;\s*const onKeyDown = \(event: KeyboardEvent\) => \{/s,
   );
+  assert.match(dashboardSource, /const target = event\.target instanceof Element \? event\.target : null;/);
   assert.match(
     dashboardSource,
-    /shouldReturnToSessionOnEscape\(\s*\{\s*key:\s*event\.key,\s*defaultPrevented:\s*event\.defaultPrevented,\s*metaKey:\s*event\.metaKey,\s*ctrlKey:\s*event\.ctrlKey,\s*altKey:\s*event\.altKey,\s*shiftKey:\s*event\.shiftKey,\s*modalOpen:\s*Boolean\(window\.document\.querySelector\(\s*["']\.fixed\.inset-0\.z-50["']\s*\)\),?\s*\}\s*\)/s,
+    /shouldReturnToSessionOnEscape\(\s*\{\s*key:\s*event\.key,\s*defaultPrevented:\s*event\.defaultPrevented,\s*metaKey:\s*event\.metaKey,\s*ctrlKey:\s*event\.ctrlKey,\s*altKey:\s*event\.altKey,\s*shiftKey:\s*event\.shiftKey,\s*modalOpen:\s*Boolean\(window\.document\.querySelector\(\s*["']\.fixed\.inset-0\.z-50["']\s*\)\),\s*targetTagName:\s*target\?\.tagName\s*\?\?\s*null,\s*targetIsContentEditable:\s*target\s+instanceof\s+HTMLElement\s*\?\s*target\.isContentEditable\s*:\s*false,\s*\}\s*\)/s,
   );
   assert.match(
     dashboardSource,

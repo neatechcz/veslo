@@ -16,6 +16,8 @@ type DashboardEscapeShortcutInput = {
   altKey: boolean;
   shiftKey: boolean;
   modalOpen: boolean;
+  targetTagName: string | null;
+  targetIsContentEditable: boolean;
 };
 
 type ResolveLeftMenuActionInput = {
@@ -73,5 +75,8 @@ export function shouldReturnToSessionOnEscape(input: DashboardEscapeShortcutInpu
   if (input.defaultPrevented) return false;
   if (input.metaKey || input.ctrlKey || input.altKey || input.shiftKey) return false;
   if (input.modalOpen) return false;
+  if (input.targetIsContentEditable) return false;
+  const tagName = input.targetTagName?.toUpperCase() ?? "";
+  if (tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT") return false;
   return true;
 }

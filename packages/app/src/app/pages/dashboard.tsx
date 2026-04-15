@@ -1307,6 +1307,7 @@ export default function DashboardView(props: DashboardViewProps) {
   createEffect(() => {
     if (typeof window === "undefined") return;
     const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
       if (!shouldReturnToSessionOnEscape({
         key: event.key,
         defaultPrevented: event.defaultPrevented,
@@ -1315,6 +1316,8 @@ export default function DashboardView(props: DashboardViewProps) {
         altKey: event.altKey,
         shiftKey: event.shiftKey,
         modalOpen: Boolean(window.document.querySelector(".fixed.inset-0.z-50")),
+        targetTagName: target?.tagName ?? null,
+        targetIsContentEditable: target instanceof HTMLElement ? target.isContentEditable : false,
       })) {
         return;
       }
