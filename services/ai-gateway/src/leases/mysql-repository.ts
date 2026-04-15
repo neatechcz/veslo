@@ -39,15 +39,28 @@ export class MySqlLeaseRepository implements LeaseRepository {
     }
 
     const createdAt = new Date();
-    await this.db.insert(sessionLeaseTable).values({
-      id: createLeaseId(input),
-      owner_user_id: input.ownerUserId,
-      provider: input.provider,
-      session_id: input.sessionId,
-      active_binding_id: input.activeBindingId,
-      created_at: createdAt,
-      updated_at: createdAt,
-    });
+    try {
+      await this.db.insert(sessionLeaseTable).values({
+        id: createLeaseId(input),
+        owner_user_id: input.ownerUserId,
+        provider: input.provider,
+        session_id: input.sessionId,
+        active_binding_id: input.activeBindingId,
+        created_at: createdAt,
+        updated_at: createdAt,
+      });
+    } catch (error) {
+      if (!isDuplicateEntryError(error)) {
+        throw error;
+      }
+
+      const winningLease = await this.getActiveLease(input);
+      if (winningLease) {
+        return winningLease;
+      }
+
+      throw error;
+    }
 
     return (await this.getActiveLease(input)) ?? {
       id: createLeaseId(input),
@@ -103,4 +116,21 @@ function createLeaseId(input: ResolveLeaseInput): string {
     .slice(0, 32);
 
   return `lease_${input.provider}_${digest}`;
+}
+
+function isDuplicateEntryError(error: unknown): boolean {
+  let candidate = error;
+  const seen = new Set<unknown>();
+
+  while (candidate && typeof candidate === "object" && !seen.has(candidate)) {
+    seen.add(candidate);
+    const record = candidate as Record<string, unknown>;
+    const message = typeof record.message === "string" ? record.message : "";
+    if (record.code === "ER_DUP_ENTRY" || record.errno === 1062 || message.includes("Duplicate entry")) {
+      return true;
+    }
+    candidate = record.cause;
+  }
+
+  return false;
 }
