@@ -5,7 +5,7 @@ import test from "node:test";
 import { createRoot, createSignal } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 
-import { createSessionStore, type SessionModelState } from "./session.js";
+import { createSessionStore } from "./session.js";
 
 const makeTextPart = (): Part => ({
   id: "part-1",
@@ -36,19 +36,12 @@ test("hydrateTranscriptSnapshot stores messages and keeps the current selection 
   createRoot((dispose) => {
     try {
       const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>("sess-b");
-      let sessionModelState: SessionModelState = { overrides: {}, resolved: {} };
 
       const store = createSessionStore({
         client: () => null,
         activeWorkspaceRoot: () => "",
         selectedSessionId,
         setSelectedSessionId,
-        sessionModelState: () => sessionModelState,
-        setSessionModelState: (updater) => {
-          sessionModelState = updater(sessionModelState);
-          return sessionModelState;
-        },
-        lastUserModelFromMessages: () => null,
         developerMode: () => false,
         setError: () => {},
         setSseConnected: () => {},

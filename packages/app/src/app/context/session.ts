@@ -827,22 +827,6 @@ export function createSessionStore(options: {
       setMessageLimitBySession((prev) => ({ ...prev, [sessionID]: requestLimit }));
       setMessageCompleteBySession((prev) => ({ ...prev, [sessionID]: msgs.length < requestLimit }));
 
-      const model = options.lastUserModelFromMessages(msgs);
-      if (model) {
-        if (abortIfStale("selection changed before model applied")) return;
-        options.setSessionModelState((current) => ({
-          overrides: current.overrides,
-          resolved: { ...current.resolved, [sessionID]: model },
-        }));
-
-        options.setSessionModelState((current) => {
-          if (!current.overrides[sessionID]) return current;
-          const copy = { ...current.overrides };
-          delete copy[sessionID];
-          return { ...current, overrides: copy };
-        });
-      }
-
       finishPerf(perfEnabled, "session.select", "complete", startedAt, {
         runId,
         sessionID,
