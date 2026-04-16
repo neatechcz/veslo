@@ -150,6 +150,7 @@ export function createSessionStore(options: {
   markReloadRequired?: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
   onHotReloadApplied?: () => void;
   onSessionLoadComplete?: () => void;
+  loadOfflineTranscript?: (sessionID: string, limit: number) => Promise<VesloSessionTranscriptSnapshot | null>;
 }) {
 
   const sessionDebugEnabled = () => options.developerMode();
@@ -772,7 +773,6 @@ export function createSessionStore(options: {
 
   async function selectSession(sessionID: string) {
     const c = options.client();
-    if (!c) return;
 
     const perfEnabled = options.developerMode();
     options.setSelectedSessionId(sessionID);
@@ -816,6 +816,35 @@ export function createSessionStore(options: {
       const existingLimit = messageLimitBySession()[sessionID] ?? 0;
       const requestLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, existingLimit);
       setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
+      if (!c) {
+        try {
+          mark("calling offline transcript fallback", { limit: requestLimit });
+          let snapshot: VesloSessionTranscriptSnapshot | null = null;
+          try {
+            snapshot = (await options.loadOfflineTranscript?.(sessionID, requestLimit)) ?? null;
+          } catch (error) {
+            addError(error);
+            mark("offline transcript fallback failed", {
+              error: error instanceof Error ? error.message : safeStringify(error),
+            });
+            return;
+          }
+          if (abortIfStale("selection changed before offline transcript applied")) return;
+          if (snapshot) {
+            hydrateTranscriptSnapshot(snapshot);
+            setStore("todos", sessionID, []);
+            mark("offline transcript fallback done", {
+              count: snapshot.messages.length,
+              limit: requestLimit,
+            });
+          } else {
+            mark("offline transcript fallback unavailable");
+          }
+        } finally {
+          setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
+        }
+        return;
+      }
       mark("calling session.messages", { limit: requestLimit });
       const msgs = unwrap(
         await withTimeout(c.session.messages({ sessionID, limit: requestLimit }), 12000, "session.messages"),

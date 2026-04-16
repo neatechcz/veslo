@@ -1047,6 +1047,19 @@ export default function App() {
       onHotReloadAppliedHandler?.();
     },
     onSessionLoadComplete: () => setPendingSessionLoad(null),
+    loadOfflineTranscript: async (sessionId, limit) => {
+      if (!isTauriRuntime()) return null;
+      const workspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
+      if (!workspaceRoot) return null;
+      const { readTranscriptFromDb, dbTranscriptToSnapshot } = await import("./lib/db-reader");
+      const transcript = await readTranscriptFromDb(sessionId, limit);
+      return dbTranscriptToSnapshot(
+        sessionId,
+        workspaceStore.activeWorkspaceId().trim(),
+        transcript,
+        limit,
+      );
+    },
   });
 
   const {

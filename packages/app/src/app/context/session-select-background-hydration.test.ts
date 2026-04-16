@@ -132,3 +132,79 @@ test("selectSession completes initial transcript load without waiting for health
     }
   });
 });
+
+test("selectSession still completes the load lifecycle when no client is available", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
+      let loadCompleteCount = 0;
+
+      const store = createSessionStore({
+        client: () => null,
+        activeWorkspaceRoot: () => "",
+        selectedSessionId,
+        setSelectedSessionId,
+        developerMode: () => false,
+        setError: () => {},
+        setSseConnected: () => {},
+        onSessionLoadComplete: () => {
+          loadCompleteCount += 1;
+        },
+      });
+
+      await store.selectSession("sess-missing-client");
+
+      assert.equal(selectedSessionId(), "sess-missing-client");
+      assert.equal(loadCompleteCount, 1);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("selectSession hydrates transcript from offline fallback when no client is available", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
+      let loadCompleteCount = 0;
+      let offlineLoadCalls = 0;
+
+      const store = createSessionStore({
+        client: () => null,
+        activeWorkspaceRoot: () => "/tmp/prometheus",
+        selectedSessionId,
+        setSelectedSessionId,
+        developerMode: () => false,
+        setError: () => {},
+        setSseConnected: () => {},
+        onSessionLoadComplete: () => {
+          loadCompleteCount += 1;
+        },
+        loadOfflineTranscript: async (sessionId: string, limit: number) => {
+          offlineLoadCalls += 1;
+          assert.equal(sessionId, "sess-offline");
+          assert.equal(limit, 140);
+          return {
+            workspaceId: "ws-prometheus",
+            sessionId,
+            limit,
+            fetchedAt: Date.now(),
+            messages: [makeMessageInfo()],
+            partsByMessageId: {
+              "msg-1": [makeTextPart()],
+            },
+          };
+        },
+      } as any);
+
+      await store.selectSession("sess-offline");
+
+      assert.equal(selectedSessionId(), "sess-offline");
+      assert.equal(offlineLoadCalls, 1);
+      assert.equal(store.getCachedTranscriptMessageCount("sess-offline"), 1);
+      assert.equal(loadCompleteCount, 1);
+    } finally {
+      dispose();
+    }
+  });
+});
