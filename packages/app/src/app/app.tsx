@@ -1580,6 +1580,27 @@ export default function App() {
     const initialContent = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
     if (!initialContent && !resolvedDraft.attachments.length) return false;
 
+    // In browsing mode, engine is not connected. Start it before sending.
+    if (!engineReady()) {
+      setBusy(true);
+      setBusyLabel("status.connecting");
+      setBusyStartedAt(Date.now());
+      try {
+        const started = await workspaceStore.ensureEngineForWorkspace();
+        if (!started) {
+          setBusy(false);
+          setBusyLabel(null);
+          setBusyStartedAt(null);
+          return false;
+        }
+      } catch {
+        setBusy(false);
+        setBusyLabel(null);
+        setBusyStartedAt(null);
+        return false;
+      }
+    }
+
     const c = client();
     if (!c) return false;
 
