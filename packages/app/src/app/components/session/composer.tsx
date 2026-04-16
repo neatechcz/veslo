@@ -1734,12 +1734,12 @@ export default function Composer(props: ComposerProps) {
                                 if (sending() || props.busy) return;
                                 void sendDraft();
                               }}
-                              class={`shrink-0 p-1.5 rounded-full transition-colors ${
+                              class={`shrink-0 p-1.5 rounded-full ${
                                 sending()
-                                  ? "bg-[#1B29FF] text-white"
-                                  : !hasDraftContent()
+                                  ? "bg-[#1B29FF] text-white pointer-events-none"
+                                  : `transition-colors ${!hasDraftContent()
                                     ? "bg-gray-4 text-gray-10"
-                                    : "bg-[#1B29FF] text-white hover:bg-blue-10"
+                                    : "bg-[#1B29FF] text-white hover:bg-blue-10"}`
                               }`}
                               title={translate("session.send_label")}
                             >
