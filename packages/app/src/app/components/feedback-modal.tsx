@@ -74,6 +74,7 @@ export default function FeedbackModal(props: FeedbackModalProps) {
       typeof document !== "undefined" && document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
+    let focusFrameCancelled = false;
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -126,11 +127,14 @@ export default function FeedbackModal(props: FeedbackModalProps) {
     window.addEventListener("keydown", handleKeyDown, true);
     window.addEventListener("focusin", handleFocusIn, true);
 
-    requestAnimationFrame(() => {
+    const focusFrame = requestAnimationFrame(() => {
+      if (focusFrameCancelled) return;
       focusInitialField();
     });
 
     onCleanup(() => {
+      focusFrameCancelled = true;
+      cancelAnimationFrame(focusFrame);
       window.removeEventListener("keydown", handleKeyDown, true);
       window.removeEventListener("focusin", handleFocusIn, true);
       if (previouslyFocusedElement?.isConnected) {

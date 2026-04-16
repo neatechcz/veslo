@@ -20,3 +20,9 @@ test("feedback modal closes on Escape and traps focus inside the dialog", () => 
   assert.match(source, /dialogRef\.contains\(activeElement\)/, "feedback modal should keep focus within the dialog boundary");
   assert.match(source, /firstFocusable\.focus\(\)|lastFocusable\.focus\(\)/, "feedback modal should wrap focus between the first and last tabbable controls");
 });
+
+test("feedback modal cleans up scheduled initial focus when closing", () => {
+  assert.match(source, /const focusFrame = requestAnimationFrame\(/, "feedback modal should keep a handle for the scheduled initial focus");
+  assert.match(source, /cancelAnimationFrame\(focusFrame\)/, "feedback modal should cancel the scheduled focus frame during cleanup");
+  assert.match(source, /let focusFrameCancelled = false|let isFocusFrameActive = true/, "feedback modal should guard the focus callback against stale execution");
+});
