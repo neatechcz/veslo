@@ -1,290 +1,416 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+
 import * as ts from "typescript";
 
-const appSource = readFileSync(new URL("./app.tsx", import.meta.url), "utf8");
-const dashboardSource = readFileSync(new URL("./pages/dashboard.tsx", import.meta.url), "utf8");
-const sessionSource = readFileSync(new URL("./pages/session.tsx", import.meta.url), "utf8");
+const appSourceText = readFileSync(new URL("./app.tsx", import.meta.url), "utf8");
+const dashboardSourceText = readFileSync(new URL("./pages/dashboard.tsx", import.meta.url), "utf8");
+const sessionSourceText = readFileSync(new URL("./pages/session.tsx", import.meta.url), "utf8");
 
-const appFile = ts.createSourceFile("app.tsx", appSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-const dashboardFile = ts.createSourceFile("dashboard.tsx", dashboardSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-const sessionFile = ts.createSourceFile("session.tsx", sessionSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const appSourceFile = ts.createSourceFile("app.tsx", appSourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const dashboardSourceFile = ts.createSourceFile(
+  "dashboard.tsx",
+  dashboardSourceText,
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TSX,
+);
+const sessionSourceFile = ts.createSourceFile(
+  "session.tsx",
+  sessionSourceText,
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TSX,
+);
 
-function findNode<T extends ts.Node>(root: ts.Node, predicate: (node: ts.Node) => node is T) {
-  let found: T | undefined;
-  const visit = (node: ts.Node) => {
-    if (found) return;
-    if (predicate(node)) {
-      found = node;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(root);
-  return found;
+function visit(node: ts.Node, predicate: (node: ts.Node) => boolean, results: ts.Node[] = []): ts.Node[] {
+  if (predicate(node)) {
+    results.push(node);
+  }
+  ts.forEachChild(node, (child) => {
+    visit(child, predicate, results);
+  });
+  return results;
 }
 
-function findAllNodes<T extends ts.Node>(root: ts.Node, predicate: (node: ts.Node) => node is T) {
-  const nodes: T[] = [];
-  const visit = (node: ts.Node) => {
-    if (predicate(node)) nodes.push(node);
-    ts.forEachChild(node, visit);
-  };
-  visit(root);
-  return nodes;
+function isJsxElementLike(node: ts.Node): node is ts.JsxElement | ts.JsxSelfClosingElement {
+  return ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node);
 }
 
-function getOpeningElement(node: ts.JsxElement | ts.JsxSelfClosingElement) {
+function getJsxTagName(node: ts.JsxElement | ts.JsxSelfClosingElement): string {
+  return getJsxOpeningElement(node).tagName.getText();
+}
+
+function getJsxOpeningElement(node: ts.JsxElement | ts.JsxSelfClosingElement): ts.JsxOpeningLikeElement {
   return ts.isJsxElement(node) ? node.openingElement : node;
 }
 
-function getJsxAttribute(openingElement: ts.JsxOpeningLikeElement, name: string) {
-  return openingElement.attributes.properties.find(
-    (property): property is ts.JsxAttribute => ts.isJsxAttribute(property) && property.name.text === name,
-  );
-}
-
-function getJsxAttributeExpression(openingElement: ts.JsxOpeningLikeElement, name: string) {
-  const attribute = getJsxAttribute(openingElement, name);
-  if (!attribute?.initializer || !ts.isJsxExpression(attribute.initializer)) return undefined;
-  return attribute.initializer.expression ?? undefined;
-}
-
-function findJsxElementInTree(
-  root: ts.Node,
-  tagName: string,
-  predicate?: (openingElement: ts.JsxOpeningLikeElement) => boolean,
-) {
-  return findNode(root, (node): node is ts.JsxElement | ts.JsxSelfClosingElement => {
-    if (!ts.isJsxElement(node) && !ts.isJsxSelfClosingElement(node)) return false;
-    const openingElement = getOpeningElement(node);
-    return openingElement.tagName.getText(openingElement.getSourceFile()) === tagName &&
-      (!predicate || predicate(openingElement));
-  });
-}
-
-function findAllJsxElements(root: ts.Node, tagName: string) {
-  return findAllNodes(root, (node): node is ts.JsxElement | ts.JsxSelfClosingElement => {
-    if (!ts.isJsxElement(node) && !ts.isJsxSelfClosingElement(node)) return false;
-    return getOpeningElement(node).tagName.getText(node.getSourceFile()) === tagName;
-  });
-}
-
-function findTypeAlias(file: ts.SourceFile, name: string) {
-  return file.statements.find(
-    (statement): statement is ts.TypeAliasDeclaration =>
-      ts.isTypeAliasDeclaration(statement) && statement.name.text === name,
-  );
-}
-
-function findFunctionDeclaration(file: ts.SourceFile, name: string) {
-  return file.statements.find(
-    (statement): statement is ts.FunctionDeclaration =>
-      ts.isFunctionDeclaration(statement) && statement.name?.text === name,
-  );
-}
-
-function getTopLevelVariableDeclarations(functionDeclaration: ts.FunctionDeclaration) {
-  const declarations: ts.VariableDeclaration[] = [];
-  for (const statement of functionDeclaration.body?.statements ?? []) {
-    if (!ts.isVariableStatement(statement)) continue;
-    declarations.push(...statement.declarationList.declarations);
-  }
-  return declarations;
-}
-
-function getArrayBindingNames(bindingName: ts.BindingName) {
-  if (!ts.isArrayBindingPattern(bindingName)) return [];
-  return bindingName.elements
-    .map((element) => element.name.getText(element.getSourceFile()))
-    .filter((name): name is string => Boolean(name));
-}
-
-function callInfo(node: ts.Expression | undefined) {
-  if (!node || !ts.isCallExpression(node)) return null;
-  return {
-    callee: node.expression.getText(node.getSourceFile()),
-    args: node.arguments.map((arg) => arg.getText(node.getSourceFile())),
-  };
-}
-
-function containsCall(node: ts.Node, calleeName: string, argText: string) {
-  return Boolean(
-    findNode(node, (current): current is ts.CallExpression =>
-      ts.isCallExpression(current) &&
-      current.expression.getText(current.getSourceFile()) === calleeName &&
-      current.arguments.length === 1 &&
-      current.arguments[0].getText(current.getSourceFile()) === argText,
-    ),
-  );
-}
-
-function getPropNameFromCallbackReference(expr: ts.Expression) {
-  if (ts.isIdentifier(expr)) return expr.text;
-  if (ts.isPropertyAccessExpression(expr)) return expr.name.text;
-  if (ts.isCallExpression(expr)) {
-    if (ts.isIdentifier(expr.expression)) return expr.expression.text;
-    if (ts.isPropertyAccessExpression(expr.expression)) return expr.expression.name.text;
-  }
-  if (ts.isArrowFunction(expr) || ts.isFunctionExpression(expr)) {
-    if (ts.isCallExpression(expr.body)) return getPropNameFromCallbackReference(expr.body.expression);
-    if (ts.isIdentifier(expr.body)) return expr.body.text;
-    if (ts.isPropertyAccessExpression(expr.body)) return expr.body.name.text;
-    if (ts.isBlock(expr.body)) {
-      const returnStatement = expr.body.statements.find(ts.isReturnStatement);
-      if (returnStatement?.expression) return getPropNameFromCallbackReference(returnStatement.expression);
-      const expressionStatement = expr.body.statements.find(ts.isExpressionStatement);
-      if (expressionStatement?.expression) return getPropNameFromCallbackReference(expressionStatement.expression);
+function getJsxAttribute(
+  node: ts.JsxElement | ts.JsxSelfClosingElement,
+  attributeName: string,
+): ts.JsxAttribute | undefined {
+  const opening = getJsxOpeningElement(node);
+  for (const prop of opening.attributes.properties) {
+    if (ts.isJsxAttribute(prop) && prop.name.text === attributeName) {
+      return prop;
     }
   }
-  return null;
+  return undefined;
 }
 
-function feedbackStateFromOpenModal(appFunction: ts.FunctionDeclaration) {
-  const feedbackModal = findJsxElementInTree(appFile, "FeedbackModal");
-  assert.ok(feedbackModal, "App should render FeedbackModal");
-  const openExpr = getJsxAttributeExpression(getOpeningElement(feedbackModal!), "open");
-  assert.ok(openExpr, "FeedbackModal should have an open prop");
-  assert.ok(ts.isCallExpression(openExpr), "FeedbackModal open should be a call expression");
-  assert.ok(ts.isIdentifier(openExpr.expression), "FeedbackModal open should call a signal accessor identifier");
-  const accessorName = openExpr.expression.text;
-
-  const signalDeclaration = getTopLevelVariableDeclarations(appFunction).find((declaration) => {
-    const names = getArrayBindingNames(declaration.name);
-    const info = callInfo(declaration.initializer);
-    return names.length === 2 && names[0] === accessorName && info?.callee === "createSignal" && info.args[0] === "false";
-  });
-  assert.ok(signalDeclaration, "App should own the state backing FeedbackModal");
-
-  const [stateAccessorName, stateSetterName] = getArrayBindingNames(signalDeclaration!.name);
-  return { stateAccessorName, stateSetterName };
-}
-
-function feedbackCallbackFromApp(appFunction: ts.FunctionDeclaration, stateSetterName: string) {
-  const candidate = getTopLevelVariableDeclarations(appFunction).find((declaration) => {
-    if (!ts.isIdentifier(declaration.name)) return false;
-    return containsCall(declaration.initializer ?? declaration.name, stateSetterName, "true");
-  });
-  assert.ok(candidate, "App should define a shared callback that opens the feedback state");
-  return candidate!;
-}
-
-function buttonIsFeedbackLabelled(button: ts.JsxElement | ts.JsxSelfClosingElement) {
-  return /Feedback/i.test(button.getText(button.getSourceFile()));
-}
-
-function pageContract(pageSource: ts.SourceFile, propsTypeName: string) {
-  const propsAlias = findTypeAlias(pageSource, propsTypeName);
-  assert.ok(propsAlias, `${propsTypeName} should exist`);
-  assert.ok(ts.isTypeLiteralNode(propsAlias!.type), `${propsTypeName} should be a type literal`);
-
-  const titlebar = findJsxElementInTree(pageSource, "TitlebarMenuToggles");
-  assert.ok(titlebar, "page should render TitlebarMenuToggles");
-  const rightContentExpr = getJsxAttributeExpression(getOpeningElement(titlebar!), "rightContent");
-  assert.ok(rightContentExpr, "page should pass rightContent to TitlebarMenuToggles");
-  const rightContentButton = findJsxElementInTree(rightContentExpr!, "button");
-  assert.ok(rightContentButton, "rightContent should render a button");
-
-  const onClickExpr = getJsxAttributeExpression(getOpeningElement(rightContentButton!), "onClick");
-  assert.ok(onClickExpr, "feedback button should have an onClick handler");
-  const callbackPropName = getPropNameFromCallbackReference(onClickExpr!);
-  assert.ok(callbackPropName, "feedback button onClick should reference a shared callback prop");
-
-  const propSignature = propsAlias!.type.members.find(
-    (member): member is ts.PropertySignature =>
-      ts.isPropertySignature(member) && member.name.getText(pageSource) === callbackPropName,
-  );
-  assert.ok(propSignature, `${propsTypeName} should declare ${callbackPropName}`);
-  assert.equal(propSignature!.type?.getText(pageSource), "() => void", `${callbackPropName} should be a callback prop`);
-
-  const feedbackButtons = findAllJsxElements(pageSource, "button").filter(buttonIsFeedbackLabelled);
-  assert.equal(feedbackButtons.length, 1, `${propsTypeName} should expose exactly one feedback-labeled button`);
-  assert.equal(feedbackButtons[0], rightContentButton, `${propsTypeName} should keep the feedback button inside rightContent`);
-  assert.ok(
-    feedbackButtons[0]!.pos >= rightContentExpr!.pos && feedbackButtons[0]!.end <= rightContentExpr!.end,
-    `${propsTypeName} should not keep a separate page-local feedback button outside the shared titlebar path`,
-  );
-}
-
-function getJsxAttributesMapForApp(openingElement: ts.JsxOpeningLikeElement) {
-  const map = new Map<string, { expression: ts.Expression | null }>();
-  for (const property of openingElement.attributes.properties) {
-    if (!ts.isJsxAttribute(property)) continue;
-    const expression = property.initializer && ts.isJsxExpression(property.initializer) ? property.initializer.expression : null;
-    map.set(property.name.text, { expression });
+function getJsxAttributeExpression(
+  node: ts.JsxElement | ts.JsxSelfClosingElement,
+  attributeName: string,
+): ts.Expression | undefined {
+  const attribute = getJsxAttribute(node, attributeName);
+  if (!attribute || !attribute.initializer) {
+    return undefined;
   }
-  return map;
+  if (ts.isJsxExpression(attribute.initializer)) {
+    return attribute.initializer.expression ?? undefined;
+  }
+  if (ts.isStringLiteral(attribute.initializer) || ts.isNoSubstitutionTemplateLiteral(attribute.initializer)) {
+    return attribute.initializer;
+  }
+  return undefined;
 }
 
-function getSharedFeedbackPropName(appFunction: ts.FunctionDeclaration, stateSetterName: string) {
-  const dashboardView = findJsxElementInTree(appFile, "DashboardView");
-  const sessionView = findJsxElementInTree(appFile, "SessionView");
-  assert.ok(dashboardView, "App should render DashboardView");
-  assert.ok(sessionView, "App should render SessionView");
+function getJsxChildren(node: ts.JsxElement | ts.JsxSelfClosingElement): ts.NodeArray<ts.JsxChild> {
+  return ts.isJsxElement(node) ? node.children : ts.factory.createNodeArray([]);
+}
 
-  const dashboardAttrs = getJsxAttributesMapForApp(getOpeningElement(dashboardView!));
-  const sessionAttrs = getJsxAttributesMapForApp(getOpeningElement(sessionView!));
-  const sharedNames = [...dashboardAttrs.keys()].filter((name) => sessionAttrs.has(name));
+function findJsxElements(sourceFile: ts.SourceFile, tagName: string): Array<ts.JsxElement | ts.JsxSelfClosingElement> {
+  return visit(sourceFile, (node) => isJsxElementLike(node) && getJsxTagName(node) === tagName) as Array<
+    ts.JsxElement | ts.JsxSelfClosingElement
+  >;
+}
 
-  const sharedFeedbackPropName = sharedNames.find((name) => {
-    const dashboardText = dashboardAttrs.get(name)?.text;
-    const sessionText = sessionAttrs.get(name)?.text;
-    if (!dashboardText || !sessionText) return false;
-    if (dashboardText !== sessionText) return false;
-    const callbackName = dashboardText;
-    const callbackDecl = getTopLevelVariableDeclarations(appFunction).find((declaration) => {
-      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== callbackName) return false;
-      return containsCall(declaration.initializer ?? declaration.name, stateSetterName, "true");
-    });
-    return Boolean(callbackDecl);
+function findTypeAlias(sourceFile: ts.SourceFile, name: string): ts.TypeAliasDeclaration | undefined {
+  for (const statement of sourceFile.statements) {
+    if (ts.isTypeAliasDeclaration(statement) && statement.name.text === name) {
+      return statement;
+    }
+  }
+  return undefined;
+}
+
+function findTopLevelVariableDeclaration(
+  sourceFile: ts.SourceFile,
+  name: string,
+): ts.VariableDeclaration | undefined {
+  for (const statement of sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.name.text === name) {
+        return declaration;
+      }
+    }
+  }
+  return undefined;
+}
+
+function findTopLevelFunction(sourceFile: ts.SourceFile, name: string): ts.FunctionDeclaration | ts.VariableDeclaration | undefined {
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === name) {
+      return statement;
+    }
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.name.text === name) {
+        return declaration;
+      }
+    }
+  }
+  return undefined;
+}
+
+function getReturnedObjectLiteral(node: ts.FunctionDeclaration | ts.VariableDeclaration): ts.ObjectLiteralExpression | undefined {
+  const body = ts.isFunctionDeclaration(node) ? node.body : node.initializer && ts.isArrowFunction(node.initializer) ? node.initializer.body : undefined;
+  if (!body) return undefined;
+  if (ts.isBlock(body)) {
+    for (const statement of body.statements) {
+      if (!ts.isReturnStatement(statement) || !statement.expression || !ts.isObjectLiteralExpression(statement.expression)) continue;
+      return statement.expression;
+    }
+    return undefined;
+  }
+  return ts.isObjectLiteralExpression(body) ? body : undefined;
+}
+
+function getObjectPropertyExpression(
+  objectLiteral: ts.ObjectLiteralExpression,
+  propertyName: string,
+): ts.Expression | undefined {
+  for (const property of objectLiteral.properties) {
+    if (!ts.isPropertyAssignment(property)) continue;
+    const name = property.name;
+    if (ts.isIdentifier(name) && name.text === propertyName) {
+      return property.initializer;
+    }
+    if (ts.isStringLiteral(name) && name.text === propertyName) {
+      return property.initializer;
+    }
+  }
+  return undefined;
+}
+
+function unwrapExpression(expression: ts.Expression | undefined): ts.Expression | undefined {
+  let current = expression;
+  while (current && (ts.isParenthesizedExpression(current) || ts.isAsExpression(current) || ts.isTypeAssertionExpression(current))) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function getCallbackDeclaration(
+  sourceFile: ts.SourceFile,
+  expression: ts.Expression,
+): ts.VariableDeclaration | ts.FunctionDeclaration | undefined {
+  const normalized = unwrapExpression(expression);
+  if (!normalized) return undefined;
+
+  if (ts.isIdentifier(normalized)) {
+    const variable = findTopLevelVariableDeclaration(sourceFile, normalized.text);
+    if (variable) return variable;
+    for (const statement of sourceFile.statements) {
+      if (ts.isFunctionDeclaration(statement) && statement.name?.text === normalized.text) {
+        return statement;
+      }
+    }
+    return undefined;
+  }
+
+  if (ts.isArrowFunction(normalized) || ts.isFunctionExpression(normalized)) {
+    const fakeVariable = ts.factory.createVariableDeclaration("inline", undefined, undefined, normalized);
+    return fakeVariable as unknown as ts.VariableDeclaration;
+  }
+
+  if (ts.isCallExpression(normalized)) {
+    return getCallbackDeclaration(sourceFile, normalized.expression);
+  }
+
+  return undefined;
+}
+
+function functionBodyContainsCall(
+  node: ts.FunctionDeclaration | ts.VariableDeclaration,
+  calleeName: string,
+  expectedArgumentText: string,
+): boolean {
+  const functionLike = ts.isFunctionDeclaration(node)
+    ? node
+    : node.initializer && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))
+      ? node.initializer
+      : undefined;
+  if (!functionLike || !functionLike.body) return false;
+
+  const body = functionLike.body;
+  let matched = false;
+  visit(body, (child) => {
+    if (!ts.isCallExpression(child)) return false;
+    const callee = child.expression;
+    if (!ts.isIdentifier(callee) || callee.text !== calleeName) return false;
+    if (child.arguments.length !== 1) return false;
+    const arg = child.arguments[0];
+    if (arg.getText() !== expectedArgumentText) return false;
+    matched = true;
+    return true;
   });
-
-  assert.ok(sharedFeedbackPropName, "App should thread one shared callback prop into both page views");
-  return sharedFeedbackPropName;
+  return matched;
 }
 
-test("app shell owns the feedback modal state", () => {
-  const appFunction = findFunctionDeclaration(appFile, "App");
-  assert.ok(appFunction?.body, "App should be declared as a function");
+function expressionText(sourceFile: ts.SourceFile, expression: ts.Expression | undefined): string {
+  return expression ? expression.getText(sourceFile) : "";
+}
 
-  const { stateAccessorName, stateSetterName } = feedbackStateFromOpenModal(appFunction!);
-  const sharedFeedbackPropName = getSharedFeedbackPropName(appFunction!, stateSetterName);
-  const sharedCallbackDecl = feedbackCallbackFromApp(appFunction!, stateSetterName);
+function findButtonNodes(root: ts.Node): Array<ts.JsxElement | ts.JsxSelfClosingElement> {
+  return visit(root, (node) => isJsxElementLike(node) && getJsxTagName(node) === "button") as Array<
+    ts.JsxElement | ts.JsxSelfClosingElement
+  >;
+}
 
-  const feedbackModal = findJsxElementInTree(appFile, "FeedbackModal");
-  assert.ok(feedbackModal, "App should render FeedbackModal");
-  const openExpr = getJsxAttributeExpression(getOpeningElement(feedbackModal!), "open");
-  assert.ok(openExpr && ts.isCallExpression(openExpr), "FeedbackModal open should be a call expression");
-  assert.equal(openExpr.expression.getText(appFile), stateAccessorName, "FeedbackModal should read the same state accessor");
+function jsxSubtreeContainsFeedbackLabel(node: ts.JsxElement | ts.JsxSelfClosingElement): boolean {
+  const textFragments: string[] = [];
 
-  const onCloseExpr = getJsxAttributeExpression(getOpeningElement(feedbackModal!), "onClose");
-  assert.ok(onCloseExpr, "FeedbackModal should have an onClose handler");
+  const collect = (current: ts.Node): void => {
+    if (ts.isJsxText(current)) {
+      textFragments.push(current.getText());
+    } else if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current)) {
+      textFragments.push(current.text);
+    }
+    ts.forEachChild(current, collect);
+  };
+
+  collect(node);
+  return textFragments.some((fragment) => /\bFeedback\b/.test(fragment));
+}
+
+function isDescendant(node: ts.Node, ancestor: ts.Node): boolean {
+  for (let current: ts.Node | undefined = node.parent; current; current = current.parent) {
+    if (current === ancestor) return true;
+  }
+  return false;
+}
+
+function assertPageFeedbackContract(
+  sourceFile: ts.SourceFile,
+  propsTypeName: string,
+  viewName: string,
+): void {
+  const propsType = findTypeAlias(sourceFile, propsTypeName);
+  assert.ok(propsType, `${propsTypeName} should be declared`);
+  assert.ok(ts.isTypeLiteralNode(propsType!.type), `${propsTypeName} should be a type literal`);
+
+  const onOpenFeedbackProperty = propsType!.type.members.find(
+    (member): member is ts.PropertySignature =>
+      ts.isPropertySignature(member) &&
+      member.name.getText(sourceFile) === "onOpenFeedback",
+  );
+  assert.ok(onOpenFeedbackProperty, `${propsTypeName} should declare onOpenFeedback`);
   assert.ok(
-    containsCall(onCloseExpr!, stateSetterName, "false"),
-    "FeedbackModal onClose should close the same app-owned state",
+    onOpenFeedbackProperty!.type && ts.isFunctionTypeNode(onOpenFeedbackProperty!.type),
+    `${propsTypeName}.onOpenFeedback should be a function type`,
+  );
+  assert.equal(onOpenFeedbackProperty!.type!.parameters.length, 0, `${propsTypeName}.onOpenFeedback should take no args`);
+  assert.equal(onOpenFeedbackProperty!.type!.type.getText(sourceFile), "void", `${propsTypeName}.onOpenFeedback should return void`);
+
+  const titlebar = findJsxElements(sourceFile, "TitlebarMenuToggles").find((node) => getJsxAttribute(node, "rightContent"));
+  assert.ok(titlebar, `${viewName} should render TitlebarMenuToggles with rightContent`);
+
+  const rightContent = getJsxAttributeExpression(titlebar!, "rightContent");
+  assert.ok(rightContent, `${viewName} should provide rightContent`);
+
+  const rightContentButtons = findButtonNodes(rightContent!);
+  assert.equal(rightContentButtons.length, 1, `${viewName} should put exactly one button in shared rightContent`);
+
+  const feedbackButtons = findButtonNodes(sourceFile).filter(jsxSubtreeContainsFeedbackLabel);
+  assert.equal(
+    feedbackButtons.length,
+    1,
+    `${viewName} should expose exactly one feedback-labeled button, and it should live in shared rightContent`,
+  );
+  assert.ok(
+    isDescendant(feedbackButtons[0], rightContent!),
+    `${viewName} should keep the feedback-labeled button inside shared rightContent`,
   );
 
+  const feedbackButton = rightContentButtons[0];
+  const onClickExpression = getJsxAttributeExpression(feedbackButton, "onClick");
+  assert.ok(onClickExpression, `${viewName} rightContent button should have onClick`);
+  assert.equal(
+    expressionText(sourceFile, onClickExpression),
+    "props.onOpenFeedback",
+    `${viewName} rightContent button should use props.onOpenFeedback`,
+  );
+}
+
+test("app shell owns feedback modal state and shared feedback opener", () => {
+  const feedbackModal = findJsxElements(appSourceFile, "FeedbackModal").find((node) => getJsxAttribute(node, "open"));
+  assert.ok(feedbackModal, "app.tsx should render FeedbackModal");
+
+  const openExpression = getJsxAttributeExpression(feedbackModal!, "open");
+  assert.ok(openExpression, "FeedbackModal should receive an open expression");
+  assert.ok(ts.isCallExpression(openExpression), "FeedbackModal open should be an accessor call");
+  assert.ok(ts.isIdentifier(openExpression.expression), "FeedbackModal open accessor should be a simple identifier");
+
+  const openAccessorName = openExpression.expression.text;
+  const stateDeclaration = [...appSourceFile.statements]
+    .flatMap((statement) => (ts.isVariableStatement(statement) ? [...statement.declarationList.declarations] : []))
+    .find((declaration) => {
+      if (!declaration.name || !ts.isArrayBindingPattern(declaration.name)) return false;
+      const bindings = declaration.name.elements.filter((element): element is ts.BindingElement => !!element.name);
+      if (bindings.length < 2) return false;
+      const [accessor, setter] = bindings;
+      return (
+        ts.isIdentifier(accessor.name) &&
+        accessor.name.text === openAccessorName &&
+        ts.isIdentifier(setter.name) &&
+        ts.isCallExpression(declaration.initializer) &&
+        ts.isIdentifier(declaration.initializer.expression) &&
+        declaration.initializer.expression.text === "createSignal" &&
+        declaration.initializer.arguments.length >= 1 &&
+        declaration.initializer.arguments[0].getText(appSourceFile) === "false"
+      );
+    });
+  assert.ok(stateDeclaration, "FeedbackModal open should come from a shared createSignal(false) pair");
+
+  const [accessorBinding, setterBinding] = (stateDeclaration!.name as ts.ArrayBindingPattern).elements;
+  assert.ok(ts.isIdentifier(accessorBinding.name), "feedback open accessor should be an identifier");
+  assert.ok(ts.isIdentifier(setterBinding.name), "feedback open setter should be an identifier");
+
+  const onCloseExpression = getJsxAttributeExpression(feedbackModal!, "onClose");
+  assert.ok(onCloseExpression, "FeedbackModal should receive onClose");
+
+  const setterName = setterBinding.name.text;
+  const onCloseDecl = getCallbackDeclaration(appSourceFile, onCloseExpression!);
+  assert.ok(onCloseDecl, "FeedbackModal onClose should be backed by a callback declaration");
   assert.ok(
-    containsCall(sharedCallbackDecl.initializer ?? sharedCallbackDecl.name, stateSetterName, "true"),
-    "shared callback should open the same app-owned state",
+    functionBodyContainsCall(onCloseDecl!, setterName, "false"),
+    "FeedbackModal onClose should close the same shared feedback state",
   );
 
-  const dashboardView = findJsxElementInTree(appFile, "DashboardView");
-  const sessionView = findJsxElementInTree(appFile, "SessionView");
-  assert.ok(dashboardView, "App should render DashboardView");
-  assert.ok(sessionView, "App should render SessionView");
+  const sharedCallbackPropertyName = "onOpenFeedback";
+  const dashboardPropsFactory = findTopLevelFunction(appSourceFile, "dashboardProps");
+  const sessionPropsFactory = findTopLevelFunction(appSourceFile, "sessionProps");
+  assert.ok(dashboardPropsFactory, "dashboardProps should exist");
+  assert.ok(sessionPropsFactory, "sessionProps should exist");
 
-  const dashboardAttrs = getJsxAttributesMapForApp(getOpeningElement(dashboardView!));
-  const sessionAttrs = getJsxAttributesMapForApp(getOpeningElement(sessionView!));
-  assert.equal(dashboardAttrs.get(sharedFeedbackPropName)?.text, sharedCallbackDecl.name.getText(appFile));
-  assert.equal(sessionAttrs.get(sharedFeedbackPropName)?.text, sharedCallbackDecl.name.getText(appFile));
+  const dashboardPropsObject = getReturnedObjectLiteral(dashboardPropsFactory!);
+  const sessionPropsObject = getReturnedObjectLiteral(sessionPropsFactory!);
+  assert.ok(dashboardPropsObject, "dashboardProps should return an object literal");
+  assert.ok(sessionPropsObject, "sessionProps should return an object literal");
+
+  const dashboardCallback = getObjectPropertyExpression(dashboardPropsObject!, sharedCallbackPropertyName);
+  const sessionCallback = getObjectPropertyExpression(sessionPropsObject!, sharedCallbackPropertyName);
+  assert.ok(dashboardCallback, "dashboardProps should expose onOpenFeedback");
+  assert.ok(sessionCallback, "sessionProps should expose onOpenFeedback");
+  assert.equal(
+    dashboardCallback!.getText(appSourceFile),
+    sessionCallback!.getText(appSourceFile),
+    "dashboardProps and sessionProps should share the same onOpenFeedback callback expression",
+  );
+
+  const dashboardCallbackDecl = getCallbackDeclaration(appSourceFile, dashboardCallback!);
+  assert.ok(dashboardCallbackDecl, "shared onOpenFeedback callback should be declared in app.tsx");
+  assert.ok(
+    functionBodyContainsCall(dashboardCallbackDecl!, setterName, "true"),
+    "shared onOpenFeedback callback should open the same feedback modal state",
+  );
+
+  const dashboardView = findJsxElements(appSourceFile, "DashboardView").find((node) =>
+    ts.isJsxSelfClosingElement(node) &&
+    node.attributes.properties.some(
+      (prop) =>
+        ts.isJsxSpreadAttribute(prop) &&
+        ts.isCallExpression(prop.expression) &&
+        ts.isIdentifier(prop.expression.expression) &&
+        prop.expression.expression.text === "dashboardProps",
+    ),
+  );
+  const sessionView = findJsxElements(appSourceFile, "SessionView").find((node) =>
+    ts.isJsxSelfClosingElement(node) &&
+    node.attributes.properties.some(
+      (prop) =>
+        ts.isJsxSpreadAttribute(prop) &&
+        ts.isCallExpression(prop.expression) &&
+        ts.isIdentifier(prop.expression.expression) &&
+        prop.expression.expression.text === "sessionProps",
+    ),
+  );
+  assert.ok(dashboardView, "App should spread dashboardProps into DashboardView");
+  assert.ok(sessionView, "App should spread sessionProps into SessionView");
+  assert.equal(
+    dashboardCallback!.getText(appSourceFile),
+    sessionCallback!.getText(appSourceFile),
+    "App should route the same shared onOpenFeedback callback into both page prop objects",
+  );
 });
 
-test("dashboard keeps feedback UI in the shared titlebar path", () => {
-  pageContract(dashboardFile, "DashboardViewProps");
+test("dashboard view keeps the explicit onOpenFeedback page contract", () => {
+  assertPageFeedbackContract(dashboardSourceFile, "DashboardViewProps", "DashboardView");
 });
 
-test("session keeps feedback UI in the shared titlebar path", () => {
-  pageContract(sessionFile, "SessionViewProps");
+test("session view keeps the explicit onOpenFeedback page contract", () => {
+  assertPageFeedbackContract(sessionSourceFile, "SessionViewProps", "SessionView");
 });
