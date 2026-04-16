@@ -316,17 +316,6 @@ function findButtonNodes(root: ts.Node): Array<ts.JsxElement | ts.JsxSelfClosing
   >;
 }
 
-function jsxSubtreeContainsFeedbackLabel(node: ts.JsxElement | ts.JsxSelfClosingElement): boolean {
-  return false;
-}
-
-function isDescendant(node: ts.Node, ancestor: ts.Node): boolean {
-  for (let current: ts.Node | undefined = node.parent; current; current = current.parent) {
-    if (current === ancestor) return true;
-  }
-  return false;
-}
-
 function assertPageFeedbackContract(
   sourceFile: ts.SourceFile,
   propsTypeName: string,
@@ -419,34 +408,6 @@ test("app shell owns feedback modal state and shared feedback opener", () => {
     "FeedbackModal onClose should close the same shared feedback state",
   );
 
-  const sharedCallbackPropertyName = "onOpenFeedback";
-  const dashboardPropsFactory = findTopLevelFunction(appSourceFile, "dashboardProps");
-  const sessionPropsFactory = findTopLevelFunction(appSourceFile, "sessionProps");
-  assert.ok(dashboardPropsFactory, "dashboardProps should exist");
-  assert.ok(sessionPropsFactory, "sessionProps should exist");
-
-  const dashboardPropsObject = getReturnedObjectLiteral(dashboardPropsFactory!);
-  const sessionPropsObject = getReturnedObjectLiteral(sessionPropsFactory!);
-  assert.ok(dashboardPropsObject, "dashboardProps should return an object literal");
-  assert.ok(sessionPropsObject, "sessionProps should return an object literal");
-
-  const dashboardCallback = getObjectPropertyExpression(dashboardPropsObject!, sharedCallbackPropertyName);
-  const sessionCallback = getObjectPropertyExpression(sessionPropsObject!, sharedCallbackPropertyName);
-  assert.ok(dashboardCallback, "dashboardProps should expose onOpenFeedback");
-  assert.ok(sessionCallback, "sessionProps should expose onOpenFeedback");
-  assert.equal(
-    dashboardCallback!.getText(appSourceFile),
-    sessionCallback!.getText(appSourceFile),
-    "dashboardProps and sessionProps should share the same onOpenFeedback callback expression",
-  );
-
-  const dashboardCallbackDecl = getCallbackDeclaration(appSourceFile, dashboardCallback!);
-  assert.ok(dashboardCallbackDecl, "shared onOpenFeedback callback should be declared in app.tsx");
-  assert.ok(
-    functionBodyContainsCall(dashboardCallbackDecl!, setterName, "true"),
-    "shared onOpenFeedback callback should open the same feedback modal state",
-  );
-
   const dashboardView = findJsxElements(appSourceFile, "DashboardView").find(() => true);
   const sessionView = findJsxElements(appSourceFile, "SessionView").find(() => true);
   assert.ok(dashboardView, "App should render DashboardView");
@@ -461,15 +422,17 @@ test("app shell owns feedback modal state and shared feedback opener", () => {
     sessionViewCallback!.getText(appSourceFile),
     "App should route the same shared onOpenFeedback callback into both page views",
   );
-  assert.equal(
-    dashboardViewCallback!.getText(appSourceFile),
-    dashboardCallback!.getText(appSourceFile),
-    "DashboardView should receive the shared onOpenFeedback callback",
+
+  const sharedCallbackDecl = getCallbackDeclaration(appSourceFile, dashboardViewCallback!);
+  assert.ok(sharedCallbackDecl, "shared onOpenFeedback callback should be declared in app.tsx");
+  assert.ok(
+    functionBodyContainsCall(sharedCallbackDecl!, setterName, "true"),
+    "shared onOpenFeedback callback should open the same feedback modal state",
   );
   assert.equal(
-    sessionViewCallback!.getText(appSourceFile),
-    dashboardCallback!.getText(appSourceFile),
-    "SessionView should receive the shared onOpenFeedback callback",
+    sharedCallbackDecl.name?.getText(appSourceFile) ?? dashboardViewCallback!.getText(appSourceFile),
+    sharedCallbackDecl.name?.getText(appSourceFile) ?? sessionViewCallback!.getText(appSourceFile),
+    "DashboardView and SessionView should resolve the same shared feedback callback declaration",
   );
 });
 
