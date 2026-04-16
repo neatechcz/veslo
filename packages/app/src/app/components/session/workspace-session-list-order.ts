@@ -4,6 +4,15 @@ export const applyProjectOrder = <T extends { key: string }>(groups: T[], stored
   const byKey = new Map(groups.map((group) => [group.key, group] as const));
   const ordered: T[] = [];
   const used = new Set<string>();
+  const storedKeys = new Set(
+    storedOrder.map((rawKey) => rawKey.trim()).filter(Boolean),
+  );
+
+  for (const group of groups) {
+    if (storedKeys.has(group.key) || used.has(group.key)) continue;
+    used.add(group.key);
+    ordered.push(group);
+  }
 
   for (const rawKey of storedOrder) {
     const key = rawKey.trim();
@@ -11,12 +20,6 @@ export const applyProjectOrder = <T extends { key: string }>(groups: T[], stored
     const group = byKey.get(key);
     if (!group) continue;
     used.add(key);
-    ordered.push(group);
-  }
-
-  for (const group of groups) {
-    if (used.has(group.key)) continue;
-    used.add(group.key);
     ordered.push(group);
   }
 

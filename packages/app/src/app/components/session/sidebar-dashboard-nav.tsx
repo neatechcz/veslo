@@ -15,7 +15,7 @@ type SidebarDashboardNavProps = {
 };
 
 const buttonClass = (active: boolean) =>
-  `w-full h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
+  `w-full h-7 flex items-center gap-1.5 px-2.5 rounded-lg font-product text-[12px] font-medium transition-colors ${
     active
       ? "bg-gray-4 text-gray-12"
       : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"

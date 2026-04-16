@@ -28,3 +28,9 @@ test("sidebar dashboard nav collapses from prefs and exposes a divider toggle", 
     /<Show when=\{collapsed\(\)\} fallback=\{<ChevronDown size=\{11\} \/>\}>\s*<ChevronUp size=\{11\} \/>\s*<\/Show>/,
   );
 });
+
+test("sidebar dashboard nav uses the same product typography tokens as sidebar action buttons", () => {
+  assert.match(source, /font-product/);
+  assert.match(source, /text-\[12px\]/);
+  assert.match(source, /font-medium/);
+});

@@ -5025,6 +5025,9 @@ export default function App() {
   const [expandedStepIds, setExpandedStepIds] = createSignal<Set<string>>(
     new Set()
   );
+  const [expandedTimelineSectionIds, setExpandedTimelineSectionIds] = createSignal<Set<string>>(
+    new Set()
+  );
   const [expandedSidebarSections, setExpandedSidebarSections] = createSignal({
     progress: true,
     artifacts: true,
@@ -7623,6 +7626,8 @@ export default function App() {
     summarizeStep,
     expandedStepIds: expandedStepIds(),
     setExpandedStepIds: setExpandedStepIds,
+    expandedTimelineSectionIds: expandedTimelineSectionIds(),
+    setExpandedTimelineSectionIds: setExpandedTimelineSectionIds,
     expandedSidebarSections: expandedSidebarSections(),
     setExpandedSidebarSections: setExpandedSidebarSections,
     artifacts: activeArtifacts(),

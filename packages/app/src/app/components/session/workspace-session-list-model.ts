@@ -196,6 +196,9 @@ const compareProjectGroups = (
   const byWorkspaceOrder = aWorkspaceOrder - bWorkspaceOrder;
   if (byWorkspaceOrder !== 0) return byWorkspaceOrder;
 
+  const byActivity = b.activityAt - a.activityAt;
+  if (byActivity !== 0) return byActivity;
+
   const byLabel = a.projectLabel.localeCompare(b.projectLabel);
   if (byLabel !== 0) return byLabel;
 

@@ -4,7 +4,7 @@ import test from "node:test";
 import { createRoot, createSignal } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 
-import { createSessionStore, type SessionModelState } from "./session.js";
+import { createSessionStore } from "./session.js";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -59,8 +59,6 @@ test("selectSession completes initial transcript load without waiting for health
   let messageCalls = 0;
   let todoCalls = 0;
   let permissionCalls = 0;
-  let sessionModelState: SessionModelState = { overrides: {}, resolved: {} };
-
   await createRoot(async (dispose) => {
     try {
       const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
@@ -95,12 +93,6 @@ test("selectSession completes initial transcript load without waiting for health
         activeWorkspaceRoot: () => "",
         selectedSessionId,
         setSelectedSessionId,
-        sessionModelState: () => sessionModelState,
-        setSessionModelState: (updater) => {
-          sessionModelState = updater(sessionModelState);
-          return sessionModelState;
-        },
-        lastUserModelFromMessages: () => null,
         developerMode: () => false,
         setError: () => {},
         setSseConnected: () => {},

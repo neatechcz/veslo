@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   createTimelineDetailState,
+  reconcileTimelineOpenSectionIds,
   toggleTimelineExpanded,
   toggleTimelineSection,
 } from "./timeline-detail-state.js";
@@ -56,4 +57,29 @@ test("createTimelineDetailState auto-opens a single section", () => {
 
   assert.equal(state.expanded, false);
   assert.deepEqual([...state.openSectionIds], ["action-0"]);
+});
+
+test("reconcileTimelineOpenSectionIds keeps user-open sections with stable ids and auto-opens new running sections", () => {
+  const current = new Set(["steps-1:section:thinking:0"]);
+
+  const next = reconcileTimelineOpenSectionIds(current, {
+    containerId: "steps-1",
+    sections: [
+      { id: "steps-1:section:thinking:0", kind: "action", status: "done" },
+      { id: "steps-1:section:action:0", kind: "action", status: "running" },
+    ],
+  });
+
+  assert.deepEqual([...next].sort(), ["steps-1:section:action:0", "steps-1:section:thinking:0"]);
+});
+
+test("reconcileTimelineOpenSectionIds keeps unrelated container ids intact", () => {
+  const current = new Set(["steps-1:section:thinking:0", "steps-2:section:explore:0"]);
+
+  const next = reconcileTimelineOpenSectionIds(current, {
+    containerId: "steps-1",
+    sections: [{ id: "steps-1:section:action:0", kind: "action", status: "running" }],
+  });
+
+  assert.deepEqual([...next].sort(), ["steps-1:section:action:0", "steps-2:section:explore:0"]);
 });

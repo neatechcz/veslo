@@ -6,7 +6,8 @@ const source = readFileSync(new URL("./message-list.tsx", import.meta.url), "utf
 
 test("message list integrates the hybrid timeline model and collapse state helpers", () => {
   assert.match(source, /buildTimelineDetailModel/);
-  assert.match(source, /createTimelineDetailState/);
+  assert.match(source, /reconcileTimelineOpenSectionIds/);
+  assert.match(source, /createTimelineSectionStateId/);
   assert.match(source, /toggleTimelineSection/);
 });
 
@@ -36,6 +37,14 @@ test("section toggle handlers isolate their click events", () => {
     source,
     /onClick=\{\(event\) => \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*setTimelineDetailState\(\(current\) => toggleTimelineSection\(current, section\.id\)\);/s,
   );
+});
+
+test("timeline section state is parent-owned and keyed independently of section indexes", () => {
+  assert.match(source, /reconcileTimelineOpenSectionIds/);
+  assert.match(source, /createTimelineSectionStateId/);
+  assert.match(source, /expandedTimelineSectionIds: Set<string>/);
+  assert.match(source, /setExpandedTimelineSectionIds: \(updater: \(current: Set<string>\) => Set<string>\) => void;/);
+  assert.doesNotMatch(source, /createSignal<TimelineDetailState>/);
 });
 
 test("adjacent step-only assistant messages merge into a single timeline block", () => {

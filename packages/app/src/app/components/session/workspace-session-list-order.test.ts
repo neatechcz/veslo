@@ -7,10 +7,10 @@ import {
   reorderProjectKeys,
 } from "./workspace-session-list-order.js";
 
-test("applyProjectOrder applies stored key order and appends unknown keys", () => {
+test("applyProjectOrder keeps new keys ahead of stored order", () => {
   const groups = [
-    { key: "a" },
     { key: "c" },
+    { key: "a" },
     { key: "b" },
   ];
 
@@ -18,7 +18,7 @@ test("applyProjectOrder applies stored key order and appends unknown keys", () =
 
   assert.deepEqual(
     ordered.map((group) => group.key),
-    ["b", "a", "c"],
+    ["c", "b", "a"],
   );
 });
 
@@ -33,7 +33,7 @@ test("applyProjectOrder ignores unknown and duplicate stored keys", () => {
 
   assert.deepEqual(
     ordered.map((group) => group.key),
-    ["b", "a", "c"],
+    ["c", "b", "a"],
   );
 });
 

@@ -163,6 +163,42 @@ test("buildProjectGroups keeps subagents nested under their parent in by-project
   );
 });
 
+test("buildProjectGroups surfaces the most recently active project first within a workspace", () => {
+  const workspace = {
+    id: "workspace-1",
+    name: "workspace-1",
+    path: "/tmp/workspace-1",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+
+  const groups = buildProjectGroups([
+    {
+      workspace,
+      sessions: [
+        {
+          id: "old-project-session",
+          title: "old-project-session",
+          directory: "/tmp/workspace-1/a-project-old",
+          time: { created: 100, updated: 100 },
+        },
+        {
+          id: "new-project-session",
+          title: "new-project-session",
+          directory: "/tmp/workspace-1/z-project-new",
+          time: { created: 200, updated: 2_000 },
+        },
+      ],
+      status: "ready",
+    },
+  ]);
+
+  assert.deepEqual(
+    groups.map((group) => group.projectLabel),
+    ["z-project-new", "a-project-old"],
+  );
+});
+
 test("rowVisibleByExpansion keeps a three-level branch closed until each parent is explicitly expanded", () => {
   const workspace = {
     id: "workspace-1",

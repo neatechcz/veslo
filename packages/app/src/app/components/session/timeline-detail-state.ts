@@ -9,6 +9,10 @@ export type TimelineDetailState = {
   openSectionIds: Set<string>;
 };
 
+export function createTimelineSectionStateId(containerId: string, labelKind: string, occurrence: number): string {
+  return `${containerId}:section:${labelKind}:${occurrence}`;
+}
+
 export function createTimelineDetailState(input: {
   sections: TimelineDetailSectionStateInput[];
 }): TimelineDetailState {
@@ -43,6 +47,32 @@ export function toggleTimelineSection(state: TimelineDetailState, sectionId: str
     expanded: state.expanded,
     openSectionIds: nextOpenSectionIds,
   };
+}
+
+export function reconcileTimelineOpenSectionIds(
+  current: ReadonlySet<string> | undefined,
+  input: {
+    containerId: string;
+    sections: TimelineDetailSectionStateInput[];
+  },
+): Set<string> {
+  const nextState = createTimelineDetailState({ sections: input.sections });
+  const validIds = new Set(input.sections.map((section) => section.id));
+  const containerPrefix = `${input.containerId}:section:`;
+  const nextOpenSectionIds = new Set<string>();
+
+  current?.forEach((id) => {
+    if (!id.startsWith(containerPrefix)) {
+      nextOpenSectionIds.add(id);
+      return;
+    }
+    if (validIds.has(id)) {
+      nextOpenSectionIds.add(id);
+    }
+  });
+
+  nextState.openSectionIds.forEach((id) => nextOpenSectionIds.add(id));
+  return nextOpenSectionIds;
 }
 
 export type { TimelineSectionKind };

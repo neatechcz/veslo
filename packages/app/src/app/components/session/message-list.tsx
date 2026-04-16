@@ -17,7 +17,12 @@ import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { getTaskPartSubagentInfo, isVesloInternalSubagentType } from "../../lib/internal-subagents";
 import { currentLocale, t } from "../../../i18n";
 import { buildTimelineDetailModel, type TimelineRowModel, type TimelineRowType, type TimelineSectionKind } from "./timeline-detail-model.js";
-import { createTimelineDetailState, toggleTimelineSection, type TimelineDetailState } from "./timeline-detail-state.js";
+import {
+  createTimelineSectionStateId,
+  reconcileTimelineOpenSectionIds,
+  toggleTimelineSection,
+  type TimelineDetailState,
+} from "./timeline-detail-state.js";
 
 export type MessageListProps = {
   messages: MessageWithParts[];
@@ -26,6 +31,8 @@ export type MessageListProps = {
   showThinking: boolean;
   expandedStepIds: Set<string>;
   setExpandedStepIds: (updater: (current: Set<string>) => Set<string>) => void;
+  expandedTimelineSectionIds: Set<string>;
+  setExpandedTimelineSectionIds: (updater: (current: Set<string>) => Set<string>) => void;
   openSessionById?: (sessionId: string) => void;
   searchMatchMessageIds?: ReadonlySet<string>;
   activeSearchMessageId?: string | null;
@@ -893,7 +900,6 @@ export default function MessageList(props: MessageListProps) {
         });
         cursor += section.rows.length;
         return {
-          id: `${containerProps.id}:section:${sectionIndex}`,
           kind: section.kind,
           labelKind: section.kind,
           summary: section.summary,
@@ -902,60 +908,64 @@ export default function MessageList(props: MessageListProps) {
         };
       });
 
+      const sectionCounts = new Map<TimelineSectionLabelKind, number>();
+      const withStableSectionId = (section: Omit<TimelineSectionView, "id">): TimelineSectionView => {
+        const occurrence = sectionCounts.get(section.labelKind) ?? 0;
+        sectionCounts.set(section.labelKind, occurrence + 1);
+        return {
+          ...section,
+          id: createTimelineSectionStateId(containerProps.id, section.labelKind, occurrence),
+        };
+      };
+
       const sections: TimelineSectionView[] = [];
       for (const section of baseSections) {
         if (section.kind !== "action") {
-          sections.push(section);
+          sections.push(withStableSectionId(section));
           continue;
         }
 
         const splitGroups = splitActionSectionRows(section.rows);
         if (splitGroups.length <= 1) {
-          sections.push({
+          sections.push(withStableSectionId({
             ...section,
             labelKind: splitGroups[0]?.labelKind ?? "action",
-          });
+          }));
           continue;
         }
 
-        splitGroups.forEach((group, groupIndex) => {
-          sections.push({
-            id: `${section.id}:label:${group.labelKind}:${groupIndex}`,
+        splitGroups.forEach((group) => {
+          sections.push(withStableSectionId({
             kind: "action",
             labelKind: group.labelKind,
             summary: section.summary,
             status: sectionStatusFromRows(group.rows),
             rows: group.rows,
-          });
+          }));
         });
       }
 
       return sections;
     });
-    const [timelineDetailState, setTimelineDetailState] = createSignal<TimelineDetailState>(
-      createTimelineDetailState({ sections: [] }),
-    );
+    const timelineDetailState = (): TimelineDetailState => ({
+      expanded: false,
+      openSectionIds: props.expandedTimelineSectionIds,
+    });
+    const setTimelineDetailState = (updater: (current: TimelineDetailState) => TimelineDetailState) => {
+      props.setExpandedTimelineSectionIds((current) => updater({ expanded: false, openSectionIds: current }).openSectionIds);
+    };
     createEffect(() => {
       const sections = timelineSections().map((section) => ({
         id: section.id,
         kind: section.kind,
         status: section.status,
       }));
-      setTimelineDetailState((current) => {
-        const nextState = createTimelineDetailState({ sections });
-        const validIds = new Set(sections.map((section) => section.id));
-        const openSectionIds = new Set<string>();
-        current?.openSectionIds.forEach((id) => {
-          if (validIds.has(id)) {
-            openSectionIds.add(id);
-          }
-        });
-        nextState.openSectionIds.forEach((id) => openSectionIds.add(id));
-        return {
-          expanded: current?.expanded ?? nextState.expanded,
-          openSectionIds,
-        };
-      });
+      props.setExpandedTimelineSectionIds((current) =>
+        reconcileTimelineOpenSectionIds(current, {
+          containerId: containerProps.id,
+          sections,
+        }),
+      );
     });
 
     const hasRunning = () => timelineSections().some((section) => section.status === "running");
