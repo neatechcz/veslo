@@ -2,7 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { exists, ensureDir } from "./utils.js";
 
-export const INTERNAL_SYSTEM_VERSION = "2026-04-03.1";
+export const INTERNAL_SYSTEM_VERSION = "2026-04-16.1";
 const INTERNAL_SYSTEM_SOURCE = "openwork-snapshot";
 const MANIFEST_SCHEMA_VERSION = 1;
 const ROUTING_BLOCK_VERSION = 3;
@@ -211,6 +211,12 @@ This block is managed by Veslo. Keep it intact.
 - **Skills** — reusable workflows in \`.opencode/skills/\`. Suggest creating one when work repeats.
 - **Scheduler** — recurring tasks (daily, weekly, interval). Mention when a task could be automated.
 - **Workspace** — user may have multiple workspaces; respect workspace boundaries.
+
+### User Memory
+- When the user says "remember this", "zapamatuj si", or "ulož si", persist the information to \`.opencode/soul-user.md\`.
+- Read the file first, append new entries, then write it back. Do not overwrite existing content.
+- Keep entries concise — one line per fact, grouped logically.
+- Never store credentials, tokens, or API keys in this file.
 ${AGENT_BLOCK_END}`;
 }
 
@@ -663,6 +669,89 @@ export default async (ctx) => {
 `;
 }
 
+const DEFAULT_SOUL_COMPANY = `# Company Instructions
+
+<!-- Edit this file to set company-wide tone, guardrails, and context. -->
+<!-- This file is loaded into every workspace conversation. -->
+
+## Tone & Style
+- Professional and clear.
+- Respond in the user's language.
+
+## Guardrails
+- Never share credentials, tokens, or API keys.
+- Explain consequences before destructive actions.
+- Respect workspace boundaries.
+`;
+
+const DEFAULT_SOUL_USER = `# User Memory
+
+<!-- This file stores personal notes and preferences. -->
+<!-- Say "remember this" or "zapamatuj si" to add entries. -->
+<!-- Veslo will append new facts below. -->
+`;
+
+const SOUL_INSTRUCTIONS = [".opencode/soul-company.md", ".opencode/soul-user.md"] as const;
+
+async function ensureSoulFiles(workspaceRoot: string, stats: ProvisionStats) {
+  const opencodePath = join(workspaceRoot, ".opencode");
+  await ensureDir(opencodePath);
+
+  const files: Array<[string, string]> = [
+    ["soul-company.md", DEFAULT_SOUL_COMPANY],
+    ["soul-user.md", DEFAULT_SOUL_USER],
+  ];
+
+  for (const [filename, defaultContent] of files) {
+    const dest = join(opencodePath, filename);
+    if (await exists(dest)) {
+      stats.unchanged += 1;
+      continue;
+    }
+    await writeFile(dest, defaultContent, "utf8");
+    stats.written += 1;
+  }
+}
+
+async function ensureSoulInstructions(workspaceRoot: string, stats: ProvisionStats) {
+  // Find opencode config (jsonc or json)
+  const jsoncPath = join(workspaceRoot, "opencode.jsonc");
+  const jsonPath = join(workspaceRoot, "opencode.json");
+  const configPath = (await exists(jsoncPath)) ? jsoncPath : (await exists(jsonPath)) ? jsonPath : null;
+  if (!configPath) return; // Config is created by Rust side; if it doesn't exist, skip
+
+  const raw = await readFile(configPath, "utf8");
+  let config: Record<string, unknown>;
+  try {
+    config = JSON.parse(raw);
+  } catch {
+    return; // Can't parse JSONC with JSON.parse — Rust side handles this
+  }
+
+  const existing: string[] = Array.isArray(config.instructions)
+    ? (config.instructions as string[])
+    : typeof config.instructions === "string"
+      ? [config.instructions]
+      : [];
+
+  const merged = [...existing];
+  let changed = false;
+  for (const instruction of SOUL_INSTRUCTIONS) {
+    if (!merged.includes(instruction)) {
+      merged.push(instruction);
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    config.instructions = merged;
+    await writeFile(configPath, JSON.stringify(config, null, 2), "utf8");
+    stats.written += 1;
+  } else {
+    stats.unchanged += 1;
+  }
+}
+
 async function writeDelegatePlugin(workspaceRoot: string, stats: ProvisionStats) {
   const pluginsDir = join(workspaceRoot, ".opencode", "plugins");
   await ensureDir(pluginsDir);
@@ -709,11 +798,13 @@ async function writeInternalManifest(workspaceRoot: string, stats: ProvisionStat
 export async function provisionWorkspaceInternalSystem(workspaceRoot: string): Promise<WorkspaceProvisionResult> {
   const stats: ProvisionStats = { written: 0, unchanged: 0 };
 
+  await ensureSoulFiles(workspaceRoot, stats);
   await copyInternalPacks(workspaceRoot, stats);
   await writeInternalAgents(workspaceRoot, stats);
   await writeDelegatePlugin(workspaceRoot, stats);
   await ensureVesloAgentRouting(workspaceRoot, stats);
   await ensureWorkspaceInstructions(workspaceRoot, stats);
+  await ensureSoulInstructions(workspaceRoot, stats);
   await writeInternalManifest(workspaceRoot, stats);
 
   return {
