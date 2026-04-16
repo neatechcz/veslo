@@ -149,6 +149,9 @@ export function createWorkspaceStore(options: {
   onEngineStable?: () => void;
   engineRuntime?: () => EngineRuntime;
   developerMode: () => boolean;
+  setEngineReady?: (value: boolean) => void;
+  populateSidebarFromDb?: (workspaceId: string, directory: string) => Promise<void>;
+  hydrateLatestSessionFromDb?: (workspaceId: string, directory: string) => Promise<void>;
 }) {
   const cloudOnlyMessage = (code: string, detail: string) => `${code}: ${detail}`;
   const blockLocalAction = (code: string, detail: string) => {
@@ -856,6 +859,13 @@ export function createWorkspaceStore(options: {
     syncActiveWorkspaceId(id);
     setProjectDir(nextRoot);
 
+    // For local→local workspace switches in Tauri, signal that the engine is not ready
+    // for the new workspace BEFORE any await. This prevents reactive effects (idle-loader,
+    // SSE sync) from trying to contact the engine API during the async setup phase.
+    if (!isRemote && wasLocalConnection && workspaceChanged && isTauriRuntime() && options.populateSidebarFromDb) {
+      options.setEngineReady?.(false);
+    }
+
     if (isTauriRuntime()) {
       if (isRemote) {
         setWorkspaceConfig(null);
@@ -1025,7 +1035,39 @@ export function createWorkspaceStore(options: {
       }
     }
 
-    // When running locally, restart the engine when workspace changes
+    // BROWSING MODE: When switching between local workspaces in Tauri,
+    // skip engine restart and load sessions/messages directly from SQLite.
+    // The user can browse history immediately; engine stays where it was.
+    if (!isRemote && wasLocalConnection && workspaceChanged && isTauriRuntime() && options.populateSidebarFromDb) {
+      _wsLog("[workspace:activate] STEP 5-BROWSE — browsing mode, loading from SQLite", { id, path: next.path });
+      wsDebug("activate:local->local:browsingMode", { id, nextPath: next.path });
+
+      options.setSelectedSessionId(null);
+      options.setMessages([]);
+      options.setTodos([]);
+      options.setSessionStatusById({});
+
+      try {
+        await options.populateSidebarFromDb(id, next.path);
+      } catch (e) {
+        _wsLog("[workspace:activate] STEP 5-BROWSE — populateSidebarFromDb failed", e);
+      }
+
+      try {
+        if (options.hydrateLatestSessionFromDb) {
+          await options.hydrateLatestSessionFromDb(id, next.path);
+        }
+      } catch (e) {
+        _wsLog("[workspace:activate] STEP 5-BROWSE — hydrateLatestSessionFromDb failed", e);
+      }
+
+      options.setEngineReady?.(false);
+      updateWorkspaceConnectionState(id, { status: "connected", message: null });
+      wsDebug("activate:local->local:browsingMode:done", { id, ms: Date.now() - activateStart });
+      return true;
+    }
+
+    // When running locally, restart the engine when workspace changes (fallback for non-Tauri)
     let engineRestartFailed = false;
     if (!isRemote && wasLocalConnection && workspaceChanged) {
       if (isSuperseded()) {

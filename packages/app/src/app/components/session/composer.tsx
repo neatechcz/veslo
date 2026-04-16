@@ -52,6 +52,7 @@ type ComposerProps = {
   attachmentsEnabled: boolean;
   attachmentsDisabledReason: string | null;
   listCommands: () => Promise<SlashCommandOption[]>;
+  engineReady?: boolean;
 };
 
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
@@ -1386,7 +1387,7 @@ export default function Composer(props: ComposerProps) {
 
     if (event.key === "Enter") {
       event.preventDefault();
-      if (props.busy) return;
+      if (props.busy || props.engineReady === false) return;
       void sendDraft();
     }
   };
@@ -1718,15 +1719,16 @@ export default function Composer(props: ComposerProps) {
                           fallback={
                             <button
                               type="button"
-                              disabled={!hasDraftContent()}
+                              disabled={!hasDraftContent() || props.engineReady === false}
                               onClick={() => {
+                                if (props.engineReady === false) return;
                                 void sendDraft();
                               }}
-                              class={`shrink-0 p-1.5 rounded-full transition-colors ${!hasDraftContent()
+                              class={`shrink-0 p-1.5 rounded-full transition-colors ${!hasDraftContent() || props.engineReady === false
                                 ? "bg-gray-4 text-gray-10"
                                 : "bg-[#1B29FF] text-white hover:bg-blue-10"
                                 }`}
-                              title={translate("session.send_label")}
+                              title={props.engineReady === false ? translate("session.engine_not_connected") : translate("session.send_label")}
                             >
                               <ArrowUp size={18} />
                             </button>

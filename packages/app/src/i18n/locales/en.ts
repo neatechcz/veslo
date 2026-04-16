@@ -1002,6 +1002,7 @@ export default {
   "session.search_no_matches": "No matches",
   "session.select_session_to_manage": "Select a session to manage it",
   "session.send_label": "Send",
+  "session.engine_not_connected": "Engine is not connected to this workspace",
   "session.session_actions": "Session actions",
   "session.show_earlier_messages": "Show earlier messages ({count})",
   "session.start_new_session": "Start a new session",

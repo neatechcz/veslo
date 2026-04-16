@@ -998,6 +998,7 @@ export default {
   "session.search_no_matches": "Žádné shody",
   "session.select_session_to_manage": "Vyberte relaci, kterou chcete spravovat",
   "session.send_label": "Odeslat",
+  "session.engine_not_connected": "Engine není připojen k tomuto workspace",
   "session.session_actions": "Akce relace",
   "session.show_earlier_messages": "Zobrazit dřívější zprávy ({count})",
   "session.start_new_session": "Spustit novou relaci",

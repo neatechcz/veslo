@@ -42,6 +42,7 @@ use commands::orchestrator::{
     sandbox_doctor, sandbox_stop,
 };
 use commands::scheduler::{scheduler_delete_job, scheduler_list_jobs};
+use commands::session_reader::{opencode_db_read_sessions, opencode_db_read_transcript};
 use commands::skills::{
     install_skill_template, list_local_skills, read_local_skill, uninstall_skill, write_local_skill,
 };
@@ -187,6 +188,8 @@ pub fn run() {
             opencode_db_migrate,
             opencode_mcp_auth,
             opencode_db_update_session_directory,
+            opencode_db_read_sessions,
+            opencode_db_read_transcript,
             scheduler_list_jobs,
             scheduler_delete_job,
             set_window_decorations

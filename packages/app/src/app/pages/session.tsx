@@ -157,6 +157,7 @@ export type SessionViewProps = {
   importingWorkspaceConfig: boolean;
   exportWorkspaceConfig: (workspaceId?: string) => void;
   exportWorkspaceBusy: boolean;
+  engineReady?: boolean;
   clientConnected: boolean;
   authenticatedUser: string | null;
   vesloServerStatus: VesloServerStatus;
@@ -4283,6 +4284,7 @@ export default function SessionView(props: SessionViewProps) {
                 onChooseSessionFolder={chooseFolderForSession}
                 attachmentsEnabled={attachmentsEnabled()}
                 attachmentsDisabledReason={attachmentsDisabledReason()}
+                engineReady={props.engineReady}
               />
               <div class="sticky bottom-0 z-20 -mt-3 bg-gray-1 px-8 pb-3">
                 <div class={`mx-auto flex w-full ${chatBodyWidthClass()} justify-end`}>
