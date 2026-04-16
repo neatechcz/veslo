@@ -1585,6 +1585,9 @@ export default function App() {
       setBusy(true);
       setBusyLabel("status.connecting");
       setBusyStartedAt(Date.now());
+      // Yield to the browser's macro task queue so it paints the spinner
+      // before the engine start blocks the microtask chain.
+      await new Promise((resolve) => setTimeout(resolve, 0));
       try {
         const started = await workspaceStore.ensureEngineForWorkspace();
         if (!started) {
