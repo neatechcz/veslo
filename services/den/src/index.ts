@@ -9,20 +9,34 @@ import { auth } from "./auth.js"
 import { db } from "./db/index.js"
 import { shouldWidenVarcharColumn } from "./db/schema-reconcile.js"
 import { env } from "./env.js"
+import { createDbFeedbackProjectorStore, createFeedbackProjector } from "./feedback/projector.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { requireSession } from "./http/session.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
 import { desktopAuthV2Router } from "./http/desktop-auth-v2.js"
 import { createAdminRuntimeRouter } from "./http/admin-runtime.js"
-import { feedbackRouter } from "./http/feedback.js"
+import { createFeedbackRouter } from "./http/feedback.js"
 import { orgsRouter } from "./http/orgs.js"
 import { orgMcpCatalogRouter } from "./http/org-mcp-catalog.js"
 import { orgSkillsCatalogRouter } from "./http/org-skills-catalog.js"
 import { workersRouter } from "./http/workers.js"
+import { createYouTrackMcpIssueClient } from "./integrations/youtrack-mcp.js"
 
 const app = express()
 const currentFile = fileURLToPath(import.meta.url)
 const publicDir = path.resolve(path.dirname(currentFile), "../public")
+const feedbackProjector = createFeedbackProjector({
+  projectKey: env.youtrack.projectKey,
+  store: createDbFeedbackProjectorStore(db),
+  issueClient: createYouTrackMcpIssueClient({
+    command: env.youtrack.mcpCommand,
+    args: env.youtrack.mcpArgs,
+    timeoutMs: env.youtrack.mcpTimeoutMs,
+  }),
+})
+const feedbackRouter = createFeedbackRouter({
+  projector: feedbackProjector,
+})
 const desktopCorsOrigins = ["tauri://localhost", "http://localhost:1420", "http://localhost:1421"] as const
 const corsOrigins =
   env.corsOrigins.length > 0

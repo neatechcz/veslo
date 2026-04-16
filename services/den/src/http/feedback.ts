@@ -3,6 +3,7 @@ import express from "express"
 import { z } from "zod"
 import { db } from "../db/index.js"
 import { FeedbackReportTable, FeedbackScreenshotStatus } from "../db/schema.js"
+import type { createFeedbackProjector } from "../feedback/projector.js"
 import { asyncRoute } from "./errors.js"
 import { requireOrganizationAccess } from "./org-auth.js"
 
@@ -21,6 +22,7 @@ export type FeedbackRouterOptions = {
   db?: FeedbackInsertDb
   generateId?: () => string
   now?: () => Date
+  projector?: Pick<ReturnType<typeof createFeedbackProjector>, "projectFeedback">
 }
 
 const feedbackContextSchema = z.object({
@@ -150,6 +152,7 @@ export function createFeedbackRouter(options: FeedbackRouterOptions = {}) {
   const feedbackDb = options.db ?? db
   const generateId = options.generateId ?? buildFeedbackId
   const now = options.now ?? (() => new Date())
+  const projector = options.projector ?? null
   const router = express.Router()
   const feedbackJsonParser = express.json({ limit: "10mb" })
 
@@ -219,6 +222,12 @@ export function createFeedbackRouter(options: FeedbackRouterOptions = {}) {
       last_projector_error: null,
       next_projector_attempt_at: null,
     })
+    if (projector) {
+      void projector.projectFeedback(feedbackId).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error(`[feedback] failed to start projector for ${feedbackId}: ${message}`)
+      })
+    }
 
     res.status(201).json({
       feedbackId,
