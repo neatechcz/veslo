@@ -311,16 +311,6 @@ type RemoteWorkspaceDefaults = {
   displayName?: string | null;
 };
 
-const [feedbackModalOpen, setFeedbackModalOpen] = createSignal(false);
-
-function openFeedbackModal() {
-  setFeedbackModalOpen(true);
-}
-
-function closeFeedbackModal() {
-  setFeedbackModalOpen(false);
-}
-
 export default function App() {
   const cloudEnvironment = resolveVesloCloudEnvironment(import.meta.env as Record<string, string | undefined>);
   const envVesloWorkspaceId = cloudEnvironment.workspaceId ?? null;
@@ -422,7 +412,16 @@ export default function App() {
     createSignal<OnboardingStep>(initialOnboardingStep());
   const [rememberStartupChoice, setRememberStartupChoice] = createSignal(false);
   const [denKeepSignedIn, setDenKeepSignedIn] = createSignal(readDenKeepSignedIn());
+  const [feedbackModalOpen, setFeedbackModalOpen] = createSignal(false);
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
+
+  function openFeedbackModal() {
+    setFeedbackModalOpen(true);
+  }
+
+  function closeFeedbackModal() {
+    setFeedbackModalOpen(false);
+  }
 
   const setDenKeepSignedInPreference = (value: boolean) => {
     writeDenKeepSignedIn(value);

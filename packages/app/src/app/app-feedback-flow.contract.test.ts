@@ -82,6 +82,12 @@ function findJsxElements(sourceFile: ts.SourceFile, tagName: string): Array<ts.J
   >;
 }
 
+function findJsxElementsInNode(root: ts.Node, tagName: string): Array<ts.JsxElement | ts.JsxSelfClosingElement> {
+  return visit(root, (node) => isJsxElementLike(node) && getJsxTagName(node) === tagName) as Array<
+    ts.JsxElement | ts.JsxSelfClosingElement
+  >;
+}
+
 function findTypeAlias(sourceFile: ts.SourceFile, name: string): ts.TypeAliasDeclaration | undefined {
   for (const statement of sourceFile.statements) {
     if (ts.isTypeAliasDeclaration(statement) && statement.name.text === name) {
@@ -108,6 +114,42 @@ function findTopLevelVariableDeclaration(
 
 function findTopLevelFunction(sourceFile: ts.SourceFile, name: string): ts.FunctionDeclaration | ts.VariableDeclaration | undefined {
   for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === name) {
+      return statement;
+    }
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.name.text === name) {
+        return declaration;
+      }
+    }
+  }
+  return undefined;
+}
+
+function findFunctionDeclaration(sourceFile: ts.SourceFile, name: string): ts.FunctionDeclaration | undefined {
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === name) {
+      return statement;
+    }
+  }
+  return undefined;
+}
+
+function findLocalVariableDeclaration(body: ts.Block, name: string): ts.VariableDeclaration | undefined {
+  for (const statement of body.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.name.text === name) {
+        return declaration;
+      }
+    }
+  }
+  return undefined;
+}
+
+function findLocalCallable(body: ts.Block, name: string): ts.VariableDeclaration | ts.FunctionDeclaration | undefined {
+  for (const statement of body.statements) {
     if (ts.isFunctionDeclaration(statement) && statement.name?.text === name) {
       return statement;
     }
@@ -279,6 +321,29 @@ function getCallbackDeclaration(
   return undefined;
 }
 
+function getCallbackDeclarationInScope(
+  body: ts.Block,
+  expression: ts.Expression,
+): ts.VariableDeclaration | ts.FunctionDeclaration | undefined {
+  const normalized = unwrapExpression(expression);
+  if (!normalized) return undefined;
+
+  if (ts.isIdentifier(normalized)) {
+    return findLocalCallable(body, normalized.text);
+  }
+
+  if (ts.isArrowFunction(normalized) || ts.isFunctionExpression(normalized)) {
+    const fakeVariable = ts.factory.createVariableDeclaration("inline", undefined, undefined, normalized);
+    return fakeVariable as unknown as ts.VariableDeclaration;
+  }
+
+  if (ts.isCallExpression(normalized)) {
+    return getCallbackDeclarationInScope(body, normalized.expression);
+  }
+
+  return undefined;
+}
+
 function functionBodyContainsCall(
   node: ts.FunctionDeclaration | ts.VariableDeclaration,
   calleeName: string,
@@ -364,7 +429,11 @@ function assertPageFeedbackContract(
 }
 
 test("app shell owns feedback modal state and shared feedback opener", () => {
-  const feedbackModal = findJsxElements(appSourceFile, "FeedbackModal").find((node) => getJsxAttribute(node, "open"));
+  const appFunction = findFunctionDeclaration(appSourceFile, "App");
+  assert.ok(appFunction?.body, "app.tsx should declare App with a function body");
+
+  const appBody = appFunction!.body!;
+  const feedbackModal = findJsxElementsInNode(appBody, "FeedbackModal").find((node) => getJsxAttribute(node, "open"));
   assert.ok(feedbackModal, "app.tsx should render FeedbackModal");
 
   const openExpression = getJsxAttributeExpression(feedbackModal!, "open");
@@ -373,7 +442,7 @@ test("app shell owns feedback modal state and shared feedback opener", () => {
   assert.ok(ts.isIdentifier(openExpression.expression), "FeedbackModal open accessor should be a simple identifier");
 
   const openAccessorName = openExpression.expression.text;
-  const stateDeclaration = [...appSourceFile.statements]
+  const stateDeclaration = appBody.statements
     .flatMap((statement) => (ts.isVariableStatement(statement) ? [...statement.declarationList.declarations] : []))
     .find((declaration) => {
       if (!declaration.name || !ts.isArrayBindingPattern(declaration.name)) return false;
@@ -391,25 +460,30 @@ test("app shell owns feedback modal state and shared feedback opener", () => {
         declaration.initializer.arguments[0].getText(appSourceFile) === "false"
       );
     });
-  assert.ok(stateDeclaration, "FeedbackModal open should come from a shared createSignal(false) pair");
+  assert.ok(stateDeclaration, "FeedbackModal open should come from an App-local createSignal(false) pair");
 
   const [accessorBinding, setterBinding] = (stateDeclaration!.name as ts.ArrayBindingPattern).elements;
   assert.ok(ts.isIdentifier(accessorBinding.name), "feedback open accessor should be an identifier");
   assert.ok(ts.isIdentifier(setterBinding.name), "feedback open setter should be an identifier");
+  assert.equal(
+    findTopLevelVariableDeclaration(appSourceFile, openAccessorName),
+    undefined,
+    "feedback open accessor should not be declared at module scope",
+  );
 
   const onCloseExpression = getJsxAttributeExpression(feedbackModal!, "onClose");
   assert.ok(onCloseExpression, "FeedbackModal should receive onClose");
 
   const setterName = setterBinding.name.text;
-  const onCloseDecl = getCallbackDeclaration(appSourceFile, onCloseExpression!);
-  assert.ok(onCloseDecl, "FeedbackModal onClose should be backed by a callback declaration");
+  const onCloseDecl = getCallbackDeclarationInScope(appBody, onCloseExpression!);
+  assert.ok(onCloseDecl, "FeedbackModal onClose should be backed by an App-local callback declaration");
   assert.ok(
     functionBodyContainsCall(onCloseDecl!, setterName, "false"),
     "FeedbackModal onClose should close the same shared feedback state",
   );
 
-  const dashboardView = findJsxElements(appSourceFile, "DashboardView").find(() => true);
-  const sessionView = findJsxElements(appSourceFile, "SessionView").find(() => true);
+  const dashboardView = findJsxElementsInNode(appBody, "DashboardView").find(() => true);
+  const sessionView = findJsxElementsInNode(appBody, "SessionView").find(() => true);
   assert.ok(dashboardView, "App should render DashboardView");
   assert.ok(sessionView, "App should render SessionView");
 
@@ -423,8 +497,8 @@ test("app shell owns feedback modal state and shared feedback opener", () => {
     "App should route the same shared onOpenFeedback callback into both page views",
   );
 
-  const sharedCallbackDecl = getCallbackDeclaration(appSourceFile, dashboardViewCallback!);
-  assert.ok(sharedCallbackDecl, "shared onOpenFeedback callback should be declared in app.tsx");
+  const sharedCallbackDecl = getCallbackDeclarationInScope(appBody, dashboardViewCallback!);
+  assert.ok(sharedCallbackDecl, "shared onOpenFeedback callback should be declared in App scope");
   assert.ok(
     functionBodyContainsCall(sharedCallbackDecl!, setterName, "true"),
     "shared onOpenFeedback callback should open the same feedback modal state",
