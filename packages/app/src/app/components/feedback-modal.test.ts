@@ -26,3 +26,13 @@ test("feedback modal cleans up scheduled initial focus when closing", () => {
   assert.match(source, /cancelAnimationFrame\(focusFrame\)/, "feedback modal should cancel the scheduled focus frame during cleanup");
   assert.match(source, /let focusFrameCancelled = false|let isFocusFrameActive = true/, "feedback modal should guard the focus callback against stale execution");
 });
+
+test("feedback modal blocks duplicate submit activation while persistence is in flight", () => {
+  assert.match(source, /submitting: boolean;/, "feedback modal props should expose submitting state from the app shell");
+  assert.match(source, /if \(!canSubmit\(\) \|\| props\.submitting\) return;/, "feedback modal submit handler should ignore activations while submitting");
+  assert.match(
+    source,
+    /<Button onClick=\{submit\} disabled=\{props\.submitting \|\| !canSubmit\(\)\}>/,
+    "feedback modal submit button should disable while submitting",
+  );
+});

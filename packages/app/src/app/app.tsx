@@ -417,6 +417,7 @@ export default function App() {
   const [rememberStartupChoice, setRememberStartupChoice] = createSignal(false);
   const [denKeepSignedIn, setDenKeepSignedIn] = createSignal(readDenKeepSignedIn());
   const [feedbackModalOpen, setFeedbackModalOpen] = createSignal(false);
+  const [feedbackSubmitting, setFeedbackSubmitting] = createSignal(false);
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
 
   function openFeedbackModal() {
@@ -7828,15 +7829,20 @@ export default function App() {
   });
 
   async function persistFeedback(values: FeedbackFormValues) {
+    if (feedbackSubmitting()) return;
     setError(null);
+    setFeedbackSubmitting(true);
+    try {
+      await submitFeedbackReport({
+        title: values.title,
+        description: values.description,
+        context: buildFeedbackRuntimeContext(),
+      });
 
-    await submitFeedbackReport({
-      title: values.title,
-      description: values.description,
-      context: buildFeedbackRuntimeContext(),
-    });
-
-    closeFeedbackModal();
+      closeFeedbackModal();
+    } finally {
+      setFeedbackSubmitting(false);
+    }
   }
 
   function submitFeedback(values: FeedbackFormValues) {
@@ -8007,6 +8013,7 @@ export default function App() {
 
       <FeedbackModal
         open={feedbackModalOpen()}
+        submitting={feedbackSubmitting()}
         onClose={closeFeedbackModal}
         onSubmit={submitFeedback}
       />

@@ -13,6 +13,7 @@ export type FeedbackFormValues = {
 
 export type FeedbackModalProps = {
   open: boolean;
+  submitting: boolean;
   onClose: () => void;
   onSubmit: (values: FeedbackFormValues) => void;
 };
@@ -144,7 +145,7 @@ export default function FeedbackModal(props: FeedbackModalProps) {
   });
 
   const submit = () => {
-    if (!canSubmit()) return;
+    if (!canSubmit() || props.submitting) return;
     props.onSubmit({
       title: title().trim(),
       description: description().trim(),
@@ -212,7 +213,7 @@ export default function FeedbackModal(props: FeedbackModalProps) {
               <Button variant="outline" onClick={props.onClose}>
                 {translate("common.cancel")}
               </Button>
-              <Button onClick={submit} disabled={!canSubmit()}>
+              <Button onClick={submit} disabled={props.submitting || !canSubmit()}>
                 {translate("feedback.submit")}
               </Button>
             </div>

@@ -371,6 +371,28 @@ function functionBodyContainsCall(
   return matched;
 }
 
+function getFunctionBlock(node: ts.FunctionDeclaration | ts.VariableDeclaration): ts.Block | undefined {
+  const functionLike = ts.isFunctionDeclaration(node)
+    ? node
+    : node.initializer && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))
+      ? node.initializer
+      : undefined;
+  if (!functionLike || !functionLike.body) return undefined;
+  return ts.isBlock(functionLike.body) ? functionLike.body : undefined;
+}
+
+function blockContainsCallee(block: ts.Block, calleeName: string): boolean {
+  let matched = false;
+  visit(block, (child) => {
+    if (!ts.isCallExpression(child)) return false;
+    const callee = child.expression;
+    if (!ts.isIdentifier(callee) || callee.text !== calleeName) return false;
+    matched = true;
+    return true;
+  });
+  return matched;
+}
+
 function expressionText(sourceFile: ts.SourceFile, expression: ts.Expression | undefined): string {
   return expression ? expression.getText(sourceFile) : "";
 }
@@ -507,6 +529,71 @@ test("app shell owns feedback modal state and shared feedback opener", () => {
     sharedCallbackDecl.name?.getText(appSourceFile) ?? dashboardViewCallback!.getText(appSourceFile),
     sharedCallbackDecl.name?.getText(appSourceFile) ?? sessionViewCallback!.getText(appSourceFile),
     "DashboardView and SessionView should resolve the same shared feedback callback declaration",
+  );
+});
+
+test("app shell guards feedback submission while persistence is in flight", () => {
+  const appFunction = findFunctionDeclaration(appSourceFile, "App");
+  assert.ok(appFunction?.body, "app.tsx should declare App with a function body");
+
+  const appBody = appFunction!.body!;
+  const feedbackSubmittingDeclaration = appBody.statements
+    .flatMap((statement) => (ts.isVariableStatement(statement) ? [...statement.declarationList.declarations] : []))
+    .find((declaration) => {
+      if (!ts.isArrayBindingPattern(declaration.name) || declaration.name.elements.length < 2) return false;
+      const [accessor, setter] = declaration.name.elements;
+      if (!accessor || !setter) return false;
+      if (!ts.isIdentifier(accessor.name) || !ts.isIdentifier(setter.name)) return false;
+      if (accessor.name.text !== "feedbackSubmitting" || setter.name.text !== "setFeedbackSubmitting") return false;
+      return (
+        ts.isCallExpression(declaration.initializer) &&
+        ts.isIdentifier(declaration.initializer.expression) &&
+        declaration.initializer.expression.text === "createSignal" &&
+        declaration.initializer.arguments[0]?.getText(appSourceFile) === "false"
+      );
+    });
+  assert.ok(feedbackSubmittingDeclaration, "App should track feedback submission with a dedicated createSignal(false)");
+
+  const feedbackModal = findJsxElementsInNode(appBody, "FeedbackModal").find((node) => getJsxAttribute(node, "open"));
+  assert.ok(feedbackModal, "app.tsx should render FeedbackModal");
+  assert.equal(
+    getJsxAttributeExpression(feedbackModal!, "submitting")?.getText(appSourceFile),
+    "feedbackSubmitting()",
+    "FeedbackModal should receive the shared feedbackSubmitting accessor",
+  );
+
+  const persistFeedbackDecl = findLocalCallable(appBody, "persistFeedback");
+  assert.ok(persistFeedbackDecl, "App should declare persistFeedback in local scope");
+
+  const persistFeedbackBody = getFunctionBlock(persistFeedbackDecl!);
+  assert.ok(persistFeedbackBody, "persistFeedback should have a block body");
+  assert.match(
+    persistFeedbackBody!.getText(appSourceFile),
+    /if \(feedbackSubmitting\(\)\) return;/,
+    "persistFeedback should ignore concurrent submissions",
+  );
+  assert.ok(
+    functionBodyContainsCall(persistFeedbackDecl!, "setFeedbackSubmitting", "true"),
+    "persistFeedback should mark feedback submission as in flight before posting",
+  );
+
+  const tryStatements = visit(persistFeedbackBody!, (node) => ts.isTryStatement(node)) as ts.TryStatement[];
+  assert.equal(tryStatements.length, 1, "persistFeedback should use a single try/finally block around feedback persistence");
+
+  const [persistTry] = tryStatements;
+  assert.equal(persistTry!.catchClause, undefined, "persistFeedback should let persistence failures bubble back to the caller");
+  assert.ok(
+    blockContainsCallee(persistTry!.tryBlock, "submitFeedbackReport"),
+    "persistFeedback should submit feedback inside the protected try block",
+  );
+  assert.ok(
+    blockContainsCallee(persistTry!.tryBlock, "closeFeedbackModal"),
+    "persistFeedback should close the modal only after successful feedback persistence",
+  );
+  assert.ok(persistTry!.finallyBlock, "persistFeedback should always clear the in-flight flag in finally");
+  assert.ok(
+    blockContainsCallee(persistTry!.finallyBlock!, "setFeedbackSubmitting"),
+    "persistFeedback should always reset the in-flight flag in finally",
   );
 });
 
