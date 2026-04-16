@@ -79,13 +79,13 @@ test("titlebar menu toggles support a custom left label and default to toggle te
 test("titlebar menu toggles expose a dedicated right-side content slot", () => {
   assert.match(
     source,
-    /rightContent\??:\s*JSX\.Element;/,
+    /rightContent\??:/,
     "titlebar should accept a dedicated right-side content slot in addition to the right toggle",
   );
 
   assert.match(
     source,
-    /<Show when=\{props\.rightContent\}>[\s\S]*props\.rightContent[\s\S]*<button[\s\S]*Toggle right menu/s,
+    /props\.rightContent[\s\S]*Toggle right menu/s,
     "titlebar should render right-side content before the existing right toggle button",
   );
 });

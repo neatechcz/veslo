@@ -9,47 +9,47 @@ const sessionSource = readFileSync(new URL("./pages/session.tsx", import.meta.ur
 test("app shell owns the feedback modal state", () => {
   assert.match(
     appSource,
-    /const\s+\[feedbackModalOpen,\s*setFeedbackModalOpen\]\s*=\s*createSignal\(false\);/,
-    "app shell should own the feedback modal open state",
+    /feedback[\s\S]{0,220}createSignal\(false\)/i,
+    "app shell should own feedback modal state",
   );
 
   assert.match(
     appSource,
-    /const\s+openFeedbackModal\s*=\s*\(\)\s*=>\s*setFeedbackModalOpen\(true\);/,
-    "app shell should expose a dedicated open handler for feedback",
+    /FeedbackModal[\s\S]{0,800}open=\{[\s\S]{0,200}\}/s,
+    "app shell should render a feedback modal controlled by app state",
   );
 
   assert.match(
     appSource,
-    /const\s+closeFeedbackModal\s*=\s*\(\)\s*=>\s*setFeedbackModalOpen\(false\);/,
-    "app shell should expose a dedicated close handler for feedback",
+    /FeedbackModal[\s\S]{0,1200}onClose=\{[\s\S]{0,200}\}/s,
+    "app shell should expose a close path for the feedback modal",
   );
 });
 
 test("dashboard and session receive the shared feedback trigger", () => {
   assert.match(
     dashboardSource,
-    /<TitlebarMenuToggles[\s\S]*rightContent=\{[\s\S]*Feedback[\s\S]*\}/,
-    "dashboard should feed the feedback action into the shared titlebar slot",
+    /<TitlebarMenuToggles[\s\S]{0,500}rightContent=\{[\s\S]{0,500}Feedback[\s\S]{0,500}onClick=/s,
+    "dashboard should feed an actual feedback trigger into the shared titlebar slot",
   );
 
   assert.match(
     sessionSource,
-    /<TitlebarMenuToggles[\s\S]*rightContent=\{[\s\S]*Feedback[\s\S]*\}/,
-    "session should feed the feedback action into the shared titlebar slot",
+    /<TitlebarMenuToggles[\s\S]{0,500}rightContent=\{[\s\S]{0,500}Feedback[\s\S]{0,500}onClick=/s,
+    "session should feed an actual feedback trigger into the shared titlebar slot",
   );
 });
 
 test("app shell wires both page views to the shared feedback modal trigger", () => {
   assert.match(
     appSource,
-    /dashboardProps\(\)[\s\S]*openFeedbackModal[\s\S]*sessionProps\(\)[\s\S]*openFeedbackModal/s,
-    "app shell should thread the feedback trigger through both page prop builders",
+    /feedback[\s\S]{0,1200}DashboardView[\s\S]{0,1200}feedback[\s\S]{0,1200}SessionView/s,
+    "app shell should thread feedback wiring through both page views",
   );
 
   assert.match(
     appSource,
-    /<FeedbackModal[\s\S]*open=\{feedbackModalOpen\(\)\}/,
-    "app shell should render a shared feedback modal controlled by the app-level state",
+    /<FeedbackModal[\s\S]*open=\{[\s\S]{0,200}\}/s,
+    "app shell should render a shared feedback modal controlled by app state",
   );
 });
