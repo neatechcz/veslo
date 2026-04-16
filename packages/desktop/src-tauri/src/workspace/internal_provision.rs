@@ -4,7 +4,7 @@ use std::path::Path;
 use include_dir::{include_dir, Dir};
 use serde::{Deserialize, Serialize};
 
-const INTERNAL_PACK_VERSION: &str = "2026-04-03.1";
+const INTERNAL_PACK_VERSION: &str = "2026-04-16.1";
 const INTERNAL_PACK_SOURCE: &str = "openwork-snapshot";
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
 const ROUTING_BLOCK_VERSION: u32 = 3;
@@ -154,6 +154,12 @@ fn managed_veslo_agent_instructions_block() -> String {
          - **Skills** — reusable workflows in `.opencode/skills/`. Suggest creating one when work repeats.\n\
          - **Scheduler** — recurring tasks (daily, weekly, interval). Mention when a task could be automated.\n\
          - **Workspace** — user may have multiple workspaces; respect workspace boundaries.\n\
+         \n\
+         ### User Memory\n\
+         - When the user says \"remember this\", \"zapamatuj si\", or \"ulož si\", persist the information to `.opencode/soul-user.md`.\n\
+         - Read the file first, append new entries, then write it back. Do not overwrite existing content.\n\
+         - Keep entries concise — one line per fact, grouped logically.\n\
+         - Never store credentials, tokens, or API keys in this file.\n\
          {end}",
         start = AGENT_BLOCK_START,
         end = AGENT_BLOCK_END,

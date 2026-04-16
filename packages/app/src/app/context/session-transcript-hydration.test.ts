@@ -36,6 +36,7 @@ test("hydrateTranscriptSnapshot stores messages and keeps the current selection 
   createRoot((dispose) => {
     try {
       const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>("sess-b");
+
       const store = createSessionStore({
         client: () => null,
         activeWorkspaceRoot: () => "",

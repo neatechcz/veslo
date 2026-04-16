@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import fuzzysort from "fuzzysort";
-import { ArrowUp, File as FileIcon, Paperclip, Square, Terminal, X, Zap } from "lucide-solid";
+import { ArrowUp, File as FileIcon, Loader2, Paperclip, Square, Terminal, X, Zap } from "lucide-solid";
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
@@ -52,6 +52,7 @@ type ComposerProps = {
   attachmentsEnabled: boolean;
   attachmentsDisabledReason: string | null;
   listCommands: () => Promise<SlashCommandOption[]>;
+  engineReady?: boolean;
 };
 
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
@@ -929,6 +930,11 @@ export default function Composer(props: ComposerProps) {
     applyHistoryDraft(target);
   };
 
+  const [sending, setSending] = createSignal(false);
+  createEffect(() => {
+    if (props.isStreaming && sending()) setSending(false);
+  });
+
   const sendDraft = async () => {
     // Ensure any pending debounce updates are committed before sending
     flushDraftChange();
@@ -952,8 +958,13 @@ export default function Composer(props: ComposerProps) {
     }
 
     recordHistory(draft);
+    setSending(true);
     const sent = await props.onSend(draft);
-    if (!sent) return;
+    if (!sent) {
+      setSending(false);
+      return;
+    }
+    // Don't reset sending here — isStreaming will take over and hide the send button.
     setSlashOpen(false);
     setSlashQuery("");
     setAttachments([]);
@@ -1386,7 +1397,7 @@ export default function Composer(props: ComposerProps) {
 
     if (event.key === "Enter") {
       event.preventDefault();
-      if (props.busy) return;
+      if (sending() || props.busy) return;
       void sendDraft();
     }
   };
@@ -1720,15 +1731,22 @@ export default function Composer(props: ComposerProps) {
                               type="button"
                               disabled={!hasDraftContent()}
                               onClick={() => {
+                                if (sending() || props.busy) return;
                                 void sendDraft();
                               }}
-                              class={`shrink-0 p-1.5 rounded-full transition-colors ${!hasDraftContent()
-                                ? "bg-gray-4 text-gray-10"
-                                : "bg-[#1B29FF] text-white hover:bg-blue-10"
-                                }`}
+                              class={`shrink-0 p-1.5 rounded-full ${
+                                sending()
+                                  ? "bg-[#1B29FF] text-white pointer-events-none"
+                                  : `transition-colors ${!hasDraftContent()
+                                    ? "bg-gray-4 text-gray-10"
+                                    : "bg-[#1B29FF] text-white hover:bg-blue-10"}`
+                              }`}
                               title={translate("session.send_label")}
                             >
-                              <ArrowUp size={18} />
+                              {sending()
+                                ? <Loader2 size={18} class="animate-spin" />
+                                : <ArrowUp size={18} />
+                              }
                             </button>
                           }
                         >

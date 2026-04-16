@@ -10,6 +10,87 @@ use crate::utils::now_ms;
 use crate::workspace::commands::{sanitize_command_name, serialize_command_frontmatter};
 use crate::workspace::internal_provision::{provision_internal_workspace_assets, ProvisionStatus};
 
+const DEFAULT_SOUL_COMPANY: &str = r#"# Company Instructions
+
+<!-- Edit this file to set company-wide tone, guardrails, and context. -->
+<!-- This file is loaded into every workspace conversation. -->
+<!-- Template location: ~/Library/Application Support/com.neatech.veslo/templates/soul-company.md -->
+
+## Tone & Style
+- Professional and clear.
+- Respond in the user's language.
+
+## Guardrails
+- Never share credentials, tokens, or API keys.
+- Explain consequences before destructive actions.
+- Respect workspace boundaries.
+"#;
+
+const DEFAULT_SOUL_USER: &str = r#"# User Memory
+
+<!-- This file stores personal notes and preferences. -->
+<!-- Say "remember this" or "zapamatuj si" to add entries. -->
+<!-- Veslo will append new facts below. -->
+"#;
+
+const SOUL_INSTRUCTIONS: &[&str] = &[".opencode/soul-company.md", ".opencode/soul-user.md"];
+
+/// Seed soul template files into app_data_dir/templates/ if they don't exist.
+pub fn seed_soul_templates(templates_dir: &Path) -> Result<(), String> {
+    fs::create_dir_all(templates_dir)
+        .map_err(|e| format!("Failed to create templates dir: {e}"))?;
+
+    let company_path = templates_dir.join("soul-company.md");
+    if !company_path.exists() {
+        fs::write(&company_path, DEFAULT_SOUL_COMPANY)
+            .map_err(|e| format!("Failed to write soul-company.md template: {e}"))?;
+    }
+
+    let user_path = templates_dir.join("soul-user.md");
+    if !user_path.exists() {
+        fs::write(&user_path, DEFAULT_SOUL_USER)
+            .map_err(|e| format!("Failed to write soul-user.md template: {e}"))?;
+    }
+
+    Ok(())
+}
+
+/// Copy soul files into workspace .opencode/ from templates (or inline defaults).
+fn seed_soul_files(opencode_dir: &Path, templates_dir: Option<&Path>) -> Result<(), String> {
+    let files: &[(&str, &str)] = &[
+        ("soul-company.md", DEFAULT_SOUL_COMPANY),
+        ("soul-user.md", DEFAULT_SOUL_USER),
+    ];
+
+    for (filename, default_content) in files {
+        let dest = opencode_dir.join(filename);
+        if dest.exists() {
+            continue;
+        }
+
+        let content = templates_dir
+            .map(|dir| dir.join(filename))
+            .filter(|path| path.exists())
+            .and_then(|path| fs::read_to_string(&path).ok());
+
+        let content = content.as_deref().unwrap_or(default_content);
+        fs::write(&dest, content)
+            .map_err(|e| format!("Failed to write {filename}: {e}"))?;
+    }
+
+    Ok(())
+}
+
+fn merge_instructions(existing: Vec<String>, required: &[&str]) -> Vec<String> {
+    let mut out = existing;
+    for instruction in required {
+        if !out.iter().any(|entry| entry == instruction) {
+            out.push(instruction.to_string());
+        }
+    }
+    out
+}
+
 pub fn merge_plugins(existing: Vec<String>, required: &[&str]) -> Vec<String> {
     let mut out = existing;
     for plugin in required {
@@ -408,8 +489,18 @@ fn seed_commands(commands_dir: &PathBuf, preset: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), String> {
+pub fn ensure_workspace_files(
+    workspace_path: &str,
+    preset: &str,
+    templates_dir: Option<&Path>,
+) -> Result<(), String> {
     let root = PathBuf::from(workspace_path);
+
+    // Seed soul files into .opencode/ before anything else that reads config
+    let opencode_dir = root.join(".opencode");
+    fs::create_dir_all(&opencode_dir)
+        .map_err(|e| format!("Failed to create .opencode: {e}"))?;
+    seed_soul_files(&opencode_dir, templates_dir)?;
 
     let skill_root = root.join(".opencode").join("skills");
     fs::create_dir_all(&skill_root)
@@ -553,6 +644,34 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
         }
     }
 
+    // Ensure soul files are listed in instructions
+    if let Some(obj) = config.as_object_mut() {
+        let instructions_value = obj
+            .get("instructions")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+
+        let existing_instructions: Vec<String> = match instructions_value {
+            serde_json::Value::Array(arr) => arr
+                .into_iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect(),
+            serde_json::Value::String(s) => vec![s],
+            _ => vec![],
+        };
+
+        let merged = merge_instructions(existing_instructions.clone(), SOUL_INSTRUCTIONS);
+        if merged != existing_instructions {
+            config_changed = true;
+        }
+        obj.insert(
+            "instructions".to_string(),
+            serde_json::Value::Array(
+                merged.into_iter().map(serde_json::Value::String).collect(),
+            ),
+        );
+    }
+
     if config_changed {
         fs::write(
             &config_path,
@@ -645,7 +764,7 @@ mod tests {
         let root = temp_workspace_root("automation");
         let root_str = root.to_string_lossy().to_string();
 
-        ensure_workspace_files(&root_str, "automation").expect("seed workspace files");
+        ensure_workspace_files(&root_str, "automation", None).expect("seed workspace files");
 
         let config_raw =
             fs::read_to_string(root.join("opencode.jsonc")).expect("read generated config");
@@ -690,7 +809,7 @@ mod tests {
         .expect("write existing config");
 
         let root_str = root.to_string_lossy().to_string();
-        ensure_workspace_files(&root_str, "minimal").expect("seed workspace files");
+        ensure_workspace_files(&root_str, "minimal", None).expect("seed workspace files");
 
         let config_raw = fs::read_to_string(&config_path).expect("read updated config");
         let config: serde_json::Value =

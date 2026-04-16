@@ -59,6 +59,7 @@ test("selectSession completes initial transcript load without waiting for health
   let messageCalls = 0;
   let todoCalls = 0;
   let permissionCalls = 0;
+
   await createRoot(async (dispose) => {
     try {
       const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);

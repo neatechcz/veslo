@@ -9,7 +9,7 @@ use crate::types::{
     ExecResult, RemoteType, WorkspaceInfo, WorkspaceList, WorkspaceState, WorkspaceType,
     WorkspaceVesloConfig,
 };
-use crate::workspace::files::ensure_workspace_files;
+use crate::workspace::files::{ensure_workspace_files, seed_soul_templates};
 use crate::workspace::state::{
     load_workspace_state, save_workspace_state, stable_workspace_id,
     stable_workspace_id_for_remote, stable_workspace_id_for_veslo,
@@ -219,11 +219,19 @@ pub fn workspace_bootstrap(
     println!("[workspace] bootstrap");
     let mut state = load_workspace_state(&app)?;
 
+    let (data_dir, _) = crate::workspace::state::veslo_state_paths(&app)?;
+    let templates_dir = data_dir.join("templates");
+    if let Err(e) = seed_soul_templates(&templates_dir) {
+        eprintln!("[workspace] failed to seed soul templates: {e}");
+    }
+
     for workspace in state.workspaces.iter_mut() {
         if workspace.workspace_type != WorkspaceType::Local {
             continue;
         }
-        if let Err(error) = ensure_workspace_files(&workspace.path, &workspace.preset) {
+        if let Err(error) =
+            ensure_workspace_files(&workspace.path, &workspace.preset, Some(&templates_dir))
+        {
             eprintln!(
                 "[workspace] bootstrap provisioning failed for {}: {}",
                 workspace.path, error
@@ -441,9 +449,15 @@ pub fn workspace_create(
 
     fs::create_dir_all(&folder).map_err(|e| format!("Failed to create workspace folder: {e}"))?;
 
+    let (data_dir, _) = crate::workspace::state::veslo_state_paths(&app)?;
+    let templates_dir = data_dir.join("templates");
+    if let Err(e) = seed_soul_templates(&templates_dir) {
+        eprintln!("[workspace] failed to seed soul templates: {e}");
+    }
+
     let id = stable_workspace_id(&folder);
 
-    ensure_workspace_files(&folder, &preset)?;
+    ensure_workspace_files(&folder, &preset, Some(&templates_dir))?;
 
     let mut state = load_workspace_state(&app)?;
     upsert_workspace(&mut state.workspaces, WorkspaceInfo {

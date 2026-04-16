@@ -149,6 +149,9 @@ export function createWorkspaceStore(options: {
   onEngineStable?: () => void;
   engineRuntime?: () => EngineRuntime;
   developerMode: () => boolean;
+  setEngineReady?: (value: boolean) => void;
+  populateSidebarFromDb?: (workspaceId: string, directory: string) => Promise<void>;
+  hydrateLatestSessionFromDb?: (workspaceId: string, directory: string) => Promise<void>;
 }) {
   const cloudOnlyMessage = (code: string, detail: string) => `${code}: ${detail}`;
   const blockLocalAction = (code: string, detail: string) => {
@@ -856,6 +859,13 @@ export function createWorkspaceStore(options: {
     syncActiveWorkspaceId(id);
     setProjectDir(nextRoot);
 
+    // For local→local workspace switches in Tauri, signal that the engine is not ready
+    // for the new workspace BEFORE any await. This prevents reactive effects (idle-loader,
+    // SSE sync) from trying to contact the engine API during the async setup phase.
+    if (!isRemote && wasLocalConnection && workspaceChanged && isTauriRuntime() && options.populateSidebarFromDb) {
+      options.setEngineReady?.(false);
+    }
+
     if (isTauriRuntime()) {
       if (isRemote) {
         setWorkspaceConfig(null);
@@ -1025,7 +1035,39 @@ export function createWorkspaceStore(options: {
       }
     }
 
-    // When running locally, restart the engine when workspace changes
+    // BROWSING MODE: When switching between local workspaces in Tauri,
+    // skip engine restart and load sessions/messages directly from SQLite.
+    // The user can browse history immediately; engine stays where it was.
+    if (!isRemote && wasLocalConnection && workspaceChanged && isTauriRuntime() && options.populateSidebarFromDb) {
+      _wsLog("[workspace:activate] STEP 5-BROWSE — browsing mode, loading from SQLite", { id, path: next.path });
+      wsDebug("activate:local->local:browsingMode", { id, nextPath: next.path });
+
+      options.setSelectedSessionId(null);
+      options.setMessages([]);
+      options.setTodos([]);
+      options.setSessionStatusById({});
+
+      try {
+        await options.populateSidebarFromDb(id, next.path);
+      } catch (e) {
+        _wsLog("[workspace:activate] STEP 5-BROWSE — populateSidebarFromDb failed", e);
+      }
+
+      try {
+        if (options.hydrateLatestSessionFromDb) {
+          await options.hydrateLatestSessionFromDb(id, next.path);
+        }
+      } catch (e) {
+        _wsLog("[workspace:activate] STEP 5-BROWSE — hydrateLatestSessionFromDb failed", e);
+      }
+
+      options.setEngineReady?.(false);
+      updateWorkspaceConnectionState(id, { status: "connected", message: null });
+      wsDebug("activate:local->local:browsingMode:done", { id, ms: Date.now() - activateStart });
+      return true;
+    }
+
+    // When running locally, restart the engine when workspace changes (fallback for non-Tauri)
     let engineRestartFailed = false;
     if (!isRemote && wasLocalConnection && workspaceChanged) {
       if (isSuperseded()) {
@@ -2310,6 +2352,105 @@ export function createWorkspaceStore(options: {
     }
   }
 
+  /**
+   * Minimal engine connection — creates client, waits for healthy, sets client signal.
+   * Does NOT clear session state, load sessions, or navigate.
+   * SSE subscription starts automatically via createEffect watching client().
+   */
+  async function connectToEngineQuiet(
+    baseUrl: string,
+    directory: string,
+    auth?: OpencodeAuth,
+  ): Promise<boolean> {
+    const nextClient = createClient(baseUrl, directory, auth);
+    const health = await waitForHealthy(nextClient, { timeoutMs: DEFAULT_CONNECT_HEALTH_TIMEOUT_MS });
+    options.setClient(nextClient);
+    options.setConnectedVersion(health.version);
+    options.setBaseUrl(baseUrl);
+    options.setClientDirectory(directory);
+    return true;
+  }
+
+  /**
+   * Start the engine for the active workspace and connect without disrupting
+   * the current session view. Used when sending a message in browsing mode.
+   *
+   * Order: engine restart → quiet connect → loadSessions → engineReady(true)
+   * The engineReady guard in SSE sync prevents sidebar overwrite until sessions are loaded.
+   */
+  async function ensureEngineForWorkspace(): Promise<boolean> {
+    const id = activeWorkspaceId();
+    const workspace = workspaces().find((w) => w.id === id);
+    if (!workspace?.path) return false;
+
+    _wsLog("[workspace:ensureEngine] starting engine for browsing mode", { id, path: workspace.path });
+
+    try {
+      const runtime = resolveEngineRuntime();
+      if (runtime === "veslo-orchestrator") {
+        await activateOrchestratorWorkspace({
+          workspacePath: workspace.path,
+          name: workspace.displayName?.trim() || workspace.name?.trim() || null,
+        });
+        await activateVesloHostWorkspaceWithTimeout(
+          () => activateVesloHostWorkspace(workspace.path),
+        );
+        const newInfo = await withTimeoutOrThrow(
+          engineInfo(),
+          { timeoutMs: ENGINE_INFO_TIMEOUT_MS, label: "engine_info" },
+        );
+        engineStore.setEngine(newInfo);
+
+        const username = newInfo.opencodeUsername?.trim() ?? "";
+        const password = newInfo.opencodePassword?.trim() ?? "";
+        const auth = username && password ? { username, password } : undefined;
+        engineStore.setEngineAuth(auth ?? null);
+
+        if (newInfo.baseUrl) {
+          await connectToEngineQuiet(newInfo.baseUrl, workspace.path, auth);
+        }
+      } else {
+        const { stopResult: info, startResult: newInfo } = await runWorkspaceEngineRestartWithTimeouts({
+          stop: () => engineStop(),
+          start: () =>
+            engineStart(workspace.path, {
+              preferSidecar: options.engineSource() === "sidecar",
+              opencodeBinPath:
+                options.engineSource() === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
+              runtime,
+              workspacePaths: resolveWorkspacePaths(),
+            }),
+        });
+        engineStore.setEngine(info);
+        engineStore.setEngine(newInfo);
+
+        const username = newInfo.opencodeUsername?.trim() ?? "";
+        const password = newInfo.opencodePassword?.trim() ?? "";
+        const auth = username && password ? { username, password } : undefined;
+        engineStore.setEngineAuth(auth ?? null);
+
+        if (newInfo.baseUrl) {
+          await connectToEngineQuiet(newInfo.baseUrl, workspace.path, auth);
+        }
+      }
+
+      // Load sessions while engineReady is still false (SSE sync guard protects sidebar)
+      await options.loadSessions(workspace.path);
+
+      // Now set engineReady — SSE sync fires with correct session data
+      options.setEngineReady?.(true);
+      updateWorkspaceConnectionState(id, { status: "connected", message: null });
+      options.onEngineStable?.();
+      _wsLog("[workspace:ensureEngine] engine started successfully", { id });
+      return true;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      _wsLog("[workspace:ensureEngine] engine start failed", { id, error: message });
+      options.setError(message);
+      return false;
+    }
+  }
+
   return {
     engine: engineStore.engine,
     engineDoctorResult: engineStore.engineDoctorResult,
@@ -2350,6 +2491,7 @@ export function createWorkspaceStore(options: {
     refreshEngine: engineStore.refreshEngine,
     refreshEngineDoctor: engineStore.refreshEngineDoctor,
     activateWorkspace,
+    ensureEngineForWorkspace,
     testWorkspaceConnection,
     connectToServer,
     createWorkspaceFlow,

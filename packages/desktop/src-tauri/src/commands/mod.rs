@@ -11,4 +11,5 @@ pub mod scheduler;
 pub mod skills;
 pub mod updater;
 pub mod window;
+pub mod session_reader;
 pub mod workspace;

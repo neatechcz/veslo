@@ -887,6 +887,7 @@ export default function App() {
   const [error, setError] = createSignal<string | null>(null);
   const [opencodeConnectStatus, setOpencodeConnectStatus] = createSignal<OpencodeConnectStatus | null>(null);
   const [booting, setBooting] = createSignal(true);
+  const [engineReady, setEngineReady] = createSignal(true);
   const mountTime = Date.now();
   const [lastKnownConfigSnapshot, setLastKnownConfigSnapshot] = createSignal("");
   const [developerMode, setDeveloperMode] = createSignal(false);
@@ -1578,6 +1579,30 @@ export default function App() {
 
     const initialContent = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
     if (!initialContent && !resolvedDraft.attachments.length) return false;
+
+    // In browsing mode, engine is not connected. Start it before sending.
+    if (!engineReady()) {
+      setBusy(true);
+      setBusyLabel("status.connecting");
+      setBusyStartedAt(Date.now());
+      // Yield to the browser's macro task queue so it paints the spinner
+      // before the engine start blocks the microtask chain.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      try {
+        const started = await workspaceStore.ensureEngineForWorkspace();
+        if (!started) {
+          setBusy(false);
+          setBusyLabel(null);
+          setBusyStartedAt(null);
+          return false;
+        }
+      } catch {
+        setBusy(false);
+        setBusyLabel(null);
+        setBusyStartedAt(null);
+        return false;
+      }
+    }
 
     const c = client();
     if (!c) return false;
@@ -2533,9 +2558,32 @@ export default function App() {
     vesloServerSettings,
     updateVesloServerSettings,
     vesloServerClient,
-    onEngineStable: () => {},
+    onEngineStable: () => {
+      setEngineReady(true);
+    },
     engineRuntime,
     developerMode,
+    setEngineReady,
+    populateSidebarFromDb: async (workspaceId: string, directory: string) => {
+      // Set status to "loading" SYNCHRONOUSLY before any await, so the idle-loader
+      // effect (line ~2964) doesn't fire and try to contact the engine API.
+      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [workspaceId]: "loading" as const }));
+      const { readSessionsFromDb, dbSessionRowToSidebarItem } = await import("./lib/db-reader");
+      const rows = await readSessionsFromDb(directory);
+      const items = rows.map(dbSessionRowToSidebarItem);
+      setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [workspaceId]: items }));
+      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [workspaceId]: "ready" as const }));
+    },
+    hydrateLatestSessionFromDb: async (workspaceId: string, directory: string) => {
+      const { readSessionsFromDb, readTranscriptFromDb, dbTranscriptToSnapshot } = await import("./lib/db-reader");
+      const sessions = await readSessionsFromDb(directory);
+      if (sessions.length === 0) return;
+      const latest = sessions[0];
+      const transcript = await readTranscriptFromDb(latest.id, 50);
+      const snapshot = dbTranscriptToSnapshot(latest.id, workspaceId, transcript, 50);
+      sessionStore.hydrateTranscriptSnapshot(snapshot);
+      setSelectedSessionId(latest.id);
+    },
   });
 
   const activeArtifactFamilies = createMemo(() =>
@@ -2690,8 +2738,29 @@ export default function App() {
     const config = resolveSidebarClientConfig(id);
     if (!config) return;
 
-    // For local workspaces, avoid thrashing UI with errors if the engine is offline.
+    // For local workspaces without a running engine, try reading sessions
+    // directly from SQLite. Falls back to idle state if that also fails.
     if (!config.baseUrl) {
+      if (isTauriRuntime()) {
+        try {
+          const workspace = workspaceStore.workspaces().find((w) => w.id === id);
+          const wsDirectory = workspace?.path?.trim() ?? "";
+          if (wsDirectory) {
+            const { readSessionsFromDb, dbSessionRowToSidebarItem } = await import("./lib/db-reader");
+            const rows = await readSessionsFromDb(wsDirectory);
+            const items = rows.map(dbSessionRowToSidebarItem);
+            setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: items }));
+            setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
+            setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
+            wsDebug("sidebar:db-fallback", { id, count: items.length });
+            return;
+          }
+        } catch (e) {
+          wsDebug("sidebar:db-fallback:error", { id, error: String(e) });
+          // fall through to existing idle behavior
+        }
+      }
+
       let changed = false;
       setSidebarSessionStatusByWorkspaceId((prev) => {
         if (prev[id] === "idle") return prev;
@@ -2919,6 +2988,8 @@ export default function App() {
   createEffect(() => {
     const id = workspaceStore.activeWorkspaceId().trim();
     if (!id) return;
+    // In browsing mode, sidebar is populated from SQLite — don't try engine API.
+    if (!engineReady()) return;
     const status = sidebarSessionStatusByWorkspaceId()[id] ?? "idle";
     // Only auto-load once per workspace activation.
     // If a remote is offline, repeated retries here can create an endless refresh loop.
@@ -2927,6 +2998,10 @@ export default function App() {
   });
 
   createEffect(() => {
+    // In browsing mode (engineReady=false), the session store contains stale data
+    // from the previous workspace. Don't sync it to the sidebar — it would overwrite
+    // the SQLite-populated session list with wrong/empty data.
+    if (!engineReady()) return;
     const allSessions = sessions(); // reactive dependency on session store
     // When switching workers, the session store can update before the activeWorkspaceId flips.
     // Use connectingWorkspaceId as the authoritative target during the switch so we don't
@@ -7549,6 +7624,7 @@ export default function App() {
     importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
     exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
     exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
+    engineReady: engineReady(),
     clientConnected: Boolean(client()),
     authenticatedUser: authenticatedUser(),
     vesloServerStatus: vesloServerStatus(),
