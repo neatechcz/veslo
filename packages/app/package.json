@@ -65,6 +65,7 @@
     "@tauri-apps/plugin-process": "~2.3.1",
     "@tauri-apps/plugin-updater": "~2.9.0",
     "fuzzysort": "^3.1.0",
+    "html2canvas": "^1.4.1",
     "jsonc-parser": "^3.2.1",
     "lucide-solid": "^0.562.0",
     "marked": "^17.0.1",

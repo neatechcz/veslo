@@ -1328,7 +1328,10 @@ export default function DashboardView(props: DashboardViewProps) {
   });
 
   return (
-    <div class={`flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden ${titlebarContentInsetClass()}`}>
+    <div
+      data-feedback-capture-root
+      class={`flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden ${titlebarContentInsetClass()}`}
+    >
       <TitlebarMenuToggles
         leftActive={leftMenuActive()}
         rightActive={rightSidebarVisible()}

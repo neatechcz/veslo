@@ -3873,6 +3873,7 @@ export default function SessionView(props: SessionViewProps) {
       ref={(el) => {
         sessionLayoutRootEl = el;
       }}
+      data-feedback-capture-root
       class="flex h-screen w-full bg-dls-sidebar text-gray-12 font-sans overflow-hidden"
     >
       <TitlebarMenuToggles

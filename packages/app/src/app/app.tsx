@@ -114,6 +114,10 @@ import {
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
 import { createSkillReloadGuard } from "./lib/skill-reload-guard";
 import {
+  submitFeedbackReport,
+  type FeedbackRuntimeContext,
+} from "./lib/feedback";
+import {
   AUTO_COMPACT_CONTEXT_PREF_KEY,
   DEFAULT_MODEL,
   HIDE_TITLEBAR_PREF_KEY,
@@ -422,6 +426,41 @@ export default function App() {
   function closeFeedbackModal() {
     setFeedbackModalOpen(false);
   }
+
+  const normalizeFeedbackOptional = (value?: string | null) => {
+    const trimmed = value?.trim() ?? "";
+    return trimmed ? trimmed : null;
+  };
+
+  const resolveFeedbackPlatform = () => {
+    if (typeof navigator === "undefined") return null;
+    const platform =
+      (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ??
+      navigator.platform;
+    return normalizeFeedbackOptional(platform);
+  };
+
+  const buildFeedbackRuntimeContext = (): FeedbackRuntimeContext => ({
+    view: currentView(),
+    pathname: location.pathname.trim() || "/",
+    tab: tab(),
+    settingsTab: settingsTab(),
+    selectedSessionId: normalizeFeedbackOptional(activeSessionId()),
+    activeWorkspaceId: normalizeFeedbackOptional(workspaceStore.activeWorkspaceId()),
+    vesloServerWorkspaceId: normalizeFeedbackOptional(resolvedDevtoolsWorkspaceId()),
+    activeWorkspaceType: activeWorkspaceDisplay().workspaceType,
+    activeWorkspaceRoot: normalizeFeedbackOptional(
+      currentView() === "session"
+        ? preferredSessionWorkspaceRoot(
+            resolveSessionDirectory(selectedSession() ?? { id: "", directory: "" }),
+            workspaceStore.activeWorkspaceRoot().trim(),
+          )
+        : workspaceStore.activeWorkspaceRoot().trim(),
+    ),
+    locale: currentLocale(),
+    appVersion: normalizeFeedbackOptional(appVersion()),
+    platform: resolveFeedbackPlatform(),
+  });
 
   const setDenKeepSignedInPreference = (value: boolean) => {
     writeDenKeepSignedIn(value);
@@ -7788,8 +7827,23 @@ export default function App() {
     error: error(),
   });
 
-  function submitFeedback(_values: FeedbackFormValues) {
+  async function persistFeedback(values: FeedbackFormValues) {
+    setError(null);
+
+    await submitFeedbackReport({
+      title: values.title,
+      description: values.description,
+      context: buildFeedbackRuntimeContext(),
+    });
+
     closeFeedbackModal();
+  }
+
+  function submitFeedback(values: FeedbackFormValues) {
+    void persistFeedback(values).catch((error) => {
+      reportError(error, "feedback.submit");
+      setError(error instanceof Error ? error.message : safeStringify(error));
+    });
   }
 
   const dashboardTabs = new Set<DashboardTab>([
