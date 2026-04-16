@@ -134,6 +134,7 @@ export type SessionViewProps = {
   tab: DashboardTab;
   setTab: (tab: DashboardTab) => void;
   setSettingsTab: (tab: SettingsTab) => void;
+  onOpenFeedback: () => void;
   activeWorkspaceDisplay: WorkspaceDisplay;
   activeWorkspaceRoot: string;
   workspaces: WorkspaceInfo[];
@@ -3865,6 +3866,8 @@ export default function SessionView(props: SessionViewProps) {
     </div>
   );
 
+  const feedbackButtonLabel = () => t("feedback.button", currentLocale());
+
   return (
     <div
       ref={(el) => {
@@ -3876,6 +3879,17 @@ export default function SessionView(props: SessionViewProps) {
         leftActive={leftSidebarToggleActive()}
         rightActive={rightSidebarToggleActive()}
         centerContent={sessionTitlebarContext()}
+        rightContent={
+          <button
+            type="button"
+            class="mr-1 inline-flex h-6 items-center rounded-md px-2.5 text-[11px] font-medium leading-6 text-gray-10 transition-colors hover:bg-gray-3/70 hover:text-gray-12 focus:outline-none focus-visible:ring-0"
+            onClick={props.onOpenFeedback}
+            aria-label={feedbackButtonLabel()}
+            title={feedbackButtonLabel()}
+          >
+            {feedbackButtonLabel()}
+          </button>
+        }
         hideTitlebar={props.hideTitlebar}
         onToggleLeft={() => toggleSidebarMenu("left")}
         onToggleRight={() => toggleSidebarMenu("right")}

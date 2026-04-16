@@ -87,6 +87,7 @@ import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
 import VesloLogo from "./components/veslo-logo";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
+import FeedbackModal, { type FeedbackFormValues } from "./components/feedback-modal";
 import RenameWorkspaceModal from "./components/rename-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
 import OnboardingView from "./pages/onboarding";
@@ -309,6 +310,16 @@ type RemoteWorkspaceDefaults = {
   directory?: string | null;
   displayName?: string | null;
 };
+
+const [feedbackModalOpen, setFeedbackModalOpen] = createSignal(false);
+
+function openFeedbackModal() {
+  setFeedbackModalOpen(true);
+}
+
+function closeFeedbackModal() {
+  setFeedbackModalOpen(false);
+}
 
 export default function App() {
   const cloudEnvironment = resolveVesloCloudEnvironment(import.meta.env as Record<string, string | undefined>);
@@ -7778,6 +7789,10 @@ export default function App() {
     error: error(),
   });
 
+  function submitFeedback(_values: FeedbackFormValues) {
+    closeFeedbackModal();
+  }
+
   const dashboardTabs = new Set<DashboardTab>([
     "scheduled",
     "soul",
@@ -7924,10 +7939,10 @@ export default function App() {
           <OnboardingView {...onboardingProps()} />
         </Match>
         <Match when={currentView() === "session"}>
-          <SessionView {...sessionProps()} />
+          <SessionView {...sessionProps()} onOpenFeedback={openFeedbackModal} />
         </Match>
         <Match when={true}>
-          <DashboardView {...dashboardProps()} />
+          <DashboardView {...dashboardProps()} onOpenFeedback={openFeedbackModal} />
         </Match>
       </Switch>
 
@@ -7935,6 +7950,12 @@ export default function App() {
         open={workspaceSwitchOpen()}
         workspace={workspaceSwitchWorkspace()}
         statusKey={workspaceSwitchStatusKey()}
+      />
+
+      <FeedbackModal
+        open={feedbackModalOpen()}
+        onClose={closeFeedbackModal}
+        onSubmit={submitFeedback}
       />
 
       <ModelPickerModal

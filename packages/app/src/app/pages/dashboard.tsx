@@ -108,6 +108,7 @@ export type DashboardViewProps = {
   setTab: (tab: DashboardTab) => void;
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
+  onOpenFeedback: () => void;
   providers: ProviderListItem[];
   providerConnectedIds: string[];
   providerAuthBusy: boolean;
@@ -1298,6 +1299,7 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const headerSettingsLabel = createMemo(() => t("dashboard.settings", currentLocale()));
   const headerBackLabel = createMemo(() => t("session.back", currentLocale()));
+  const feedbackButtonLabel = createMemo(() => t("feedback.button", currentLocale()));
 
   const returnToSession = () => {
     const sessionId = props.selectedSessionId?.trim();
@@ -1331,6 +1333,17 @@ export default function DashboardView(props: DashboardViewProps) {
         leftActive={leftMenuActive()}
         rightActive={rightSidebarVisible()}
         centerContent={dashboardTitlebarContext()}
+        rightContent={
+          <button
+            type="button"
+            class="mr-1 inline-flex h-6 items-center rounded-md px-2.5 text-[11px] font-medium leading-6 text-gray-10 transition-colors hover:bg-gray-3/70 hover:text-gray-12 focus:outline-none focus-visible:ring-0"
+            onClick={props.onOpenFeedback}
+            aria-label={feedbackButtonLabel()}
+            title={feedbackButtonLabel()}
+          >
+            {feedbackButtonLabel()}
+          </button>
+        }
         hideTitlebar={props.hideTitlebar}
         leftLabel={leftMenuLabel()}
         onToggleLeft={handleLeftMenuToggle}
