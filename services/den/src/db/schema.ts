@@ -1,8 +1,10 @@
 import { sql } from "drizzle-orm"
 import {
   boolean,
+  int,
   index,
   json,
+  longtext,
   mysqlEnum,
   mysqlTable,
   text,
@@ -28,6 +30,10 @@ export const TokenScope = ["client", "host"] as const
 export const DesktopAuthIntent = ["signin", "signup"] as const
 export const DesktopAuthSessionStatus = ["started", "browser_authed", "exchanged", "expired", "cancelled"] as const
 export const DesktopAuthTransactionStatus = ["started", "browser_authed", "exchanged", "expired", "cancelled"] as const
+export const FeedbackType = ["bug"] as const
+export const FeedbackStatus = ["pending", "projected", "failed"] as const
+export const FeedbackScreenshotStatus = ["captured", "failed"] as const
+export const FeedbackProjectorAttemptStatus = ["pending", "succeeded", "failed"] as const
 
 export const AuthUserTable = mysqlTable(
   "user",
@@ -299,6 +305,68 @@ export const DesktopAuthTransactionTable = mysqlTable(
     index("desktop_auth_transaction_authorization_code_hash").on(table.authorization_code_hash),
     index("desktop_auth_transaction_manual_code_hash").on(table.manual_code_hash),
   ],
+)
+
+export const FeedbackReportTable = mysqlTable(
+  "feedback_report",
+  {
+    id: id().primaryKey(),
+    type: mysqlEnum("type", FeedbackType).notNull().default("bug"),
+    status: mysqlEnum("status", FeedbackStatus).notNull().default("pending"),
+    title: varchar("title", { length: 255 }).notNull(),
+    description: text("description").notNull(),
+    user_id: varchar("user_id", { length: 64 }).notNull(),
+    user_email: varchar("user_email", { length: 255 }),
+    org_id: varchar("org_id", { length: 64 }).notNull(),
+    context: json("context"),
+    view: varchar("view", { length: 64 }).notNull(),
+    pathname: varchar("pathname", { length: 1024 }),
+    dashboard_tab: varchar("dashboard_tab", { length: 64 }),
+    settings_tab: varchar("settings_tab", { length: 64 }),
+    session_id: varchar("session_id", { length: 64 }),
+    workspace_id: varchar("workspace_id", { length: 64 }),
+    veslo_server_workspace_id: varchar("veslo_server_workspace_id", { length: 64 }),
+    workspace_type: varchar("workspace_type", { length: 64 }),
+    workspace_path: varchar("workspace_path", { length: 1024 }),
+    worker_id: varchar("worker_id", { length: 64 }),
+    run_id: varchar("run_id", { length: 64 }),
+    app_version: varchar("app_version", { length: 64 }),
+    locale: varchar("locale", { length: 64 }),
+    platform: varchar("platform", { length: 64 }),
+    os_family: varchar("os_family", { length: 64 }),
+    submitted_at: timestamp("submitted_at", { fsp: 3 }).notNull().defaultNow(),
+    screenshot_status: mysqlEnum("screenshot_status", FeedbackScreenshotStatus).notNull(),
+    screenshot_mime_type: varchar("screenshot_mime_type", { length: 255 }),
+    screenshot_bytes: int("screenshot_bytes", { unsigned: true }),
+    screenshot_data: longtext("screenshot_data"),
+    youtrack_issue_id: varchar("youtrack_issue_id", { length: 255 }),
+    youtrack_issue_url: varchar("youtrack_issue_url", { length: 2048 }),
+    last_projector_error: text("last_projector_error"),
+    next_projector_attempt_at: timestamp("next_projector_attempt_at", { fsp: 3 }),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updated_at: timestamp("updated_at", { fsp: 3 })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [
+    index("feedback_report_org_id").on(table.org_id),
+    index("feedback_report_user_id").on(table.user_id),
+    index("feedback_report_status").on(table.status),
+    index("feedback_report_next_projector_attempt_at").on(table.next_projector_attempt_at),
+  ],
+)
+
+export const FeedbackProjectorAttemptTable = mysqlTable(
+  "feedback_projector_attempt",
+  {
+    id: id().primaryKey(),
+    feedback_id: varchar("feedback_id", { length: 64 }).notNull(),
+    attempt_no: int("attempt_no", { unsigned: true }).notNull(),
+    status: mysqlEnum("status", FeedbackProjectorAttemptStatus).notNull(),
+    error_message: text("error_message"),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [index("feedback_projector_attempt_feedback_id").on(table.feedback_id)],
 )
 
 export const AuditEventTable = mysqlTable(

@@ -106,6 +106,14 @@ pnpm db:migrate
 - `POST /v1/workers/:id/tokens`
 - `DELETE /v1/workers/:id`
   - Deletes worker records and attempts to suspend the backing cloud service when destination is `cloud`.
+- `POST /v1/feedback`
+  - Authenticated and org-scoped through `x-veslo-org-id`.
+  - Accepts `{ title, description, userId?, userEmail?, orgId?, orgName?, context, screenshotStatus, screenshotDataUrl, screenshotMimeType }`.
+  - Persists a canonical `feedback_report` row with `status=pending`; user/org identity is derived from the authenticated session and selected organization.
+  - Returns `201` with `{ feedbackId, status: "pending" }` after persisting the report.
+  - Screenshot data is stored directly on the feedback row for v1 as base64 payload + mime type + byte size.
+  - Rejects invalid payloads with `400 invalid_feedback_payload` and oversized screenshots with `413 feedback_screenshot_too_large`.
+  - The feedback route uses a larger JSON body limit to support screenshot-bearing payloads without widening limits for unrelated endpoints.
 - `POST /v1/desktop-auth/handoff`
   - Requires an authenticated browser session (Better Auth cookie). Returns a single-use, short-lived one-time code that the desktop app can exchange for credentials.
   - Respects `x-veslo-org-id` header to select the active organization.

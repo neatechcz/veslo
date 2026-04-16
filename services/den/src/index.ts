@@ -14,6 +14,7 @@ import { requireSession } from "./http/session.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
 import { desktopAuthV2Router } from "./http/desktop-auth-v2.js"
 import { createAdminRuntimeRouter } from "./http/admin-runtime.js"
+import { feedbackRouter } from "./http/feedback.js"
 import { orgsRouter } from "./http/orgs.js"
 import { orgMcpCatalogRouter } from "./http/org-mcp-catalog.js"
 import { orgSkillsCatalogRouter } from "./http/org-skills-catalog.js"
@@ -41,6 +42,7 @@ if (corsOrigins.length > 0) {
 // Better Auth reads the raw request body itself — mount BEFORE express.json()
 // so the body stream isn't consumed by Express's JSON parser first
 app.all("/api/auth/*", toNodeHandler(auth))
+app.use("/v1", feedbackRouter)
 app.use(express.json())
 app.use(express.static(publicDir))
 
