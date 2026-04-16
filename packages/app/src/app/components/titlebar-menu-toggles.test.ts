@@ -1,52 +1,78 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import * as ts from "typescript";
 
 const source = readFileSync(new URL("./titlebar-menu-toggles.tsx", import.meta.url), "utf8");
+const sourceFile = ts.createSourceFile(
+  "titlebar-menu-toggles.tsx",
+  source,
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TSX,
+);
 
-function extractBalancedJsxBlock(source: string, startMarker: string, endMarker: string) {
-  const start = source.indexOf(startMarker);
-  assert.ok(start >= 0, `missing ${startMarker}`);
+function findNode<T extends ts.Node>(
+  root: ts.Node,
+  predicate: (node: ts.Node) => node is T,
+): T | undefined {
+  let found: T | undefined;
 
-  const end = source.indexOf(endMarker, start + startMarker.length);
-  assert.ok(end >= 0, `missing ${endMarker}`);
+  const visit = (node: ts.Node) => {
+    if (found) return;
+    if (predicate(node)) {
+      found = node;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
 
-  return source.slice(start, end + endMarker.length);
+  visit(root);
+  return found;
 }
 
-function extractJsxAttributeValue(tagSource: string, attributeName: string) {
-  const startMarker = `${attributeName}={`;
-  const start = tagSource.indexOf(startMarker);
-  assert.ok(start >= 0, `missing ${attributeName} attribute`);
+function getOpeningElement(node: ts.JsxElement | ts.JsxSelfClosingElement) {
+  return ts.isJsxElement(node) ? node.openingElement : node;
+}
 
-  let depth = 1;
-  let inString: string | null = null;
+function getJsxAttributeText(openingElement: ts.JsxOpeningLikeElement, name: string) {
+  const attribute = openingElement.attributes.properties.find(
+    (property): property is ts.JsxAttribute =>
+      ts.isJsxAttribute(property) && property.name.text === name,
+  );
+  assert.ok(attribute, `missing ${name} attribute`);
+  assert.ok(attribute.initializer, `missing ${name} initializer`);
+  return attribute.initializer.getText(sourceFile);
+}
 
-  for (let i = start + startMarker.length; i < tagSource.length; i += 1) {
-    const char = tagSource[i];
-    if (inString) {
-      if (char === "\\" && i + 1 < tagSource.length) {
-        i += 1;
-        continue;
-      }
-      if (char === inString) {
-        inString = null;
-      }
-      continue;
-    }
+function findTypeAlias(name: string) {
+  return sourceFile.statements.find(
+    (statement): statement is ts.TypeAliasDeclaration =>
+      ts.isTypeAliasDeclaration(statement) && statement.name.text === name,
+  );
+}
 
-    if (char === "'" || char === '"' || char === "`") {
-      inString = char;
-      continue;
-    }
-    if (char === "{") depth += 1;
-    if (char === "}") depth -= 1;
-    if (depth === 0) {
-      return tagSource.slice(start + startMarker.length, i);
-    }
-  }
+function findFunctionDeclaration(name: string) {
+  return sourceFile.statements.find(
+    (statement): statement is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(statement) && statement.name?.text === name,
+  );
+}
 
-  throw new Error(`unclosed ${attributeName} attribute`);
+function findJsxElementInTree(
+  root: ts.Node,
+  tagName: string,
+  predicate?: (openingElement: ts.JsxOpeningLikeElement) => boolean,
+) {
+  return findNode(root, (node): node is ts.JsxElement | ts.JsxSelfClosingElement => {
+    if (!ts.isJsxElement(node) && !ts.isJsxSelfClosingElement(node)) return false;
+    const openingElement = getOpeningElement(node);
+    return openingElement.tagName.getText(sourceFile) === tagName && (!predicate || predicate(openingElement));
+  });
+}
+
+function isMeaningfulJsxChild(node: ts.JsxChild) {
+  return !(ts.isJsxText(node) && node.getText(sourceFile).trim() === "");
 }
 
 test("titlebar menu toggles keep macOS-sized icon controls", () => {
@@ -122,32 +148,43 @@ test("titlebar menu toggles support a custom left label and default to toggle te
 });
 
 test("titlebar menu toggles expose a dedicated right-side content slot", () => {
-  const rightRail = extractBalancedJsxBlock(
-    source,
-    '<div class={layout.rightOffsetClass}>',
-    "</div>",
+  const propsAlias = findTypeAlias("TitlebarMenuTogglesProps");
+  assert.ok(propsAlias, "titlebar should define a props type");
+  assert.ok(ts.isTypeLiteralNode(propsAlias!.type), "titlebar props type should be a type literal");
+
+  const rightContentProp = propsAlias!.type.members.find(
+    (member): member is ts.PropertySignature =>
+      ts.isPropertySignature(member) && member.name.getText(sourceFile) === "rightContent",
+  );
+  assert.ok(rightContentProp, "titlebar should declare a rightContent prop");
+  assert.ok(rightContentProp!.questionToken, "rightContent should stay optional");
+  assert.equal(rightContentProp!.type?.getText(sourceFile), "JSX.Element");
+
+  const component = findFunctionDeclaration("TitlebarMenuToggles");
+  assert.ok(component?.body, "titlebar should define a component body");
+
+  const rightRail = findJsxElementInTree(
+    component!.body!,
+    "div",
+    (openingElement) => getJsxAttributeText(openingElement, "class") === "{layout.rightOffsetClass}",
+  );
+  assert.ok(rightRail, "titlebar should render a shared right rail");
+
+  const meaningfulChildren = rightRail!.children.filter(isMeaningfulJsxChild);
+  const rightContentIndex = meaningfulChildren.findIndex(
+    (child) => ts.isJsxExpression(child) && child.expression?.getText(sourceFile) === "props.rightContent",
+  );
+  const rightToggleIndex = meaningfulChildren.findIndex(
+    (child) =>
+      ts.isJsxElement(child) &&
+      child.openingElement.tagName.getText(sourceFile) === "button" &&
+      getJsxAttributeText(child.openingElement, "aria-label") === '"Toggle right menu"',
   );
 
-  assert.match(rightRail, /props\.rightContent/, "titlebar should render right-side content inside the shared right rail");
-  assert.match(
-    rightRail,
-    /aria-label="Toggle right menu"/,
-    "titlebar should keep the existing right toggle button in the shared right rail",
-  );
+  assert.ok(rightContentIndex >= 0, "titlebar should render right-side content in the shared right rail");
+  assert.ok(rightToggleIndex >= 0, "titlebar should keep the existing right toggle in the shared right rail");
   assert.ok(
-    rightRail.indexOf("props.rightContent") < rightRail.indexOf('aria-label="Toggle right menu"'),
+    rightContentIndex < rightToggleIndex,
     "right-side content should appear before the existing right toggle button",
   );
-
-  const dashboardSource = readFileSync(new URL("../pages/dashboard.tsx", import.meta.url), "utf8");
-  const sessionSource = readFileSync(new URL("../pages/session.tsx", import.meta.url), "utf8");
-
-  const dashboardTitlebar = extractBalancedJsxBlock(dashboardSource, "<TitlebarMenuToggles", "/>");
-  const sessionTitlebar = extractBalancedJsxBlock(sessionSource, "<TitlebarMenuToggles", "/>");
-
-  const dashboardRightContent = extractJsxAttributeValue(dashboardTitlebar, "rightContent");
-  const sessionRightContent = extractJsxAttributeValue(sessionTitlebar, "rightContent");
-
-  assert.match(dashboardRightContent, /^<button[\s\S]*onClick=/s, "dashboard should pass an actual button element into the shared titlebar slot");
-  assert.match(sessionRightContent, /^<button[\s\S]*onClick=/s, "session should pass an actual button element into the shared titlebar slot");
 });
