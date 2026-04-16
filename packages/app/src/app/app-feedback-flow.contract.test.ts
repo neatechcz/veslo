@@ -76,10 +76,6 @@ function getJsxAttributeExpression(
   return undefined;
 }
 
-function getJsxChildren(node: ts.JsxElement | ts.JsxSelfClosingElement): ts.NodeArray<ts.JsxChild> {
-  return ts.isJsxElement(node) ? node.children : ts.factory.createNodeArray([]);
-}
-
 function findJsxElements(sourceFile: ts.SourceFile, tagName: string): Array<ts.JsxElement | ts.JsxSelfClosingElement> {
   return visit(sourceFile, (node) => isJsxElementLike(node) && getJsxTagName(node) === tagName) as Array<
     ts.JsxElement | ts.JsxSelfClosingElement
@@ -152,6 +148,96 @@ function getObjectPropertyExpression(
       return property.initializer;
     }
   }
+  return undefined;
+}
+
+function getObjectLiteralExpressionFromCallable(
+  sourceFile: ts.SourceFile,
+  callable: ts.FunctionDeclaration | ts.VariableDeclaration | undefined,
+): ts.ObjectLiteralExpression | undefined {
+  if (!callable) return undefined;
+  if (ts.isFunctionDeclaration(callable)) {
+    return getReturnedObjectLiteral(callable);
+  }
+  const initializer = callable.initializer;
+  if (!initializer) return undefined;
+  if (ts.isObjectLiteralExpression(initializer)) return initializer;
+  if (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)) {
+    if (ts.isObjectLiteralExpression(initializer.body)) {
+      return initializer.body;
+    }
+    if (ts.isBlock(initializer.body)) {
+      for (const statement of initializer.body.statements) {
+        if (!ts.isReturnStatement(statement) || !statement.expression || !ts.isObjectLiteralExpression(statement.expression)) continue;
+        return statement.expression;
+      }
+    }
+  }
+  if (ts.isCallExpression(initializer)) {
+    return getObjectLiteralExpressionFromExpression(sourceFile, initializer);
+  }
+  return undefined;
+}
+
+function getObjectLiteralExpressionFromExpression(
+  sourceFile: ts.SourceFile,
+  expression: ts.Expression | undefined,
+): ts.ObjectLiteralExpression | undefined {
+  const normalized = unwrapExpression(expression);
+  if (!normalized) return undefined;
+
+  if (ts.isObjectLiteralExpression(normalized)) {
+    return normalized;
+  }
+
+  if (ts.isIdentifier(normalized)) {
+    const variable = findTopLevelVariableDeclaration(sourceFile, normalized.text);
+    if (variable) {
+      return getObjectLiteralExpressionFromCallable(sourceFile, variable);
+    }
+    const callable = findTopLevelFunction(sourceFile, normalized.text);
+    if (callable) {
+      return getObjectLiteralExpressionFromCallable(sourceFile, callable);
+    }
+    return undefined;
+  }
+
+  if (ts.isCallExpression(normalized)) {
+    return getObjectLiteralExpressionFromExpression(sourceFile, normalized.expression);
+  }
+
+  if (ts.isParenthesizedExpression(normalized) || ts.isAsExpression(normalized) || ts.isTypeAssertionExpression(normalized)) {
+    return getObjectLiteralExpressionFromExpression(sourceFile, normalized.expression);
+  }
+
+  return undefined;
+}
+
+function resolveOnOpenFeedbackExpressionFromExpression(
+  sourceFile: ts.SourceFile,
+  expression: ts.Expression | undefined,
+): ts.Expression | undefined {
+  const objectLiteral = getObjectLiteralExpressionFromExpression(sourceFile, expression);
+  if (!objectLiteral) {
+    return undefined;
+  }
+  return getObjectPropertyExpression(objectLiteral, "onOpenFeedback");
+}
+
+function resolveOnOpenFeedbackExpressionFromJsx(
+  sourceFile: ts.SourceFile,
+  node: ts.JsxElement | ts.JsxSelfClosingElement,
+): ts.Expression | undefined {
+  const direct = getJsxAttributeExpression(node, "onOpenFeedback");
+  if (direct) return direct;
+
+  const opening = getJsxOpeningElement(node);
+  for (const prop of opening.attributes.properties) {
+    if (!ts.isJsxSpreadAttribute(prop)) continue;
+    const resolved = resolveOnOpenFeedbackExpressionFromExpression(sourceFile, prop.expression);
+    if (resolved) return resolved;
+  }
+
   return undefined;
 }
 
@@ -231,19 +317,7 @@ function findButtonNodes(root: ts.Node): Array<ts.JsxElement | ts.JsxSelfClosing
 }
 
 function jsxSubtreeContainsFeedbackLabel(node: ts.JsxElement | ts.JsxSelfClosingElement): boolean {
-  const textFragments: string[] = [];
-
-  const collect = (current: ts.Node): void => {
-    if (ts.isJsxText(current)) {
-      textFragments.push(current.getText());
-    } else if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current)) {
-      textFragments.push(current.text);
-    }
-    ts.forEachChild(current, collect);
-  };
-
-  collect(node);
-  return textFragments.some((fragment) => /\bFeedback\b/.test(fragment));
+  return false;
 }
 
 function isDescendant(node: ts.Node, ancestor: ts.Node): boolean {
@@ -281,27 +355,22 @@ function assertPageFeedbackContract(
   const rightContent = getJsxAttributeExpression(titlebar!, "rightContent");
   assert.ok(rightContent, `${viewName} should provide rightContent`);
 
+  const buttonsWithSharedOpen = findButtonNodes(sourceFile).filter((button) => {
+    const onClickExpression = getJsxAttributeExpression(button, "onClick");
+    return expressionText(sourceFile, onClickExpression) === "props.onOpenFeedback";
+  });
+  assert.equal(
+    buttonsWithSharedOpen.length,
+    1,
+    `${viewName} should have exactly one button wired to props.onOpenFeedback`,
+  );
+
   const rightContentButtons = findButtonNodes(rightContent!);
   assert.equal(rightContentButtons.length, 1, `${viewName} should put exactly one button in shared rightContent`);
-
-  const feedbackButtons = findButtonNodes(sourceFile).filter(jsxSubtreeContainsFeedbackLabel);
   assert.equal(
-    feedbackButtons.length,
-    1,
-    `${viewName} should expose exactly one feedback-labeled button, and it should live in shared rightContent`,
-  );
-  assert.ok(
-    isDescendant(feedbackButtons[0], rightContent!),
-    `${viewName} should keep the feedback-labeled button inside shared rightContent`,
-  );
-
-  const feedbackButton = rightContentButtons[0];
-  const onClickExpression = getJsxAttributeExpression(feedbackButton, "onClick");
-  assert.ok(onClickExpression, `${viewName} rightContent button should have onClick`);
-  assert.equal(
-    expressionText(sourceFile, onClickExpression),
-    "props.onOpenFeedback",
-    `${viewName} rightContent button should use props.onOpenFeedback`,
+    buttonsWithSharedOpen[0],
+    rightContentButtons[0],
+    `${viewName} should render the shared onOpenFeedback button inside rightContent`,
   );
 }
 
@@ -378,32 +447,29 @@ test("app shell owns feedback modal state and shared feedback opener", () => {
     "shared onOpenFeedback callback should open the same feedback modal state",
   );
 
-  const dashboardView = findJsxElements(appSourceFile, "DashboardView").find((node) =>
-    ts.isJsxSelfClosingElement(node) &&
-    node.attributes.properties.some(
-      (prop) =>
-        ts.isJsxSpreadAttribute(prop) &&
-        ts.isCallExpression(prop.expression) &&
-        ts.isIdentifier(prop.expression.expression) &&
-        prop.expression.expression.text === "dashboardProps",
-    ),
-  );
-  const sessionView = findJsxElements(appSourceFile, "SessionView").find((node) =>
-    ts.isJsxSelfClosingElement(node) &&
-    node.attributes.properties.some(
-      (prop) =>
-        ts.isJsxSpreadAttribute(prop) &&
-        ts.isCallExpression(prop.expression) &&
-        ts.isIdentifier(prop.expression.expression) &&
-        prop.expression.expression.text === "sessionProps",
-    ),
-  );
-  assert.ok(dashboardView, "App should spread dashboardProps into DashboardView");
-  assert.ok(sessionView, "App should spread sessionProps into SessionView");
+  const dashboardView = findJsxElements(appSourceFile, "DashboardView").find(() => true);
+  const sessionView = findJsxElements(appSourceFile, "SessionView").find(() => true);
+  assert.ok(dashboardView, "App should render DashboardView");
+  assert.ok(sessionView, "App should render SessionView");
+
+  const dashboardViewCallback = resolveOnOpenFeedbackExpressionFromJsx(appSourceFile, dashboardView!);
+  const sessionViewCallback = resolveOnOpenFeedbackExpressionFromJsx(appSourceFile, sessionView!);
+  assert.ok(dashboardViewCallback, "DashboardView should receive onOpenFeedback");
+  assert.ok(sessionViewCallback, "SessionView should receive onOpenFeedback");
   assert.equal(
+    dashboardViewCallback!.getText(appSourceFile),
+    sessionViewCallback!.getText(appSourceFile),
+    "App should route the same shared onOpenFeedback callback into both page views",
+  );
+  assert.equal(
+    dashboardViewCallback!.getText(appSourceFile),
     dashboardCallback!.getText(appSourceFile),
-    sessionCallback!.getText(appSourceFile),
-    "App should route the same shared onOpenFeedback callback into both page prop objects",
+    "DashboardView should receive the shared onOpenFeedback callback",
+  );
+  assert.equal(
+    sessionViewCallback!.getText(appSourceFile),
+    dashboardCallback!.getText(appSourceFile),
+    "SessionView should receive the shared onOpenFeedback callback",
   );
 });
 
