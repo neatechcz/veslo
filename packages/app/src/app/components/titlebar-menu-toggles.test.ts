@@ -178,7 +178,8 @@ test("titlebar menu toggles expose a dedicated right-side content slot", () => {
     (child) =>
       ts.isJsxElement(child) &&
       child.openingElement.tagName.getText(sourceFile) === "button" &&
-      getJsxAttributeText(child.openingElement, "aria-label") === '"Toggle right menu"',
+      getJsxAttributeText(child.openingElement, "onClick") === "{() => props.onToggleRight()}" &&
+      Boolean(findJsxElementInTree(child, "RightSidebarToggleIcon")),
   );
 
   assert.ok(rightContentIndex >= 0, "titlebar should render right-side content in the shared right rail");
