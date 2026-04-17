@@ -407,6 +407,79 @@ test("createDefaultAdminService keeps user creation successful when audit persis
   }
 });
 
+test("default admin service rejects enabled codex_oauth access without credentialId", async () => {
+  let upsertCalled = false;
+  const service = createDefaultAdminService("http://den.example.test", {
+    denClient: {
+      async startBrowserAuth() {
+        throw new Error("unused");
+      },
+      async exchangeBrowserAuth() {
+        throw new Error("unused");
+      },
+      async getSession() {
+        return createSession();
+      },
+      async listUsers() {
+        return [];
+      },
+      async createUser() {
+        throw new Error("unused");
+      },
+      async updateUser() {
+        throw new Error("unused");
+      },
+      async disableUser() {
+        throw new Error("unused");
+      },
+      async enableUser() {
+        throw new Error("unused");
+      },
+      async deleteUser() {
+        throw new Error("unused");
+      },
+    },
+    aiAccessRepository: {
+      async getUserAiAccess() {
+        return null;
+      },
+      async upsertUserAiAccess() {
+        upsertCalled = true;
+        throw new Error("unused");
+      },
+    } as any,
+  });
+  const app = createApp({ admin: service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        ...AUTHORIZATION,
+      },
+      body: JSON.stringify({
+        enabled: true,
+        provider: "codex_oauth",
+        defaultModel: "gpt-5.4",
+        allowedModels: ["gpt-5.4"],
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      error: "invalid_ai_access_credential_id",
+    });
+    assert.equal(upsertCalled, false);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
 test("GET admin read endpoints return JSON 502 payloads when read models fail", async () => {
   const { service } = createAdminServiceSpy();
   service.listCredentials = async () => {

@@ -696,12 +696,19 @@ function validateCreateCredentialInput(input: CreateCredentialInput): {
 function validateUserAiAccessInput(input: UpdateUserAiAccessInput & { userId: string }): UpsertUserAiAccessPolicyInput {
   const enabled = input.enabled === true
   const provider = parseAiAccessProvider(input.provider)
-  const credentialId = typeof input.credentialId === "string" ? input.credentialId : null
+  const credentialId =
+    typeof input.credentialId === "string" && input.credentialId.trim()
+      ? input.credentialId.trim()
+      : null
   const defaultModel = typeof input.defaultModel === "string" ? input.defaultModel.trim() : ""
   const allowedModels = normalizeAllowedModels(input.allowedModels)
 
   if (enabled && !provider) {
     throw new HttpError("invalid_ai_access_provider", 400)
+  }
+
+  if (enabled && provider === "codex_oauth" && !credentialId) {
+    throw new HttpError("invalid_ai_access_credential_id", 400)
   }
 
   if (enabled && !defaultModel) {

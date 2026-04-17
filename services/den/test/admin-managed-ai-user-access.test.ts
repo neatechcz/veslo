@@ -310,3 +310,74 @@ test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", asyn
     await once(server, "close")
   }
 })
+
+test("PUT /admin/api/users/:userId/ai-access rejects enabled codex_oauth without credentialId", async () => {
+  const session = createSession()
+  const app = express()
+  app.use(express.json())
+  app.use(
+    "/admin/api",
+    createAdminRouter({
+      async getSessionSnapshot() {
+        return session
+      },
+      ...createManagedAiAdminRouteDeps({
+        async getAdminSession() {
+          return session
+        },
+        aiAccess: {
+          async getUserAiAccess() {
+            throw new Error("unused")
+          },
+          async upsertUserAiAccess() {
+            throw new Error("unused")
+          },
+        },
+        alerts: {
+          async listAlerts() {
+            return []
+          },
+        },
+        audit: {
+          async recordEvent() {
+            return
+          },
+          async listEvents() {
+            return []
+          },
+        },
+        credentials: {} as any,
+        leases: {} as any,
+        secrets: {} as any,
+        usage: {} as any,
+      }),
+    }),
+  )
+
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        enabled: true,
+        provider: "codex_oauth",
+        defaultModel: "gpt-5.4",
+        allowedModels: ["gpt-5.4"],
+      }),
+    })
+
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), {
+      error: "invalid_ai_access_credential_id",
+    })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})

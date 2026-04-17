@@ -757,10 +757,10 @@ export function createDefaultAdminService(
       };
     },
     async upsertUserAiAccess(_token, userId, input) {
-      const validated = await validateUserAiAccessInput({
+      const validated = validateUserAiAccessInput({
         ...input,
         userId,
-      }, getAiAccessRepository(), userId);
+      });
       const saved = await getAiAccessRepository().upsertUserAiAccess(validated);
       await recordAuditEvent({
         actorUserId: "admin-ui",
@@ -953,20 +953,24 @@ function validateCreateCredentialInput(input: CreateCredentialInput): {
   };
 }
 
-async function validateUserAiAccessInput(
+function validateUserAiAccessInput(
   input: UpdateUserAiAccessInput & { userId: string },
-  aiAccessRepository: AiAccessRepository,
-  userId: string,
-): Promise<UpsertUserAiAccessPolicyInput> {
+): UpsertUserAiAccessPolicyInput {
   const enabled = input.enabled === true;
   const provider = parseAiAccessProvider(input.provider);
-  const existing = await aiAccessRepository.getUserAiAccess(userId);
-  const credentialId = typeof input.credentialId === "string" ? input.credentialId : existing?.credentialId ?? null;
+  const credentialId =
+    typeof input.credentialId === "string" && input.credentialId.trim()
+      ? input.credentialId.trim()
+      : null;
   const defaultModel = typeof input.defaultModel === "string" ? input.defaultModel.trim() : "";
   const allowedModels = normalizeAllowedModels(input.allowedModels);
 
   if (enabled && !provider) {
     throw new HttpError("invalid_ai_access_provider", 400);
+  }
+
+  if (enabled && provider === "codex_oauth" && !credentialId) {
+    throw new HttpError("invalid_ai_access_credential_id", 400);
   }
 
   if (enabled && !defaultModel) {
