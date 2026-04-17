@@ -7,6 +7,7 @@ pub struct DbSessionRow {
     pub id: String,
     pub title: String,
     pub directory: String,
+    pub parent_id: Option<String>,
     pub time_created: f64,
     pub time_updated: f64,
 }
@@ -51,21 +52,13 @@ fn open_opencode_db_readonly() -> Result<Option<Connection>, String> {
     Ok(Some(conn))
 }
 
-#[tauri::command]
-pub fn opencode_db_read_sessions(directory: String) -> Result<Vec<DbSessionRow>, String> {
-    let directory = directory.trim().to_string();
-    if directory.is_empty() {
-        return Err("directory is required".to_string());
-    }
-
-    let conn = match open_opencode_db_readonly()? {
-        Some(c) => c,
-        None => return Ok(vec![]),
-    };
-
+fn read_sessions_from_connection(
+    conn: &Connection,
+    directory: &str,
+) -> Result<Vec<DbSessionRow>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, title, directory, time_created, time_updated \
+            "SELECT id, title, directory, parent_id, time_created, time_updated \
              FROM session \
              WHERE directory = ?1 \
              ORDER BY time_updated DESC",
@@ -78,8 +71,9 @@ pub fn opencode_db_read_sessions(directory: String) -> Result<Vec<DbSessionRow>,
                 id: row.get(0)?,
                 title: row.get::<_, String>(1).unwrap_or_default(),
                 directory: row.get::<_, String>(2).unwrap_or_default(),
-                time_created: row.get::<_, f64>(3).unwrap_or(0.0),
-                time_updated: row.get::<_, f64>(4).unwrap_or(0.0),
+                parent_id: row.get::<_, Option<String>>(3).unwrap_or(None),
+                time_created: row.get::<_, f64>(4).unwrap_or(0.0),
+                time_updated: row.get::<_, f64>(5).unwrap_or(0.0),
             })
         })
         .map_err(|e| format!("Failed to query sessions: {e}"))?;
@@ -93,6 +87,21 @@ pub fn opencode_db_read_sessions(directory: String) -> Result<Vec<DbSessionRow>,
     }
 
     Ok(result)
+}
+
+#[tauri::command]
+pub fn opencode_db_read_sessions(directory: String) -> Result<Vec<DbSessionRow>, String> {
+    let directory = directory.trim().to_string();
+    if directory.is_empty() {
+        return Err("directory is required".to_string());
+    }
+
+    let conn = match open_opencode_db_readonly()? {
+        Some(c) => c,
+        None => return Ok(vec![]),
+    };
+
+    read_sessions_from_connection(&conn, &directory)
 }
 
 #[tauri::command]
@@ -175,4 +184,47 @@ pub fn opencode_db_read_transcript(
     }
 
     Ok(DbTranscriptResult { messages, parts })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_sessions_from_connection_returns_parent_ids() {
+        let conn = Connection::open_in_memory().expect("open in-memory sqlite");
+        conn.execute(
+            "CREATE TABLE session (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                directory TEXT NOT NULL,
+                parent_id TEXT,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL
+            )",
+            [],
+        )
+        .expect("create session table");
+
+        conn.execute(
+            "INSERT INTO session (id, title, directory, parent_id, time_created, time_updated)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params!["root-parent", "root-parent", "/tmp/workspace", Option::<String>::None, 100, 300],
+        )
+        .expect("insert root session");
+        conn.execute(
+            "INSERT INTO session (id, title, directory, parent_id, time_created, time_updated)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params!["child-subagent", "child-subagent", "/tmp/workspace", "root-parent", 200, 400],
+        )
+        .expect("insert child session");
+
+        let rows = read_sessions_from_connection(&conn, "/tmp/workspace").expect("query sessions");
+        let child = rows
+            .iter()
+            .find(|row| row.id == "child-subagent")
+            .expect("child session present");
+
+        assert_eq!(child.parent_id.as_deref(), Some("root-parent"));
+    }
 }

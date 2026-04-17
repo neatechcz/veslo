@@ -12,6 +12,18 @@ test("recent rows reserve right space for timestamp/menu to avoid title overlap"
   );
 });
 
+test("recent show-less memo reads its baseline only after the helper is declared", () => {
+  const showLessMemoIndex = source.indexOf("const recentCanShowLess = createMemo(() =>");
+  const baselineHelperIndex = source.indexOf("const initialRecentVisibleCount = () =>");
+
+  assert.notEqual(showLessMemoIndex, -1, "recent show-less memo should exist");
+  assert.notEqual(baselineHelperIndex, -1, "recent visible baseline helper should exist");
+  assert.ok(
+    baselineHelperIndex < showLessMemoIndex,
+    "recent show-less memo must not read initialRecentVisibleCount before its declaration",
+  );
+});
+
 test("recent rows keep timestamp on the right and replace it with menu trigger on hover", () => {
   assert.match(
     source,

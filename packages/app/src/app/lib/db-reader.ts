@@ -17,6 +17,9 @@ type DbMessageRow = { id: string; sessionId: string; data: string };
 type DbPartRow = { id: string; messageId: string; sessionId: string; data: string };
 type DbTranscriptResult = { messages: DbMessageRow[]; parts: DbPartRow[] };
 
+const isParsedDbRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 // --- Tauri invoke wrappers ---
 
 export async function readSessionsFromDb(directory: string): Promise<DbSessionRow[]> {
@@ -56,10 +59,20 @@ export function dbTranscriptToSnapshot(
   const messages: Message[] = [];
   for (const row of result.messages) {
     try {
-      const parsed = JSON.parse(row.data) as Message;
-      if (parsed?.id) {
-        messages.push(parsed);
+      const parsed = JSON.parse(row.data) as unknown;
+      if (!isParsedDbRecord(parsed)) {
+        console.warn("[db-reader] skipping non-object message", row.id);
+        continue;
       }
+
+      messages.push({
+        ...parsed,
+        id: typeof parsed.id === "string" && parsed.id.trim() ? parsed.id : row.id,
+        sessionID:
+          typeof parsed.sessionID === "string" && parsed.sessionID.trim()
+            ? parsed.sessionID
+            : row.sessionId,
+      } as Message);
     } catch {
       console.warn("[db-reader] skipping unparseable message", row.id);
     }
@@ -68,14 +81,28 @@ export function dbTranscriptToSnapshot(
   const partsByMessageId: Record<string, Part[]> = {};
   for (const row of result.parts) {
     try {
-      const parsed = JSON.parse(row.data) as Part;
-      if (parsed?.id) {
-        const key = row.messageId;
-        if (!partsByMessageId[key]) {
-          partsByMessageId[key] = [];
-        }
-        partsByMessageId[key].push(parsed);
+      const parsed = JSON.parse(row.data) as unknown;
+      if (!isParsedDbRecord(parsed)) {
+        console.warn("[db-reader] skipping non-object part", row.id);
+        continue;
       }
+
+      const key = row.messageId;
+      if (!partsByMessageId[key]) {
+        partsByMessageId[key] = [];
+      }
+      partsByMessageId[key].push({
+        ...parsed,
+        id: typeof parsed.id === "string" && parsed.id.trim() ? parsed.id : row.id,
+        messageID:
+          typeof parsed.messageID === "string" && parsed.messageID.trim()
+            ? parsed.messageID
+            : row.messageId,
+        sessionID:
+          typeof parsed.sessionID === "string" && parsed.sessionID.trim()
+            ? parsed.sessionID
+            : row.sessionId,
+      } as Part);
     } catch {
       console.warn("[db-reader] skipping unparseable part", row.id);
     }

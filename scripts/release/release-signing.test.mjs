@@ -92,7 +92,7 @@ test("requires notary secrets when notarization is requested", () => {
 
 test("non-macOS releases only require updater signing", () => {
   const result = resolveReleaseSigning({
-    osType: "windows",
+    osType: "linux",
     updaterPrivateKey: "private-key",
     updaterPrivateKeyPassword: "secret",
     allowUnsignedMacos: false,
@@ -102,6 +102,40 @@ test("non-macOS releases only require updater signing", () => {
   assert.equal(result.macosBuildMode, "not-applicable");
   assert.equal(result.shouldBuildSignedMacos, false);
   assert.equal(result.shouldBuildUnsignedMacos, false);
+  assert.equal(result.windowsSigningReady, false);
+});
+
+test("windows releases require Azure signing configuration", () => {
+  assert.throws(
+    () =>
+      resolveReleaseSigning({
+        osType: "windows",
+        updaterPrivateKey: "private-key",
+        updaterPrivateKeyPassword: "secret",
+        allowUnsignedMacos: false,
+        macosNotarize: false,
+      }),
+    /AZURE_CLIENT_ID|AZURE_ARTIFACT_SIGNING_ENDPOINT/i,
+  );
+});
+
+test("windows releases resolve when Azure signing configuration is present", () => {
+  const result = resolveReleaseSigning({
+    osType: "windows",
+    updaterPrivateKey: "private-key",
+    updaterPrivateKeyPassword: "secret",
+    azureClientId: "client-id",
+    azureTenantId: "tenant-id",
+    azureSubscriptionId: "subscription-id",
+    azureArtifactSigningEndpoint: "https://plc.codesigning.azure.net/",
+    azureArtifactSigningAccountName: "VesloSign",
+    azureArtifactSigningCertProfileName: "veslo-public-trust",
+    allowUnsignedMacos: false,
+    macosNotarize: false,
+  });
+
+  assert.equal(result.windowsSigningReady, true);
+  assert.equal(result.macosBuildMode, "not-applicable");
 });
 
 test("workflow routes signing through the release signing resolver", () => {
@@ -111,4 +145,8 @@ test("workflow routes signing through the release signing resolver", () => {
   assert.match(workflow, /allow_unsigned_macos:/);
   assert.match(workflow, /release-signing\.mjs/);
   assert.match(workflow, /shouldBuildUnsignedMacos/);
+  assert.match(workflow, /publish-tauri-windows:/);
+  assert.match(workflow, /azure\/login@/);
+  assert.match(workflow, /Artifact Signing Client Tools/);
+  assert.match(workflow, /tauri\.windows\.release\.conf\.json/);
 });

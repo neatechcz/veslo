@@ -76,6 +76,7 @@ import { createSessionFromDirectorySelection } from "./pages/session-navigation"
 import {
   SIDEBAR_SESSION_PAGE_SIZE,
   deriveSidebarHasMore,
+  expandSidebarSessionSliceWithAncestors,
   initialSidebarSessionLimit,
   nextSidebarSessionLimit,
 } from "./pages/sidebar-session-pagination";
@@ -1205,6 +1206,37 @@ export default function App() {
         if (delta !== 0) return delta;
         return a.id.localeCompare(b.id);
       });
+  const normalizeParentSessionId = (value: string | null | undefined) => value?.trim() ?? "";
+  const hydrateSidebarSessionAncestors = async (
+    sessions: Session[],
+    resolveSessionById: (sessionId: string) => Promise<Session>,
+  ) => {
+    const expanded = new Map(sessions.map((session) => [session.id, session] as const));
+    const pendingParentIds = sessions
+      .map((session) => normalizeParentSessionId(session.parentID))
+      .filter((parentId) => parentId && !expanded.has(parentId));
+    const queuedParentIds = new Set(pendingParentIds);
+
+    while (pendingParentIds.length > 0) {
+      const parentId = pendingParentIds.shift();
+      if (!parentId) continue;
+      queuedParentIds.delete(parentId);
+      if (expanded.has(parentId)) continue;
+      try {
+        const fetched = await resolveSessionById(parentId);
+        expanded.set(fetched.id, fetched);
+        const nextParentId = normalizeParentSessionId(fetched.parentID);
+        if (nextParentId && !expanded.has(nextParentId) && !queuedParentIds.has(nextParentId)) {
+          pendingParentIds.push(nextParentId);
+          queuedParentIds.add(nextParentId);
+        }
+      } catch {
+        // ignore stale/missing ancestors; the child row will remain visible on its own
+      }
+    }
+
+    return Array.from(expanded.values());
+  };
 
   const [sessionsLoaded, setSessionsLoaded] = createSignal(false);
   const loadSessionsWithReady = async (scopeRoot?: string) => {
@@ -2870,8 +2902,15 @@ export default function App() {
         }
       }
 
-      const sorted = sortSessionsByActivity(Array.from(merged.values()));
-      const items: SidebarSessionItem[] = sorted.map((session) => ({
+      const hydrated = await hydrateSidebarSessionAncestors(
+        Array.from(merged.values()),
+        async (sessionId) => applySessionDirectoryOverride(
+          unwrap(await c.session.get({ sessionID: sessionId })),
+        ),
+      );
+      const sorted = sortSessionsByActivity(hydrated);
+      const visible = expandSidebarSessionSliceWithAncestors(sorted, requestLimit);
+      const items: SidebarSessionItem[] = visible.map((session) => ({
         id: session.id,
         title: session.title,
         slug: session.slug,
@@ -3059,7 +3098,7 @@ export default function App() {
       }
       const sorted = sortSessionsByActivity(scopedSessions);
       const requestLimit = sidebarSessionLimitByWorkspaceId()[wsId] ?? initialSidebarSessionLimit();
-      const visibleRows = sorted.slice(0, requestLimit);
+      const visibleRows = expandSidebarSessionSliceWithAncestors(sorted, requestLimit);
       setSidebarSessionsByWorkspaceId((prev) => ({
         ...prev,
         [wsId]: visibleRows.map((s) => ({

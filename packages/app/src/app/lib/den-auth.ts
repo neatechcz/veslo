@@ -157,6 +157,11 @@ function storage(): Storage | null {
   return localStorageAccess();
 }
 
+function isAutomatedBrowserSession(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return navigator.webdriver === true;
+}
+
 function normalizeDenApiBase(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -297,7 +302,7 @@ async function invokeDesktopCommand<T>(command: string, args?: Record<string, un
 }
 
 function queueDesktopSnapshotWrite(auth: DenAuthState | null, keepSignedIn: boolean): void {
-  if (!isTauriRuntime()) return;
+  if (!isTauriRuntime() || isAutomatedBrowserSession()) return;
   const payloadAuth = auth ? JSON.stringify(auth) : null;
   desktopSnapshotWriteQueue = desktopSnapshotWriteQueue
     .catch(() => {})

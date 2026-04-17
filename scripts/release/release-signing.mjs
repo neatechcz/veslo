@@ -22,6 +22,15 @@ export function resolveReleaseSigning(options = {}) {
   const updaterPrivateKey = options.updaterPrivateKey ?? readOption("TAURI_SIGNING_PRIVATE_KEY");
   const updaterPrivateKeyPassword =
     options.updaterPrivateKeyPassword ?? readOption("TAURI_SIGNING_PRIVATE_KEY_PASSWORD");
+  const azureClientId = options.azureClientId ?? readOption("AZURE_CLIENT_ID");
+  const azureTenantId = options.azureTenantId ?? readOption("AZURE_TENANT_ID");
+  const azureSubscriptionId = options.azureSubscriptionId ?? readOption("AZURE_SUBSCRIPTION_ID");
+  const azureArtifactSigningEndpoint =
+    options.azureArtifactSigningEndpoint ?? readOption("AZURE_ARTIFACT_SIGNING_ENDPOINT");
+  const azureArtifactSigningAccountName =
+    options.azureArtifactSigningAccountName ?? readOption("AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME");
+  const azureArtifactSigningCertProfileName =
+    options.azureArtifactSigningCertProfileName ?? readOption("AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME");
   const appleSigningIdentity = options.appleSigningIdentity ?? readOption("APPLE_SIGNING_IDENTITY");
   const appleCertificate = options.appleCertificate ?? readOption("APPLE_CERTIFICATE");
   const appleCertificatePassword =
@@ -42,6 +51,20 @@ export function resolveReleaseSigning(options = {}) {
     );
   }
 
+  const windowsSigningReady =
+    hasValue(azureClientId) &&
+    hasValue(azureTenantId) &&
+    hasValue(azureSubscriptionId) &&
+    hasValue(azureArtifactSigningEndpoint) &&
+    hasValue(azureArtifactSigningAccountName) &&
+    hasValue(azureArtifactSigningCertProfileName);
+
+  if (osType === "windows" && !windowsSigningReady) {
+    throw new Error(
+      "AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, AZURE_ARTIFACT_SIGNING_ENDPOINT, AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME, and AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME are required for Windows release signing.",
+    );
+  }
+
   const appleSigningReady =
     hasValue(appleSigningIdentity) && hasValue(appleCertificate) && hasValue(appleCertificatePassword);
   const appleNotaryReady =
@@ -53,6 +76,7 @@ export function resolveReleaseSigning(options = {}) {
   if (osType !== "macos") {
     return {
       updaterSigningReady: true,
+      windowsSigningReady,
       appleSigningReady,
       appleNotaryReady,
       allowUnsignedMacos,

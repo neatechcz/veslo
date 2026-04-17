@@ -35,6 +35,12 @@ struct DenAuthSnapshotFile {
     source: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedDenAuthState {
+    den_api_base: Option<String>,
+}
+
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
     value.and_then(|raw| {
         let trimmed = raw.trim().to_string();
@@ -44,6 +50,31 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
             Some(trimmed)
         }
     })
+}
+
+fn snapshot_den_api_base(snapshot: &DenAuthSnapshot) -> Option<String> {
+    let raw = snapshot.auth_json.as_deref()?;
+    let parsed = serde_json::from_str::<PersistedDenAuthState>(raw).ok()?;
+    normalize_optional_text(parsed.den_api_base)
+}
+
+fn den_api_base_uses_loopback(base: &str) -> bool {
+    let lower = base.trim().to_ascii_lowercase();
+    lower.starts_with("http://127.0.0.1")
+        || lower.starts_with("https://127.0.0.1")
+        || lower.starts_with("http://localhost")
+        || lower.starts_with("https://localhost")
+        || lower.starts_with("http://[::1]")
+        || lower.starts_with("https://[::1]")
+        || lower.starts_with("http://0.0.0.0")
+        || lower.starts_with("https://0.0.0.0")
+}
+
+fn snapshot_uses_loopback(snapshot: &DenAuthSnapshot) -> bool {
+    snapshot_den_api_base(snapshot)
+        .as_deref()
+        .map(den_api_base_uses_loopback)
+        .unwrap_or(false)
 }
 
 fn resolve_den_auth_snapshot_path() -> PathBuf {
@@ -167,7 +198,13 @@ fn read_webkit_localstorage_value(db_path: &Path, key: &str) -> Option<String> {
 }
 
 #[cfg(target_os = "macos")]
-fn collect_legacy_webkit_dbs() -> Vec<PathBuf> {
+struct LegacyWebkitDb {
+    bucket: &'static str,
+    path: PathBuf,
+}
+
+#[cfg(target_os = "macos")]
+fn collect_legacy_webkit_dbs() -> Vec<LegacyWebkitDb> {
     let mut paths = Vec::new();
     let Some(home) = home_dir() else {
         return paths;
@@ -202,7 +239,10 @@ fn collect_legacy_webkit_dbs() -> Vec<PathBuf> {
                 continue;
             }
             if entry.file_name() == "localstorage.sqlite3" {
-                paths.push(entry.path().to_path_buf());
+                paths.push(LegacyWebkitDb {
+                    bucket,
+                    path: entry.path().to_path_buf(),
+                });
             }
         }
     }
@@ -211,37 +251,84 @@ fn collect_legacy_webkit_dbs() -> Vec<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
+fn legacy_webkit_bucket_priority(bucket: &str) -> u8 {
+    match bucket {
+        "com.neatech.veslo" | "com.neatech.veslo.dev" => 3,
+        "com.differentai.openwork" => 2,
+        "veslo" | "openwork" => 1,
+        _ => 0,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn legacy_webkit_bucket_from_source(source: &str) -> Option<&str> {
+    let path = source.strip_prefix("legacy-webkit:")?;
+    let marker = "/Library/WebKit/";
+    let start = path.find(marker)? + marker.len();
+    let tail = &path[start..];
+    let end = tail.find('/')?;
+    Some(&tail[..end])
+}
+
+#[cfg(target_os = "macos")]
+fn snapshot_source_priority(snapshot: &DenAuthSnapshot) -> u8 {
+    snapshot
+        .source
+        .as_deref()
+        .and_then(legacy_webkit_bucket_from_source)
+        .map(legacy_webkit_bucket_priority)
+        .unwrap_or(0)
+}
+
+#[cfg(target_os = "macos")]
+fn should_prefer_legacy_over_snapshot_file(
+    snapshot_file: &DenAuthSnapshot,
+    legacy_snapshot: &DenAuthSnapshot,
+) -> bool {
+    let legacy_priority = snapshot_source_priority(legacy_snapshot);
+    if legacy_priority <= snapshot_source_priority(snapshot_file) || legacy_priority <= 1 {
+        return false;
+    }
+
+    snapshot_uses_loopback(snapshot_file) && !snapshot_uses_loopback(legacy_snapshot)
+}
+
+#[cfg(target_os = "macos")]
 fn read_legacy_webkit_snapshot() -> Option<DenAuthSnapshot> {
-    let mut selected: Option<(SystemTime, DenAuthSnapshot)> = None;
-    for db_path in collect_legacy_webkit_dbs() {
-        let auth_json = read_webkit_localstorage_value(&db_path, DEN_AUTH_KEY);
+    let mut selected: Option<(u8, SystemTime, DenAuthSnapshot)> = None;
+    for db in collect_legacy_webkit_dbs() {
+        let auth_json = read_webkit_localstorage_value(&db.path, DEN_AUTH_KEY);
         let Some(auth_json) = normalize_optional_text(auth_json) else {
             continue;
         };
 
-        let keep_signed_in = read_webkit_localstorage_value(&db_path, DEN_KEEP_SIGNED_IN_KEY)
+        let keep_signed_in = read_webkit_localstorage_value(&db.path, DEN_KEEP_SIGNED_IN_KEY)
             .as_deref()
             .and_then(parse_keep_signed_in);
-        let modified = db_path
+        let modified = db
+            .path
             .metadata()
             .and_then(|meta| meta.modified())
             .unwrap_or(SystemTime::UNIX_EPOCH);
+        let priority = legacy_webkit_bucket_priority(db.bucket);
 
         let snapshot = DenAuthSnapshot {
             auth_json: Some(auth_json),
             keep_signed_in,
-            source: Some(format!("legacy-webkit:{}", db_path.display())),
+            source: Some(format!("legacy-webkit:{}", db.path.display())),
         };
 
         match &selected {
-            Some((current_modified, _)) if modified <= *current_modified => {}
+            Some((current_priority, current_modified, _))
+                if priority < *current_priority
+                    || (priority == *current_priority && modified <= *current_modified) => {}
             _ => {
-                selected = Some((modified, snapshot));
+                selected = Some((priority, modified, snapshot));
             }
         }
     }
 
-    selected.map(|(_, snapshot)| snapshot)
+    selected.map(|(_, _, snapshot)| snapshot)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -251,11 +338,24 @@ fn read_legacy_webkit_snapshot() -> Option<DenAuthSnapshot> {
 
 #[tauri::command]
 pub fn den_auth_snapshot_read() -> Result<DenAuthSnapshot, String> {
-    if let Some(snapshot) = read_den_auth_snapshot_file() {
+    let snapshot_file = read_den_auth_snapshot_file();
+    let legacy_snapshot = read_legacy_webkit_snapshot();
+
+    if let (Some(file_snapshot), Some(legacy_snapshot)) =
+        (snapshot_file.as_ref(), legacy_snapshot.as_ref())
+    {
+        if should_prefer_legacy_over_snapshot_file(file_snapshot, legacy_snapshot) {
+            let repaired = legacy_snapshot.clone();
+            let _ = write_den_auth_snapshot_file(&repaired);
+            return Ok(repaired);
+        }
+    }
+
+    if let Some(snapshot) = snapshot_file {
         return Ok(snapshot);
     }
 
-    if let Some(snapshot) = read_legacy_webkit_snapshot() {
+    if let Some(snapshot) = legacy_snapshot {
         let _ = write_den_auth_snapshot_file(&snapshot);
         return Ok(snapshot);
     }
@@ -289,6 +389,8 @@ mod tests {
     use std::path::PathBuf;
     use std::process::Command;
     use std::sync::Mutex;
+    use std::thread::sleep;
+    use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -308,6 +410,40 @@ mod tests {
             out.push_str(&format!("{lo:02X}{hi:02X}"));
         }
         out
+    }
+
+    fn create_legacy_webkit_db(temp_home: &PathBuf, bucket: &str, auth_json: &str) -> PathBuf {
+        let legacy_db = temp_home
+            .join("Library")
+            .join("WebKit")
+            .join(bucket)
+            .join("WebsiteData")
+            .join("Default")
+            .join("legacy-origin")
+            .join("legacy-origin")
+            .join("LocalStorage")
+            .join("localstorage.sqlite3");
+        fs::create_dir_all(legacy_db.parent().expect("legacy parent")).expect("legacy db dir");
+
+        let auth_hex = hex_utf16le(auth_json);
+        let keep_hex = "3100";
+        let sql = format!(
+            "CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB NOT NULL ON CONFLICT FAIL);\
+             INSERT INTO ItemTable(key, value) VALUES('{auth_key}', X'{auth_hex}');\
+             INSERT INTO ItemTable(key, value) VALUES('{keep_key}', X'{keep_hex}');",
+            auth_key = "veslo.den.auth",
+            keep_key = "veslo.den.keepSignedIn",
+            auth_hex = auth_hex,
+            keep_hex = keep_hex,
+        );
+        let sqlite_status = Command::new("sqlite3")
+            .arg(&legacy_db)
+            .arg(sql)
+            .status()
+            .expect("sqlite3 command");
+        assert!(sqlite_status.success(), "sqlite3 failed to create legacy db");
+
+        legacy_db
     }
 
     #[test]
@@ -341,37 +477,8 @@ mod tests {
         let previous_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", temp_home.to_string_lossy().to_string());
 
-        let legacy_db = temp_home
-            .join("Library")
-            .join("WebKit")
-            .join("com.neatech.veslo.dev")
-            .join("WebsiteData")
-            .join("Default")
-            .join("legacy-origin")
-            .join("legacy-origin")
-            .join("LocalStorage")
-            .join("localstorage.sqlite3");
-        fs::create_dir_all(legacy_db.parent().expect("legacy parent")).expect("legacy db dir");
-
         let auth_json = r#"{"denApiBase":"https://den-control-plane-veslo.onrender.com","token":"token_123","orgId":"org_123"}"#;
-        let auth_hex = hex_utf16le(auth_json);
-        let keep_hex = "3100";
-
-        let sql = format!(
-            "CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB NOT NULL ON CONFLICT FAIL);\
-             INSERT INTO ItemTable(key, value) VALUES('{auth_key}', X'{auth_hex}');\
-             INSERT INTO ItemTable(key, value) VALUES('{keep_key}', X'{keep_hex}');",
-            auth_key = "veslo.den.auth",
-            keep_key = "veslo.den.keepSignedIn",
-            auth_hex = auth_hex,
-            keep_hex = keep_hex,
-        );
-        let sqlite_status = Command::new("sqlite3")
-            .arg(&legacy_db)
-            .arg(sql)
-            .status()
-            .expect("sqlite3 command");
-        assert!(sqlite_status.success(), "sqlite3 failed to create legacy db");
+        create_legacy_webkit_db(&temp_home, "com.neatech.veslo.dev", auth_json);
 
         let snapshot = den_auth_snapshot_read().expect("snapshot read");
         assert_eq!(snapshot.auth_json, Some(auth_json.to_string()));
@@ -388,6 +495,116 @@ mod tests {
 
         let snapshot_path = resolve_den_auth_snapshot_path();
         assert!(snapshot_path.is_file(), "snapshot file not created");
+
+        if let Some(previous) = previous_home {
+            std::env::set_var("HOME", previous);
+        } else {
+            std::env::remove_var("HOME");
+        }
+
+        let _ = fs::remove_dir_all(temp_home);
+    }
+
+    #[test]
+    fn den_auth_snapshot_read_prefers_app_bundle_snapshot_over_generic_webkit_bucket() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+
+        let temp_home = unique_temp_home("veslo-den-auth-priority");
+        fs::create_dir_all(&temp_home).expect("temp home");
+
+        let previous_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", temp_home.to_string_lossy().to_string());
+
+        let preferred_auth = r#"{"email":"vaclav.soukup@neatech.cz","token":"real-token"}"#;
+        let fallback_auth = r#"{"email":"feedback@example.com","token":"test-token"}"#;
+
+        let preferred_db = create_legacy_webkit_db(&temp_home, "com.neatech.veslo", preferred_auth);
+        sleep(Duration::from_millis(20));
+        let fallback_db = create_legacy_webkit_db(&temp_home, "veslo", fallback_auth);
+
+        let preferred_modified = preferred_db
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .expect("preferred modified");
+        let fallback_modified = fallback_db
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .expect("fallback modified");
+        assert!(
+            fallback_modified >= preferred_modified,
+            "expected generic bucket to be newer for regression coverage"
+        );
+
+        let snapshot = den_auth_snapshot_read().expect("snapshot read");
+        assert_eq!(snapshot.auth_json, Some(preferred_auth.to_string()));
+        assert!(
+            snapshot
+                .source
+                .as_deref()
+                .unwrap_or("")
+                .contains("com.neatech.veslo"),
+            "expected app bundle source, got {:?}",
+            snapshot.source
+        );
+
+        if let Some(previous) = previous_home {
+            std::env::set_var("HOME", previous);
+        } else {
+            std::env::remove_var("HOME");
+        }
+
+        let _ = fs::remove_dir_all(temp_home);
+    }
+
+    #[test]
+    fn den_auth_snapshot_read_repairs_loopback_snapshot_file_from_legacy_storage() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+
+        let temp_home = unique_temp_home("veslo-den-auth-repair");
+        fs::create_dir_all(&temp_home).expect("temp home");
+
+        let previous_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", temp_home.to_string_lossy().to_string());
+
+        let loopback_auth = r#"{"denApiBase":"http://127.0.0.1:65187","token":"den-token-e2e","orgId":"org-e2e","user":{"id":"user-e2e","email":"feedback@example.com","name":"Feedback Tester"},"org":{"id":"org-e2e","name":"E2E Org","slug":"e2e-org","role":"owner"}}"#;
+        let preferred_auth = r#"{"denApiBase":"https://den-control-plane-veslo.onrender.com","token":"real-token","orgId":"org-real","user":{"id":"user-real","email":"vaclav.soukup@neatech.cz","name":"Václav Soukup"},"org":{"id":"org-real","name":"Personal","slug":"personal","role":"owner"}}"#;
+
+        let snapshot_path = resolve_den_auth_snapshot_path();
+        fs::create_dir_all(snapshot_path.parent().expect("snapshot parent")).expect("snapshot dir");
+        fs::write(
+            &snapshot_path,
+            format!(
+                r#"{{
+  "version": 1,
+  "authJson": {auth_json:?},
+  "keepSignedIn": true,
+  "updatedAt": 1,
+  "source": "desktop-runtime"
+}}"#,
+                auth_json = loopback_auth
+            ),
+        )
+        .expect("snapshot write");
+
+        create_legacy_webkit_db(&temp_home, "com.neatech.veslo", preferred_auth);
+
+        let snapshot = den_auth_snapshot_read().expect("snapshot read");
+        assert_eq!(snapshot.auth_json, Some(preferred_auth.to_string()));
+        assert!(
+            snapshot
+                .source
+                .as_deref()
+                .unwrap_or("")
+                .contains("com.neatech.veslo"),
+            "expected repaired snapshot to come from app bundle legacy storage, got {:?}",
+            snapshot.source
+        );
+
+        let persisted = fs::read_to_string(&snapshot_path).expect("snapshot persisted");
+        assert!(
+            persisted.contains("real-token"),
+            "expected repaired snapshot file to be rewritten"
+        );
 
         if let Some(previous) = previous_home {
             std::env::set_var("HOME", previous);

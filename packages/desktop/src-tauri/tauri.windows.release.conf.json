@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "windows": {
+      "signCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%GITHUB_WORKSPACE%\\\\scripts\\\\release\\\\windows-sign.ps1\" \"%1\""
+    }
+  }
+}

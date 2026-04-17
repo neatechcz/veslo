@@ -44,6 +44,12 @@ test("by-project mode renders project-level load more controls", () => {
     /tr\("sidebar\.more_ellipsis"\)/,
     "project list should expose ellipsis affordance before the load-more action",
   );
+
+  assert.match(
+    source,
+    /tr\("sidebar\.show_less"\)/,
+    "project list should render a localized show-less action once rows are expanded",
+  );
 });
 
 test("recent mode has sentinel + fallback load more button", () => {
@@ -79,5 +85,19 @@ test("load-more controls use timestamp-sized row styling without button chrome",
     source,
     /rounded-lg border border-gray-6 bg-gray-1 px-2 py-1\.5 text-xs text-gray-11/,
     "load-more controls should not render bordered button styling",
+  );
+});
+
+test("expanded lists can reset their visible window back to the baseline", () => {
+  assert.match(
+    source,
+    /setRecentVisibleCount\(initialRecentVisibleCount\(\)\)/,
+    "recent mode should be able to reset back to the viewport-derived baseline",
+  );
+
+  assert.match(
+    source,
+    /\[project\.key\]: PROJECT_VISIBLE_DEFAULT/,
+    "by-project mode should be able to reset back to the default project window",
   );
 });

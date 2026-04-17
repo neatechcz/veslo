@@ -42,12 +42,14 @@ import {
   type ProjectSessionGroup,
 } from "./workspace-session-list-model";
 import {
+  computeVisibleRowLoadCount,
   PROJECT_VISIBLE_DEFAULT,
   RECENT_ESTIMATED_ROW_HEIGHT,
   RECENT_LOAD_MORE_THRESHOLD_PX,
   VIEW_LOAD_MORE_STEP,
   computeInitialRecentVisibleCount,
   nextProjectVisibleCount,
+  shouldShowLessVisibleRowsControl,
   shouldLoadMoreRecentRowsOnScroll,
 } from "./workspace-session-list-windowing";
 import {
@@ -159,6 +161,7 @@ const sidebarControlTooltipClass =
 
 export default function WorkspaceSessionList(props: Props) {
   const tr = (key: string) => t(key, currentLocale());
+  const loadMoreLabel = (count: number) => tr("sidebar.load_more").replace("{count}", String(count));
   const revealLabel = isWindowsPlatform() ? tr("sidebar.reveal_in_explorer") : tr("sidebar.reveal_in_finder");
   const [sidebarModeSignal, setSidebarModeSignal] = createSignal<SidebarViewMode>(readSidebarViewMode());
   const [collapsedProjects, setCollapsedProjects] = createSignal<Record<string, boolean>>(
@@ -305,14 +308,23 @@ export default function WorkspaceSessionList(props: Props) {
     Object.values(props.workspaceSessionPagingById ?? {}).some((entry) => entry.hasMore),
   );
 
+  const initialRecentVisibleCount = () =>
+    computeInitialRecentVisibleCount(scrollContainerRef?.clientHeight ?? 0, RECENT_ESTIMATED_ROW_HEIGHT);
+
   const recentCanLoadMore = createMemo(() => recentHasHiddenRows() || recentHasMoreServerRows());
+  const recentLoadMoreCount = createMemo(() =>
+    computeVisibleRowLoadCount(
+      recentRowsTreeVisible().length,
+      recentVisibleCount(),
+      recentHasMoreServerRows(),
+      VIEW_LOAD_MORE_STEP,
+    ));
+  const recentCanShowLess = createMemo(() =>
+    shouldShowLessVisibleRowsControl(recentVisibleCount(), initialRecentVisibleCount()));
 
   const recentLoadingMore = createMemo(() =>
     recentLoadMoreBusy() || Object.values(props.workspaceSessionPagingById ?? {}).some((entry) => entry.loadingMore),
   );
-
-  const initialRecentVisibleCount = () =>
-    computeInitialRecentVisibleCount(scrollContainerRef?.clientHeight ?? 0, RECENT_ESTIMATED_ROW_HEIGHT);
 
   const syncRecentVisibleFromViewport = () => {
     const initialVisible = initialRecentVisibleCount();
@@ -353,6 +365,10 @@ export default function WorkspaceSessionList(props: Props) {
     } finally {
       setRecentLoadMoreBusy(false);
     }
+  };
+
+  const resetRecentVisibleRows = () => {
+    setRecentVisibleCount(initialRecentVisibleCount());
   };
 
   createEffect(() => {
@@ -1545,7 +1561,18 @@ export default function WorkspaceSessionList(props: Props) {
                       }}
                     >
                       <span aria-hidden>{tr("sidebar.more_ellipsis")}</span>
-                      <span>{recentLoadingMore() ? tr("sidebar.loading_more") : tr("sidebar.load_more")}</span>
+                      <span>{recentLoadingMore() ? tr("sidebar.loading_more") : loadMoreLabel(recentLoadMoreCount())}</span>
+                    </button>
+                  </div>
+                </Show>
+                <Show when={sidebarMode() === "recent" && recentCanShowLess()}>
+                  <div>
+                    <button
+                      type="button"
+                      class="w-full inline-flex items-center gap-1 rounded-xl px-3 py-1 text-left text-[11px] text-gray-9 transition-colors hover:bg-gray-3/70 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
+                      onClick={resetRecentVisibleRows}
+                    >
+                      <span>{tr("sidebar.show_less")}</span>
                     </button>
                   </div>
                 </Show>
@@ -1582,6 +1609,15 @@ export default function WorkspaceSessionList(props: Props) {
                 const visibleRows = () => projectTreeVisibleRows().slice(0, visibleCount());
                 const hasHiddenRows = () => projectTreeVisibleRows().length > visibleCount();
                 const canLoadMoreProjectRows = () => hasHiddenRows() || projectPaging().hasMore;
+                const projectLoadMoreCount = () =>
+                  computeVisibleRowLoadCount(
+                    projectTreeVisibleRows().length,
+                    visibleCount(),
+                    projectPaging().hasMore,
+                    VIEW_LOAD_MORE_STEP,
+                  );
+                const canShowLessProjectRows = () =>
+                  shouldShowLessVisibleRowsControl(visibleCount(), PROJECT_VISIBLE_DEFAULT);
                 const loadMoreProjectRows = async () => {
                   const nextVisible = nextProjectVisibleCount(visibleCount());
                   setProjectVisibleByKey((current) => ({
@@ -1596,6 +1632,16 @@ export default function WorkspaceSessionList(props: Props) {
                   ) {
                     await Promise.resolve(props.onLoadMoreWorkspaceSessions(workspace().id));
                   }
+                };
+                const resetProjectVisibleRows = () => {
+                  setProjectVisibleByKey((current) => {
+                    const currentVisible = current[project.key] ?? PROJECT_VISIBLE_DEFAULT;
+                    if (currentVisible <= PROJECT_VISIBLE_DEFAULT) return current;
+                    return {
+                      ...current,
+                      [project.key]: PROJECT_VISIBLE_DEFAULT,
+                    };
+                  });
                 };
 
                 return (
@@ -1828,7 +1874,18 @@ export default function WorkspaceSessionList(props: Props) {
                               }}
                             >
                               <span aria-hidden>{tr("sidebar.more_ellipsis")}</span>
-                              <span>{projectPaging().loadingMore ? tr("sidebar.loading_more") : tr("sidebar.load_more")}</span>
+                              <span>{projectPaging().loadingMore ? tr("sidebar.loading_more") : loadMoreLabel(projectLoadMoreCount())}</span>
+                            </button>
+                          </div>
+                        </Show>
+                        <Show when={canShowLessProjectRows()}>
+                          <div>
+                            <button
+                              type="button"
+                              class="w-full inline-flex items-center gap-1 rounded-xl px-3 py-1 text-left text-[11px] text-gray-9 transition-colors hover:bg-gray-3/70 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
+                              onClick={resetProjectVisibleRows}
+                            >
+                              <span>{tr("sidebar.show_less")}</span>
                             </button>
                           </div>
                         </Show>

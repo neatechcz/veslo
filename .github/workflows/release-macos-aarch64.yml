@@ -275,10 +275,6 @@ jobs:
             os_type: linux
             target: aarch64-unknown-linux-gnu
             args: "--target aarch64-unknown-linux-gnu --bundles deb,rpm"
-          - platform: windows-2022
-            os_type: windows
-            target: x86_64-pc-windows-msvc
-            args: "--target x86_64-pc-windows-msvc --bundles msi"
 
     steps:
       - name: Enable git long paths (Windows)
@@ -676,9 +672,320 @@ jobs:
           tar -xzf "$tmp_dir/veslo-desktop-darwin-${asset_arch}.app.tar.gz" -C "$tmp_dir"
           node scripts/release/verify-bundled-versions.mjs "$tmp_dir" "${{ matrix.target }}"
 
+  publish-tauri-windows:
+    name: Build + Publish (x86_64-pc-windows-msvc)
+    needs: [resolve-release, verify-release]
+    if: needs.resolve-release.outputs.build_tauri == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 360
+    environment: release-signing
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+      RELEASE_NAME: ${{ needs.resolve-release.outputs.release_name }}
+      RELEASE_BODY: ${{ needs.resolve-release.outputs.release_body }}
+      RELEASE_DRAFT: ${{ needs.resolve-release.outputs.draft }}
+      RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}
+      OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
+      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
+      TARGET_TRIPLE: x86_64-pc-windows-msvc
+      TAURI_WINDOWS_RELEASE_CONFIG: src-tauri/tauri.windows.release.conf.json
+      VESLO_WINDOWS_SIGNING_DESCRIPTION: Veslo by Neatech
+    steps:
+      - name: Enable git long paths (Windows)
+        shell: pwsh
+        run: git config --global core.longpaths true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: "1.3.6"
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            packages/desktop/src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('packages/desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET_TRIPLE }}
+
+      - name: Resolve OpenCode version
+        id: opencode-version
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
+          OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
+        run: |
+          node <<'NODE' >> "$GITHUB_OUTPUT"
+          const fs = require('fs');
+          const repo = (process.env.OPENCODE_GITHUB_REPO || 'anomalyco/opencode').trim() || 'anomalyco/opencode';
+
+          async function resolveLatest() {
+            const token = (process.env.GITHUB_TOKEN || '').trim();
+            const headers = {
+              'Accept': 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+              'User-Agent': 'veslo-ci',
+            };
+            if (token) headers.Authorization = `Bearer ${token}`;
+
+            try {
+              const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, { headers });
+              if (res.ok) {
+                const data = await res.json();
+                const tag = (typeof data.tag_name === 'string' ? data.tag_name : '').trim();
+                let v = tag.startsWith('v') ? tag.slice(1) : tag;
+                v = v.trim();
+                if (v) return v;
+              }
+              if (res.status !== 403) {
+                throw new Error(`Failed to resolve latest OpenCode version (HTTP ${res.status})`);
+              }
+            } catch {
+              // continue to fallback
+            }
+
+            const web = await fetch(`https://github.com/${repo}/releases/latest`, {
+              headers: { 'User-Agent': 'veslo-ci' },
+              redirect: 'follow',
+            });
+            const url = (web && web.url) ? String(web.url) : '';
+            const match = url.match(/\/tag\/v([^/?#]+)/);
+            if (!match) throw new Error('Failed to resolve latest OpenCode version (web redirect).');
+            return match[1];
+          }
+
+          async function main() {
+            const pkg = JSON.parse(fs.readFileSync('./packages/desktop/package.json', 'utf8'));
+            const configuredRaw = (process.env.OPENCODE_VERSION || pkg.opencodeVersion || '').toString().trim();
+            if (configuredRaw && configuredRaw.toLowerCase() !== 'latest') {
+              const normalized = configuredRaw.startsWith('v') ? configuredRaw.slice(1) : configuredRaw;
+              const resolved = normalized.trim();
+              if (process.env.GITHUB_ENV) {
+                fs.appendFileSync(process.env.GITHUB_ENV, `OPENCODE_VERSION=${resolved}\n`);
+              }
+              console.log('version=' + resolved);
+              return;
+            }
+            const latest = await resolveLatest();
+            if (process.env.GITHUB_ENV) {
+              fs.appendFileSync(process.env.GITHUB_ENV, `OPENCODE_VERSION=${latest}\n`);
+            }
+            console.log('version=' + latest);
+          }
+
+          main().catch((err) => {
+            console.error(err);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Download OpenCode sidecar
+        shell: bash
+        env:
+          OPENCODE_VERSION: ${{ steps.opencode-version.outputs.version }}
+          OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
+        run: |
+          set -euo pipefail
+
+          opencode_asset="opencode-windows-x64-baseline.zip"
+          repo="${OPENCODE_GITHUB_REPO:-anomalyco/opencode}"
+          url="https://github.com/${repo}/releases/download/v${OPENCODE_VERSION}/${opencode_asset}"
+          tmp_dir="$RUNNER_TEMP/opencode"
+          extract_dir="$tmp_dir/extracted"
+          rm -rf "$tmp_dir"
+          mkdir -p "$extract_dir"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$tmp_dir/$opencode_asset" "$url"
+
+          if command -v unzip >/dev/null 2>&1; then
+            unzip -q "$tmp_dir/$opencode_asset" -d "$extract_dir"
+          elif command -v 7z >/dev/null 2>&1; then
+            7z x "$tmp_dir/$opencode_asset" -o"$extract_dir" >/dev/null
+          else
+            echo "No unzip utility available" >&2
+            exit 1
+          fi
+
+          if [ -f "$extract_dir/opencode.exe" ]; then
+            bin_path="$extract_dir/opencode.exe"
+          else
+            echo "OpenCode binary not found in archive" >&2
+            ls -la "$extract_dir"
+            exit 1
+          fi
+
+          mkdir -p packages/desktop/src-tauri/sidecars
+          cp "$bin_path" "packages/desktop/src-tauri/sidecars/opencode-${TARGET_TRIPLE}.exe"
+          chmod 755 "packages/desktop/src-tauri/sidecars/opencode-${TARGET_TRIPLE}.exe"
+
+      - name: Resolve release signing
+        id: signing
+        shell: bash
+        env:
+          OS_TYPE: windows
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME }}
+        run: node scripts/release/release-signing.mjs
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify Azure CLI session
+        shell: pwsh
+        run: az account show
+
+      - name: Install Artifact Signing Client Tools
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $installerPath = Join-Path $env:RUNNER_TEMP 'ArtifactSigningClientTools.msi'
+          Invoke-WebRequest -Uri 'https://download.microsoft.com/download/70ad2c3b-761f-4aa9-a9de-e7405aa2b4c1/ArtifactSigningClientTools.msi' -OutFile $installerPath
+          Start-Process msiexec.exe -Wait -ArgumentList "/I `"$installerPath`" /quiet /qn /norestart"
+          Remove-Item $installerPath -Force
+
+      - name: Write Artifact Signing metadata
+        shell: pwsh
+        env:
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME }}
+        run: |
+          $metadataPath = Join-Path $env:RUNNER_TEMP 'veslo-artifact-signing-metadata.json'
+          $metadata = @{
+            Endpoint = $env:AZURE_ARTIFACT_SIGNING_ENDPOINT
+            CodeSigningAccountName = $env:AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME
+            CertificateProfileName = $env:AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME
+            CorrelationId = "${{ github.run_id }}-${{ github.job }}"
+          } | ConvertTo-Json -Depth 4
+
+          Set-Content -Path $metadataPath -Value $metadata -Encoding utf8NoBOM
+          "VESLO_WINDOWS_SIGNING_METADATA_PATH=$metadataPath" >> $env:GITHUB_ENV
+
+      - name: Build Windows bundle
+        shell: pwsh
+        env:
+          CI: true
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          Push-Location packages/desktop
+          pnpm exec tauri -vvv build --config $env:TAURI_WINDOWS_RELEASE_CONFIG --target $env:TARGET_TRIPLE --bundles msi
+          Pop-Location
+
+      - name: Resolve Windows bundle paths
+        shell: pwsh
+        run: |
+          $bundleDir = Join-Path $env:GITHUB_WORKSPACE 'packages\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\bundle\msi'
+          if (-not (Test-Path $bundleDir)) {
+            throw "Windows bundle directory not found: $bundleDir"
+          }
+
+          $msi = Get-ChildItem -Path $bundleDir -Filter '*.msi' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $msiSig = Get-ChildItem -Path $bundleDir -Filter '*.msi.sig' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $appExe = Join-Path $env:GITHUB_WORKSPACE 'packages\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\veslo.exe'
+
+          if (-not $msi) {
+            throw "No MSI bundle found in $bundleDir"
+          }
+          if (-not $msiSig) {
+            throw "No MSI updater signature found in $bundleDir"
+          }
+          if (-not (Test-Path $appExe)) {
+            throw "Signed Windows app executable not found at $appExe"
+          }
+
+          "VESLO_WINDOWS_MSI_PATH=$($msi.FullName)" >> $env:GITHUB_ENV
+          "VESLO_WINDOWS_MSI_SIG_PATH=$($msiSig.FullName)" >> $env:GITHUB_ENV
+          "VESLO_WINDOWS_APP_EXE_PATH=$appExe" >> $env:GITHUB_ENV
+
+      - name: Verify Windows signatures
+        shell: pwsh
+        run: |
+          $files = @(
+            $env:VESLO_WINDOWS_APP_EXE_PATH,
+            $env:VESLO_WINDOWS_MSI_PATH
+          )
+
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature -FilePath $file
+            if ($signature.Status -ne 'Valid') {
+              $signature | Format-List * | Out-String | Write-Host
+              throw "Authenticode signature is not valid for $file"
+            }
+
+            Write-Host "Valid signature for $file"
+            Write-Host "Signer: $($signature.SignerCertificate.Subject)"
+          }
+
+      - name: Upload Windows release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload $env:RELEASE_TAG `
+            "$($env:VESLO_WINDOWS_MSI_PATH)#veslo-desktop-windows-x64.msi" `
+            "$($env:VESLO_WINDOWS_MSI_SIG_PATH)#veslo-desktop-windows-x64.msi.sig" `
+            --repo $env:GITHUB_REPOSITORY `
+            --clobber
+
   mirror-public-release:
     name: Mirror desktop release to public repo
-    needs: [resolve-release, verify-release, publish-tauri]
+    needs: [resolve-release, verify-release, publish-tauri, publish-tauri-windows]
     if: needs.resolve-release.outputs.build_tauri == 'true'
     runs-on: ubuntu-latest
     env:
@@ -756,11 +1063,13 @@ jobs:
       - verify-release
       - mirror-public-release
       - publish-updater-json
+      - publish-tauri-windows
     if: |
       always() &&
       needs.resolve-release.outputs.build_tauri == 'true' &&
       needs.resolve-release.result == 'success' &&
       needs.verify-release.result == 'success' &&
+      needs.publish-tauri-windows.result == 'success' &&
       needs.mirror-public-release.result == 'success' &&
       needs.publish-updater-json.result == 'success'
     runs-on: ubuntu-latest

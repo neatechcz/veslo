@@ -14,6 +14,7 @@ import {
   resolvePreferredDenUserLabel,
   startDesktopBrowserAuth,
   writeDenKeepSignedIn,
+  writeDenAuth,
 } from "./den-auth.js";
 
 class MemoryStorage implements Storage {
@@ -114,6 +115,27 @@ function installCrypto() {
     Object.defineProperty(globalThis, "crypto", {
       configurable: true,
       value: previousCrypto,
+    });
+  };
+}
+
+function installNavigator(overrides: Partial<Navigator>) {
+  const previousNavigator = globalThis.navigator;
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: {
+      ...(previousNavigator ?? {}),
+      ...overrides,
+    },
+  });
+  return () => {
+    if (previousNavigator === undefined) {
+      Reflect.deleteProperty(globalThis, "navigator");
+      return;
+    }
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: previousNavigator,
     });
   };
 }
@@ -495,6 +517,35 @@ test("hydrateDenAuthFromDesktopSnapshot imports persisted auth before onboarding
       true,
     );
   } finally {
+    storage.restore();
+  }
+});
+
+test("writeDenAuth skips desktop snapshot writes during WebDriver sessions", async () => {
+  const authState = {
+    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    token: "token_from_webdriver",
+    orgId: "org_webdriver",
+    user: { id: "user_webdriver", email: "webdriver@example.com" },
+    org: { id: "org_webdriver" },
+  };
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  const storage = installDomStorage({
+    tauriInvoke: async (command, args) => {
+      calls.push({ command, args });
+      return null;
+    },
+  });
+  const restoreNavigator = installNavigator({ webdriver: true });
+
+  try {
+    writeDenAuth(authState);
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.deepEqual(readDenAuth(), authState);
+    assert.equal(calls.length, 0);
+  } finally {
+    restoreNavigator();
     storage.restore();
   }
 });

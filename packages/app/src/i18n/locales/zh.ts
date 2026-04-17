@@ -773,10 +773,11 @@ export default {
   "sidebar.archive_confirm": "确认",
   "sidebar.more_actions": "更多操作",
   "sidebar.loading_more": "正在加载更多...",
-  "sidebar.load_more": "加载更多（+20）",
+  "sidebar.load_more": "加载更多（+{count}）",
   "sidebar.more_ellipsis": "…",
   "sidebar.recent": "最近",
   "sidebar.reorder_project": "拖动以重新排序项目",
+  "sidebar.show_less": "显示更少",
 
   // ==================== Common ====================
   "common.alpha": "测试版",
