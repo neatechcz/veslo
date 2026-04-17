@@ -43,12 +43,12 @@ import {
 } from "./workspace-session-list-model";
 import {
   computeVisibleRowLoadCount,
+  planVisibleRowLoadMore,
   PROJECT_VISIBLE_DEFAULT,
   RECENT_ESTIMATED_ROW_HEIGHT,
   RECENT_LOAD_MORE_THRESHOLD_PX,
   VIEW_LOAD_MORE_STEP,
   computeInitialRecentVisibleCount,
-  nextProjectVisibleCount,
   shouldShowLessVisibleRowsControl,
   shouldLoadMoreRecentRowsOnScroll,
 } from "./workspace-session-list-windowing";
@@ -346,10 +346,15 @@ export default function WorkspaceSessionList(props: Props) {
 
   const loadMoreRecentRows = async () => {
     if (recentLoadMoreBusy()) return;
-    if (recentHasHiddenRows()) {
-      setRecentVisibleCount((current) =>
-        Math.min(visibleRecentRows().length, current + VIEW_LOAD_MORE_STEP),
-      );
+    const loadMorePlan = planVisibleRowLoadMore(
+      recentRowsTreeVisible().length,
+      recentVisibleCount(),
+      recentHasMoreServerRows(),
+      VIEW_LOAD_MORE_STEP,
+    );
+
+    if (!loadMorePlan.shouldFetchServerRows) {
+      setRecentVisibleCount(loadMorePlan.nextVisibleCount);
       return;
     }
     if (!recentHasMoreServerRows() || !props.onLoadMoreWorkspaceSessions) return;
@@ -360,7 +365,7 @@ export default function WorkspaceSessionList(props: Props) {
     try {
       await Promise.resolve(props.onLoadMoreWorkspaceSessions(workspaceId));
       setRecentVisibleCount((current) =>
-        Math.min(visibleRecentRows().length, current + VIEW_LOAD_MORE_STEP),
+        Math.max(current, Math.min(visibleRecentRows().length, loadMorePlan.nextVisibleCount)),
       );
     } finally {
       setRecentLoadMoreBusy(false);
@@ -1619,16 +1624,25 @@ export default function WorkspaceSessionList(props: Props) {
                 const canShowLessProjectRows = () =>
                   shouldShowLessVisibleRowsControl(visibleCount(), PROJECT_VISIBLE_DEFAULT);
                 const loadMoreProjectRows = async () => {
-                  const nextVisible = nextProjectVisibleCount(visibleCount());
+                  const loadMorePlan = planVisibleRowLoadMore(
+                    projectTreeVisibleRows().length,
+                    visibleCount(),
+                    projectPaging().hasMore,
+                    VIEW_LOAD_MORE_STEP,
+                  );
                   setProjectVisibleByKey((current) => ({
                     ...current,
-                    [project.key]: nextVisible,
+                    [project.key]: loadMorePlan.nextVisibleCount,
                   }));
+
+                  if (!loadMorePlan.shouldFetchServerRows) {
+                    return;
+                  }
 
                   if (
                     props.onLoadMoreWorkspaceSessions &&
                     projectPaging().hasMore &&
-                    nextVisible > project.sessions.length
+                    loadMorePlan.nextVisibleCount > project.sessions.length
                   ) {
                     await Promise.resolve(props.onLoadMoreWorkspaceSessions(workspace().id));
                   }
