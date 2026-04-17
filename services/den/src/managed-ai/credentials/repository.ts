@@ -81,6 +81,7 @@ export interface CredentialRepository {
   getCredentialRecordById(credentialRecordId: string): Promise<CredentialRecord | null>
   listHealthyCredentialRecordIds(): Promise<string[]>
   listEligibleBindings?(input: ListEligibleBindingsInput): Promise<CredentialBinding[]>
+  getBindingByCredentialId?(credentialId: string): Promise<CredentialBinding | null>
   getCredentialRecordByBindingId?(bindingId: string): Promise<CredentialRecord | null>
   listAdminCredentials?(): Promise<AdminCredentialRecord[]>
   revokeCredential?(credentialId: string): Promise<boolean>

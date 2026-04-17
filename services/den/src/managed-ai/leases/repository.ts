@@ -45,6 +45,7 @@ export type RebindSessionLeaseInput = {
 export type ResolveLeaseInput = {
   ownerUserId: string
   bindingOwnerUserId?: string
+  requiredBindingId?: string
   provider: LeaseProvider
   sessionId: string
 }

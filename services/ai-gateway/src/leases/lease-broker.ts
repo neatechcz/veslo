@@ -19,6 +19,9 @@ export class LeaseBroker {
   async getOrCreateActiveLease(input: ResolveLeaseInput): Promise<SessionLease> {
     const existing = await this.leases.getActiveLease(input);
     if (existing) {
+      if (input.requiredBindingId && existing.activeBindingId !== input.requiredBindingId) {
+        return this.rebindLease(input, existing.activeBindingId, input.requiredBindingId);
+      }
       return existing;
     }
 
@@ -73,17 +76,23 @@ export class LeaseBroker {
     return rebinding;
   }
 
-  private async rebindLease(input: ResolveLeaseInput, currentBindingId: string): Promise<SessionLease> {
-    const currentLease = await this.getOrCreateActiveLease(input);
+  private async rebindLease(
+    input: ResolveLeaseInput,
+    currentBindingId: string,
+    nextBindingId?: string,
+  ): Promise<SessionLease> {
+    const currentLease = (await this.leases.getActiveLease(input)) ?? (await this.createLeaseIfMissing(input));
 
     if (currentLease.activeBindingId !== currentBindingId) {
       return currentLease;
     }
 
-    const replacementBindingId = await this.selector.selectReplacementBinding({
-      ...input,
-      previousBindingId: currentBindingId,
-    });
+    const replacementBindingId =
+      nextBindingId ??
+      (await this.selector.selectReplacementBinding({
+        ...input,
+        previousBindingId: currentBindingId,
+      }));
 
     if (replacementBindingId === currentBindingId) {
       return currentLease;

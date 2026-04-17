@@ -12,6 +12,10 @@ export class DefaultBindingSelector implements BindingSelector {
   constructor(private readonly credentials: CredentialRepository) {}
 
   async selectInitialBinding(input: ResolveLeaseInput): Promise<string> {
+    if (input.requiredBindingId) {
+      return input.requiredBindingId
+    }
+
     const bindings = await this.listEligibleBindings({
       ownerUserId: this.resolveBindingOwnerUserId(input),
       provider: input.provider,
@@ -30,6 +34,10 @@ export class DefaultBindingSelector implements BindingSelector {
   async selectReplacementBinding(
     input: ResolveLeaseInput & { previousBindingId: string },
   ): Promise<string> {
+    if (input.requiredBindingId) {
+      return input.requiredBindingId
+    }
+
     const replacements = await this.listEligibleBindings({
       ownerUserId: this.resolveBindingOwnerUserId(input),
       provider: input.provider,

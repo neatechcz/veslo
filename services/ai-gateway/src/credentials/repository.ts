@@ -85,6 +85,7 @@ export interface CredentialRepository {
 
   // Provider-scoped BYOK API for the gateway rollout.
   listEligibleBindings?(input: ListEligibleBindingsInput): Promise<CredentialBinding[]>;
+  getBindingByCredentialId?(credentialId: string): Promise<CredentialBinding | null>;
   getCredentialRecordByBindingId?(bindingId: string): Promise<CredentialRecord | null>;
   listAdminCredentials?(): Promise<AdminCredentialRecord[]>;
   createUserCredential?(input: CreateUserCredentialInput): Promise<CredentialRecord>;

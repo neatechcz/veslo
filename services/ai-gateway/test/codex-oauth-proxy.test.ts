@@ -5,7 +5,7 @@ import test from "node:test"
 
 import type { UserAiAccessPolicyRecord } from "../src/access/repository.js"
 import { getPlatformCredentialOwnerUserId } from "../src/credentials/platform-owner.js"
-import type { CredentialRecord } from "../src/credentials/repository.js"
+import type { CredentialBinding, CredentialRecord } from "../src/credentials/repository.js"
 import { createApp } from "../src/index.js"
 import type { RecordUsageInput } from "../src/usage/repository.js"
 
@@ -29,10 +29,22 @@ function createAiAccess(): UserAiAccessPolicyRecord {
     userId: "user_gateway",
     enabled: true,
     provider: "codex_oauth",
+    credentialId: "cred_codex_1",
     defaultModel: "gpt-5.4",
     allowedModels: ["gpt-5.4"],
     createdAt: new Date("2026-04-10T10:00:00.000Z"),
     updatedAt: new Date("2026-04-10T10:00:00.000Z"),
+  }
+}
+
+function createCredentialBinding(): CredentialBinding {
+  return {
+    id: "binding_codex_primary",
+    ownerUserId: "platform:codex_oauth",
+    provider: "codex_oauth",
+    credentialRecordId: "cred_codex_1",
+    createdAt: new Date("2026-04-10T00:00:00.000Z"),
+    updatedAt: new Date("2026-04-10T00:00:00.000Z"),
   }
 }
 
@@ -41,6 +53,7 @@ test("codex_oauth proxy forwards through the worker transport with a sticky leas
   const leaseScopes: Array<{
     ownerUserId: string
     bindingOwnerUserId?: string
+    requiredBindingId?: string
     provider: string
     sessionId: string
   }> = []
@@ -79,6 +92,10 @@ test("codex_oauth proxy forwards through the worker transport with a sticky leas
         async getCredentialRecordByBindingId(bindingId: string) {
           assert.equal(bindingId, "binding_codex_primary")
           return createCredentialRecord()
+        },
+        async getBindingByCredentialId(credentialId: string) {
+          assert.equal(credentialId, "cred_codex_1")
+          return createCredentialBinding()
         },
         async markCredentialState() {},
       },
@@ -168,6 +185,7 @@ test("codex_oauth proxy forwards through the worker transport with a sticky leas
       {
         ownerUserId: "user_gateway",
         bindingOwnerUserId: getPlatformCredentialOwnerUserId("codex_oauth"),
+        requiredBindingId: "binding_codex_primary",
         provider: "codex_oauth",
         sessionId: "session_codex_1",
       },

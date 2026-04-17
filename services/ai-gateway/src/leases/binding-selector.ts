@@ -13,6 +13,10 @@ export class DefaultBindingSelector implements BindingSelector {
   constructor(private readonly credentials: CredentialRepository) {}
 
   async selectInitialBinding(input: ResolveLeaseInput): Promise<string> {
+    if (input.requiredBindingId) {
+      return input.requiredBindingId;
+    }
+
     if (input.provider === CODEX_OAUTH_PROVIDER) {
       return CODEX_OAUTH_WORKER_BINDING_ID;
     }
@@ -35,6 +39,10 @@ export class DefaultBindingSelector implements BindingSelector {
   async selectReplacementBinding(
     input: ResolveLeaseInput & { previousBindingId: string },
   ): Promise<string> {
+    if (input.requiredBindingId) {
+      return input.requiredBindingId;
+    }
+
     if (input.provider === CODEX_OAUTH_PROVIDER) {
       return CODEX_OAUTH_WORKER_BINDING_ID;
     }

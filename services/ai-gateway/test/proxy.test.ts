@@ -6,6 +6,7 @@ import test from "node:test";
 import type { CredentialRecord } from "../src/credentials/repository.js";
 import type { UpstreamAuth } from "../src/credentials/token-broker.js";
 import type { BindingSelector } from "../src/leases/binding-selector.js";
+import { DefaultBindingSelector } from "../src/leases/binding-selector.js";
 import { LeaseBroker } from "../src/leases/lease-broker.js";
 import type {
   CreateSessionLeaseInput,
@@ -124,23 +125,110 @@ function createCredentialsByBindingId(records: Record<string, CredentialRecord>)
   };
 }
 
-function createCredentialRecord(bindingId: string, provider: "openai" | "anthropic"): CredentialRecord {
+function createCredentialRecord(
+  bindingId: string,
+  provider: "openai" | "anthropic" | "codex_oauth",
+  overrides: Partial<CredentialRecord> = {},
+): CredentialRecord {
   return {
     id: `cred_${bindingId}`,
-    ownerUserId: "user_gateway",
+    ownerUserId: provider === "codex_oauth" ? "platform:codex_oauth" : "user_gateway",
     provider,
-    credentialType: provider === "openai" ? "oauth" : "api_key",
+    credentialType: provider === "anthropic" ? "api_key" : "oauth",
     state: "healthy",
     secretRef: `secret_${bindingId}`,
     createdAt: new Date("2026-04-01T00:00:00.000Z"),
     updatedAt: new Date("2026-04-01T00:00:00.000Z"),
     lastFailureAt: null,
+    ...overrides,
   };
 }
 
 function createNoopUsageRepository() {
   return {
     async recordUsage() {},
+  };
+}
+
+function createCodexAiAccess(credentialId = "cred_codex_assigned"): {
+  getUserAiAccess(userId: string): Promise<{
+    id: string;
+    userId: string;
+    enabled: boolean;
+    provider: "codex_oauth";
+    credentialId: string;
+    defaultModel: string;
+    allowedModels: string[];
+    createdAt: Date;
+    updatedAt: Date;
+  }>;
+} {
+  return {
+    async getUserAiAccess(userId: string) {
+      return {
+        id: "ai_access_codex_user_gateway",
+        userId,
+        enabled: true,
+        provider: "codex_oauth",
+        credentialId,
+        defaultModel: "gpt-5.4",
+        allowedModels: ["gpt-5.4"],
+        createdAt: new Date("2026-04-10T10:00:00.000Z"),
+        updatedAt: new Date("2026-04-10T10:00:00.000Z"),
+      };
+    },
+  };
+}
+
+function createCodexCredentialRepository() {
+  const assignedBinding = {
+    id: "binding_codex_assigned",
+    ownerUserId: "platform:codex_oauth",
+    provider: "codex_oauth",
+    credentialRecordId: "cred_codex_assigned",
+    createdAt: new Date("2026-04-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-04-01T00:00:00.000Z"),
+  };
+  const fallbackBinding = {
+    id: "binding_codex_fallback",
+    ownerUserId: "platform:codex_oauth",
+    provider: "codex_oauth",
+    credentialRecordId: "cred_codex_fallback",
+    createdAt: new Date("2026-04-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-04-01T00:00:00.000Z"),
+  };
+  const bindingByCredentialId = new Map([
+    ["cred_codex_assigned", assignedBinding],
+    ["cred_codex_fallback", fallbackBinding],
+  ]);
+  const recordByBindingId: Record<string, CredentialRecord> = {
+    binding_codex_assigned: createCredentialRecord("binding_codex_assigned", "codex_oauth", {
+      id: "cred_codex_assigned",
+    }),
+    binding_codex_fallback: createCredentialRecord("binding_codex_fallback", "codex_oauth", {
+      id: "cred_codex_fallback",
+    }),
+  };
+
+  return {
+    async getCredentialRecordById(credentialRecordId: string) {
+      return Object.values(recordByBindingId).find((record) => record.id === credentialRecordId) ?? null;
+    },
+    async listHealthyCredentialRecordIds() {
+      return Object.values(recordByBindingId).map((record) => record.id);
+    },
+    async listEligibleBindings(input: { ownerUserId: string; provider: string; excludeBindingId?: string }) {
+      assert.equal(input.ownerUserId, "platform:codex_oauth");
+      assert.equal(input.provider, "codex_oauth");
+      return [fallbackBinding, assignedBinding].filter((binding) => binding.id !== input.excludeBindingId);
+    },
+    async getCredentialRecordByBindingId(bindingId: string) {
+      return recordByBindingId[bindingId] ?? null;
+    },
+    async getBindingByCredentialId(credentialId: string) {
+      return bindingByCredentialId.get(credentialId) ?? null;
+    },
+    async markCredentialState() {},
   };
 }
 
@@ -543,6 +631,187 @@ test("transient upstream failures do not rebind", async () => {
     assert.equal(transportCalls, 1);
     assert.equal(leases.rebindCalls, 0);
     assert.equal(failureCalls.length, 0);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("POST /providers/codex_oauth/v1/chat/completions routes through the assigned shared credential", async () => {
+  const leases = new InMemoryLeaseRepository();
+  const leaseBroker = new LeaseBroker(leases, new DefaultBindingSelector(createCodexCredentialRepository() as never));
+  const recordUsageCalls: Array<Record<string, unknown>> = [];
+  const transportBodies: unknown[] = [];
+
+  const app = createApp({
+    proxy: {
+      aiAccess: createCodexAiAccess(),
+      gatewaySessions: createGatewaySessions(),
+      credentials: createCodexCredentialRepository() as never,
+      usageRepository: {
+        async recordUsage(input: Record<string, unknown>) {
+          recordUsageCalls.push(input);
+        },
+      },
+      leaseBroker,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          assert.fail("token broker should not run for codex worker routes");
+        },
+      },
+      openAiTransport: {
+        async chatCompletions() {
+          assert.fail("openai transport should not be used for codex routes");
+        },
+      },
+      anthropicTransport: {
+        async messages() {
+          assert.fail("anthropic transport should not be used for codex routes");
+        },
+      },
+      codexOAuthTransport: {
+        async chatCompletions(input: { body: unknown }) {
+          transportBodies.push(input.body);
+          return {
+            status: 200,
+            headers: {
+              "x-request-id": "codex_req_assigned_1",
+            },
+            body: {
+              id: "chatcmpl_codex_assigned_1",
+              object: "chat.completion",
+              model: "gpt-5.4",
+              choices: [],
+              usage: null,
+            },
+          };
+        },
+      },
+    } as NonNullable<AppDependencies["proxy"]>,
+  });
+
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/providers/codex_oauth/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        ...GATEWAY_AUTH_HEADER,
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_codex_assigned_1",
+      },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      id: "chatcmpl_codex_assigned_1",
+      object: "chat.completion",
+      model: "gpt-5.4",
+      choices: [],
+      usage: null,
+    });
+    assert.deepEqual(transportBodies, [
+      {
+        model: "gpt-5.4",
+        messages: [{ role: "user", content: "hello" }],
+      },
+    ]);
+    assert.deepEqual(recordUsageCalls, [
+      {
+        requestId: "codex_req_assigned_1",
+        ownerUserId: "user_gateway",
+        provider: "codex_oauth",
+        sessionId: "session_codex_assigned_1",
+        credentialId: "cred_codex_assigned",
+        bindingId: "binding_codex_assigned",
+        model: "gpt-5.4",
+        inputTokens: undefined,
+        outputTokens: undefined,
+      },
+    ]);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("POST /providers/codex_oauth/v1/chat/completions fails when the assigned credential is unavailable", async () => {
+  const app = createApp({
+    proxy: {
+      aiAccess: createCodexAiAccess("cred_codex_missing"),
+      gatewaySessions: createGatewaySessions(),
+      credentials: {
+        async getCredentialRecordById() {
+          return null;
+        },
+        async listHealthyCredentialRecordIds() {
+          return [];
+        },
+        async getCredentialRecordByBindingId() {
+          return null;
+        },
+        async getBindingByCredentialId() {
+          return null;
+        },
+        async markCredentialState() {},
+      } as never,
+      usageRepository: createNoopUsageRepository(),
+      leaseBroker: {
+        async getOrCreateActiveLease() {
+          assert.fail("lease broker should not run when the assigned credential is unavailable");
+        },
+      } as never,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          assert.fail("token broker should not run for codex worker routes");
+        },
+      },
+      openAiTransport: {
+        async chatCompletions() {
+          assert.fail("openai transport should not be used for codex routes");
+        },
+      },
+      anthropicTransport: {
+        async messages() {
+          assert.fail("anthropic transport should not be used for codex routes");
+        },
+      },
+      codexOAuthTransport: {
+        async chatCompletions() {
+          assert.fail("codex transport should not run when the assigned credential is unavailable");
+        },
+      },
+    } as NonNullable<AppDependencies["proxy"]>,
+  });
+
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await withMutedConsoleError(async () =>
+      fetch(`http://127.0.0.1:${port}/providers/codex_oauth/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          ...GATEWAY_AUTH_HEADER,
+          "content-type": "application/json",
+          "x-veslo-session-id": "session_codex_missing_1",
+        },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          messages: [{ role: "user", content: "hello" }],
+        }),
+      }),
+    );
+
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: "assigned_credential_unavailable" });
   } finally {
     server.close();
     await once(server, "close");

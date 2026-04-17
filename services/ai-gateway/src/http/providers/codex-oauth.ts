@@ -4,6 +4,7 @@ import { Router, type Response } from "express"
 
 import type { UserAiAccessPolicyRecord } from "../../access/repository.js"
 import type { GatewaySession } from "../../auth/gateway-session.js"
+import type { CredentialBinding } from "../../credentials/repository.js"
 import { getPlatformCredentialOwnerUserId } from "../../credentials/platform-owner.js"
 import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js"
 import type { ProviderTransportResponse } from "../../providers/transport.js"
@@ -42,9 +43,18 @@ export function createCodexOAuthProxyRouter(
       return
     }
 
+    const assignedBinding = gatewayAiAccess
+      ? await resolveAssignedBinding(gatewayAiAccess)
+      : null
+    if (gatewayAiAccess && !assignedBinding) {
+      res.status(503).json({ error: "assigned_credential_unavailable" })
+      return
+    }
+
     const scope: ResolveLeaseInput = {
       ownerUserId: gatewaySession.user.id,
-      bindingOwnerUserId: getPlatformCredentialOwnerUserId("codex_oauth"),
+      bindingOwnerUserId: assignedBinding?.ownerUserId ?? getPlatformCredentialOwnerUserId("codex_oauth"),
+      requiredBindingId: assignedBinding?.id,
       provider: "codex_oauth",
       sessionId,
     }
@@ -120,6 +130,23 @@ export function createCodexOAuthProxyRouter(
     } catch (error) {
       console.error("proxy_usage_record_failed", error)
     }
+  }
+
+  async function resolveAssignedBinding(
+    aiAccess: UserAiAccessPolicyRecord,
+  ): Promise<CredentialBinding | null> {
+    const credentialId = typeof aiAccess.credentialId === "string" ? aiAccess.credentialId.trim() : ""
+    if (!credentialId) {
+      return null
+    }
+
+    const lookup = deps.credentials.getBindingByCredentialId
+    if (!lookup) {
+      return null
+    }
+
+    const binding = await lookup.call(deps.credentials, credentialId)
+    return binding?.provider === "codex_oauth" ? binding : null
   }
 }
 

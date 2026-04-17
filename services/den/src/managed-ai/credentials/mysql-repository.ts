@@ -86,6 +86,31 @@ export class MySqlCredentialRepository implements CredentialRepository {
     return row ? mapCredentialRecord(row.record) : null
   }
 
+  async getBindingByCredentialId(credentialId: string): Promise<CredentialBinding | null> {
+    const rows = await this.db
+      .select({
+        id: credentialBindingTable.id,
+        owner_user_id: credentialBindingTable.owner_user_id,
+        provider: credentialBindingTable.provider,
+        credential_record_id: credentialBindingTable.credential_record_id,
+        created_at: credentialBindingTable.created_at,
+        updated_at: credentialBindingTable.updated_at,
+      })
+      .from(credentialBindingTable)
+      .innerJoin(credentialRecordTable, eq(credentialBindingTable.credential_record_id, credentialRecordTable.id))
+      .where(
+        and(
+          eq(credentialBindingTable.credential_record_id, credentialId),
+          eq(credentialRecordTable.state, "healthy"),
+        ),
+      )
+      .orderBy(credentialBindingTable.created_at)
+      .limit(1)
+    const row = rows[0]
+
+    return row ? mapCredentialBinding(row) : null
+  }
+
   async listAdminCredentials() {
     const [credentialRows, activeLeaseRows, usageRows] = await Promise.all([
       this.db.select().from(credentialRecordTable).orderBy(desc(credentialRecordTable.updated_at)),
