@@ -51,6 +51,11 @@ export type AdminUserAiAccessRecord = {
   updatedAt: string
 }
 
+export type AdminCredentialOption = {
+  id: string
+  name: string
+}
+
 export type AdminCredentialRecord = {
   id: string
   name: string
@@ -145,11 +150,11 @@ export type AdminRouteDeps = {
   getUserAiAccess?: (
     req: express.Request,
     res: express.Response,
-  ) => Promise<{ aiAccess: AdminUserAiAccessRecord | null } | null>
+  ) => Promise<{ aiAccess: AdminUserAiAccessRecord | null; availableCredentials?: AdminCredentialOption[] } | null>
   upsertUserAiAccess?: (
     req: express.Request,
     res: express.Response,
-  ) => Promise<{ aiAccess: AdminUserAiAccessRecord } | null>
+  ) => Promise<{ aiAccess: AdminUserAiAccessRecord; availableCredentials?: AdminCredentialOption[] } | null>
   disableUser?: (req: express.Request, res: express.Response) => Promise<AdminUserRecord | null>
   enableUser?: (req: express.Request, res: express.Response) => Promise<AdminUserRecord | null>
   deleteUser?: (req: express.Request, res: express.Response) => Promise<{ ok: true } | null>

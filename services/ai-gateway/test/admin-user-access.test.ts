@@ -19,6 +19,11 @@ const AI_ACCESS_PAYLOAD = {
   updatedAt: "2026-04-08T10:00:00.000Z",
 };
 
+const AVAILABLE_CREDENTIALS = [
+  { id: "cred_codex_123", name: "Shared Codex A" },
+  { id: "cred_codex_456", name: "Shared Codex B" },
+];
+
 function createAdminUserAccessApp() {
   let currentAiAccess = {
     ...AI_ACCESS_PAYLOAD,
@@ -107,6 +112,7 @@ function createAdminUserAccessApp() {
             ...currentAiAccess,
             userId,
           },
+          availableCredentials: AVAILABLE_CREDENTIALS,
         };
       },
       async upsertUserAiAccess(_token: string, userId: string, input: Record<string, unknown>) {
@@ -120,6 +126,7 @@ function createAdminUserAccessApp() {
           aiAccess: {
             ...currentAiAccess,
           },
+          availableCredentials: AVAILABLE_CREDENTIALS,
         };
       },
     } as any,
@@ -189,6 +196,7 @@ test("GET /admin/api/users/:userId/ai-access returns the stored ai access policy
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), {
       aiAccess: AI_ACCESS_PAYLOAD,
+      availableCredentials: AVAILABLE_CREDENTIALS,
     });
   } finally {
     server.close();
@@ -229,6 +237,7 @@ test("PUT /admin/api/users/:userId/ai-access persists the admin managed policy",
         defaultModel: "claude-3-7-sonnet",
         allowedModels: ["claude-3-7-sonnet", "claude-3-5-sonnet"],
       },
+      availableCredentials: AVAILABLE_CREDENTIALS,
     });
   } finally {
     server.close();
@@ -269,6 +278,7 @@ test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", asyn
         defaultModel: "gpt-5.4",
         allowedModels: ["gpt-5.4"],
       },
+      availableCredentials: AVAILABLE_CREDENTIALS,
     });
   } finally {
     server.close();

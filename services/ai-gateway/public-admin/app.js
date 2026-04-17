@@ -29,6 +29,7 @@ const state = {
   selectedUserId: null,
   userMode: "edit",
   userAiAccessByUserId: {},
+  userAiAccessAvailableCredentialsByUserId: {},
 };
 
 const els = {
@@ -81,6 +82,7 @@ const els = {
   userSendInvite: document.getElementById("user-send-invite"),
   userAiAccessEnabled: document.getElementById("user-ai-access-enabled"),
   userAiAccessProvider: document.getElementById("user-ai-access-provider"),
+  userAiAccessCredential: document.getElementById("user-ai-access-credential"),
   userAiAccessDefaultModel: document.getElementById("user-ai-access-default-model"),
   userAiAccessAllowedModels: document.getElementById("user-ai-access-allowed-models"),
   userAiAccessStatus: document.getElementById("user-ai-access-status"),
@@ -271,6 +273,28 @@ function currentUserAiAccess(userId) {
   return normalizeAiAccess(state.userAiAccessByUserId[userId] || null);
 }
 
+function normalizeAvailableCredentials(payload) {
+  if (!Array.isArray(payload)) {
+    return [];
+  }
+
+  return payload
+    .filter((entry) => entry && typeof entry === "object")
+    .map((entry) => ({
+      id: typeof entry.id === "string" ? entry.id.trim() : "",
+      name: typeof entry.name === "string" ? entry.name.trim() : "",
+    }))
+    .filter((entry) => entry.id)
+    .map((entry) => ({
+      id: entry.id,
+      name: entry.name || entry.id,
+    }));
+}
+
+function currentUserAiAccessAvailableCredentials(userId) {
+  return normalizeAvailableCredentials(state.userAiAccessAvailableCredentialsByUserId[userId] || []);
+}
+
 function formatAllowedModels(models) {
   return (models || []).join("\n");
 }
@@ -289,6 +313,18 @@ function readAiAccessFormValue() {
     defaultModel: els.userAiAccessDefaultModel.value.trim() || null,
     allowedModels: parseAllowedModelsInput(els.userAiAccessAllowedModels.value),
   };
+}
+
+function readAiAccessCredentialValue() {
+  const selectedProvider = els.userAiAccessProvider.value || "";
+  if (selectedProvider === "codex_oauth") {
+    const selectedCredentialId = els.userAiAccessCredential.value.trim();
+    return selectedCredentialId || null;
+  }
+
+  const user = currentUser();
+  const currentAiAccess = user?.id ? currentUserAiAccess(user.id) : normalizeAiAccess(null);
+  return currentAiAccess.provider === selectedProvider ? currentAiAccess.credentialId : null;
 }
 
 function summarizeUser(user) {
@@ -636,6 +672,9 @@ async function loadUserAiAccess(userId) {
 
   const payload = await fetchJson(`/users/${encodeURIComponent(resolvedUserId)}/ai-access`);
   const aiAccess = normalizeAiAccess(payload?.aiAccess || null);
+  state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
+    payload?.availableCredentials,
+  );
   state.userAiAccessByUserId[resolvedUserId] = aiAccess;
   return aiAccess;
 }
@@ -646,14 +685,16 @@ async function saveUserAiAccess(userId) {
     return;
   }
 
-  const currentAiAccess = currentUserAiAccess(resolvedUserId);
   const saved = await fetchJson(`/users/${encodeURIComponent(resolvedUserId)}/ai-access`, {
     method: "PUT",
     body: JSON.stringify({
       ...readAiAccessFormValue(),
-      credentialId: currentAiAccess.credentialId,
+      credentialId: readAiAccessCredentialValue(),
     }),
   });
+  state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
+    saved?.availableCredentials,
+  );
   state.userAiAccessByUserId[resolvedUserId] = normalizeAiAccess(saved?.aiAccess || null);
 }
 
@@ -912,6 +953,48 @@ function currentAlert() {
   return state.alerts.find((entry) => entry.id === state.selectedAlertId) || state.alerts[0] || null;
 }
 
+function renderAiAccessCredentialOptions(user, aiAccess) {
+  const availableCredentials = user?.id ? currentUserAiAccessAvailableCredentials(user.id) : [];
+  const options = [
+    `<option value="">Select assigned credential</option>`,
+    ...availableCredentials.map(
+      (credential) =>
+        `<option value="${escapeHtml(credential.id)}">${escapeHtml(credential.name)}</option>`,
+    ),
+  ];
+
+  els.userAiAccessCredential.innerHTML = options.join("");
+  const selectedCredentialId =
+    aiAccess.provider === "codex_oauth" &&
+    availableCredentials.some((entry) => entry.id === aiAccess.credentialId)
+      ? aiAccess.credentialId
+      : "";
+  els.userAiAccessCredential.value = selectedCredentialId || "";
+  els.userAiAccessCredential.disabled =
+    state.userMode === "create" ||
+    !user ||
+    els.userAiAccessProvider.value !== "codex_oauth" ||
+    availableCredentials.length === 0;
+}
+
+function updateAiAccessStatusText(user, aiAccess) {
+  if (state.userMode === "create") {
+    els.userAiAccessStatus.textContent = "Create the user first, then assign provider and models.";
+    return;
+  }
+
+  const selectedProvider = els.userAiAccessProvider.value || "";
+  const availableCredentials = user?.id ? currentUserAiAccessAvailableCredentials(user.id) : [];
+  if (selectedProvider === "codex_oauth" && availableCredentials.length === 0) {
+    els.userAiAccessStatus.textContent = "Create a shared Codex runtime credential first, then assign it here.";
+    return;
+  }
+
+  els.userAiAccessStatus.textContent = aiAccess.updatedAt
+    ? `Assignments updated ${formatDate(aiAccess.updatedAt)}.`
+    : "Assignments are enforced by the gateway for this signed-in user.";
+}
+
 function populateUserEditor(user) {
   const isCreate = state.userMode === "create";
   const membership = user?.memberships?.[0];
@@ -940,15 +1023,12 @@ function populateUserEditor(user) {
   els.userAiAccessEnabled.disabled = isCreate || !user;
   els.userAiAccessProvider.value = aiAccess.provider || "";
   els.userAiAccessProvider.disabled = isCreate || !user;
+  renderAiAccessCredentialOptions(user, aiAccess);
   els.userAiAccessDefaultModel.value = aiAccess.defaultModel || "";
   els.userAiAccessDefaultModel.disabled = isCreate || !user;
   els.userAiAccessAllowedModels.value = formatAllowedModels(aiAccess.allowedModels);
   els.userAiAccessAllowedModels.disabled = isCreate || !user;
-  els.userAiAccessStatus.textContent = isCreate
-    ? "Create the user first, then assign provider and models."
-    : aiAccess.updatedAt
-      ? `Assignments updated ${formatDate(aiAccess.updatedAt)}.`
-      : "Assignments are enforced by the gateway for this signed-in user.";
+  updateAiAccessStatusText(user, aiAccess);
 }
 
 function renderUsers() {
@@ -1389,6 +1469,12 @@ function bindActions() {
   els.userSearch.addEventListener("input", renderUsers);
   els.userStatusFilter.addEventListener("change", renderUsers);
   els.userRoleFilter.addEventListener("change", renderUsers);
+  els.userAiAccessProvider.addEventListener("change", () => {
+    const user = currentUser();
+    const aiAccess = user?.id ? currentUserAiAccess(user.id) : normalizeAiAccess(null);
+    renderAiAccessCredentialOptions(user, aiAccess);
+    updateAiAccessStatusText(user, aiAccess);
+  });
   els.auditSearch.addEventListener("input", renderAudit);
   els.auditActorFilter.addEventListener("change", renderAudit);
   els.auditEntityFilter.addEventListener("change", renderAudit);

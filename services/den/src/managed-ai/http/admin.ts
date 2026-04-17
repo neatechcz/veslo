@@ -7,6 +7,7 @@ import express from "express"
 import type {
   AdminAlertRecord,
   AdminAuditRecord,
+  AdminCredentialOption,
   AdminCredentialRecord,
   AdminRouteDeps,
   AdminSessionRecord,
@@ -148,6 +149,21 @@ export function createManagedAiAdminRouteDeps(
     })
   }
 
+  async function listAvailableCodexCredentials(): Promise<AdminCredentialOption[] | undefined> {
+    const listAdminCredentials = deps.credentials.listAdminCredentials
+    if (!listAdminCredentials) {
+      return undefined
+    }
+
+    const credentials = await listAdminCredentials.call(deps.credentials)
+    return credentials
+      .filter((entry) => entry.provider === "codex_oauth")
+      .map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+      }))
+  }
+
   async function getCredentialOrThrow(credentialId: string) {
     const credential = (await listCredentialsWithAlerts()).find((entry) => entry.id === credentialId)
     if (!credential) {
@@ -176,6 +192,7 @@ export function createManagedAiAdminRouteDeps(
       try {
         return {
           aiAccess: toAdminUserAiAccessRecord(await deps.aiAccess.getUserAiAccess(userId)),
+          availableCredentials: await listAvailableCodexCredentials(),
         }
       } catch (error) {
         return handleRouteError(res, error, "ai_access_lookup_failed")
@@ -211,6 +228,7 @@ export function createManagedAiAdminRouteDeps(
         })
         return {
           aiAccess: toAdminUserAiAccessRecord(saved)!,
+          availableCredentials: await listAvailableCodexCredentials(),
         }
       } catch (error) {
         return handleRouteError(res, error, "ai_access_update_failed")

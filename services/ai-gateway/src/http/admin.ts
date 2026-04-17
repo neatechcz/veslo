@@ -84,6 +84,11 @@ export type AdminUserAiAccessRecord = {
   updatedAt: string;
 };
 
+export type AdminCredentialOption = {
+  id: string;
+  name: string;
+};
+
 export type UpdateUserAiAccessInput = {
   enabled: boolean;
   provider: AiAccessProvider | null;
@@ -144,8 +149,15 @@ export interface AdminService {
   listUsers(token: string): Promise<AdminUserRecord[]>;
   createUser(token: string, input: CreateUserInput): Promise<AdminUserRecord>;
   updateUser(token: string, userId: string, input: UpdateUserInput): Promise<AdminUserRecord>;
-  getUserAiAccess(token: string, userId: string): Promise<{ aiAccess: AdminUserAiAccessRecord | null }>;
-  upsertUserAiAccess(token: string, userId: string, input: UpdateUserAiAccessInput): Promise<{ aiAccess: AdminUserAiAccessRecord }>;
+  getUserAiAccess(
+    token: string,
+    userId: string,
+  ): Promise<{ aiAccess: AdminUserAiAccessRecord | null; availableCredentials: AdminCredentialOption[] }>;
+  upsertUserAiAccess(
+    token: string,
+    userId: string,
+    input: UpdateUserAiAccessInput,
+  ): Promise<{ aiAccess: AdminUserAiAccessRecord; availableCredentials: AdminCredentialOption[] }>;
   disableUser(token: string, userId: string): Promise<AdminUserRecord>;
   enableUser(token: string, userId: string): Promise<AdminUserRecord>;
   deleteUser(token: string, userId: string): Promise<void>;
@@ -695,6 +707,16 @@ export function createDefaultAdminService(
     });
   }
 
+  async function listAvailableCodexCredentials(): Promise<AdminCredentialOption[]> {
+    const credentials = await getCredentialReadRepository().listAdminCredentials();
+    return credentials
+      .filter((entry) => entry.provider === "codex_oauth")
+      .map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+      }));
+  }
+
   async function getCredentialOrThrow(credentialId: string): Promise<CredentialRecord> {
     const credentials = await listCredentialsWithAlerts();
     const credential = credentials.find((entry) => entry.id === credentialId);
@@ -754,6 +776,7 @@ export function createDefaultAdminService(
     async getUserAiAccess(_token, userId) {
       return {
         aiAccess: toAdminUserAiAccessRecord(await getAiAccessRepository().getUserAiAccess(userId)),
+        availableCredentials: await listAvailableCodexCredentials(),
       };
     },
     async upsertUserAiAccess(_token, userId, input) {
@@ -772,6 +795,7 @@ export function createDefaultAdminService(
       });
       return {
         aiAccess: toAdminUserAiAccessRecord(saved)!,
+        availableCredentials: await listAvailableCodexCredentials(),
       };
     },
     async disableUser(token, userId) {

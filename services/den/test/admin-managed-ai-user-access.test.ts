@@ -34,6 +34,13 @@ function createAiAccess() {
   }
 }
 
+function createAvailableCredentials() {
+  return [
+    { id: "cred_codex_123", name: "Shared Codex A" },
+    { id: "cred_codex_456", name: "Shared Codex B" },
+  ]
+}
+
 test("GET /admin/api/users/:userId/ai-access returns the stored ai access policy", async () => {
   const session = createSession()
   const app = express()
@@ -74,7 +81,42 @@ test("GET /admin/api/users/:userId/ai-access returns the stored ai access policy
             return []
           },
         },
-        credentials: {} as any,
+        credentials: {
+          async listAdminCredentials() {
+            return [
+              {
+                id: "cred_codex_123",
+                name: "Shared Codex A",
+                provider: "codex_oauth",
+                type: "oauth",
+                state: "healthy",
+                scope: "platform:codex_oauth",
+                activeLeases: 0,
+                alertCount: 0,
+                lastRefreshAt: "2026-04-10T10:00:00.000Z",
+                lastFailureAt: null,
+                totalTokens: 0,
+                nextRotationAt: null,
+                linkedAlertIds: [],
+              },
+              {
+                id: "cred_codex_456",
+                name: "Shared Codex B",
+                provider: "codex_oauth",
+                type: "oauth",
+                state: "healthy",
+                scope: "platform:codex_oauth",
+                activeLeases: 0,
+                alertCount: 0,
+                lastRefreshAt: "2026-04-10T10:00:00.000Z",
+                lastFailureAt: null,
+                totalTokens: 0,
+                nextRotationAt: null,
+                linkedAlertIds: [],
+              },
+            ]
+          },
+        } as any,
         leases: {} as any,
         secrets: {} as any,
         usage: {} as any,
@@ -92,6 +134,117 @@ test("GET /admin/api/users/:userId/ai-access returns the stored ai access policy
     assert.equal(response.status, 200)
     assert.deepEqual(await response.json(), {
       aiAccess: createAiAccess(),
+      availableCredentials: createAvailableCredentials(),
+    })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("PUT /admin/api/users/:userId/ai-access returns available codex credentials for the editor", async () => {
+  const session = createSession()
+  const app = express()
+  app.use(express.json())
+  app.use(
+    "/admin/api",
+    createAdminRouter({
+      async getSessionSnapshot() {
+        return session
+      },
+      ...createManagedAiAdminRouteDeps({
+        async getAdminSession() {
+          return session
+        },
+        aiAccess: {
+          async getUserAiAccess() {
+            throw new Error("unused")
+          },
+          async upsertUserAiAccess(input) {
+            return {
+              id: "ai_access_user_123",
+              userId: input.userId,
+              enabled: input.enabled,
+              provider: input.provider,
+              credentialId: input.credentialId,
+              defaultModel: input.defaultModel,
+              allowedModels: input.allowedModels,
+              createdAt: new Date("2026-04-10T10:00:00.000Z"),
+              updatedAt: new Date("2026-04-10T10:05:00.000Z"),
+            }
+          },
+        },
+        alerts: {
+          async listAlerts() {
+            return []
+          },
+        },
+        audit: {
+          async recordEvent() {
+            return
+          },
+          async listEvents() {
+            return []
+          },
+        },
+        credentials: {
+          async listAdminCredentials() {
+            return [
+              {
+                id: "cred_codex_123",
+                name: "Shared Codex A",
+                provider: "codex_oauth",
+                type: "oauth",
+                state: "healthy",
+                scope: "platform:codex_oauth",
+                activeLeases: 0,
+                alertCount: 0,
+                lastRefreshAt: "2026-04-10T10:00:00.000Z",
+                lastFailureAt: null,
+                totalTokens: 0,
+                nextRotationAt: null,
+                linkedAlertIds: [],
+              },
+            ]
+          },
+        } as any,
+        leases: {} as any,
+        secrets: {} as any,
+        usage: {} as any,
+      }),
+    }),
+  )
+
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        enabled: true,
+        provider: "codex_oauth",
+        credentialId: "cred_codex_123",
+        defaultModel: "gpt-5.4",
+        allowedModels: ["gpt-5.4"],
+      }),
+    })
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), {
+      aiAccess: {
+        ...createAiAccess(),
+        userId: "user_123",
+        provider: "codex_oauth",
+        credentialId: "cred_codex_123",
+        defaultModel: "gpt-5.4",
+        allowedModels: ["gpt-5.4"],
+      },
+      availableCredentials: [{ id: "cred_codex_123", name: "Shared Codex A" }],
     })
   } finally {
     server.close()
