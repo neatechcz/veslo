@@ -757,10 +757,10 @@ export function createDefaultAdminService(
       };
     },
     async upsertUserAiAccess(_token, userId, input) {
-      const validated = validateUserAiAccessInput({
+      const validated = await validateUserAiAccessInput({
         ...input,
         userId,
-      });
+      }, getAiAccessRepository(), userId);
       const saved = await getAiAccessRepository().upsertUserAiAccess(validated);
       await recordAuditEvent({
         actorUserId: "admin-ui",
@@ -953,10 +953,15 @@ function validateCreateCredentialInput(input: CreateCredentialInput): {
   };
 }
 
-function validateUserAiAccessInput(input: UpdateUserAiAccessInput & { userId: string }): UpsertUserAiAccessPolicyInput {
+async function validateUserAiAccessInput(
+  input: UpdateUserAiAccessInput & { userId: string },
+  aiAccessRepository: AiAccessRepository,
+  userId: string,
+): Promise<UpsertUserAiAccessPolicyInput> {
   const enabled = input.enabled === true;
   const provider = parseAiAccessProvider(input.provider);
-  const credentialId = typeof input.credentialId === "string" ? input.credentialId : null;
+  const existing = await aiAccessRepository.getUserAiAccess(userId);
+  const credentialId = typeof input.credentialId === "string" ? input.credentialId : existing?.credentialId ?? null;
   const defaultModel = typeof input.defaultModel === "string" ? input.defaultModel.trim() : "";
   const allowedModels = normalizeAllowedModels(input.allowedModels);
 
@@ -1416,6 +1421,7 @@ export function createAdminRouter(adminService: AdminService) {
       const payload = await adminService.upsertUserAiAccess(res.locals.adminToken as string, req.params.userId, {
         enabled: req.body?.enabled === true,
         provider: parseAiAccessProvider(req.body?.provider),
+        credentialId: typeof req.body?.credentialId === "string" ? req.body.credentialId : null,
         defaultModel: typeof req.body?.defaultModel === "string" ? req.body.defaultModel.trim() : null,
         allowedModels: normalizeAllowedModels(req.body?.allowedModels),
       });

@@ -243,6 +243,7 @@ function normalizeAiAccess(payload) {
   if (!payload || typeof payload !== "object") {
     return {
       enabled: false,
+      credentialId: null,
       provider: "",
       defaultModel: "",
       allowedModels: [],
@@ -258,6 +259,7 @@ function normalizeAiAccess(payload) {
     id: typeof payload.id === "string" ? payload.id : "",
     userId: typeof payload.userId === "string" ? payload.userId : "",
     enabled: payload.enabled === true,
+    credentialId: typeof payload.credentialId === "string" ? payload.credentialId : null,
     provider: typeof payload.provider === "string" ? payload.provider : "",
     defaultModel: typeof payload.defaultModel === "string" ? payload.defaultModel : "",
     allowedModels,
@@ -644,9 +646,13 @@ async function saveUserAiAccess(userId) {
     return;
   }
 
+  const currentAiAccess = currentUserAiAccess(resolvedUserId);
   const saved = await fetchJson(`/users/${encodeURIComponent(resolvedUserId)}/ai-access`, {
     method: "PUT",
-    body: JSON.stringify(readAiAccessFormValue()),
+    body: JSON.stringify({
+      ...readAiAccessFormValue(),
+      credentialId: currentAiAccess.credentialId,
+    }),
   });
   state.userAiAccessByUserId[resolvedUserId] = normalizeAiAccess(saved?.aiAccess || null);
 }

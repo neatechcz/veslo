@@ -174,6 +174,8 @@ test("GET /admin/app.js loads and saves per-user ai access assignments", async (
     assert.match(script, /user-ai-access-provider/)
     assert.match(script, /user-ai-access-default-model/)
     assert.match(script, /user-ai-access-allowed-models/)
+    assert.match(script, /credentialId:\s*typeof payload\.credentialId === "string" \? payload\.credentialId : null/)
+    assert.match(script, /credentialId:\s*currentAiAccess\.credentialId/)
   } finally {
     server.close()
     await once(server, "close")

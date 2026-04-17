@@ -118,6 +118,8 @@ test("GET /admin/app.js uses DEN desktop auth and OpenAI OAuth credential routes
     assert.match(script, /credential-anthropic-submit/)
     assert.match(script, /Fallback only: connect platform OpenAI OAuth/)
     assert.match(script, /Anthropic legacy fallback/)
+    assert.match(script, /credentialId:\s*typeof payload\.credentialId === "string" \? payload\.credentialId : null/)
+    assert.match(script, /credentialId:\s*currentAiAccess\.credentialId/)
     assert.match(
       script,
       /const shouldClearToken = payload\?\.error === "unauthorized" \|\| payload\?\.error === "forbidden"/,
