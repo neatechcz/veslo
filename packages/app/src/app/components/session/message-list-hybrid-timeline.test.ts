@@ -47,6 +47,15 @@ test("timeline section state is parent-owned and keyed independently of section 
   assert.doesNotMatch(source, /createSignal<TimelineDetailState>/);
 });
 
+test("timeline section reconciliation avoids writing a fresh Set when nothing changed", () => {
+  assert.match(source, /function sameStringSet\(left: ReadonlySet<string>, right: ReadonlySet<string>\): boolean/);
+  assert.match(
+    source,
+    /const next = reconcileTimelineOpenSectionIds\(current, \{[\s\S]*return sameStringSet\(current, next\) \? current : next;/s,
+    "timeline reconciliation must preserve the existing Set identity when contents are unchanged, otherwise step timelines loop forever",
+  );
+});
+
 test("adjacent step-only assistant messages merge into a single timeline block", () => {
   assert.match(
     source,

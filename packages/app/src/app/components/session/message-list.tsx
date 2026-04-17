@@ -72,6 +72,14 @@ type MessageBlockItem = MessageBlock | StepClusterBlock;
 const VIRTUALIZATION_THRESHOLD = 500;
 const VIRTUAL_OVERSCAN = 4;
 
+function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  if (left.size !== right.size) return false;
+  for (const value of left) {
+    if (!right.has(value)) return false;
+  }
+  return true;
+}
+
 /** Icon for a given tool category */
 function ToolIcon(props: { category: string; size?: number }) {
   const s = () => props.size ?? 12;
@@ -960,12 +968,13 @@ export default function MessageList(props: MessageListProps) {
         kind: section.kind,
         status: section.status,
       }));
-      props.setExpandedTimelineSectionIds((current) =>
-        reconcileTimelineOpenSectionIds(current, {
+      props.setExpandedTimelineSectionIds((current) => {
+        const next = reconcileTimelineOpenSectionIds(current, {
           containerId: containerProps.id,
           sections,
-        }),
-      );
+        });
+        return sameStringSet(current, next) ? current : next;
+      });
     });
 
     const hasRunning = () => timelineSections().some((section) => section.status === "running");

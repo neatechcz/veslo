@@ -6,10 +6,10 @@
  * this guard the third click joins the stale promise and session A never
  * loads its data — the app appears frozen.
  *
- * The guard tracks which `selectVersion` started each in-flight load.  A
- * dedup join is only allowed when the in-flight was started in the
- * immediately preceding version cycle (same session, no intervening
- * selection change, e.g. a route re-fire or double-click).
+ * The guard tracks which `selectVersion` started each in-flight load. A
+ * dedup join is only allowed when the in-flight belongs to the current
+ * version cycle (same session, no intervening selection change, e.g. a
+ * route re-fire or double-click).
  */
 
 export type SelectSessionGuard = {
@@ -52,9 +52,10 @@ export function createSelectSessionGuard(): SelectSessionGuard {
       if (!existing) return null;
       const existingVersion = versionBySession.get(sessionID);
       if (existingVersion === undefined) return null;
-      // Only join when the in-flight was started in the immediately preceding
-      // version (i.e. same session, no other session selected in between).
-      if (selectVersion - existingVersion === 1) {
+      // Only join when the in-flight belongs to the current version cycle.
+      // If another selection advanced the version, the older load must not be
+      // re-used because its stale guard will abort before applying messages.
+      if (existingVersion === selectVersion) {
         return existing;
       }
       return null;

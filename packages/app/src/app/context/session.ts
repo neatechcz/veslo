@@ -778,14 +778,6 @@ export function createSessionStore(options: {
     options.setSelectedSessionId(sessionID);
     options.setError(null);
 
-    const runId = ++selectRunCounter;
-    const version = selectGuard.nextVersion();
-
-    // Only join an existing in-flight load when it was started in the
-    // immediately preceding version (same session, no intervening selection
-    // change — e.g. a route re-fire).  If the user clicked A→B→A, the
-    // in-flight for A is stale (started at an earlier version) and will
-    // abort — we must start a fresh load so session A actually gets its data.
     const existing = selectGuard.tryDedup(sessionID);
     if (existing) {
       recordPerfLog(perfEnabled, "session.select", "dedupe join", {
@@ -793,6 +785,9 @@ export function createSessionStore(options: {
       });
       return existing;
     }
+
+    const runId = ++selectRunCounter;
+    const version = selectGuard.nextVersion();
     const startedAt = perfNow();
     const mark = (event: string, payload?: Record<string, unknown>) => {
       const elapsedMs = Math.round((perfNow() - startedAt) * 100) / 100;

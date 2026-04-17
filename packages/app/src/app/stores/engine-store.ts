@@ -4,6 +4,7 @@ import type { OnboardingStep } from "../types";
 import {
   addOpencodeCacheHint,
   isTauriRuntime,
+  normalizeDirectoryPath,
   safeStringify,
 } from "../utils";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
@@ -109,16 +110,26 @@ export function createEngineStore(deps: EngineStoreDeps) {
 
       const isRemoteWorkspace = deps.activeWorkspaceInfo()?.workspaceType === "remote";
       const syncLocalState = !isRemoteWorkspace;
+      const activeWorkspacePath = normalizeDirectoryPath(deps.activeWorkspacePath().trim());
+      const activeWorkspaceRoot = normalizeDirectoryPath(deps.activeWorkspaceRoot().trim());
+      const engineProjectDir = normalizeDirectoryPath(info.projectDir?.trim() ?? "");
+      const workspaceOwnsLocalReconnect = syncLocalState && activeWorkspacePath.length > 0;
+      const browsingDifferentLocalWorkspace =
+        syncLocalState &&
+        !deps.client() &&
+        activeWorkspaceRoot.length > 0 &&
+        engineProjectDir.length > 0 &&
+        activeWorkspaceRoot !== engineProjectDir;
 
       const username = info.opencodeUsername?.trim() ?? "";
       const password = info.opencodePassword?.trim() ?? "";
       const auth = username && password ? { username, password } : null;
       setEngineAuth(auth);
 
-      if (info.projectDir && syncLocalState) {
+      if (info.projectDir && syncLocalState && !browsingDifferentLocalWorkspace) {
         deps.setProjectDir(info.projectDir);
       }
-      if (info.baseUrl && syncLocalState) {
+      if (info.baseUrl && syncLocalState && !browsingDifferentLocalWorkspace) {
         deps.setBaseUrl(info.baseUrl);
       }
 
@@ -127,7 +138,9 @@ export function createEngineStore(deps: EngineStoreDeps) {
         info.running &&
         info.baseUrl &&
         !deps.client() &&
-        !reconnectingEngine
+        !reconnectingEngine &&
+        !workspaceOwnsLocalReconnect &&
+        !browsingDifferentLocalWorkspace
       ) {
         const now = Date.now();
         if (now - lastEngineReconnectAt > 10_000) {
@@ -264,6 +277,17 @@ export function createEngineStore(deps: EngineStoreDeps) {
     deps.setBusyStartedAt(Date.now());
 
     try {
+      // Drop any previous live connection immediately so route/session selection
+      // cannot race against the old workspace engine while the new host starts.
+      deps.setClient(null);
+      deps.setConnectedVersion(null);
+      deps.setSelectedSessionId(null);
+      deps.setMessages([]);
+      deps.setTodos([]);
+      deps.setPendingPermissions([]);
+      deps.setSessionStatusById({});
+      deps.setSseConnected(false);
+
       deps.setProjectDir(dir);
       if (!deps.authorizedDirs().length) {
         deps.setAuthorizedDirs([dir]);

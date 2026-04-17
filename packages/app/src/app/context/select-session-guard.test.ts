@@ -23,15 +23,13 @@ test("tryDedup returns null when no in-flight exists", () => {
   assert.equal(guard.tryDedup("sess-A"), null);
 });
 
-test("tryDedup joins when same session is selected on the very next version", () => {
+test("tryDedup joins when same session is re-selected within the current version", () => {
   const guard = createSelectSessionGuard();
   const v1 = guard.nextVersion();
   const gate = deferred();
   guard.register("sess-A", v1, gate.promise);
 
-  // Immediately re-select A (next version, no intervening session)
-  const v2 = guard.nextVersion();
-  assert.equal(v2 - v1, 1, "versions should be consecutive");
+  // Immediately re-select A without any intervening selection/version change.
   const result = guard.tryDedup("sess-A");
   assert.equal(result, gate.promise, "should join the in-flight promise");
 
@@ -152,8 +150,7 @@ test("cleanup does not remove entry if promise does not match (replaced by newer
   // First load finishes and tries to clean up — should NOT remove the newer entry
   guard.cleanup("sess-A", gate1.promise);
 
-  // The newer entry should still be dedup-joinable (consecutive version)
-  const v3 = guard.nextVersion();
+  // The newer entry should still be dedup-joinable within the current version.
   assert.equal(guard.tryDedup("sess-A"), gate2.promise);
 
   gate1.resolve();
@@ -172,9 +169,8 @@ test("double-click on same session still deduplicates", () => {
   const gate = deferred();
   guard.register("sess-A", v1, gate.promise);
 
-  // Second click on A (route re-fire, double-click, etc.)
-  const v2 = guard.nextVersion();
-  assert.equal(v2 - v1, 1, "consecutive versions");
+  // Second click on A (route re-fire, double-click, etc.) before any other
+  // selection/version change.
   const result = guard.tryDedup("sess-A");
   assert.equal(result, gate.promise, "should join — genuine duplicate");
 

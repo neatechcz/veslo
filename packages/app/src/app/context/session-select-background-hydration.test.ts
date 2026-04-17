@@ -208,3 +208,50 @@ test("selectSession hydrates transcript from offline fallback when no client is 
     }
   });
 });
+
+test("re-selecting the same session while the first load is in flight still applies the transcript", async () => {
+  const messagesGate = deferred<ReturnType<typeof ok<Array<{ info: ReturnType<typeof makeMessageInfo>; parts: Part[] }>>>>();
+  let messageCalls = 0;
+
+  await createRoot(async (dispose) => {
+    try {
+      const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
+
+      const store = createSessionStore({
+        client: () =>
+          ({
+            session: {
+              messages: () => {
+                messageCalls += 1;
+                return messagesGate.promise;
+              },
+              todo: async () => ok([]),
+            },
+            permission: {
+              list: async () => ok([]),
+            },
+          }) as any,
+        activeWorkspaceRoot: () => "/Users/vaclavsoukup/ai discussion projects/Client data and offer descriptions/Prometheus",
+        selectedSessionId,
+        setSelectedSessionId,
+        developerMode: () => false,
+        setError: () => {},
+        setSseConnected: () => {},
+      });
+
+      const first = store.selectSession("sess-a");
+      const second = store.selectSession("sess-a");
+
+      assert.equal(messageCalls, 1, "same-session re-select should not spawn a duplicate fetch");
+
+      messagesGate.resolve(ok([{ info: makeMessageInfo(), parts: [makeTextPart()] }]));
+
+      await Promise.all([first, second]);
+
+      assert.equal(selectedSessionId(), "sess-a");
+      assert.equal(store.getCachedTranscriptMessageCount("sess-a"), 1);
+    } finally {
+      dispose();
+    }
+  });
+});

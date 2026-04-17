@@ -213,6 +213,7 @@ import {
   subscribeToSystemTheme,
   type ThemeMode,
 } from "./theme";
+
 import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./context/session";
@@ -3674,6 +3675,36 @@ export default function App() {
     // Keep /session as a draft-ready empty state until the user picks a session
     // or sends a prompt. Avoid auto-selecting prior sessions on app launch.
     return;
+  });
+
+  let lastRouteClientResumeKey = "";
+  createEffect(() => {
+    const rawPath = location.pathname.trim();
+    const path = rawPath.toLowerCase();
+    if (!path.startsWith("/session/")) return;
+
+    const [, , sessionSegment] = rawPath.split("/");
+    const id = (sessionSegment ?? "").trim();
+    if (!id) return;
+
+    const connectionKey = [
+      id,
+      client() ? "live" : "offline",
+      clientDirectory() || workspaceStore.activeWorkspaceRoot().trim(),
+      connectedVersion() ?? "",
+    ].join("::");
+    if (connectionKey === lastRouteClientResumeKey) return;
+
+    const alreadyLoaded = selectedSessionId() === id && visibleMessages().length > 0;
+    if (alreadyLoaded) {
+      lastRouteClientResumeKey = connectionKey;
+      return;
+    }
+
+    if (selectedSessionLoadingEarlierMessages()) return;
+
+    lastRouteClientResumeKey = connectionKey;
+    void selectSession(id);
   });
 
   createEffect(() => {

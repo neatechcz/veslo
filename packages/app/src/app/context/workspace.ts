@@ -1046,6 +1046,10 @@ export function createWorkspaceStore(options: {
       options.setMessages([]);
       options.setTodos([]);
       options.setSessionStatusById({});
+      options.setClient(null);
+      options.setClientDirectory("");
+      options.setConnectedVersion(null);
+      options.setSseConnected(false);
 
       try {
         await options.populateSidebarFromDb(id, next.path);
@@ -1268,6 +1272,7 @@ export function createWorkspaceStore(options: {
       options.setOpencodeConnectStatus?.(connectMeta);
 
       const connectMetrics: NonNullable<OpencodeConnectStatus["metrics"]> = {};
+      let publishedClient = false;
 
       try {
         let resolvedDirectory = directory?.trim() ?? "";
@@ -1304,10 +1309,16 @@ export function createWorkspaceStore(options: {
           }
         }
 
+        options.setSelectedSessionId(null);
+        options.setMessages([]);
+        options.setTodos([]);
+        options.setSessionStatusById({});
+
         options.setClient(nextClient);
         options.setConnectedVersion(health.version);
         options.setBaseUrl(nextBaseUrl);
         options.setClientDirectory(resolvedDirectory);
+        publishedClient = true;
 
         const providersPromise = (async () => {
           const providersAt = Date.now();
@@ -1387,11 +1398,6 @@ export function createWorkspaceStore(options: {
         options.setProviderDefaults(providerState.defaults);
         options.setProviderConnectedIds(providerState.connectedIds);
 
-        options.setSelectedSessionId(null);
-        options.setMessages([]);
-        options.setTodos([]);
-        options.setSessionStatusById({});
-
         options.refreshSkills({ force: true }).catch(e => reportError(e, "workspace.refreshSkills"));
         options.refreshPlugins().catch(e => reportError(e, "workspace.refreshPlugins"));
         if (navigate && !options.selectedSessionId()) {
@@ -1408,11 +1414,22 @@ export function createWorkspaceStore(options: {
         wsDebug("connect:done", { ok: true, ms: Date.now() - connectStart });
         return true;
       } catch (e) {
+        const message = e instanceof Error ? e.message : safeStringify(e);
+        connectMetrics.totalMs = Date.now() - connectStart;
+        if (publishedClient) {
+          wsDebug("connect:degraded", { ms: Date.now() - connectStart, message });
+          reportError(e, "workspace.connect.postHealthy");
+          options.setOpencodeConnectStatus?.({
+            ...connectMeta,
+            status: "connected",
+            error: addOpencodeCacheHint(message),
+            metrics: connectMetrics,
+          });
+          return true;
+        }
         options.setClient(null);
         options.setConnectedVersion(null);
-        const message = e instanceof Error ? e.message : safeStringify(e);
         wsDebug("connect:error", { ms: Date.now() - connectStart, message });
-        connectMetrics.totalMs = Date.now() - connectStart;
         options.setOpencodeConnectStatus?.({
           ...connectMeta,
           status: "error",
@@ -2155,9 +2172,13 @@ export function createWorkspaceStore(options: {
     bootTrace("activeWorkspacePath=", activeWorkspacePath().trim() || "(empty)");
     if (activeWorkspacePath().trim()) {
       const workspacePath = activeWorkspacePath().trim();
+      const runningEngineProjectDir = info?.projectDir?.trim() ?? "";
+      const canReuseRunningEngine =
+        normalizeDirectoryPath(runningEngineProjectDir) !== "" &&
+        normalizeDirectoryPath(runningEngineProjectDir) === normalizeDirectoryPath(workspacePath);
       options.setStartupPreference("local");
 
-      if (info?.running && info.baseUrl) {
+      if (info?.running && info.baseUrl && canReuseRunningEngine) {
         const engineBaseUrl = info.baseUrl;
         _wsLog("[workspace:bootstrap] engine already running, connectToServer...", { baseUrl: engineBaseUrl, projectDir: info.projectDir });
         bootTrace("engine running, connectToServer...");
@@ -2176,6 +2197,7 @@ export function createWorkspaceStore(options: {
                   reason: "bootstrap-local",
                 },
                 engineStore.engineAuth() ?? undefined,
+                { navigate: false },
               );
               bootTrace("connectToServer ok=", connected);
               return connected;
@@ -2195,7 +2217,7 @@ export function createWorkspaceStore(options: {
             },
             startHost: async () => {
               return await withTimeoutOrThrow(
-                engineStore.startHost({ workspacePath }),
+                engineStore.startHost({ workspacePath, navigate: false }),
                 { timeoutMs: START_HOST_TIMEOUT_MS, label: "bootstrap_startHost" },
               );
             },
@@ -2212,13 +2234,21 @@ export function createWorkspaceStore(options: {
         return;
       }
 
+      if (info?.running && info.baseUrl && !canReuseRunningEngine) {
+        _wsLog("[workspace:bootstrap] running engine project mismatch, restarting host...", {
+          workspacePath,
+          runningEngineProjectDir,
+        });
+        bootTrace("running engine project mismatch, restarting host...", runningEngineProjectDir);
+      }
+
       _wsLog("[workspace:bootstrap] startHost...", { workspacePath });
       bootTrace("startHost...");
       options.setOnboardingStep("connecting");
       let ok = false;
       try {
         ok = await withTimeoutOrThrow(
-          engineStore.startHost({ workspacePath }),
+          engineStore.startHost({ workspacePath, navigate: false }),
           { timeoutMs: START_HOST_TIMEOUT_MS, label: "bootstrap_startHost" },
         );
       } catch (e) {
