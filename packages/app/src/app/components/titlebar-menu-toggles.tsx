@@ -10,6 +10,7 @@ type TitlebarMenuTogglesProps = {
   hideTitlebar: boolean;
   leftContent?: JSX.Element;
   centerContent?: JSX.Element;
+  rightContent?: JSX.Element;
   showBrand?: boolean;
   leftLabel?: string;
   onToggleLeft: () => void;
@@ -80,6 +81,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
         </Show>
 
         <div class={layout.rightOffsetClass}>
+          {props.rightContent}
           <button
             type="button"
             class={buttonClass(props.rightActive)}

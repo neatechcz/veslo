@@ -1,205 +1,227 @@
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+
 import { expect } from "@wdio/globals";
 
 import { navigateToHash } from "../helpers/app-launcher.js";
-import { startFeedbackServer } from "../helpers/feedback-server.js";
 
-type FeedbackAuth = {
-  denApiBase: string;
-  token: string;
-  orgId: string;
-  user: { id: string; email: string; name: string };
-  org: { id: string; name: string; slug: string; role: string };
+type FeedbackRequest = {
+  method: string;
+  url: string;
+  headers: IncomingMessage["headers"];
+  body: Record<string, unknown>;
 };
 
-type CapturedDenAuthState = {
-  localAuth: string | null;
-  localKeepSignedIn: string | null;
-  sessionAuth: string | null;
-};
+function waitForRoute(hashFragment: string, timeout = 10_000): Promise<void> {
+  return browser.waitUntil(async () => (await browser.getUrl()).includes(hashFragment), {
+    timeout,
+    timeoutMsg: `Route did not change to ${hashFragment} within ${timeout}ms`,
+  });
+}
 
-function buildAuth(baseUrl: string): FeedbackAuth {
+function createFeedbackStubServer() {
+  const requests: FeedbackRequest[] = [];
+
+  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    let rawBody = "";
+
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      rawBody += chunk;
+    });
+    req.on("end", () => {
+      const body = rawBody.trim() ? (JSON.parse(rawBody) as Record<string, unknown>) : {};
+      requests.push({
+        method: req.method ?? "",
+        url: req.url ?? "",
+        headers: req.headers,
+        body,
+      });
+
+      res.writeHead(201, { "content-type": "application/json" });
+      res.end(JSON.stringify({ feedbackId: `fb_${requests.length}` }));
+    });
+  });
+
   return {
-    denApiBase: baseUrl,
-    token: "e2e-feedback-token",
-    orgId: "org-e2e-feedback",
-    user: {
-      id: "user-e2e-feedback",
-      email: "feedback@example.com",
-      name: "Feedback Tester",
+    requests,
+    async start() {
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Feedback stub server did not bind to an IPv4 port.");
+      }
+      return `http://127.0.0.1:${address.port}`;
     },
-    org: {
-      id: "org-e2e-feedback",
-      name: "E2E Feedback Org",
-      slug: "e2e-feedback-org",
-      role: "admin",
+    async stop() {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    },
+    reset() {
+      requests.length = 0;
     },
   };
 }
 
-async function seedDenAuth(baseUrl: string): Promise<void> {
-  const auth = buildAuth(baseUrl);
-  await browser.execute((value) => {
-    localStorage.setItem("veslo.den.auth", JSON.stringify(value));
-  }, auth);
+async function seedDenAuth(denApiBase: string) {
+  await browser.execute((baseUrl: string) => {
+    const auth = {
+      denApiBase: baseUrl,
+      token: "den-token-e2e",
+      orgId: "org-e2e",
+      user: {
+        id: "user-e2e",
+        email: "feedback@example.com",
+        name: "Feedback Tester",
+      },
+      org: {
+        id: "org-e2e",
+        name: "E2E Org",
+        slug: "e2e-org",
+        role: "owner",
+      },
+    };
+
+    window.localStorage.setItem("veslo.den.auth", JSON.stringify(auth));
+    window.localStorage.setItem("veslo.den.keepSignedIn", "1");
+  }, denApiBase);
 }
 
-async function captureDenAuthState(): Promise<CapturedDenAuthState> {
-  return browser.execute(() => ({
-    localAuth: localStorage.getItem("veslo.den.auth"),
-    localKeepSignedIn: localStorage.getItem("veslo.den.keepSignedIn"),
-    sessionAuth: sessionStorage.getItem("veslo.den.auth"),
-  }));
+async function openFeedbackModal() {
+  const feedbackButton = await $('//button[normalize-space()="Feedback" or @aria-label="Feedback" or @title="Feedback"]');
+  await feedbackButton.waitForDisplayed({ timeout: 10_000 });
+  await feedbackButton.click();
+
+  const dialog = await $('[role="dialog"]');
+  await dialog.waitForDisplayed({ timeout: 10_000 });
+  return dialog;
 }
 
-async function restoreDenAuthState(state: CapturedDenAuthState | null): Promise<void> {
-  if (!state) return;
-  await browser.execute((value) => {
-    if (value.localAuth === null) {
-      localStorage.removeItem("veslo.den.auth");
-    } else {
-      localStorage.setItem("veslo.den.auth", value.localAuth);
-    }
+async function submitFeedback(title: string, description: string) {
+  const dialog = await openFeedbackModal();
+  const titleInput = await dialog.$("input");
+  const descriptionInput = await dialog.$("textarea");
+  const submitButton = await dialog.$('//button[normalize-space()="Odeslat hlášení" or normalize-space()="Send bug report"]');
 
-    if (value.localKeepSignedIn === null) {
-      localStorage.removeItem("veslo.den.keepSignedIn");
-    } else {
-      localStorage.setItem("veslo.den.keepSignedIn", value.localKeepSignedIn);
-    }
-
-    if (value.sessionAuth === null) {
-      sessionStorage.removeItem("veslo.den.auth");
-    } else {
-      sessionStorage.setItem("veslo.den.auth", value.sessionAuth);
-    }
-  }, state);
-}
-
-async function waitForFeedbackModal(): Promise<void> {
-  await browser.waitUntil(
-    async () => {
-      const title = await $('//*[@role="dialog"]//*[normalize-space()="Report a bug"]');
-      return await title.isExisting();
-    },
-    {
-      timeout: 10_000,
-      interval: 100,
-      timeoutMsg: "Feedback modal did not open",
-    },
-  );
-}
-
-async function openFeedbackModal(): Promise<void> {
-  const feedbackButton = await $('//button[normalize-space()="Feedback" or @aria-label="Feedback" or @data-tooltip="Feedback"]');
-  await feedbackButton.waitForExist({ timeout: 10_000 });
-  await browser.execute((element) => {
-    (element as HTMLElement).click();
-  }, feedbackButton);
-  await waitForFeedbackModal();
-}
-
-async function fillFeedbackForm(title: string, description: string): Promise<void> {
-  const titleInput = await $('//label[normalize-space()="Title"]/following::input[1]');
-  const descriptionInput = await $('//label[normalize-space()="Description"]/following::textarea[1]');
-
-  await titleInput.waitForEnabled({ timeout: 10_000 });
-  await descriptionInput.waitForEnabled({ timeout: 10_000 });
+  await titleInput.waitForDisplayed({ timeout: 10_000 });
+  await descriptionInput.waitForDisplayed({ timeout: 10_000 });
 
   await titleInput.setValue(title);
   await descriptionInput.setValue(description);
-}
-
-async function submitFeedback(): Promise<void> {
-  const submitButton = await $('//button[normalize-space()="Send bug report"]');
-  await submitButton.waitForClickable({ timeout: 10_000 });
+  await submitButton.waitForEnabled({ timeout: 10_000 });
   await submitButton.click();
+
+  await dialog.waitForDisplayed({ timeout: 10_000, reverse: true });
 }
 
-async function expectFeedbackSubmission({
-  server,
-  viewRoute,
-  expectedView,
-  title,
-  description,
-}: {
-  server: Awaited<ReturnType<typeof startFeedbackServer>>;
-  viewRoute: string;
-  expectedView: string;
-  title: string;
-  description: string;
-}): Promise<void> {
-  await navigateToHash(viewRoute);
-  await seedDenAuth(server.baseUrl);
-  await browser.refresh();
-  await browser.waitUntil(
-    async () => (await browser.getUrl()).includes(`#${viewRoute}`),
-    { timeout: 5_000, timeoutMsg: `Route ${viewRoute} did not load` },
-  );
-
-  await openFeedbackModal();
-  await fillFeedbackForm(title, description);
-  await submitFeedback();
-
-  await server.waitForRequests(server.requests.length + 1);
-  const request = server.requests.at(-1);
-  expect(request).toBeDefined();
-  expect(request?.headers["content-type"]).toContain("application/json");
-  expect(request?.headers.authorization).toBe("Bearer e2e-feedback-token");
-  expect(request?.headers["x-veslo-org-id"]).toBe("org-e2e-feedback");
-
-  const body = request?.body as Record<string, unknown>;
-  expect(body.title).toBe(title);
-  expect(body.description).toBe(description);
-  expect(body.view).toBe(expectedView);
-
-  await browser.waitUntil(
-    async () => {
-      const modalTitle = await $('//*[@role="dialog"]//*[normalize-space()="Report a bug"]');
-      return !(await modalTitle.isExisting());
-    },
-    {
-      timeout: 10_000,
-      interval: 100,
-      timeoutMsg: "Feedback modal did not close after submit",
-    },
-  );
+function feedbackPosts(requests: FeedbackRequest[]) {
+  return requests.filter((request) => request.method === "POST" && request.url === "/v1/feedback");
 }
 
-describe("Feedback bug report flow", () => {
-  let server: Awaited<ReturnType<typeof startFeedbackServer>> | undefined;
-  let originalDenAuthState: CapturedDenAuthState | null = null;
+async function waitForExactFeedbackPostCount(requests: FeedbackRequest[], count: number) {
+  let stableSince: number | null = null;
+
+  await browser.waitUntil(() => {
+    const postCount = feedbackPosts(requests).length;
+    if (postCount !== count) {
+      stableSince = null;
+      return false;
+    }
+
+    if (stableSince == null) {
+      stableSince = Date.now();
+      return false;
+    }
+
+    return Date.now() - stableSince >= 400;
+  }, {
+    timeout: 15_000,
+    interval: 100,
+    timeoutMsg: `Expected exactly ${count} feedback POST(s), saw ${feedbackPosts(requests).length}.`,
+  });
+
+  const posts = feedbackPosts(requests);
+  expect(posts.length).toBe(count);
+  return posts;
+}
+
+function expectCommonPayload(
+  request: FeedbackRequest,
+  expected: {
+    title: string;
+    description: string;
+    view: string;
+    pathname: string;
+  },
+) {
+  expect(request.method).toBe("POST");
+  expect(request.url).toBe("/v1/feedback");
+  expect(request.headers.authorization).toBe("Bearer den-token-e2e");
+  expect(request.headers["x-veslo-org-id"]).toBe("org-e2e");
+
+  expect(request.body.title).toBe(expected.title);
+  expect(request.body.description).toBe(expected.description);
+  expect(request.body.userId).toBe("user-e2e");
+  expect(request.body.userEmail).toBe("feedback@example.com");
+  expect(request.body.orgId).toBe("org-e2e");
+  expect(request.body.orgName).toBe("E2E Org");
+
+  const context = request.body.context as Record<string, unknown>;
+  expect(context.view).toBe(expected.view);
+  expect(context.pathname).toBe(expected.pathname);
+
+  const screenshotStatus = request.body.screenshotStatus;
+  expect(["captured", "failed"]).toContain(String(screenshotStatus));
+  if (screenshotStatus === "captured") {
+    expect(String(request.body.screenshotMimeType)).toBe("image/jpeg");
+    expect(String(request.body.screenshotDataUrl)).toContain("data:image/jpeg");
+  }
+}
+
+describe("Global feedback bug reporting", () => {
+  const feedbackStub = createFeedbackStubServer();
+  let denApiBase = "";
 
   before(async () => {
-    server = await startFeedbackServer();
-    originalDenAuthState = await captureDenAuthState();
+    denApiBase = await feedbackStub.start();
   });
 
   after(async () => {
-    await restoreDenAuthState(originalDenAuthState);
-    await server?.close();
+    await feedbackStub.stop();
   });
 
-  it("submits from the dashboard and session views", async () => {
-    const dashboardTitle = `Dashboard bug ${Date.now()}`;
-    const sessionTitle = `Session bug ${Date.now() + 1}`;
-    expect(server).toBeDefined();
-    if (!server) return;
+  beforeEach(async () => {
+    feedbackStub.reset();
+    await seedDenAuth(denApiBase);
+  });
 
-    await expectFeedbackSubmission({
-      server,
-      viewRoute: "/dashboard",
-      expectedView: "dashboard",
-      title: dashboardTitle,
-      description: "Dashboard feedback from the E2E spec.",
+  it("submits bug feedback from the dashboard view", async () => {
+    await navigateToHash("/dashboard/settings");
+    await waitForRoute("#/dashboard/settings");
+
+    await submitFeedback("Dashboard feedback", "Dashboard bug reproduction steps.");
+    const posts = await waitForExactFeedbackPostCount(feedbackStub.requests, 1);
+
+    expectCommonPayload(posts[0]!, {
+      title: "Dashboard feedback",
+      description: "Dashboard bug reproduction steps.",
+      view: "dashboard",
+      pathname: "/dashboard/settings",
     });
+  });
 
-    await expectFeedbackSubmission({
-      server,
-      viewRoute: "/session",
-      expectedView: "session",
-      title: sessionTitle,
-      description: "Session feedback from the E2E spec.",
+  it("submits bug feedback from the session view", async () => {
+    await navigateToHash("/session");
+    await waitForRoute("#/session");
+
+    await submitFeedback("Session feedback", "Session bug reproduction steps.");
+    const posts = await waitForExactFeedbackPostCount(feedbackStub.requests, 1);
+
+    expectCommonPayload(posts[0]!, {
+      title: "Session feedback",
+      description: "Session bug reproduction steps.",
+      view: "session",
+      pathname: "/session",
     });
-
-    expect(server.requests).toHaveLength(2);
   });
 });

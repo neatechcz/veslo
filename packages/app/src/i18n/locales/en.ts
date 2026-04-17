@@ -100,6 +100,17 @@ export default {
   "workspace.rename_label": "Worker name",
   "workspace.rename_placeholder": "Design team worker",
 
+  // ==================== Feedback ====================
+  "feedback.button": "Feedback",
+  "feedback.modal_title": "Report a bug",
+  "feedback.modal_description": "Tell us what went wrong and Veslo will attach the current screen automatically.",
+  "feedback.title_label": "Title",
+  "feedback.title_placeholder": "What broke?",
+  "feedback.description_label": "Description",
+  "feedback.description_placeholder": "What happened, what did you expect, and how can we reproduce it?",
+  "feedback.technical_note": "Veslo will attach the current screen and technical details automatically.",
+  "feedback.submit": "Send bug report",
+
   // ==================== Session ====================
   "session.no_selected": "No session selected",
   "session.back_to_dashboard": "Back to dashboard",

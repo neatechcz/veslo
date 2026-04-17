@@ -88,6 +88,7 @@ import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
 import VesloLogo from "./components/veslo-logo";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
+import FeedbackModal, { type FeedbackFormValues } from "./components/feedback-modal";
 import RenameWorkspaceModal from "./components/rename-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
 import OnboardingView from "./pages/onboarding";
@@ -113,6 +114,10 @@ import {
 } from "./lib/opencode-session";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
 import { createSkillReloadGuard } from "./lib/skill-reload-guard";
+import {
+  submitFeedbackReport,
+  type FeedbackRuntimeContext,
+} from "./lib/feedback";
 import {
   AUTO_COMPACT_CONTEXT_PREF_KEY,
   DEFAULT_MODEL,
@@ -413,7 +418,52 @@ export default function App() {
     createSignal<OnboardingStep>(initialOnboardingStep());
   const [rememberStartupChoice, setRememberStartupChoice] = createSignal(false);
   const [denKeepSignedIn, setDenKeepSignedIn] = createSignal(readDenKeepSignedIn());
+  const [feedbackModalOpen, setFeedbackModalOpen] = createSignal(false);
+  const [feedbackSubmitting, setFeedbackSubmitting] = createSignal(false);
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
+
+  function openFeedbackModal() {
+    setFeedbackModalOpen(true);
+  }
+
+  function closeFeedbackModal() {
+    setFeedbackModalOpen(false);
+  }
+
+  const normalizeFeedbackOptional = (value?: string | null) => {
+    const trimmed = value?.trim() ?? "";
+    return trimmed ? trimmed : null;
+  };
+
+  const resolveFeedbackPlatform = () => {
+    if (typeof navigator === "undefined") return null;
+    const platform =
+      (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ??
+      navigator.platform;
+    return normalizeFeedbackOptional(platform);
+  };
+
+  const buildFeedbackRuntimeContext = (): FeedbackRuntimeContext => ({
+    view: currentView(),
+    pathname: location.pathname.trim() || "/",
+    tab: tab(),
+    settingsTab: settingsTab(),
+    selectedSessionId: normalizeFeedbackOptional(activeSessionId()),
+    activeWorkspaceId: normalizeFeedbackOptional(workspaceStore.activeWorkspaceId()),
+    vesloServerWorkspaceId: normalizeFeedbackOptional(resolvedDevtoolsWorkspaceId()),
+    activeWorkspaceType: activeWorkspaceDisplay().workspaceType,
+    activeWorkspaceRoot: normalizeFeedbackOptional(
+      currentView() === "session"
+        ? preferredSessionWorkspaceRoot(
+            resolveSessionDirectory(selectedSession() ?? { id: "", directory: "" }),
+            workspaceStore.activeWorkspaceRoot().trim(),
+          )
+        : workspaceStore.activeWorkspaceRoot().trim(),
+    ),
+    locale: currentLocale(),
+    appVersion: normalizeFeedbackOptional(appVersion()),
+    platform: resolveFeedbackPlatform(),
+  });
 
   const setDenKeepSignedInPreference = (value: boolean) => {
     writeDenKeepSignedIn(value);
@@ -7787,6 +7837,30 @@ export default function App() {
     error: error(),
   });
 
+  async function persistFeedback(values: FeedbackFormValues) {
+    if (feedbackSubmitting()) return;
+    setError(null);
+    setFeedbackSubmitting(true);
+    try {
+      await submitFeedbackReport({
+        title: values.title,
+        description: values.description,
+        context: buildFeedbackRuntimeContext(),
+      });
+
+      closeFeedbackModal();
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  }
+
+  function submitFeedback(values: FeedbackFormValues) {
+    void persistFeedback(values).catch((error) => {
+      reportError(error, "feedback.submit");
+      setError(error instanceof Error ? error.message : safeStringify(error));
+    });
+  }
+
   const dashboardTabs = new Set<DashboardTab>([
     "scheduled",
     "soul",
@@ -7933,10 +8007,10 @@ export default function App() {
           <OnboardingView {...onboardingProps()} />
         </Match>
         <Match when={currentView() === "session"}>
-          <SessionView {...sessionProps()} />
+          <SessionView {...sessionProps()} onOpenFeedback={openFeedbackModal} />
         </Match>
         <Match when={true}>
-          <DashboardView {...dashboardProps()} />
+          <DashboardView {...dashboardProps()} onOpenFeedback={openFeedbackModal} />
         </Match>
       </Switch>
 
@@ -7944,6 +8018,13 @@ export default function App() {
         open={workspaceSwitchOpen()}
         workspace={workspaceSwitchWorkspace()}
         statusKey={workspaceSwitchStatusKey()}
+      />
+
+      <FeedbackModal
+        open={feedbackModalOpen()}
+        submitting={feedbackSubmitting()}
+        onClose={closeFeedbackModal}
+        onSubmit={submitFeedback}
       />
 
       <ModelPickerModal

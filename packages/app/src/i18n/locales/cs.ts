@@ -100,6 +100,17 @@ export default {
   "workspace.rename_label": "Název pracovního prostoru",
   "workspace.rename_placeholder": "Pracovní prostor design týmu",
 
+  // ==================== Feedback ====================
+  "feedback.button": "Feedback",
+  "feedback.modal_title": "Nahlásit chybu",
+  "feedback.modal_description": "Popište problém a Veslo automaticky přiloží aktuální obrazovku.",
+  "feedback.title_label": "Nadpis",
+  "feedback.title_placeholder": "Co se pokazilo?",
+  "feedback.description_label": "Popis",
+  "feedback.description_placeholder": "Co se stalo, co jste čekali a jak to umíme zopakovat?",
+  "feedback.technical_note": "Veslo automaticky přiloží aktuální obrazovku a technické detaily.",
+  "feedback.submit": "Odeslat hlášení",
+
   // ==================== Session ====================
   "session.no_selected": "Není vybraná žádná relace",
   "session.back_to_dashboard": "Zpět na přehled",
