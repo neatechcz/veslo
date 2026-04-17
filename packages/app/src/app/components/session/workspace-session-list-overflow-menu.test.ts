@@ -45,13 +45,19 @@ test("overflow menu exposes keyboard and screen-reader affordances", () => {
 
   assert.match(
     source,
-    /window\.addEventListener\("keydown", handleMoreActionsEscape\)/,
-    "overflow menu should close on Escape",
+    /window\.addEventListener\("keydown", handleMoreActionsKeyDown\)/,
+    "overflow menu should install a keyboard close handler",
   );
 
   assert.match(
     source,
+    /if \(event\.key !== "Escape" && event\.key !== "Tab"\) return;/,
+    "overflow keyboard handler should close on Escape and Tab without relying on blur races",
+  );
+
+  assert.doesNotMatch(
+    source,
     /onFocusOut=\{\(event\) => \{/,
-    "overflow wrapper should close when focus leaves the trigger/menu cluster",
+    "overflow wrapper should not synchronously close on focusout because real clicks can lose focus before menu item handlers run",
   );
 });

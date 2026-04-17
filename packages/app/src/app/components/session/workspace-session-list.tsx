@@ -1022,13 +1022,15 @@ export default function WorkspaceSessionList(props: Props) {
 
   createEffect(() => {
     if (!moreActionsMenuOpen()) return;
-    const handleMoreActionsEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+    const handleMoreActionsKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" && event.key !== "Tab") return;
       setMoreActionsMenuOpen(false);
-      moreActionsButtonRef?.focus();
+      if (event.key === "Escape") {
+        moreActionsButtonRef?.focus();
+      }
     };
-    window.addEventListener("keydown", handleMoreActionsEscape);
-    onCleanup(() => window.removeEventListener("keydown", handleMoreActionsEscape));
+    window.addEventListener("keydown", handleMoreActionsKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", handleMoreActionsKeyDown));
   });
 
   createEffect(() => {
@@ -1292,11 +1294,6 @@ export default function WorkspaceSessionList(props: Props) {
         <div
           class="relative shrink-0"
           ref={(el) => (moreActionsMenuRef = el)}
-          onFocusOut={(event) => {
-            const nextFocus = event.relatedTarget as Node | null;
-            if (nextFocus && moreActionsMenuRef?.contains(nextFocus)) return;
-            setMoreActionsMenuOpen(false);
-          }}
         >
           <button
             type="button"
