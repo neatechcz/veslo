@@ -39,6 +39,7 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
             userId: aiAccess.userId,
             enabled: aiAccess.enabled,
             provider: aiAccess.provider,
+            credentialId: aiAccess.credentialId,
             defaultModel: aiAccess.defaultModel,
             allowedModels: aiAccess.allowedModels,
             updatedAt: toIsoString(aiAccess.updatedAt),

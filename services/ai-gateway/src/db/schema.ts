@@ -148,6 +148,7 @@ export const userAiAccessPolicyTable = mysqlTable(
     user_id: varchar("user_id", { length: 64 }).notNull(),
     enabled: int("enabled").notNull().default(1),
     provider: varchar("provider", { length: 64 }),
+    credential_id: varchar("credential_id", { length: 64 }),
     default_model: varchar("default_model", { length: 128 }),
     allowed_models_json: text("allowed_models_json").notNull(),
     ...timestamps,

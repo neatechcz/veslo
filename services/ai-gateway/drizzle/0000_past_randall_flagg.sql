@@ -15,6 +15,7 @@ CREATE TABLE `user_ai_access_policy` (
 	`user_id` varchar(64) NOT NULL,
 	`enabled` int NOT NULL DEFAULT 1,
 	`provider` varchar(64),
+	`credential_id` varchar(64),
 	`default_model` varchar(128),
 	`allowed_models_json` text NOT NULL,
 	`created_at` timestamp(3) NOT NULL DEFAULT (now()),

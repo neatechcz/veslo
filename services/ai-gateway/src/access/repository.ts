@@ -9,6 +9,7 @@ export type UserAiAccessPolicyRecord = {
   userId: string;
   enabled: boolean;
   provider: AiAccessProvider | null;
+  credentialId: string | null;
   defaultModel: string | null;
   allowedModels: string[];
   createdAt: Date;
@@ -19,6 +20,7 @@ export type UpsertUserAiAccessPolicyInput = {
   userId: string;
   enabled: boolean;
   provider: AiAccessProvider | null;
+  credentialId: string | null;
   defaultModel: string | null;
   allowedModels: string[];
 };

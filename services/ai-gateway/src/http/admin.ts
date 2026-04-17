@@ -78,6 +78,7 @@ export type AdminUserAiAccessRecord = {
   userId: string;
   enabled: boolean;
   provider: AiAccessProvider | null;
+  credentialId: string | null;
   defaultModel: string | null;
   allowedModels: string[];
   updatedAt: string;
@@ -86,6 +87,7 @@ export type AdminUserAiAccessRecord = {
 export type UpdateUserAiAccessInput = {
   enabled: boolean;
   provider: AiAccessProvider | null;
+  credentialId: string | null;
   defaultModel: string | null;
   allowedModels: string[];
 };
@@ -954,6 +956,7 @@ function validateCreateCredentialInput(input: CreateCredentialInput): {
 function validateUserAiAccessInput(input: UpdateUserAiAccessInput & { userId: string }): UpsertUserAiAccessPolicyInput {
   const enabled = input.enabled === true;
   const provider = parseAiAccessProvider(input.provider);
+  const credentialId = typeof input.credentialId === "string" ? input.credentialId : null;
   const defaultModel = typeof input.defaultModel === "string" ? input.defaultModel.trim() : "";
   const allowedModels = normalizeAllowedModels(input.allowedModels);
 
@@ -973,6 +976,7 @@ function validateUserAiAccessInput(input: UpdateUserAiAccessInput & { userId: st
     userId: input.userId,
     enabled,
     provider,
+    credentialId,
     defaultModel: defaultModel || null,
     allowedModels,
   };
@@ -1026,6 +1030,7 @@ function toAdminUserAiAccessRecord(record: UserAiAccessPolicyRecord | null): Adm
     userId: record.userId,
     enabled: record.enabled,
     provider: record.provider,
+    credentialId: record.credentialId,
     defaultModel: record.defaultModel,
     allowedModels: record.allowedModels,
     updatedAt: record.updatedAt.toISOString(),

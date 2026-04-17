@@ -13,6 +13,7 @@ const AI_ACCESS_PAYLOAD = {
   userId: "user_123",
   enabled: true,
   provider: "openai",
+  credentialId: null,
   defaultModel: "gpt-4o-mini",
   allowedModels: ["gpt-4o-mini", "gpt-4.1-mini"],
   updatedAt: "2026-04-08T10:00:00.000Z",

@@ -85,6 +85,7 @@ export async function ensureAiGatewaySchema(db: SchemaReconcileDb) {
       \`user_id\` varchar(64) NOT NULL,
       \`enabled\` int NOT NULL DEFAULT 1,
       \`provider\` varchar(64),
+      \`credential_id\` varchar(64),
       \`default_model\` varchar(128),
       \`allowed_models_json\` text NOT NULL,
       \`created_at\` timestamp(3) NOT NULL,
@@ -174,6 +175,7 @@ export async function ensureAiGatewaySchema(db: SchemaReconcileDb) {
   await ensureIndex(db, "ai_gateway_audit_event", "audit_event_actor", ["actor_user_id"]);
   await ensureIndex(db, "ai_gateway_audit_event", "audit_event_action", ["action"]);
   await ensureIndex(db, "user_ai_access_policy", "user_ai_access_policy_provider", ["provider"]);
+  await ensureColumn(db, "user_ai_access_policy", "credential_id", "varchar(64)");
   await ensureColumn(db, "credential_record", "name", "varchar(255)");
   await ensureIndex(db, "credential_record", "credential_record_owner_provider_state", [
     "owner_user_id",
