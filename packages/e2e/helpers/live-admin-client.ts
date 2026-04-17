@@ -51,6 +51,7 @@ export type AdminCredentialRecord = {
   provider?: string;
   state?: string;
   name?: string;
+  credentialType?: string;
 };
 
 export type AdminUserAiAccessRecord = {
@@ -60,6 +61,7 @@ export type AdminUserAiAccessRecord = {
   provider?: string | null;
   defaultModel?: string | null;
   allowedModels?: string[];
+  credentialId?: string | null;
 };
 
 export type CreateAdminUserInput = {
@@ -75,6 +77,7 @@ export type UpsertAdminUserAiAccessInput = {
   provider: string | null;
   defaultModel: string | null;
   allowedModels: string[];
+  credentialId?: string | null;
 };
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -275,6 +278,7 @@ export async function upsertAdminUserAiAccess(
       provider: input.provider,
       defaultModel: input.defaultModel,
       allowedModels: input.allowedModels,
+      credentialId: input.credentialId ?? null,
     },
   });
 

@@ -43,6 +43,7 @@ function parseArgs(argv: string[]) {
     provider: process.env.VESLO_ADMIN_CHECK_PROVIDER?.trim() || '',
     defaultModel: process.env.VESLO_ADMIN_CHECK_DEFAULT_MODEL?.trim() || '',
     allowedModels: parseList(process.env.VESLO_ADMIN_CHECK_ALLOWED_MODELS),
+    credentialId: process.env.VESLO_ADMIN_CHECK_CREDENTIAL_ID?.trim() || '',
     disableAiAccess: process.env.VESLO_ADMIN_CHECK_DISABLE_AI_ACCESS === '1',
   };
 
@@ -99,6 +100,11 @@ function parseArgs(argv: string[]) {
       index += 1;
       continue;
     }
+    if (arg === '--credential-id' && argv[index + 1]) {
+      result.credentialId = argv[index + 1].trim();
+      index += 1;
+      continue;
+    }
     if (arg === '--disable-ai-access') {
       result.disableAiAccess = true;
     }
@@ -148,6 +154,7 @@ async function main() {
     provider,
     defaultModel,
     allowedModels,
+    credentialId,
     disableAiAccess,
   } = parseArgs(process.argv.slice(2));
   const state = randomBase64Url(32);
@@ -221,6 +228,7 @@ async function main() {
         provider: disableAiAccess ? null : provider || null,
         defaultModel: disableAiAccess ? null : defaultModel || null,
         allowedModels: disableAiAccess ? [] : allowedModels,
+        credentialId: disableAiAccess ? null : credentialId || null,
       })
     : null;
 

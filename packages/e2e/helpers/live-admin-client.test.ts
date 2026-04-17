@@ -126,9 +126,10 @@ test('admin client lists users, credentials, and upserts ai access with bearer a
           id: 'ai_access_123',
           userId: 'user_123',
           enabled: true,
-          provider: 'anthropic',
-          defaultModel: 'claude-3-7-sonnet-latest',
-          allowedModels: ['claude-3-7-sonnet-latest'],
+          provider: 'codex_oauth',
+          defaultModel: 'gpt-5.4',
+          allowedModels: ['gpt-5.4'],
+          credentialId: 'cred_codex_shared_1',
         },
       });
     }
@@ -152,9 +153,10 @@ test('admin client lists users, credentials, and upserts ai access with bearer a
     }),
     upsertAdminUserAiAccess(fetchImpl, gatewayBase, token, 'user_123', {
       enabled: true,
-      provider: 'anthropic',
-      defaultModel: 'claude-3-7-sonnet-latest',
-      allowedModels: ['claude-3-7-sonnet-latest'],
+      provider: 'codex_oauth',
+      defaultModel: 'gpt-5.4',
+      allowedModels: ['gpt-5.4'],
+      credentialId: 'cred_codex_shared_1',
     }),
   ]);
 
@@ -163,7 +165,8 @@ test('admin client lists users, credentials, and upserts ai access with bearer a
   assert.equal(findAdminUserByEmail(users, 'MEMBER@example.test')?.id, 'user_123');
   assert.equal(credentials[0]?.provider, 'openai');
   assert.equal(createdUser.id, 'user_created');
-  assert.equal(aiAccess.provider, 'anthropic');
+  assert.equal(aiAccess.provider, 'codex_oauth');
+  assert.equal(aiAccess.credentialId, 'cred_codex_shared_1');
   assert.equal(calls.length, 5);
 
   for (const call of calls) {
@@ -176,8 +179,9 @@ test('admin client lists users, credentials, and upserts ai access with bearer a
   assert.equal(aiAccessCall?.init?.method, 'PUT');
   assert.deepEqual(JSON.parse(String(aiAccessCall?.init?.body)), {
     enabled: true,
-    provider: 'anthropic',
-    defaultModel: 'claude-3-7-sonnet-latest',
-    allowedModels: ['claude-3-7-sonnet-latest'],
+    provider: 'codex_oauth',
+    defaultModel: 'gpt-5.4',
+    allowedModels: ['gpt-5.4'],
+    credentialId: 'cred_codex_shared_1',
   });
 });

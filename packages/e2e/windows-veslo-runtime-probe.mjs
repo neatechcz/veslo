@@ -5,7 +5,9 @@ import { remote } from "webdriverio";
 
 const repoRoot = process.cwd();
 const e2eRoot = resolve(repoRoot, "packages/e2e");
-const snapshotFile = resolve(e2eRoot, ".tmp-opencode-home-live/.veslo/den-auth.json");
+const snapshotFile =
+  process.env.VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE?.trim() ||
+  resolve(e2eRoot, ".tmp-opencode-home-live/.veslo/den-auth.json");
 
 process.env.VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE = snapshotFile;
 

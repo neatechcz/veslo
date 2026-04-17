@@ -1,14 +1,22 @@
+import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { expect } from '@wdio/globals';
 import { navigateToHash } from '../helpers/app-launcher.js';
-
-type StorageSnapshot = {
-  local: Record<string, string | null>;
-  session: Record<string, string | null>;
-};
+import {
+  exchangeAdminBrowserSession,
+  findAdminUserByEmail,
+  listAdminCredentials,
+  listAdminUsers,
+  startAdminBrowserSession,
+  upsertAdminUserAiAccess,
+  type AdminCredentialRecord,
+} from '../helpers/live-admin-client.js';
+import { waitForAdminBrowserCallback } from '../helpers/live-admin-check.js';
+import { openUrlInSystemBrowser } from '../helpers/live-desktop-auth.js';
 
 type DesktopAuthSnapshotFile = {
   authJson?: string | null;
+  source?: string | null;
 };
 
 type DenAuthState = {
@@ -21,18 +29,9 @@ type DenAuthState = {
 };
 
 const DEFAULT_GATEWAY_BASE = 'https://veslo-ai-gateway-dev.onrender.com';
+const DEFAULT_MODEL = 'gpt-5.4';
 
-const STORAGE_KEYS = [
-  'veslo.den.keepSignedIn',
-  'veslo.server.urlOverride',
-  'veslo.server.token',
-  'veslo.language',
-  'veslo.onboardingComplete',
-] as const;
-
-const SESSION_KEYS = ['veslo.den.auth'] as const;
-
-function readLiveAdminAuth(): { authJson: string; auth: DenAuthState } {
+function readLiveAdminAuth(): { authJson: string; auth: DenAuthState; source: string | null } {
   const snapshotPath = process.env.VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE?.trim();
   if (!snapshotPath) {
     throw new Error('VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE is required.');
@@ -49,11 +48,28 @@ function readLiveAdminAuth(): { authJson: string; auth: DenAuthState } {
     throw new Error('Desktop auth snapshot must include denApiBase and token.');
   }
 
-  return { authJson, auth };
+  return {
+    authJson,
+    auth,
+    source: typeof snapshot.source === 'string' && snapshot.source.trim() ? snapshot.source.trim() : null,
+  };
 }
 
 function readGatewayBase(): string {
   return (process.env.VESLO_E2E_GATEWAY_BASE?.trim() || DEFAULT_GATEWAY_BASE).replace(/\/+$/, '');
+}
+
+function readOptionalEnv(name: string): string | null {
+  const value = process.env[name]?.trim();
+  return value ? value : null;
+}
+
+function randomBase64Url(size: number): string {
+  return randomBytes(size).toString('base64url');
+}
+
+function sha256Base64Url(value: string): string {
+  return createHash('sha256').update(value).digest('base64url');
 }
 
 async function waitForAppShellReady(timeout = 15000): Promise<void> {
@@ -91,59 +107,102 @@ function compactLogText(value: string): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, 1200);
 }
 
-async function snapshotStorage(): Promise<StorageSnapshot> {
-  return browser.execute(
-    (localKeys: readonly string[], sessionKeys: readonly string[]) => {
-      const local: Record<string, string | null> = {};
-      const session: Record<string, string | null> = {};
-      for (const key of localKeys) {
-        local[key] = window.localStorage.getItem(key);
-      }
-      for (const key of sessionKeys) {
-        session[key] = window.sessionStorage.getItem(key);
-      }
-      return { local, session };
-    },
-    STORAGE_KEYS,
-    SESSION_KEYS,
-  );
+function isUnauthenticatedAuthGate(text: string): boolean {
+  return text.includes('Sign in to Veslo') && text.includes('Sign in with Browser');
 }
 
-async function restoreStorage(snapshot: StorageSnapshot): Promise<void> {
-  await browser.execute(
-    (state: StorageSnapshot) => {
-      for (const [key, value] of Object.entries(state.local)) {
-        if (value === null) {
-          window.localStorage.removeItem(key);
-        } else {
-          window.localStorage.setItem(key, value);
-        }
-      }
-      for (const [key, value] of Object.entries(state.session)) {
-        if (value === null) {
-          window.sessionStorage.removeItem(key);
-        } else {
-          window.sessionStorage.setItem(key, value);
-        }
-      }
+async function authenticateLiveAdmin(gatewayBase: string): Promise<string> {
+  const providedToken = readOptionalEnv('VESLO_E2E_ADMIN_TOKEN');
+  if (providedToken) {
+    return providedToken;
+  }
+
+  const authState = randomBase64Url(32);
+  const codeVerifier = randomBase64Url(48);
+  const codeChallenge = sha256Base64Url(codeVerifier);
+
+  const callback = await waitForAdminBrowserCallback({
+    timeoutMs: 300000,
+    onReady: async ({ redirectUri }) => {
+      const start = await startAdminBrowserSession(fetch, gatewayBase, {
+        intent: 'signin',
+        redirectUri,
+        state: authState,
+        codeChallenge,
+      });
+
+      console.log('[live-admin-codex] opening admin browser sign-in');
+      await openUrlInSystemBrowser(start.authorizeUrl);
     },
-    snapshot,
-  );
+  });
+
+  return exchangeAdminBrowserSession(fetch, gatewayBase, {
+    code: callback.code,
+    sessionId: callback.sessionId,
+    state: authState,
+    codeVerifier,
+  });
 }
 
-async function injectLiveAdminAuth(authJson: string, gatewayBase: string): Promise<void> {
-  await browser.execute((json: string, serverBase: string) => {
-    const auth = JSON.parse(json) as DenAuthState;
-    window.sessionStorage.setItem('veslo.den.auth', json);
-    window.localStorage.setItem('veslo.den.keepSignedIn', '0');
-    window.localStorage.setItem('veslo.server.urlOverride', serverBase);
-    window.localStorage.setItem('veslo.server.token', auth.token);
-    window.localStorage.setItem('veslo.language', 'en');
-    window.localStorage.setItem('veslo.onboardingComplete', '1');
-    window.location.reload();
-  }, authJson, gatewayBase);
+function selectCodexCredential(credentials: AdminCredentialRecord[]): AdminCredentialRecord {
+  const desiredId = readOptionalEnv('VESLO_E2E_CODEX_CREDENTIAL_ID');
+  const desiredName = readOptionalEnv('VESLO_E2E_CODEX_CREDENTIAL_NAME')?.toLowerCase();
+  const codexCredentials = credentials.filter((entry) => entry.provider === 'codex_oauth');
 
-  await waitForAppShellReady(30000);
+  if (desiredId) {
+    const exact = codexCredentials.find((entry) => entry.id === desiredId);
+    if (!exact) {
+      throw new Error(`Codex credential ${desiredId} was not found in admin credentials.`);
+    }
+    return exact;
+  }
+
+  if (desiredName) {
+    const match = codexCredentials.find((entry) => entry.name?.trim().toLowerCase() === desiredName);
+    if (!match) {
+      throw new Error(`Codex credential named ${desiredName} was not found in admin credentials.`);
+    }
+    return match;
+  }
+
+  const healthy = codexCredentials.find((entry) => (entry.state ?? '').trim().toLowerCase() === 'healthy');
+  if (healthy) {
+    return healthy;
+  }
+
+  const firstAvailable = codexCredentials.find((entry) => entry.id?.trim());
+  if (firstAvailable) {
+    return firstAvailable;
+  }
+
+  throw new Error('No shared codex_oauth credential is available in admin credentials.');
+}
+
+async function assignSharedCodexCredential(gatewayBase: string, adminToken: string, userEmail: string) {
+  const [users, credentials] = await Promise.all([
+    listAdminUsers(fetch, gatewayBase, adminToken),
+    listAdminCredentials(fetch, gatewayBase, adminToken),
+  ]);
+  const user = findAdminUserByEmail(users, userEmail);
+  if (!user?.id) {
+    throw new Error(`Admin users did not include desktop user ${userEmail}.`);
+  }
+
+  const credential = selectCodexCredential(credentials);
+  if (!credential.id) {
+    throw new Error('Selected Codex credential is missing an id.');
+  }
+
+  const aiAccess = await upsertAdminUserAiAccess(fetch, gatewayBase, adminToken, user.id, {
+    enabled: true,
+    provider: 'codex_oauth',
+    defaultModel: DEFAULT_MODEL,
+    allowedModels: [DEFAULT_MODEL],
+    credentialId: credential.id,
+  });
+
+  console.log(`[live-admin-codex] assigned credential ${credential.name ?? credential.id} to ${userEmail}`);
+  return { user, credential, aiAccess };
 }
 
 async function waitForExpectedManagedAiAssignment(timeout = 45000): Promise<void> {
@@ -228,62 +287,78 @@ async function clickSend(): Promise<void> {
 
 describe('Live admin Codex roundtrip', () => {
   it('should send a real Codex prompt from the Windows desktop app through DEN', async function () {
-    this.timeout(180000);
+    this.timeout(300000);
 
-    const { authJson, auth } = readLiveAdminAuth();
+    const { auth, source } = readLiveAdminAuth();
     const gatewayBase = readGatewayBase();
-    const previousStorage = await snapshotStorage();
-
-    try {
-      console.log('[live-admin-codex] injecting admin session storage');
-      await injectLiveAdminAuth(authJson, gatewayBase);
-      console.log('[live-admin-codex] waiting for managed AI assignment');
-      await waitForExpectedManagedAiAssignment();
-      console.log('[live-admin-codex] managed AI assignment is visible');
-
-      const rootText = await readRootText();
-      const expectedUserMarker = auth.user?.email ?? auth.user?.id;
-      if (expectedUserMarker) {
-        expect(rootText).toContain(expectedUserMarker);
-      }
-
-      console.log('[live-admin-codex] opening session composer');
-      await navigateToHash('/session');
-      await waitForComposer();
-
-      const token = `codex-live-admin-${Date.now()}`;
-      const prompt = `Reply with exactly ${token}. No other words.`;
-
-      console.log('[live-admin-codex] sending prompt');
-      await setComposerText(prompt);
-      await clickSend();
-
-      console.log('[live-admin-codex] waiting for prompt response');
-      try {
-        await browser.waitUntil(
-          async () => {
-            const text = await readRootText();
-            return countOccurrences(text, token) >= 2;
-          },
-          {
-            timeout: 120000,
-            interval: 1000,
-            timeoutMsg: `Managed Codex response did not echo token ${token} within 120000ms`,
-          },
-        );
-      } catch (error) {
-        const text = await readRootText().catch(() => '');
-        console.log(`[live-admin-codex] final token occurrences=${countOccurrences(text, token)}`);
-        console.log(`[live-admin-codex] final visible text=${compactLogText(text)}`);
-        throw error;
-      }
-
-      const finalText = await readRootText();
-      expect(countOccurrences(finalText, token)).toBeGreaterThanOrEqual(2);
-      expect(finalText.toLowerCase()).not.toContain('server unavailable');
-      console.log('[live-admin-codex] prompt response rendered');
-    } finally {
-      await restoreStorage(previousStorage);
+    if (source !== 'e2e-live-browser') {
+      throw new Error(
+        `Desktop auth snapshot must come from the live browser seed flow. Received source=${source ?? '(missing)'}.`,
+      );
     }
+
+    console.log('[live-admin-codex] waiting for desktop app shell');
+    await waitForAppShellReady(30000);
+    const initialText = await readRootText();
+    if (isUnauthenticatedAuthGate(initialText)) {
+      throw new Error(
+        'Desktop app is still unauthenticated. Seed live browser auth first and relaunch the E2E run.',
+      );
+    }
+
+    console.log('[live-admin-codex] authenticating admin');
+    const adminToken = await authenticateLiveAdmin(gatewayBase);
+    const userEmail = auth.user?.email?.trim();
+    if (!userEmail) {
+      throw new Error('Desktop auth snapshot did not include the signed-in user email.');
+    }
+
+    await assignSharedCodexCredential(gatewayBase, adminToken, userEmail);
+
+    console.log('[live-admin-codex] waiting for managed AI assignment');
+    await waitForExpectedManagedAiAssignment();
+    console.log('[live-admin-codex] managed AI assignment is visible');
+
+    const rootText = await readRootText();
+    const expectedUserMarker = auth.user?.email ?? auth.user?.id;
+    if (expectedUserMarker) {
+      expect(rootText).toContain(expectedUserMarker);
+    }
+
+    console.log('[live-admin-codex] opening session composer');
+    await navigateToHash('/session');
+    await waitForComposer();
+
+    const token = `codex-live-admin-${Date.now()}`;
+    const prompt = `Reply with exactly ${token}. No other words.`;
+
+    console.log('[live-admin-codex] sending prompt');
+    await setComposerText(prompt);
+    await clickSend();
+
+    console.log('[live-admin-codex] waiting for prompt response');
+    try {
+      await browser.waitUntil(
+        async () => {
+          const text = await readRootText();
+          return countOccurrences(text, token) >= 2;
+        },
+        {
+          timeout: 120000,
+          interval: 1000,
+          timeoutMsg: `Managed Codex response did not echo token ${token} within 120000ms`,
+        },
+      );
+    } catch (error) {
+      const text = await readRootText().catch(() => '');
+      console.log(`[live-admin-codex] final token occurrences=${countOccurrences(text, token)}`);
+      console.log(`[live-admin-codex] final visible text=${compactLogText(text)}`);
+      throw error;
+    }
+
+    const finalText = await readRootText();
+    expect(countOccurrences(finalText, token)).toBeGreaterThanOrEqual(2);
+    expect(finalText.toLowerCase()).not.toContain('server unavailable');
+    console.log('[live-admin-codex] prompt response rendered');
   });
 });
