@@ -58,7 +58,6 @@ import {
   SUBAGENT_DECORATION_PALETTE,
   type SubagentLocale,
 } from "./lib/subagent-decoration-model";
-import { resolveSubagentRole } from "./lib/subagent-role-resolver";
 import {
   parseSharedBundleDeepLink,
   stripSharedBundleQuery,
@@ -82,6 +81,7 @@ import {
 } from "./pages/sidebar-session-pagination";
 import { shouldFallbackFromSessionRoute } from "./lib/session-route-selection-guard";
 import { shouldSyncSidebarFromSessionStore } from "./lib/sidebar-session-sync-guard";
+import { partitionVesloUtilitySessions } from "./lib/veslo-utility-session";
 import ModelPickerModal from "./components/model-picker-modal";
 import ResetModal from "./components/reset-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
@@ -1236,6 +1236,21 @@ export default function App() {
     }
 
     return Array.from(expanded.values());
+  };
+  const cleanupVesloUtilitySessions = async (c: Client, sessions: Session[]) => {
+    for (const session of sessions) {
+      try {
+        await c.session.delete({
+          sessionID: session.id,
+          directory: normalizeDirectoryQueryPath(resolveSessionDirectory(session)) || undefined,
+        });
+      } catch (error) {
+        wsDebug("sidebar:utility-session:delete:error", {
+          sessionID: session.id,
+          message: error instanceof Error ? error.message : safeStringify(error),
+        });
+      }
+    }
   };
 
   const [sessionsLoaded, setSessionsLoaded] = createSignal(false);
@@ -2616,7 +2631,7 @@ export default function App() {
       setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [workspaceId]: "loading" as const }));
       const { readSessionsFromDb, dbSessionRowToSidebarItem } = await import("./lib/db-reader");
       const rows = await readSessionsFromDb(directory);
-      const items = rows.map(dbSessionRowToSidebarItem);
+      const { visible: items } = partitionVesloUtilitySessions(rows.map(dbSessionRowToSidebarItem));
       setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [workspaceId]: items }));
       setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [workspaceId]: "ready" as const }));
     },
@@ -2794,7 +2809,7 @@ export default function App() {
           if (wsDirectory) {
             const { readSessionsFromDb, dbSessionRowToSidebarItem } = await import("./lib/db-reader");
             const rows = await readSessionsFromDb(wsDirectory);
-            const items = rows.map(dbSessionRowToSidebarItem);
+            const { visible: items } = partitionVesloUtilitySessions(rows.map(dbSessionRowToSidebarItem));
             setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: items }));
             setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
             setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
@@ -2855,61 +2870,78 @@ export default function App() {
 
       const queryDirectory = normalizeDirectoryQueryPath(directory) || undefined;
       const requestLimit = sidebarSessionLimitByWorkspaceId()[id] ?? initialSidebarSessionLimit();
-
-      // Fetch sessions scoped to the workspace directory to avoid loading the
-      // full global session list for every workspace.
-      // Keep `roots` unset so the backend returns both root sessions and child/subagent sessions.
-      const list = unwrap(
-        await c.session.list({ directory: queryDirectory, limit: requestLimit }),
-      );
-      wsDebug("sidebar:list", {
-        id,
-        baseUrl: config.baseUrl,
-        directory: directory || null,
-        queryDirectory: queryDirectory ?? null,
-        count: list.length,
-        limit: requestLimit,
-        ms: Date.now() - start,
-      });
-      if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
-
-      // Defensive client-side filter in case upstream ignores the directory query.
       const root = normalizeDirectoryPath(directory);
-      const filtered = root
-        ? list
-          .map((session) => applySessionDirectoryOverride(session))
-          .filter((session) => sessionDirectoryMatchesRoot(resolveSessionDirectory(session), root))
-        : list.map((session) => applySessionDirectoryOverride(session));
+      const listWorkspaceSessions = async (limit: number) => {
+        const list = unwrap(
+          await c.session.list({ directory: queryDirectory, limit }),
+        );
+        wsDebug("sidebar:list", {
+          id,
+          baseUrl: config.baseUrl,
+          directory: directory || null,
+          queryDirectory: queryDirectory ?? null,
+          count: list.length,
+          limit,
+          ms: Date.now() - start,
+        });
 
-      const overrideIds = root
-        ? Object.entries(sessionDirectoryOverrideById())
-          .filter(([, directory]) => normalizeDirectoryPath(directory) === root)
-          .map(([sessionID]) => sessionID)
-        : [];
-      const merged = new Map(filtered.map((session) => [session.id, session] as const));
-      for (const sessionID of overrideIds) {
-        if (merged.has(sessionID)) continue;
-        try {
-          // Fetch by ID without directory filter — the session may still be
-          // registered under the old directory in the engine while the local
-          // override already points to the new workspace root.
-          const fetched = applySessionDirectoryOverride(
-            unwrap(await c.session.get({ sessionID })),
-          );
-          merged.set(sessionID, fetched);
-        } catch {
-          // ignore stale local overrides
+        const filtered = root
+          ? list
+            .map((session) => applySessionDirectoryOverride(session))
+            .filter((session) => sessionDirectoryMatchesRoot(resolveSessionDirectory(session), root))
+          : list.map((session) => applySessionDirectoryOverride(session));
+
+        const overrideIds = root
+          ? Object.entries(sessionDirectoryOverrideById())
+            .filter(([, directory]) => normalizeDirectoryPath(directory) === root)
+            .map(([sessionID]) => sessionID)
+          : [];
+        const merged = new Map(filtered.map((session) => [session.id, session] as const));
+        for (const sessionID of overrideIds) {
+          if (merged.has(sessionID)) continue;
+          try {
+            const fetched = applySessionDirectoryOverride(
+              unwrap(await c.session.get({ sessionID })),
+            );
+            merged.set(sessionID, fetched);
+          } catch {
+            // ignore stale local overrides
+          }
         }
+
+        return {
+          rawCount: list.length,
+          sessions: Array.from(merged.values()),
+        };
+      };
+
+      let fetchLimit = requestLimit;
+      let rawCount = 0;
+      let visibleSessions: Session[] = [];
+      for (let pass = 0; pass < 4; pass += 1) {
+        const result = await listWorkspaceSessions(fetchLimit);
+        if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
+        rawCount = result.rawCount;
+
+        const hydrated = await hydrateSidebarSessionAncestors(
+          result.sessions,
+          async (sessionId) => applySessionDirectoryOverride(
+            unwrap(await c.session.get({ sessionID: sessionId })),
+          ),
+        );
+        if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
+
+        const sorted = sortSessionsByActivity(hydrated);
+        const { visible, utility } = partitionVesloUtilitySessions(sorted);
+        visibleSessions = visible;
+        if (utility.length === 0) break;
+
+        await cleanupVesloUtilitySessions(c, utility);
+        if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
+        fetchLimit += utility.length;
       }
 
-      const hydrated = await hydrateSidebarSessionAncestors(
-        Array.from(merged.values()),
-        async (sessionId) => applySessionDirectoryOverride(
-          unwrap(await c.session.get({ sessionID: sessionId })),
-        ),
-      );
-      const sorted = sortSessionsByActivity(hydrated);
-      const visible = expandSidebarSessionSliceWithAncestors(sorted, requestLimit);
+      const visible = expandSidebarSessionSliceWithAncestors(visibleSessions, requestLimit);
       const items: SidebarSessionItem[] = visible.map((session) => ({
         id: session.id,
         title: session.title,
@@ -2925,7 +2957,7 @@ export default function App() {
       }));
       setSidebarSessionHasMoreByWorkspaceId((prev) => ({
         ...prev,
-        [id]: deriveSidebarHasMore(list.length, requestLimit),
+        [id]: deriveSidebarHasMore(rawCount, requestLimit),
       }));
       setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" }));
     } catch (error) {
@@ -3097,8 +3129,9 @@ export default function App() {
         return;
       }
       const sorted = sortSessionsByActivity(scopedSessions);
+      const { visible: visibleSessions } = partitionVesloUtilitySessions(sorted);
       const requestLimit = sidebarSessionLimitByWorkspaceId()[wsId] ?? initialSidebarSessionLimit();
-      const visibleRows = expandSidebarSessionSliceWithAncestors(sorted, requestLimit);
+      const visibleRows = expandSidebarSessionSliceWithAncestors(visibleSessions, requestLimit);
       setSidebarSessionsByWorkspaceId((prev) => ({
         ...prev,
         [wsId]: visibleRows.map((s) => ({
@@ -3112,7 +3145,7 @@ export default function App() {
       }));
       setSidebarSessionHasMoreByWorkspaceId((prev) => ({
         ...prev,
-        [wsId]: deriveSidebarHasMore(sorted.length, requestLimit),
+        [wsId]: deriveSidebarHasMore(visibleSessions.length, requestLimit),
       }));
     }
   });
@@ -3453,66 +3486,6 @@ export default function App() {
     }
   };
 
-  const buildSubagentRoleClassifierPrompt = (input: {
-    locale: SubagentLocale;
-    sessionTitle: string;
-    parentSessionTitle: string;
-  }) => {
-    const language = input.locale === "cs" ? "Czech" : "English";
-    return [
-      "Return ONLY one JSON object with keys role_key, role_label, first_name.",
-      "No markdown, no explanation.",
-      `Language for role_label and first_name: ${language}.`,
-      "Prefer stable role keys from this set when relevant:",
-      "web-research, spreadsheet-processing, document-editing, slides-processing, coding, data-analysis, general-assistant",
-      "role_key must be lowercase kebab-case ASCII.",
-      "",
-      `Subagent session title: ${input.sessionTitle || "(empty)"}`,
-      `Parent session title: ${input.parentSessionTitle || "(empty)"}`,
-    ].join("\n");
-  };
-
-  const runAiSubagentRoleClassifier = async (input: {
-    locale: SubagentLocale;
-    prompt: string;
-  }) => {
-    const c = client();
-    if (!c) throw new Error("Client is not connected.");
-
-    const created = unwrap(
-      await c.session.create({
-        title: "[Veslo] Subagent role classifier",
-      }),
-    );
-    const sessionID = created.id;
-
-    try {
-      const model = defaultModel();
-      const response = unwrap(
-        await c.session.prompt({
-          sessionID,
-          model: model ? { providerID: model.providerID, modelID: model.modelID } : undefined,
-          parts: [{ type: "text", text: input.prompt } as TextPartInput],
-        }),
-      );
-      const textPart = response.parts.find((part) =>
-        part.type === "text" && typeof (part as { text?: unknown }).text === "string",
-      ) as (Part & { text?: string }) | undefined;
-      return textPart?.text?.trim() ?? "";
-    } finally {
-      try {
-        await c.session.abort({ sessionID });
-      } catch {
-        // ignore
-      }
-      try {
-        await c.session.delete({ sessionID });
-      } catch {
-        // ignore
-      }
-    }
-  };
-
   const buildSubagentRoleEntry = (input: {
     locale: SubagentLocale;
     roleKey: string;
@@ -3550,52 +3523,18 @@ export default function App() {
 
   const ensureSubagentDecorationForSession = async (candidate: SidebarSubagentCandidate) => {
     const locale = toSubagentLocale(currentLocale());
-    const classificationPrompt = buildSubagentRoleClassifierPrompt({
-      locale,
-      sessionTitle: candidate.sessionTitle,
-      parentSessionTitle: candidate.parentSessionTitle,
-    });
     const deterministic = classifySubagentRoleDeterministic({
       locale,
       prompt: `${candidate.sessionTitle}\n${candidate.parentSessionTitle}`,
     });
 
-    let resolvedRoleKey = deterministic.roleKey;
-    let resolvedRoleLabel = deterministic.roleLabel;
-    let resolvedFirstName = deterministic.firstName;
-    try {
-      const resolved = await resolveSubagentRole(
-        {
-          locale,
-          prompt: classificationPrompt,
-          fallbackPrompt: `${candidate.sessionTitle}\n${candidate.parentSessionTitle}`,
-          timeoutMs: 3_000,
-        },
-        {
-          runAiClassifier: runAiSubagentRoleClassifier,
-          classifyDeterministic: ({ locale: nextLocale, prompt }) =>
-            classifySubagentRoleDeterministic({
-              locale: nextLocale,
-              prompt,
-            }),
-        },
-      );
-      resolvedRoleKey = resolved.roleKey;
-      resolvedRoleLabel = resolved.roleLabel;
-      resolvedFirstName = resolved.firstName;
-    } catch {
-      resolvedRoleKey = deterministic.roleKey;
-      resolvedRoleLabel = deterministic.roleLabel;
-      resolvedFirstName = deterministic.firstName;
-    }
-
-    const roleKey = normalizeSubagentRoleKey(resolvedRoleKey) ?? deterministic.roleKey;
+    const roleKey = normalizeSubagentRoleKey(deterministic.roleKey) ?? deterministic.roleKey;
     const roleProfile = roleProfileFromRoleKey(roleKey, locale);
     const roleLabel =
-      resolvedRoleLabel?.trim() ||
+      deterministic.roleLabel?.trim() ||
       roleProfile?.roleLabel ||
       deterministic.roleLabel;
-    const aiFirstName = resolvedFirstName?.trim() || deterministic.firstName;
+    const aiFirstName = deterministic.firstName;
 
     setSubagentDecorationsState((current) => {
       if (current.sessions.some((entry) => entry.sessionId === candidate.sessionId)) {

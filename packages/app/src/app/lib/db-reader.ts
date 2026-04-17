@@ -9,6 +9,7 @@ type DbSessionRow = {
   id: string;
   title: string;
   directory: string;
+  parentId?: string | null;
   timeCreated: number;
   timeUpdated: number;
 };
@@ -43,6 +44,7 @@ export function dbSessionRowToSidebarItem(row: DbSessionRow): SidebarSessionItem
     id: row.id,
     title: row.title,
     directory: row.directory,
+    parentID: row.parentId ?? null,
     time: {
       created: row.timeCreated,
       updated: row.timeUpdated,
