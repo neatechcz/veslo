@@ -39,10 +39,28 @@ function createCredential() {
   }
 }
 
+function createCodexCredential() {
+  return {
+    id: "cred_platform_codex_1",
+    name: "Shared Codex runtime",
+    provider: "codex_oauth",
+    type: "oauth",
+    state: "healthy",
+    scope: "platform:codex_oauth",
+    activeLeases: 0,
+    alertCount: 0,
+    lastRefreshAt: "2026-04-10T14:00:00.000Z",
+    lastFailureAt: null,
+    totalTokens: 0,
+    nextRotationAt: null,
+    linkedAlertIds: [],
+  }
+}
+
 test("POST /admin/api/credentials creates a platform credential", async () => {
   const session = createSession()
   const calls = {
-    secrets: [] as Array<{ kind: string; apiKey: string }>,
+    secrets: [] as Array<{ kind: string; apiKey?: string; authJson?: string }>,
     credentials: [] as Array<{
       ownerUserId: string
       provider: string
@@ -156,6 +174,138 @@ test("POST /admin/api/credentials creates a platform credential", async () => {
         entityId: "cred_platform_openai_1",
         result: "ok",
         summary: "Created openai credential cred_platform_openai_1.",
+      },
+    ])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("POST /admin/api/credentials creates a shared codex_oauth credential", async () => {
+  const session = createSession()
+  const codexAuthJson = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      access_token: "codex-access-token",
+      refresh_token: "codex-refresh-token",
+    },
+  })
+  const calls = {
+    secrets: [] as Array<{ kind: string; apiKey?: string; authJson?: string }>,
+    credentials: [] as Array<{
+      ownerUserId: string
+      provider: string
+      credentialType: "api_key" | "oauth"
+      secretRef: string
+      name: string
+    }>,
+    audit: [] as Array<{
+      actorUserId?: string | null
+      action: string
+      entityType: string
+      entityId: string
+      result: "ok" | "warning" | "error"
+      summary?: string | null
+    }>,
+  }
+  const app = express()
+  app.use(express.json())
+  app.use(
+    "/admin/api",
+    createAdminRouter({
+      async getSessionSnapshot() {
+        return session
+      },
+      ...createManagedAiAdminRouteDeps({
+        async getAdminSession() {
+          return session
+        },
+        aiAccess: {} as any,
+        alerts: {
+          async listAlerts() {
+            return []
+          },
+        },
+        audit: {
+          async recordEvent(input) {
+            calls.audit.push(input)
+          },
+          async listEvents() {
+            return []
+          },
+        },
+        credentials: {
+          async listAdminCredentials() {
+            return [createCodexCredential()]
+          },
+          async createPlatformCredential(input) {
+            calls.credentials.push(input)
+            return {
+              id: "cred_platform_codex_1",
+              ownerUserId: input.ownerUserId,
+              provider: input.provider,
+              credentialType: input.credentialType,
+              state: "healthy",
+              secretRef: input.secretRef,
+              name: input.name,
+              createdAt: new Date("2026-04-10T14:00:00.000Z"),
+              updatedAt: new Date("2026-04-10T14:00:00.000Z"),
+              lastFailureAt: null,
+            }
+          },
+        } as any,
+        leases: {} as any,
+        secrets: {
+          async put(secret) {
+            calls.secrets.push(secret)
+            return { secretRef: "secret_codex_1" }
+          },
+        } as any,
+        usage: {} as any,
+      }),
+    }),
+  )
+
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/credentials`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        provider: "codex_oauth",
+        name: "Shared Codex runtime",
+        secret: codexAuthJson,
+      }),
+    })
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), {
+      credential: createCodexCredential(),
+    })
+    assert.deepEqual(calls.secrets, [{ kind: "codex_auth_json", authJson: codexAuthJson }])
+    assert.deepEqual(calls.credentials, [
+      {
+        ownerUserId: "platform:codex_oauth",
+        provider: "codex_oauth",
+        credentialType: "oauth",
+        secretRef: "secret_codex_1",
+        name: "Shared Codex runtime",
+      },
+    ])
+    assert.deepEqual(calls.audit, [
+      {
+        actorUserId: "admin@example.test",
+        action: "credential.create",
+        entityType: "credential",
+        entityId: "cred_platform_codex_1",
+        result: "ok",
+        summary: "Created codex_oauth credential cred_platform_codex_1.",
       },
     ])
   } finally {

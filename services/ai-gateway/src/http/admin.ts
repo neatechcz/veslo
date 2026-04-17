@@ -15,13 +15,13 @@ import { getPlatformCredentialOwnerUserId } from "../credentials/platform-owner.
 import { MySqlCredentialRepository } from "../credentials/mysql-repository.js";
 import { MySqlSecretStore } from "../credentials/mysql-secret-store.js";
 import type { AdminCredentialRecord, CreatePlatformCredentialInput, CredentialRecord as GatewayCredentialRecord } from "../credentials/repository.js";
-import type { SecretStore } from "../credentials/secret-store.js";
+import type { SecretStore, StoredSecret } from "../credentials/secret-store.js";
 import type { AiGatewayDb } from "../db/index.js";
 import { createDb } from "../db/index.js";
 import { credentialBindingTable, credentialHealthEventTable, credentialRecordTable, credentialUsageEventTable, sessionLeaseTable, type CredentialState } from "../db/schema.js";
 import { env } from "../env.js";
 import type { AdminSessionRecord, LeaseProvider } from "../leases/repository.js";
-import { isAiGatewayProvider, isApiKeyCredentialProvider } from "../providers/ids.js";
+import { isAiGatewayProvider } from "../providers/ids.js";
 import { MySqlUsageRepository } from "../usage/mysql-repository.js";
 import type { AggregateUsageInput, UsageAggregateResponse, UsageGroupBy as RepositoryUsageGroupBy, UsageRepository } from "../usage/repository.js";
 
@@ -814,15 +814,12 @@ export function createDefaultAdminService(
     },
     async createCredential(_token, input, actorUserId) {
       const validated = validateCreateCredentialInput(input);
-      const stored = await getSecretStore().put({
-        kind: "api_key",
-        apiKey: validated.secret,
-      });
+      const stored = await getSecretStore().put(validated.storedSecret);
       const created = await getCredentialWriteRepository().createPlatformCredential({
         ownerUserId: getPlatformCredentialOwnerUserId(validated.provider),
         name: validated.name,
         provider: validated.provider,
-        credentialType: "api_key",
+        credentialType: validated.credentialType,
         secretRef: stored.secretRef,
       });
       await recordAuditEvent({
@@ -932,7 +929,8 @@ export function createDefaultAdminService(
 function validateCreateCredentialInput(input: CreateCredentialInput): {
   provider: LeaseProvider;
   name: string;
-  secret: string;
+  credentialType: "api_key" | "oauth";
+  storedSecret: StoredSecret;
 } {
   const provider = parseCredentialProvider(input.provider);
   const name = typeof input.name === "string" ? input.name.trim() : "";
@@ -949,7 +947,16 @@ function validateCreateCredentialInput(input: CreateCredentialInput): {
   return {
     provider,
     name: name || `${formatProviderLabel(provider)} credential`,
-    secret,
+    credentialType: provider === "codex_oauth" ? "oauth" : "api_key",
+    storedSecret: provider === "codex_oauth"
+      ? {
+          kind: "codex_auth_json",
+          authJson: validateCodexAuthJson(secret),
+        }
+      : {
+          kind: "api_key",
+          apiKey: secret,
+        },
   };
 }
 
@@ -1009,6 +1016,19 @@ function normalizeAllowedModels(value: unknown): string[] {
   }
 
   return Array.from(unique);
+}
+
+function validateCodexAuthJson(secret: string): string {
+  try {
+    const parsed = JSON.parse(secret);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("codex_auth_json_invalid");
+    }
+  } catch {
+    throw new HttpError("invalid_credential_secret", 400);
+  }
+
+  return secret;
 }
 
 function toAdminCredentialRecord(record: GatewayCredentialRecord): CredentialRecord {
@@ -1497,5 +1517,5 @@ export function createAdminRouter(adminService: AdminService) {
 }
 
 function parseCredentialProvider(value: unknown): LeaseProvider | null {
-  return isApiKeyCredentialProvider(value) ? value : null;
+  return isAiGatewayProvider(value) ? value : null;
 }

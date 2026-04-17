@@ -50,6 +50,10 @@ const els = {
   pages: Array.from(document.querySelectorAll("[data-page]")),
   credentialOpenAiConnect: document.getElementById("credential-openai-connect"),
   credentialOpenAiStatus: document.getElementById("credential-openai-status"),
+  credentialCodexName: document.getElementById("credential-codex-name"),
+  credentialCodexSecret: document.getElementById("credential-codex-secret"),
+  credentialCodexSubmit: document.getElementById("credential-codex-submit"),
+  credentialCodexStatus: document.getElementById("credential-codex-status"),
   credentialAnthropicName: document.getElementById("credential-anthropic-name"),
   credentialAnthropicSecret: document.getElementById("credential-anthropic-secret"),
   credentialAnthropicSubmit: document.getElementById("credential-anthropic-submit"),
@@ -800,6 +804,17 @@ function renderOverview() {
 }
 
 function renderCredentials() {
+  const codexCredential = state.credentials.find((entry) => entry.provider === "codex_oauth");
+  if (codexCredential) {
+    const tone = codexCredential.state === "healthy" ? "success" : codexCredential.state === "revoked" ? "error" : "pending";
+    setCodexCredentialStatus(
+      `Primary routing credential connected as ${codexCredential.name} (${codexCredential.state}).`,
+      tone,
+    );
+  } else {
+    setCodexCredentialStatus("Primary routing credential for the server-side Codex worker.");
+  }
+
   const openAiCredential = state.credentials.find((entry) => entry.provider === "openai" && entry.type === "oauth");
   if (openAiCredential) {
     const tone = openAiCredential.state === "healthy" ? "success" : openAiCredential.state === "revoked" ? "error" : "pending";
@@ -1141,6 +1156,15 @@ function setOpenAiCredentialStatus(message, tone = "neutral") {
   els.credentialOpenAiStatus.dataset.tone = tone;
 }
 
+function setCodexCredentialStatus(message, tone = "neutral") {
+  els.credentialCodexStatus.textContent = message;
+  if (tone === "neutral") {
+    delete els.credentialCodexStatus.dataset.tone;
+    return;
+  }
+  els.credentialCodexStatus.dataset.tone = tone;
+}
+
 function setUserSaveStatus(message, tone = "neutral") {
   els.userSaveStatus.textContent = message;
   if (tone === "neutral") {
@@ -1153,6 +1177,47 @@ function setUserSaveStatus(message, tone = "neutral") {
 function resetAnthropicCredentialForm() {
   els.credentialAnthropicName.value = "";
   els.credentialAnthropicSecret.value = "";
+}
+
+function resetCodexCredentialForm() {
+  els.credentialCodexName.value = "";
+  els.credentialCodexSecret.value = "";
+}
+
+async function createCodexCredential() {
+  const name = els.credentialCodexName.value.trim();
+  const secret = els.credentialCodexSecret.value.trim();
+
+  if (!secret) {
+    setCodexCredentialStatus("Codex runtime auth JSON is required.", "error");
+    return;
+  }
+
+  els.credentialCodexSubmit.disabled = true;
+  setCodexCredentialStatus("Saving Codex runtime credential", "pending");
+
+  try {
+    const requestBody = { provider: "codex_oauth", secret };
+    if (name) {
+      requestBody.name = name;
+    }
+
+    const payload = await fetchJson("/credentials", {
+      method: "POST",
+      body: JSON.stringify(requestBody),
+    });
+    state.selectedCredentialId = payload?.credential?.id || state.selectedCredentialId;
+    resetCodexCredentialForm();
+    setCodexCredentialStatus("Codex runtime credential saved to the platform pool.", "success");
+    await refreshCredentialOperations();
+  } catch (error) {
+    setCodexCredentialStatus(
+      `Unable to save Codex runtime credential: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
+  } finally {
+    els.credentialCodexSubmit.disabled = false;
+  }
 }
 
 async function createAnthropicCredential() {
@@ -1469,6 +1534,7 @@ function bindActions() {
   els.createUserButton.addEventListener("click", enterCreateMode);
   els.createUserButtonInline.addEventListener("click", enterCreateMode);
   els.credentialOpenAiConnect.addEventListener("click", () => void connectOpenAiCredential());
+  els.credentialCodexSubmit.addEventListener("click", () => void createCodexCredential());
   els.credentialAnthropicSubmit.addEventListener("click", () => void createAnthropicCredential());
   els.userSaveButton.addEventListener("click", () => void saveUser());
   els.userDisableButton.addEventListener("click", () => void toggleUserDisabled());

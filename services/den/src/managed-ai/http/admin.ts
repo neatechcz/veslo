@@ -20,11 +20,10 @@ import type { AuditRepository } from "../audit/repository.js"
 import type { OpenAiOAuthClient } from "../credentials/openai-oauth.js"
 import { getPlatformCredentialOwnerUserId } from "../credentials/platform-owner.js"
 import type { CredentialRepository, CredentialRecord } from "../credentials/repository.js"
-import type { SecretStore } from "../credentials/secret-store.js"
+import type { SecretStore, StoredSecret } from "../credentials/secret-store.js"
 import type { LeaseProvider, LeaseRepository } from "../leases/repository.js"
 import {
   formatManagedAiProviderLabel,
-  isApiKeyCredentialProvider,
   isManagedAiProvider,
 } from "../providers/ids.js"
 import type { UsageRepository } from "../usage/repository.js"
@@ -244,15 +243,12 @@ export function createManagedAiAdminRouteDeps(
           throw new HttpError("credential_write_unavailable", 503)
         }
 
-        const stored = await deps.secrets.put({
-          kind: "api_key",
-          apiKey: validated.secret,
-        })
+        const stored = await deps.secrets.put(validated.storedSecret)
         const created = await createPlatformCredential.call(deps.credentials, {
           ownerUserId: getPlatformCredentialOwnerUserId(validated.provider),
           name: validated.name,
           provider: validated.provider,
-          credentialType: "api_key",
+          credentialType: validated.credentialType,
           secretRef: stored.secretRef,
         })
 
@@ -672,7 +668,8 @@ function getAdminActorUserId(session: AdminSessionSnapshot) {
 function validateCreateCredentialInput(input: CreateCredentialInput): {
   provider: LeaseProvider
   name: string
-  secret: string
+  credentialType: "api_key" | "oauth"
+  storedSecret: StoredSecret
 } {
   const provider = parseCredentialProvider(input.provider)
   const name = typeof input.name === "string" ? input.name.trim() : ""
@@ -689,7 +686,16 @@ function validateCreateCredentialInput(input: CreateCredentialInput): {
   return {
     provider,
     name: name || `${formatProviderLabel(provider)} credential`,
-    secret,
+    credentialType: provider === "codex_oauth" ? "oauth" : "api_key",
+    storedSecret: provider === "codex_oauth"
+      ? {
+          kind: "codex_auth_json",
+          authJson: validateCodexAuthJson(secret),
+        }
+      : {
+          kind: "api_key",
+          apiKey: secret,
+        },
   }
 }
 
@@ -730,7 +736,7 @@ function validateUserAiAccessInput(input: UpdateUserAiAccessInput & { userId: st
 }
 
 function parseCredentialProvider(value: unknown): LeaseProvider | null {
-  return isApiKeyCredentialProvider(value) ? value : null
+  return isManagedAiProvider(value) ? value : null
 }
 
 function parseAiAccessProvider(value: unknown): AiAccessProvider | null {
@@ -755,6 +761,19 @@ function normalizeAllowedModels(value: unknown): string[] {
   }
 
   return Array.from(unique)
+}
+
+function validateCodexAuthJson(secret: string): string {
+  try {
+    const parsed = JSON.parse(secret)
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("codex_auth_json_invalid")
+    }
+  } catch {
+    throw new HttpError("invalid_credential_secret", 400)
+  }
+
+  return secret
 }
 
 function normalizeGroupBy(value: unknown): AdminUsageResponse["groupBy"] {

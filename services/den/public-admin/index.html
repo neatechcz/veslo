@@ -135,6 +135,24 @@
               <p class="editor-note">Server-side Codex worker profile routes Veslo prompts through DEN. Provision the worker with <code>MANAGED_AI_CODEX_HOME</code> and validate it with the Codex probe.</p>
               <div class="stack">
                 <div class="detail-card">
+                  <p class="eyebrow">Shared Codex runtime credential</p>
+                  <h4>Server-side Codex worker profile</h4>
+                  <div class="credential-create-grid">
+                    <label>
+                      <span>Display name</span>
+                      <input class="input" id="credential-codex-name" type="text" placeholder="Shared Codex runtime" />
+                    </label>
+                  </div>
+                  <label class="credential-create-secret-field">
+                    <span>Auth JSON</span>
+                    <textarea class="input ai-access-textarea" id="credential-codex-secret" placeholder="Paste the Codex auth JSON copied from the runtime host."></textarea>
+                  </label>
+                  <div class="button-row">
+                    <button class="button button-primary" id="credential-codex-submit" type="button">Save Codex runtime credential</button>
+                    <p class="editor-note credential-create-status" id="credential-codex-status">Primary routing credential for the server-side Codex worker.</p>
+                  </div>
+                </div>
+                <div class="detail-card">
                   <p class="eyebrow">Legacy OpenAI fallback</p>
                   <h4>Provider OAuth fallback</h4>
                   <p class="editor-note" id="credential-openai-status">Fallback only: connect platform OpenAI OAuth if Codex worker routing is disabled.</p>

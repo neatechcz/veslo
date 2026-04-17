@@ -138,6 +138,7 @@
                   <select class="input" id="credential-create-provider">
                     <option value="openai">OpenAI</option>
                     <option value="anthropic">Anthropic</option>
+                    <option value="codex_oauth">Codex / ChatGPT runtime</option>
                   </select>
                 </label>
                 <label>
@@ -146,12 +147,12 @@
                 </label>
               </div>
               <label class="credential-create-secret-field">
-                <span>API secret</span>
-                <textarea class="input ai-access-textarea" id="credential-create-secret" placeholder="Paste the provider API key or token."></textarea>
+                <span>Credential secret</span>
+                <textarea class="input ai-access-textarea" id="credential-create-secret" placeholder="Paste the provider API key or Codex auth JSON."></textarea>
               </label>
               <div class="button-row">
                 <button class="button button-primary" id="credential-create-submit" type="button">Create credential</button>
-                <p class="editor-note credential-create-status" id="credential-create-status">Secrets are stored encrypted and assigned to the provider platform pool.</p>
+                <p class="editor-note credential-create-status" id="credential-create-status">Secrets are stored encrypted and assigned to the provider platform pool. Paste the provider API key or Codex auth JSON.</p>
               </div>
             </div>
             <div class="split-layout credentials-layout">

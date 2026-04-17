@@ -50,6 +50,10 @@ export class DefaultTokenBroker implements TokenBroker {
       }
     }
 
+    if (secret.kind === "codex_auth_json") {
+      throw new Error("codex_auth_json_not_supported_by_token_broker")
+    }
+
     if (!isExpired(secret.expiresAt, this.now())) {
       return {
         kind: "oauth",

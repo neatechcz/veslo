@@ -26,6 +26,8 @@ test("GET /admin/credentials serves the admin shell with an admin-only platform 
     assert.match(html, /id="credential-create-secret"/)
     assert.match(html, /id="credential-create-submit"/)
     assert.match(html, /Codex \/ ChatGPT runtime profile/)
+    assert.match(html, /<option value="codex_oauth">Codex \/ ChatGPT runtime<\/option>/)
+    assert.match(html, /Paste the provider API key or Codex auth JSON\./)
   } finally {
     server.close()
     await once(server, "close")
@@ -198,6 +200,7 @@ test("GET /admin/app.js creates platform credentials from the Credentials page",
     assert.match(script, /credential-create-secret/)
     assert.match(script, /credential-create-submit/)
     assert.match(script, /await fetchJson\("\/credentials", \{\s*method: "POST"/)
+    assert.match(script, /Credential created and attached to the platform pool\./)
   } finally {
     server.close()
     await once(server, "close")

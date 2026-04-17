@@ -25,7 +25,7 @@ function createSession(): AdminSessionSnapshot {
 
 function createAdminCredentialCreateApp() {
   const calls = {
-    secrets: [] as Array<{ kind: string; apiKey: string }>,
+    secrets: [] as Array<{ kind: string; apiKey?: string; authJson?: string }>,
     credentials: [] as Array<{
       ownerUserId: string;
       provider: string;
@@ -195,6 +195,67 @@ test("POST /admin/api/credentials creates a platform OpenAI credential", async (
         credentialType: "api_key",
         secretRef: "secret_admin_1",
         name: "Shared OpenAI key",
+      },
+    ]);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("POST /admin/api/credentials creates a shared codex_oauth credential", async () => {
+  const runtime = createAdminCredentialCreateApp();
+  const codexAuthJson = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      access_token: "codex-access-token",
+      refresh_token: "codex-refresh-token",
+    },
+  });
+  const server = runtime.app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/credentials`, {
+      method: "POST",
+      headers: {
+        ...AUTHORIZATION,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        provider: "codex_oauth",
+        name: "Shared Codex runtime",
+        secret: codexAuthJson,
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      credential: {
+        id: "cred_platform_openai_1",
+        name: "Shared Codex runtime",
+        provider: "codex_oauth",
+        type: "oauth",
+        state: "healthy",
+        scope: getPlatformCredentialOwnerUserId("codex_oauth"),
+        activeLeases: 0,
+        alertCount: 0,
+        lastRefreshAt: "2026-04-08T14:00:00.000Z",
+        lastFailureAt: null,
+        totalTokens: 0,
+        nextRotationAt: null,
+        linkedAlertIds: [],
+      },
+    });
+    assert.deepEqual(runtime.calls.secrets, [{ kind: "codex_auth_json", authJson: codexAuthJson }]);
+    assert.deepEqual(runtime.calls.credentials, [
+      {
+        ownerUserId: getPlatformCredentialOwnerUserId("codex_oauth"),
+        provider: "codex_oauth",
+        credentialType: "oauth",
+        secretRef: "secret_admin_1",
+        name: "Shared Codex runtime",
       },
     ]);
   } finally {
