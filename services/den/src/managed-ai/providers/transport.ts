@@ -12,6 +12,7 @@ export type MessagesTransportInput = {
 
 export type CodexChatCompletionsTransportInput = {
   body: unknown
+  authJson?: string | null
 }
 
 export type ProviderTransportResponse = {

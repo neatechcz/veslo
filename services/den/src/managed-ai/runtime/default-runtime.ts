@@ -97,6 +97,7 @@ export function createDefaultProxyDependencies(
     aiAccess: runtime.aiAccess,
     gatewaySessions: overrides.gatewaySessions ?? new DenGatewaySessionResolver(),
     credentials: runtime.credentials,
+    secrets: runtime.secrets,
     usageRepository: runtime.usage,
     leaseBroker: new LeaseBroker(
       runtime.leases,

@@ -13,7 +13,7 @@ import { applyAiAccessPolicy } from "./access-policy.js"
 import type { ProxyDependencies } from "../proxy.js"
 
 export function createCodexOAuthProxyRouter(
-  deps: Pick<ProxyDependencies, "credentials" | "usageRepository" | "leaseBroker" | "codexOAuthTransport">,
+  deps: Pick<ProxyDependencies, "credentials" | "secrets" | "usageRepository" | "leaseBroker" | "codexOAuthTransport">,
 ) {
   const router = Router()
 
@@ -51,6 +51,14 @@ export function createCodexOAuthProxyRouter(
       return
     }
 
+    const assignedAuthJson = assignedBinding
+      ? await loadAssignedAuthJson(assignedBinding.id)
+      : null
+    if (assignedBinding && !assignedAuthJson) {
+      res.status(503).json({ error: "assigned_credential_unavailable" })
+      return
+    }
+
     const scope: ResolveLeaseInput = {
       ownerUserId: gatewaySession.user.id,
       bindingOwnerUserId: assignedBinding?.ownerUserId ?? getPlatformCredentialOwnerUserId("codex_oauth"),
@@ -60,7 +68,7 @@ export function createCodexOAuthProxyRouter(
     }
 
     try {
-      const upstreamResponse = await executeRequest(scope, policyResult.body)
+      const upstreamResponse = await executeRequest(scope, policyResult.body, assignedAuthJson)
       applyUpstreamResponse(res, upstreamResponse)
     } catch (error) {
       if (error instanceof ProviderTransportError && error.statusCode && error.statusCode < 500) {
@@ -78,16 +86,18 @@ export function createCodexOAuthProxyRouter(
   async function executeRequest(
     scope: ResolveLeaseInput,
     body: unknown,
+    authJson: string | null,
   ): Promise<ProviderTransportResponse> {
     const lease = await deps.leaseBroker.getOrCreateActiveLease(scope)
-    return executeLeaseRequest(lease, body)
+    return executeLeaseRequest(lease, body, authJson)
   }
 
   async function executeLeaseRequest(
     lease: SessionLease,
     body: unknown,
+    authJson: string | null,
   ): Promise<ProviderTransportResponse> {
-    const upstreamResponse = await deps.codexOAuthTransport.chatCompletions({ body })
+    const upstreamResponse = await deps.codexOAuthTransport.chatCompletions({ body, authJson })
 
     await recordUsage({
       ownerUserId: lease.ownerUserId,
@@ -147,6 +157,20 @@ export function createCodexOAuthProxyRouter(
 
     const binding = await lookup.call(deps.credentials, credentialId)
     return binding?.provider === "codex_oauth" ? binding : null
+  }
+
+  async function loadAssignedAuthJson(bindingId: string): Promise<string | null> {
+    try {
+      const credential = await deps.credentials.getCredentialRecordByBindingId?.(bindingId)
+      if (!credential) {
+        return null
+      }
+
+      const secret = await deps.secrets.get(credential.secretRef)
+      return secret.kind === "codex_auth_json" ? secret.authJson : null
+    } catch {
+      return null
+    }
   }
 }
 

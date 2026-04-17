@@ -232,6 +232,24 @@ function createCodexCredentialRepository() {
   };
 }
 
+function createCodexSecrets(secretAuthJson = JSON.stringify({
+  auth_mode: "chatgpt",
+  tokens: {
+    refresh_token: "proxy-refresh-token",
+    account_id: "acct_proxy",
+  },
+})) {
+  return {
+    async get(secretRef: string) {
+      assert.match(secretRef, /^secret_binding_codex_/);
+      return {
+        kind: "codex_auth_json",
+        authJson: secretAuthJson,
+      };
+    },
+  };
+}
+
 test("POST /providers/openai/v1/chat/completions forwards with sticky openai lease", async () => {
   const leases = new InMemoryLeaseRepository();
   const selectorCalls = { initial: 0, replacement: 0 };
@@ -642,12 +660,21 @@ test("POST /providers/codex_oauth/v1/chat/completions routes through the assigne
   const leaseBroker = new LeaseBroker(leases, new DefaultBindingSelector(createCodexCredentialRepository() as never));
   const recordUsageCalls: Array<Record<string, unknown>> = [];
   const transportBodies: unknown[] = [];
+  const transportAuthJson: Array<string | null | undefined> = [];
+  const secretAuthJson = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      refresh_token: "proxy-refresh-token",
+      account_id: "acct_proxy",
+    },
+  });
 
   const app = createApp({
     proxy: {
       aiAccess: createCodexAiAccess(),
       gatewaySessions: createGatewaySessions(),
       credentials: createCodexCredentialRepository() as never,
+      secrets: createCodexSecrets(secretAuthJson) as never,
       usageRepository: {
         async recordUsage(input: Record<string, unknown>) {
           recordUsageCalls.push(input);
@@ -670,8 +697,9 @@ test("POST /providers/codex_oauth/v1/chat/completions routes through the assigne
         },
       },
       codexOAuthTransport: {
-        async chatCompletions(input: { body: unknown }) {
+        async chatCompletions(input: { body: unknown; authJson?: string | null }) {
           transportBodies.push(input.body);
+          transportAuthJson.push(input.authJson);
           return {
             status: 200,
             headers: {
@@ -722,6 +750,7 @@ test("POST /providers/codex_oauth/v1/chat/completions routes through the assigne
         messages: [{ role: "user", content: "hello" }],
       },
     ]);
+    assert.deepEqual(transportAuthJson, [secretAuthJson]);
     assert.deepEqual(recordUsageCalls, [
       {
         requestId: "codex_req_assigned_1",
@@ -760,6 +789,11 @@ test("POST /providers/codex_oauth/v1/chat/completions fails when the assigned cr
           return null;
         },
         async markCredentialState() {},
+      } as never,
+      secrets: {
+        async get() {
+          assert.fail("secret store should not run when the assigned credential is unavailable");
+        },
       } as never,
       usageRepository: createNoopUsageRepository(),
       leaseBroker: {

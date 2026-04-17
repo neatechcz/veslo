@@ -152,6 +152,14 @@ function createAiAccess(): UserAiAccessPolicyRecord {
 test("codex_oauth proxy forwards through the worker transport with a sticky lease", async () => {
   const recordUsageCalls: RecordUsageInput[] = []
   const transportBodies: unknown[] = []
+  const transportAuthJson: Array<string | null | undefined> = []
+  const secretAuthJson = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      refresh_token: "proxy-refresh-token",
+      account_id: "acct_proxy",
+    },
+  })
   const credentials = new TestCredentialRepository(
     new Map([
       [
@@ -234,6 +242,15 @@ test("codex_oauth proxy forwards through the worker transport with a sticky leas
         },
       },
       credentials,
+      secrets: {
+        async get(secretRef: string) {
+          assert.match(secretRef, /^secret_codex_/)
+          return {
+            kind: "codex_auth_json",
+            authJson: secretAuthJson,
+          }
+        },
+      },
       usageRepository: {
         async recordUsage(input: RecordUsageInput) {
           recordUsageCalls.push(input)
@@ -256,8 +273,9 @@ test("codex_oauth proxy forwards through the worker transport with a sticky leas
         },
       },
       codexOAuthTransport: {
-        async chatCompletions(input: { body: unknown }) {
+        async chatCompletions(input: { body: unknown; authJson?: string | null }) {
           transportBodies.push(input.body)
+          transportAuthJson.push(input.authJson)
           return {
             status: 200,
             headers: {
@@ -320,6 +338,7 @@ test("codex_oauth proxy forwards through the worker transport with a sticky leas
         messages: [{ role: "user", content: "hello" }],
       },
     ])
+    assert.deepEqual(transportAuthJson, [secretAuthJson])
     assert.deepEqual(recordUsageCalls, [
       {
         requestId: "codex_req_usage_1",
@@ -362,6 +381,11 @@ test("codex_oauth proxy fails when the assigned credential is unavailable", asyn
         },
       },
       credentials: new TestCredentialRepository(new Map()),
+      secrets: {
+        async get() {
+          assert.fail("secret store should not run when the assigned credential is unavailable")
+        },
+      },
       usageRepository: {
         async recordUsage() {
           assert.fail("usage should not be recorded when the assigned credential is unavailable")

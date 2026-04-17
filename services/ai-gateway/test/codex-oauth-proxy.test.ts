@@ -58,6 +58,11 @@ test("codex_oauth proxy forwards through the worker transport with a sticky leas
     sessionId: string
   }> = []
   const transportBodies: unknown[] = []
+  const transportAuthJson: Array<string | null | undefined> = []
+  const secretAuthJson = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: { refresh_token: "proxy-refresh-token" },
+  })
 
   const app = createApp({
     proxy: {
@@ -99,6 +104,15 @@ test("codex_oauth proxy forwards through the worker transport with a sticky leas
         },
         async markCredentialState() {},
       },
+      secrets: {
+        async get(secretRef: string) {
+          assert.equal(secretRef, "secret_codex_1")
+          return {
+            kind: "codex_auth_json",
+            authJson: secretAuthJson,
+          }
+        },
+      },
       usageRepository: {
         async recordUsage(input: RecordUsageInput) {
           recordUsageCalls.push(input)
@@ -135,8 +149,9 @@ test("codex_oauth proxy forwards through the worker transport with a sticky leas
         },
       },
       codexOAuthTransport: {
-        async chatCompletions(input: { body: unknown }) {
+        async chatCompletions(input: { body: unknown; authJson?: string | null }) {
           transportBodies.push(input.body)
+          transportAuthJson.push(input.authJson)
           return {
             status: 200,
             headers: {
@@ -196,6 +211,7 @@ test("codex_oauth proxy forwards through the worker transport with a sticky leas
         messages: [{ role: "user", content: "hello" }],
       },
     ])
+    assert.deepEqual(transportAuthJson, [secretAuthJson])
     assert.deepEqual(recordUsageCalls, [
       {
         requestId: "codex_req_usage_1",

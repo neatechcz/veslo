@@ -47,6 +47,39 @@ test("rejects streaming requests until streaming is implemented", async () => {
   )
 })
 
+test("passes per-request Codex auth JSON to the worker runner", async () => {
+  const requestAuthJson = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      refresh_token: "request-refresh-token",
+      account_id: "acct_request",
+    },
+  })
+  const transport = new CodexCliWorkerTransport({
+    authJson: JSON.stringify({
+      auth_mode: "chatgpt",
+      tokens: {
+        refresh_token: "env-refresh-token",
+        account_id: "acct_env",
+      },
+    }),
+    spawnCodex: async (input) => {
+      assert.equal(input.authJson, requestAuthJson)
+      return { exitCode: 0, signal: null, timedOut: false, finalMessage: "ok", stdout: "", stderr: "" }
+    },
+  })
+
+  const response = await transport.chatCompletions({
+    body: {
+      model: "gpt-5.4",
+      messages: [{ role: "user", content: "Say ok" }],
+    },
+    authJson: requestAuthJson,
+  })
+
+  assert.equal(response.status, 200)
+})
+
 test("materializes Codex auth JSON into the worker CODEX_HOME without logging secrets", async () => {
   const codexHome = await mkdtemp(path.join(tmpdir(), "veslo-codex-home-test-"))
   const authJson = JSON.stringify({

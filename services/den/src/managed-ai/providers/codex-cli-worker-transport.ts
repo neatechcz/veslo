@@ -14,6 +14,7 @@ import {
 export type CodexCliWorkerRunInput = {
   prompt: string
   model: string
+  authJson?: string | null
 }
 
 export type CodexCliWorkerRunResult = {
@@ -78,7 +79,11 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
 
     const model = getString(body, "model") ?? "unknown"
     const prompt = formatPrompt(readMessages(body.messages))
-    const result = await this.spawnCodex({ prompt, model })
+    const authJson =
+      typeof input.authJson === "string" && input.authJson.trim()
+        ? input.authJson.trim()
+        : this.authJson
+    const result = await this.spawnCodex({ prompt, model, authJson })
     if (result.exitCode !== 0 || result.timedOut || !result.finalMessage.trim()) {
       throw new ProviderTransportError("codex_worker_failed", {
         statusCode: 502,
@@ -132,7 +137,7 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
 
     await materializeCodexAuthJson({
       codexHome: this.codexHome,
-      authJson: this.authJson,
+      authJson: typeof input.authJson === "string" ? input.authJson : this.authJson,
     })
 
     const scratchDir = await mkdtemp(path.join(this.workDir, "veslo-codex-worker-"))

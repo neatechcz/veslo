@@ -4,6 +4,7 @@ import type { AiAccessRepository } from "../access/repository.js"
 import { readBearerToken } from "../auth/user-session.js"
 import type { GatewaySessionResolver } from "../auth/gateway-session.js"
 import type { CredentialRepository } from "../credentials/repository.js"
+import type { SecretStore } from "../credentials/secret-store.js"
 import type { TokenBroker } from "../credentials/token-broker.js"
 import type { LeaseBroker } from "../leases/lease-broker.js"
 import type { AnthropicProviderTransport, CodexOAuthProviderTransport, OpenAiProviderTransport } from "../providers/transport.js"
@@ -16,6 +17,7 @@ export type ProxyDependencies = {
   aiAccess?: AiAccessRepository
   gatewaySessions: GatewaySessionResolver
   credentials: CredentialRepository
+  secrets: SecretStore
   usageRepository: UsageRepository
   leaseBroker: LeaseBroker
   tokenBroker: TokenBroker
