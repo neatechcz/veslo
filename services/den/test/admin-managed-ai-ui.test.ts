@@ -134,6 +134,10 @@ test("GET /admin/app.js uses DEN desktop auth and OpenAI OAuth credential routes
     assert.match(script, /credentialId:\s*readAiAccessCredentialValue\(\)/)
     assert.match(
       script,
+      /async function createCodexCredential\(\) \{[\s\S]*await fetchJson\("\/credentials", \{\s*method: "POST"[\s\S]*await refreshSelectedUserAiAccessOptions\(\)/,
+    )
+    assert.match(
+      script,
       /const shouldClearToken = payload\?\.error === "unauthorized" \|\| payload\?\.error === "forbidden"/,
     )
   } finally {

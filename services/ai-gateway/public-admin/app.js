@@ -1116,6 +1116,18 @@ async function refreshCredentialOperations() {
   renderOverview();
 }
 
+async function refreshSelectedUserAiAccessOptions() {
+  if (state.userMode === "create" || !state.selectedUserId) {
+    return;
+  }
+
+  await loadUserAiAccess(state.selectedUserId);
+  const user = currentUser();
+  if (user) {
+    populateUserEditor(user);
+  }
+}
+
 function setCredentialCreateStatus(message, tone = "neutral") {
   els.credentialCreateStatus.textContent = message;
   if (tone === "neutral") {
@@ -1166,6 +1178,7 @@ async function createCredential() {
     resetCredentialCreateForm();
     setCredentialCreateStatus("Credential created and attached to the platform pool.", "success");
     await refreshCredentialOperations();
+    await refreshSelectedUserAiAccessOptions();
   } catch (error) {
     setCredentialCreateStatus(
       `Unable to create credential: ${error instanceof Error ? error.message : "unknown_error"}`,

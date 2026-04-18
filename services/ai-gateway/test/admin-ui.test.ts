@@ -205,6 +205,10 @@ test("GET /admin/app.js creates platform credentials from the Credentials page",
     assert.match(script, /credential-create-submit/)
     assert.match(script, /await fetchJson\("\/credentials", \{\s*method: "POST"/)
     assert.match(script, /Credential created and attached to the platform pool\./)
+    assert.match(
+      script,
+      /async function createCredential\(\) \{[\s\S]*await fetchJson\("\/credentials", \{\s*method: "POST"[\s\S]*await refreshSelectedUserAiAccessOptions\(\)/,
+    )
   } finally {
     server.close()
     await once(server, "close")

@@ -1218,6 +1218,18 @@ async function refreshCredentialOperations() {
   renderOverview();
 }
 
+async function refreshSelectedUserAiAccessOptions() {
+  if (state.userMode === "create" || !state.selectedUserId) {
+    return;
+  }
+
+  await loadUserAiAccess(state.selectedUserId);
+  const user = currentUser();
+  if (user) {
+    populateUserEditor(user);
+  }
+}
+
 function setAnthropicCredentialStatus(message, tone = "neutral") {
   els.credentialAnthropicStatus.textContent = message;
   if (tone === "neutral") {
@@ -1290,6 +1302,7 @@ async function createCodexCredential() {
     resetCodexCredentialForm();
     setCodexCredentialStatus("Codex runtime credential saved to the platform pool.", "success");
     await refreshCredentialOperations();
+    await refreshSelectedUserAiAccessOptions();
   } catch (error) {
     setCodexCredentialStatus(
       `Unable to save Codex runtime credential: ${error instanceof Error ? error.message : "unknown_error"}`,
@@ -1326,6 +1339,7 @@ async function createAnthropicCredential() {
     resetAnthropicCredentialForm();
     setAnthropicCredentialStatus("Anthropic legacy fallback saved to the platform pool.", "success");
     await refreshCredentialOperations();
+    await refreshSelectedUserAiAccessOptions();
   } catch (error) {
     setAnthropicCredentialStatus(
       `Unable to save Anthropic legacy fallback: ${error instanceof Error ? error.message : "unknown_error"}`,
@@ -1391,6 +1405,7 @@ async function completeOpenAiOAuth() {
     showApp();
     setOpenAiCredentialStatus("OpenAI connected to the platform pool.", "success");
     await refreshCredentialOperations();
+    await refreshSelectedUserAiAccessOptions();
   } catch (error) {
     setActivePage("credentials");
     showApp();
