@@ -1237,22 +1237,6 @@ export default function App() {
 
     return Array.from(expanded.values());
   };
-  const cleanupVesloUtilitySessions = async (c: Client, sessions: Session[]) => {
-    for (const session of sessions) {
-      try {
-        await c.session.delete({
-          sessionID: session.id,
-          directory: normalizeDirectoryQueryPath(resolveSessionDirectory(session)) || undefined,
-        });
-      } catch (error) {
-        wsDebug("sidebar:utility-session:delete:error", {
-          sessionID: session.id,
-          message: error instanceof Error ? error.message : safeStringify(error),
-        });
-      }
-    }
-  };
-
   const [sessionsLoaded, setSessionsLoaded] = createSignal(false);
   const loadSessionsWithReady = async (scopeRoot?: string) => {
     await loadSessions(scopeRoot);
@@ -2934,10 +2918,7 @@ export default function App() {
         const sorted = sortSessionsByActivity(hydrated);
         const { visible, utility } = partitionVesloUtilitySessions(sorted);
         visibleSessions = visible;
-        if (utility.length === 0) break;
-
-        await cleanupVesloUtilitySessions(c, utility);
-        if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
+        if (utility.length === 0 || visible.length >= requestLimit) break;
         fetchLimit += utility.length;
       }
 
