@@ -115,6 +115,40 @@ test("passes per-request Codex auth JSON to the worker runner", async () => {
   assert.equal(response.status, 200)
 })
 
+test("includes worker stderr tail when the Codex CLI exits unsuccessfully", async () => {
+  const transport = new CodexCliWorkerTransport({
+    spawnCodex: async () => ({
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      finalMessage: "",
+      stdout: "",
+      stderr: "Error: Please run `codex login`.\nAuthentication required.\n",
+    }),
+  })
+
+  await assert.rejects(
+    () =>
+      transport.chatCompletions({
+        body: {
+          model: "gpt-5.4",
+          messages: [{ role: "user", content: "Say ok." }],
+        },
+      }),
+    (error) => {
+      assert(error instanceof ProviderTransportError)
+      assert.equal(error.message, "codex_worker_failed")
+      assert.deepEqual(error.body, {
+        error: "codex_worker_failed",
+        timedOut: false,
+        exitCode: 1,
+        stderrTail: "Error: Please run `codex login`.\nAuthentication required.",
+      })
+      return true
+    },
+  )
+})
+
 test("materializes Codex auth JSON into the worker CODEX_HOME without logging secrets", async () => {
   const codexHome = await mkdtemp(path.join(tmpdir(), "veslo-ai-gateway-codex-home-test-"))
   const authJson = JSON.stringify({

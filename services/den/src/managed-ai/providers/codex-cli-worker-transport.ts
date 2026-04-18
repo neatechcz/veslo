@@ -85,6 +85,7 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
         : this.authJson
     const result = await this.spawnCodex({ prompt, model, authJson })
     if (result.exitCode !== 0 || result.timedOut || !result.finalMessage.trim()) {
+      const stderrTail = summarizeWorkerStderr(result.stderr)
       throw new ProviderTransportError("codex_worker_failed", {
         statusCode: 502,
         code: result.timedOut ? "codex_worker_timeout" : "codex_worker_failed",
@@ -92,6 +93,7 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
           error: "codex_worker_failed",
           timedOut: result.timedOut,
           exitCode: result.exitCode,
+          ...(stderrTail ? { stderrTail } : {}),
         },
       })
     }
@@ -180,6 +182,23 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
       await rm(scratchDir, { recursive: true, force: true })
     }
   }
+}
+
+function summarizeWorkerStderr(stderr: string): string | null {
+  const trimmed = stderr.trim()
+  if (!trimmed) {
+    return null
+  }
+
+  const lines = trimmed
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (lines.length === 0) {
+    return null
+  }
+
+  return lines.slice(-10).join("\n").slice(-1000)
 }
 
 export async function materializeCodexAuthJson(input: {
