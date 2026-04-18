@@ -182,6 +182,14 @@ test("GET /admin/app.js loads and saves per-user ai access assignments", async (
     assert.match(script, /Select assigned credential/)
     assert.match(script, /credentialId:\s*typeof payload\.credentialId === "string" \? payload\.credentialId : null/)
     assert.match(script, /credentialId:\s*readAiAccessCredentialValue\(\)/)
+    assert.match(
+      script,
+      /async function saveUserAiAccess\(userId,\s*input = null\)[\s\S]*const aiAccessInput = input && typeof input === "object"[\s\S]*credentialId: readAiAccessCredentialValue\(\)/,
+    )
+    assert.match(
+      script,
+      /async function saveUser\(\) \{[\s\S]*const aiAccessInput = \{\s*\.\.\.readAiAccessFormValue\(\),\s*credentialId: readAiAccessCredentialValue\(\),\s*}\s*;[\s\S]*await loadUsers\(\);[\s\S]*await saveUserAiAccess\(selectedUser\.id,\s*aiAccessInput\)/,
+    )
   } finally {
     server.close()
     await once(server, "close")

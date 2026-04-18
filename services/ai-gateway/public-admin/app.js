@@ -679,18 +679,28 @@ async function loadUserAiAccess(userId) {
   return aiAccess;
 }
 
-async function saveUserAiAccess(userId) {
+async function saveUserAiAccess(userId, input = null) {
   const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
   if (!resolvedUserId) {
     return;
   }
 
+  const aiAccessInput = input && typeof input === "object"
+    ? {
+        enabled: input.enabled === true,
+        provider: typeof input.provider === "string" ? input.provider : null,
+        defaultModel: typeof input.defaultModel === "string" ? input.defaultModel : null,
+        allowedModels: Array.isArray(input.allowedModels) ? input.allowedModels : [],
+        credentialId: typeof input.credentialId === "string" ? input.credentialId : null,
+      }
+    : {
+        ...readAiAccessFormValue(),
+        credentialId: readAiAccessCredentialValue(),
+      };
+
   const saved = await fetchJson(`/users/${encodeURIComponent(resolvedUserId)}/ai-access`, {
     method: "PUT",
-    body: JSON.stringify({
-      ...readAiAccessFormValue(),
-      credentialId: readAiAccessCredentialValue(),
-    }),
+    body: JSON.stringify(aiAccessInput),
   });
   state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
     saved?.availableCredentials,
@@ -1266,6 +1276,10 @@ async function saveUser() {
     orgId: els.userOrg.value || null,
     orgRole: els.userRole.value === "owner" ? "owner" : "member",
   };
+  const aiAccessInput = {
+    ...readAiAccessFormValue(),
+    credentialId: readAiAccessCredentialValue(),
+  };
   const wasCreating = state.userMode === "create";
 
   try {
@@ -1307,7 +1321,7 @@ async function saveUser() {
     await loadUsers();
     const selectedUser = currentUser();
     if (selectedUser?.id) {
-      await saveUserAiAccess(selectedUser.id);
+      await saveUserAiAccess(selectedUser.id, aiAccessInput);
       await loadUserAiAccess(selectedUser.id);
       populateUserEditor(selectedUser);
     }
