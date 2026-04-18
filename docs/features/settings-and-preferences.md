@@ -10,9 +10,12 @@ Current visible tabs:
 
 - `general`
 - `archived`
+- `model` when developer mode is enabled
+- `advanced` when developer mode is enabled
 - `debug` when developer mode is enabled
 
-The type also includes `model` and `advanced`, and those sections are rendered through the same page composition.
+Developer mode restores the full support and diagnostics surface inside Settings, including the model/provider controls and the advanced connection/runtime controls.
+The developer mode toggle itself remains reachable from the always-visible `general` tab so the extra tabs can be enabled without already being inside the advanced subsection.
 
 ## Scope Model
 

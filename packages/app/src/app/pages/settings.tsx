@@ -599,7 +599,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
     const tabs: SettingsTab[] = ["general", "archived"];
-    if (props.developerMode) tabs.push("debug");
+    if (props.developerMode) tabs.push("model", "advanced", "debug");
     return tabs;
   });
 
@@ -1030,6 +1030,30 @@ export default function SettingsView(props: SettingsViewProps) {
                 </div>
               </div>
             </div>
+
+            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-3">
+              <div class="text-sm font-medium text-gray-12">Developer mode</div>
+              <div class="text-xs text-gray-9">
+                Enables debug tools, diagnostics, and the Developer tab.
+              </div>
+              <div class="pt-1 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  class={`${compactOutlineActionClass} ${
+                    props.developerMode
+                      ? "border-blue-7/35 bg-blue-3/20 text-blue-11 hover:bg-blue-3/35 hover:text-blue-11"
+                      : ""
+                  }`}
+                  onClick={props.toggleDeveloperMode}
+                >
+                  <Zap size={14} class={props.developerMode ? "text-blue-10" : "text-dls-secondary"} />
+                  {props.developerMode ? "Disable Developer Mode" : "Enable Developer Mode"}
+                </button>
+                <div class="text-xs text-gray-10">
+                  {props.developerMode ? "Developer panel enabled." : "Enable this to access the Developer panel."}
+                </div>
+              </div>
+            </div>
           </div>
         </Match>
 
@@ -1246,30 +1270,6 @@ export default function SettingsView(props: SettingsViewProps) {
 
         <Match when={activeTab() === "advanced"}>
           <div class="space-y-6">
-            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-3">
-              <div class="text-sm font-medium text-gray-12">Developer mode</div>
-              <div class="text-xs text-gray-9">
-                Enables debug tools, diagnostics, and the Developer tab.
-              </div>
-              <div class="pt-1 flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  class={`${compactOutlineActionClass} ${
-                    props.developerMode
-                      ? "border-blue-7/35 bg-blue-3/20 text-blue-11 hover:bg-blue-3/35 hover:text-blue-11"
-                      : ""
-                  }`}
-                  onClick={props.toggleDeveloperMode}
-                >
-                  <Zap size={14} class={props.developerMode ? "text-blue-10" : "text-dls-secondary"} />
-                  {props.developerMode ? "Disable Developer Mode" : "Enable Developer Mode"}
-                </button>
-                <div class="text-xs text-gray-10">
-                  {props.developerMode ? "Developer panel enabled." : "Enable this to access the Developer panel."}
-                </div>
-              </div>
-            </div>
-
             <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-3">
               <div class="text-sm font-medium text-gray-12">Connection</div>
               <div class="text-xs text-gray-9">{props.headerStatus}</div>

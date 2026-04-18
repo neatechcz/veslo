@@ -380,11 +380,15 @@ test("settings tab labels include archived and keep debug gated", () => {
   assert.equal(resolveVisibleSettingsTab("archived", false), "archived");
   assert.equal(resolveVisibleSettingsTab("archived", true), "archived");
   assert.equal(resolveVisibleSettingsTab("model", false), "general");
+  assert.equal(resolveVisibleSettingsTab("model", true), "model");
   assert.equal(resolveVisibleSettingsTab("advanced", false), "general");
+  assert.equal(resolveVisibleSettingsTab("advanced", true), "advanced");
   assert.equal(resolveVisibleSettingsTab("debug", false), "general");
   assert.equal(resolveVisibleSettingsTab("debug", true), "debug");
 
   assert.match(settingsTabLabelSource, /archived:\s*"settings\.archived"/);
+  assert.match(settingsTabLabelSource, /model:\s*"settings\.model"/);
+  assert.match(settingsTabLabelSource, /advanced:\s*"settings\.advanced"/);
   assert.match(
     settingsTabLabelSource,
     /const visibleSettingsTabs: SettingsTab\[] = \["general", "archived"\]/,
@@ -401,12 +405,14 @@ test("settings tab labels include archived and keep debug gated", () => {
 
 test("settings tab labels are localized through a shared helper", () => {
   assert.equal(resolveVisibleSettingsTab("model", false), "general");
+  assert.equal(resolveVisibleSettingsTab("model", true), "model");
   assert.equal(resolveVisibleSettingsTab("advanced", false), "general");
+  assert.equal(resolveVisibleSettingsTab("advanced", true), "advanced");
   assert.equal(resolveVisibleSettingsTab("debug", false), "general");
   assert.equal(resolveVisibleSettingsTab("debug", true), "debug");
   assert.match(settingsTabLabelSource, /settings\.general/);
-  assert.doesNotMatch(settingsTabLabelSource, /model:\s*"settings\.model"/);
-  assert.doesNotMatch(settingsTabLabelSource, /advanced:\s*"settings\.advanced"/);
+  assert.match(settingsTabLabelSource, /settings\.model/);
+  assert.match(settingsTabLabelSource, /settings\.advanced/);
   assert.match(settingsTabLabelSource, /settings\.debug/);
   assert.match(settingsTabLabelSource, /return\s+t\(key,\s*currentLocale\(\)\)/);
   assert.doesNotMatch(settingsTabLabelSource, /"General"|"Model"|"Advanced"|"Debug"/);

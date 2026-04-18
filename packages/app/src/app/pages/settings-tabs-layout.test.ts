@@ -7,10 +7,12 @@ const enLocaleSource = readFileSync(new URL("../../i18n/locales/en.ts", import.m
 const csLocaleSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
 const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
 
-test("settings exposes archived and model tabs with the expected content split", () => {
+test("settings exposes archived, model, and advanced tabs when developer mode is enabled", () => {
   assert.match(source, /const tabs: SettingsTab\[\] = \["general", "archived"\]/);
-  assert.match(source, /if \(props\.developerMode\) tabs\.push\("debug"\);/);
+  assert.match(source, /if \(props\.developerMode\) tabs\.push\("model", "advanced", "debug"\);/);
   assert.match(source, /<Match when=\{activeTab\(\) === "archived"\}>/);
+  assert.match(source, /<Match when=\{activeTab\(\) === "model"\}>/);
+  assert.match(source, /<Match when=\{activeTab\(\) === "advanced"\}>/);
   assert.match(source, /const\s+showGeneralUpdateControls\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
   assert.match(source, /const\s+generalUpdateLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
   assert.match(source, /const\s+generalUpdateActionLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
@@ -27,6 +29,12 @@ test("settings exposes archived and model tabs with the expected content split",
   assert.doesNotMatch(generalSection, /System mode follows your OS preference automatically\./);
   assert.doesNotMatch(generalSection, /Providers/);
   assert.doesNotMatch(generalSection, /settings\.archived_sessions_label/);
+});
+
+test("settings keeps the developer mode toggle reachable from the general tab", () => {
+  assert.match(generalSection, /props\.toggleDeveloperMode/);
+  assert.match(generalSection, /Enable Developer Mode|Disable Developer Mode/);
+  assert.match(generalSection, /Developer panel enabled\.|Enable this to access the Developer panel\./);
 });
 
 test("settings keeps compact update controls in general instead of a floating toolbar layout", () => {

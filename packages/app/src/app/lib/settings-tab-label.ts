@@ -4,13 +4,15 @@ import { currentLocale, t } from "../../i18n";
 const settingsTabLabelKeyByTab: Partial<Record<SettingsTab, string>> = {
   general: "settings.general",
   archived: "settings.archived",
+  model: "settings.model",
+  advanced: "settings.advanced",
   debug: "settings.debug",
 };
 
 const visibleSettingsTabs: SettingsTab[] = ["general", "archived"];
 
 export const resolveVisibleSettingsTab = (settingsTab: SettingsTab, developerMode: boolean) => {
-  const tabs = developerMode ? [...visibleSettingsTabs, "debug"] : visibleSettingsTabs;
+  const tabs = developerMode ? [...visibleSettingsTabs, "model", "advanced", "debug"] : visibleSettingsTabs;
   return tabs.includes(settingsTab) ? settingsTab : "general";
 };
 
