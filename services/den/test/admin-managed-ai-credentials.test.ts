@@ -187,8 +187,10 @@ test("POST /admin/api/credentials creates a shared codex_oauth credential", asyn
   const codexAuthJson = JSON.stringify({
     auth_mode: "chatgpt",
     tokens: {
+      id_token: "codex-id-token",
       access_token: "codex-access-token",
       refresh_token: "codex-refresh-token",
+      account_id: "acct_codex_runtime",
     },
   })
   const calls = {
@@ -308,6 +310,96 @@ test("POST /admin/api/credentials creates a shared codex_oauth credential", asyn
         summary: "Created codex_oauth credential cred_platform_codex_1.",
       },
     ])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("POST /admin/api/credentials rejects partial codex_oauth auth json", async () => {
+  const session = createSession()
+  const partialCodexAuthJson = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      access_token: "codex-access-token",
+      refresh_token: "codex-refresh-token",
+    },
+  })
+  const calls = {
+    secrets: [] as Array<{ kind: string; apiKey?: string; authJson?: string }>,
+    credentials: [] as Array<{
+      ownerUserId: string
+      provider: string
+      credentialType: "api_key" | "oauth"
+      secretRef: string
+      name: string
+    }>,
+  }
+  const app = express()
+  app.use(express.json())
+  app.use(
+    "/admin/api",
+    createAdminRouter({
+      async getSessionSnapshot() {
+        return session
+      },
+      ...createManagedAiAdminRouteDeps({
+        async getAdminSession() {
+          return session
+        },
+        aiAccess: {} as any,
+        alerts: {
+          async listAlerts() {
+            return []
+          },
+        },
+        audit: {
+          async recordEvent() {},
+          async listEvents() {
+            return []
+          },
+        },
+        credentials: {
+          async listAdminCredentials() {
+            return [createCodexCredential()]
+          },
+          async createPlatformCredential(input) {
+            calls.credentials.push(input)
+            throw new Error("unreachable")
+          },
+        } as any,
+        leases: {} as any,
+        secrets: {
+          async put(secret) {
+            calls.secrets.push(secret)
+            throw new Error("unreachable")
+          },
+        } as any,
+      }),
+    }),
+  )
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/credentials`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${session.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        provider: "codex_oauth",
+        name: "Broken Codex runtime",
+        secret: partialCodexAuthJson,
+      }),
+    })
+
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), { error: "invalid_credential_secret" })
+    assert.deepEqual(calls.secrets, [])
+    assert.deepEqual(calls.credentials, [])
   } finally {
     server.close()
     await once(server, "close")

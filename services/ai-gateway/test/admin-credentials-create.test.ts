@@ -208,8 +208,10 @@ test("POST /admin/api/credentials creates a shared codex_oauth credential", asyn
   const codexAuthJson = JSON.stringify({
     auth_mode: "chatgpt",
     tokens: {
+      id_token: "codex-id-token",
       access_token: "codex-access-token",
       refresh_token: "codex-refresh-token",
+      account_id: "acct_codex_runtime",
     },
   });
   const server = runtime.app.listen(0, "127.0.0.1");
@@ -258,6 +260,43 @@ test("POST /admin/api/credentials creates a shared codex_oauth credential", asyn
         name: "Shared Codex runtime",
       },
     ]);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("POST /admin/api/credentials rejects partial codex_oauth auth json", async () => {
+  const runtime = createAdminCredentialCreateApp();
+  const partialCodexAuthJson = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      access_token: "codex-access-token",
+      refresh_token: "codex-refresh-token",
+    },
+  });
+  const server = runtime.app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/credentials`, {
+      method: "POST",
+      headers: {
+        ...AUTHORIZATION,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        provider: "codex_oauth",
+        name: "Broken Codex runtime",
+        secret: partialCodexAuthJson,
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: "invalid_credential_secret" });
+    assert.deepEqual(runtime.calls.secrets, []);
+    assert.deepEqual(runtime.calls.credentials, []);
   } finally {
     server.close();
     await once(server, "close");

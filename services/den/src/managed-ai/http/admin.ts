@@ -782,12 +782,31 @@ function normalizeAllowedModels(value: unknown): string[] {
 }
 
 function validateCodexAuthJson(secret: string): string {
+  let parsed: unknown
+
   try {
-    const parsed = JSON.parse(secret)
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("codex_auth_json_invalid")
-    }
+    parsed = JSON.parse(secret)
   } catch {
+    throw new HttpError("invalid_credential_secret", 400)
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new HttpError("invalid_credential_secret", 400)
+  }
+
+  const authMode = typeof (parsed as { auth_mode?: unknown }).auth_mode === "string"
+    ? (parsed as { auth_mode: string }).auth_mode.trim()
+    : ""
+  const tokens = (parsed as { tokens?: unknown }).tokens
+  const tokenRecord = tokens && typeof tokens === "object" && !Array.isArray(tokens)
+    ? (tokens as Record<string, unknown>)
+    : null
+  const requiredTokenFields = ["id_token", "access_token", "refresh_token", "account_id"]
+  const hasRequiredTokens = tokenRecord
+    ? requiredTokenFields.every((key) => typeof tokenRecord[key] === "string" && tokenRecord[key]?.trim())
+    : false
+
+  if (!authMode || !hasRequiredTokens) {
     throw new HttpError("invalid_credential_secret", 400)
   }
 

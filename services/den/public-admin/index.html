@@ -145,11 +145,11 @@
                   </div>
                   <label class="credential-create-secret-field">
                     <span>Auth JSON</span>
-                    <textarea class="input ai-access-textarea" id="credential-codex-secret" placeholder="Paste the Codex auth JSON copied from the runtime host."></textarea>
+                    <textarea class="input ai-access-textarea" id="credential-codex-secret" placeholder="Paste the full Codex auth.json copied from the runtime host."></textarea>
                   </label>
                   <div class="button-row">
                     <button class="button button-primary" id="credential-codex-submit" type="button">Save Codex runtime credential</button>
-                    <p class="editor-note credential-create-status" id="credential-codex-status">Primary routing credential for the server-side Codex worker.</p>
+                    <p class="editor-note credential-create-status" id="credential-codex-status">Primary routing credential for the server-side Codex worker. Require the full Codex <code>auth.json</code> with <code>id_token</code>, <code>access_token</code>, <code>refresh_token</code>, and <code>account_id</code>.</p>
                   </div>
                 </div>
                 <div class="detail-card">

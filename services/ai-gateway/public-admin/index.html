@@ -148,11 +148,11 @@
               </div>
               <label class="credential-create-secret-field">
                 <span>Credential secret</span>
-                <textarea class="input ai-access-textarea" id="credential-create-secret" placeholder="Paste the provider API key or Codex auth JSON."></textarea>
+                <textarea class="input ai-access-textarea" id="credential-create-secret" placeholder="Paste the provider API key or the full Codex auth.json."></textarea>
               </label>
               <div class="button-row">
                 <button class="button button-primary" id="credential-create-submit" type="button">Create credential</button>
-                <p class="editor-note credential-create-status" id="credential-create-status">Secrets are stored encrypted and assigned to the provider platform pool. Paste the provider API key or Codex auth JSON.</p>
+                <p class="editor-note credential-create-status" id="credential-create-status">Secrets are stored encrypted and assigned to the provider platform pool. For Codex / ChatGPT runtime, paste the full Codex <code>auth.json</code> with <code>id_token</code>, <code>access_token</code>, <code>refresh_token</code>, and <code>account_id</code>.</p>
               </div>
             </div>
             <div class="split-layout credentials-layout">
