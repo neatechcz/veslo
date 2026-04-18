@@ -2671,6 +2671,7 @@ export default function App() {
     vesloServerClient,
     onEngineStable: () => {
       setEngineReady(true);
+    preferServerByDefault: () => Boolean(cloudEnvironment.vesloUrl),
     },
     engineRuntime,
     developerMode,

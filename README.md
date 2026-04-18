@@ -111,6 +111,8 @@ Veslo now lives in `packages/app` (UI) and `packages/desktop` (desktop shell).
 pnpm dev
 ```
 
+If port `5173` is already serving a different app, `pnpm dev` now fails fast instead of attaching Veslo to the wrong Vite process. Stop the other server or launch Veslo on a different port, for example `PORT=5174 pnpm dev`.
+
 ### Run (Web UI only)
 
 ```bash
@@ -128,7 +130,7 @@ pnpm dev:ui
 | `VITE_VESLO_LOGIN_URL_DEV` | Den API base URL for desktop auth |
 | `VITE_VESLO_TOKEN_DEV` | Access token written to `localStorage` on first load |
 
-On startup, `hydrateVesloServerSettingsFromEnv()` (see `packages/app/src/app/lib/veslo-server.ts`) reads these values and persists them to `localStorage`. This means the app boots already connected to the dev worker with a valid token — no manual URL or token entry needed in the settings UI.
+On startup, `hydrateVesloServerSettingsFromEnv()` (see `packages/app/src/app/lib/veslo-server.ts`) reads these values and persists them to `localStorage`. In the desktop dev app, bootstrap now treats that env-backed Veslo URL as the default remote target as well, so `pnpm dev` attaches to the shared dev worker automatically unless the stored startup preference explicitly forces local mode. If the remote attach fails, Veslo falls back to the server onboarding step instead of silently continuing in local mode.
 
 > **Note:** This pre-fills the **veslo server connection token** only. Den cloud auth (`veslo.den.auth` in `localStorage`) is separate and still requires going through the normal sign-in flow.
 
