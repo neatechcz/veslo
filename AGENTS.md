@@ -123,6 +123,18 @@ If you cannot complete steps 4-8 (Docker, Chrome MCP, missing credentials, or en
 * what you verified instead (tests, logs, manual checks)
 * the exact commands/steps the user should run to complete the end-to-end gate
 
+## Documentation Sync (Required)
+
+Before claiming a feature or bugfix is complete, check whether the verified change affected durable behavior, configuration, runtime flow, or developer workflow.
+
+If yes, use:
+
+* `.opencode/skills/documenting-implemented-state/SKILL.md`
+
+Update the canonical developer docs for the new steady state. Do not treat `docs/plans/*` as the final source of truth for shipped behavior.
+
+If no durable docs update is needed, say so explicitly in the completion summary and give the reason.
+
 ## Pull Request Expectations (Fast Merge)
 
 If you open a PR, you must run tests and report what you ran (commands + result).
@@ -160,6 +172,17 @@ Design principles for hot reload:
 ## Repository Guidance
 
 * Use `VISION.md`, `PRINCIPLES.md`, `PRODUCT.md`, `ARCHITECTURE.md`, and `INFRASTRUCTURE.md` to understand the "why" and requirements so you can guide your decisions.
+
+## Documentation Entry Points
+
+For coding and maintenance work, use these documentation entry points instead of discovering behavior only from grep or historical plans:
+
+* Start with `docs/dev/documentation-map.md` to see what is canonical and where each type of documentation lives.
+* Use `docs/dev/app-map.md` to find the main code surfaces before exploring implementation files.
+* Use `docs/dev/state-and-config-reference.md` when changing persistence, settings, workspace config, auth state, or precedence rules.
+* Use `docs/dev/testing-playbook.md` and `docs/dev/build-and-rebuild-matrix.md` before claiming verification is complete or deciding what must be rebuilt.
+* Use `docs/features/` for shipped feature behavior and runtime semantics, especially onboarding/auth, settings, extensions, sessions, workspace sharing, and soul/automations.
+* Use `docs/plans/*` only as implementation history or design context, not as the final source of truth for shipped behavior.
 
 ## Dev Debugging
 

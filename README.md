@@ -201,6 +201,43 @@ Updater system documentation:
 
 - [docs/desktop-updater.md](./docs/desktop-updater.md)
 
+## Documentation Map
+
+For coding and maintenance work, use these docs in this order:
+
+### Canonical developer docs
+
+- [docs/dev/documentation-map.md](./docs/dev/documentation-map.md) - where documentation lives and what is canonical
+- [docs/dev/app-map.md](./docs/dev/app-map.md) - code surface map for the app, desktop shell, server, and orchestrator
+- [docs/dev/state-and-config-reference.md](./docs/dev/state-and-config-reference.md) - persistence keys, config files, and precedence
+- [docs/dev/veslo-server-app-contract.md](./docs/dev/veslo-server-app-contract.md) - app-facing contract for Veslo server usage
+- [docs/dev/testing-playbook.md](./docs/dev/testing-playbook.md) - practical verification flow for coding work
+- [docs/dev/build-and-rebuild-matrix.md](./docs/dev/build-and-rebuild-matrix.md) - what must be rebuilt after each type of change
+- [docs/dev/documentation-promotion.md](./docs/dev/documentation-promotion.md) - how to promote shipped behavior out of plans into durable docs
+
+### Canonical feature docs
+
+- [docs/features/onboarding-and-auth.md](./docs/features/onboarding-and-auth.md)
+- [docs/features/settings-and-preferences.md](./docs/features/settings-and-preferences.md)
+- [docs/features/extensions-and-integrations.md](./docs/features/extensions-and-integrations.md)
+- [docs/features/session-runtime.md](./docs/features/session-runtime.md)
+- [docs/features/workspace-config-and-sharing.md](./docs/features/workspace-config-and-sharing.md)
+- [docs/features/soul-and-automations.md](./docs/features/soul-and-automations.md)
+
+### Existing deep dives
+
+- [docs/desktop-updater.md](./docs/desktop-updater.md) - desktop updater behavior
+- [docs/agents-doc/agents.md](./docs/agents-doc/agents.md) - agent architecture and agent-mode details
+
+### Public docs
+
+- `packages/docs/` - user-facing and operator-facing docs site content
+
+### Historical docs
+
+- `docs/plans/` - design docs and implementation plans; useful history, but not the final source of truth for shipped behavior
+- `pr/` and `packages/app/pr/` - PR-oriented notes and one-off implementation context
+
 ## Troubleshooting
 
 ### Linux / Wayland (Hyprland)
