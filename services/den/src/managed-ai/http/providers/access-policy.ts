@@ -23,8 +23,14 @@ export function applyAiAccessPolicy(input: {
   }
 
   const requestBody = { ...(input.body as Record<string, unknown>) }
-  const requestedModel = typeof requestBody.model === "string" ? requestBody.model.trim() : ""
-  const defaultModel = typeof input.aiAccess.defaultModel === "string" ? input.aiAccess.defaultModel.trim() : ""
+  const requestedModel = normalizeManagedModelRef(
+    typeof requestBody.model === "string" ? requestBody.model : "",
+    input.routeProvider,
+  )
+  const defaultModel = normalizeManagedModelRef(
+    typeof input.aiAccess.defaultModel === "string" ? input.aiAccess.defaultModel : "",
+    input.routeProvider,
+  )
   const effectiveModel = requestedModel || defaultModel
 
   if (!effectiveModel) {
@@ -36,7 +42,7 @@ export function applyAiAccessPolicy(input: {
   }
 
   const allowedModels = input.aiAccess.allowedModels.length > 0
-    ? input.aiAccess.allowedModels
+    ? input.aiAccess.allowedModels.map((value) => normalizeManagedModelRef(value, input.routeProvider)).filter(Boolean)
     : defaultModel
       ? [defaultModel]
       : []
@@ -54,4 +60,19 @@ export function applyAiAccessPolicy(input: {
     ok: true,
     body: requestBody,
   }
+}
+
+function normalizeManagedModelRef(model: string, routeProvider: LeaseProvider): string {
+  const trimmed = model.trim()
+  if (!trimmed) {
+    return ""
+  }
+
+  const prefix = `${routeProvider}/`
+  if (!trimmed.startsWith(prefix)) {
+    return trimmed
+  }
+
+  const normalized = trimmed.slice(prefix.length).trim()
+  return normalized || trimmed
 }
