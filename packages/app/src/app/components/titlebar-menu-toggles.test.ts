@@ -166,9 +166,16 @@ test("titlebar menu toggles expose a dedicated right-side content slot", () => {
   const rightRail = findJsxElementInTree(
     component!.body!,
     "div",
-    (openingElement) => getJsxAttributeText(openingElement, "class") === "{layout.rightOffsetClass}",
+    (openingElement) => /layout\.rightOffsetClass/.test(getJsxAttributeText(openingElement, "class")),
   );
   assert.ok(rightRail, "titlebar should render a shared right rail");
+
+  const rightRailClass = getJsxAttributeText(getOpeningElement(rightRail!), "class");
+  assert.match(
+    rightRailClass,
+    /layout\.rightOffsetClass[\s\S]*flex[\s\S]*shrink-0[\s\S]*flex-nowrap[\s\S]*items-center[\s\S]*gap-1/,
+    "titlebar right rail should stay on a single row so feedback and the right toggle do not wrap onto a second line",
+  );
 
   const meaningfulChildren = rightRail!.children.filter(isMeaningfulJsxChild);
   const rightContentIndex = meaningfulChildren.findIndex(
