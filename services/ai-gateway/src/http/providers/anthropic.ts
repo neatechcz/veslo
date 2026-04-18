@@ -9,6 +9,7 @@ import { classifyUpstreamFailure, getUpstreamFailureInput } from "../../leases/e
 import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js";
 import type { ProviderTransportResponse } from "../../providers/transport.js";
 import { applyAiAccessPolicy } from "./access-policy.js";
+import { normalizeGatewaySessionId } from "./session-id.js";
 import type { ProxyDependencies } from "../proxy.js";
 
 export function createAnthropicProxyRouter(
@@ -17,8 +18,8 @@ export function createAnthropicProxyRouter(
   const router = Router();
 
   router.post("/v1/messages", async (req, res) => {
-    const sessionId = getHeaderAsString(req.header("x-veslo-session-id"));
-    if (!sessionId) {
+    const rawSessionId = getHeaderAsString(req.header("x-veslo-session-id"));
+    if (!rawSessionId) {
       res.status(400).json({ error: "missing_session_id" });
       return;
     }
@@ -28,6 +29,8 @@ export function createAnthropicProxyRouter(
       res.status(401).json({ error: "unauthorized" });
       return;
     }
+
+    const sessionId = normalizeGatewaySessionId(rawSessionId, gatewaySession.user.id, "anthropic");
 
     const gatewayAiAccess = res.locals.gatewayAiAccess as UserAiAccessPolicyRecord | undefined;
     const policyResult = gatewayAiAccess
