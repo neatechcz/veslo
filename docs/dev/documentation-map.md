@@ -17,7 +17,9 @@ When documents disagree, use this order:
 ## Root Documents
 
 - `AGENTS.md`
-  Repository guardrails, runtime rules, testing expectations, and implementation workflow constraints.
+  Short repo-wide entry point for always-on agent guardrails and links to scoped instruction files.
+- `CLAUDE.md`
+  Claude Code wrapper that imports the repo-wide `AGENTS.md`.
 - `README.md`
   Entry point for the repo and map of the available documentation.
 - `VISION.md`
@@ -30,6 +32,19 @@ When documents disagree, use this order:
   Runtime model, capability model, and system-level design.
 - `INFRASTRUCTURE.md`
   Operational assumptions, infra constraints, and platform capabilities.
+
+## Scoped Instruction Files
+
+- `packages/app/AGENTS.md` and `packages/app/CLAUDE.md`
+  Shared SolidJS app-shell and UI instructions.
+- `packages/desktop/AGENTS.md` and `packages/desktop/CLAUDE.md`
+  Tauri runtime and desktop E2E instructions.
+- `packages/server/AGENTS.md` and `packages/server/CLAUDE.md`
+  Server and orchestrator integration instructions.
+- `.github/copilot-instructions.md`
+  Repository-wide GitHub Copilot instructions.
+- `.github/instructions/*.instructions.md`
+  Path-specific GitHub Copilot instructions.
 
 ## Durable Developer Docs
 
