@@ -731,6 +731,13 @@ export default function DashboardView(props: DashboardViewProps) {
     return Boolean(status?.enabled ?? props.activeSoulStatus?.enabled);
   });
 
+  const runtimeAvailableWithoutClient = createMemo(() => {
+    if (props.clientConnected) return false;
+    if (props.vesloServerStatus !== "connected") return false;
+    if (props.activeWorkspaceDisplay.workspaceType !== "local") return false;
+    return (props.workspaceConnectionStateById[props.activeWorkspaceId]?.status ?? "idle") === "connected";
+  });
+
   const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
 
   const handleDashboardTabSelection = (nextTab: DashboardTab, nextSettingsTab?: SettingsTab) => {
@@ -1437,6 +1444,7 @@ export default function DashboardView(props: DashboardViewProps) {
           <SidebarStatusControls
             clientConnected={props.clientConnected}
             vesloServerStatus={props.vesloServerStatus}
+            runtimeAvailableWithoutClient={runtimeAvailableWithoutClient()}
             authenticatedUser={props.authenticatedUser}
             onOpenSettings={() => openSettings("general")}
           />

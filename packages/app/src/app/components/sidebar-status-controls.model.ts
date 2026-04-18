@@ -17,8 +17,12 @@ export function getVesloStatusMeta(vesloServerStatus: VesloServerStatus) {
   }
 }
 
-export function getUnifiedStatusMeta(clientConnected: boolean, vesloServerStatus: VesloServerStatus) {
-  return clientConnected && vesloServerStatus === "connected"
+export function getUnifiedStatusMeta(
+  clientConnected: boolean,
+  vesloServerStatus: VesloServerStatus,
+  runtimeAvailableWithoutClient = false,
+) {
+  return (clientConnected || runtimeAvailableWithoutClient) && vesloServerStatus === "connected"
     ? { dot: "bg-green-9", text: "text-green-11", label: "Ready" }
     : { dot: "bg-red-9", text: "text-red-11", label: "Unavailable" };
 }

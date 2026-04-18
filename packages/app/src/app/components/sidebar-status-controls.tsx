@@ -12,6 +12,7 @@ import {
 type SidebarStatusControlsProps = {
   clientConnected: boolean;
   vesloServerStatus: VesloServerStatus;
+  runtimeAvailableWithoutClient?: boolean;
   authenticatedUser?: string | null;
   onOpenSettings: () => void;
 };
@@ -38,7 +39,9 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
 
   const vesloStatusMeta = createMemo(() => getVesloStatusMeta(props.vesloServerStatus));
 
-  const unifiedStatusMeta = createMemo(() => getUnifiedStatusMeta(props.clientConnected, props.vesloServerStatus));
+  const unifiedStatusMeta = createMemo(() =>
+    getUnifiedStatusMeta(props.clientConnected, props.vesloServerStatus, props.runtimeAvailableWithoutClient ?? false)
+  );
   const persistedAuthenticatedUserLabel = createMemo(() => resolveAuthenticatedDenUserLabel(readDenAuth()));
   const authenticatedUserLabel = createMemo(() =>
     resolveConnectedUserLabel(props.authenticatedUser, persistedAuthenticatedUserLabel())
