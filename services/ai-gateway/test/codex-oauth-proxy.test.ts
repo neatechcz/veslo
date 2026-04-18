@@ -7,6 +7,7 @@ import type { UserAiAccessPolicyRecord } from "../src/access/repository.js"
 import { getPlatformCredentialOwnerUserId } from "../src/credentials/platform-owner.js"
 import type { CredentialBinding, CredentialRecord } from "../src/credentials/repository.js"
 import { createApp } from "../src/index.js"
+import { ProviderTransportError } from "../src/providers/transport.js"
 import type { RecordUsageInput } from "../src/usage/repository.js"
 
 function createCredentialRecord(): CredentialRecord {
@@ -225,6 +226,146 @@ test("codex_oauth proxy forwards through the worker transport with a sticky leas
         outputTokens: undefined,
       },
     ])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("codex_oauth proxy returns structured worker failures for authenticated callers", async () => {
+  const app = createApp({
+    proxy: {
+      gatewaySessions: {
+        async resolveSession(token: string) {
+          assert.equal(token, "gateway-access-token")
+          return {
+            token,
+            user: {
+              id: "user_gateway",
+              email: "gateway@example.test",
+            },
+          }
+        },
+      },
+      aiAccess: {
+        async getUserAiAccess(userId: string) {
+          assert.equal(userId, "user_gateway")
+          return createAiAccess()
+        },
+        async upsertUserAiAccess() {
+          throw new Error("unused")
+        },
+      },
+      credentials: {
+        async getCredentialRecordById() {
+          return null
+        },
+        async listHealthyCredentialRecordIds() {
+          return []
+        },
+        async getCredentialRecordByBindingId(bindingId: string) {
+          assert.equal(bindingId, "binding_codex_primary")
+          return createCredentialRecord()
+        },
+        async getBindingByCredentialId(credentialId: string) {
+          assert.equal(credentialId, "cred_codex_1")
+          return createCredentialBinding()
+        },
+        async markCredentialState() {},
+      },
+      secrets: {
+        async get(secretRef: string) {
+          assert.equal(secretRef, "secret_codex_1")
+          return {
+            kind: "codex_auth_json",
+            authJson: JSON.stringify({
+              auth_mode: "chatgpt",
+              tokens: {
+                id_token: "id_token",
+                access_token: "access_token",
+                refresh_token: "refresh_token",
+                account_id: "account_id",
+              },
+            }),
+          }
+        },
+      },
+      usageRepository: {
+        async recordUsage() {
+          assert.fail("usage should not be recorded when the worker transport fails")
+        },
+      },
+      leaseBroker: {
+        async getOrCreateActiveLease(scope) {
+          return {
+            id: "lease_codex_1",
+            ownerUserId: scope.ownerUserId,
+            provider: scope.provider,
+            sessionId: scope.sessionId,
+            activeBindingId: "binding_codex_primary",
+          }
+        },
+        async handleUpstreamFailure() {
+          assert.fail("failure handler should not be reached in codex proxy test")
+        },
+      } as never,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          assert.fail("token broker should not run for codex worker route")
+        },
+      },
+      openAiTransport: {
+        async chatCompletions() {
+          assert.fail("openai transport should not be reached in codex proxy test")
+        },
+      },
+      anthropicTransport: {
+        async messages() {
+          assert.fail("anthropic transport should not be reached in codex proxy test")
+        },
+      },
+      codexOAuthTransport: {
+        async chatCompletions() {
+          throw new ProviderTransportError("codex_worker_failed", {
+            statusCode: 502,
+            code: "codex_worker_failed",
+            body: {
+              error: "codex_worker_failed",
+              timedOut: false,
+              exitCode: 1,
+              stderrTail: "Error: Please run `codex login`.\nAuthentication required.",
+            },
+          })
+        },
+      },
+    } as never,
+  })
+
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/providers/codex_oauth/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer gateway-access-token",
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_codex_1",
+      },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    })
+
+    assert.equal(response.status, 502)
+    assert.deepEqual(await response.json(), {
+      error: "codex_worker_failed",
+      timedOut: false,
+      exitCode: 1,
+      stderrTail: "Error: Please run `codex login`.\nAuthentication required.",
+    })
   } finally {
     server.close()
     await once(server, "close")
