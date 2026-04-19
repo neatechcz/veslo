@@ -1661,7 +1661,7 @@ export function createWorkspaceStore(options: {
 
   async function forgetWorkspace(
     workspaceId: string,
-    options?: { deleteLocalData?: boolean },
+    forgetOptions?: { deleteLocalData?: boolean },
   ) {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
@@ -1675,7 +1675,7 @@ export function createWorkspaceStore(options: {
 
     try {
       const previousActive = activeWorkspaceId();
-      const mode = options?.deleteLocalData ? "delete_local_data" : "detach_only";
+      const mode = forgetOptions?.deleteLocalData ? "delete_local_data" : "detach_only";
       const ws = await workspaceForget(id, mode);
       setWorkspaces(ws.workspaces);
       clearWorkspaceConnectionState(id);

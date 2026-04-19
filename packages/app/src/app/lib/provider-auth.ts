@@ -13,6 +13,7 @@ import type {
 import { parse } from "jsonc-parser";
 
 import { fetchWithTimeout } from "./http";
+import type { FieldsResult } from "./opencode";
 import {
   extractOpenAiCompatibleModelIds,
   LM_STUDIO_DEFAULT_BASE_URL,
@@ -170,7 +171,7 @@ export interface ProviderAuthDeps {
   globalSyncSetProvider: (data: unknown) => void;
   /** globalSync.set("provider", { ...data, connected: mergedConnected }) */
   globalSyncSetProviderMerged: (data: unknown, mergedConnected: string[]) => void;
-  unwrap: <T>(result: { data?: T; error?: unknown }) => NonNullable<T>;
+  unwrap: <T>(result: FieldsResult<T>) => NonNullable<T>;
   isTauriRuntime: () => boolean;
   readOpencodeConfig: (
     scope: "project",

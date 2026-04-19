@@ -52,11 +52,19 @@ function getJsxAttribute(
 ): ts.JsxAttribute | undefined {
   const opening = getJsxOpeningElement(node);
   for (const prop of opening.attributes.properties) {
-    if (ts.isJsxAttribute(prop) && prop.name.text === attributeName) {
+    if (ts.isJsxAttribute(prop) && ts.isIdentifier(prop.name) && prop.name.text === attributeName) {
       return prop;
     }
   }
   return undefined;
+}
+
+function isNamedBindingElement(element: ts.ArrayBindingElement): element is ts.BindingElement & { name: ts.Identifier } {
+  return ts.isBindingElement(element) && ts.isIdentifier(element.name);
+}
+
+function getNamedBindingElements(pattern: ts.ArrayBindingPattern): Array<ts.BindingElement & { name: ts.Identifier }> {
+  return pattern.elements.filter(isNamedBindingElement);
 }
 
 function getJsxAttributeExpression(
@@ -467,26 +475,27 @@ test("app shell owns feedback modal state and shared feedback opener", () => {
   const stateDeclaration = appBody.statements
     .flatMap((statement) => (ts.isVariableStatement(statement) ? [...statement.declarationList.declarations] : []))
     .find((declaration) => {
-      if (!declaration.name || !ts.isArrayBindingPattern(declaration.name)) return false;
-      const bindings = declaration.name.elements.filter((element): element is ts.BindingElement => !!element.name);
+      if (!ts.isArrayBindingPattern(declaration.name)) return false;
+      const bindings = getNamedBindingElements(declaration.name);
       if (bindings.length < 2) return false;
       const [accessor, setter] = bindings;
+      const initializer = declaration.initializer;
+      if (!initializer) return false;
       return (
-        ts.isIdentifier(accessor.name) &&
         accessor.name.text === openAccessorName &&
-        ts.isIdentifier(setter.name) &&
-        ts.isCallExpression(declaration.initializer) &&
-        ts.isIdentifier(declaration.initializer.expression) &&
-        declaration.initializer.expression.text === "createSignal" &&
-        declaration.initializer.arguments.length >= 1 &&
-        declaration.initializer.arguments[0].getText(appSourceFile) === "false"
+        ts.isCallExpression(initializer) &&
+        ts.isIdentifier(initializer.expression) &&
+        initializer.expression.text === "createSignal" &&
+        initializer.arguments.length >= 1 &&
+        initializer.arguments[0].getText(appSourceFile) === "false"
       );
     });
   assert.ok(stateDeclaration, "FeedbackModal open should come from an App-local createSignal(false) pair");
 
-  const [accessorBinding, setterBinding] = (stateDeclaration!.name as ts.ArrayBindingPattern).elements;
-  assert.ok(ts.isIdentifier(accessorBinding.name), "feedback open accessor should be an identifier");
-  assert.ok(ts.isIdentifier(setterBinding.name), "feedback open setter should be an identifier");
+  assert.ok(ts.isArrayBindingPattern(stateDeclaration!.name), "feedback open state should use an array binding pattern");
+  const [accessorBinding, setterBinding] = getNamedBindingElements(stateDeclaration!.name);
+  assert.ok(accessorBinding, "feedback open accessor should be an identifier binding");
+  assert.ok(setterBinding, "feedback open setter should be an identifier binding");
   assert.equal(
     findTopLevelVariableDeclaration(appSourceFile, openAccessorName),
     undefined,
@@ -540,16 +549,17 @@ test("app shell guards feedback submission while persistence is in flight", () =
   const feedbackSubmittingDeclaration = appBody.statements
     .flatMap((statement) => (ts.isVariableStatement(statement) ? [...statement.declarationList.declarations] : []))
     .find((declaration) => {
-      if (!ts.isArrayBindingPattern(declaration.name) || declaration.name.elements.length < 2) return false;
-      const [accessor, setter] = declaration.name.elements;
+      if (!ts.isArrayBindingPattern(declaration.name)) return false;
+      const [accessor, setter] = getNamedBindingElements(declaration.name);
       if (!accessor || !setter) return false;
-      if (!ts.isIdentifier(accessor.name) || !ts.isIdentifier(setter.name)) return false;
+      const initializer = declaration.initializer;
+      if (!initializer) return false;
       if (accessor.name.text !== "feedbackSubmitting" || setter.name.text !== "setFeedbackSubmitting") return false;
       return (
-        ts.isCallExpression(declaration.initializer) &&
-        ts.isIdentifier(declaration.initializer.expression) &&
-        declaration.initializer.expression.text === "createSignal" &&
-        declaration.initializer.arguments[0]?.getText(appSourceFile) === "false"
+        ts.isCallExpression(initializer) &&
+        ts.isIdentifier(initializer.expression) &&
+        initializer.expression.text === "createSignal" &&
+        initializer.arguments[0]?.getText(appSourceFile) === "false"
       );
     });
   assert.ok(feedbackSubmittingDeclaration, "App should track feedback submission with a dedicated createSignal(false)");
@@ -605,11 +615,10 @@ test("app shell keeps feedback submit failures scoped to the modal", () => {
   const feedbackErrorDeclaration = appBody.statements
     .flatMap((statement) => (ts.isVariableStatement(statement) ? [...statement.declarationList.declarations] : []))
     .find((declaration) => {
-      if (!ts.isArrayBindingPattern(declaration.name) || declaration.name.elements.length < 2) return false;
-      const bindings = declaration.name.elements.filter(ts.isBindingElement);
+      if (!ts.isArrayBindingPattern(declaration.name)) return false;
+      const bindings = getNamedBindingElements(declaration.name);
       if (bindings.length < 2) return false;
       const [accessor, setter] = bindings;
-      if (!ts.isIdentifier(accessor.name) || !ts.isIdentifier(setter.name)) return false;
       if (accessor.name.text !== "feedbackSubmitError" || setter.name.text !== "setFeedbackSubmitError") return false;
       return declaration.initializer?.getText(appSourceFile) === "createSignal<string | null>(null)";
     });

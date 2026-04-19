@@ -14,6 +14,8 @@ import { useLocation, useNavigate } from "@solidjs/router";
 
 import type {
   Agent,
+  McpLocalConfig,
+  McpRemoteConfig,
   Part,
   Session,
   TextPartInput,
@@ -5570,17 +5572,18 @@ export default function App() {
     return { activeClient, resolvedProjectDir };
   }
 
-  function buildMcpAddConfig(entry: McpDirectoryInfo) {
+  function buildMcpAddConfig(entry: McpDirectoryInfo): McpLocalConfig | McpRemoteConfig {
     const entryType = entry.type ?? "remote";
     if (entryType === "remote") {
       if (!entry.url) {
         throw new Error("Missing MCP URL.");
       }
+      const oauth: McpRemoteConfig["oauth"] = entry.oauth ? {} : false;
       return {
-        type: "remote" as const,
+        type: "remote",
         url: entry.url,
         enabled: true,
-        ...(entry.oauth ? { oauth: {} } : { oauth: false }),
+        oauth,
       };
     }
 
@@ -5589,7 +5592,7 @@ export default function App() {
     }
 
     return {
-      type: "local" as const,
+      type: "local",
       command: entry.command,
       enabled: true,
     };

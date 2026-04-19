@@ -38,7 +38,7 @@ function getOpeningElement(node: ts.JsxElement | ts.JsxSelfClosingElement) {
 function getJsxAttributeText(openingElement: ts.JsxOpeningLikeElement, name: string) {
   const attribute = openingElement.attributes.properties.find(
     (property): property is ts.JsxAttribute =>
-      ts.isJsxAttribute(property) && property.name.text === name,
+      ts.isJsxAttribute(property) && ts.isIdentifier(property.name) && property.name.text === name,
   );
   assert.ok(attribute, `missing ${name} attribute`);
   assert.ok(attribute.initializer, `missing ${name} initializer`);
@@ -177,7 +177,8 @@ test("titlebar menu toggles expose a dedicated right-side content slot", () => {
     "titlebar right rail should stay on a single row so feedback and the right toggle do not wrap onto a second line",
   );
 
-  const meaningfulChildren = rightRail!.children.filter(isMeaningfulJsxChild);
+  assert.ok(ts.isJsxElement(rightRail!), "titlebar right rail should be a standard JSX element");
+  const meaningfulChildren = rightRail!.children.filter((child: ts.JsxChild) => isMeaningfulJsxChild(child));
   const rightContentIndex = meaningfulChildren.findIndex(
     (child) => ts.isJsxExpression(child) && child.expression?.getText(sourceFile) === "props.rightContent",
   );

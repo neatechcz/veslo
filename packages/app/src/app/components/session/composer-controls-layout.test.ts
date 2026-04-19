@@ -19,8 +19,8 @@ test("composer uses a compact control rail below the editor", () => {
 
   assert.match(
     composerSource,
-    /class=\{`inline-flex items-center gap-1\.5 rounded-lg border px-2\.5 py-1 text-\[12px\] font-medium transition-colors \$\{/,
-    '"Jen se ptám" mode switch should use a compact single-button control',
+    /class=\{`font-product type-ui-sm inline-flex items-center gap-1\.5 rounded-lg border px-2\.5 py-1 font-medium transition-colors \$\{/,
+    '"Jen se ptám" mode switch should keep the compact single-button control with product typography tokens',
   );
 
   assert.match(
@@ -63,13 +63,13 @@ test("composer uses a compact control rail below the editor", () => {
 test("composer editor keeps compact typography without horizontal scrollbar", () => {
   assert.match(
     composerSource,
-    /class="absolute left-0 top-0 text-gray-9 text-\[14px\] leading-relaxed pointer-events-none"/,
-    "placeholder text should use a slightly smaller font size",
+    /class="font-reading type-reading-md absolute left-0 top-0 text-gray-9 pointer-events-none"/,
+    "placeholder text should use the shared reading typography tokens",
   );
 
   assert.match(
     composerSource,
-    /class="bg-transparent border-none p-0 pb-2 pr-2 text-gray-12 focus:ring-0 text-\[14px\] leading-relaxed whitespace-pre-wrap break-words resize-none min-h-\[24px\] max-h-40 overflow-y-auto overflow-x-hidden outline-none"/,
-    "editor should wrap long content and avoid showing a horizontal scrollbar in narrow layouts",
+    /class="font-reading type-reading-md bg-transparent border-none p-0 pb-2 pr-2 text-gray-12 focus:ring-0 whitespace-pre-wrap break-words resize-none min-h-\[24px\] max-h-40 overflow-y-auto overflow-x-hidden outline-none"/,
+    "editor should wrap long content, avoid horizontal scrollbars, and keep the shared reading typography tokens",
   );
 });

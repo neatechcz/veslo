@@ -5,7 +5,7 @@ import {
   extractProviderOAuthCallbackProbeUrl,
   settleAsyncResult,
   waitForProviderOAuthCallbackListener,
-} from "./provider-oauth-auto.ts";
+} from "./provider-oauth-auto.js";
 
 test("extractProviderOAuthCallbackProbeUrl derives the localhost probe URL from redirect_uri", () => {
   const probeUrl = extractProviderOAuthCallbackProbeUrl(
