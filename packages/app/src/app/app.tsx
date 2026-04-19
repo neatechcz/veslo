@@ -3604,6 +3604,7 @@ export default function App() {
     void exchangeHandoffCode(code, exchangeProof)
       .then(async (result) => {
         if (result.ok) {
+          exchangedCodes.add(code);
           writeDenAuth(result.state);
           await flushPendingDesktopSnapshotWrite();
           clearDesktopAuthExchangeProof(exchangeProof?.sessionId);
