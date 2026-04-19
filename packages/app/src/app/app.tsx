@@ -7927,6 +7927,7 @@ export default function App() {
           routeSessionId: id,
           sessionIdsInStore,
           sessionIdsInSidebar,
+          pendingRouteSessionId: pendingSessionLoad()?.sessionId ?? null,
         })
       ) {
         if (selectedSessionId() === id) {
