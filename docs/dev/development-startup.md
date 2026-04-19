@@ -1,0 +1,64 @@
+# Development Startup Guide
+
+Use this guide whenever someone asks to start Veslo during development (for example `spust`, `start app`, `run in dev mode`).
+
+## Scope
+
+- Authoritative runtime: `packages/desktop` (Tauri desktop app)
+- Primary development mode: local mode with local OpenCode (do not treat cloud-backed execution as the default startup path)
+- Do not use `packages/web` as proof that the app is running correctly
+- Never launch a previously built desktop app as a substitute for development startup. Always run a new build from current sources before starting.
+
+## Standard Dev Startup (Fresh Build Required, No Exceptions)
+
+Run from repository root.
+
+1. Stop previous app/dev processes so the run is deterministic.
+2. Rebuild desktop artifacts from source.
+3. Start Tauri dev runtime.
+4. Confirm the expected runtime signals.
+
+```bash
+# 1) Stop previous runs (safe if nothing is running)
+pkill -f "pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|Veslo by Neatech.app/Contents/MacOS/veslo" || true
+
+# 2) Fresh rebuild (desktop native layer)
+pnpm --filter @neatech/veslo exec cargo clean --manifest-path src-tauri/Cargo.toml
+pnpm --filter @neatech/veslo exec cargo build --manifest-path src-tauri/Cargo.toml --no-default-features
+
+# 3) Start dev runtime
+pnpm dev
+```
+
+## Required Runtime Confirmation
+
+Consider startup complete only when both appear in logs:
+
+- `VITE ... ready` with local URL (default `http://localhost:5173/`)
+- `Running target/debug/veslo`
+
+If only Vite runs, desktop runtime is not fully started.
+
+## After Server-Side Changes
+
+If changes touched `packages/server/src`, rebuild server binary before relying on orchestrator-backed flows:
+
+```bash
+pnpm --filter openwork-server build:bin
+```
+
+Then run the standard dev startup flow above.
+
+## PATH / Tooling Fallback
+
+If shell PATH in automation sessions cannot find `pnpm`/`cargo`, use an explicit PATH prefix:
+
+```bash
+PATH="$HOME/.cargo/bin:$HOME/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" /opt/homebrew/bin/pnpm dev
+```
+
+Use the same PATH prefix for the rebuild commands when needed.
+
+## Interpretation Rule For Agents
+
+When asked to "start" the app for development in this repo, always execute this fresh-build startup flow. Do not skip rebuild and do not launch stale prebuilt binaries as the startup path.

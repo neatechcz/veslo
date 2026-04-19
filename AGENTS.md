@@ -7,6 +7,7 @@ Veslo is a local-first, cloud-backed control surface for agentic work. Treat the
 - `docs/dev/documentation-map.md`
 - `docs/dev/app-map.md`
 - `docs/dev/testing-playbook.md`
+- `docs/dev/development-startup.md`
 - `docs/dev/state-and-config-reference.md`
 - `VISION.md`, `PRINCIPLES.md`, `PRODUCT.md`, `ARCHITECTURE.md`, `INFRASTRUCTURE.md`
 
@@ -18,6 +19,7 @@ Veslo is a local-first, cloud-backed control surface for agentic work. Treat the
   3. `Planned output: <what will be changed/tested>`
 - In final answers, do not include references to specific code, files, or line numbers unless the user explicitly asks for them.
 - Never use `packages/web` as the runtime for development, debugging, or verification. Use `packages/desktop`.
+- For development startup requests ("spust", "start app", "run in dev mode"), follow `docs/dev/development-startup.md`. Default to the fresh rebuild startup flow unless the user explicitly asks to skip rebuild.
 - When the task says "test the app" or depends on desktop behavior, validate the real Tauri runtime. Use `docs/dev/testing-playbook.md`; for internal desktop E2E, follow the `packages/desktop` plus `packages/e2e` WebdriverIO flow and reuse existing WebDriver instances when available.
 - Prefer OpenCode and server surfaces over Tauri-only filesystem behavior. Any capability that mutates `.opencode/` should stay expressible via the Veslo server API when possible.
 - If you change `packages/server/src`, rebuild the server binary with `pnpm --filter openwork-server build:bin` before relying on orchestrator-backed flows.
@@ -35,6 +37,7 @@ Veslo is a local-first, cloud-backed control surface for agentic work. Treat the
 ## Task-Specific References
 
 - Feature verification and Docker-backed flow checks: `docs/dev/testing-playbook.md` and `packaging/docker/README.md`
+- Development startup and run procedure: `docs/dev/development-startup.md`
 - Release workflow: `RELEASE.md`
 - Public behavior and runtime semantics: `docs/features/`
 - Product intent and architecture: `VISION.md`, `PRINCIPLES.md`, `PRODUCT.md`, `ARCHITECTURE.md`, `INFRASTRUCTURE.md`
