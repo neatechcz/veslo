@@ -194,6 +194,7 @@ export default function WorkspaceSessionList(props: Props) {
   let scrollContainerRef: HTMLDivElement | undefined;
   let recentSentinelRef: HTMLDivElement | undefined;
   let projectDragPreviewElement: HTMLDivElement | null = null;
+  let recentMouseUpSessionActivation: { sessionId: string; at: number } | null = null;
 
   const sidebarMode = createMemo(() => sidebarModeSignal());
   const setSidebarMode = (value: SidebarViewMode) => {
@@ -597,14 +598,34 @@ export default function WorkspaceSessionList(props: Props) {
     }
   };
 
-  const handleSessionRowKeyDown = (
-    event: KeyboardEvent,
+  const handleSessionRowMouseUp = (
+    event: MouseEvent,
     row: FlatSessionRow,
     hasChildren: (sessionId: string) => boolean,
   ) => {
-    if (event.target !== event.currentTarget) return;
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
+    if (event.button !== 0 || event.defaultPrevented) return;
+    recentMouseUpSessionActivation = {
+      sessionId: row.session.id,
+      at: Date.now(),
+    };
+    handleSessionRowClick(row, hasChildren);
+  };
+
+  const handleSessionRowPress = (
+    event: MouseEvent,
+    row: FlatSessionRow,
+    hasChildren: (sessionId: string) => boolean,
+  ) => {
+    const recentMouseUp = recentMouseUpSessionActivation;
+    if (
+      event.detail > 0 &&
+      recentMouseUp &&
+      recentMouseUp.sessionId === row.session.id &&
+      Date.now() - recentMouseUp.at < 500
+    ) {
+      recentMouseUpSessionActivation = null;
+      return;
+    }
     handleSessionRowClick(row, hasChildren);
   };
 
@@ -1431,18 +1452,18 @@ export default function WorkspaceSessionList(props: Props) {
                           class="relative group/session-row"
                           onContextMenu={(event) => handleSessionRowContextMenu(event, workspace().id, anchorKey)}
                         >
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            class={`w-full flex items-center rounded-xl px-3 py-1 pr-12 text-left transition-colors ${
+                          <button
+                            type="button"
+                            data-session-sidebar-row="true"
+                            class={`w-full appearance-none border-none bg-transparent flex items-center rounded-xl px-3 py-1 pr-12 text-left transition-colors focus-visible:outline-none ${
                               isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
                             }`}
                             style={rowIndentStyle(row)}
-                            onClick={() => handleSessionRowClick(row, hasChildren)}
-                            onKeyDown={(event) => handleSessionRowKeyDown(event, row, hasChildren)}
+                            onMouseUp={(event) => handleSessionRowMouseUp(event, row, hasChildren)}
+                            onClick={(event) => handleSessionRowPress(event, row, hasChildren)}
                           >
-                            <div class="relative min-w-0 flex-1">
-                              <div class="flex items-center gap-1.5 min-w-0">
+                            <span class="relative min-w-0 flex-1">
+                              <span class="flex items-center gap-1.5 min-w-0">
                                 <Show when={isSessionActive()}>
                                   <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
                                 </Show>
@@ -1463,9 +1484,9 @@ export default function WorkspaceSessionList(props: Props) {
                                     )}
                                   </Show>
                                 </span>
-                              </div>
+                              </span>
 
-                              <div class="mt-px flex items-center gap-1 text-[11px] text-gray-10 min-w-0">
+                              <span class="mt-px flex items-center gap-1 text-[11px] text-gray-10 min-w-0">
                                 <Show when={row.projectLabel}>
                                   <span class="truncate">{row.projectLabel}</span>
                                 </Show>
@@ -1496,9 +1517,9 @@ export default function WorkspaceSessionList(props: Props) {
                                     {taskLoadError().label}
                                   </span>
                                 </Show>
-                              </div>
-                            </div>
-                          </div>
+                              </span>
+                            </span>
+                          </button>
 
                           <span
                             class="pointer-events-none absolute right-2 bottom-1 text-[11px] text-gray-9 whitespace-nowrap transition-opacity group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
@@ -1795,18 +1816,18 @@ export default function WorkspaceSessionList(props: Props) {
                                 class="relative group/session-row"
                                 onContextMenu={(event) => handleSessionRowContextMenu(event, row.workspace.id, rowAnchorKey)}
                               >
-                                <div
-                                  role="button"
-                                  tabIndex={0}
-                                  class={`w-full flex items-center gap-2 rounded-xl px-3 py-1 pr-12 text-left transition-colors ${
+                                <button
+                                  type="button"
+                                  data-session-sidebar-row="true"
+                                  class={`w-full appearance-none border-none bg-transparent flex items-center gap-2 rounded-xl px-3 py-1 pr-12 text-left transition-colors focus-visible:outline-none ${
                                     isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
                                   }`}
                                   style={rowIndentStyle(row)}
-                                  onClick={() => handleSessionRowClick(row, hasChildren)}
-                                  onKeyDown={(event) => handleSessionRowKeyDown(event, row, hasChildren)}
+                                  onMouseUp={(event) => handleSessionRowMouseUp(event, row, hasChildren)}
+                                  onClick={(event) => handleSessionRowPress(event, row, hasChildren)}
                                 >
-                                  <div class="relative min-w-0 flex-1">
-                                    <div class="flex items-center gap-1.5 min-w-0">
+                                  <span class="relative min-w-0 flex-1">
+                                    <span class="flex items-center gap-1.5 min-w-0">
                                       <Show when={isSessionActive()}>
                                         <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
                                       </Show>
@@ -1827,9 +1848,9 @@ export default function WorkspaceSessionList(props: Props) {
                                           )}
                                         </Show>
                                       </span>
-                                    </div>
-                                  </div>
-                                </div>
+                                    </span>
+                                  </span>
+                                </button>
 
                                 <span
                                   class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-9 whitespace-nowrap transition-opacity group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"

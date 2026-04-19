@@ -46,6 +46,7 @@ type CandidateSession = {
 };
 
 const SIDEBAR_VIEW_MODE_KEY = "veslo.sidebar-session-view.v1";
+const SESSION_ROW_SELECTOR = '[data-session-sidebar-row="true"]';
 const USE_REAL_PROFILE = process.env.E2E_USE_EXISTING_PROFILE?.trim() === "1";
 const EVIDENCE_DIR =
   "/Users/vaclavsoukup/AI agent projects/Veslo/.worktrees/codex/cross-workspace-sidebar-prefetch/evidence/2026-04-11-cross-workspace-sidebar-prefetch";
@@ -163,17 +164,19 @@ async function listWorkspaceSessions(workspace: WorkspaceInfo, engine: EngineInf
 }
 
 async function visibleSidebarRows(): Promise<SidebarRow[]> {
-  return browser.execute(() =>
-    Array.from(document.querySelectorAll('div[role="button"]'))
-      .map((row) => {
-        const title = row.querySelector("span.text-\\[13px\\]");
-        const meta = row.querySelector("div.mt-px");
-        return {
-          title: (title?.textContent ?? "").replace(/\s+/g, " ").trim(),
-          meta: (meta?.textContent ?? "").replace(/\s+/g, " ").trim(),
-        };
-      })
-      .filter((row) => row.title.length > 0),
+  return browser.execute(
+    (selector: string) =>
+      Array.from(document.querySelectorAll(selector))
+        .map((row) => {
+          const title = row.querySelector("span.text-\\[13px\\]");
+          const meta = row.querySelector(".mt-px");
+          return {
+            title: (title?.textContent ?? "").replace(/\s+/g, " ").trim(),
+            meta: (meta?.textContent ?? "").replace(/\s+/g, " ").trim(),
+          };
+        })
+        .filter((row) => row.title.length > 0),
+    SESSION_ROW_SELECTOR,
   ) as Promise<SidebarRow[]>;
 }
 
@@ -294,12 +297,12 @@ async function findCandidateSession(
 
 async function clickSidebarRow(row: SidebarRow) {
   const result = await browser.execute(
-    ({ title, meta }: SidebarRow) => {
+    ({ title, meta, selector }: SidebarRow & { selector: string }) => {
       const normalize = (value: string | null | undefined) => (value ?? "").replace(/\s+/g, " ").trim();
-      const rows = Array.from(document.querySelectorAll('div[role="button"]')).map((entry) => ({
+      const rows = Array.from(document.querySelectorAll(selector)).map((entry) => ({
         entry,
         title: normalize(entry.querySelector("span.text-\\[13px\\]")?.textContent),
-        meta: normalize(entry.querySelector("div.mt-px")?.textContent),
+        meta: normalize(entry.querySelector(".mt-px")?.textContent),
       }));
 
       const exact = rows.find((candidate) => candidate.title === title && candidate.meta === meta);
@@ -321,13 +324,7 @@ async function clickSidebarRow(row: SidebarRow) {
       }
 
       target.entry.scrollIntoView({ block: "center" });
-      target.entry.dispatchEvent(
-        new MouseEvent("click", {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-        }),
-      );
+      target.entry.click();
 
       return {
         clicked: true,
@@ -335,7 +332,7 @@ async function clickSidebarRow(row: SidebarRow) {
         availableRows: rows.map(({ title, meta }) => ({ title, meta })),
       };
     },
-    row,
+    { ...row, selector: SESSION_ROW_SELECTOR },
   ) as {
     clicked: boolean;
     strategy: string | null;
