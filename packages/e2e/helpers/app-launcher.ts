@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve, dirname, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prepareDesktopAuthSeed } from './desktop-auth-seed.js';
 
@@ -84,6 +84,10 @@ export function createAppLaunchEnv(
     OPENCODE_HOME: options.opencodeHome,
     VESLO_DEN_AUTH_SNAPSHOT_PATH: options.snapshotPath,
   };
+
+  if ((options.platform ?? process.platform) === 'win32') {
+    env.WEBVIEW2_USER_DATA_FOLDER = win32.join(options.opencodeHome, 'webview2');
+  }
 
   if ((options.platform ?? process.platform) === 'linux') {
     delete env.WAYLAND_DISPLAY;
