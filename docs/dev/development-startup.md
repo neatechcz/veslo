@@ -13,20 +13,29 @@ Use this guide whenever someone asks to start Veslo during development (for exam
 
 Run from repository root.
 
-1. Stop previous app/dev processes so the run is deterministic.
-2. Rebuild desktop artifacts from source.
-3. Start Tauri dev runtime.
-4. Confirm the expected runtime signals.
+1. Verify whether app/dev processes are already running.
+2. Stop previous app/dev processes and verify they are fully stopped.
+3. Rebuild desktop artifacts from source.
+4. Start Tauri dev runtime.
+5. Confirm the expected runtime signals.
+
+Never launch a second app/dev instance. This rule applies to normal development startup and to test runs.
 
 ```bash
-# 1) Stop previous runs (safe if nothing is running)
+# 1) Mandatory pre-check: detect already-running instances
+pgrep -fl "pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|Veslo by Neatech.app/Contents/MacOS/veslo" || true
+
+# 2) Stop previous runs (safe if nothing is running)
 pkill -f "pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|Veslo by Neatech.app/Contents/MacOS/veslo" || true
 
-# 2) Fresh rebuild (desktop native layer)
+# 2b) Mandatory post-check: must be empty before continuing
+pgrep -fl "pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|Veslo by Neatech.app/Contents/MacOS/veslo" || true
+
+# 3) Fresh rebuild (desktop native layer)
 pnpm --filter @neatech/veslo exec cargo clean --manifest-path src-tauri/Cargo.toml
 pnpm --filter @neatech/veslo exec cargo build --manifest-path src-tauri/Cargo.toml --no-default-features
 
-# 3) Start dev runtime
+# 4) Start dev runtime
 pnpm dev
 ```
 
