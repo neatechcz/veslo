@@ -16,6 +16,7 @@ Veslo is a local-first, cloud-backed control surface for agentic work. Treat the
   1. `Target repo: <path>`
   2. `Out of scope repos: <list>`
   3. `Planned output: <what will be changed/tested>`
+- In final answers, do not include references to specific code, files, or line numbers unless the user explicitly asks for them.
 - Never use `packages/web` as the runtime for development, debugging, or verification. Use `packages/desktop`.
 - When the task says "test the app" or depends on desktop behavior, validate the real Tauri runtime. Use `docs/dev/testing-playbook.md`; for internal desktop E2E, follow the `packages/desktop` plus `packages/e2e` WebdriverIO flow and reuse existing WebDriver instances when available.
 - Prefer OpenCode and server surfaces over Tauri-only filesystem behavior. Any capability that mutates `.opencode/` should stay expressible via the Veslo server API when possible.
