@@ -1391,11 +1391,13 @@ mod tests {
             br#"{
               "provider": {
                 "openai": {
-                  "options": {
-                    "headers": {
-                      "x-veslo-gateway-token": "gateway-access-token",
-                      "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
-                      "x-extra": "keep-me"
+                  "models": {
+                    "gpt-4o-mini": {
+                      "headers": {
+                        "x-veslo-gateway-token": "gateway-access-token",
+                        "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
+                        "x-extra": "keep-me"
+                      }
                     }
                   }
                 }
@@ -1408,15 +1410,15 @@ mod tests {
             serde_json::from_slice(&redacted).expect("parse redacted config");
 
         assert_eq!(
-            parsed["provider"]["openai"]["options"]["headers"]["x-veslo-gateway-token"],
+            parsed["provider"]["openai"]["models"]["gpt-4o-mini"]["headers"]["x-veslo-gateway-token"],
             "[REDACTED]"
         );
         assert_eq!(
-            parsed["provider"]["openai"]["options"]["headers"]["x-veslo-session-id"],
+            parsed["provider"]["openai"]["models"]["gpt-4o-mini"]["headers"]["x-veslo-session-id"],
             "${OPENCODE_SESSION_ID}"
         );
         assert_eq!(
-            parsed["provider"]["openai"]["options"]["headers"]["x-extra"],
+            parsed["provider"]["openai"]["models"]["gpt-4o-mini"]["headers"]["x-extra"],
             "keep-me"
         );
     }

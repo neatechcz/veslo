@@ -9,7 +9,7 @@ describe("reconcileOpencodeVersion", () => {
         {
           bin: "/tmp/veslo-code",
           source: "bundled",
-          expectedVersion: "1.2.25",
+          expectedVersion: "1.3.13",
         },
         undefined,
       ),
@@ -22,11 +22,11 @@ describe("reconcileOpencodeVersion", () => {
         {
           bin: "/tmp/opencode",
           source: "external",
-          expectedVersion: "1.2.25",
+          expectedVersion: "1.3.13",
         },
-        "1.2.24",
+        "1.3.12",
       ),
-    ).toBe("1.2.24");
+    ).toBe("1.3.12");
   });
 
   test("rejects bundled version mismatches", () => {
@@ -35,9 +35,9 @@ describe("reconcileOpencodeVersion", () => {
         {
           bin: "/tmp/veslo-code",
           source: "bundled",
-          expectedVersion: "1.2.25",
+          expectedVersion: "1.3.13",
         },
-        "1.2.24",
+        "1.3.12",
       ),
     ).toThrow("veslo-code version mismatch");
   });

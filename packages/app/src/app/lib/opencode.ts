@@ -205,6 +205,29 @@ function sanitizeGatewayProviderOptions(value: unknown): Record<string, unknown>
   return sanitized;
 }
 
+function sanitizeGatewayProviderModel(value: unknown): {
+  config: Record<string, unknown>;
+  headers: Record<string, string>;
+} {
+  const model = readConfigObject(value);
+  const sanitized: Record<string, unknown> = {};
+  let headers: Record<string, string> = {};
+
+  for (const [key, rawValue] of Object.entries(model)) {
+    const normalizedKey = normalizeConfigKey(key);
+    if (isGatewayProviderSecretKey(normalizedKey)) {
+      continue;
+    }
+    if (normalizedKey === "headers") {
+      headers = sanitizeGatewayProviderHeaders(rawValue);
+      continue;
+    }
+    sanitized[key] = rawValue;
+  }
+
+  return { config: sanitized, headers };
+}
+
 export function applyGatewayProviderRouting(
   content: string | null | undefined,
   input: {
@@ -238,48 +261,53 @@ export function applyGatewayProviderRouting(
   const assignedModels = Array.from(
     new Set((input.models ?? []).map((value) => value.trim()).filter(Boolean)),
   );
+  const routedModels = assignedModels.reduce<Record<string, unknown>>((models, modelId) => {
+    const existingModel = sanitizeGatewayProviderModel(existingModels[modelId]);
+    models[modelId] = {
+      ...(providerId === "codex_oauth"
+        ? {
+            name: modelId,
+            tool_call: true,
+            reasoning: true,
+          }
+        : {}),
+      ...existingModel.config,
+      headers: {
+        ...existingModel.headers,
+        "x-veslo-gateway-token": gatewayAccessToken,
+        "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
+      },
+    };
+    return models;
+  }, {});
 
-  const codexProviderFields = providerId === "codex_oauth"
-    ? {
-        name: typeof existingProvider.name === "string" && existingProvider.name.trim()
-          ? existingProvider.name
-          : "Veslo Codex OAuth",
-        npm: typeof existingProvider.npm === "string" && existingProvider.npm.trim()
-          ? existingProvider.npm
-          : "@ai-sdk/openai-compatible",
-        env: Array.isArray(existingProvider.env) ? existingProvider.env : [],
-        models: assignedModels.reduce<Record<string, unknown>>(
-          (models, modelId) => {
-            models[modelId] = readConfigObject(models[modelId]);
-            if (!Object.keys(models[modelId] as Record<string, unknown>).length) {
-              models[modelId] = {
-                name: modelId,
-                tool_call: true,
-                reasoning: true,
-              };
-            }
-            return models;
-          },
-          { ...existingModels },
-        ),
-      }
-    : {};
+  const nextProvider: Record<string, unknown> = {
+    ...existingProvider,
+    ...(providerId === "codex_oauth"
+      ? {
+          name: typeof existingProvider.name === "string" && existingProvider.name.trim()
+            ? existingProvider.name
+            : "Veslo Codex OAuth",
+          npm: typeof existingProvider.npm === "string" && existingProvider.npm.trim()
+            ? existingProvider.npm
+            : "@ai-sdk/openai-compatible",
+          env: Array.isArray(existingProvider.env) ? existingProvider.env : [],
+        }
+      : {}),
+    options: {
+      ...existingOptions,
+      baseURL: `${serverBaseUrl}/ai-gateway/providers/${providerId}/v1`,
+      ...(Object.keys(existingHeaders).length > 0 ? { headers: existingHeaders } : {}),
+    },
+  };
+
+  if (assignedModels.length > 0) {
+    nextProvider.models = routedModels;
+  }
 
   parsed.provider = {
     ...providerRoot,
-    [providerId]: {
-      ...existingProvider,
-      ...codexProviderFields,
-      options: {
-        ...existingOptions,
-        baseURL: `${serverBaseUrl}/ai-gateway/providers/${providerId}/v1`,
-        headers: {
-          ...existingHeaders,
-          "x-veslo-gateway-token": gatewayAccessToken,
-          "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
-        },
-      },
-    },
+    [providerId]: nextProvider,
   };
 
   return JSON.stringify(parsed, null, 2);

@@ -439,12 +439,12 @@ fn ensure_opencode_router_sidecar() {
     let sidecar_dir = manifest_dir.join("sidecars");
 
     let canonical_name = if target.contains("windows") {
-        "opencode-router.exe"
+        "veslo-code-router.exe"
     } else {
-        "opencode-router"
+        "veslo-code-router"
     };
 
-    let mut target_name = format!("opencode-router-{target}");
+    let mut target_name = format!("veslo-code-router-{target}");
     if target.contains("windows") {
         target_name.push_str(".exe");
     }
@@ -468,6 +468,13 @@ fn ensure_opencode_router_sidecar() {
         .filter(|path| path.is_file())
         .or_else(|| {
             find_in_path(if target.contains("windows") {
+                "veslo-code-router.exe"
+            } else {
+                "veslo-code-router"
+            })
+        })
+        .or_else(|| {
+            find_in_path(if target.contains("windows") {
                 "opencode-router.exe"
             } else {
                 "opencode-router"
@@ -478,7 +485,7 @@ fn ensure_opencode_router_sidecar() {
 
     let Some(source_path) = source_path else {
         println!(
-      "cargo:warning=OpenCodeRouter sidecar missing at {} (set OPENCODE_ROUTER_BIN_PATH or install opencode-router)",
+      "cargo:warning=OpenCodeRouter sidecar missing at {} (set OPENCODE_ROUTER_BIN_PATH or install veslo-code-router/opencode-router)",
       dest_path.display()
     );
 
