@@ -183,11 +183,13 @@ import { computeWorkspaceSwitchOverlayHoldMs } from "./utils/workspace-switch-ov
 import {
   parseAuthCompleteDeepLink,
   exchangeHandoffCode,
+  flushPendingDesktopSnapshotWrite,
   getDesktopBrowserAuthStatus,
   hydrateDenAuthFromDesktopSnapshot,
   readDenAuth,
   resolveAuthenticatedDenUserLabel,
   resolvePreferredDenUserLabel,
+  subscribeDenAuthChanges,
   writeDenAuth,
   readDenKeepSignedIn,
   writeDenKeepSignedIn,
@@ -283,6 +285,12 @@ import {
   resolveManagedAiAccess,
   type ManagedAiAccessProfile,
 } from "./lib/ai-access";
+import {
+  resolveManagedAiAccessRetryDelayMs,
+  shouldRetryManagedAiAccessRefresh,
+} from "./lib/managed-ai-access-retry";
+import { waitForManagedAiBootstrapReady } from "./lib/managed-ai-bootstrap-ready";
+import { shouldAutoReloadManagedAiConfig } from "./lib/managed-ai-config-reload";
 import { assertNoClientError, describeRequestError } from "./lib/client-errors";
 import { CLOUD_ONLY_MODE, resolveVesloCloudEnvironment } from "./lib/cloud-policy";
 import { isRemoteUiEnabled } from "./lib/runtime-policy";
@@ -1444,6 +1452,7 @@ export default function App() {
     const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
     if (!content && !resolvedDraft.attachments.length) return;
 
+    await ensureManagedAiBootstrapReady();
     const c = client();
     if (!c) return;
 
@@ -1457,8 +1466,7 @@ export default function App() {
 
     let sessionID = selectedSessionId();
     if (!sessionID) {
-      await createSessionAndOpen();
-      sessionID = selectedSessionId();
+      sessionID = (await createSessionAndOpen()) ?? selectedSessionId();
     }
     if (!sessionID) return;
 
@@ -2165,7 +2173,21 @@ export default function App() {
   const [managedAiAccess, setManagedAiAccess] = createSignal<ManagedAiAccessProfile | null>(null);
   const [managedAiAccessBusy, setManagedAiAccessBusy] = createSignal(false);
   const [managedAiAccessError, setManagedAiAccessError] = createSignal<string | null>(null);
+  const [denAuthRevision, setDenAuthRevision] = createSignal(0);
+  const [managedAiAccessRefreshNonce, setManagedAiAccessRefreshNonce] = createSignal(0);
+  const [managedAiAccessRetryAttempt, setManagedAiAccessRetryAttempt] = createSignal(0);
+  const [managedAiBootstrapPendingCount, setManagedAiBootstrapPendingCount] = createSignal(0);
   const managedAiAccessModel = createMemo(() => managedAiAccess()?.defaultModel ?? null);
+  const managedAiBootstrapBusy = createMemo(
+    () => managedAiAccessBusy() || managedAiBootstrapPendingCount() > 0,
+  );
+  const requestManagedAiAccessRefresh = () => {
+    setManagedAiAccessRefreshNonce((value) => value + 1);
+  };
+  const denGatewayAccessToken = createMemo(() => {
+    denAuthRevision();
+    return readDenAuth()?.token?.trim() ?? "";
+  });
 
   const getConfigSnapshot = (content: string | null) => {
     if (!content?.trim()) return "";
@@ -2179,6 +2201,29 @@ export default function App() {
       return content;
     } catch {
       return content;
+    }
+  };
+
+  const beginManagedAiBootstrap = () => {
+    let released = false;
+    setManagedAiBootstrapPendingCount((count) => count + 1);
+    return () => {
+      if (released) return;
+      released = true;
+      setManagedAiBootstrapPendingCount((count) => Math.max(0, count - 1));
+    };
+  };
+
+  const ensureManagedAiBootstrapReady = async () => {
+    try {
+      await waitForManagedAiBootstrapReady({
+        hasManagedProfile: Boolean(managedAiAccess()) || managedAiBootstrapBusy(),
+        isBootstrapBusy: managedAiBootstrapBusy,
+        isReloadBusy: reloadBusy,
+        hasClient: () => Boolean(client()),
+      });
+    } catch (error) {
+      setError(error instanceof Error ? error.message : safeStringify(error));
     }
   };
 
@@ -3556,23 +3601,27 @@ export default function App() {
     cancelDesktopAuthStatusPolling();
     setAuthCompleteExchangeBusy(true);
     setError(null);
-    exchangeHandoffCode(code, exchangeProof).then((result) => {
-      setAuthCompleteExchangeBusy(false);
-      if (result.ok) {
-        writeDenAuth(result.state);
-        clearDesktopAuthExchangeProof(exchangeProof?.sessionId);
-        setError(null);
-        setView("onboarding");
-        setBooting(true);
-        const rebootstrapTimeout = setTimeout(() => {
-          console.warn("[boot] post-auth bootstrap timed out after 15s - forcing boot complete");
-          setBooting(false);
-        }, 15_000);
-        void workspaceStore.bootstrapOnboarding().finally(() => {
-          clearTimeout(rebootstrapTimeout);
-          setBooting(false);
-        });
-      } else {
+    void exchangeHandoffCode(code, exchangeProof)
+      .then(async (result) => {
+        if (result.ok) {
+          writeDenAuth(result.state);
+          await flushPendingDesktopSnapshotWrite();
+          clearDesktopAuthExchangeProof(exchangeProof?.sessionId);
+          requestManagedAiAccessRefresh();
+          setError(null);
+          setView("onboarding");
+          setBooting(true);
+          const rebootstrapTimeout = setTimeout(() => {
+            console.warn("[boot] post-auth bootstrap timed out after 15s - forcing boot complete");
+            setBooting(false);
+          }, 15_000);
+          void workspaceStore.bootstrapOnboarding().finally(() => {
+            clearTimeout(rebootstrapTimeout);
+            setBooting(false);
+          });
+          return;
+        }
+
         console.error("[den-auth] exchange failed:", result.error);
         if (exchangeProof) {
           clearDesktopAuthExchangeProof(exchangeProof.sessionId);
@@ -3580,8 +3629,20 @@ export default function App() {
         setError(`Sign in failed: ${result.error}`);
         setOnboardingStep("auth");
         setView("onboarding");
-      }
-    });
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : safeStringify(error);
+        console.error("[den-auth] exchange failed:", message);
+        if (exchangeProof) {
+          clearDesktopAuthExchangeProof(exchangeProof.sessionId);
+        }
+        setError(`Sign in failed: ${message}`);
+        setOnboardingStep("auth");
+        setView("onboarding");
+      })
+      .finally(() => {
+        setAuthCompleteExchangeBusy(false);
+      });
   };
 
   const startDesktopAuthStatusPolling = (sessionId: string) => {
@@ -3683,12 +3744,19 @@ export default function App() {
     cancelDesktopAuthStatusPolling();
   });
 
+  onMount(() => {
+    const unsubscribe = subscribeDenAuthChanges(() => {
+      setDenAuthRevision((value) => value + 1);
+    });
+    onCleanup(unsubscribe);
+  });
+
   const resolveDenUserLabel = (auth: ReturnType<typeof readDenAuth>) => {
     return resolveAuthenticatedDenUserLabel(auth);
   };
 
   createEffect(() => {
-    authCompleteExchangeBusy();
+    denAuthRevision();
 
     const auth = readDenAuth();
     setAuthenticatedUser(resolveDenUserLabel(auth));
@@ -3755,7 +3823,7 @@ export default function App() {
   });
 
   const managedAiAccessBlockedReason = createMemo(() => {
-    const userToken = readDenAuth()?.token?.trim() ?? "";
+    const userToken = denGatewayAccessToken();
     if (!userToken || !gatewayVesloServerClient()) {
       return null;
     }
@@ -3766,19 +3834,42 @@ export default function App() {
 
   createEffect(() => {
     authenticatedUser();
+    managedAiAccessRefreshNonce();
 
     const gatewayClient = gatewayVesloServerClient();
-    const userToken = readDenAuth()?.token?.trim() ?? "";
+    const userToken = denGatewayAccessToken();
     if (!gatewayClient || !userToken) {
       setManagedAiAccess(null);
       setManagedAiAccessBusy(false);
       setManagedAiAccessError(null);
+      setManagedAiAccessRetryAttempt(0);
       return;
     }
 
     let cancelled = false;
+    let retryTimeoutId: number | null = null;
     setManagedAiAccessBusy(true);
     setManagedAiAccessError(null);
+
+    const scheduleRetry = (profilePresent: boolean) => {
+      if (
+        !shouldRetryManagedAiAccessRefresh({
+          hasGatewayClient: true,
+          userToken,
+          profilePresent,
+        })
+      ) {
+        setManagedAiAccessRetryAttempt(0);
+        return;
+      }
+
+      const delayMs = resolveManagedAiAccessRetryDelayMs(managedAiAccessRetryAttempt());
+      retryTimeoutId = window.setTimeout(() => {
+        if (cancelled) return;
+        setManagedAiAccessRetryAttempt((value) => value + 1);
+        requestManagedAiAccessRefresh();
+      }, delayMs);
+    };
 
     void gatewayClient
       .getMyAiAccess(userToken)
@@ -3787,11 +3878,17 @@ export default function App() {
         const { profile, reason } = resolveManagedAiAccess(response.aiAccess);
         setManagedAiAccess(profile);
         setManagedAiAccessError(profile ? null : reason ?? AI_ACCESS_NOT_CONFIGURED_MESSAGE);
+        if (profile) {
+          setManagedAiAccessRetryAttempt(0);
+          return;
+        }
+        scheduleRetry(false);
       })
       .catch((error) => {
         if (cancelled) return;
         setManagedAiAccess(null);
         setManagedAiAccessError(describeRequestError(error, "Failed to load AI access"));
+        scheduleRetry(false);
       })
       .finally(() => {
         if (cancelled) return;
@@ -3800,6 +3897,33 @@ export default function App() {
 
     onCleanup(() => {
       cancelled = true;
+      if (retryTimeoutId != null) {
+        window.clearTimeout(retryTimeoutId);
+      }
+    });
+  });
+
+  createEffect(() => {
+    authenticatedUser();
+
+    if (typeof window === "undefined") return;
+    const gatewayClient = gatewayVesloServerClient();
+    const userToken = denGatewayAccessToken();
+    if (!gatewayClient || !userToken) return;
+
+    const refresh = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      requestManagedAiAccessRefresh();
+    };
+
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+
+    onCleanup(() => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
     });
   });
 
@@ -5367,6 +5491,7 @@ export default function App() {
       return undefined;
     }
 
+    await ensureManagedAiBootstrapReady();
     const c = client();
     if (!c) {
       setError("Local runtime is not ready yet.");
@@ -6198,6 +6323,7 @@ export default function App() {
     if (!workspaceDefaultModelReady()) return;
     if (!isTauriRuntime()) return;
     if (!defaultModelExplicit()) return;
+    denAuthRevision();
 
     const workspace = workspaceStore.activeWorkspaceDisplay();
     if (workspace.workspaceType !== "local") return;
@@ -6207,7 +6333,7 @@ export default function App() {
     const nextModel = defaultModel();
     const managedProfile = managedAiAccess();
     const gatewayClient = gatewayVesloServerClient();
-    const gatewayAccessToken = readDenAuth()?.token?.trim() ?? "";
+    const gatewayAccessToken = denGatewayAccessToken();
     const vesloClient = vesloServerClient();
     const vesloWorkspaceId = vesloServerWorkspaceId();
     const vesloCapabilities = resolvedVesloCapabilities();
@@ -6217,6 +6343,8 @@ export default function App() {
       vesloWorkspaceId &&
       vesloCapabilities?.config?.write;
     let cancelled = false;
+    const releaseManagedAiBootstrap =
+      managedProfile && gatewayClient && gatewayAccessToken ? beginManagedAiBootstrap() : null;
 
     const writeConfig = async () => {
       try {
@@ -6235,6 +6363,16 @@ export default function App() {
               opencode: JSON.parse(content) as Record<string, unknown>,
             });
             markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+            if (
+              shouldAutoReloadManagedAiConfig({
+                hasManagedProfile: true,
+                hasConfigChanged: true,
+                hasActiveRuns: anyActiveRuns(),
+                canReloadWorkspace: canReloadWorkspace(),
+              })
+            ) {
+              await reloadWorkspaceEngine();
+            }
             return;
           }
 
@@ -6264,6 +6402,16 @@ export default function App() {
           }
           setLastKnownConfigSnapshot(getConfigSnapshot(content));
           markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+          if (
+            shouldAutoReloadManagedAiConfig({
+              hasManagedProfile: true,
+              hasConfigChanged: true,
+              hasActiveRuns: anyActiveRuns(),
+              canReloadWorkspace: canReloadWorkspace(),
+            })
+          ) {
+            await reloadWorkspaceEngine();
+          }
           return;
         }
 
@@ -6281,6 +6429,8 @@ export default function App() {
         if (cancelled) return;
         const message = error instanceof Error ? error.message : safeStringify(error);
         setError(addOpencodeCacheHint(message));
+      } finally {
+        releaseManagedAiBootstrap?.();
       }
     };
 

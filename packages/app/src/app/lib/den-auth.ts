@@ -114,8 +114,10 @@ type DenDesktopSnapshot = {
 };
 
 type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
+type DenAuthChangeListener = () => void;
 
 let desktopSnapshotWriteQueue: Promise<void> = Promise.resolve();
+const denAuthChangeListeners = new Set<DenAuthChangeListener>();
 
 export function resolvePreferredDenUserLabel(
   user?: Partial<DenAuthState["user"]> | null,
@@ -368,6 +370,27 @@ function queueDesktopSnapshotWrite(
     });
 }
 
+export function flushPendingDesktopSnapshotWrite(): Promise<void> {
+  return desktopSnapshotWriteQueue.catch(() => {});
+}
+
+function emitDenAuthChanged(): void {
+  for (const listener of denAuthChangeListeners) {
+    try {
+      listener();
+    } catch {
+      // ignore listener failures
+    }
+  }
+}
+
+export function subscribeDenAuthChanges(listener: DenAuthChangeListener): () => void {
+  denAuthChangeListeners.add(listener);
+  return () => {
+    denAuthChangeListeners.delete(listener);
+  };
+}
+
 function syncDesktopSnapshotFromCurrentState(): void {
   if (!isTauriRuntime()) return;
   const localStore = localStorageAccess();
@@ -479,6 +502,7 @@ export function writeDenKeepSignedIn(value: boolean): void {
     }
   }
   syncDesktopSnapshotFromCurrentState();
+  emitDenAuthChanged();
 }
 
 export function readDenAuth(): DenAuthState | null {
@@ -525,12 +549,14 @@ export function writeDenAuth(state: DenAuthState): void {
   }
 
   syncDesktopSnapshotFromCurrentState();
+  emitDenAuthChanged();
 }
 
 export function clearDenAuth(): void {
   clearDenAuthFromStorage(localStorageAccess());
   clearDenAuthFromStorage(sessionStorageAccess());
   syncDesktopSnapshotFromCurrentState();
+  emitDenAuthChanged();
 }
 
 async function readDenSessionUser(

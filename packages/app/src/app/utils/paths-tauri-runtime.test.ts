@@ -8,14 +8,22 @@ function withMockWindow<T>(mockWindow: unknown, run: () => T): T {
   const hadWindow = Object.prototype.hasOwnProperty.call(globalScope, "window");
   const originalWindow = globalScope.window;
 
-  globalScope.window = mockWindow;
+  Object.defineProperty(globalScope, "window", {
+    configurable: true,
+    writable: true,
+    value: mockWindow,
+  });
   try {
     return run();
   } finally {
     if (hadWindow) {
-      globalScope.window = originalWindow;
+      Object.defineProperty(globalScope, "window", {
+        configurable: true,
+        writable: true,
+        value: originalWindow,
+      });
     } else {
-      delete globalScope.window;
+      Reflect.deleteProperty(globalScope, "window");
     }
   }
 }

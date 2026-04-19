@@ -110,6 +110,9 @@ test("formatManagedAiAccessConfig writes admin-managed default model and gateway
     model?: string;
     provider?: {
       openai?: {
+        models?: Record<string, {
+          headers?: Record<string, string>;
+        }>;
         options?: {
           baseURL?: string;
           headers?: Record<string, string>;
@@ -122,6 +125,8 @@ test("formatManagedAiAccessConfig writes admin-managed default model and gateway
   assert.equal(parsed.provider?.openai?.options?.baseURL, "https://veslo.example.test/ai-gateway/providers/openai/v1");
   assert.deepEqual(parsed.provider?.openai?.options?.headers, {
     "x-keep": "1",
+  });
+  assert.deepEqual(parsed.provider?.openai?.models?.["gpt-4o-mini"]?.headers, {
     "x-veslo-gateway-token": "den_token_123",
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
@@ -157,6 +162,7 @@ test("formatManagedAiAccessConfig routes codex_oauth through the gateway", () =>
           name?: string;
           tool_call?: boolean;
           reasoning?: boolean;
+          headers?: Record<string, string>;
         }>;
         options?: {
           baseURL?: string;
@@ -177,7 +183,8 @@ test("formatManagedAiAccessConfig routes codex_oauth through the gateway", () =>
     parsed.provider?.codex_oauth?.options?.baseURL,
     "https://veslo.example.test/ai-gateway/providers/codex_oauth/v1",
   );
-  assert.deepEqual(parsed.provider?.codex_oauth?.options?.headers, {
+  assert.equal(parsed.provider?.codex_oauth?.options?.headers, undefined);
+  assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.headers, {
     "x-veslo-gateway-token": "den_token_123",
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
