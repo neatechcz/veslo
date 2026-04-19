@@ -8,6 +8,7 @@ import {
   LM_STUDIO_DEFAULT_BASE_URL,
   LM_STUDIO_PROVIDER_ID,
 } from "../utils/providers";
+import { settleAsyncResult, waitForProviderOAuthCallbackListener } from "../lib/provider-oauth-auto";
 
 import Button from "./button";
 import TextInput from "./text-input";
@@ -204,6 +205,14 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
+  const resolveCallbackFetchImpl = async (): Promise<typeof globalThis.fetch> => {
+    if (isTauriRuntime()) {
+      const { fetch: tauriFetch } = await import("@tauri-apps/plugin-http");
+      return tauriFetch as unknown as typeof globalThis.fetch;
+    }
+    return globalThis.fetch;
+  };
+
   const submitOauth = async (providerId: string, methodIndex: number, code?: string) => {
     const trimmedCode = code?.trim();
     setLocalError(null);
@@ -229,15 +238,27 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
         authorization: started.authorization,
       };
       setOauthSession(nextSession);
-      await openOauthUrl(started.authorization.url);
 
       if (started.authorization.method === "code") {
         setView("oauth-code");
+        await openOauthUrl(started.authorization.url);
         return;
       }
 
       setView("oauth-auto");
-      await submitOauth(entry.id, started.methodIndex);
+      const autoCompletion = settleAsyncResult(submitOauth(entry.id, started.methodIndex));
+      const callbackFetchImpl = await resolveCallbackFetchImpl();
+      const listenerReady = await waitForProviderOAuthCallbackListener(started.authorization.url, {
+        fetchImpl: callbackFetchImpl,
+      });
+      if (!listenerReady) {
+        throw new Error("OAuth callback listener did not start.");
+      }
+      await openOauthUrl(started.authorization.url);
+      const autoResult = await autoCompletion;
+      if (!autoResult.ok) {
+        throw autoResult.error instanceof Error ? autoResult.error : new Error("Failed to complete OAuth");
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to start OAuth";
       setLocalError(message);

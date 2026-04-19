@@ -103,14 +103,14 @@ test("project rows expose drag lifecycle bindings without dedicated grip handle"
 
   assert.match(
     source,
-    /draggable/,
-    "project header should opt into native drag-and-drop",
+    /data-project-drag-preview[\s\S]*draggable/,
+    "project drag preview wrapper should opt into native drag-and-drop",
   );
 
   assert.match(
     source,
-    /onDragStart=\{\(event\) => handleProjectDragStart\(event, project\.key\)\}/,
-    "project header should start reordering with the project key",
+    /data-project-drag-preview[\s\S]*onDragStart=\{\(event\) => handleProjectDragStart\(event, project\.key\)\}/,
+    "project drag preview wrapper should start reordering with the project key",
   );
 
   assert.match(
@@ -128,7 +128,7 @@ test("project rows expose drag lifecycle bindings without dedicated grip handle"
   assert.match(
     source,
     /onDragEnd=\{handleProjectDragEnd\}/,
-    "project header should clear transient drag state at the end of the gesture",
+    "project drag container should clear transient drag state at the end of the gesture",
   );
 
   assert.match(
@@ -153,6 +153,12 @@ test("project rows expose drag lifecycle bindings without dedicated grip handle"
     source,
     /data-project-drag-preview/,
     "project row should expose a dedicated preview source for drag image cloning",
+  );
+
+  assert.match(
+    source,
+    /data-project-drag-preview[\s\S]*<button[\s\S]*onPointerDown=\{\(event\) => handleProjectPointerDown\(event, project\.key, projectDragLabel\(\)\)\}[\s\S]*onClick=\{\(\) => toggleProjectCollapse\(project\.key\)\}/,
+    "project collapse button should stay clickable while drag behavior lives on the wrapper",
   );
 
   assert.match(

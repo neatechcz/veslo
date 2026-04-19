@@ -65,6 +65,7 @@ import { createOnboardingLanguageGate } from "./onboarding-language-gate";
 import { createConfigStore } from "../stores/config-store";
 import { createEngineStore } from "../stores/engine-store";
 import { createRemoteStore } from "../stores/remote-store";
+import { shouldAutoBootstrapRemoteServer } from "../utils/startup-server-bootstrap";
 
 export type { MigrationRepairResult } from "../stores/config-store";
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
@@ -144,6 +145,7 @@ export function createWorkspaceStore(options: {
   isWindowsPlatform: () => boolean;
   vesloServerSettings: () => VesloServerSettings;
   updateVesloServerSettings: (next: VesloServerSettings) => void;
+  preferServerByDefault?: () => boolean;
   vesloServerClient?: () => VesloServerClient | null;
   setOpencodeConnectStatus?: (status: OpencodeConnectStatus | null) => void;
   onEngineStable?: () => void;
@@ -1659,7 +1661,7 @@ export function createWorkspaceStore(options: {
 
   async function forgetWorkspace(
     workspaceId: string,
-    options?: { deleteLocalData?: boolean },
+    forgetOptions?: { deleteLocalData?: boolean },
   ) {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
@@ -1673,7 +1675,7 @@ export function createWorkspaceStore(options: {
 
     try {
       const previousActive = activeWorkspaceId();
-      const mode = options?.deleteLocalData ? "delete_local_data" : "detach_only";
+      const mode = forgetOptions?.deleteLocalData ? "delete_local_data" : "detach_only";
       const ws = await workspaceForget(id, mode);
       setWorkspaces(ws.workspaces);
       clearWorkspaceConnectionState(id);
@@ -1972,9 +1974,58 @@ export function createWorkspaceStore(options: {
     try { fetch("http://127.0.0.1:9876", { method: "POST", body: line, mode: "no-cors" }).catch(() => {}); } catch { /* ignore */ }
   }
 
+  async function bootstrapConfiguredRemoteServer(input: {
+    hostUrl: string;
+    token?: string | null;
+    directory?: string | null;
+  }) {
+    const hostUrl = normalizeVesloServerUrl(input.hostUrl ?? "") ?? "";
+    const token = input.token?.trim() ?? "";
+    const directory = input.directory?.trim() ?? "";
+    const activeRemoteWorkspace =
+      activeWorkspaceInfo()?.workspaceType === "remote" ? activeWorkspaceInfo() : null;
+    const matchedRemoteWorkspace = hostUrl
+      ? workspaces().find((workspace) => {
+          if (workspace.workspaceType !== "remote") return false;
+          const workspaceHost = normalizeVesloServerUrl(
+            workspace.vesloHostUrl ?? workspace.baseUrl ?? workspace.path ?? "",
+          );
+          return Boolean(workspaceHost && workspaceHost === hostUrl);
+        }) ?? null
+      : null;
+    const preferredRemoteWorkspace = matchedRemoteWorkspace ?? activeRemoteWorkspace;
+
+    if (preferredRemoteWorkspace?.workspaceType === "remote") {
+      options.setOnboardingStep("connecting");
+      const ok = await activateWorkspace(preferredRemoteWorkspace.id);
+      if (ok) return true;
+
+      if (isTauriRuntime()) {
+        try {
+          const ws = await workspaceForget(preferredRemoteWorkspace.id);
+          setWorkspaces(ws.workspaces);
+          syncActiveWorkspaceId(ws.activeId);
+          clearWorkspaceConnectionState(preferredRemoteWorkspace.id);
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    if (!hostUrl) return false;
+
+    options.setOnboardingStep("connecting");
+    return await remoteStoreRef.createRemoteWorkspaceFlow({
+      vesloHostUrl: hostUrl,
+      vesloToken: token || null,
+      directory: directory || null,
+      displayName: null,
+    });
+  }
+
   async function bootstrapOnboarding() {
     bootTrace("bootstrapOnboarding START");
-    const startupPref = readStartupPreference();
+    const startupPref = options.startupPreference() ?? readStartupPreference();
     const onboardingComplete = (() => {
       try {
         return window.localStorage.getItem("veslo.onboardingComplete") === "1";
@@ -2094,53 +2145,12 @@ export function createWorkspaceStore(options: {
       const cloudHostUrl = normalizeVesloServerUrl(settings.urlOverride ?? "") ?? "";
       const cloudToken = settings.token?.trim() ?? "";
       const cloudDirectory = options.clientDirectory().trim() ? options.clientDirectory().trim() : null;
-      const normalizedCloudHost = normalizeVesloServerUrl(cloudHostUrl) ?? "";
-
-      const activeRemoteWorkspace = activeWorkspaceInfo()?.workspaceType === "remote"
-        ? activeWorkspaceInfo()
-        : null;
-      const cloudMatchedRemoteWorkspace = normalizedCloudHost
-        ? workspaces().find((workspace) => {
-            if (workspace.workspaceType !== "remote") return false;
-            const workspaceHost = normalizeVesloServerUrl(
-              workspace.vesloHostUrl ?? workspace.baseUrl ?? workspace.path ?? "",
-            );
-            return Boolean(workspaceHost && workspaceHost === normalizedCloudHost);
-          }) ?? null
-        : null;
-      const preferredRemoteWorkspace = cloudMatchedRemoteWorkspace ?? activeRemoteWorkspace;
-
-      if (preferredRemoteWorkspace?.workspaceType === "remote") {
-        options.setOnboardingStep("connecting");
-        const ok = await activateWorkspace(preferredRemoteWorkspace.id);
-        if (ok) {
-          return;
-        }
-
-        if (isTauriRuntime()) {
-          try {
-            const ws = await workspaceForget(preferredRemoteWorkspace.id);
-            setWorkspaces(ws.workspaces);
-            syncActiveWorkspaceId(ws.activeId);
-            clearWorkspaceConnectionState(preferredRemoteWorkspace.id);
-          } catch {
-            // ignore
-          }
-        }
-      }
-
-      if (cloudHostUrl) {
-        options.setOnboardingStep("connecting");
-        const ok = await remoteStoreRef.createRemoteWorkspaceFlow({
-          vesloHostUrl: cloudHostUrl,
-          vesloToken: cloudToken || null,
-          directory: cloudDirectory,
-          displayName: null,
-        });
-        if (ok) {
-          return;
-        }
-      }
+      const ok = await bootstrapConfiguredRemoteServer({
+        hostUrl: cloudHostUrl,
+        token: cloudToken || null,
+        directory: cloudDirectory,
+      });
+      if (ok) return;
 
       options.setOnboardingStep("server");
       return;
@@ -2161,6 +2171,26 @@ export function createWorkspaceStore(options: {
 
     if (startupPref) {
       options.setStartupPreference(startupPref);
+    }
+
+    const settings = options.vesloServerSettings();
+    const configuredServerUrl = normalizeVesloServerUrl(settings.urlOverride ?? "") ?? "";
+    const shouldAutoBootstrapServer = shouldAutoBootstrapRemoteServer({
+      cloudOnlyMode: CLOUD_ONLY_MODE,
+      startupPreference: startupPref,
+      hasConfiguredServerUrl: Boolean(configuredServerUrl),
+      preferServerByDefault: options.preferServerByDefault?.() ?? false,
+    });
+
+    if (shouldAutoBootstrapServer) {
+      const ok = await bootstrapConfiguredRemoteServer({
+        hostUrl: configuredServerUrl,
+        token: settings.token ?? null,
+        directory: options.clientDirectory().trim() ? options.clientDirectory().trim() : null,
+      });
+      if (ok) return;
+      options.setOnboardingStep("server");
+      return;
     }
 
     if (startupPref === "server") {

@@ -108,6 +108,7 @@ export type DashboardViewProps = {
   setTab: (tab: DashboardTab) => void;
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
+  onOpenFeedback: () => void;
   providers: ProviderListItem[];
   providerConnectedIds: string[];
   providerAuthBusy: boolean;
@@ -730,6 +731,13 @@ export default function DashboardView(props: DashboardViewProps) {
     return Boolean(status?.enabled ?? props.activeSoulStatus?.enabled);
   });
 
+  const runtimeAvailableWithoutClient = createMemo(() => {
+    if (props.clientConnected) return false;
+    if (props.vesloServerStatus !== "connected") return false;
+    if (props.activeWorkspaceDisplay.workspaceType !== "local") return false;
+    return (props.workspaceConnectionStateById[props.activeWorkspaceId]?.status ?? "idle") === "connected";
+  });
+
   const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
 
   const handleDashboardTabSelection = (nextTab: DashboardTab, nextSettingsTab?: SettingsTab) => {
@@ -1298,6 +1306,7 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const headerSettingsLabel = createMemo(() => t("dashboard.settings", currentLocale()));
   const headerBackLabel = createMemo(() => t("session.back", currentLocale()));
+  const feedbackButtonLabel = createMemo(() => t("feedback.button", currentLocale()));
 
   const returnToSession = () => {
     const sessionId = props.selectedSessionId?.trim();
@@ -1329,11 +1338,25 @@ export default function DashboardView(props: DashboardViewProps) {
   });
 
   return (
-    <div class={`flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden ${titlebarContentInsetClass()}`}>
+    <div
+      data-feedback-capture-root
+      class={`flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden ${titlebarContentInsetClass()}`}
+    >
       <TitlebarMenuToggles
         leftActive={leftMenuActive()}
         rightActive={rightSidebarVisible()}
         centerContent={dashboardTitlebarContext()}
+        rightContent={
+          <button
+            type="button"
+            class="mr-1 inline-flex h-6 items-center rounded-md px-2.5 text-[11px] font-medium leading-6 text-gray-10 transition-colors hover:bg-gray-3/70 hover:text-gray-12 focus:outline-none focus-visible:ring-0"
+            onClick={props.onOpenFeedback}
+            aria-label={feedbackButtonLabel()}
+            title={feedbackButtonLabel()}
+          >
+            {feedbackButtonLabel()}
+          </button>
+        }
         hideTitlebar={props.hideTitlebar}
         leftLabel={leftMenuLabel()}
         onToggleLeft={handleLeftMenuToggle}
@@ -1421,6 +1444,7 @@ export default function DashboardView(props: DashboardViewProps) {
           <SidebarStatusControls
             clientConnected={props.clientConnected}
             vesloServerStatus={props.vesloServerStatus}
+            runtimeAvailableWithoutClient={runtimeAvailableWithoutClient()}
             authenticatedUser={props.authenticatedUser}
             onOpenSettings={() => openSettings("general")}
           />

@@ -77,7 +77,7 @@ export interface EngineStoreDeps {
   ) => Promise<boolean>;
 
   // Orchestrator / runtime helpers
-  resolveEngineRuntime: () => string;
+  resolveEngineRuntime: () => EngineInfo["runtime"];
   resolveWorkspacePaths: () => string[];
   activateOrchestratorWorkspace: (input: { workspacePath: string; name?: string | null }) => Promise<any>;
 

@@ -7,9 +7,36 @@ export const RECENT_LOAD_MORE_THRESHOLD_PX = 120;
 const normalizePositiveInteger = (value: number, fallback: number) =>
   Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 
+const normalizeLoadedRowCount = (value: number) =>
+  Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+
 export const nextProjectVisibleCount = (current: number) => {
   const safeCurrent = normalizePositiveInteger(current, PROJECT_VISIBLE_DEFAULT);
   return safeCurrent + VIEW_LOAD_MORE_STEP;
+};
+
+export const planVisibleRowLoadMore = (
+  totalLoadedRows: number,
+  currentVisibleRows: number,
+  hasMoreServerRows: boolean,
+  step = VIEW_LOAD_MORE_STEP,
+) => {
+  const safeStep = normalizePositiveInteger(step, VIEW_LOAD_MORE_STEP);
+  const safeTotalLoadedRows = normalizeLoadedRowCount(totalLoadedRows);
+  const safeCurrentVisibleRows = normalizeLoadedRowCount(currentVisibleRows);
+  const loadedHiddenRows = Math.max(0, safeTotalLoadedRows - safeCurrentVisibleRows);
+
+  if (loadedHiddenRows > 0) {
+    return {
+      nextVisibleCount: Math.min(safeTotalLoadedRows, safeCurrentVisibleRows + safeStep),
+      shouldFetchServerRows: false,
+    };
+  }
+
+  return {
+    nextVisibleCount: hasMoreServerRows ? safeCurrentVisibleRows + safeStep : safeCurrentVisibleRows,
+    shouldFetchServerRows: hasMoreServerRows,
+  };
 };
 
 export const computeVisibleRowLoadCount = (
@@ -19,15 +46,11 @@ export const computeVisibleRowLoadCount = (
   step = VIEW_LOAD_MORE_STEP,
 ) => {
   const safeStep = normalizePositiveInteger(step, VIEW_LOAD_MORE_STEP);
-  const safeTotalLoadedRows = Number.isFinite(totalLoadedRows) && totalLoadedRows > 0
-    ? Math.floor(totalLoadedRows)
-    : 0;
-  const safeCurrentVisibleRows = Number.isFinite(currentVisibleRows) && currentVisibleRows > 0
-    ? Math.floor(currentVisibleRows)
-    : 0;
+  const safeTotalLoadedRows = normalizeLoadedRowCount(totalLoadedRows);
+  const safeCurrentVisibleRows = normalizeLoadedRowCount(currentVisibleRows);
   const loadedHiddenRows = Math.max(0, safeTotalLoadedRows - safeCurrentVisibleRows);
 
-  if (loadedHiddenRows >= safeStep) return safeStep;
+  if (loadedHiddenRows > 0) return Math.min(loadedHiddenRows, safeStep);
   if (hasMoreServerRows) return safeStep;
   return loadedHiddenRows;
 };

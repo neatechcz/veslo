@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   computeVisibleRowLoadCount,
+  planVisibleRowLoadMore,
   PROJECT_VISIBLE_DEFAULT,
   RECENT_LOAD_MORE_THRESHOLD_PX,
   RECENT_OVERSCAN_ROWS,
@@ -54,7 +55,7 @@ test("load-more count reflects the remaining loaded rows when the final page is 
 
 test("load-more count keeps the paging step when more server rows may still exist", () => {
   assert.equal(computeVisibleRowLoadCount(27, 27, true), 20);
-  assert.equal(computeVisibleRowLoadCount(30, 27, true), 20);
+  assert.equal(computeVisibleRowLoadCount(30, 27, true), 3);
 });
 
 test("show-less control appears only after the visible window grows beyond its baseline", () => {
@@ -62,4 +63,24 @@ test("show-less control appears only after the visible window grows beyond its b
   assert.equal(shouldShowLessVisibleRowsControl(PROJECT_VISIBLE_DEFAULT, PROJECT_VISIBLE_DEFAULT), false);
   assert.equal(shouldShowLessVisibleRowsControl(11, 11), false);
   assert.equal(shouldShowLessVisibleRowsControl(12, 11), true);
+});
+
+test("load-more planning reveals already-loaded rows before fetching another server page", () => {
+  assert.deepEqual(
+    planVisibleRowLoadMore(30, 27, true),
+    {
+      nextVisibleCount: 30,
+      shouldFetchServerRows: false,
+    },
+  );
+});
+
+test("load-more planning fetches another server page only after the loaded rows are exhausted", () => {
+  assert.deepEqual(
+    planVisibleRowLoadMore(30, 30, true),
+    {
+      nextVisibleCount: 50,
+      shouldFetchServerRows: true,
+    },
+  );
 });

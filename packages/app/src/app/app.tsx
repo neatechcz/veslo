@@ -14,6 +14,8 @@ import { useLocation, useNavigate } from "@solidjs/router";
 
 import type {
   Agent,
+  McpLocalConfig,
+  McpRemoteConfig,
   Part,
   Session,
   TextPartInput,
@@ -88,6 +90,7 @@ import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
 import VesloLogo from "./components/veslo-logo";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
+import FeedbackModal, { type FeedbackFormValues } from "./components/feedback-modal";
 import RenameWorkspaceModal from "./components/rename-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
 import OnboardingView from "./pages/onboarding";
@@ -113,6 +116,10 @@ import {
 } from "./lib/opencode-session";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
 import { createSkillReloadGuard } from "./lib/skill-reload-guard";
+import {
+  submitFeedbackReport,
+  type FeedbackRuntimeContext,
+} from "./lib/feedback";
 import {
   AUTO_COMPACT_CONTEXT_PREF_KEY,
   DEFAULT_MODEL,
@@ -413,7 +420,55 @@ export default function App() {
     createSignal<OnboardingStep>(initialOnboardingStep());
   const [rememberStartupChoice, setRememberStartupChoice] = createSignal(false);
   const [denKeepSignedIn, setDenKeepSignedIn] = createSignal(readDenKeepSignedIn());
+  const [feedbackModalOpen, setFeedbackModalOpen] = createSignal(false);
+  const [feedbackSubmitError, setFeedbackSubmitError] = createSignal<string | null>(null);
+  const [feedbackSubmitting, setFeedbackSubmitting] = createSignal(false);
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
+
+  function openFeedbackModal() {
+    setFeedbackSubmitError(null);
+    setFeedbackModalOpen(true);
+  }
+
+  function closeFeedbackModal() {
+    setFeedbackSubmitError(null);
+    setFeedbackModalOpen(false);
+  }
+
+  const normalizeFeedbackOptional = (value?: string | null) => {
+    const trimmed = value?.trim() ?? "";
+    return trimmed ? trimmed : null;
+  };
+
+  const resolveFeedbackPlatform = () => {
+    if (typeof navigator === "undefined") return null;
+    const platform =
+      (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ??
+      navigator.platform;
+    return normalizeFeedbackOptional(platform);
+  };
+
+  const buildFeedbackRuntimeContext = (): FeedbackRuntimeContext => ({
+    view: currentView(),
+    pathname: location.pathname.trim() || "/",
+    tab: tab(),
+    settingsTab: settingsTab(),
+    selectedSessionId: normalizeFeedbackOptional(activeSessionId()),
+    activeWorkspaceId: normalizeFeedbackOptional(workspaceStore.activeWorkspaceId()),
+    vesloServerWorkspaceId: normalizeFeedbackOptional(resolvedDevtoolsWorkspaceId()),
+    activeWorkspaceType: activeWorkspaceDisplay().workspaceType,
+    activeWorkspaceRoot: normalizeFeedbackOptional(
+      currentView() === "session"
+        ? preferredSessionWorkspaceRoot(
+            resolveSessionDirectory(selectedSession() ?? { id: "", directory: "" }),
+            workspaceStore.activeWorkspaceRoot().trim(),
+          )
+        : workspaceStore.activeWorkspaceRoot().trim(),
+    ),
+    locale: currentLocale(),
+    appVersion: normalizeFeedbackOptional(appVersion()),
+    platform: resolveFeedbackPlatform(),
+  });
 
   const setDenKeepSignedInPreference = (value: boolean) => {
     writeDenKeepSignedIn(value);
@@ -2602,6 +2657,7 @@ export default function App() {
     isWindowsPlatform,
     vesloServerSettings,
     updateVesloServerSettings,
+    preferServerByDefault: () => Boolean(cloudEnvironment.vesloUrl),
     vesloServerClient,
     onEngineStable: () => {
       setEngineReady(true);
@@ -5497,17 +5553,18 @@ export default function App() {
     return { activeClient, resolvedProjectDir };
   }
 
-  function buildMcpAddConfig(entry: McpDirectoryInfo) {
+  function buildMcpAddConfig(entry: McpDirectoryInfo): McpLocalConfig | McpRemoteConfig {
     const entryType = entry.type ?? "remote";
     if (entryType === "remote") {
       if (!entry.url) {
         throw new Error("Missing MCP URL.");
       }
+      const oauth: McpRemoteConfig["oauth"] = entry.oauth ? {} : false;
       return {
-        type: "remote" as const,
+        type: "remote",
         url: entry.url,
         enabled: true,
-        ...(entry.oauth ? { oauth: {} } : { oauth: false }),
+        oauth,
       };
     }
 
@@ -5516,7 +5573,7 @@ export default function App() {
     }
 
     return {
-      type: "local" as const,
+      type: "local",
       command: entry.command,
       enabled: true,
     };
@@ -7768,6 +7825,30 @@ export default function App() {
     error: error(),
   });
 
+  async function persistFeedback(values: FeedbackFormValues) {
+    if (feedbackSubmitting()) return;
+    setFeedbackSubmitError(null);
+    setFeedbackSubmitting(true);
+    try {
+      await submitFeedbackReport({
+        title: values.title,
+        description: values.description,
+        context: buildFeedbackRuntimeContext(),
+      });
+
+      closeFeedbackModal();
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  }
+
+  function submitFeedback(values: FeedbackFormValues) {
+    void persistFeedback(values).catch((error) => {
+      reportError(error, "feedback.submit");
+      setFeedbackSubmitError(error instanceof Error ? error.message : safeStringify(error));
+    });
+  }
+
   const dashboardTabs = new Set<DashboardTab>([
     "scheduled",
     "soul",
@@ -7914,10 +7995,10 @@ export default function App() {
           <OnboardingView {...onboardingProps()} />
         </Match>
         <Match when={currentView() === "session"}>
-          <SessionView {...sessionProps()} />
+          <SessionView {...sessionProps()} onOpenFeedback={openFeedbackModal} />
         </Match>
         <Match when={true}>
-          <DashboardView {...dashboardProps()} />
+          <DashboardView {...dashboardProps()} onOpenFeedback={openFeedbackModal} />
         </Match>
       </Switch>
 
@@ -7925,6 +8006,14 @@ export default function App() {
         open={workspaceSwitchOpen()}
         workspace={workspaceSwitchWorkspace()}
         statusKey={workspaceSwitchStatusKey()}
+      />
+
+      <FeedbackModal
+        open={feedbackModalOpen()}
+        error={feedbackSubmitError()}
+        submitting={feedbackSubmitting()}
+        onClose={closeFeedbackModal}
+        onSubmit={submitFeedback}
       />
 
       <ModelPickerModal

@@ -13,6 +13,7 @@ const readPort = () => {
 const hostOverride = process.env.VESLO_DEV_HOST?.trim() || null;
 const port = readPort();
 const baseUrls = (hostOverride ? [hostOverride] : ["127.0.0.1", "localhost"]).map((host) => `http://${host}:${port}`);
+const VESLO_DEV_SERVER_MARKER = 'name="veslo-dev-server" content="1"';
 
 const fetchWithTimeout = async (url, { timeoutMs = 1200 } = {}) => {
   const controller = new AbortController();
@@ -96,16 +97,27 @@ const portHasHttpServer = async (baseUrl) => {
   }
 };
 
-const looksLikeVite = async (baseUrl) => {
+const looksLikeVesloDevServer = async (baseUrl) => {
   try {
     const res = await fetchWithTimeout(`${baseUrl}/@vite/client`, { timeoutMs: 1200 });
     if (!res.ok) return false;
 
     const contentType = (res.headers.get("content-type") || "").toLowerCase();
-    if (contentType.includes("javascript")) return true;
+    let viteClientLooksValid = contentType.includes("javascript");
+    if (!viteClientLooksValid) {
+      const body = await res.text();
+      viteClientLooksValid = body.includes("import.meta.hot") || body.includes("@vite/client");
+    }
+    if (!viteClientLooksValid) return false;
 
-    const body = await res.text();
-    return body.includes("import.meta.hot") || body.includes("@vite/client");
+    const html = await fetchWithTimeout(baseUrl, { timeoutMs: 1200 });
+    if (!html.ok) return false;
+
+    const htmlContentType = (html.headers.get("content-type") || "").toLowerCase();
+    if (!htmlContentType.includes("text/html")) return false;
+
+    const body = await html.text();
+    return body.includes(VESLO_DEV_SERVER_MARKER);
   } catch {
     return false;
   }
@@ -229,7 +241,7 @@ ensureLinuxDesktopDependencies();
 const main = async () => {
   let detectedViteUrl = null;
   for (const candidate of baseUrls) {
-    if (await looksLikeVite(candidate)) {
+    if (await looksLikeVesloDevServer(candidate)) {
       detectedViteUrl = candidate;
       break;
     }

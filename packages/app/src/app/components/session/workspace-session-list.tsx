@@ -43,12 +43,12 @@ import {
 } from "./workspace-session-list-model";
 import {
   computeVisibleRowLoadCount,
+  planVisibleRowLoadMore,
   PROJECT_VISIBLE_DEFAULT,
   RECENT_ESTIMATED_ROW_HEIGHT,
   RECENT_LOAD_MORE_THRESHOLD_PX,
   VIEW_LOAD_MORE_STEP,
   computeInitialRecentVisibleCount,
-  nextProjectVisibleCount,
   shouldShowLessVisibleRowsControl,
   shouldLoadMoreRecentRowsOnScroll,
 } from "./workspace-session-list-windowing";
@@ -346,10 +346,15 @@ export default function WorkspaceSessionList(props: Props) {
 
   const loadMoreRecentRows = async () => {
     if (recentLoadMoreBusy()) return;
-    if (recentHasHiddenRows()) {
-      setRecentVisibleCount((current) =>
-        Math.min(visibleRecentRows().length, current + VIEW_LOAD_MORE_STEP),
-      );
+    const loadMorePlan = planVisibleRowLoadMore(
+      recentRowsTreeVisible().length,
+      recentVisibleCount(),
+      recentHasMoreServerRows(),
+      VIEW_LOAD_MORE_STEP,
+    );
+
+    if (!loadMorePlan.shouldFetchServerRows) {
+      setRecentVisibleCount(loadMorePlan.nextVisibleCount);
       return;
     }
     if (!recentHasMoreServerRows() || !props.onLoadMoreWorkspaceSessions) return;
@@ -360,7 +365,7 @@ export default function WorkspaceSessionList(props: Props) {
     try {
       await Promise.resolve(props.onLoadMoreWorkspaceSessions(workspaceId));
       setRecentVisibleCount((current) =>
-        Math.min(visibleRecentRows().length, current + VIEW_LOAD_MORE_STEP),
+        Math.max(current, Math.min(visibleRecentRows().length, loadMorePlan.nextVisibleCount)),
       );
     } finally {
       setRecentLoadMoreBusy(false);
@@ -1619,16 +1624,25 @@ export default function WorkspaceSessionList(props: Props) {
                 const canShowLessProjectRows = () =>
                   shouldShowLessVisibleRowsControl(visibleCount(), PROJECT_VISIBLE_DEFAULT);
                 const loadMoreProjectRows = async () => {
-                  const nextVisible = nextProjectVisibleCount(visibleCount());
+                  const loadMorePlan = planVisibleRowLoadMore(
+                    projectTreeVisibleRows().length,
+                    visibleCount(),
+                    projectPaging().hasMore,
+                    VIEW_LOAD_MORE_STEP,
+                  );
                   setProjectVisibleByKey((current) => ({
                     ...current,
-                    [project.key]: nextVisible,
+                    [project.key]: loadMorePlan.nextVisibleCount,
                   }));
+
+                  if (!loadMorePlan.shouldFetchServerRows) {
+                    return;
+                  }
 
                   if (
                     props.onLoadMoreWorkspaceSessions &&
                     projectPaging().hasMore &&
-                    nextVisible > project.sessions.length
+                    loadMorePlan.nextVisibleCount > project.sessions.length
                   ) {
                     await Promise.resolve(props.onLoadMoreWorkspaceSessions(workspace().id));
                   }
@@ -1661,68 +1675,73 @@ export default function WorkspaceSessionList(props: Props) {
                     <Show when={dropIndicatorPosition() === "after"}>
                       <div class="pointer-events-none absolute left-2 right-2 bottom-0 h-[2px] rounded-full bg-indigo-8/80" />
                     </Show>
-                    <div class="relative flex items-start gap-2" data-project-drag-preview>
-                      <button
-                        type="button"
+                    <div class="relative flex items-start gap-2">
+                      <div
+                        class="min-w-0 flex-1"
                         draggable
-                        class={`min-w-0 flex-1 rounded-lg px-1.5 py-1 text-left transition-colors ${
-                          isActiveWorkspace()
-                            ? "text-gray-12"
-                            : "text-gray-11 hover:text-gray-12 hover:bg-gray-2/70"
-                        }`}
-                        title={project.projectTitle}
-                        aria-label={project.projectLabel ? `${tr("sidebar.open_project")} ${project.projectLabel}` : tr("sidebar.open_project")}
+                        data-project-drag-preview
                         onDragStart={(event) => handleProjectDragStart(event, project.key)}
                         onDragEnd={handleProjectDragEnd}
-                        onPointerDown={(event) => handleProjectPointerDown(event, project.key, projectDragLabel())}
-                        onClick={() => toggleProjectCollapse(project.key)}
                       >
-                        <div class="flex items-center gap-2 min-w-0">
-                          <Folder
-                            size={13}
-                            class="shrink-0 text-gray-8 cursor-pointer"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              toggleProjectCollapse(project.key);
-                            }}
-                          />
-                          <span
-                            class="truncate text-[12px] font-semibold text-gray-10 cursor-pointer"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              toggleProjectCollapse(project.key);
-                            }}
-                          >
-                            {project.projectLabel}
-                          </span>
-                          <Show when={workspace().workspaceType === "remote"}>
-                            <span class="shrink-0 text-[10px] text-gray-8 uppercase tracking-[0.12em]">
-                              {workspaceKindLabel(workspace())}
-                            </span>
-                          </Show>
-                          <Show when={soulEnabled()}>
-                            <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
-                              <HeartPulse size={10} />
-                              {tr("sidebar.soul_badge")}
-                            </span>
-                          </Show>
-                          <Show when={isConnecting()}>
-                            <Loader2 size={11} class="animate-spin text-gray-10" />
-                          </Show>
-                          <Show when={project.status === "error"}>
+                        <button
+                          type="button"
+                          class={`w-full rounded-lg px-1.5 py-1 text-left transition-colors ${
+                            isActiveWorkspace()
+                              ? "text-gray-12"
+                              : "text-gray-11 hover:text-gray-12 hover:bg-gray-2/70"
+                          }`}
+                          title={project.projectTitle}
+                          aria-label={project.projectLabel ? `${tr("sidebar.open_project")} ${project.projectLabel}` : tr("sidebar.open_project")}
+                          onPointerDown={(event) => handleProjectPointerDown(event, project.key, projectDragLabel())}
+                          onClick={() => toggleProjectCollapse(project.key)}
+                        >
+                          <div class="flex items-center gap-2 min-w-0">
+                            <Folder
+                              size={13}
+                              class="shrink-0 text-gray-8 cursor-pointer"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleProjectCollapse(project.key);
+                              }}
+                            />
                             <span
-                              class={`text-[10px] px-1.5 py-0.5 rounded-full border ${
-                                taskLoadError().tone === "offline"
-                                  ? "border-amber-7 text-amber-11 bg-amber-3"
-                                  : "border-red-7 text-red-11 bg-red-3"
-                              }`}
-                              title={taskLoadError().title}
+                              class="truncate text-[12px] font-semibold text-gray-10 cursor-pointer"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleProjectCollapse(project.key);
+                              }}
                             >
-                              {taskLoadError().label}
+                              {project.projectLabel}
                             </span>
-                          </Show>
-                        </div>
-                      </button>
+                            <Show when={workspace().workspaceType === "remote"}>
+                              <span class="shrink-0 text-[10px] text-gray-8 uppercase tracking-[0.12em]">
+                                {workspaceKindLabel(workspace())}
+                              </span>
+                            </Show>
+                            <Show when={soulEnabled()}>
+                              <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
+                                <HeartPulse size={10} />
+                                {tr("sidebar.soul_badge")}
+                              </span>
+                            </Show>
+                            <Show when={isConnecting()}>
+                              <Loader2 size={11} class="animate-spin text-gray-10" />
+                            </Show>
+                            <Show when={project.status === "error"}>
+                              <span
+                                class={`text-[10px] px-1.5 py-0.5 rounded-full border ${
+                                  taskLoadError().tone === "offline"
+                                    ? "border-amber-7 text-amber-11 bg-amber-3"
+                                    : "border-red-7 text-red-11 bg-red-3"
+                                }`}
+                                title={taskLoadError().title}
+                              >
+                                {taskLoadError().label}
+                              </span>
+                            </Show>
+                          </div>
+                        </button>
+                      </div>
 
                       <div class="flex items-center gap-1 shrink-0">
                         <button

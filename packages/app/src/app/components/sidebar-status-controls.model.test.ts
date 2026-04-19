@@ -9,13 +9,19 @@ import {
 } from "./sidebar-status-controls.model";
 
 test("unified status is ready only when both client and server are connected", () => {
-  const ready = getUnifiedStatusMeta(true, "connected");
+  const ready = getUnifiedStatusMeta(true, "connected", false);
   assert.equal(ready.label, "Ready");
   assert.equal(ready.dot, "bg-green-9");
 
-  const unavailable = getUnifiedStatusMeta(true, "limited");
+  const unavailable = getUnifiedStatusMeta(true, "limited", false);
   assert.equal(unavailable.label, "Unavailable");
   assert.equal(unavailable.dot, "bg-red-9");
+});
+
+test("unified status stays ready in local browsing mode when the active workspace is connected", () => {
+  const ready = getUnifiedStatusMeta(false, "connected", true);
+  assert.equal(ready.label, "Ready");
+  assert.equal(ready.dot, "bg-green-9");
 });
 
 test("veslo status label maps connected, limited and unavailable", () => {

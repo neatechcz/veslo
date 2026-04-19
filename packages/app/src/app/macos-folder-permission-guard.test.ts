@@ -19,8 +19,9 @@ test("macOS bundle declares folder usage descriptions", () => {
   };
 
   const infoPlistPath = tauriConfig.bundle?.macOS?.infoPlist;
-  assert.equal(typeof infoPlistPath, "string", "bundle.macOS.infoPlist should be a file path string");
-  assert.ok(infoPlistPath.trim().length > 0, "bundle.macOS.infoPlist should not be empty");
+  if (typeof infoPlistPath !== "string" || infoPlistPath.trim().length === 0) {
+    assert.fail("bundle.macOS.infoPlist should be a non-empty file path string");
+  }
 
   const tauriConfigDir = dirname(fileURLToPath(tauriConfigPath));
   const infoPlistRaw = readFileSync(resolve(tauriConfigDir, infoPlistPath), "utf8");

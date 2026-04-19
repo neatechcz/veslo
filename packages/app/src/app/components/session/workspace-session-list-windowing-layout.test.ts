@@ -101,3 +101,17 @@ test("expanded lists can reset their visible window back to the baseline", () =>
     "by-project mode should be able to reset back to the default project window",
   );
 });
+
+test("by-project load-more reveals loaded rows before fetching another server page", () => {
+  assert.match(
+    source,
+    /const loadMorePlan = planVisibleRowLoadMore\(\s*projectTreeVisibleRows\(\)\.length,\s*visibleCount\(\),\s*projectPaging\(\)\.hasMore,\s*VIEW_LOAD_MORE_STEP,\s*\);/s,
+    "by-project load-more should derive a single plan from the loaded rows, visible rows, and server paging state",
+  );
+
+  assert.match(
+    source,
+    /if \(!loadMorePlan\.shouldFetchServerRows\) \{\s*return;\s*\}/s,
+    "by-project load-more should stop after revealing locally loaded rows",
+  );
+});

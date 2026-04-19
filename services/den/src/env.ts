@@ -39,9 +39,42 @@ const schema = z.object({
   POLAR_BENEFIT_ID: z.string().optional(),
   POLAR_SUCCESS_URL: z.string().optional(),
   POLAR_RETURN_URL: z.string().optional(),
+  YOUTRACK_PROJECT_KEY: z.string().optional(),
+  YOUTRACK_MCP_COMMAND: z.string().optional(),
+  YOUTRACK_MCP_ARGS: z.string().optional(),
+  YOUTRACK_MCP_TIMEOUT_MS: z.string().optional(),
 })
 
 const parsed = schema.parse(process.env)
+
+function parseJsonStringArray(raw: string | undefined, label: string) {
+  if (!raw || raw.trim().length === 0) {
+    return []
+  }
+
+  let parsedValue: unknown
+  try {
+    parsedValue = JSON.parse(raw)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`${label} must be a JSON string array. ${message}`)
+  }
+
+  if (!Array.isArray(parsedValue) || parsedValue.some((entry) => typeof entry !== "string")) {
+    throw new Error(`${label} must be a JSON string array.`)
+  }
+
+  return parsedValue.map((entry) => entry.trim()).filter(Boolean)
+}
+
+function parsePositiveNumber(raw: string | undefined, fallback: number, label: string) {
+  const parsedValue = Number(raw ?? String(fallback))
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    throw new Error(`${label} must be a positive number.`)
+  }
+
+  return parsedValue
+}
 
 function normalizeOrigin(origin: string): string {
   const value = origin.trim()
@@ -108,5 +141,11 @@ export const env = {
     benefitId: parsed.POLAR_BENEFIT_ID,
     successUrl: parsed.POLAR_SUCCESS_URL,
     returnUrl: parsed.POLAR_RETURN_URL,
+  },
+  youtrack: {
+    projectKey: parsed.YOUTRACK_PROJECT_KEY?.trim() || null,
+    mcpCommand: parsed.YOUTRACK_MCP_COMMAND?.trim() || null,
+    mcpArgs: parseJsonStringArray(parsed.YOUTRACK_MCP_ARGS, "YOUTRACK_MCP_ARGS"),
+    mcpTimeoutMs: parsePositiveNumber(parsed.YOUTRACK_MCP_TIMEOUT_MS, 20_000, "YOUTRACK_MCP_TIMEOUT_MS"),
   },
 }
