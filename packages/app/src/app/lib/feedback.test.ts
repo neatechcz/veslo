@@ -191,6 +191,36 @@ test("submitFeedbackReport falls back to screenshotStatus=failed when surface ca
   }
 });
 
+test("submitFeedbackReport translates missing feedback route on the Den host into an actionable error", async () => {
+  const dom = installDomStorage();
+
+  installAuthenticatedDenState();
+
+  try {
+    await assert.rejects(
+      submitFeedbackReport({
+        title: "Feedback route missing",
+        description: "The configured Den host does not expose feedback persistence.",
+        context: TEST_CONTEXT,
+        captureSurface: async (): Promise<FeedbackCaptureResult> => ({
+          status: "captured",
+          dataUrl: "data:image/jpeg;base64,missing-route",
+          mimeType: "image/jpeg",
+        }),
+        fetchImpl: async () =>
+          new Response("<!DOCTYPE html><html><body><pre>Cannot POST /v1/feedback</pre></body></html>", {
+            status: 404,
+            headers: { "Content-Type": "text/html" },
+          }),
+      }),
+      /feedback reporting is not enabled on this Den host yet/i,
+    );
+  } finally {
+    clearDenAuth();
+    dom.restore();
+  }
+});
+
 test("submitFeedbackReport requires Den auth before attempting capture or POST", async () => {
   const dom = installDomStorage();
   let captureCalls = 0;

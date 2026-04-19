@@ -419,14 +419,17 @@ export default function App() {
   const [rememberStartupChoice, setRememberStartupChoice] = createSignal(false);
   const [denKeepSignedIn, setDenKeepSignedIn] = createSignal(readDenKeepSignedIn());
   const [feedbackModalOpen, setFeedbackModalOpen] = createSignal(false);
+  const [feedbackSubmitError, setFeedbackSubmitError] = createSignal<string | null>(null);
   const [feedbackSubmitting, setFeedbackSubmitting] = createSignal(false);
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
 
   function openFeedbackModal() {
+    setFeedbackSubmitError(null);
     setFeedbackModalOpen(true);
   }
 
   function closeFeedbackModal() {
+    setFeedbackSubmitError(null);
     setFeedbackModalOpen(false);
   }
 
@@ -2668,10 +2671,10 @@ export default function App() {
     isWindowsPlatform,
     vesloServerSettings,
     updateVesloServerSettings,
+    preferServerByDefault: () => Boolean(cloudEnvironment.vesloUrl),
     vesloServerClient,
     onEngineStable: () => {
       setEngineReady(true);
-    preferServerByDefault: () => Boolean(cloudEnvironment.vesloUrl),
     },
     engineRuntime,
     developerMode,
@@ -7840,7 +7843,7 @@ export default function App() {
 
   async function persistFeedback(values: FeedbackFormValues) {
     if (feedbackSubmitting()) return;
-    setError(null);
+    setFeedbackSubmitError(null);
     setFeedbackSubmitting(true);
     try {
       await submitFeedbackReport({
@@ -7858,7 +7861,7 @@ export default function App() {
   function submitFeedback(values: FeedbackFormValues) {
     void persistFeedback(values).catch((error) => {
       reportError(error, "feedback.submit");
-      setError(error instanceof Error ? error.message : safeStringify(error));
+      setFeedbackSubmitError(error instanceof Error ? error.message : safeStringify(error));
     });
   }
 
@@ -8023,6 +8026,7 @@ export default function App() {
 
       <FeedbackModal
         open={feedbackModalOpen()}
+        error={feedbackSubmitError()}
         submitting={feedbackSubmitting()}
         onClose={closeFeedbackModal}
         onSubmit={submitFeedback}

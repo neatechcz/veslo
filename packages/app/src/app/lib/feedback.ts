@@ -75,6 +75,16 @@ const normalizeOptional = (value?: string | null) => {
   return trimmed ? trimmed : null;
 };
 
+function normalizeFeedbackSubmitError(error: unknown, denApiBase: string): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/^HTTP 404\b/.test(message) && /Cannot POST \/v1\/feedback/.test(message)) {
+    return new Error(
+      `Feedback reporting is not enabled on this Den host yet. The configured Den API base (${denApiBase}) returned 404 for POST /v1/feedback.`,
+    );
+  }
+  return error instanceof Error ? error : new Error(message);
+}
+
 export async function captureFeedbackSurface(
   options: FeedbackCaptureOptions = {},
 ): Promise<Extract<FeedbackCaptureResult, { status: "captured" }>> {
@@ -155,14 +165,17 @@ export async function submitFeedbackReport(args: SubmitFeedbackReportArgs): Prom
   });
 
   const url = `${auth.denApiBase.replace(/\/+$/, "")}/v1/feedback`;
-
-  await fetchJson<unknown>(url, {
-    method: "POST",
-    body: requestBody,
-    headers: {
-      Authorization: `Bearer ${auth.token}`,
-      "x-veslo-org-id": auth.orgId,
-    },
-    fetchImpl: args.fetchImpl ?? resolveFetch(),
-  });
+  try {
+    await fetchJson<unknown>(url, {
+      method: "POST",
+      body: requestBody,
+      headers: {
+        Authorization: `Bearer ${auth.token}`,
+        "x-veslo-org-id": auth.orgId,
+      },
+      fetchImpl: args.fetchImpl ?? resolveFetch(),
+    });
+  } catch (error) {
+    throw normalizeFeedbackSubmitError(error, auth.denApiBase.replace(/\/+$/, ""));
+  }
 }

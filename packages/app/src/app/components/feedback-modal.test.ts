@@ -36,3 +36,9 @@ test("feedback modal blocks duplicate submit activation while persistence is in 
     "feedback modal submit button should disable while submitting",
   );
 });
+
+test("feedback modal renders inline submit errors from the app shell", () => {
+  assert.match(source, /error: string \| null;/, "feedback modal props should accept a dedicated inline error message");
+  assert.match(source, /<Show when=\{props\.error\}>/, "feedback modal should render submit errors inline when present");
+  assert.match(source, /role="alert"/, "feedback modal error surface should announce failures accessibly");
+});

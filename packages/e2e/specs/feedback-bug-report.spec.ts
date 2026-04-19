@@ -20,6 +20,7 @@ function waitForRoute(hashFragment: string, timeout = 10_000): Promise<void> {
 
 function createFeedbackStubServer() {
   const requests: FeedbackRequest[] = [];
+  let responseMode: "success" | "missing-route" = "success";
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     let rawBody = "";
@@ -36,6 +37,12 @@ function createFeedbackStubServer() {
         headers: req.headers,
         body,
       });
+
+      if (responseMode === "missing-route") {
+        res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
+        res.end("<!DOCTYPE html><html><body><pre>Cannot POST /v1/feedback</pre></body></html>");
+        return;
+      }
 
       res.writeHead(201, { "content-type": "application/json" });
       res.end(JSON.stringify({ feedbackId: `fb_${requests.length}` }));
@@ -59,6 +66,10 @@ function createFeedbackStubServer() {
     },
     reset() {
       requests.length = 0;
+      responseMode = "success";
+    },
+    setResponseMode(mode: "success" | "missing-route") {
+      responseMode = mode;
     },
   };
 }
@@ -85,6 +96,15 @@ async function seedDenAuth(denApiBase: string) {
     window.localStorage.setItem("veslo.den.auth", JSON.stringify(auth));
     window.localStorage.setItem("veslo.den.keepSignedIn", "1");
   }, denApiBase);
+}
+
+async function clearDenAuth() {
+  await browser.execute(() => {
+    window.localStorage.removeItem("veslo.den.auth");
+    window.localStorage.removeItem("veslo.den.keepSignedIn");
+    window.sessionStorage.removeItem("veslo.den.auth");
+    window.sessionStorage.removeItem("veslo.den.keepSignedIn");
+  });
 }
 
 async function openFeedbackModal() {
@@ -223,5 +243,50 @@ describe("Global feedback bug reporting", () => {
       view: "session",
       pathname: "/session",
     });
+  });
+
+  it("shows an inline error when feedback submit fails before sending", async () => {
+    await navigateToHash("/dashboard/settings");
+    await waitForRoute("#/dashboard/settings");
+    await clearDenAuth();
+
+    const dialog = await openFeedbackModal();
+    const titleInput = await dialog.$("input");
+    const descriptionInput = await dialog.$("textarea");
+    const submitButton = await dialog.$('//button[normalize-space()="Odeslat hlášení" or normalize-space()="Send bug report"]');
+
+    await titleInput.setValue("Dashboard feedback");
+    await descriptionInput.setValue("This should explain why submit failed.");
+    await submitButton.waitForEnabled({ timeout: 10_000 });
+    await submitButton.click();
+
+    const inlineError = await dialog.$('[role="alert"]');
+    await inlineError.waitForDisplayed({ timeout: 10_000 });
+    await expect(inlineError).toHaveText(expect.stringContaining("Sign in to Den before sending feedback."));
+    expect(feedbackPosts(feedbackStub.requests).length).toBe(0);
+  });
+
+  it("shows an actionable error when the configured Den host does not expose feedback persistence", async () => {
+    feedbackStub.setResponseMode("missing-route");
+
+    await navigateToHash("/dashboard/settings");
+    await waitForRoute("#/dashboard/settings");
+
+    const dialog = await openFeedbackModal();
+    const titleInput = await dialog.$("input");
+    const descriptionInput = await dialog.$("textarea");
+    const submitButton = await dialog.$('//button[normalize-space()="Odeslat hlášení" or normalize-space()="Send bug report"]');
+
+    await titleInput.setValue("Dashboard feedback");
+    await descriptionInput.setValue("This should explain that the Den host is missing feedback persistence.");
+    await submitButton.waitForEnabled({ timeout: 10_000 });
+    await submitButton.click();
+
+    const inlineError = await dialog.$('[role="alert"]');
+    await inlineError.waitForDisplayed({ timeout: 10_000 });
+    await expect(inlineError).toHaveText(
+      expect.stringContaining("Feedback reporting is not enabled on this Den host yet."),
+    );
+    expect(feedbackPosts(feedbackStub.requests).length).toBe(1);
   });
 });

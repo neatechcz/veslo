@@ -13,6 +13,7 @@ export type FeedbackFormValues = {
 
 export type FeedbackModalProps = {
   open: boolean;
+  error: string | null;
   submitting: boolean;
   onClose: () => void;
   onSubmit: (values: FeedbackFormValues) => void;
@@ -207,6 +208,12 @@ export default function FeedbackModal(props: FeedbackModalProps) {
               <p id={noteId} class="rounded-xl border border-dls-border bg-dls-hover px-3 py-2 text-sm text-dls-secondary">
                 {translate("feedback.technical_note")}
               </p>
+
+              <Show when={props.error}>
+                <p role="alert" class="rounded-xl border border-red-7/30 bg-red-1/50 px-3 py-2 text-sm text-red-11">
+                  {props.error}
+                </p>
+              </Show>
             </div>
 
             <div class="mt-6 flex justify-end gap-2">

@@ -597,6 +597,57 @@ test("app shell guards feedback submission while persistence is in flight", () =
   );
 });
 
+test("app shell keeps feedback submit failures scoped to the modal", () => {
+  const appFunction = findFunctionDeclaration(appSourceFile, "App");
+  assert.ok(appFunction?.body, "app.tsx should declare App with a function body");
+
+  const appBody = appFunction!.body!;
+  const feedbackErrorDeclaration = appBody.statements
+    .flatMap((statement) => (ts.isVariableStatement(statement) ? [...statement.declarationList.declarations] : []))
+    .find((declaration) => {
+      if (!ts.isArrayBindingPattern(declaration.name) || declaration.name.elements.length < 2) return false;
+      const bindings = declaration.name.elements.filter(ts.isBindingElement);
+      if (bindings.length < 2) return false;
+      const [accessor, setter] = bindings;
+      if (!ts.isIdentifier(accessor.name) || !ts.isIdentifier(setter.name)) return false;
+      if (accessor.name.text !== "feedbackSubmitError" || setter.name.text !== "setFeedbackSubmitError") return false;
+      return declaration.initializer?.getText(appSourceFile) === "createSignal<string | null>(null)";
+    });
+  assert.ok(feedbackErrorDeclaration, "App should track feedback submit failures in a dedicated signal");
+
+  const feedbackModal = findJsxElementsInNode(appBody, "FeedbackModal").find((node) => getJsxAttribute(node, "open"));
+  assert.ok(feedbackModal, "app.tsx should render FeedbackModal");
+  assert.equal(
+    getJsxAttributeExpression(feedbackModal!, "error")?.getText(appSourceFile),
+    "feedbackSubmitError()",
+    "FeedbackModal should receive the dedicated feedback error accessor",
+  );
+
+  const openFeedbackDecl = findLocalCallable(appBody, "openFeedbackModal");
+  assert.ok(openFeedbackDecl, "App should declare openFeedbackModal in local scope");
+  assert.ok(
+    functionBodyContainsCall(openFeedbackDecl!, "setFeedbackSubmitError", "null"),
+    "opening the feedback modal should clear any stale submit error",
+  );
+
+  const closeFeedbackDecl = findLocalCallable(appBody, "closeFeedbackModal");
+  assert.ok(closeFeedbackDecl, "App should declare closeFeedbackModal in local scope");
+  assert.ok(
+    functionBodyContainsCall(closeFeedbackDecl!, "setFeedbackSubmitError", "null"),
+    "closing the feedback modal should clear any stale submit error",
+  );
+
+  const submitFeedbackDecl = findLocalCallable(appBody, "submitFeedback");
+  assert.ok(submitFeedbackDecl, "App should declare submitFeedback in local scope");
+  const submitFeedbackBody = getFunctionBlock(submitFeedbackDecl!);
+  assert.ok(submitFeedbackBody, "submitFeedback should have a block body");
+  assert.match(
+    submitFeedbackBody!.getText(appSourceFile),
+    /setFeedbackSubmitError\(error instanceof Error \? error\.message : safeStringify\(error\)\)/,
+    "submitFeedback should surface persistence failures inside the modal",
+  );
+});
+
 test("dashboard view keeps the explicit onOpenFeedback page contract", () => {
   assertPageFeedbackContract(dashboardSourceFile, "DashboardViewProps", "DashboardView");
 });
