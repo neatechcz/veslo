@@ -7,6 +7,7 @@ import {
   normalizeDirectoryPath,
   safeStringify,
 } from "../utils";
+import { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecycle";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { t, currentLocale } from "../../i18n";
 import { reportError } from "../lib/error-reporter";
@@ -80,6 +81,7 @@ export interface EngineStoreDeps {
   resolveEngineRuntime: () => EngineInfo["runtime"];
   resolveWorkspacePaths: () => string[];
   activateOrchestratorWorkspace: (input: { workspacePath: string; name?: string | null }) => Promise<any>;
+  activateVesloHostWorkspace: (workspacePath: string) => Promise<any>;
 
   // Workspace-level helpers
   blockLocalAction: (code: string, detail: string) => boolean;
@@ -98,6 +100,34 @@ export function createEngineStore(deps: EngineStoreDeps) {
   const [sandboxDoctorCheckedAt, setSandboxDoctorCheckedAt] = createSignal<number | null>(null);
   const [sandboxDoctorBusy, setSandboxDoctorBusy] = createSignal(false);
 
+  const localRuntimeLifecycle = createLocalRuntimeLifecycle({
+    engineSource: deps.engineSource,
+    engineCustomBinPath: deps.engineCustomBinPath,
+    resolveEngineRuntime: deps.resolveEngineRuntime,
+    resolveWorkspacePaths: deps.resolveWorkspacePaths,
+    setEngine,
+    setEngineAuth,
+    startEngine: engineStart,
+    stopEngine: engineStop,
+    readEngineInfo: engineInfo,
+    activateOrchestratorWorkspace: deps.activateOrchestratorWorkspace,
+    activateVesloHostWorkspace: deps.activateVesloHostWorkspace,
+    connectToServer: deps.connectToServer,
+    connectQuiet: async (baseUrl, directory, auth) =>
+      await deps.connectToServer(
+        baseUrl,
+        directory,
+        {
+          workspaceId: deps.activeWorkspaceId().trim() || undefined,
+          workspaceType: "local",
+          targetRoot: directory,
+          reason: "engine-quiet-reconnect",
+        },
+        auth,
+        { quiet: true, navigate: false },
+      ),
+  });
+
   let lastEngineReconnectAt = 0;
   let reconnectingEngine = false;
 
@@ -106,7 +136,7 @@ export function createEngineStore(deps: EngineStoreDeps) {
 
     try {
       const info = await engineInfo();
-      setEngine(info);
+      const auth = localRuntimeLifecycle.syncEngineSnapshot(info) ?? null;
 
       const isRemoteWorkspace = deps.activeWorkspaceInfo()?.workspaceType === "remote";
       const syncLocalState = !isRemoteWorkspace;
@@ -120,11 +150,6 @@ export function createEngineStore(deps: EngineStoreDeps) {
         activeWorkspaceRoot.length > 0 &&
         engineProjectDir.length > 0 &&
         activeWorkspaceRoot !== engineProjectDir;
-
-      const username = info.opencodeUsername?.trim() ?? "";
-      const password = info.opencodePassword?.trim() ?? "";
-      const auth = username && password ? { username, password } : null;
-      setEngineAuth(auth);
 
       if (info.projectDir && syncLocalState && !browsingDifferentLocalWorkspace) {
         deps.setProjectDir(info.projectDir);
@@ -293,37 +318,15 @@ export function createEngineStore(deps: EngineStoreDeps) {
         deps.setAuthorizedDirs([dir]);
       }
 
-      const info = await engineStart(dir, {
-        preferSidecar: deps.engineSource() === "sidecar",
-        opencodeBinPath:
-          deps.engineSource() === "custom" ? deps.engineCustomBinPath?.().trim() || null : null,
-        runtime: deps.resolveEngineRuntime(),
-        workspacePaths: deps.resolveWorkspacePaths(),
+      const activeLocalWorkspace =
+        deps.activeWorkspaceInfo()?.workspaceType === "local" ? deps.activeWorkspaceInfo() : null;
+      const ok = await localRuntimeLifecycle.startHost({
+        workspacePath: dir,
+        workspaceId: activeLocalWorkspace?.id,
+        reason: "host-start",
+        navigate: optionsOverride?.navigate ?? true,
       });
-      setEngine(info);
-
-      const username = info.opencodeUsername?.trim() ?? "";
-      const password = info.opencodePassword?.trim() ?? "";
-      const auth = username && password ? { username, password } : undefined;
-      setEngineAuth(auth ?? null);
-
-      if (info.baseUrl) {
-        const activeLocalWorkspace =
-          deps.activeWorkspaceInfo()?.workspaceType === "local" ? deps.activeWorkspaceInfo() : null;
-        const ok = await deps.connectToServer(
-          info.baseUrl,
-          dir,
-          {
-            workspaceId: activeLocalWorkspace?.id,
-            workspaceType: "local",
-            targetRoot: dir,
-            reason: "host-start",
-          },
-          auth,
-          { navigate: optionsOverride?.navigate ?? true },
-        );
-        if (!ok) return false;
-      }
+      if (!ok) return false;
 
       deps.markOnboardingComplete();
       return true;
@@ -403,81 +406,25 @@ export function createEngineStore(deps: EngineStoreDeps) {
 
     try {
       const runtime = engine()?.runtime ?? deps.resolveEngineRuntime();
-      if (runtime === "veslo-orchestrator") {
-        await orchestratorInstanceDispose(root);
-        await deps.activateOrchestratorWorkspace({
-          workspacePath: root,
-          name: deps.activeWorkspaceInfo()?.displayName?.trim() || deps.activeWorkspaceInfo()?.name?.trim() || null,
-        });
-
-        const nextInfo = await engineInfo();
-        setEngine(nextInfo);
-
-        const username = nextInfo.opencodeUsername?.trim() ?? "";
-        const password = nextInfo.opencodePassword?.trim() ?? "";
-        const auth = username && password ? { username, password } : undefined;
-        setEngineAuth(auth ?? null);
-
-        if (nextInfo.baseUrl) {
-          const ok = await deps.connectToServer(
-            nextInfo.baseUrl,
-            root,
-            {
-              workspaceId:
-                deps.activeWorkspaceInfo()?.workspaceType === "local"
-                  ? deps.activeWorkspaceInfo()?.id
-                  : undefined,
-              workspaceType: "local",
-              targetRoot: root,
-              reason: "engine-reload-orchestrator",
-            },
-            auth,
-          );
-          if (!ok) {
-            deps.setError("Failed to reconnect after reload");
-            return false;
-          }
-        }
-
-        return true;
-      }
-
-      const info = await engineStop();
-      setEngine(info);
-
-      const nextInfo = await engineStart(root, {
-        preferSidecar: deps.engineSource() === "sidecar",
-        opencodeBinPath:
-          deps.engineSource() === "custom" ? deps.engineCustomBinPath?.().trim() || null : null,
-        runtime,
-        workspacePaths: deps.resolveWorkspacePaths(),
+      const activeLocalWorkspaceId =
+        deps.activeWorkspaceInfo()?.workspaceType === "local"
+          ? deps.activeWorkspaceInfo()?.id
+          : undefined;
+      const ok = await localRuntimeLifecycle.restartWorkspaceRuntime({
+        workspacePath: root,
+        workspaceId: activeLocalWorkspaceId,
+        workspaceName: deps.activeWorkspaceInfo()?.displayName?.trim() || deps.activeWorkspaceInfo()?.name?.trim() || null,
+        reason: runtime === "veslo-orchestrator" ? "engine-reload-orchestrator" : "engine-reload",
+        beforeOrchestratorReconnect:
+          runtime === "veslo-orchestrator"
+            ? async () => {
+                await orchestratorInstanceDispose(root);
+              }
+            : undefined,
       });
-      setEngine(nextInfo);
-
-      const username = nextInfo.opencodeUsername?.trim() ?? "";
-      const password = nextInfo.opencodePassword?.trim() ?? "";
-      const auth = username && password ? { username, password } : undefined;
-      setEngineAuth(auth ?? null);
-
-      if (nextInfo.baseUrl) {
-        const ok = await deps.connectToServer(
-          nextInfo.baseUrl,
-          root,
-          {
-            workspaceId:
-              deps.activeWorkspaceInfo()?.workspaceType === "local"
-                ? deps.activeWorkspaceInfo()?.id
-                : undefined,
-            workspaceType: "local",
-            targetRoot: root,
-            reason: "engine-reload",
-          },
-          auth,
-        );
-        if (!ok) {
-          deps.setError("Failed to reconnect after reload");
-          return false;
-        }
+      if (!ok) {
+        deps.setError("Failed to reconnect after reload");
+        return false;
       }
 
       return true;

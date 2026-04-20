@@ -55,10 +55,7 @@ import { t, currentLocale, isLanguage } from "../../i18n";
 import { mapConfigProvidersToList } from "../utils/providers";
 import { withTimeoutOrThrow } from "../utils/promise-timeout";
 import { connectOrRecoverLocalBootstrap } from "../utils/bootstrap-local-recovery";
-import {
-  activateVesloHostWorkspaceWithTimeout,
-  runWorkspaceEngineRestartWithTimeouts,
-} from "../utils/workspace-switch-timeouts";
+import { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecycle";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { createWorkspaceActivateGuard } from "./workspace-activate-guard";
 import { createOnboardingLanguageGate } from "./onboarding-language-gate";
@@ -215,7 +212,6 @@ export function createWorkspaceStore(options: {
   const CONNECT_PENDING_PERMISSIONS_TIMEOUT_MS = 8_000;
   const WORKSPACE_IO_TIMEOUT_MS = 8_000;
   const WORKSPACE_SET_ACTIVE_TIMEOUT_MS = 8_000;
-  const ENGINE_INFO_TIMEOUT_MS = 12_000;
   const START_HOST_TIMEOUT_MS = 45_000;
   const WORKSPACE_ACTIVATE_TIMEOUT_MS = 30_000;
   const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS = 15_000;
@@ -970,44 +966,16 @@ export function createWorkspaceStore(options: {
       if (canReuseHost && runtime === "veslo-orchestrator") {
         try {
           const reuseStart = Date.now();
-          _wsLog("[workspace:activate] STEP 4a.1 — activateOrchestratorWorkspace...", { path: next.path });
-          await activateOrchestratorWorkspace({
-            workspacePath: next.path,
-            name: next.displayName?.trim() || next.name?.trim() || null,
+          _wsLog("[workspace:activate] STEP 4a.1 — localRuntimeLifecycle.reattachOrchestratorWorkspace...", {
+            path: next.path,
           });
-          _wsLog("[workspace:activate] STEP 4a.2 — activateVesloHostWorkspace...");
-          await activateVesloHostWorkspaceWithTimeout(
-            () => activateVesloHostWorkspace(next.path),
-          );
-          _wsLog("[workspace:activate] STEP 4a.3 — engineInfo...");
-
-          const nextInfo = await withTimeoutOrThrow(
-            engineInfo(),
-            { timeoutMs: ENGINE_INFO_TIMEOUT_MS, label: "engine_info" },
-          );
-          _wsLog("[workspace:activate] STEP 4a.3 — engineInfo DONE");
-          engineStore.setEngine(nextInfo);
-
-          const username = nextInfo.opencodeUsername?.trim() ?? "";
-          const password = nextInfo.opencodePassword?.trim() ?? "";
-          const auth = username && password ? { username, password } : undefined;
-          engineStore.setEngineAuth(auth ?? null);
-
-          if (nextInfo.baseUrl) {
-            _wsLog("[workspace:activate] STEP 4a.4 — connectToServer...", { baseUrl: nextInfo.baseUrl });
-            connectedToLocalHost = await connectToServer(
-              nextInfo.baseUrl,
-              next.path,
-              {
-                workspaceId: next.id,
-                workspaceType: "local",
-                targetRoot: next.path,
-                reason: "workspace-attach-local",
-              },
-              auth,
-              { navigate: false },
-            );
-          }
+          connectedToLocalHost = await localRuntimeLifecycle.reattachOrchestratorWorkspace({
+            workspacePath: next.path,
+            workspaceId: next.id,
+            workspaceName: next.displayName?.trim() || next.name?.trim() || null,
+            reason: "workspace-attach-local",
+            navigate: false,
+          });
           wsDebug("activate:remote->local:reuseHost:done", {
             ok: connectedToLocalHost,
             ms: Date.now() - reuseStart,
@@ -1090,89 +1058,20 @@ export function createWorkspaceStore(options: {
       try {
         const runtime = resolveEngineRuntime();
         _wsLog("[workspace:activate] STEP 5 — runtime =", runtime);
-        if (runtime === "veslo-orchestrator") {
-          _wsLog("[workspace:activate] STEP 5.1 — activateOrchestratorWorkspace...");
-          await activateOrchestratorWorkspace({
-            workspacePath: next.path,
-            name: next.displayName?.trim() || next.name?.trim() || null,
-          });
-          _wsLog("[workspace:activate] STEP 5.2 — activateVesloHostWorkspace...");
-          await activateVesloHostWorkspaceWithTimeout(
-            () => activateVesloHostWorkspace(next.path),
-          );
-          _wsLog("[workspace:activate] STEP 5.3 — engineInfo...");
-
-          const newInfo = await withTimeoutOrThrow(
-            engineInfo(),
-            { timeoutMs: ENGINE_INFO_TIMEOUT_MS, label: "engine_info" },
-          );
-          _wsLog("[workspace:activate] STEP 5.3 — engineInfo DONE");
-          engineStore.setEngine(newInfo);
-
-          const username = newInfo.opencodeUsername?.trim() ?? "";
-          const password = newInfo.opencodePassword?.trim() ?? "";
-          const auth = username && password ? { username, password } : undefined;
-          engineStore.setEngineAuth(auth ?? null);
-
-          if (newInfo.baseUrl) {
-            _wsLog("[workspace:activate] STEP 5.4 — connectToServer...");
-            const ok = await connectToServer(
-              newInfo.baseUrl,
-              next.path,
-              {
-                workspaceId: next.id,
-                workspaceType: "local",
-                targetRoot: next.path,
-                reason: "workspace-orchestrator-switch",
-              },
-              auth,
-              { navigate: false },
-            );
-            if (!ok) {
-              engineRestartFailed = true;
-              options.setError("Failed to reconnect after worker switch");
-            }
-          }
-        } else {
-          _wsLog("[workspace:activate] STEP 5.1b — runWorkspaceEngineRestartWithTimeouts (non-orchestrator)...");
-          const { stopResult: info, startResult: newInfo } = await runWorkspaceEngineRestartWithTimeouts({
-            stop: () => engineStop(),
-            start: () =>
-              engineStart(next.path, {
-                preferSidecar: options.engineSource() === "sidecar",
-                opencodeBinPath:
-                  options.engineSource() === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
-                runtime,
-                workspacePaths: resolveWorkspacePaths(),
-              }),
-          });
-          engineStore.setEngine(info);
-          engineStore.setEngine(newInfo);
-
-          const username = newInfo.opencodeUsername?.trim() ?? "";
-          const password = newInfo.opencodePassword?.trim() ?? "";
-          const auth = username && password ? { username, password } : undefined;
-          engineStore.setEngineAuth(auth ?? null);
-
-          // Reconnect to server
-          if (newInfo.baseUrl) {
-            const ok = await connectToServer(
-              newInfo.baseUrl,
-              next.path,
-              {
-                workspaceId: next.id,
-                workspaceType: "local",
-                targetRoot: next.path,
-                reason: "workspace-restart",
-              },
-              auth,
-              { navigate: false },
-            );
-            if (!ok) {
-              engineRestartFailed = true;
-              options.setError("Failed to reconnect after worker switch");
-            }
-          }
+        _wsLog("[workspace:activate] STEP 5.1 — localRuntimeLifecycle.restartWorkspaceRuntime...", {
+          path: next.path,
+          runtime,
+        });
+        const ok = await localRuntimeLifecycle.restartWorkspaceRuntime({
+          workspacePath: next.path,
+          workspaceId: next.id,
+          workspaceName: next.displayName?.trim() || next.name?.trim() || null,
+          reason: runtime === "veslo-orchestrator" ? "workspace-orchestrator-switch" : "workspace-restart",
+          navigate: false,
+        });
+        if (!ok) {
+          engineRestartFailed = true;
+          options.setError("Failed to reconnect after worker switch");
         }
       } catch (e) {
         engineRestartFailed = true;
@@ -1849,6 +1748,7 @@ export function createWorkspaceStore(options: {
     resolveEngineRuntime,
     resolveWorkspacePaths,
     activateOrchestratorWorkspace,
+    activateVesloHostWorkspace,
     blockLocalAction,
     markOnboardingComplete,
     resolveWelcomeOnboardingStep,
@@ -2431,6 +2331,22 @@ export function createWorkspaceStore(options: {
     return true;
   }
 
+  const localRuntimeLifecycle = createLocalRuntimeLifecycle({
+    engineSource: options.engineSource,
+    engineCustomBinPath: options.engineCustomBinPath,
+    resolveEngineRuntime,
+    resolveWorkspacePaths,
+    setEngine: engineStore.setEngine,
+    setEngineAuth: engineStore.setEngineAuth,
+    startEngine: engineStart,
+    stopEngine: engineStop,
+    readEngineInfo: engineInfo,
+    activateOrchestratorWorkspace,
+    activateVesloHostWorkspace,
+    connectToServer,
+    connectQuiet: connectToEngineQuiet,
+  });
+
   /**
    * Start the engine for the active workspace and connect without disrupting
    * the current session view. Used when sending a message in browsing mode.
@@ -2447,52 +2363,14 @@ export function createWorkspaceStore(options: {
 
     try {
       const runtime = resolveEngineRuntime();
-      if (runtime === "veslo-orchestrator") {
-        await activateOrchestratorWorkspace({
-          workspacePath: workspace.path,
-          name: workspace.displayName?.trim() || workspace.name?.trim() || null,
-        });
-        await activateVesloHostWorkspaceWithTimeout(
-          () => activateVesloHostWorkspace(workspace.path),
-        );
-        const newInfo = await withTimeoutOrThrow(
-          engineInfo(),
-          { timeoutMs: ENGINE_INFO_TIMEOUT_MS, label: "engine_info" },
-        );
-        engineStore.setEngine(newInfo);
-
-        const username = newInfo.opencodeUsername?.trim() ?? "";
-        const password = newInfo.opencodePassword?.trim() ?? "";
-        const auth = username && password ? { username, password } : undefined;
-        engineStore.setEngineAuth(auth ?? null);
-
-        if (newInfo.baseUrl) {
-          await connectToEngineQuiet(newInfo.baseUrl, workspace.path, auth);
-        }
-      } else {
-        const { stopResult: info, startResult: newInfo } = await runWorkspaceEngineRestartWithTimeouts({
-          stop: () => engineStop(),
-          start: () =>
-            engineStart(workspace.path, {
-              preferSidecar: options.engineSource() === "sidecar",
-              opencodeBinPath:
-                options.engineSource() === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
-              runtime,
-              workspacePaths: resolveWorkspacePaths(),
-            }),
-        });
-        engineStore.setEngine(info);
-        engineStore.setEngine(newInfo);
-
-        const username = newInfo.opencodeUsername?.trim() ?? "";
-        const password = newInfo.opencodePassword?.trim() ?? "";
-        const auth = username && password ? { username, password } : undefined;
-        engineStore.setEngineAuth(auth ?? null);
-
-        if (newInfo.baseUrl) {
-          await connectToEngineQuiet(newInfo.baseUrl, workspace.path, auth);
-        }
-      }
+      const ok = await localRuntimeLifecycle.restartWorkspaceRuntime({
+        workspacePath: workspace.path,
+        workspaceId: workspace.id,
+        workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
+        reason: runtime === "veslo-orchestrator" ? "browse-attach-orchestrator" : "browse-attach-direct",
+        connectMode: "quiet",
+      });
+      if (!ok) return false;
 
       // Load sessions while engineReady is still false (SSE sync guard protects sidebar)
       await options.loadSessions(workspace.path);

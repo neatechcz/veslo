@@ -34,7 +34,7 @@ describe('Typography system', () => {
     }, composer);
 
     expect(typography.fontFamily).toContain('Source Sans 3');
-    expect(typography.fontSize).toBe('15px');
+    expect(typography.fontSize).toBe('13px');
   });
 
   it('uses the product typography on shell page titles', async () => {

@@ -95,3 +95,29 @@ test("bootstrap local connect/start preserves the current session route instead 
     "bootstrap startHost must preserve the current route so session opening can complete after the host becomes ready",
   );
 });
+
+test("workspace activation delegates local runtime reuse and restart flows to the shared lifecycle helper", () => {
+  assert.match(
+    source,
+    /const localRuntimeLifecycle = createLocalRuntimeLifecycle\(/,
+    "workspace store should instantiate the shared local runtime lifecycle helper",
+  );
+
+  assert.match(
+    source,
+    /connectedToLocalHost = await localRuntimeLifecycle\.reattachOrchestratorWorkspace\(\{/,
+    "remote-to-local reuse should delegate to the shared helper",
+  );
+
+  assert.match(
+    source,
+    /const ok = await localRuntimeLifecycle\.restartWorkspaceRuntime\(\{/,
+    "local-to-local engine switching should delegate to the shared helper",
+  );
+
+  assert.match(
+    source,
+    /const ok = await localRuntimeLifecycle\.restartWorkspaceRuntime\(\{[\s\S]*connectMode: "quiet"/s,
+    "browsing-mode engine attach should use the shared helper's quiet reconnect path",
+  );
+});
