@@ -1,7 +1,11 @@
 import { Show, createSignal } from "solid-js";
-import { Loader2, Plus, X } from "lucide-solid";
+import { Loader2, Plus } from "lucide-solid";
 import Button from "./button";
 import TextInput from "./text-input";
+import ModalShell from "./modal-shell";
+import ModalHeader from "./modal-header";
+import ModalFooter from "./modal-footer";
+import ModalError from "./modal-error";
 import type { McpDirectoryInfo } from "../constants";
 import { parseLocalCommandInput } from "../mcp";
 import { t, type Language } from "../../i18n";
@@ -82,127 +86,110 @@ export default function AddMcpModal(props: AddMcpModalProps) {
   };
 
   return (
-    <Show when={props.open}>
-      <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div
-          class="absolute inset-0 bg-gray-1/60 backdrop-blur-sm"
+    <ModalShell open={props.open} onClose={handleClose}>
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-6">
+        <ModalHeader
+          title={tr("mcp.add_modal_title")}
+          description={tr("mcp.add_modal_subtitle")}
+          showClose={false}
+        />
+        <button
+          type="button"
+          class="p-2 text-gray-11 hover:text-gray-12 hover:bg-gray-4 rounded-lg transition-colors"
           onClick={handleClose}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+
+      <div class="px-6 py-5 space-y-4">
+        <TextInput
+          label={tr("mcp.server_name")}
+          placeholder={tr("mcp.server_name_placeholder")}
+          value={name()}
+          onInput={(e) => setName(e.currentTarget.value)}
+          autofocus
         />
 
-        <div class="relative w-full max-w-lg bg-gray-2 border border-gray-6 rounded-2xl shadow-2xl overflow-hidden">
-          {/* Header */}
-          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-6">
-            <div>
-              <h2 class="text-lg font-semibold text-gray-12">
-                {tr("mcp.add_modal_title")}
-              </h2>
-              <p class="text-sm text-gray-11">{tr("mcp.add_modal_subtitle")}</p>
-            </div>
+        <div>
+          <div class="mb-1 text-xs font-medium text-dls-secondary">{tr("mcp.server_type")}</div>
+          <div class="flex items-center gap-1.5">
             <button
               type="button"
-              class="p-2 text-gray-11 hover:text-gray-12 hover:bg-gray-4 rounded-lg transition-colors"
-              onClick={handleClose}
+              class={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                serverType() === "remote"
+                  ? "bg-dls-active text-dls-text"
+                  : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+              }`}
+              onClick={() => setServerType("remote")}
             >
-              <X size={20} />
+              {tr("mcp.type_remote")}
+            </button>
+            <button
+              type="button"
+              disabled={props.isRemoteWorkspace}
+              class={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                serverType() === "local"
+                  ? "bg-dls-active text-dls-text"
+                  : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+              } ${props.isRemoteWorkspace ? "opacity-50 cursor-not-allowed" : ""}`}
+              onClick={() => {
+                if (props.isRemoteWorkspace) return;
+                setServerType("local");
+              }}
+            >
+              {tr("mcp.type_local_cmd")}
             </button>
           </div>
-
-          {/* Content */}
-          <div class="px-6 py-5 space-y-4">
-            <TextInput
-              label={tr("mcp.server_name")}
-              placeholder={tr("mcp.server_name_placeholder")}
-              value={name()}
-              onInput={(e) => setName(e.currentTarget.value)}
-              autofocus
-            />
-
-            <div>
-              <div class="mb-1 text-xs font-medium text-dls-secondary">{tr("mcp.server_type")}</div>
-              <div class="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  class={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                    serverType() === "remote"
-                      ? "bg-dls-active text-dls-text"
-                      : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
-                  }`}
-                  onClick={() => setServerType("remote")}
-                >
-                  {tr("mcp.type_remote")}
-                </button>
-                <button
-                  type="button"
-                  disabled={props.isRemoteWorkspace}
-                  class={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                    serverType() === "local"
-                      ? "bg-dls-active text-dls-text"
-                      : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
-                  } ${props.isRemoteWorkspace ? "opacity-50 cursor-not-allowed" : ""}`}
-                  onClick={() => {
-                    if (props.isRemoteWorkspace) return;
-                    setServerType("local");
-                  }}
-                >
-                  {tr("mcp.type_local_cmd")}
-                </button>
-              </div>
-              <Show when={props.isRemoteWorkspace}>
-                <div class="mt-2 text-[11px] text-dls-secondary">{tr("mcp.remote_workspace_url_hint")}</div>
-              </Show>
-            </div>
-
-            <Show when={serverType() === "remote"}>
-              <div class="space-y-3">
-                <TextInput
-                  label={tr("mcp.server_url")}
-                  placeholder={tr("mcp.server_url_placeholder")}
-                  value={url()}
-                  onInput={(e) => setUrl(e.currentTarget.value)}
-                />
-                <label class="flex items-center gap-2 text-xs text-dls-secondary">
-                  <input
-                    type="checkbox"
-                    class="h-4 w-4 rounded border border-dls-border"
-                    checked={oauthRequired()}
-                    onChange={(event) => setOauthRequired(event.currentTarget.checked)}
-                  />
-                  {tr("mcp.oauth_optional_label")}
-                </label>
-              </div>
-            </Show>
-
-            <Show when={serverType() === "local"}>
-              <TextInput
-                label={tr("mcp.server_command")}
-                placeholder={tr("mcp.server_command_placeholder")}
-                hint={tr("mcp.server_command_hint")}
-                value={command()}
-                onInput={(e) => setCommand(e.currentTarget.value)}
-              />
-            </Show>
-
-            <Show when={error()}>
-              <div class="rounded-lg bg-red-2 border border-red-6 px-3 py-2 text-xs text-red-11">
-                {error()}
-              </div>
-            </Show>
-          </div>
-
-          {/* Footer */}
-          <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-6 bg-gray-2/50">
-            <Button variant="ghost" onClick={handleClose}>
-              {tr("mcp.auth.cancel")}
-            </Button>
-            <Button variant="secondary" onClick={handleSubmit} disabled={props.busy}>
-              <Show when={props.busy} fallback={<Plus size={16} />}>
-                <Loader2 size={16} class="animate-spin" />
-              </Show>
-              {tr("mcp.add_server_button")}
-            </Button>
-          </div>
+          <Show when={props.isRemoteWorkspace}>
+            <div class="mt-2 text-[11px] text-dls-secondary">{tr("mcp.remote_workspace_url_hint")}</div>
+          </Show>
         </div>
+
+        <Show when={serverType() === "remote"}>
+          <div class="space-y-3">
+            <TextInput
+              label={tr("mcp.server_url")}
+              placeholder={tr("mcp.server_url_placeholder")}
+              value={url()}
+              onInput={(e) => setUrl(e.currentTarget.value)}
+            />
+            <label class="flex items-center gap-2 text-xs text-dls-secondary">
+              <input
+                type="checkbox"
+                class="h-4 w-4 rounded border border-dls-border"
+                checked={oauthRequired()}
+                onChange={(event) => setOauthRequired(event.currentTarget.checked)}
+              />
+              {tr("mcp.oauth_optional_label")}
+            </label>
+          </div>
+        </Show>
+
+        <Show when={serverType() === "local"}>
+          <TextInput
+            label={tr("mcp.server_command")}
+            placeholder={tr("mcp.server_command_placeholder")}
+            hint={tr("mcp.server_command_hint")}
+            value={command()}
+            onInput={(e) => setCommand(e.currentTarget.value)}
+          />
+        </Show>
+
+        <ModalError error={error()} />
       </div>
-    </Show>
+
+      <ModalFooter bordered>
+        <Button variant="ghost" onClick={handleClose}>
+          {tr("mcp.auth.cancel")}
+        </Button>
+        <Button variant="secondary" onClick={handleSubmit} disabled={props.busy}>
+          <Show when={props.busy} fallback={<Plus size={16} />}>
+            <Loader2 size={16} class="animate-spin" />
+          </Show>
+          {tr("mcp.add_server_button")}
+        </Button>
+      </ModalFooter>
+    </ModalShell>
   );
 }

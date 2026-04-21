@@ -1,6 +1,6 @@
 import type { WorkspaceInfo } from "../lib/tauri";
 
-import { t, currentLocale } from "../../i18n";
+import { useTranslate } from "../../i18n";
 
 import { ChevronDown, Folder, Globe, Loader2, Zap } from "lucide-solid";
 
@@ -27,7 +27,7 @@ export default function WorkspaceChip(props: {
     (props.workspace.sandboxBackend === "docker" ||
       Boolean(props.workspace.sandboxRunId?.trim()) ||
       Boolean(props.workspace.sandboxContainerName?.trim()));
-  const translate = (key: string) => t(key, currentLocale());
+  const translate = useTranslate();
 
   return (
     <button

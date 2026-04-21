@@ -4,6 +4,7 @@ import type { ScheduledJob } from "../types";
 import { usePlatform } from "../context/platform";
 import { formatRelativeTime, isTauriRuntime } from "../utils";
 import { currentLocale, t } from "../../i18n";
+import { createAsyncAction } from "../hooks/create-async-action";
 
 import Button from "../components/button";
 import {
@@ -539,8 +540,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   });
 
   const [deleteTarget, setDeleteTarget] = createSignal<ScheduledJob | null>(null);
-  const [deleteBusy, setDeleteBusy] = createSignal(false);
-  const [deleteError, setDeleteError] = createSignal<string | null>(null);
+  const deleteAction = createAsyncAction();
   const [createModalOpen, setCreateModalOpen] = createSignal(false);
   const [automationName, setAutomationName] = createSignal(tr("scheduled.default_name"));
   const [automationProject, setAutomationProject] = createSignal(props.activeWorkspaceRoot);
@@ -553,17 +553,10 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const confirmDelete = async () => {
     const target = deleteTarget();
     if (!target) return;
-    setDeleteBusy(true);
-    setDeleteError(null);
-    try {
+    await deleteAction.execute(async () => {
       await props.deleteJob(target.slug);
       setDeleteTarget(null);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setDeleteError(message || tr("scheduled.delete_failed"));
-    } finally {
-      setDeleteBusy(false);
-    }
+    });
   };
 
   const cronExpression = createMemo(() => {
@@ -797,9 +790,9 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
         </div>
       </Show>
 
-      <Show when={deleteError()}>
+      <Show when={deleteAction.error()}>
         <div class="rounded-xl border border-red-7/40 bg-red-3/60 px-5 py-4 text-sm text-red-11">
-          {deleteError()}
+          {deleteAction.error()}
         </div>
       </Show>
 
@@ -839,7 +832,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
               <AutomationJobCard
                 job={job}
                 supported={supported()}
-                busy={props.busy || deleteBusy()}
+                busy={props.busy || deleteAction.busy()}
                 onDelete={() => setDeleteTarget(job)}
                 onRun={() => runAutomationNow(job)}
               />
@@ -862,11 +855,11 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                 {deleteTarget()?.name}
               </div>
               <div class="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleteBusy()}>
+                <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleteAction.busy()}>
                   {tr("scheduled.cancel")}
                 </Button>
-                <Button variant="danger" onClick={confirmDelete} disabled={deleteBusy()}>
-                  {deleteBusy() ? tr("scheduled.deleting") : tr("scheduled.delete")}
+                <Button variant="danger" onClick={confirmDelete} disabled={deleteAction.busy()}>
+                  {deleteAction.busy() ? tr("scheduled.deleting") : tr("scheduled.delete")}
                 </Button>
               </div>
             </div>

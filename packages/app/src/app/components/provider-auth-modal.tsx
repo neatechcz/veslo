@@ -2,7 +2,7 @@ import type { ProviderAuthAuthorization } from "@opencode-ai/sdk/v2/client";
 import { CheckCircle2, Loader2, X } from "lucide-solid";
 import type { ProviderListItem } from "../types";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { isTauriRuntime } from "../utils";
+import { openExternalUrl, resolveFetchImpl } from "../lib/tauri-url";
 import {
   isApiCredentialRequired,
   LM_STUDIO_DEFAULT_BASE_URL,
@@ -195,23 +195,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     props.onClose();
   };
 
-  const openOauthUrl = async (url: string) => {
-    if (!url) return;
-    if (isTauriRuntime()) {
-      const { openUrl } = await import("@tauri-apps/plugin-opener");
-      await openUrl(url);
-      return;
-    }
-    window.open(url, "_blank", "noopener,noreferrer");
-  };
-
-  const resolveCallbackFetchImpl = async (): Promise<typeof globalThis.fetch> => {
-    if (isTauriRuntime()) {
-      const { fetch: tauriFetch } = await import("@tauri-apps/plugin-http");
-      return tauriFetch as unknown as typeof globalThis.fetch;
-    }
-    return globalThis.fetch;
-  };
+  const openOauthUrl = openExternalUrl;
+  const resolveCallbackFetchImpl = resolveFetchImpl;
 
   const submitOauth = async (providerId: string, methodIndex: number, code?: string) => {
     const trimmedCode = code?.trim();

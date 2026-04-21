@@ -4,6 +4,7 @@ import type { JSX } from "solid-js";
 
 import type { ArtifactFamily, ArtifactFamilyId, ArtifactFamilyItem } from "./artifact-family-model";
 import { t as tr } from "../../../i18n";
+import { splitPathSegments, toWorkspaceRelative, getBasename, getDirname } from "../../utils/workspace-path";
 
 export type ArtifactsPanelProps = {
   families: ArtifactFamily[];
@@ -15,31 +16,6 @@ export type ArtifactsPanelProps = {
 };
 
 const normalizePath = (value: string) => value.trim().replace(/[\\/]+/g, "/");
-const splitPathSegments = (value: string) => value.split(/[/\\]/).filter(Boolean);
-
-const toWorkspaceRelative = (file: string, root?: string) => {
-  const normalizedRoot = (root ?? "").trim().replace(/[\\/]+/g, "/").replace(/\/+$/, "");
-  if (!normalizedRoot) return file;
-
-  const normalizedFile = file.replace(/[\\/]+/g, "/");
-  const rootKey = normalizedRoot.toLowerCase();
-  const fileKey = normalizedFile.toLowerCase();
-
-  if (fileKey === rootKey) return normalizedFile.split("/").pop() ?? normalizedFile;
-  if (fileKey.startsWith(`${rootKey}/`)) return normalizedFile.slice(normalizedRoot.length + 1);
-  return normalizedFile;
-};
-
-const getBasename = (value: string) => {
-  const segments = splitPathSegments(value);
-  return segments[segments.length - 1] ?? value;
-};
-
-const getDirname = (value: string) => {
-  const segments = splitPathSegments(value);
-  if (segments.length <= 1) return ".";
-  return segments.slice(0, -1).join("/");
-};
 
 const isMarkdown = (value: string) => /\.(md|mdx|markdown)$/i.test(value);
 

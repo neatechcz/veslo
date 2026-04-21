@@ -811,6 +811,7 @@ export function createSessionStore(options: {
       const existingLimit = messageLimitBySession()[sessionID] ?? 0;
       const requestLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, existingLimit);
       setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
+      mark("client check", { hasClient: Boolean(c), sessionID });
       if (!c) {
         try {
           mark("calling offline transcript fallback", { limit: requestLimit });

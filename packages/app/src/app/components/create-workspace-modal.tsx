@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
 import { CheckCircle2, FolderPlus, Loader2, X, XCircle } from "lucide-solid";
-import { t, currentLocale } from "../../i18n";
+import { useTranslate } from "../../i18n";
 
 import Button from "./button";
 
@@ -38,7 +38,7 @@ export default function CreateWorkspaceModal(props: {
   } | null;
 }) {
   let pickFolderRef: HTMLButtonElement | undefined;
-  const translate = (key: string) => t(key, currentLocale());
+  const translate = useTranslate();
 
   const [preset, setPreset] = createSignal<"starter" | "automation" | "minimal">("starter");
   const [selectedFolder, setSelectedFolder] = createSignal<string | null>(null);

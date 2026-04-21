@@ -1,9 +1,12 @@
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 
-import { CheckCircle2, Circle, Search, X } from "lucide-solid";
-import { t, currentLocale } from "../../i18n";
+import { CheckCircle2, Circle, Search } from "lucide-solid";
+import { useTranslate } from "../../i18n";
 
 import Button from "./button";
+import ModalShell from "./modal-shell";
+import ModalHeader from "./modal-header";
+import { useModalFocus } from "./use-modal-focus";
 import { modelEquals } from "../utils";
 import type { ModelOption, ModelRef } from "../types";
 
@@ -22,7 +25,7 @@ export type ModelPickerModalProps = {
 
 export default function ModelPickerModal(props: ModelPickerModalProps) {
   let searchInputRef: HTMLInputElement | undefined;
-  const translate = (key: string) => t(key, currentLocale());
+  const translate = useTranslate();
 
   type RenderedItem =
     | { kind: "model"; opt: ModelOption }
@@ -100,15 +103,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
     el.scrollIntoView({ block: "nearest" });
   };
 
-  createEffect(() => {
-    if (!props.open) return;
-    requestAnimationFrame(() => {
-      searchInputRef?.focus();
-      if (searchInputRef?.value) {
-        searchInputRef.select();
-      }
-    });
-  });
+  useModalFocus(() => props.open, () => searchInputRef, { select: true });
 
   createEffect(() => {
     if (!props.open) return;
@@ -258,79 +253,67 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
   );
 
   return (
-    <Show when={props.open}>
-      <div class="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
-        <div class="bg-gray-2 border border-gray-6/70 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden max-h-[calc(100vh-2rem)] flex flex-col">
-          <div class="p-6 flex flex-col min-h-0">
-            <div class="flex items-start justify-between gap-4">
-              <div>
-                <h3 class="text-lg font-semibold text-gray-12">
-                  {props.target === "default" ? translate("settings.default_model") : translate("settings.session_model")}
-                </h3>
-                <p class="text-sm text-gray-11 mt-1">
-                  {props.target === "default" ? translate("settings.model_description_default") : translate("settings.model_description_session")}
-                </p>
-              </div>
-              <Button variant="ghost" class="!p-2 rounded-full" onClick={props.onClose}>
-                <X size={16} />
-              </Button>
-            </div>
+    <ModalShell open={props.open} onClose={props.onClose} align="start" class="max-h-[calc(100vh-2rem)] flex flex-col">
+      <div class="p-6 flex flex-col min-h-0">
+        <ModalHeader
+          title={props.target === "default" ? translate("settings.default_model") : translate("settings.session_model")}
+          description={props.target === "default" ? translate("settings.model_description_default") : translate("settings.model_description_session")}
+          onClose={props.onClose}
+        />
 
-            <div class="mt-5">
-              <div class="relative">
-                <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-dls-secondary" />
-                <input
-                  ref={(el) => (searchInputRef = el)}
-                  type="text"
-                  value={props.query}
-                  onInput={(e) => props.setQuery(e.currentTarget.value)}
-                  placeholder={translate("settings.search_models")}
-                  class="w-full bg-dls-surface border border-dls-border rounded-xl py-2.5 pl-9 pr-3 text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none focus:ring-1 focus:ring-[rgba(var(--dls-accent-rgb),0.2)] focus:border-dls-accent"
-                />
-              </div>
-              <Show when={props.query.trim()}>
-                <div class="mt-2 text-xs text-dls-secondary">
-                  {translate("settings.showing_models").replace("{count}", String(props.filteredOptions.length)).replace("{total}", String(props.options.length))}
-                </div>
-              </Show>
-            </div>
-
-            <div class="mt-4 space-y-4 overflow-y-auto pr-1 -mr-1 min-h-0">
-              <Show when={enabledOptions().length > 0}>
-                <section class="space-y-2">
-                  <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
-                    Enabled Providers
-                  </div>
-                  <For each={enabledOptions()}>{({ opt, index }) => renderOption(opt, index)}</For>
-                </section>
-              </Show>
-
-              <Show when={otherOptions().length > 0}>
-                <section class="space-y-2">
-                  <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
-                    Other Providers
-                  </div>
-                  <For each={otherOptions()}>
-                    {(provider) => renderProviderLink(provider, provider.index)}
-                  </For>
-                </section>
-              </Show>
-
-              <Show when={renderedItems().length === 0}>
-                <div class="rounded-2xl border border-gray-6/70 bg-gray-1/40 px-4 py-6 text-sm text-gray-10">
-                  No models match your search.
-                </div>
-              </Show>
-            </div>
-
-            <div class="mt-5 flex justify-end shrink-0">
-              <Button variant="outline" onClick={props.onClose}>
-                {translate("settings.done")}
-              </Button>
-            </div>
+        <div class="mt-5">
+          <div class="relative">
+            <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-dls-secondary" />
+            <input
+              ref={(el) => (searchInputRef = el)}
+              type="text"
+              value={props.query}
+              onInput={(e) => props.setQuery(e.currentTarget.value)}
+              placeholder={translate("settings.search_models")}
+              class="w-full bg-dls-surface border border-dls-border rounded-xl py-2.5 pl-9 pr-3 text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none focus:ring-1 focus:ring-[rgba(var(--dls-accent-rgb),0.2)] focus:border-dls-accent"
+            />
           </div>
+          <Show when={props.query.trim()}>
+            <div class="mt-2 text-xs text-dls-secondary">
+              {translate("settings.showing_models").replace("{count}", String(props.filteredOptions.length)).replace("{total}", String(props.options.length))}
+            </div>
+          </Show>
+        </div>
+
+        <div class="mt-4 space-y-4 overflow-y-auto pr-1 -mr-1 min-h-0">
+          <Show when={enabledOptions().length > 0}>
+            <section class="space-y-2">
+              <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
+                Enabled Providers
+              </div>
+              <For each={enabledOptions()}>{({ opt, index }) => renderOption(opt, index)}</For>
+            </section>
+          </Show>
+
+          <Show when={otherOptions().length > 0}>
+            <section class="space-y-2">
+              <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
+                Other Providers
+              </div>
+              <For each={otherOptions()}>
+                {(provider) => renderProviderLink(provider, provider.index)}
+              </For>
+            </section>
+          </Show>
+
+          <Show when={renderedItems().length === 0}>
+            <div class="rounded-2xl border border-gray-6/70 bg-gray-1/40 px-4 py-6 text-sm text-gray-10">
+              No models match your search.
+            </div>
+          </Show>
+        </div>
+
+        <div class="mt-5 flex justify-end shrink-0">
+          <Button variant="outline" onClick={props.onClose}>
+            {translate("settings.done")}
+          </Button>
         </div>
       </div>
-    </Show>
+    </ModalShell>
   );
 }

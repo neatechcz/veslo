@@ -105,6 +105,23 @@ export const t = (key: string, localeOverride?: Language): string => {
  * Initialize locale from localStorage
  * Call this during app initialization
  */
+/**
+ * Reactive translation helper. Returns a function that resolves keys
+ * against the current locale, with optional placeholder replacements.
+ */
+export const useTranslate = (localeOverride?: () => Language) => {
+  return (key: string, replacements?: Record<string, string>): string => {
+    const loc = localeOverride ? localeOverride() : locale();
+    let result = t(key, loc);
+    if (replacements) {
+      for (const [placeholder, value] of Object.entries(replacements)) {
+        result = result.replaceAll(`{${placeholder}}`, value);
+      }
+    }
+    return result;
+  };
+};
+
 export const initLocale = (): Language => {
   if (typeof window === "undefined") {
     return "en";

@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { useOutsideClick } from "./use-outside-click";
 import {
   Archive,
   Folder,
@@ -1007,54 +1008,21 @@ export default function WorkspaceSessionList(props: Props) {
     return shouldUseExpandedNewSessionLabel(sidebarControlsWidth()) ? tr("sidebar.new_session") : tr("sidebar.new");
   });
 
-  createEffect(() => {
-    if (!workspaceMenuTarget()) return;
-    const closeMenu = (event: PointerEvent) => {
-      if (!workspaceMenuRef) return;
-      const target = event.target as Node | null;
-      if (target && workspaceMenuRef.contains(target)) return;
-      setWorkspaceMenuTarget(null);
-    };
-    window.addEventListener("pointerdown", closeMenu);
-    onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
-  });
+  useOutsideClick(() => Boolean(workspaceMenuTarget()), () => workspaceMenuRef, () => setWorkspaceMenuTarget(null));
 
   createEffect(() => {
-    const pendingArchiveId = pendingArchiveConfirmationSessionId();
-    if (!pendingArchiveId) {
+    if (!pendingArchiveConfirmationSessionId()) {
       pendingArchiveConfirmButtonRef = undefined;
-      return;
     }
-    const cancelPendingArchive = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (pendingArchiveConfirmButtonRef && target && pendingArchiveConfirmButtonRef.contains(target)) return;
-      setPendingArchiveConfirmationSessionId(null);
-    };
-    window.addEventListener("pointerdown", cancelPendingArchive);
-    onCleanup(() => window.removeEventListener("pointerdown", cancelPendingArchive));
   });
+  useOutsideClick(
+    () => Boolean(pendingArchiveConfirmationSessionId()),
+    () => pendingArchiveConfirmButtonRef,
+    () => setPendingArchiveConfirmationSessionId(null),
+  );
 
-  createEffect(() => {
-    if (!addWorkspaceMenuOpen()) return;
-    const closeMenu = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (addWorkspaceMenuRef && target && addWorkspaceMenuRef.contains(target)) return;
-      setAddWorkspaceMenuOpen(false);
-    };
-    window.addEventListener("pointerdown", closeMenu);
-    onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
-  });
-
-  createEffect(() => {
-    if (!moreActionsMenuOpen()) return;
-    const closeMenu = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (moreActionsMenuRef && target && moreActionsMenuRef.contains(target)) return;
-      setMoreActionsMenuOpen(false);
-    };
-    window.addEventListener("pointerdown", closeMenu);
-    onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
-  });
+  useOutsideClick(() => addWorkspaceMenuOpen(), () => addWorkspaceMenuRef, () => setAddWorkspaceMenuOpen(false));
+  useOutsideClick(() => moreActionsMenuOpen(), () => moreActionsMenuRef, () => setMoreActionsMenuOpen(false));
 
   createEffect(() => {
     if (!moreActionsMenuOpen()) return;

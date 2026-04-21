@@ -1,7 +1,7 @@
 import { Show, createEffect, createMemo, createSignal } from "solid-js";
 
 import { Globe, X } from "lucide-solid";
-import { t, currentLocale } from "../../i18n";
+import { useTranslate } from "../../i18n";
 
 import Button from "./button";
 import TextInput from "./text-input";
@@ -30,7 +30,7 @@ export default function CreateRemoteWorkspaceModal(props: {
   confirmLabel?: string;
 }) {
   let inputRef: HTMLInputElement | undefined;
-  const translate = (key: string) => t(key, currentLocale());
+  const translate = useTranslate();
 
   const [vesloHostUrl, setVesloHostUrl] = createSignal("");
   const [vesloToken, setVesloToken] = createSignal("");

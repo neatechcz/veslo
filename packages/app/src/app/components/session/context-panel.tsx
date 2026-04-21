@@ -4,6 +4,7 @@ import { ChevronDown, Circle, File, Folder, Package } from "lucide-solid";
 import { SUGGESTED_PLUGINS } from "../../constants";
 import type { McpServerEntry, McpStatus, McpStatusMap, SkillCard } from "../../types";
 import { stripPluginVersion } from "../../utils/plugins";
+import { splitPathSegments, toWorkspaceRelative } from "../../utils/workspace-path";
 
 export type ContextPanelProps = {
   activePlugins: string[];
@@ -65,20 +66,6 @@ const humanizeSkill = (name: string) => {
     .trim();
 };
 
-const splitPathSegments = (value: string) => value.split(/[/\\]/).filter(Boolean);
-
-const toWorkspaceRelative = (file: string, root?: string) => {
-  const normalizedRoot = (root ?? "").trim().replace(/[\\/]+/g, "/").replace(/\/+$/, "");
-  if (!normalizedRoot) return file;
-  const normalizedFile = file.replace(/[\\/]+/g, "/");
-  const rootKey = normalizedRoot.toLowerCase();
-  const fileKey = normalizedFile.toLowerCase();
-  if (fileKey === rootKey) return normalizedFile.split("/").pop() ?? normalizedFile;
-  if (fileKey.startsWith(`${rootKey}/`)) {
-    return normalizedFile.slice(normalizedRoot.length + 1);
-  }
-  return normalizedFile;
-};
 
 const getSmartFileName = (files: string[], file: string): string => {
   if (!file) return "";

@@ -9,6 +9,7 @@ import { opencodeMcpAuth } from "../lib/tauri";
 import { validateMcpServerName } from "../mcp";
 import { t, type Language } from "../../i18n";
 import { isTauriRuntime, normalizeDirectoryPath } from "../utils";
+import { openExternalUrl } from "../lib/tauri-url";
 
 const MCP_AUTH_POLL_INTERVAL_MS = 2_000;
 const MCP_AUTH_TIMEOUT_MS = 90_000;
@@ -85,17 +86,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     }
   });
 
-  const openAuthorizationUrl = async (url: string) => {
-    if (isTauriRuntime()) {
-      const { openUrl } = await import("@tauri-apps/plugin-opener");
-      await openUrl(url);
-      return;
-    }
-
-    if (typeof window !== "undefined") {
-      window.open(url, "_blank", "noopener,noreferrer");
-    }
-  };
+  const openAuthorizationUrl = openExternalUrl;
 
   const handleCopyAuthorizationUrl = async () => {
     const url = authorizationUrl();

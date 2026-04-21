@@ -5,6 +5,7 @@ import { readPerfLogs } from "../lib/perf-log";
 
 import Button from "../components/button";
 import TextInput from "../components/text-input";
+import SecretField from "../components/secret-field";
 
 import { RefreshCcw } from "lucide-solid";
 
@@ -47,8 +48,6 @@ export default function ConfigView(props: ConfigViewProps) {
   const [vesloTokenVisible, setVesloTokenVisible] = createSignal(false);
   const [vesloTestState, setVesloTestState] = createSignal<"idle" | "testing" | "success" | "error">("idle");
   const [vesloTestMessage, setVesloTestMessage] = createSignal<string | null>(null);
-  const [clientTokenVisible, setClientTokenVisible] = createSignal(false);
-  const [hostTokenVisible, setHostTokenVisible] = createSignal(false);
   const [copyingField, setCopyingField] = createSignal<string | null>(null);
   let copyTimeout: number | undefined;
 
@@ -357,69 +356,21 @@ export default function ConfigView(props: ConfigViewProps) {
               </Button>
             </div>
 
-            <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-              <div class="min-w-0">
-                <div class="text-xs font-medium text-gray-11">Access token</div>
-                <div class="text-xs text-gray-7 font-mono truncate">
-                  {clientTokenVisible()
-                    ? hostInfo()?.clientToken || "—"
-                    : hostInfo()?.clientToken
-                      ? "••••••••••••"
-                      : "—"}
-                </div>
-                <div class="text-[11px] text-gray-8 mt-1">Use on phones or laptops connecting to this server.</div>
-              </div>
-              <div class="flex items-center gap-2 shrink-0">
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3"
-                  onClick={() => setClientTokenVisible((prev) => !prev)}
-                  disabled={!hostInfo()?.clientToken}
-                >
-                  {clientTokenVisible() ? "Hide" : "Show"}
-                </Button>
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3"
-                  onClick={() => handleCopy(hostInfo()?.clientToken ?? "", "client-token")}
-                  disabled={!hostInfo()?.clientToken}
-                >
-                  {copyingField() === "client-token" ? "Copied" : "Copy"}
-                </Button>
-              </div>
-            </div>
+            <SecretField
+              label="Access token"
+              value={hostInfo()?.clientToken}
+              hint="Use on phones or laptops connecting to this server."
+              onCopy={(v) => handleCopy(v, "client-token")}
+              copied={copyingField() === "client-token"}
+            />
 
-            <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-              <div class="min-w-0">
-                <div class="text-xs font-medium text-gray-11">Server token</div>
-                <div class="text-xs text-gray-7 font-mono truncate">
-                  {hostTokenVisible()
-                    ? hostInfo()?.hostToken || "—"
-                    : hostInfo()?.hostToken
-                      ? "••••••••••••"
-                      : "—"}
-                </div>
-                <div class="text-[11px] text-gray-8 mt-1">Keep private. Required for approval actions.</div>
-              </div>
-              <div class="flex items-center gap-2 shrink-0">
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3"
-                  onClick={() => setHostTokenVisible((prev) => !prev)}
-                  disabled={!hostInfo()?.hostToken}
-                >
-                  {hostTokenVisible() ? "Hide" : "Show"}
-                </Button>
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3"
-                  onClick={() => handleCopy(hostInfo()?.hostToken ?? "", "host-token")}
-                  disabled={!hostInfo()?.hostToken}
-                >
-                  {copyingField() === "host-token" ? "Copied" : "Copy"}
-                </Button>
-              </div>
-            </div>
+            <SecretField
+              label="Server token"
+              value={hostInfo()?.hostToken}
+              hint="Keep private. Required for approval actions."
+              onCopy={(v) => handleCopy(v, "host-token")}
+              copied={copyingField() === "host-token"}
+            />
           </div>
 
           <div class="text-xs text-gray-9">

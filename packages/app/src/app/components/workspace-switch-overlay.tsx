@@ -1,5 +1,5 @@
 import { Show, createMemo } from "solid-js";
-import { t, currentLocale } from "../../i18n";
+import { useTranslate } from "../../i18n";
 import VesloLogo from "./veslo-logo";
 
 import type { WorkspaceInfo } from "../lib/tauri";
@@ -9,7 +9,7 @@ export default function WorkspaceSwitchOverlay(props: {
   workspace: WorkspaceInfo | null;
   statusKey: string;
 }) {
-  const translate = (key: string) => t(key, currentLocale());
+  const translate = useTranslate();
 
   const workspaceName = createMemo(() => {
     if (!props.workspace) return "";
