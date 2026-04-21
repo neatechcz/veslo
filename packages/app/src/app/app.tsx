@@ -2682,8 +2682,11 @@ export default function App() {
       const latest = sessions[0];
       const transcript = await readTranscriptFromDb(latest.id, 50);
       const snapshot = dbTranscriptToSnapshot(latest.id, workspaceId, transcript, 50);
+      // Only populate the cache — don't change selectedSessionId.
+      // The route effect and selectSession will pick the correct session
+      // when the user clicks. Changing selectedSessionId here interfered
+      // with the user's session selection and caused race conditions.
       sessionStore.hydrateTranscriptSnapshot(snapshot);
-      setSelectedSessionId(latest.id);
     },
   });
 

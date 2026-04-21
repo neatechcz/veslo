@@ -1005,10 +1005,15 @@ export function createWorkspaceStore(options: {
       }
     }
 
-    // BROWSING MODE: When switching between local workspaces in Tauri,
-    // skip engine restart and load sessions/messages directly from SQLite.
-    // The user can browse history immediately; engine stays where it was.
-    if (!isRemote && wasLocalConnection && workspaceChanged && isTauriRuntime() && options.populateSidebarFromDb) {
+    // BROWSING MODE: Load sessions/messages directly from SQLite so the user
+    // can browse history without waiting for engine startup.  Entered when
+    // switching between local workspaces (wasLocalConnection truthy) OR on
+    // cold boot when no engine is running yet (client is null and startup
+    // preference has already been set to "local" by this function).
+    const canBrowseOffline =
+      !isRemote && workspaceChanged && isTauriRuntime() && options.populateSidebarFromDb;
+    const isColdBoot = !options.client() && options.startupPreference() === "local";
+    if (canBrowseOffline && (wasLocalConnection || isColdBoot)) {
       _wsLog("[workspace:activate] STEP 5-BROWSE — browsing mode, loading from SQLite", { id, path: next.path });
       wsDebug("activate:local->local:browsingMode", { id, nextPath: next.path });
 
@@ -1022,7 +1027,7 @@ export function createWorkspaceStore(options: {
       options.setSseConnected(false);
 
       try {
-        await options.populateSidebarFromDb(id, next.path);
+        await options.populateSidebarFromDb!(id, next.path);
       } catch (e) {
         _wsLog("[workspace:activate] STEP 5-BROWSE — populateSidebarFromDb failed", e);
       }
@@ -2172,6 +2177,20 @@ export function createWorkspaceStore(options: {
         bootTrace("running engine project mismatch, restarting host...", runningEngineProjectDir);
       }
 
+      // BROWSING MODE BOOT: Instead of starting the engine (which takes ~2.5s
+      // and wipes session state via connectToServer), activate the workspace in
+      // browsing mode so the user can browse session history from SQLite.
+      // The engine starts on-demand when the user sends a message
+      // (via ensureEngineForWorkspace in sendPrompt).
+      if (isTauriRuntime() && activeWorkspace) {
+        _wsLog("[workspace:bootstrap] browsing mode boot — activateWorkspace", { workspacePath });
+        bootTrace("browsing mode boot — activateWorkspace...");
+        await activateWorkspace(activeWorkspace.id);
+        markOnboardingComplete();
+        return;
+      }
+
+      // Non-Tauri fallback: start engine the traditional way
       _wsLog("[workspace:bootstrap] startHost...", { workspacePath });
       bootTrace("startHost...");
       options.setOnboardingStep("connecting");
