@@ -189,13 +189,7 @@ const compareProjectRows = (a: FlatSessionRow, b: FlatSessionRow) => {
 const compareProjectGroups = (
   a: ProjectSessionGroup,
   b: ProjectSessionGroup,
-  workspaceOrderById: Map<string, number>,
 ) => {
-  const aWorkspaceOrder = workspaceOrderById.get(a.workspace.id) ?? Number.MAX_SAFE_INTEGER;
-  const bWorkspaceOrder = workspaceOrderById.get(b.workspace.id) ?? Number.MAX_SAFE_INTEGER;
-  const byWorkspaceOrder = aWorkspaceOrder - bWorkspaceOrder;
-  if (byWorkspaceOrder !== 0) return byWorkspaceOrder;
-
   const byActivity = b.activityAt - a.activityAt;
   if (byActivity !== 0) return byActivity;
 
@@ -484,9 +478,6 @@ export const buildProjectGroups = (
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean = defaultPrivateWorkspacePath,
 ): ProjectSessionGroup[] => {
   const rows = collectFlatRows(workspaceSessionGroups, isPrivateWorkspacePath);
-  const workspaceOrderById = new Map(
-    workspaceSessionGroups.map((group, index) => [group.workspace.id, index] as const),
-  );
   const rowBySessionId = new Map(rows.map((row) => [row.session.id, row] as const));
   const groupedRows = new Map<string, FlatSessionRow[]>();
 
@@ -519,5 +510,5 @@ export const buildProjectGroups = (
         isPrivateProject,
       };
     })
-    .sort((a, b) => compareProjectGroups(a, b, workspaceOrderById));
+    .sort(compareProjectGroups);
 };

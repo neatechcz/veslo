@@ -24,7 +24,7 @@ assert.equal(
 );
 
 const statusBarSource = readFileSync(
-  new URL("../src/app/components/status-bar.tsx", import.meta.url),
+  new URL("../src/app/components/sidebar-status-controls.tsx", import.meta.url),
   "utf8",
 );
 assert.equal(
@@ -50,9 +50,9 @@ assert.equal(
   "session empty state title must not imply local setup",
 );
 assert.equal(
-  sessionSource.includes("CLOUD_ONLY_MODE"),
+  settingsSource.includes("This build is cloud-only. Local host mode is disabled."),
   true,
-  "session empty state must gate cloud-only behavior",
+  "settings must expose the cloud-only banner copy",
 );
 
 console.log(JSON.stringify({ ok: true, checks: 9 }));

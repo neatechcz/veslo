@@ -36,17 +36,23 @@ assert.equal(
   "language onboarding gate must check persisted language preference key",
 );
 assert.equal(
-  appSource.includes('if (onboardingStep() === "language" && !path.startsWith("/onboarding"))'),
+  appSource.includes(
+    'if ((onboardingStep() === "language" || onboardingStep() === "auth") && !path.startsWith("/onboarding"))',
+  ),
   true,
   "router must enter onboarding route when language step is active",
 );
 assert.equal(
-  appSource.includes('if (path.startsWith("/onboarding")) {\n      if (onboardingStep() === "language") {\n        return;\n      }'),
+  appSource.includes(
+    'if (path.startsWith("/onboarding")) {\n      if (onboardingStep() === "language" || onboardingStep() === "auth") {\n        return;\n      }',
+  ),
   true,
   "router must not redirect away from onboarding while language step is active",
 );
 assert.equal(
-  /async function onConnectClient\(\)\s*{[\s\S]*options\.setOnboardingStep\("connecting"\)[\s\S]*const ok = await createRemoteWorkspaceFlow\([\s\S]*if \(!ok\)\s*{[\s\S]*options\.setOnboardingStep\("server"\);[\s\S]*return;[\s\S]*}[\s\S]*options\.setOnboardingStep\("server"\);[\s\S]*}/.test(workspaceSource),
+  /async function onConnectClient\(\)[\s\S]*options\.setOnboardingStep\("connecting"\)[\s\S]*remoteStoreRef\.createRemoteWorkspaceFlow\([\s\S]*if \(!ok\) \{\s*[\s\S]*options\.setOnboardingStep\("server"\);\s*return;[\s\S]*\}\s*[\s\S]*options\.setOnboardingStep\("server"\);/.test(
+    workspaceSource,
+  ),
   true,
   "server connect flow must clear the transient connecting onboarding step after success or failure",
 );

@@ -45,6 +45,8 @@ Session/sidebar convenience state also lives in local storage, for example:
 
 Treat these as UI state, not product contract, unless a feature depends on them explicitly.
 
+During workspace switches, the sidebar may already have task rows for the target workspace while the global session store still reflects the previous workspace or is startup-empty. The sidebar must keep those existing target rows until scoped sessions for the target workspace load, so a transient empty store does not hide a remote worker's project list.
+
 ## Workspace Activation State
 
 Workspace activation state is runtime-only state managed by `packages/app/src/app/context/workspace.ts`.

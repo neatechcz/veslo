@@ -99,6 +99,10 @@ const workspaceB = join(root, "ws-b");
 await mkdir(workspaceA, { recursive: true });
 await mkdir(workspaceB, { recursive: true });
 
+function normalizeMacOSTempPath(input) {
+  return resolve(input).replace(/^\/private\/var(?=\/|$)/, "/var").replace(/[\\/]+$/, "");
+}
+
 const daemonPort = await findFreePort();
 const opencodePort = await findFreePort();
 const daemonUrl = `http://127.0.0.1:${daemonPort}`;
@@ -152,8 +156,8 @@ try {
   const pathA = await runCli(["workspace", "path", idA, "--json"], dataDir);
   const pathB = await runCli(["workspace", "path", idB, "--json"], dataDir);
 
-  assert.equal(pathA.path.directory, workspaceA);
-  assert.equal(pathB.path.directory, workspaceB);
+  assert.equal(normalizeMacOSTempPath(pathA.path.directory), normalizeMacOSTempPath(workspaceA));
+  assert.equal(normalizeMacOSTempPath(pathB.path.directory), normalizeMacOSTempPath(workspaceB));
 
   const status2 = await runCli(["daemon", "status", "--json"], dataDir);
   const pid2 = status2.opencode.pid;
@@ -163,7 +167,7 @@ try {
   assert.equal(disposed.disposed, true);
 
   const pathA2 = await runCli(["workspace", "path", idA, "--json"], dataDir);
-  assert.equal(pathA2.path.directory, workspaceA);
+  assert.equal(normalizeMacOSTempPath(pathA2.path.directory), normalizeMacOSTempPath(workspaceA));
 
   await runCli(["daemon", "stop", "--json"], dataDir);
   await Promise.race([once(daemon, "exit"), new Promise((resolve) => setTimeout(resolve, 3000))]);

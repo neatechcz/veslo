@@ -199,6 +199,102 @@ test("buildProjectGroups surfaces the most recently active project first within 
   );
 });
 
+test("buildProjectGroups orders private and named project groups by latest activity", () => {
+  const privateRoot = "/Users/test/.veslo/workspaces/private";
+  const isPrivateWorkspacePath = (folder: string | null | undefined) =>
+    typeof folder === "string" && (folder === privateRoot || folder.startsWith(`${privateRoot}/`));
+
+  const groups = buildProjectGroups(
+    [
+      {
+        workspace: {
+          id: "private-a",
+          name: "private-a",
+          path: `${privateRoot}/a`,
+          preset: "starter",
+          workspaceType: "local" as const,
+        },
+        sessions: [
+          {
+            id: "private-newest",
+            title: "private-newest",
+            directory: `${privateRoot}/a`,
+            time: { created: 500, updated: 505 },
+          },
+        ],
+        status: "ready",
+      },
+      {
+        workspace: {
+          id: "project-alpha",
+          name: "project-alpha",
+          path: "/Users/test/projects/alpha",
+          preset: "starter",
+          workspaceType: "local" as const,
+        },
+        sessions: [
+          {
+            id: "alpha-session",
+            title: "alpha-session",
+            directory: "/Users/test/projects/alpha",
+            time: { created: 350, updated: 450 },
+          },
+        ],
+        status: "ready",
+      },
+      {
+        workspace: {
+          id: "private-b",
+          name: "private-b",
+          path: `${privateRoot}/b`,
+          preset: "starter",
+          workspaceType: "local" as const,
+        },
+        sessions: [
+          {
+            id: "private-middle",
+            title: "private-middle",
+            directory: `${privateRoot}/b`,
+            time: { created: 420, updated: 421 },
+          },
+          {
+            id: "private-oldest",
+            title: "private-oldest",
+            directory: `${privateRoot}/b`,
+            time: { created: 120, updated: 600 },
+          },
+        ],
+        status: "ready",
+      },
+      {
+        workspace: {
+          id: "remote-beta",
+          name: "remote-beta",
+          path: "/tmp/remote-beta",
+          preset: "starter",
+          workspaceType: "remote" as const,
+          directory: "/srv/beta",
+        },
+        sessions: [
+          {
+            id: "remote-session",
+            title: "remote-session",
+            directory: "/srv/beta",
+            time: { created: 410, updated: 411 },
+          },
+        ],
+        status: "ready",
+      },
+    ],
+    isPrivateWorkspacePath,
+  );
+
+  assert.deepEqual(
+    groups.map((group) => group.key),
+    ["project:veslo-private", "/Users/test/projects/alpha", "/srv/beta"],
+  );
+});
+
 test("rowVisibleByExpansion keeps a three-level branch closed until each parent is explicitly expanded", () => {
   const workspace = {
     id: "workspace-1",
@@ -405,7 +501,7 @@ test("splitSessionDisplayLabel avoids duplicating the same text twice", () => {
   });
 });
 
-test("buildProjectGroups keeps directory groups in workspace insertion order", () => {
+test("buildProjectGroups orders directory groups by latest activity", () => {
   const workspaceA = {
     id: "workspace-a",
     name: "workspace-a",
@@ -450,7 +546,7 @@ test("buildProjectGroups keeps directory groups in workspace insertion order", (
 
   assert.deepEqual(
     groups.map((group) => group.workspace.id),
-    ["workspace-a", "workspace-b"],
+    ["workspace-b", "workspace-a"],
   );
 });
 

@@ -3147,6 +3147,7 @@ export default function App() {
             sessionDirectoryMatchesRoot(resolveSessionDirectory(session), activeWorkspaceRoot),
           )
         : allSessions;
+      const existingTargetSessionCount = (sidebarSessionsByWorkspaceId()[wsId] ?? []).length;
       if (
         !shouldSyncSidebarFromSessionStore({
           activeWorkspaceId,
@@ -3154,6 +3155,7 @@ export default function App() {
           targetWorkspaceId: wsId,
           allSessionCount: allSessions.length,
           scopedSessionCount: scopedSessions.length,
+          existingTargetSessionCount,
         })
       ) {
         wsDebug("sidebar:sync:skip-stale-session-store", {
@@ -3162,6 +3164,7 @@ export default function App() {
           connectingWorkspaceId: connectingWorkspaceId || null,
           allSessionCount: allSessions.length,
           scopedSessionCount: scopedSessions.length,
+          existingTargetSessionCount,
         });
         return;
       }

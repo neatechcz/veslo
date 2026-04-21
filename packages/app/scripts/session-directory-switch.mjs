@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import {
   findFreePort,
@@ -14,6 +14,10 @@ import {
 const root = mkdtempSync(join(tmpdir(), "veslo-session-directory-switch-"));
 const dirA = join(root, "private-workspace");
 const dirB = join(root, "chosen-folder");
+
+function normalizeMacOSTempPath(input) {
+  return resolve(input).replace(/^\/private\/var(?=\/|$)/, "/var").replace(/[\\/]+$/, "");
+}
 
 const port = await findFreePort();
 await mkdir(dirA, { recursive: true });
@@ -45,7 +49,11 @@ try {
 
   const reopened = await clientA.session.get({ sessionID: session.id, directory: dirB });
   assert.equal(reopened.id, session.id);
-  assert.equal(reopened.directory, dirA, "OpenCode still stores the original session directory");
+  assert.equal(
+    normalizeMacOSTempPath(reopened.directory),
+    normalizeMacOSTempPath(dirA),
+    "OpenCode still stores the original session directory",
+  );
 
   console.log(
     JSON.stringify({

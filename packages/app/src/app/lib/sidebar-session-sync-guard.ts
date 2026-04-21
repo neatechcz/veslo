@@ -4,6 +4,7 @@ type SidebarSessionSyncGuardInput = {
   targetWorkspaceId: string;
   allSessionCount: number;
   scopedSessionCount: number;
+  existingTargetSessionCount?: number;
 };
 
 /**
@@ -24,6 +25,9 @@ export const shouldSyncSidebarFromSessionStore = (
   const scopedSessionCount = Number.isFinite(input.scopedSessionCount)
     ? Math.max(0, Math.floor(input.scopedSessionCount))
     : 0;
+  const existingTargetSessionCount = Number.isFinite(input.existingTargetSessionCount)
+    ? Math.max(0, Math.floor(input.existingTargetSessionCount ?? 0))
+    : 0;
 
   if (!targetWorkspaceId) return false;
 
@@ -39,8 +43,9 @@ export const shouldSyncSidebarFromSessionStore = (
   // Safe once we have scoped rows for the target workspace.
   if (scopedSessionCount > 0) return true;
 
-  // Also safe when the freshly loaded store is legitimately empty.
-  if (allSessionCount === 0) return true;
+  // Also safe when the freshly loaded store is legitimately empty, unless the
+  // target already has rows that would be wiped by a startup-empty store.
+  if (allSessionCount === 0) return existingTargetSessionCount === 0;
 
   // Otherwise this is likely old workspace data; keep existing sidebar rows.
   return false;

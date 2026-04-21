@@ -18,7 +18,7 @@ assert.equal(
 );
 
 assert.equal(
-  sessionSource.includes('tr("session.choose_folder")'),
+  composerSource.includes('translate("session.choose_folder")'),
   true,
   "session actions must expose choose-folder copy-and-switch flow",
 );

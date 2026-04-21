@@ -396,12 +396,6 @@ export default function WorkspaceSessionList(props: Props) {
   });
 
   createEffect(() => {
-    props.activeWorkspaceId;
-    setProjectVisibleByKey({});
-    setRecentVisibleCount(initialRecentVisibleCount());
-  });
-
-  createEffect(() => {
     if (sidebarMode() !== "recent") return;
     syncRecentVisibleFromViewport();
   });

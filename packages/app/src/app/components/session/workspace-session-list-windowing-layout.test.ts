@@ -102,6 +102,14 @@ test("expanded lists can reset their visible window back to the baseline", () =>
   );
 });
 
+test("selecting a session from expanded results does not collapse the visible window", () => {
+  assert.doesNotMatch(
+    source,
+    /createEffect\(\(\) => \{\s*props\.activeWorkspaceId;\s*setProjectVisibleByKey\(\{\}\);\s*setRecentVisibleCount\(initialRecentVisibleCount\(\)\);\s*\}\);/s,
+    "active workspace changes should preserve explicit load-more expansion",
+  );
+});
+
 test("by-project load-more reveals loaded rows before fetching another server page", () => {
   assert.match(
     source,

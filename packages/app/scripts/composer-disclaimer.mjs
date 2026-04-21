@@ -17,7 +17,7 @@ const loadTsObject = (relativePath) => {
 };
 
 const composerSource = readFileSync(
-  new URL("../src/app/components/session/composer.tsx", import.meta.url),
+  new URL("../src/app/pages/session.tsx", import.meta.url),
   "utf8",
 );
 
@@ -42,7 +42,7 @@ for (const [locale, messages] of Object.entries(locales)) {
 
 assert.match(
   composerSource,
-  /translate\("session\.composer_disclaimer"\)/,
+  /tr\("session\.composer_disclaimer"\)/,
   "composer must render the localized disclaimer",
 );
 
