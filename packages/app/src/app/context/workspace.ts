@@ -2381,14 +2381,30 @@ export function createWorkspaceStore(options: {
     _wsLog("[workspace:ensureEngine] starting engine for browsing mode", { id, path: workspace.path });
 
     try {
-      const runtime = resolveEngineRuntime();
-      const ok = await localRuntimeLifecycle.restartWorkspaceRuntime({
-        workspacePath: workspace.path,
-        workspaceId: workspace.id,
-        workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
-        reason: runtime === "veslo-orchestrator" ? "browse-attach-orchestrator" : "browse-attach-direct",
-        connectMode: "quiet",
-      });
+      let ok = false;
+      try {
+        const runtime = resolveEngineRuntime();
+        ok = await localRuntimeLifecycle.restartWorkspaceRuntime({
+          workspacePath: workspace.path,
+          workspaceId: workspace.id,
+          workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
+          reason: runtime === "veslo-orchestrator" ? "browse-attach-orchestrator" : "browse-attach-direct",
+          connectMode: "quiet",
+        });
+      } catch (restartError) {
+        // Orchestrator not running yet (cold boot browsing mode).
+        // Fall back to startHost which launches from scratch.
+        _wsLog("[workspace:ensureEngine] restartWorkspaceRuntime failed, trying startHost...", {
+          id,
+          error: restartError instanceof Error ? restartError.message : String(restartError),
+        });
+        ok = await localRuntimeLifecycle.startHost({
+          workspacePath: workspace.path,
+          workspaceId: workspace.id,
+          reason: "browse-cold-start",
+          navigate: false,
+        });
+      }
       if (!ok) return false;
 
       // Load sessions while engineReady is still false (SSE sync guard protects sidebar)
