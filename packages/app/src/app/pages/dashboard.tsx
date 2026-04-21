@@ -524,7 +524,7 @@ export default function DashboardView(props: DashboardViewProps) {
         null
       );
     }
-    return workspace?.vesloWorkspaceId?.trim() || id;
+    return workspace?.vesloWorkspaceId?.trim() || null;
   };
 
   const reportLoadedSessionPrefetchInterest: LoadedSessionPrefetchInterestChangeHandler = (workspaceId, interest) => {

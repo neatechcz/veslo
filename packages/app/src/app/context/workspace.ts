@@ -2202,6 +2202,14 @@ export function createWorkspaceStore(options: {
           _wsLog("[workspace:bootstrap] hydrateLatestSessionFromDb failed", e);
         }
         markOnboardingComplete();
+
+        // Start the engine in the background so veslo-server connects
+        // (green status dot).  The user can already browse sessions from
+        // SQLite while this runs (~2-3s).
+        void ensureEngineForWorkspace().catch((e) => {
+          _wsLog("[workspace:bootstrap] background engine start failed (non-fatal)", e);
+        });
+
         return;
       }
 

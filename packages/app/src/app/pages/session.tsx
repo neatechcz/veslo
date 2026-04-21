@@ -910,16 +910,12 @@ export default function SessionView(props: SessionViewProps) {
 
   const [batchedRenderedMessages, setBatchedRenderedMessages] = createSignal<MessageWithParts[]>(renderedMessages());
 
-  // Force SolidJS to track props.messages dependency for the batching
-  // effect below.  Without this explicit read, the memo → signal →
-  // effect chain can miss updates when messages are hydrated from
-  // the offline transcript (browsing mode).
-  createEffect(() => {
-    const _count = props.messages.length;
-    const _batched = batchedRenderedMessages();
-    void _count;
-    void _batched;
-  });
+  // Bypass the batching signal and always use the memo directly.
+  // The signal-based batching path has a SolidJS reactivity gap that
+  // causes messages to flash/disappear during state transitions
+  // (idle → running, browsing → engine start).  The memo path is
+  // reliable because SolidJS memos propagate synchronously.
+  const effectiveRenderedMessages = renderedMessages;
 
   createEffect(() => {
     const next = renderedMessages();
@@ -995,7 +991,7 @@ export default function SessionView(props: SessionViewProps) {
         status: props.sessionStatus,
         messageCount: props.messages.length,
         partCount: totalPartCount(),
-        renderedMessageCount: batchedRenderedMessages().length,
+        renderedMessageCount: effectiveRenderedMessages().length,
       });
     }, MAIN_THREAD_LAG_INTERVAL_MS);
 
@@ -3523,7 +3519,7 @@ export default function SessionView(props: SessionViewProps) {
         null
       );
     }
-    return workspace?.vesloWorkspaceId?.trim() || id;
+    return workspace?.vesloWorkspaceId?.trim() || null;
   };
 
   const reportLoadedSessionPrefetchInterest: LoadedSessionPrefetchInterestChangeHandler = (workspaceId, interest) => {
@@ -4156,7 +4152,7 @@ export default function SessionView(props: SessionViewProps) {
           </Show>
 
           <MessageList
-            messages={batchedRenderedMessages()}
+            messages={effectiveRenderedMessages()}
             isStreaming={showRunIndicator()}
             developerMode={props.developerMode}
             showThinking={props.showThinking}

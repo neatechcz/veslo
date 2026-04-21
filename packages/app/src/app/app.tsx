@@ -7095,6 +7095,8 @@ export default function App() {
   });
 
   const workspaceSwitchWorkspace = createMemo(() => {
+    // During boot, don't show any specific workspace in the overlay.
+    if (booting()) return null;
     const switchingId = workspaceStore.connectingWorkspaceId();
     if (switchingId) {
       return workspaceStore.workspaces().find((ws) => ws.id === switchingId) ?? activeWorkspaceDisplay();
