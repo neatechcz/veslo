@@ -2177,15 +2177,27 @@ export function createWorkspaceStore(options: {
         bootTrace("running engine project mismatch, restarting host...", runningEngineProjectDir);
       }
 
-      // BROWSING MODE BOOT: Instead of starting the engine (which takes ~2.5s
-      // and wipes session state via connectToServer), activate the workspace in
-      // browsing mode so the user can browse session history from SQLite.
-      // The engine starts on-demand when the user sends a message
-      // (via ensureEngineForWorkspace in sendPrompt).
-      if (isTauriRuntime() && activeWorkspace) {
-        _wsLog("[workspace:bootstrap] browsing mode boot — activateWorkspace", { workspacePath });
-        bootTrace("browsing mode boot — activateWorkspace...");
-        await activateWorkspace(activeWorkspace.id);
+      // BROWSING MODE BOOT: Load sessions from SQLite directly instead of
+      // starting the engine (which takes ~2.5s and wipes state via
+      // connectToServer).  The engine starts on-demand when the user sends a
+      // message (via ensureEngineForWorkspace in sendPrompt).
+      if (isTauriRuntime() && options.populateSidebarFromDb) {
+        _wsLog("[workspace:bootstrap] browsing mode boot — loading sidebar from DB", { workspacePath });
+        bootTrace("browsing mode boot — populateSidebarFromDb...");
+        options.setStartupPreference("local");
+        options.setEngineReady?.(false);
+        try {
+          await options.populateSidebarFromDb(activeWorkspace?.id ?? "", workspacePath);
+        } catch (e) {
+          _wsLog("[workspace:bootstrap] populateSidebarFromDb failed", e);
+        }
+        try {
+          if (options.hydrateLatestSessionFromDb && activeWorkspace) {
+            await options.hydrateLatestSessionFromDb(activeWorkspace.id, workspacePath);
+          }
+        } catch (e) {
+          _wsLog("[workspace:bootstrap] hydrateLatestSessionFromDb failed", e);
+        }
         markOnboardingComplete();
         return;
       }
