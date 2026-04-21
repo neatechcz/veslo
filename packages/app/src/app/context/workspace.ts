@@ -1017,10 +1017,13 @@ export function createWorkspaceStore(options: {
       _wsLog("[workspace:activate] STEP 5-BROWSE — browsing mode, loading from SQLite", { id, path: next.path });
       wsDebug("activate:local->local:browsingMode", { id, nextPath: next.path });
 
-      options.setSelectedSessionId(null);
-      options.setMessages([]);
-      options.setTodos([]);
-      options.setSessionStatusById({});
+      // Don't clear selectedSessionId / messages / todos here.
+      // In browsing mode the store is keyed by session ID, so data from
+      // different workspaces doesn't collide.  Clearing was wiping the
+      // user's active session view whenever a spurious workspace
+      // activation (sidebar expand, auto-select) raced with a session
+      // click.  The route effect + selectSession already handle
+      // re-selecting the correct session on navigation.
       options.setClient(null);
       options.setClientDirectory("");
       options.setConnectedVersion(null);

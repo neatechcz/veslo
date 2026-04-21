@@ -529,8 +529,9 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const reportLoadedSessionPrefetchInterest: LoadedSessionPrefetchInterestChangeHandler = (workspaceId, interest) => {
     const client = props.vesloServerClient;
+    if (!client || props.vesloServerStatus !== "connected") return;
     const serverWorkspaceId = resolveVesloWorkspaceId(workspaceId);
-    if (!client || !serverWorkspaceId) return;
+    if (!serverWorkspaceId) return;
 
     void client.prefetchSessionTranscripts(serverWorkspaceId, interest).catch((error) => {
       console.warn("[dashboard.loaded-session-prefetch] failed", {

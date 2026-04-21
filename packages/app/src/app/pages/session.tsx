@@ -910,6 +910,17 @@ export default function SessionView(props: SessionViewProps) {
 
   const [batchedRenderedMessages, setBatchedRenderedMessages] = createSignal<MessageWithParts[]>(renderedMessages());
 
+  // Force SolidJS to track props.messages dependency for the batching
+  // effect below.  Without this explicit read, the memo → signal →
+  // effect chain can miss updates when messages are hydrated from
+  // the offline transcript (browsing mode).
+  createEffect(() => {
+    const _count = props.messages.length;
+    const _batched = batchedRenderedMessages();
+    void _count;
+    void _batched;
+  });
+
   createEffect(() => {
     const next = renderedMessages();
     const sourceMessageCount = props.messages.length;
@@ -3517,8 +3528,9 @@ export default function SessionView(props: SessionViewProps) {
 
   const reportLoadedSessionPrefetchInterest: LoadedSessionPrefetchInterestChangeHandler = (workspaceId, interest) => {
     const client = props.vesloServerClient;
+    if (!client || props.vesloServerStatus !== "connected") return;
     const serverWorkspaceId = resolveVesloWorkspaceId(workspaceId);
-    if (!client || !serverWorkspaceId) return;
+    if (!serverWorkspaceId) return;
 
     void client.prefetchSessionTranscripts(serverWorkspaceId, interest).catch((error) => {
       console.warn("[session.loaded-session-prefetch] failed", {
