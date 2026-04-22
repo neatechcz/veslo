@@ -267,7 +267,7 @@ fn cleanup_stale_central_packs(
 /// Create a symlink from `link` to `target`. If `link` exists as a real directory,
 /// remove it first. If it's a symlink pointing elsewhere, replace it.
 #[cfg(unix)]
-fn ensure_symlink(target: &Path, link: &Path) -> Result<(), String> {
+fn ensure_symlink(target: &Path, link: &Path) -> Result<bool, String> {
     if link.exists() || link.symlink_metadata().is_ok() {
         let meta = link.symlink_metadata().map_err(|e| {
             format!("Failed to stat {}: {e}", link.display())
@@ -278,7 +278,7 @@ fn ensure_symlink(target: &Path, link: &Path) -> Result<(), String> {
                 format!("Failed to read symlink {}: {e}", link.display())
             })?;
             if current_target == target {
-                return Ok(());
+                return Ok(false);
             }
             fs::remove_file(link).map_err(|e| {
                 format!("Failed to remove old symlink {}: {e}", link.display())
@@ -286,6 +286,10 @@ fn ensure_symlink(target: &Path, link: &Path) -> Result<(), String> {
         } else if meta.is_dir() {
             fs::remove_dir_all(link).map_err(|e| {
                 format!("Failed to remove directory {}: {e}", link.display())
+            })?;
+        } else {
+            fs::remove_file(link).map_err(|e| {
+                format!("Failed to remove file {}: {e}", link.display())
             })?;
         }
     }
@@ -296,11 +300,12 @@ fn ensure_symlink(target: &Path, link: &Path) -> Result<(), String> {
             link.display(),
             target.display()
         )
-    })
+    })?;
+    Ok(true)
 }
 
 #[cfg(windows)]
-fn ensure_symlink(target: &Path, link: &Path) -> Result<(), String> {
+fn ensure_symlink(target: &Path, link: &Path) -> Result<bool, String> {
     if link.exists() || link.symlink_metadata().is_ok() {
         let meta = link.symlink_metadata().map_err(|e| {
             format!("Failed to stat {}: {e}", link.display())
@@ -311,7 +316,7 @@ fn ensure_symlink(target: &Path, link: &Path) -> Result<(), String> {
                 format!("Failed to read symlink {}: {e}", link.display())
             })?;
             if current_target == target {
-                return Ok(());
+                return Ok(false);
             }
             fs::remove_dir(link).map_err(|e| {
                 format!("Failed to remove old symlink {}: {e}", link.display())
@@ -319,6 +324,10 @@ fn ensure_symlink(target: &Path, link: &Path) -> Result<(), String> {
         } else if meta.is_dir() {
             fs::remove_dir_all(link).map_err(|e| {
                 format!("Failed to remove directory {}: {e}", link.display())
+            })?;
+        } else {
+            fs::remove_file(link).map_err(|e| {
+                format!("Failed to remove file {}: {e}", link.display())
             })?;
         }
     }
@@ -329,7 +338,8 @@ fn ensure_symlink(target: &Path, link: &Path) -> Result<(), String> {
             link.display(),
             target.display()
         )
-    })
+    })?;
+    Ok(true)
 }
 
 pub fn provision_internal_workspace_assets(
@@ -355,13 +365,18 @@ pub fn provision_internal_workspace_assets(
     // 1) Provision internal packs under .opencode/veslo/internal/<pack>/...
     if let Some(central_dir) = central_packs_dir {
         // Symlink mode: point each pack to the central store
+        let mut any_pack_updated = false;
         for pack_name in PACKS {
             let link_path = internal_root.join(pack_name);
             let target_path = central_dir.join(pack_name);
-            ensure_symlink(&target_path, &link_path)?;
+            if ensure_symlink(&target_path, &link_path)? {
+                any_pack_updated = true;
+            }
         }
-        // Symlinks don't count as written files, but mark as updated on first run
-        stats.written += 1;
+        // Symlink mode should stay idempotent: only mark updated when a link changed.
+        if any_pack_updated {
+            stats.written += 1;
+        }
     } else {
         // Copy mode: write packs directly (fallback when no central store)
         for pack_name in PACKS {

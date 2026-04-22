@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { provisionWorkspaceInternalSystem } from "./internal-system.js";
+import { INTERNAL_SYSTEM_VERSION, provisionWorkspaceInternalSystem } from "./internal-system.js";
 
 async function createWorkspaceRoot(label: string) {
   return await mkdtemp(join(tmpdir(), `veslo-internal-system-${label}-`));
@@ -86,7 +86,7 @@ You are Veslo.
         join(workspaceRoot, ".opencode", "veslo", "internal", "manifest.json"),
         "utf8",
       );
-      expect(manifest).toContain('"version": "2026-03-31.1"');
+      expect(manifest).toContain(`"version": "${INTERNAL_SYSTEM_VERSION}"`);
       expect(manifest).toContain('"schemaVersion": 1');
       expect(manifest).toContain('"plugins"');
       expect(manifest).toContain("veslo-delegate.js");
@@ -139,6 +139,29 @@ You are Veslo.
       expect(restored).toContain("Veslo internal DOCX execution agent");
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("is idempotent in central symlink mode", async () => {
+    const workspaceRoot = await createWorkspaceRoot("idempotent-symlink");
+    const appDataDir = await createWorkspaceRoot("idempotent-symlink-appdata");
+
+    try {
+      await mkdir(join(workspaceRoot, ".opencode", "agents"), { recursive: true });
+      await writeFile(
+        join(workspaceRoot, ".opencode", "agents", "veslo.md"),
+        "---\ndescription: Veslo default agent (desktop-first, safe, self-referential)\nmode: primary\ntemperature: 0.2\n---\n\nYou are Veslo.\n",
+        "utf8",
+      );
+
+      await provisionWorkspaceInternalSystem(workspaceRoot, appDataDir);
+      const second = await provisionWorkspaceInternalSystem(workspaceRoot, appDataDir);
+      expect(second.status).toBe("unchanged");
+      expect(second.written).toBe(0);
+      expect(second.unchanged).toBeGreaterThan(0);
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+      await rm(appDataDir, { recursive: true, force: true });
     }
   });
 

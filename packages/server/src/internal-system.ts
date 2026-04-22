@@ -816,21 +816,22 @@ export async function provisionCentralPacks(appDataDir: string): Promise<string>
  * Create a directory symlink from `linkPath` to `targetPath`.
  * Handles migration from real directories and stale symlinks.
  */
-async function ensureSymlink(targetPath: string, linkPath: string): Promise<void> {
+async function ensureSymlink(targetPath: string, linkPath: string): Promise<boolean> {
   try {
     const stat = await lstat(linkPath);
     if (stat.isSymbolicLink()) {
       const currentTarget = await readlink(linkPath);
-      if (currentTarget === targetPath) return;
+      if (currentTarget === targetPath) return false;
       await rm(linkPath);
-    } else if (stat.isDirectory()) {
-      await rm(linkPath, { recursive: true, force: true });
+    } else {
+      await rm(linkPath, { recursive: stat.isDirectory(), force: true });
     }
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
 
   await symlink(targetPath, linkPath, "dir");
+  return true;
 }
 
 async function copyInternalPacks(workspaceRoot: string, stats: ProvisionStats, centralPacksDir?: string) {
@@ -839,12 +840,17 @@ async function copyInternalPacks(workspaceRoot: string, stats: ProvisionStats, c
 
   if (centralPacksDir) {
     // Symlink mode: point each pack to the central store
+    let anyPackUpdated = false;
     for (const pack of INTERNAL_PACKS) {
       const linkPath = join(destinationRoot, pack);
       const targetPath = join(centralPacksDir, pack);
-      await ensureSymlink(targetPath, linkPath);
+      if (await ensureSymlink(targetPath, linkPath)) {
+        anyPackUpdated = true;
+      }
     }
-    stats.written += 1;
+    if (anyPackUpdated) {
+      stats.written += 1;
+    }
   } else {
     // Copy mode: write packs directly (fallback when no central store)
     const sourceRoot = await resolveInternalPackSourceRoot();
