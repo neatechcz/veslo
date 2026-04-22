@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +12,13 @@ const POLL_INTERVAL = 250;
 const REAL_PROFILE_ENV = process.env.E2E_USE_EXISTING_PROFILE?.trim() === '1';
 const CUSTOM_BINARY_PATH = process.env.E2E_TAURI_BINARY?.trim() ?? '';
 const CUSTOM_OPENCODE_HOME = process.env.E2E_OPENCODE_HOME?.trim() ?? '';
+const ISOLATED_PROFILE_ROOT = join(resolveDesktopRoot(), '..', 'e2e', '.tmp-veslo-home');
+const APP_IDENTIFIERS = [
+  'com.neatech.veslo',
+  'com.neatech.veslo.dev',
+  'com.differentai.openwork',
+  'com.differentai.openwork.dev',
+] as const;
 
 let appProcess: ChildProcess | null = null;
 let appProcessOwnedByHarness = false;
@@ -74,6 +81,68 @@ async function hasReadyWebDriverServer(port: number): Promise<boolean> {
   }
 }
 
+function prepareIsolatedProfileEnv(env: NodeJS.ProcessEnv): void {
+  rmSync(ISOLATED_PROFILE_ROOT, { recursive: true, force: true });
+
+  const xdgData = join(ISOLATED_PROFILE_ROOT, '.local', 'share');
+  const xdgConfig = join(ISOLATED_PROFILE_ROOT, '.config');
+  const xdgCache = join(ISOLATED_PROFILE_ROOT, '.cache');
+  const appData = join(ISOLATED_PROFILE_ROOT, 'AppData', 'Roaming');
+  const localAppData = join(ISOLATED_PROFILE_ROOT, 'AppData', 'Local');
+  const orchestratorData = join(ISOLATED_PROFILE_ROOT, '.veslo', 'orchestrator');
+  const opencodeHome = CUSTOM_OPENCODE_HOME || join(ISOLATED_PROFILE_ROOT, '.opencode');
+  const workspacePath = join(ISOLATED_PROFILE_ROOT, 'workspaces', 'visual-workspace');
+
+  for (const dir of [ISOLATED_PROFILE_ROOT, xdgData, xdgConfig, xdgCache, appData, localAppData, orchestratorData, opencodeHome, workspacePath]) {
+    mkdirSync(dir, { recursive: true });
+  }
+
+  env.HOME = ISOLATED_PROFILE_ROOT;
+  env.USERPROFILE = ISOLATED_PROFILE_ROOT;
+  env.XDG_DATA_HOME = xdgData;
+  env.XDG_CONFIG_HOME = xdgConfig;
+  env.XDG_CACHE_HOME = xdgCache;
+  env.APPDATA = appData;
+  env.LOCALAPPDATA = localAppData;
+  env.VESLO_DATA_DIR = orchestratorData;
+  env.OPENCODE_HOME = opencodeHome;
+
+  const workspaceState = {
+    version: 4,
+    activeId: 'e2e-visual-workspace',
+    workspaces: [{
+      id: 'e2e-visual-workspace',
+      name: 'Visual Workspace',
+      path: workspacePath,
+      preset: 'starter',
+      workspaceType: 'local',
+      remoteType: 'opencode',
+      baseUrl: null,
+      directory: null,
+      displayName: 'Visual Workspace',
+    }],
+  };
+
+  const stateDirs =
+    process.platform === 'darwin'
+      ? APP_IDENTIFIERS.map(id => join(ISOLATED_PROFILE_ROOT, 'Library', 'Application Support', id))
+      : process.platform === 'win32'
+        ? APP_IDENTIFIERS.flatMap(id => [join(appData, id), join(localAppData, id)])
+        : APP_IDENTIFIERS.map(id => join(xdgData, id));
+
+  for (const dir of stateDirs) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'veslo-workspaces.json'), JSON.stringify(workspaceState, null, 2));
+  }
+
+  console.log(`[e2e] Using isolated app profile: ${ISOLATED_PROFILE_ROOT}`);
+  if (CUSTOM_OPENCODE_HOME) {
+    console.log(`[e2e] Using custom OPENCODE_HOME: ${CUSTOM_OPENCODE_HOME}`);
+  } else {
+    console.log(`[e2e] Using isolated OPENCODE_HOME: ${opencodeHome}`);
+  }
+}
+
 export async function ensureWebDriverReady(
   port: number = WEBDRIVER_PORT,
   timeout: number = Math.max(POLL_INTERVAL, Math.min(5_000, LAUNCH_TIMEOUT)),
@@ -93,20 +162,18 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   console.log(`[e2e] Launching Tauri binary: ${binaryPath}`);
   console.log(`[e2e] WebDriver port: ${port}`);
 
-  const tmpDir = join(resolveDesktopRoot(), '..', 'e2e', '.tmp-opencode-home');
   const env = {
     ...process.env,
     TAURI_WEBDRIVER_PORT: String(port),
   } as NodeJS.ProcessEnv;
 
-  if (CUSTOM_OPENCODE_HOME) {
+  if (!REAL_PROFILE_ENV) {
+    prepareIsolatedProfileEnv(env);
+  } else if (CUSTOM_OPENCODE_HOME) {
     env.OPENCODE_HOME = CUSTOM_OPENCODE_HOME;
-    console.log(`[e2e] Using custom OPENCODE_HOME: ${CUSTOM_OPENCODE_HOME}`);
-  } else if (!REAL_PROFILE_ENV) {
-    env.OPENCODE_HOME = tmpDir;
-    console.log(`[e2e] Using isolated OPENCODE_HOME: ${tmpDir}`);
+    console.log(`[e2e] Using the app's existing profile with custom OPENCODE_HOME: ${CUSTOM_OPENCODE_HOME}`);
   } else {
-    console.log('[e2e] Using the app\'s existing profile and OPENCODE_HOME.');
+    console.log("[e2e] Using the app's existing profile and OPENCODE_HOME.");
   }
 
   appProcess = spawn(binaryPath, [], {

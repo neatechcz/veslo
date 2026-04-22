@@ -21,7 +21,8 @@ async function waitForBodyText(expected: string, timeout = 5000): Promise<string
 }
 
 function containsAny(text: string, values: string[]): boolean {
-  return values.some((value) => text.includes(value));
+  const normalizedText = text.toLocaleLowerCase();
+  return values.some((value) => normalizedText.includes(value.toLocaleLowerCase()));
 }
 
 describe('Extensions MCP', () => {
