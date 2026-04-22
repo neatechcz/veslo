@@ -146,21 +146,21 @@ export function extractSessionId(value: unknown): string | null {
 
 export function modelFromUserMessage(info: MessageInfo): ModelRef | null {
   if (!info || typeof info !== "object") return null;
-  if ((info as any).role !== "user") return null;
+  if ((info as { role?: unknown }).role !== "user") return null;
 
-  const model = (info as any).model as unknown;
+  const model = (info as { model?: unknown }).model;
   if (!model || typeof model !== "object") return null;
 
-  const providerID = (model as any).providerID;
-  const modelID = (model as any).modelID;
+  const providerID = (model as { providerID?: unknown }).providerID;
+  const modelID = (model as { modelID?: unknown }).modelID;
 
   if (typeof providerID !== "string" || typeof modelID !== "string") return null;
   return { providerID, modelID };
 }
 
 export function lastUserModelFromMessages(list: MessageWithParts[]): ModelRef | null {
-  for (let i = list.length - 1; i >= 0; i -= 1) {
-    const model = modelFromUserMessage(list[i]?.info);
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    const model = modelFromUserMessage(list[index]?.info);
     if (model) return model;
   }
 
@@ -170,6 +170,10 @@ export function lastUserModelFromMessages(list: MessageWithParts[]): ModelRef | 
 export function isStepPart(part: Part) {
   return part.type === "reasoning" || part.type === "tool";
 }
+
+type GroupMessagePartsOptions = {
+  showThinking?: boolean;
+};
 
 export function isUserVisiblePart(part: Part) {
   const flags = part as { synthetic?: boolean; ignored?: boolean };
@@ -181,6 +185,12 @@ export function isUserVisiblePart(part: Part) {
 
 export function isVisibleTextPart(part: Part) {
   return part.type === "text" && isUserVisiblePart(part);
+}
+
+function isAttachmentFilePart(part: Part) {
+  if (part.type !== "file") return false;
+  const url = (part as { url?: string }).url;
+  return typeof url === "string" && !url.startsWith("file://");
 }
 
 /**
@@ -254,12 +264,13 @@ function isExplorationToolPart(part: Part) {
   return EXPLORATION_TOOL_NAMES.has(tool);
 }
 
-export function groupMessageParts(parts: Part[], messageId: string): MessageGroup[] {
+export function groupMessageParts(parts: Part[], messageId: string, options: GroupMessagePartsOptions = {}): MessageGroup[] {
   const groups: MessageGroup[] = [];
   const explorationSteps: Part[] = [];
   let textBuffer = "";
   let stepGroupIndex = 0;
   let sawExecution = false;
+  const showThinking = options.showThinking ?? true;
 
   const flushText = () => {
     if (!textBuffer) return;
@@ -290,6 +301,10 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
   };
 
   parts.forEach((part) => {
+    if (part.type === "reasoning" && !showThinking) {
+      return;
+    }
+
     if (part.type === "text") {
       if (!isVisibleTextPart(part)) {
         return;
@@ -308,6 +323,10 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
 
     if (part.type === "file") {
       flushExplorationSteps();
+      if (isAttachmentFilePart(part)) {
+        flushText();
+        return;
+      }
       flushText();
       groups.push({ kind: "text", part, segment: sawExecution ? "result" : "intent" });
       return;

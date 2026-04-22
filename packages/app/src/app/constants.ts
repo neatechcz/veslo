@@ -1,6 +1,7 @@
 import type { ModelRef, SuggestedPlugin } from "./types";
 
 export const MODEL_PREF_KEY = "veslo.defaultModel";
+export const SESSION_MODEL_PREF_KEY = "veslo.sessionModels";
 export const THINKING_PREF_KEY = "veslo.showThinking";
 export const VARIANT_PREF_KEY = "veslo.modelVariant";
 export const LANGUAGE_PREF_KEY = "veslo.language";
