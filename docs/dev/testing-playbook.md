@@ -6,6 +6,34 @@ This file describes the practical verification flow for coding work in Veslo.
 
 Do not use `packages/web` as the runtime under test. Veslo's authoritative application runtime is the Tauri desktop app in `packages/desktop`.
 
+## Desktop Test Runtime Preflight
+
+Veslo desktop is single-tenant in development. Before any test that launches or depends on the desktop runtime, the agent must ensure it is not starting a second app instance.
+
+This is an LLM/operator responsibility, not a step to duplicate inside individual specs.
+
+1. Detect running Veslo dev/test processes from this repo:
+
+```bash
+pgrep -fl "pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
+```
+
+2. If the matches are internally started dev/test runtime processes from this repo, stop them before launching the test runtime:
+
+```bash
+pkill -f "pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
+```
+
+3. Verify the post-check is empty before continuing:
+
+```bash
+pgrep -fl "pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
+```
+
+If a match looks like a user-launched production/bundled app or otherwise cannot be identified as an internally started dev/test runtime, stop and report what is running instead of force-killing it.
+
+Existing WebDriver reuse is not the default desktop test flow. Attach to an existing WebDriver server only when the user explicitly asks for a debug attach workflow.
+
 ## Fast Checks by Surface
 
 ### App-only documentation or copy changes
@@ -46,6 +74,8 @@ pnpm dev
 For internal end-to-end testing, follow the repo rule from `AGENTS.md`:
 
 ```bash
+# First run the Desktop Test Runtime Preflight above.
+
 cd packages/desktop
 pnpm tauri build --debug --no-bundle -- --features e2e
 
