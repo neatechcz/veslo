@@ -493,6 +493,7 @@ pub fn ensure_workspace_files(
     workspace_path: &str,
     preset: &str,
     templates_dir: Option<&Path>,
+    app_data_dir: Option<&Path>,
 ) -> Result<(), String> {
     let root = PathBuf::from(workspace_path);
 
@@ -518,7 +519,13 @@ pub fn ensure_workspace_files(
     // Managed blocks (routing, agent instructions) are added by Rust provision + TS server.
     seed_veslo_agent(&agents_dir)?;
     seed_plan_agent(&agents_dir)?;
-    let provision = provision_internal_workspace_assets(&root)?;
+    let central_packs_dir = app_data_dir
+        .map(|dir| crate::workspace::internal_provision::provision_central_packs(dir))
+        .transpose()?;
+    let provision = provision_internal_workspace_assets(
+        &root,
+        central_packs_dir.as_deref(),
+    )?;
     let provision_status = match provision.status {
         ProvisionStatus::Updated => "updated",
         ProvisionStatus::Unchanged => "unchanged",
@@ -764,7 +771,7 @@ mod tests {
         let root = temp_workspace_root("automation");
         let root_str = root.to_string_lossy().to_string();
 
-        ensure_workspace_files(&root_str, "automation", None).expect("seed workspace files");
+        ensure_workspace_files(&root_str, "automation", None, None).expect("seed workspace files");
 
         let config_raw =
             fs::read_to_string(root.join("opencode.jsonc")).expect("read generated config");
@@ -809,7 +816,7 @@ mod tests {
         .expect("write existing config");
 
         let root_str = root.to_string_lossy().to_string();
-        ensure_workspace_files(&root_str, "minimal", None).expect("seed workspace files");
+        ensure_workspace_files(&root_str, "minimal", None, None).expect("seed workspace files");
 
         let config_raw = fs::read_to_string(&config_path).expect("read updated config");
         let config: serde_json::Value =

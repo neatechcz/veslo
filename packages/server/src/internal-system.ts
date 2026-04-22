@@ -1,8 +1,9 @@
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, readdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { exists, ensureDir } from "./utils.js";
 
-export const INTERNAL_SYSTEM_VERSION = "2026-04-16.1";
+export const INTERNAL_SYSTEM_VERSION = "2026-04-22.1";
 const INTERNAL_SYSTEM_SOURCE = "openwork-snapshot";
 const MANIFEST_SCHEMA_VERSION = 1;
 const ROUTING_BLOCK_VERSION = 3;
@@ -45,6 +46,8 @@ type InternalManifest = {
   agents: string[];
   plugins: string[];
   routingBlockVersion: number;
+  packsMode?: string;
+  centralPacksDir?: string;
 };
 
 async function resolveInternalPackSourceRoot(): Promise<string> {
@@ -758,20 +761,31 @@ async function writeDelegatePlugin(workspaceRoot: string, stats: ProvisionStats)
   await writeIfChanged(join(pluginsDir, DELEGATE_PLUGIN_FILE), delegatePluginSource(), stats);
 }
 
-async function copyInternalPacks(workspaceRoot: string, stats: ProvisionStats) {
-  const sourceRoot = await resolveInternalPackSourceRoot();
-  const destinationRoot = join(workspaceRoot, ".opencode", "veslo", "internal");
-  await ensureDir(destinationRoot);
+/**
+ * Write internal packs once to a central versioned directory under `appDataDir`.
+ * Returns the path to the versioned central directory.
+ */
+export async function provisionCentralPacks(appDataDir: string): Promise<string> {
+  const centralRoot = join(appDataDir, "internal-packs", INTERNAL_SYSTEM_VERSION);
+  const marker = join(centralRoot, ".provisioned");
 
+  if (await exists(marker)) {
+    return centralRoot;
+  }
+
+  await ensureDir(centralRoot);
+
+  const sourceRoot = await resolveInternalPackSourceRoot();
   for (const pack of INTERNAL_PACKS) {
     const sourcePack = join(sourceRoot, pack);
-    const destinationPack = join(destinationRoot, pack);
+    const destinationPack = join(centralRoot, pack);
     if (!(await exists(sourcePack))) {
       throw new Error(`Missing internal pack source: ${pack}`);
     }
     await ensureDir(destinationPack);
 
     const files = await collectFiles(sourcePack);
+    const stats: ProvisionStats = { written: 0, unchanged: 0 };
     for (const relativePath of files) {
       const sourcePath = join(sourcePack, relativePath);
       const destinationPath = join(destinationPack, relativePath);
@@ -779,9 +793,81 @@ async function copyInternalPacks(workspaceRoot: string, stats: ProvisionStats) {
       await writeIfChanged(destinationPath, content, stats);
     }
   }
+
+  await writeFile(marker, INTERNAL_SYSTEM_VERSION, "utf8");
+
+  // Cleanup stale versions
+  const packsParent = join(appDataDir, "internal-packs");
+  try {
+    const entries = await readdir(packsParent, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && entry.name !== INTERNAL_SYSTEM_VERSION) {
+        await rm(join(packsParent, entry.name), { recursive: true, force: true });
+      }
+    }
+  } catch {
+    // Ignore cleanup errors
+  }
+
+  return centralRoot;
 }
 
-async function writeInternalManifest(workspaceRoot: string, stats: ProvisionStats) {
+/**
+ * Create a directory symlink from `linkPath` to `targetPath`.
+ * Handles migration from real directories and stale symlinks.
+ */
+async function ensureSymlink(targetPath: string, linkPath: string): Promise<void> {
+  try {
+    const stat = await lstat(linkPath);
+    if (stat.isSymbolicLink()) {
+      const currentTarget = await readlink(linkPath);
+      if (currentTarget === targetPath) return;
+      await rm(linkPath);
+    } else if (stat.isDirectory()) {
+      await rm(linkPath, { recursive: true, force: true });
+    }
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+
+  await symlink(targetPath, linkPath, "dir");
+}
+
+async function copyInternalPacks(workspaceRoot: string, stats: ProvisionStats, centralPacksDir?: string) {
+  const destinationRoot = join(workspaceRoot, ".opencode", "veslo", "internal");
+  await ensureDir(destinationRoot);
+
+  if (centralPacksDir) {
+    // Symlink mode: point each pack to the central store
+    for (const pack of INTERNAL_PACKS) {
+      const linkPath = join(destinationRoot, pack);
+      const targetPath = join(centralPacksDir, pack);
+      await ensureSymlink(targetPath, linkPath);
+    }
+    stats.written += 1;
+  } else {
+    // Copy mode: write packs directly (fallback when no central store)
+    const sourceRoot = await resolveInternalPackSourceRoot();
+    for (const pack of INTERNAL_PACKS) {
+      const sourcePack = join(sourceRoot, pack);
+      const destinationPack = join(destinationRoot, pack);
+      if (!(await exists(sourcePack))) {
+        throw new Error(`Missing internal pack source: ${pack}`);
+      }
+      await ensureDir(destinationPack);
+
+      const files = await collectFiles(sourcePack);
+      for (const relativePath of files) {
+        const sourcePath = join(sourcePack, relativePath);
+        const destinationPath = join(destinationPack, relativePath);
+        const content = await readFile(sourcePath);
+        await writeIfChanged(destinationPath, content, stats);
+      }
+    }
+  }
+}
+
+async function writeInternalManifest(workspaceRoot: string, stats: ProvisionStats, centralPacksDir?: string) {
   const manifest: InternalManifest = {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
     version: INTERNAL_SYSTEM_VERSION,
@@ -790,22 +876,32 @@ async function writeInternalManifest(workspaceRoot: string, stats: ProvisionStat
     agents: INTERNAL_AGENT_FILES.map((name) => name.replace(/\.md$/i, "")),
     plugins: [DELEGATE_PLUGIN_FILE],
     routingBlockVersion: ROUTING_BLOCK_VERSION,
+    packsMode: centralPacksDir ? "symlink" : "copy",
+    centralPacksDir: centralPacksDir ?? undefined,
   };
   const path = join(workspaceRoot, ".opencode", "veslo", "internal", "manifest.json");
   await writeIfChanged(path, `${JSON.stringify(manifest, null, 2)}\n`, stats);
 }
 
-export async function provisionWorkspaceInternalSystem(workspaceRoot: string): Promise<WorkspaceProvisionResult> {
+export async function provisionWorkspaceInternalSystem(
+  workspaceRoot: string,
+  appDataDir?: string,
+): Promise<WorkspaceProvisionResult> {
   const stats: ProvisionStats = { written: 0, unchanged: 0 };
 
+  let centralPacksDir: string | undefined;
+  if (appDataDir) {
+    centralPacksDir = await provisionCentralPacks(appDataDir);
+  }
+
   await ensureSoulFiles(workspaceRoot, stats);
-  await copyInternalPacks(workspaceRoot, stats);
+  await copyInternalPacks(workspaceRoot, stats, centralPacksDir);
   await writeInternalAgents(workspaceRoot, stats);
   await writeDelegatePlugin(workspaceRoot, stats);
   await ensureVesloAgentRouting(workspaceRoot, stats);
   await ensureWorkspaceInstructions(workspaceRoot, stats);
   await ensureSoulInstructions(workspaceRoot, stats);
-  await writeInternalManifest(workspaceRoot, stats);
+  await writeInternalManifest(workspaceRoot, stats, centralPacksDir);
 
   return {
     version: INTERNAL_SYSTEM_VERSION,
@@ -813,4 +909,26 @@ export async function provisionWorkspaceInternalSystem(workspaceRoot: string): P
     written: stats.written,
     unchanged: stats.unchanged,
   };
+}
+
+/**
+ * Resolve the Veslo app data directory (mirrors Tauri's `app_data_dir()`).
+ * Returns `~/Library/Application Support/com.neatech.veslo` on macOS,
+ * appropriate paths on Linux/Windows, or undefined if unsupported.
+ */
+export function resolveVesloAppDataDir(): string | undefined {
+  const home = homedir();
+  const os = platform();
+  if (os === "darwin") {
+    return join(home, "Library", "Application Support", "com.neatech.veslo");
+  }
+  if (os === "linux") {
+    const xdgData = process.env.XDG_DATA_HOME || join(home, ".local", "share");
+    return join(xdgData, "com.neatech.veslo");
+  }
+  if (os === "win32") {
+    const appData = process.env.APPDATA || join(home, "AppData", "Roaming");
+    return join(appData, "com.neatech.veslo");
+  }
+  return undefined;
 }

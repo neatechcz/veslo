@@ -1,10 +1,10 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use include_dir::{include_dir, Dir};
 use serde::{Deserialize, Serialize};
 
-const INTERNAL_PACK_VERSION: &str = "2026-04-16.1";
+const INTERNAL_PACK_VERSION: &str = "2026-04-22.1";
 const INTERNAL_PACK_SOURCE: &str = "openwork-snapshot";
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
 const ROUTING_BLOCK_VERSION: u32 = 3;
@@ -37,6 +37,10 @@ struct InternalManifest {
     agents: Vec<String>,
     plugins: Vec<String>,
     routing_block_version: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    packs_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    central_packs_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,8 +201,140 @@ fn ensure_veslo_agent_routing(
     write_if_changed(&path, next.as_bytes(), stats)
 }
 
+/// Write internal packs once to a central versioned directory under `app_data_dir`.
+/// Returns the path to the versioned central directory (e.g. `<app_data>/internal-packs/2026-04-22.1/`).
+pub fn provision_central_packs(app_data_dir: &Path) -> Result<PathBuf, String> {
+    let central_root = app_data_dir
+        .join("internal-packs")
+        .join(INTERNAL_PACK_VERSION);
+    let marker = central_root.join(".provisioned");
+
+    if marker.exists() {
+        return Ok(central_root);
+    }
+
+    fs::create_dir_all(&central_root).map_err(|e| {
+        format!(
+            "Failed to create central packs directory {}: {e}",
+            central_root.display()
+        )
+    })?;
+
+    let mut stats = WriteStats::default();
+    for pack_name in PACKS {
+        let source_pack = INTERNAL_PACKS_DIR
+            .get_dir(pack_name)
+            .ok_or_else(|| format!("Missing internal pack source: {pack_name}"))?;
+        let destination = central_root.join(pack_name);
+        write_dir_recursive(source_pack, source_pack.path(), &destination, &mut stats)?;
+    }
+
+    fs::write(&marker, INTERNAL_PACK_VERSION)
+        .map_err(|e| format!("Failed to write central packs marker: {e}"))?;
+
+    cleanup_stale_central_packs(app_data_dir, INTERNAL_PACK_VERSION)?;
+
+    Ok(central_root)
+}
+
+/// Remove old versioned central pack directories, keeping only `current_version`.
+fn cleanup_stale_central_packs(
+    app_data_dir: &Path,
+    current_version: &str,
+) -> Result<(), String> {
+    let packs_parent = app_data_dir.join("internal-packs");
+    if !packs_parent.exists() {
+        return Ok(());
+    }
+
+    let entries = fs::read_dir(&packs_parent)
+        .map_err(|e| format!("Failed to read {}: {e}", packs_parent.display()))?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name != current_version {
+                    let _ = fs::remove_dir_all(&path);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Create a symlink from `link` to `target`. If `link` exists as a real directory,
+/// remove it first. If it's a symlink pointing elsewhere, replace it.
+#[cfg(unix)]
+fn ensure_symlink(target: &Path, link: &Path) -> Result<(), String> {
+    if link.exists() || link.symlink_metadata().is_ok() {
+        let meta = link.symlink_metadata().map_err(|e| {
+            format!("Failed to stat {}: {e}", link.display())
+        })?;
+
+        if meta.file_type().is_symlink() {
+            let current_target = fs::read_link(link).map_err(|e| {
+                format!("Failed to read symlink {}: {e}", link.display())
+            })?;
+            if current_target == target {
+                return Ok(());
+            }
+            fs::remove_file(link).map_err(|e| {
+                format!("Failed to remove old symlink {}: {e}", link.display())
+            })?;
+        } else if meta.is_dir() {
+            fs::remove_dir_all(link).map_err(|e| {
+                format!("Failed to remove directory {}: {e}", link.display())
+            })?;
+        }
+    }
+
+    std::os::unix::fs::symlink(target, link).map_err(|e| {
+        format!(
+            "Failed to create symlink {} -> {}: {e}",
+            link.display(),
+            target.display()
+        )
+    })
+}
+
+#[cfg(windows)]
+fn ensure_symlink(target: &Path, link: &Path) -> Result<(), String> {
+    if link.exists() || link.symlink_metadata().is_ok() {
+        let meta = link.symlink_metadata().map_err(|e| {
+            format!("Failed to stat {}: {e}", link.display())
+        })?;
+
+        if meta.file_type().is_symlink() {
+            let current_target = fs::read_link(link).map_err(|e| {
+                format!("Failed to read symlink {}: {e}", link.display())
+            })?;
+            if current_target == target {
+                return Ok(());
+            }
+            fs::remove_dir(link).map_err(|e| {
+                format!("Failed to remove old symlink {}: {e}", link.display())
+            })?;
+        } else if meta.is_dir() {
+            fs::remove_dir_all(link).map_err(|e| {
+                format!("Failed to remove directory {}: {e}", link.display())
+            })?;
+        }
+    }
+
+    std::os::windows::fs::symlink_dir(target, link).map_err(|e| {
+        format!(
+            "Failed to create symlink {} -> {}: {e}",
+            link.display(),
+            target.display()
+        )
+    })
+}
+
 pub fn provision_internal_workspace_assets(
     workspace_root: &Path,
+    central_packs_dir: Option<&Path>,
 ) -> Result<ProvisionResult, String> {
     let opencode_root = workspace_root.join(".opencode");
     let internal_root = opencode_root.join("veslo").join("internal");
@@ -217,12 +353,24 @@ pub fn provision_internal_workspace_assets(
     let mut stats = WriteStats::default();
 
     // 1) Provision internal packs under .opencode/veslo/internal/<pack>/...
-    for pack_name in PACKS {
-        let source_pack = INTERNAL_PACKS_DIR
-            .get_dir(pack_name)
-            .ok_or_else(|| format!("Missing internal pack source: {pack_name}"))?;
-        let destination = internal_root.join(pack_name);
-        write_dir_recursive(source_pack, source_pack.path(), &destination, &mut stats)?;
+    if let Some(central_dir) = central_packs_dir {
+        // Symlink mode: point each pack to the central store
+        for pack_name in PACKS {
+            let link_path = internal_root.join(pack_name);
+            let target_path = central_dir.join(pack_name);
+            ensure_symlink(&target_path, &link_path)?;
+        }
+        // Symlinks don't count as written files, but mark as updated on first run
+        stats.written += 1;
+    } else {
+        // Copy mode: write packs directly (fallback when no central store)
+        for pack_name in PACKS {
+            let source_pack = INTERNAL_PACKS_DIR
+                .get_dir(pack_name)
+                .ok_or_else(|| format!("Missing internal pack source: {pack_name}"))?;
+            let destination = internal_root.join(pack_name);
+            write_dir_recursive(source_pack, source_pack.path(), &destination, &mut stats)?;
+        }
     }
 
     // 2) Provision hidden internal subagents
@@ -253,6 +401,15 @@ pub fn provision_internal_workspace_assets(
             .collect(),
         plugins: vec![DELEGATE_PLUGIN_FILE.to_string()],
         routing_block_version: ROUTING_BLOCK_VERSION,
+        packs_mode: Some(
+            if central_packs_dir.is_some() {
+                "symlink"
+            } else {
+                "copy"
+            }
+            .to_string(),
+        ),
+        central_packs_dir: central_packs_dir.map(|p| p.display().to_string()),
     };
 
     let serialized = serde_json::to_string_pretty(&manifest)
@@ -807,7 +964,7 @@ mod tests {
     fn provision_includes_research_delegate_routing() {
         let workspace_root = temp_workspace_root("research");
 
-        let result = provision_internal_workspace_assets(&workspace_root).unwrap();
+        let result = provision_internal_workspace_assets(&workspace_root, None).unwrap();
         assert_eq!(result.status, ProvisionStatus::Updated);
 
         let research_agent = fs::read_to_string(

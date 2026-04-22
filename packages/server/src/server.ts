@@ -21,7 +21,7 @@ import { fetchOrgMcpCatalog, fetchOrgSkillsCatalog } from "./den-catalog.js";
 import { resolveSkillMatch } from "./skill-resolver.js";
 import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
 import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
-import { provisionWorkspaceInternalSystem } from "./internal-system.js";
+import { provisionWorkspaceInternalSystem, resolveVesloAppDataDir } from "./internal-system.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
@@ -1648,7 +1648,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
     let provision: { version: string; status: "updated" | "unchanged"; written: number; unchanged: number } | null = null;
     try {
-      provision = await provisionWorkspaceInternalSystem(workspace.path);
+      provision = await provisionWorkspaceInternalSystem(workspace.path, resolveVesloAppDataDir());
       if (provision.written > 0) {
         emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
           type: "skill",
@@ -1737,7 +1737,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
 
-    const result = await provisionWorkspaceInternalSystem(workspace.path);
+    const result = await provisionWorkspaceInternalSystem(workspace.path, resolveVesloAppDataDir());
 
     await recordAudit(workspace.path, {
       id: shortId(),

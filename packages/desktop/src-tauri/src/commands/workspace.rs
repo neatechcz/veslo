@@ -230,7 +230,7 @@ pub fn workspace_bootstrap(
             continue;
         }
         if let Err(error) =
-            ensure_workspace_files(&workspace.path, &workspace.preset, Some(&templates_dir))
+            ensure_workspace_files(&workspace.path, &workspace.preset, Some(&templates_dir), Some(&data_dir))
         {
             eprintln!(
                 "[workspace] bootstrap provisioning failed for {}: {}",
@@ -457,7 +457,7 @@ pub fn workspace_create(
 
     let id = stable_workspace_id(&folder);
 
-    ensure_workspace_files(&folder, &preset, Some(&templates_dir))?;
+    ensure_workspace_files(&folder, &preset, Some(&templates_dir), Some(&data_dir))?;
 
     let mut state = load_workspace_state(&app)?;
     upsert_workspace(&mut state.workspaces, WorkspaceInfo {
