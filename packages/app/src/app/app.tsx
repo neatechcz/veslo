@@ -6130,9 +6130,12 @@ export default function App() {
     if (isTauriRuntime()) {
       const scratch = await workspaceStore.createScratchWorkspace();
       if (!scratch?.id) return;
-      const ready = await workspaceStore.ensureLocalWorkspaceActive(scratch.id);
-      if (!ready) return;
-      await createSessionAndOpen();
+      // Activate in browsing mode (no engine start).  The empty
+      // composer shows immediately.  Engine + session creation happen
+      // on-demand when the user sends a message — sendPrompt handles
+      // both ensureEngineForWorkspace and createSessionAndOpen.
+      await workspaceStore.activateWorkspace(scratch.id);
+      setView("session");
       return;
     }
 
