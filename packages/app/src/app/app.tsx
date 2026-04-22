@@ -4123,6 +4123,7 @@ export default function App() {
   const [authCompleteExchangeBusy, setAuthCompleteExchangeBusy] = createSignal(false);
   const [authenticatedUser, setAuthenticatedUser] = createSignal<string | null>(null);
   let desktopAuthStatusPollController: AbortController | null = null;
+  let exchangedCodes = new Set<string>();
 
   const cancelDesktopAuthStatusPolling = () => {
     if (!desktopAuthStatusPollController) return;
@@ -4165,6 +4166,9 @@ export default function App() {
     if (authCompleteExchangeBusy()) {
       return;
     }
+    if (exchangedCodes.has(code)) {
+      return;
+    }
 
     cancelDesktopAuthStatusPolling();
     setAuthCompleteExchangeBusy(true);
@@ -4172,6 +4176,7 @@ export default function App() {
     exchangeHandoffCode(code, exchangeProof).then((result) => {
       setAuthCompleteExchangeBusy(false);
       if (result.ok) {
+        exchangedCodes.add(code);
         writeDenAuth(result.state);
         clearDesktopAuthExchangeProof(exchangeProof?.sessionId);
         setError(null);

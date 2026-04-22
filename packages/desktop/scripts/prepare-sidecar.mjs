@@ -11,6 +11,7 @@ import {
   readSync,
   readdirSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "fs";
@@ -521,6 +522,32 @@ if (shouldDownloadOpencode) {
   }
 
   console.log(`OpenCode sidecar updated to ${normalizedOpencodeVersion}.`);
+}
+
+// Create "opencode" symlinks so the engine's internal `which opencode` check succeeds.
+// The engine binary is named veslo-code but verifies itself via `which opencode`.
+const opencodeSymlinkTargets = [
+  { link: join(sidecarDir, process.platform === "win32" ? "opencode.exe" : "opencode"), target: vesloCodeBaseName },
+  ...(resolvedTargetTriple
+    ? [{ link: join(sidecarDir, `opencode-${resolvedTargetTriple}${process.platform === "win32" ? ".exe" : ""}`), target: `veslo-code-${resolvedTargetTriple}${process.platform === "win32" ? ".exe" : ""}` }]
+    : []),
+];
+for (const { link, target } of opencodeSymlinkTargets) {
+  try {
+    if (existsSync(link)) unlinkSync(link);
+    symlinkSync(target, link);
+  } catch {
+    // Fallback: copy the binary if symlink fails (e.g. Windows without dev mode)
+    try {
+      const sourcePath = join(sidecarDir, target);
+      if (existsSync(sourcePath)) {
+        copyFileSync(sourcePath, link);
+        chmodSync(link, 0o755);
+      }
+    } catch {
+      console.warn(`Failed to create opencode symlink/copy at ${link}`);
+    }
+  }
 }
 
 const opencodeRouterPkgRaw = readFileSync(resolve(opencodeRouterDir, "package.json"), "utf8");
