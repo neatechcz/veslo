@@ -6135,6 +6135,9 @@ export default function App() {
       // on-demand when the user sends a message — sendPrompt handles
       // both ensureEngineForWorkspace and createSessionAndOpen.
       await workspaceStore.activateWorkspace(scratch.id);
+      // Clear any leftover draft from a previous no-session composer
+      // so the new session starts with an empty input.
+      setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, null));
       setView("session");
       return;
     }
