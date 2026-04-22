@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "test": "wdio run wdio.conf.ts",
-    "test:update-baselines": "wdio run wdio.conf.ts --update-visual-baseline"
+    "test:update-baselines": "wdio run wdio.conf.ts --update-visual-baseline",
+    "test:feedback-youtrack-live": "wdio run wdio.conf.ts --spec ./specs/feedback-youtrack-live.spec.ts"
   },
   "devDependencies": {
     "@wdio/cli": "^9.6",

@@ -95,6 +95,29 @@ pnpm test --spec ./specs/visual-regression.spec.ts
 
 The second command is required proof that the refreshed baselines pass in normal comparison mode.
 
+### Live feedback-to-YouTrack smoke
+
+Use this only when a real feedback report and a real YouTrack issue are acceptable. This is not a CI gate.
+
+The live smoke uses the desktop WebdriverIO harness to click the feedback UI, submit a unique report, and then poll YouTrack through the locally configured MCP transport until the projected issue appears.
+
+Requirements:
+
+- run the Desktop Test Runtime Preflight first
+- build the E2E desktop binary with `pnpm tauri build --debug --no-bundle -- --features e2e`
+- use a signed-in Den desktop profile with `E2E_USE_EXISTING_PROFILE=1`, or provide `E2E_DEN_AUTH_JSON`
+- ensure the YouTrack MCP command is available at `~/.config/youtrack-mcp/run-remote.sh`, or set `E2E_YOUTRACK_MCP_COMMAND`
+- set `E2E_YOUTRACK_PROJECT_KEY` if the target project differs from `VSLO`
+- set `E2E_YOUTRACK_MCP_WIRE_PROTOCOL=content-length` only when using a Content-Length framed MCP server; the local wrapper defaults to line-delimited JSON-RPC
+
+Run from `packages/e2e`:
+
+```bash
+E2E_LIVE_FEEDBACK_YOUTRACK=1 E2E_USE_EXISTING_PROFILE=1 pnpm test:feedback-youtrack-live
+```
+
+The live spec disables WebdriverIO spec retries while `E2E_LIVE_FEEDBACK_YOUTRACK=1` is set so a transient failure does not create duplicate YouTrack issues. It writes the latest run metadata to `packages/e2e/.tmp-live-feedback-youtrack/latest.json`.
+
 ### Server changes in `packages/server/src`
 
 Run server tests if relevant, and rebuild the server binary used by orchestrator-driven flows:

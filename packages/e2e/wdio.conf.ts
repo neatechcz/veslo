@@ -28,7 +28,7 @@ export const config: Options.Testrunner = {
   connectionRetryTimeout: 120000,
   connectionRetryCount: 3,
 
-  specFileRetries: 1,
+  specFileRetries: process.env.E2E_LIVE_FEEDBACK_YOUTRACK?.trim() === '1' ? 0 : 1,
 
   framework: 'mocha',
   reporters: ['spec'],
