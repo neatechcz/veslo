@@ -131,9 +131,13 @@ pnpm db:migrate
   - Returns `{ tokenType, token, accessToken, expiresIn, user, org }`.
   - The code is consumed on first use and cannot be replayed.
 
-## CI deployment (dev == prod)
+## Deployment
 
-The workflow `.github/workflows/deploy-den.yml` updates Render env vars and deploys the service on every push to `dev` when this service changes.
+The workflow `.github/workflows/deploy-den.yml` updates Render env vars and deploys the service only when it is run manually from GitHub Actions. Pushes and merges to `main` or `dev` must not deploy Den by themselves.
+
+The workflow also patches the configured Render control-plane service with `autoDeploy: no` on every manual run. Keep native Render Auto-Deploy off for this service.
+
+See `docs/dev/cloud-deployments.md` for the canonical operator procedure.
 
 Required GitHub Actions secrets:
 

@@ -1,21 +1,19 @@
 name: Deploy Den
 
 on:
-  push:
-    branches:
-      - dev
-      - main
-    paths:
-      - "services/den/**"
-      - "services/den-worker-runtime/**"
-      - ".github/workflows/deploy-den.yml"
   workflow_dispatch:
+    inputs:
+      branch:
+        description: "Git branch to deploy. Leave empty to use the configured branch resolution."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: deploy-den-${{ github.ref }}
+  group: deploy-den-${{ github.event.inputs.branch || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -78,7 +76,7 @@ jobs:
             exit 1
           fi
 
-      - name: Sync Render env vars and deploy latest commit
+      - name: Disable Render auto-deploy, sync env vars, and deploy latest commit
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_DEN_CONTROL_PLANE_SERVICE_ID: ${{ secrets.RENDER_DEN_CONTROL_PLANE_SERVICE_ID }}
@@ -88,7 +86,7 @@ jobs:
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
           DEN_RENDER_CONTROL_PLANE_REPO: ${{ vars.DEN_RENDER_CONTROL_PLANE_REPO }}
-          DEN_RENDER_CONTROL_PLANE_BRANCH: ${{ vars.DEN_RENDER_CONTROL_PLANE_BRANCH }}
+          DEN_RENDER_CONTROL_PLANE_BRANCH: ${{ github.event.inputs.branch || vars.DEN_RENDER_CONTROL_PLANE_BRANCH }}
           DEN_RENDER_CONTROL_PLANE_ROOT_DIR: ${{ vars.DEN_RENDER_CONTROL_PLANE_ROOT_DIR }}
           DEN_RENDER_WORKER_REPO: ${{ vars.DEN_RENDER_WORKER_REPO }}
           DEN_RENDER_WORKER_PLAN: ${{ vars.DEN_RENDER_WORKER_PLAN }}
@@ -126,7 +124,7 @@ jobs:
           default_repo = f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'neatechcz/veslo')}"
           default_branch = os.environ.get("GITHUB_REF_NAME") or "dev"
           control_plane_repo = os.environ.get("DEN_RENDER_CONTROL_PLANE_REPO") or default_repo
-          control_plane_branch = os.environ.get("DEN_RENDER_CONTROL_PLANE_BRANCH") or default_branch
+          control_plane_branch = (os.environ.get("DEN_RENDER_CONTROL_PLANE_BRANCH") or "").strip() or default_branch
           control_plane_root_dir = os.environ.get("DEN_RENDER_CONTROL_PLANE_ROOT_DIR") or "services/den"
           worker_repo = os.environ.get("DEN_RENDER_WORKER_REPO") or f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', 'neatechcz/veslo')}"
           configured_cors_origins = os.environ.get("DEN_CORS_ORIGINS") or ""
@@ -219,6 +217,8 @@ jobs:
               source_patch["branch"] = control_plane_branch
           if service.get("rootDir") != control_plane_root_dir:
               source_patch["rootDir"] = control_plane_root_dir
+          if service.get("autoDeploy") != "no":
+              source_patch["autoDeploy"] = "no"
 
           if source_patch:
               print("Updating Render control-plane source:", json.dumps(source_patch))
@@ -234,6 +234,7 @@ jobs:
                       "repo": service.get("repo"),
                       "branch": service.get("branch"),
                       "rootDir": service.get("rootDir"),
+                      "autoDeploy": service.get("autoDeploy"),
                       "url": service_url,
                   }
               ),
