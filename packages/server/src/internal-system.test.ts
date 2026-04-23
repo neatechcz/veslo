@@ -103,9 +103,12 @@ You are Veslo.
       expect(vesloAgent).toContain("VESLO_AGENT_INSTRUCTIONS_START");
       expect(vesloAgent).toContain("VESLO_AGENT_INSTRUCTIONS_END");
       expect(vesloAgent).toContain("Response Style");
+      expect(vesloAgent).toContain("Output Hygiene");
+      expect(vesloAgent).toContain("Do not print raw JSON");
       expect(vesloAgent).toContain("Progressive disclosure");
       expect(vesloAgent).toContain("Document Download Safety");
       expect(vesloAgent).toContain("If a fetch tool already returned bytes for a file URL");
+      expect(subagent).toContain("Do not dump raw JSON");
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
@@ -289,6 +292,7 @@ Verification-first
       expect(vesloAgent).toContain("VESLO_INTERNAL_ROUTING_START");
       expect(vesloAgent).toContain("VESLO_AGENT_INSTRUCTIONS_START");
       expect(vesloAgent).toContain("Response Style");
+      expect(vesloAgent).toContain("Output Hygiene");
       expect(vesloAgent).toContain("delegate");
 
       // Idempotent

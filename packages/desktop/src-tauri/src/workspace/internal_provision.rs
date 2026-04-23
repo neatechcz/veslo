@@ -141,6 +141,11 @@ fn managed_veslo_agent_instructions_block() -> String {
          - File question: read and explain, ask before modifying.\n\
          - Unclear request: ask one clarifying question rather than guessing.\n\
          \n\
+         ### Output Hygiene\n\
+         - Do not print raw JSON, tool payloads, message objects, file manifests, event objects, or internal diagnostic structures in the user-facing final answer unless the user explicitly asks for that raw data or a loaded skill requires it.\n\
+         - When a structured file is created or updated, summarize what changed and reference the file path instead of dumping the file contents.\n\
+         - If technical detail is useful, keep it short and explain it in normal language.\n\
+         \n\
          ### Communication Style\n\
          - Progressive disclosure: start with a simple answer, add technical details only if asked.\n\
          - Explain what you're doing and why, in terms the user can understand.\n\
@@ -915,6 +920,7 @@ Critical rules:
 - Perform concrete file/tool work end-to-end.
 - Keep edits deterministic and minimal.
 - Return concise execution status and outputs to the parent.
+- Do not dump raw JSON, manifests, tool payloads, or full generated file contents unless explicitly requested.
 - Do not expose internal implementation details unless explicitly requested in developer/debug mode.
 "#
     )
@@ -949,6 +955,7 @@ Rules:
 - Create or update skills only in this workspace at `.opencode/skills/<name>/SKILL.md`.
 - Keep the resulting skill concise and runnable.
 - Do not write company-global/shared skills in this flow.
+- Do not dump raw JSON, manifests, tool payloads, or full generated file contents unless explicitly requested.
 - Do not expose internal implementation details unless explicitly requested in developer/debug mode.
 "#
     .to_string()
@@ -991,6 +998,7 @@ mod tests {
         .unwrap();
         assert!(research_agent.contains("Veslo internal Research execution agent"));
         assert!(research_agent.contains("mode: subagent"));
+        assert!(research_agent.contains("Do not dump raw JSON"));
 
         let plugin = fs::read_to_string(
             workspace_root
@@ -1013,6 +1021,16 @@ mod tests {
         .unwrap();
         assert!(manifest.contains("veslo-internal-research"));
         assert!(manifest.contains("\"routingBlockVersion\": 3"));
+
+        let veslo_agent = fs::read_to_string(
+            workspace_root
+                .join(".opencode")
+                .join("agents")
+                .join("veslo.md"),
+        )
+        .unwrap();
+        assert!(veslo_agent.contains("Output Hygiene"));
+        assert!(veslo_agent.contains("Do not print raw JSON"));
 
         fs::remove_dir_all(workspace_root).unwrap();
     }

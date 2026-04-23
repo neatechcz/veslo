@@ -132,6 +132,7 @@ Critical rules:
 - Perform concrete file/tool work end-to-end.
 - Keep edits deterministic and minimal.
 - Return concise execution status and outputs to the parent.
+- Do not dump raw JSON, manifests, tool payloads, or full generated file contents unless explicitly requested.
 - Do not expose internal implementation details unless explicitly requested in developer/debug mode.
 `;
 }
@@ -165,6 +166,7 @@ Rules:
 - Create or update skills only in this workspace at \`.opencode/skills/<name>/SKILL.md\`.
 - Keep the resulting skill concise and runnable.
 - Do not write company-global/shared skills in this flow.
+- Do not dump raw JSON, manifests, tool payloads, or full generated file contents unless explicitly requested.
 - Do not expose internal implementation details unless explicitly requested in developer/debug mode.
 `;
 }
@@ -196,6 +198,11 @@ This block is managed by Veslo. Keep it intact.
 - Complex task: outline steps first, then execute one by one.
 - File question: read and explain, ask before modifying.
 - Unclear request: ask one clarifying question rather than guessing.
+
+### Output Hygiene
+- Do not print raw JSON, tool payloads, message objects, file manifests, event objects, or internal diagnostic structures in the user-facing final answer unless the user explicitly asks for that raw data or a loaded skill requires it.
+- When a structured file is created or updated, summarize what changed and reference the file path instead of dumping the file contents.
+- If technical detail is useful, keep it short and explain it in normal language.
 
 ### Communication Style
 - Progressive disclosure: start with a simple answer, add technical details only if asked.
