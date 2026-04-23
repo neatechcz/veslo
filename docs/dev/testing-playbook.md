@@ -4,7 +4,7 @@ This file describes the practical verification flow for coding work in Veslo.
 
 ## First Rule
 
-Do not use `packages/web` as the runtime under test. Veslo's authoritative application runtime is the Tauri desktop app in `packages/desktop`.
+Do not use `packages/web` or UI-only web servers as the runtime under test. Do not start `pnpm -w dev:ui`, `pnpm --filter @neatech/veslo-ui dev`, or raw Vite as the app runtime. Veslo's authoritative application runtime is the Tauri desktop app in `packages/desktop`.
 
 ## Desktop Test Runtime Preflight
 
@@ -15,19 +15,19 @@ This is an LLM/operator responsibility, not a step to duplicate inside individua
 1. Detect running Veslo dev/test processes from this repo:
 
 ```bash
-pgrep -fl "pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
+pgrep -fl "pnpm -w dev:ui|pnpm --filter @neatech/veslo-ui dev|pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
 ```
 
 2. If the matches are internally started dev/test runtime processes from this repo, stop them before launching the test runtime:
 
 ```bash
-pkill -f "pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
+pkill -f "pnpm -w dev:ui|pnpm --filter @neatech/veslo-ui dev|pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
 ```
 
 3. Verify the post-check is empty before continuing:
 
 ```bash
-pgrep -fl "pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
+pgrep -fl "pnpm -w dev:ui|pnpm --filter @neatech/veslo-ui dev|pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
 ```
 
 If a match looks like a user-launched production/bundled app or otherwise cannot be identified as an internally started dev/test runtime, stop and report what is running instead of force-killing it.
@@ -166,7 +166,7 @@ In the final summary for implementation work, report:
 
 ## Anti-Patterns
 
-- using `packages/web` as proof that the app works
+- using `packages/web`, `pnpm -w dev:ui`, `@neatech/veslo-ui dev`, or raw Vite as proof that the app works
 - claiming Tauri behavior based only on `vite` dev server checks
 - changing `packages/server/src` without rebuilding the binary that orchestrator actually runs
 - running only broad tests when a targeted script exists for the changed behavior

@@ -6,7 +6,8 @@ Use this guide whenever someone asks to start Veslo during development (for exam
 
 - Authoritative runtime: `packages/desktop` (Tauri desktop app)
 - Primary development mode: local mode with local OpenCode (do not treat cloud-backed execution as the default startup path)
-- Do not use `packages/web` as proof that the app is running correctly
+- Do not use `packages/web` or UI-only web servers as proof that the app is running correctly.
+- Do not start `pnpm -w dev:ui`, `pnpm --filter @neatech/veslo-ui dev`, or raw Vite as the Veslo app runtime.
 - Never launch a previously built desktop app as a substitute for development startup. Always run a new build from current sources before starting.
 - Veslo desktop is single-tenant during development and testing. Agents must clear internally started dev/test runtime instances before launching another runtime.
 
@@ -24,13 +25,13 @@ Never launch a second app/dev instance. This rule applies to normal development 
 
 ```bash
 # 1) Mandatory pre-check: detect already-running instances
-pgrep -fl "pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
+pgrep -fl "pnpm -w dev:ui|pnpm --filter @neatech/veslo-ui dev|pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
 
 # 2) Stop previous internally started dev/test runs (safe if nothing is running)
-pkill -f "pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
+pkill -f "pnpm -w dev:ui|pnpm --filter @neatech/veslo-ui dev|pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
 
 # 2b) Mandatory post-check: must be empty before continuing
-pgrep -fl "pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
+pgrep -fl "pnpm -w dev:ui|pnpm --filter @neatech/veslo-ui dev|pnpm --filter @neatech/veslo dev|tauri dev --config src-tauri/tauri.dev.conf.json|vite/bin/vite.js|/target/debug/veslo|target/debug/bundle/macos/(Veslo Dev|Veslo by Neatech)\\.app/Contents/MacOS/veslo" || true
 
 # 3) Fresh rebuild (desktop native layer)
 pnpm --filter @neatech/veslo exec cargo clean --manifest-path src-tauri/Cargo.toml
@@ -47,7 +48,7 @@ Consider startup complete only when both appear in logs:
 - `VITE ... ready` with local URL (default `http://localhost:5173/`)
 - `Running target/debug/veslo`
 
-If only Vite runs, desktop runtime is not fully started.
+If only Vite runs, desktop runtime is not fully started; stop it and use the desktop startup flow.
 
 ## After Server-Side Changes
 
