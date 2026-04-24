@@ -294,7 +294,9 @@ fn draft_json_path(draft_dir: &Path) -> PathBuf {
 }
 
 fn attachment_file_path(draft_dir: &Path, attachment_id: &str) -> PathBuf {
-    draft_dir.join("attachments").join(attachment_id)
+    draft_dir
+        .join("attachments")
+        .join(attachment_storage_name(attachment_id))
 }
 
 fn read_pending_session_draft_summary(
@@ -321,6 +323,26 @@ fn validate_storage_id(value: &str, field_name: &str) -> Result<String, String> 
         ));
     }
     Ok(trimmed.to_string())
+}
+
+fn validate_attachment_id(value: &str) -> Result<String, String> {
+    if value.trim().is_empty() {
+        return Err("attachment.id is required".to_string());
+    }
+    if value.chars().any(|ch| ch == '\0' || ch.is_control()) {
+        return Err("attachment.id must not contain control characters".to_string());
+    }
+    Ok(value.to_string())
+}
+
+fn attachment_storage_name(attachment_id: &str) -> String {
+    let mut encoded = String::with_capacity(attachment_id.len() * 2 + 2);
+    encoded.push_str("a-");
+    for byte in attachment_id.as_bytes() {
+        use std::fmt::Write as _;
+        let _ = write!(&mut encoded, "{byte:02x}");
+    }
+    encoded
 }
 
 fn validate_non_empty(value: &str, field_name: &str) -> Result<String, String> {
@@ -368,7 +390,7 @@ fn validate_and_build_summary(
 
     let mut attachments = Vec::with_capacity(input.composer.attachments.len());
     for attachment in &input.composer.attachments {
-        let attachment_id = validate_storage_id(&attachment.id, "attachment.id")?;
+        let attachment_id = validate_attachment_id(&attachment.id)?;
         let name = validate_non_empty(&attachment.name, "attachment.name")?;
         let mime_type = validate_non_empty(&attachment.mime_type, "attachment.mime_type")?;
         let kind = validate_attachment_kind(&attachment.kind)?;
@@ -442,8 +464,8 @@ pub fn pending_session_drafts_delete(app: AppHandle, draft_id: String) -> Result
 #[cfg(test)]
 mod tests {
     use super::{
-        delete_pending_session_draft, get_pending_session_draft, list_pending_session_drafts,
-        put_pending_session_draft, PendingSessionDraftAttachmentInput,
+        attachment_file_path, delete_pending_session_draft, get_pending_session_draft,
+        list_pending_session_drafts, put_pending_session_draft, PendingSessionDraftAttachmentInput,
         PendingSessionDraftAttachmentMetadata, PendingSessionDraftAttachmentPayload,
         PendingSessionDraftComposerInput, PendingSessionDraftComposerMetadata,
         PendingSessionDraftComposerPayload, PendingSessionDraftGetResult,
@@ -452,7 +474,9 @@ mod tests {
     use serde_json::json;
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::{Arc, Barrier, Mutex};
+    use std::thread;
+    use uuid::Uuid;
 
     struct TestDir {
         path: PathBuf,
@@ -460,14 +484,7 @@ mod tests {
 
     impl TestDir {
         fn new() -> Self {
-            let unique = format!(
-                "veslo-pending-session-drafts-test-{}-{}",
-                std::process::id(),
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("time should be after epoch")
-                    .as_nanos()
-            );
+            let unique = format!("veslo-pending-session-drafts-test-{}", Uuid::new_v4());
             let path = std::env::temp_dir().join(unique);
             fs::create_dir_all(&path).expect("test dir should be created");
             Self { path }
@@ -525,6 +542,14 @@ mod tests {
                 }),
             },
         }
+    }
+
+    fn sample_put_input_with_attachment_id(attachment_id: &str) -> PendingSessionDraftPutInput {
+        let mut input = sample_put_input();
+        input.composer.attachments[0].id = attachment_id.to_string();
+        input.composer.attachments[0].name = "diagram v2.png".to_string();
+        input.composer.attachments[0].mime_type = "image/png".to_string();
+        input
     }
 
     fn expected_summary() -> PendingSessionDraftSummary {
@@ -621,16 +646,9 @@ mod tests {
             serde_json::from_str(&draft_json).expect("draft.json should parse");
         assert_eq!(persisted, expected_summary());
 
-        let image_path = dir
-            .path()
-            .join("draft-1")
-            .join("attachments")
-            .join("attachment-image");
-        let doc_path = dir
-            .path()
-            .join("draft-1")
-            .join("attachments")
-            .join("attachment-doc");
+        let draft_dir = dir.path().join("draft-1");
+        let image_path = attachment_file_path(&draft_dir, "attachment-image");
+        let doc_path = attachment_file_path(&draft_dir, "attachment-doc");
         assert_eq!(
             fs::read(&image_path).expect("image copy should exist"),
             vec![0, 1, 2, 3]
@@ -642,6 +660,26 @@ mod tests {
 
         let listed = list_pending_session_drafts(dir.path()).expect("list should succeed");
         assert_eq!(listed, vec![expected_summary()]);
+    }
+
+    #[test]
+    fn put_accepts_attachment_ids_built_from_normal_filenames() {
+        let dir = TestDir::new();
+        let attachment_id = "diagram v2.png-1713739918018-k4m2d9";
+
+        let written = put_pending_session_draft(
+            dir.path(),
+            sample_put_input_with_attachment_id(attachment_id),
+        )
+        .expect("draft should be saved");
+
+        assert_eq!(written.composer.attachments[0].id, attachment_id);
+
+        let loaded = get_pending_session_draft(dir.path(), "draft-1")
+            .expect("load should succeed")
+            .expect("draft should exist");
+        assert_eq!(loaded.draft.composer.attachments[0].id, attachment_id);
+        assert_eq!(loaded.draft.composer.attachments[0].bytes, vec![0, 1, 2, 3]);
     }
 
     #[test]
@@ -692,11 +730,7 @@ mod tests {
         let dir = TestDir::new();
         put_pending_session_draft(dir.path(), sample_put_input()).expect("draft should be saved");
 
-        let broken_path = dir
-            .path()
-            .join("draft-1")
-            .join("attachments")
-            .join("attachment-doc");
+        let broken_path = attachment_file_path(&dir.path().join("draft-1"), "attachment-doc");
         fs::remove_file(&broken_path).expect("attachment file should be removed");
         fs::create_dir(&broken_path).expect("broken attachment path should be a directory");
 
@@ -717,8 +751,41 @@ mod tests {
         assert!(
             loaded.attachment_failures[0]
                 .message
-                .contains("attachment-doc"),
-            "failure message should mention the broken attachment path"
+                .contains("Failed to read"),
+            "failure message should stay readable for a broken attachment copy"
+        );
+    }
+
+    #[test]
+    fn test_dirs_are_unique_under_parallel_construction() {
+        let worker_count = 128;
+        let barrier = Arc::new(Barrier::new(worker_count));
+        let paths = Arc::new(Mutex::new(Vec::with_capacity(worker_count)));
+        let mut workers = Vec::with_capacity(worker_count);
+
+        for _ in 0..worker_count {
+            let barrier = Arc::clone(&barrier);
+            let paths = Arc::clone(&paths);
+            workers.push(thread::spawn(move || {
+                barrier.wait();
+                let dir = TestDir::new();
+                paths
+                    .lock()
+                    .expect("paths mutex should be available")
+                    .push(dir.path().to_path_buf());
+            }));
+        }
+
+        for worker in workers {
+            worker.join().expect("worker should complete");
+        }
+
+        let paths = paths.lock().expect("paths mutex should be available");
+        let unique_paths: std::collections::HashSet<_> = paths.iter().cloned().collect();
+        assert_eq!(
+            unique_paths.len(),
+            worker_count,
+            "parallel test roots should not collide"
         );
     }
 }
