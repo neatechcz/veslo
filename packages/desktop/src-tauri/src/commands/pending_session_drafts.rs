@@ -698,6 +698,8 @@ mod tests {
     fn delete_removes_metadata_and_attachment_copies() {
         let dir = TestDir::new();
         put_pending_session_draft(dir.path(), sample_put_input()).expect("draft should be saved");
+        let draft_dir = dir.path().join("draft-1");
+        let image_path = attachment_file_path(&draft_dir, "attachment-image");
 
         let deleted =
             delete_pending_session_draft(dir.path(), "draft-1").expect("delete should succeed");
@@ -708,12 +710,8 @@ mod tests {
             "draft.json should be removed"
         );
         assert!(
-            !dir.path()
-                .join("draft-1")
-                .join("attachments")
-                .join("attachment-image")
-                .exists(),
-            "attachment copy should be removed"
+            !image_path.exists(),
+            "encoded attachment copy should be removed"
         );
         assert_eq!(
             get_pending_session_draft(dir.path(), "draft-1").expect("get should succeed"),
