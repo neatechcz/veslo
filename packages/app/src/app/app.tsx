@@ -104,6 +104,11 @@ import {
   setSessionComposerDraft,
   setSessionComposerPrompt,
 } from "./pages/session-composer-drafts";
+import {
+  isPendingDraftKey,
+  resolveComposerStorageKey,
+  resolvePendingDraftKey,
+} from "./lib/pending-session-drafts";
 import { createClient, unwrap, waitForHealthy, type OpencodeAuth } from "./lib/opencode";
 import {
   abortSession as abortSessionTyped,
@@ -231,6 +236,8 @@ import { useGlobalSync } from "./context/global-sync";
 import { createWorkspaceStore } from "./context/workspace";
 import {
   updaterEnvironment,
+  pendingSessionDraftsGet,
+  pendingSessionDraftsList,
   readOpencodeConfig,
   writeOpencodeConfig,
   schedulerDeleteJob,
@@ -245,6 +252,7 @@ import {
   workspaceVesloWrite,
   opencodeDbUpdateSessionDirectory,
   type OrchestratorStatus,
+  type PendingSessionDraftSummary,
   type VesloServerInfo,
   type OpenCodeRouterInfo,
 } from "./lib/tauri";
@@ -955,10 +963,14 @@ export default function App() {
     clearPerfLogs();
   });
 
+  const [activePendingDraftKey, setActivePendingDraftKey] = createSignal<string | null>(null);
+  const [activePendingDraftMeta, setActivePendingDraftMeta] = createSignal<PendingSessionDraftSummary | null>(null);
+  const [activePendingDraftStorageReady, setActivePendingDraftStorageReady] = createSignal(false);
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
     null
   );
   const SESSION_BY_WORKSPACE_KEY = "veslo.workspace-last-session.v1";
+  const ACTIVE_PENDING_DRAFT_KEY = "veslo.active-pending-draft.v1";
   const SESSION_DIRECTORY_OVERRIDE_KEY = "veslo.session-workspace-override.v1";
   const SUBAGENT_DECORATIONS_PREF_KEY = "veslo.subagent-decorations.v1";
   const readSessionByWorkspace = () => {
@@ -977,6 +989,28 @@ export default function App() {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem(SESSION_BY_WORKSPACE_KEY, JSON.stringify(map));
+    } catch {
+      // ignore
+    }
+  };
+  const readActivePendingDraftKey = () => {
+    if (typeof window === "undefined") return null;
+    try {
+      const stored = window.localStorage.getItem(ACTIVE_PENDING_DRAFT_KEY)?.trim() ?? "";
+      return isPendingDraftKey(stored) ? stored : null;
+    } catch {
+      return null;
+    }
+  };
+  const writeActivePendingDraftKey = (value: string | null) => {
+    if (typeof window === "undefined") return;
+    try {
+      const nextValue = value?.trim() ?? "";
+      if (!nextValue) {
+        window.localStorage.removeItem(ACTIVE_PENDING_DRAFT_KEY);
+        return;
+      }
+      window.localStorage.setItem(ACTIVE_PENDING_DRAFT_KEY, nextValue);
     } catch {
       // ignore
     }
@@ -1305,14 +1339,21 @@ export default function App() {
   });
 
   const [composerDraftBySessionId, setComposerDraftBySessionId] = createSignal<Record<string, ComposerDraft>>({});
+  const currentComposerStorageKey = createMemo(() => {
+    const sessionId = selectedSessionId();
+    if (sessionId) {
+      return resolveComposerStorageKey({ sessionId });
+    }
+    return resolveComposerStorageKey({ pendingDraftKey: activePendingDraftKey() });
+  });
   const composerDraft = createMemo(() =>
-    getSessionComposerDraft(composerDraftBySessionId(), selectedSessionId()),
+    getSessionComposerDraft(composerDraftBySessionId(), { storageKey: currentComposerStorageKey() }),
   );
   const setComposerDraft = (draft: ComposerDraft) => {
-    setComposerDraftBySessionId((current) => setSessionComposerDraft(current, selectedSessionId(), draft));
+    setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: currentComposerStorageKey() }, draft));
   };
   const setPrompt = (value: string) => {
-    setComposerDraftBySessionId((current) => setSessionComposerPrompt(current, selectedSessionId(), value));
+    setComposerDraftBySessionId((current) => setSessionComposerPrompt(current, { storageKey: currentComposerStorageKey() }, value));
   };
   const prompt = createMemo(() => composerDraft().text);
   const [lastPromptSent, setLastPromptSent] = createSignal("");
@@ -3669,6 +3710,12 @@ export default function App() {
       };
     }
     return map;
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!activePendingDraftStorageReady()) return;
+    writeActivePendingDraftKey(activePendingDraftKey());
   });
 
   createEffect(() => {
@@ -6428,6 +6475,41 @@ export default function App() {
       setStartupPreference(startupPref);
     }
 
+    if (isTauriRuntime()) {
+      const storedPendingDraftKey = readActivePendingDraftKey();
+      if (storedPendingDraftKey) {
+        setActivePendingDraftKey(storedPendingDraftKey);
+        try {
+          const pendingDrafts = await pendingSessionDraftsList();
+          const matchingPendingDraft = pendingDrafts.find((draft) => resolvePendingDraftKey({
+            kind: draft.kind,
+            workspaceId: draft.workspaceId,
+            directory: draft.directory ?? null,
+            privateWorkspaceId: draft.privateWorkspaceId ?? null,
+          }) === storedPendingDraftKey) ?? null;
+          if (!matchingPendingDraft) {
+            setActivePendingDraftKey(null);
+            setActivePendingDraftMeta(null);
+            writeActivePendingDraftKey(null);
+          } else {
+            const loadedPendingDraft = await pendingSessionDraftsGet(matchingPendingDraft.id);
+            if (!loadedPendingDraft) {
+              setActivePendingDraftKey(null);
+              setActivePendingDraftMeta(null);
+              writeActivePendingDraftKey(null);
+            } else {
+              setActivePendingDraftMeta(matchingPendingDraft);
+              setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: storedPendingDraftKey }, loadedPendingDraft.draft.composer));
+            }
+          }
+        } catch (error) {
+          reportError(error, "pendingDrafts.hydrate");
+          setActivePendingDraftMeta(null);
+        }
+      }
+    }
+    setActivePendingDraftStorageReady(true);
+
     const unsubscribeTheme = subscribeToSystemTheme((isDark) => {
       if (themeMode() !== "system") return;
       applyThemeMode(isDark ? "dark" : "light");
@@ -7924,6 +8006,15 @@ export default function App() {
       const id = (sessionSegment ?? "").trim();
 
       if (!id) {
+        if (activePendingDraftKey()) {
+          void activePendingDraftMeta();
+          if (selectedSessionId()) {
+            setSelectedSessionId(null);
+            setMessages([]);
+            setTodos([]);
+          }
+          return;
+        }
         if (selectedSessionId()) {
           setSelectedSessionId(null);
           setMessages([]);
