@@ -99,6 +99,7 @@ import SessionView from "./pages/session";
 import ProtoWorkspacesView from "./pages/proto-workspaces";
 import ProtoV1UxView from "./pages/proto-v1-ux";
 import {
+  createEmptyComposerDraft,
   deleteSessionComposerDraft,
   getSessionComposerDraft,
   setSessionComposerDraft,
@@ -238,6 +239,7 @@ import {
   updaterEnvironment,
   pendingSessionDraftsGet,
   pendingSessionDraftsList,
+  pendingSessionDraftsPut,
   readOpencodeConfig,
   writeOpencodeConfig,
   schedulerDeleteJob,
@@ -6185,18 +6187,63 @@ export default function App() {
 
   const openNewSessionWithDirectory = async () => {
     if (isTauriRuntime()) {
-      const scratch = await workspaceStore.createScratchWorkspace();
-      if (!scratch?.id) return;
-      // Activate in browsing mode (no engine start).  The empty
-      // composer shows immediately.  Engine + session creation happen
-      // on-demand when the user sends a message — sendPrompt handles
-      // both ensureEngineForWorkspace and createSessionAndOpen.
-      await workspaceStore.activateWorkspace(scratch.id);
-      // Clear any leftover draft from a previous no-session composer
-      // so the new session starts with an empty input.
-      setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, null));
-      setView("session");
-      return;
+      try {
+        const newPrivatePendingDraftKey = resolvePendingDraftKey({ kind: "new-private" });
+        const pendingDrafts = await pendingSessionDraftsList();
+        const existingPendingDraft = pendingDrafts.find((draft) => draft.kind === "new-private") ?? null;
+
+        if (existingPendingDraft) {
+          const pendingDraft = await pendingSessionDraftsGet(existingPendingDraft.id);
+          if (pendingDraft) {
+            const pendingWorkspaceId = (existingPendingDraft.privateWorkspaceId ?? existingPendingDraft.workspaceId).trim();
+            if (!pendingWorkspaceId) return;
+            await workspaceStore.activateWorkspace(pendingWorkspaceId);
+            setActivePendingDraftKey(newPrivatePendingDraftKey);
+            setActivePendingDraftMeta(existingPendingDraft);
+            setComposerDraftBySessionId((current) => setSessionComposerDraft(
+              current,
+              { storageKey: newPrivatePendingDraftKey },
+              pendingDraft.draft.composer,
+            ));
+            setView("session");
+            return;
+          }
+        }
+
+        const scratch = await workspaceStore.createScratchWorkspace();
+        if (!scratch?.id) return;
+
+        const emptyPendingDraft = createEmptyComposerDraft();
+        const now = Date.now();
+        const pendingDraft = await pendingSessionDraftsPut({
+          id: `pending-new-private-${scratch.id}`,
+          kind: "new-private",
+          workspaceId: scratch.id,
+          directory: null,
+          privateWorkspaceId: scratch.id,
+          createdAt: now,
+          updatedAt: now,
+          composer: emptyPendingDraft,
+        });
+
+        // Activate in browsing mode (no engine start). Engine + session
+        // creation still happen on-demand when the user sends a message.
+        await workspaceStore.activateWorkspace(scratch.id);
+        setActivePendingDraftKey(newPrivatePendingDraftKey);
+        setActivePendingDraftMeta(pendingDraft);
+        setComposerDraftBySessionId((current) => setSessionComposerDraft(
+          current,
+          { storageKey: newPrivatePendingDraftKey },
+          emptyPendingDraft,
+        ));
+        setView("session");
+        return;
+      } catch (error) {
+        reportError(error, "pendingDrafts.newPrivate");
+        const message = error instanceof Error ? error.message : safeStringify(error);
+        setError(addOpencodeCacheHint(message));
+        return;
+      }
     }
 
     await createSessionAndOpen();

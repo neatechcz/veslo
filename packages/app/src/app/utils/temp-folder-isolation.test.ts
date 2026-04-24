@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -6,6 +7,9 @@ import {
   normalizeDirectoryPath,
   commandPathFromWorkspaceRoot,
 } from "./index.js";
+
+const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const workspaceSource = readFileSync(new URL("../context/workspace.ts", import.meta.url), "utf8");
 
 // ---------------------------------------------------------------------------
 // Temporary folder isolation tests
@@ -648,4 +652,28 @@ test("bootstrap startHost must be guarded by a timeout to prevent indefinite fre
 
   // The key assertion: without the timeout, this test would hang forever.
   // With the fix, it completes promptly.
+});
+
+test("after pending draft deletion New session falls back to a fresh private workspace", () => {
+  const openNewSessionStart = appSource.indexOf("  const openNewSessionWithDirectory = async () => {");
+  const openNewSessionEnd = appSource.indexOf("  const openDirectorySessionFromPicker = async () => {", openNewSessionStart);
+  assert.notEqual(openNewSessionStart, -1, "New session flow should exist in app.tsx");
+  assert.notEqual(openNewSessionEnd, -1, "New session flow end should exist in app.tsx");
+  const openNewSessionSource = appSource.slice(openNewSessionStart, openNewSessionEnd);
+
+  assert.match(
+    openNewSessionSource,
+    /const pendingDrafts = await pendingSessionDraftsList\(\);[\s\S]*const existingPendingDraft = pendingDrafts\.find\(\(draft\) => draft\.kind === "new-private"\) \?\? null;[\s\S]*if \(existingPendingDraft\) \{[\s\S]*return;\s*\}[\s\S]*const scratch = await workspaceStore\.createScratchWorkspace\(\);/s,
+    "when the private pending draft is missing, New session should fall through to fresh scratch workspace creation",
+  );
+  assert.match(
+    workspaceSource,
+    /const runId = makeRunId\(\)\.replace\(\/\[\^a-z0-9-\]\+\/gi, ""\)\.slice\(0, 24\) \|\| `\$\{Date\.now\(\)\}`;/,
+    "scratch workspaces should still derive a fresh unique run id",
+  );
+  assert.match(
+    workspaceSource,
+    /const folder = `\$\{root\}\/\$\{Date\.now\(\)\}-\$\{runId\}`;/,
+    "scratch workspaces should still create a fresh private workspace folder for each new draft",
+  );
 });

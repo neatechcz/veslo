@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -6,6 +7,15 @@ import {
   createSessionWithWorkspaceActivation,
   openSessionWithWorkspaceActivation,
 } from "./session-navigation.js";
+
+const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+
+const openNewSessionStart = appSource.indexOf("  const openNewSessionWithDirectory = async () => {");
+const openNewSessionEnd = appSource.indexOf("  const openDirectorySessionFromPicker = async () => {", openNewSessionStart);
+const openNewSessionSource =
+  openNewSessionStart >= 0 && openNewSessionEnd >= 0
+    ? appSource.slice(openNewSessionStart, openNewSessionEnd)
+    : "";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -286,6 +296,41 @@ test("picker-driven directory session flow stops when ensured workspace cannot a
   assert.deepEqual(ensured, ["/tmp/project-b"]);
   assert.deepEqual(activated, ["ws-project-b"]);
   assert.deepEqual(created, []);
+});
+
+test("first New session creates one private workspace and opens a persisted pending draft", () => {
+  assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
+  assert.match(
+    openNewSessionSource,
+    /const newPrivatePendingDraftKey = resolvePendingDraftKey\(\{ kind: "new-private" \}\);[\s\S]*const pendingDrafts = await pendingSessionDraftsList\(\);[\s\S]*const existingPendingDraft = pendingDrafts\.find\(\(draft\) => draft\.kind === "new-private"\) \?\? null;/s,
+    "New session should look for an existing private pending draft before creating a workspace",
+  );
+  assert.match(
+    openNewSessionSource,
+    /const scratch = await workspaceStore\.createScratchWorkspace\(\);[\s\S]*const emptyPendingDraft = createEmptyComposerDraft\(\);[\s\S]*const now = Date\.now\(\);[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*kind: "new-private"[\s\S]*workspaceId: scratch\.id[\s\S]*privateWorkspaceId: scratch\.id[\s\S]*createdAt: now[\s\S]*updatedAt: now[\s\S]*composer: emptyPendingDraft[\s\S]*\}\);[\s\S]*await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: newPrivatePendingDraftKey \}[\s\S]*?emptyPendingDraft[\s\S]*?\)\);[\s\S]*setView\("session"\);/s,
+    "the first New session should create one private workspace, persist one pending draft, and open the draft route",
+  );
+});
+
+test("second New session reopens the same pending draft and does not create another private workspace", () => {
+  assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
+  assert.match(
+    openNewSessionSource,
+    /if \(existingPendingDraft\) \{\s*const pendingDraft = await pendingSessionDraftsGet\(existingPendingDraft\.id\);[\s\S]*if \(pendingDraft\) \{\s*const pendingWorkspaceId = \(existingPendingDraft\.privateWorkspaceId \?\? existingPendingDraft\.workspaceId\)\.trim\(\);[\s\S]*if \(!pendingWorkspaceId\) return;[\s\S]*await workspaceStore\.activateWorkspace\(pendingWorkspaceId\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: newPrivatePendingDraftKey \}[\s\S]*?pendingDraft\.draft\.composer[\s\S]*?\)\);[\s\S]*setView\("session"\);[\s\S]*return;\s*\}\s*\}/s,
+    "repeat New session should reopen the existing private pending draft instead of creating a new workspace",
+  );
+  const existingBranchMatch = openNewSessionSource.match(/if \(existingPendingDraft\) \{[\s\S]*?return;\s*\}/);
+  const existingBranch = existingBranchMatch?.[0] ?? "";
+  assert.doesNotMatch(
+    existingBranch,
+    /createScratchWorkspace/,
+    "reopening an existing private pending draft must not create another scratch workspace",
+  );
+  assert.doesNotMatch(
+    openNewSessionSource,
+    /deleteSessionComposerDraft\(current, null\)/,
+    "repeat New session should not clear the draft bucket before reopening the same pending draft",
+  );
 });
 
 test("picker-driven directory session flow forwards the selected path unchanged to workspace resolution", async () => {
