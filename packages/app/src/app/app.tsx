@@ -1015,6 +1015,11 @@ export default function App() {
       // ignore
     }
   };
+  const clearActivePendingDraftState = () => {
+    setActivePendingDraftKey(null);
+    setActivePendingDraftMeta(null);
+    writeActivePendingDraftKey(null);
+  };
   const readSessionDirectoryOverrides = () => {
     if (typeof window === "undefined") return {} as Record<string, string>;
     try {
@@ -6478,7 +6483,6 @@ export default function App() {
     if (isTauriRuntime()) {
       const storedPendingDraftKey = readActivePendingDraftKey();
       if (storedPendingDraftKey) {
-        setActivePendingDraftKey(storedPendingDraftKey);
         try {
           const pendingDrafts = await pendingSessionDraftsList();
           const matchingPendingDraft = pendingDrafts.find((draft) => resolvePendingDraftKey({
@@ -6488,23 +6492,20 @@ export default function App() {
             privateWorkspaceId: draft.privateWorkspaceId ?? null,
           }) === storedPendingDraftKey) ?? null;
           if (!matchingPendingDraft) {
-            setActivePendingDraftKey(null);
-            setActivePendingDraftMeta(null);
-            writeActivePendingDraftKey(null);
+            clearActivePendingDraftState();
           } else {
             const loadedPendingDraft = await pendingSessionDraftsGet(matchingPendingDraft.id);
             if (!loadedPendingDraft) {
-              setActivePendingDraftKey(null);
-              setActivePendingDraftMeta(null);
-              writeActivePendingDraftKey(null);
+              clearActivePendingDraftState();
             } else {
+              setActivePendingDraftKey(storedPendingDraftKey);
               setActivePendingDraftMeta(matchingPendingDraft);
               setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: storedPendingDraftKey }, loadedPendingDraft.draft.composer));
             }
           }
         } catch (error) {
           reportError(error, "pendingDrafts.hydrate");
-          setActivePendingDraftMeta(null);
+          clearActivePendingDraftState();
         }
       }
     }

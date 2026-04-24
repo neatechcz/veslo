@@ -20,10 +20,23 @@ test("hydrates active pending draft state from the desktop draft store and prefe
     /const currentComposerStorageKey = createMemo\(\(\) => \{\s*const sessionId = selectedSessionId\(\);\s*if \(sessionId\) \{\s*return resolveComposerStorageKey\(\{ sessionId \}\);\s*\}\s*return resolveComposerStorageKey\(\{ pendingDraftKey: activePendingDraftKey\(\) \}\);\s*\}\);/s,
     "real sessions should keep their own composer key even when a pending draft remains active in the background",
   );
+  assert.doesNotMatch(
+    source,
+    /const storedPendingDraftKey = readActivePendingDraftKey\(\);[\s\S]*setActivePendingDraftKey\(storedPendingDraftKey\);[\s\S]*const pendingDrafts = await pendingSessionDraftsList\(\);/s,
+    "startup should not mark a pending draft active before the desktop draft has been validated and loaded",
+  );
   assert.match(
     source,
-    /const storedPendingDraftKey = readActivePendingDraftKey\(\);[\s\S]*setActivePendingDraftKey\(storedPendingDraftKey\);[\s\S]*const pendingDrafts = await pendingSessionDraftsList\(\);[\s\S]*const matchingPendingDraft = pendingDrafts\.find\(\(draft\) => resolvePendingDraftKey\(\{[\s\S]*\}\) === storedPendingDraftKey\) \?\? null;[\s\S]*const loadedPendingDraft = await pendingSessionDraftsGet\(matchingPendingDraft\.id\);[\s\S]*setActivePendingDraftMeta\(matchingPendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\(current, \{ storageKey: storedPendingDraftKey \}, loadedPendingDraft\.draft\.composer\)\);/s,
+    /const storedPendingDraftKey = readActivePendingDraftKey\(\);[\s\S]*const pendingDrafts = await pendingSessionDraftsList\(\);[\s\S]*const matchingPendingDraft = pendingDrafts\.find\(\(draft\) => resolvePendingDraftKey\(\{[\s\S]*\}\) === storedPendingDraftKey\) \?\? null;[\s\S]*const loadedPendingDraft = await pendingSessionDraftsGet\(matchingPendingDraft\.id\);[\s\S]*setActivePendingDraftKey\(storedPendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(matchingPendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\(current, \{ storageKey: storedPendingDraftKey \}, loadedPendingDraft\.draft\.composer\)\);/s,
     "startup should hydrate the active pending draft from durable desktop storage",
+  );
+});
+
+test("pending draft hydration failures clear the active draft key in memory and local storage", () => {
+  assert.match(
+    source,
+    /const clearActivePendingDraftState = \(\) => \{\s*setActivePendingDraftKey\(null\);\s*setActivePendingDraftMeta\(null\);\s*writeActivePendingDraftKey\(null\);\s*\};/s,
+    "app should define one explicit cleanup path for stale pending draft state",
   );
 });
 

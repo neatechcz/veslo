@@ -115,3 +115,21 @@ test("real session route fallback ignores active pending draft context", () => {
     "pending draft context must not make /session/<real-id> look valid",
   );
 });
+
+test("pending draft hydration error paths clear stale active draft state", () => {
+  assert.match(
+    appSource,
+    /if \(!matchingPendingDraft\) \{\s*clearActivePendingDraftState\(\);/s,
+    "missing desktop drafts should clear the active pending draft state",
+  );
+  assert.match(
+    appSource,
+    /if \(!loadedPendingDraft\) \{\s*clearActivePendingDraftState\(\);/s,
+    "null desktop draft loads should clear the active pending draft state",
+  );
+  assert.match(
+    appSource,
+    /catch \(error\) \{\s*reportError\(error, "pendingDrafts\.hydrate"\);\s*clearActivePendingDraftState\(\);\s*\}/s,
+    "desktop draft load failures should clear the active pending draft state",
+  );
+});
