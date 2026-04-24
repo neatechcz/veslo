@@ -37,7 +37,7 @@ test("failed pending draft sends restore the pending draft route instead of leav
 test("pending draft cleanup failures are handled separately from prompt handoff success", () => {
   assert.match(
     appSource,
-    /if \(pendingDraftId && isTauriRuntime\(\)\) \{\s*try \{[\s\S]*const deleted = await pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*if \(!deleted\) \{[\s\S]*console\.warn\([\s\S]*\}[\s\S]*\} catch \(error\) \{[\s\S]*reportError\(error, "pendingDrafts\.consume"\);[\s\S]*\}\s*\}/s,
+    /if \(pendingDraftId && isTauriRuntime\(\)\) \{\s*try \{[\s\S]*const deleted = await pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*if \(!deleted\) \{[\s\S]*markPendingDraftConsumed\(pendingDraftId\);[\s\S]*console\.warn\([\s\S]*\} else \{[\s\S]*clearConsumedPendingDraftId\(pendingDraftId\);[\s\S]*\}[\s\S]*\} catch \(error\) \{[\s\S]*markPendingDraftConsumed\(pendingDraftId\);[\s\S]*reportError\(error, "pendingDrafts\.consume"\);[\s\S]*\}\s*\}/s,
     "pending-draft cleanup should report delete errors without converting a successful prompt handoff into a send failure",
   );
 });

@@ -488,7 +488,7 @@ test("first New session creates one private workspace and opens a persisted pend
   assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
   assert.match(
     openNewSessionSource,
-    /const newPrivatePendingDraftKey = resolvePendingDraftKey\(\{ kind: "new-private" \}\);[\s\S]*const pendingDrafts = await pendingSessionDraftsList\(\);[\s\S]*const existingPendingDraft = pendingDrafts\.find\(\(draft\) => draft\.kind === "new-private"\) \?\? null;/s,
+    /const newPrivatePendingDraftKey = resolvePendingDraftKey\(\{ kind: "new-private" \}\);[\s\S]*const pendingDrafts = \(await pendingSessionDraftsList\(\)\)\.filter\(\(draft\) => !isConsumedPendingDraftId\(draft\.id\)\);[\s\S]*const existingPendingDraft = pendingDrafts\.find\(\(draft\) => draft\.kind === "new-private"\) \?\? null;/s,
     "New session should look for an existing private pending draft before creating a workspace",
   );
   assert.match(
@@ -507,7 +507,7 @@ test("second New session reopens the same pending draft and does not create anot
   assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
   assert.match(
     openNewSessionSource,
-    /if \(existingPendingDraft\) \{\s*const pendingDraft = await pendingSessionDraftsGet\(existingPendingDraft\.id\);[\s\S]*if \(pendingDraft\) \{\s*const pendingWorkspaceId = \(existingPendingDraft\.privateWorkspaceId \?\? existingPendingDraft\.workspaceId\)\.trim\(\);[\s\S]*if \(!pendingWorkspaceId\) return;[\s\S]*const activatedPendingWorkspace = await workspaceStore\.activateWorkspace\(pendingWorkspaceId\);[\s\S]*if \(!activatedPendingWorkspace\) return;[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: newPrivatePendingDraftKey \}[\s\S]*?pendingDraft\.draft\.composer[\s\S]*?\)\);[\s\S]*setView\("session"\);[\s\S]*return;\s*\}\s*\}/s,
+    /if \(existingPendingDraft\) \{\s*const pendingDraft = await pendingSessionDraftsGet\(existingPendingDraft\.id\);[\s\S]*if \(pendingDraft\) \{\s*const restoreError = formatPendingDraftAttachmentRestoreError\(pendingDraft\.attachmentFailures\);[\s\S]*if \(restoreError\) \{\s*setError\(restoreError\);[\s\S]*\}\s*const pendingWorkspaceId = \(existingPendingDraft\.privateWorkspaceId \?\? existingPendingDraft\.workspaceId\)\.trim\(\);[\s\S]*if \(!pendingWorkspaceId\) return;[\s\S]*const activatedPendingWorkspace = await workspaceStore\.activateWorkspace\(pendingWorkspaceId\);[\s\S]*if \(!activatedPendingWorkspace\) return;[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: newPrivatePendingDraftKey \}[\s\S]*?pendingDraft\.draft\.composer[\s\S]*?\)\);[\s\S]*setView\("session"\);[\s\S]*return;\s*\}\s*\}/s,
     "repeat New session should reopen the existing private pending draft instead of creating a new workspace",
   );
   const existingBranchMatch = openNewSessionSource.match(/if \(existingPendingDraft\) \{[\s\S]*?return;\s*\}/);

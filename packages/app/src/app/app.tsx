@@ -977,6 +977,7 @@ export default function App() {
   );
   const SESSION_BY_WORKSPACE_KEY = "veslo.workspace-last-session.v1";
   const ACTIVE_PENDING_DRAFT_KEY = "veslo.active-pending-draft.v1";
+  const CONSUMED_PENDING_DRAFT_IDS_KEY = "veslo.consumed-pending-draft-ids.v1";
   const SESSION_DIRECTORY_OVERRIDE_KEY = "veslo.session-workspace-override.v1";
   const SUBAGENT_DECORATIONS_PREF_KEY = "veslo.subagent-decorations.v1";
   const readSessionByWorkspace = () => {
@@ -1020,6 +1021,62 @@ export default function App() {
     } catch {
       // ignore
     }
+  };
+  const readConsumedPendingDraftIds = () => {
+    if (typeof window === "undefined") return new Set<string>();
+    try {
+      const raw = window.localStorage.getItem(CONSUMED_PENDING_DRAFT_IDS_KEY);
+      if (!raw) return new Set<string>();
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return new Set<string>();
+      return new Set(
+        parsed
+          .map((value) => (typeof value === "string" ? value.trim() : ""))
+          .filter(Boolean),
+      );
+    } catch {
+      return new Set<string>();
+    }
+  };
+  const writeConsumedPendingDraftIds = (values: Set<string>) => {
+    if (typeof window === "undefined") return;
+    try {
+      if (values.size === 0) {
+        window.localStorage.removeItem(CONSUMED_PENDING_DRAFT_IDS_KEY);
+        return;
+      }
+      window.localStorage.setItem(CONSUMED_PENDING_DRAFT_IDS_KEY, JSON.stringify(Array.from(values)));
+    } catch {
+      // ignore
+    }
+  };
+  const isConsumedPendingDraftId = (value: string | null | undefined) => {
+    const trimmed = (value ?? "").trim();
+    if (!trimmed) return false;
+    return readConsumedPendingDraftIds().has(trimmed);
+  };
+  const markPendingDraftConsumed = (value: string | null | undefined) => {
+    const trimmed = (value ?? "").trim();
+    if (!trimmed) return;
+    const next = readConsumedPendingDraftIds();
+    next.add(trimmed);
+    writeConsumedPendingDraftIds(next);
+  };
+  const clearConsumedPendingDraftId = (value: string | null | undefined) => {
+    const trimmed = (value ?? "").trim();
+    if (!trimmed) return;
+    const next = readConsumedPendingDraftIds();
+    if (!next.delete(trimmed)) return;
+    writeConsumedPendingDraftIds(next);
+  };
+  const formatPendingDraftAttachmentRestoreError = (
+    attachmentFailures: { attachmentId: string; name: string; message: string }[],
+  ) => {
+    if (!attachmentFailures.length) return null;
+    if (attachmentFailures.length === 1) {
+      return "One pending draft attachment could not be restored and was removed.";
+    }
+    return `${attachmentFailures.length} pending draft attachments could not be restored and were removed.`;
   };
   const clearActivePendingDraftState = () => {
     setActivePendingDraftKey(null);
@@ -1915,9 +1972,13 @@ export default function App() {
           try {
             const deleted = await pendingSessionDraftsDelete(pendingDraftId);
             if (!deleted) {
+              markPendingDraftConsumed(pendingDraftId);
               console.warn("[pendingDrafts.consume] failed to delete pending draft", { pendingDraftId });
+            } else {
+              clearConsumedPendingDraftId(pendingDraftId);
             }
           } catch (error) {
+            markPendingDraftConsumed(pendingDraftId);
             reportError(error, "pendingDrafts.consume");
           }
         }
@@ -6269,12 +6330,16 @@ export default function App() {
     if (isTauriRuntime()) {
       try {
         const newPrivatePendingDraftKey = resolvePendingDraftKey({ kind: "new-private" });
-        const pendingDrafts = await pendingSessionDraftsList();
+        const pendingDrafts = (await pendingSessionDraftsList()).filter((draft) => !isConsumedPendingDraftId(draft.id));
         const existingPendingDraft = pendingDrafts.find((draft) => draft.kind === "new-private") ?? null;
 
         if (existingPendingDraft) {
           const pendingDraft = await pendingSessionDraftsGet(existingPendingDraft.id);
           if (pendingDraft) {
+            const restoreError = formatPendingDraftAttachmentRestoreError(pendingDraft.attachmentFailures);
+            if (restoreError) {
+              setError(restoreError);
+            }
             const pendingWorkspaceId = (existingPendingDraft.privateWorkspaceId ?? existingPendingDraft.workspaceId).trim();
             if (!pendingWorkspaceId) return;
             const activatedPendingWorkspace = await workspaceStore.activateWorkspace(pendingWorkspaceId);
@@ -6361,7 +6426,7 @@ export default function App() {
         workspaceId,
         directory,
       });
-      const pendingDrafts = await pendingSessionDraftsList();
+      const pendingDrafts = (await pendingSessionDraftsList()).filter((draft) => !isConsumedPendingDraftId(draft.id));
       const existingPendingDraft =
         pendingDrafts.find(
           (draft) =>
@@ -6376,6 +6441,10 @@ export default function App() {
       if (existingPendingDraft) {
         const loadedPendingDraft = await pendingSessionDraftsGet(existingPendingDraft.id);
         if (loadedPendingDraft) {
+          const restoreError = formatPendingDraftAttachmentRestoreError(loadedPendingDraft.attachmentFailures);
+          if (restoreError) {
+            setError(restoreError);
+          }
           setActivePendingDraftKey(pendingDraftKey);
           setActivePendingDraftMeta(existingPendingDraft);
           setComposerDraftBySessionId((current) =>
@@ -6718,7 +6787,7 @@ export default function App() {
       const storedPendingDraftKey = readActivePendingDraftKey();
       if (storedPendingDraftKey) {
         try {
-          const pendingDrafts = await pendingSessionDraftsList();
+          const pendingDrafts = (await pendingSessionDraftsList()).filter((draft) => !isConsumedPendingDraftId(draft.id));
           const matchingPendingDraft = pendingDrafts.find((draft) => resolvePendingDraftKey({
             kind: draft.kind,
             workspaceId: draft.workspaceId,
@@ -6732,6 +6801,10 @@ export default function App() {
             if (!loadedPendingDraft) {
               clearActivePendingDraftState();
             } else {
+              const restoreError = formatPendingDraftAttachmentRestoreError(loadedPendingDraft.attachmentFailures);
+              if (restoreError) {
+                setError(restoreError);
+              }
               setActivePendingDraftKey(storedPendingDraftKey);
               setActivePendingDraftMeta(matchingPendingDraft);
               setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: storedPendingDraftKey }, loadedPendingDraft.draft.composer));

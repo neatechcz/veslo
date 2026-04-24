@@ -27,7 +27,7 @@ test("hydrates active pending draft state from the desktop draft store and prefe
   );
   assert.match(
     source,
-    /const storedPendingDraftKey = readActivePendingDraftKey\(\);[\s\S]*const pendingDrafts = await pendingSessionDraftsList\(\);[\s\S]*const matchingPendingDraft = pendingDrafts\.find\(\(draft\) => resolvePendingDraftKey\(\{[\s\S]*\}\) === storedPendingDraftKey\) \?\? null;[\s\S]*const loadedPendingDraft = await pendingSessionDraftsGet\(matchingPendingDraft\.id\);[\s\S]*setActivePendingDraftKey\(storedPendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(matchingPendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\(current, \{ storageKey: storedPendingDraftKey \}, loadedPendingDraft\.draft\.composer\)\);/s,
+    /const storedPendingDraftKey = readActivePendingDraftKey\(\);[\s\S]*const pendingDrafts = \(await pendingSessionDraftsList\(\)\)\.filter\(\(draft\) => !isConsumedPendingDraftId\(draft\.id\)\);[\s\S]*const matchingPendingDraft = pendingDrafts\.find\(\(draft\) => resolvePendingDraftKey\(\{[\s\S]*\}\) === storedPendingDraftKey\) \?\? null;[\s\S]*const loadedPendingDraft = await pendingSessionDraftsGet\(matchingPendingDraft\.id\);[\s\S]*const restoreError = formatPendingDraftAttachmentRestoreError\(loadedPendingDraft\.attachmentFailures\);[\s\S]*if \(restoreError\) \{\s*setError\(restoreError\);\s*\}[\s\S]*setActivePendingDraftKey\(storedPendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(matchingPendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\(current, \{ storageKey: storedPendingDraftKey \}, loadedPendingDraft\.draft\.composer\)\);/s,
     "startup should hydrate the active pending draft from durable desktop storage",
   );
 });
@@ -37,6 +37,11 @@ test("pending draft hydration failures clear the active draft key in memory and 
     source,
     /const clearActivePendingDraftState = \(\) => \{\s*setActivePendingDraftKey\(null\);\s*setActivePendingDraftMeta\(null\);\s*writeActivePendingDraftKey\(null\);\s*\};/s,
     "app should define one explicit cleanup path for stale pending draft state",
+  );
+  assert.match(
+    source,
+    /const CONSUMED_PENDING_DRAFT_IDS_KEY = "veslo\.consumed-pending-draft-ids\.v1";[\s\S]*const isConsumedPendingDraftId = \(value: string \| null \| undefined\) => \{[\s\S]*return readConsumedPendingDraftIds\(\)\.has\(trimmed\);[\s\S]*\};/s,
+    "app should keep an explicit consumed-draft id set so cleanup failures cannot resurrect a draft on restart",
   );
 });
 
