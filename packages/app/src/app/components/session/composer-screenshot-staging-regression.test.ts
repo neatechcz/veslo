@@ -28,6 +28,14 @@ test("staging failure blocks send with an explicit error and no draft clear", ()
   );
 });
 
+test("send flow snapshots pending draft context before materializing a real session", () => {
+  assert.match(
+    appSource,
+    /let sessionID = selectedSessionId\(\);\s*const pendingDraftSendState = \(\(\) => \{[\s\S]*const pendingDraftKey = \(activePendingDraftKey\(\) \?\? ""\)\.trim\(\);[\s\S]*if \(sessionID\) return null;[\s\S]*if \(!pendingDraftKey\) return null;[\s\S]*return \{[\s\S]*key: pendingDraftKey,[\s\S]*\};[\s\S]*\}\)\(\);\s*if \(!sessionID\) \{\s*await createSessionAndOpen\(\);\s*sessionID = selectedSessionId\(\);\s*\}/s,
+    "send flow should snapshot pending draft identity before creating the real session so failure paths can preserve the draft",
+  );
+});
+
 test("composer keeps dropped files as attachment chips", () => {
   assert.match(
     composerSource,

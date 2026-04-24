@@ -240,6 +240,7 @@ import { useGlobalSync } from "./context/global-sync";
 import { createWorkspaceStore } from "./context/workspace";
 import {
   updaterEnvironment,
+  pendingSessionDraftsDelete,
   pendingSessionDraftsGet,
   pendingSessionDraftsList,
   pendingSessionDraftsPut,
@@ -1767,6 +1768,15 @@ export default function App() {
     }
 
     let sessionID = selectedSessionId();
+    const pendingDraftSendState = (() => {
+      const pendingDraftKey = (activePendingDraftKey() ?? "").trim();
+      if (sessionID) return null;
+      if (!pendingDraftKey) return null;
+      return {
+        key: pendingDraftKey,
+        draftId: activePendingDraftMeta()?.id?.trim() || null,
+      };
+    })();
     if (!sessionID) {
       await createSessionAndOpen();
       sessionID = selectedSessionId();
@@ -1887,6 +1897,15 @@ export default function App() {
           directory: sessionDirOverride,
         });
         assertNoClientError(result);
+      }
+      if (pendingDraftSendState) {
+        const pendingDraftStorageKey = pendingDraftSendState.key;
+        const pendingDraftId = pendingDraftSendState.draftId;
+        if (pendingDraftId && isTauriRuntime()) {
+          await pendingSessionDraftsDelete(pendingDraftId);
+        }
+        clearActivePendingDraftState();
+        setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, { storageKey: pendingDraftStorageKey }));
       }
 
       finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
