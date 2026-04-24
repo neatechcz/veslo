@@ -687,7 +687,7 @@ test("fresh private pending draft flow blocks before route activation when works
 
   assert.match(
     openNewSessionSource,
-    /const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*\};[\s\S]*try \{[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setView\("session"\);/s,
+    /const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*const cleanupSucceeded = await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}[\s\S]*\};[\s\S]*try \{[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setView\("session"\);/s,
     "fresh private pending drafts must not be persisted or activated unless scratch workspace activation succeeds",
   );
   assert.doesNotMatch(
@@ -704,5 +704,28 @@ test("fresh private pending draft flow blocks before route activation when works
     openNewSessionSource,
     /catch \(error\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}/s,
     "fresh private pending draft failure must also clean up the scratch workspace when activation or persistence throws",
+  );
+});
+
+test("forgetWorkspace reports cleanup success to callers", () => {
+  assert.match(
+    workspaceSource,
+    /async function forgetWorkspace\(\s*workspaceId: string,\s*forgetOptions\?: \{ deleteLocalData\?: boolean \},\s*\): Promise<boolean> \{/s,
+    "workspace cleanup should report a boolean success signal",
+  );
+  assert.match(
+    workspaceSource,
+    /if \(!isTauriRuntime\(\)\) \{[\s\S]*return false;[\s\S]*\}/s,
+    "forgetWorkspace should report failure when desktop cleanup is unavailable",
+  );
+  assert.match(
+    workspaceSource,
+    /if \(!id\) return false;/,
+    "forgetWorkspace should report failure for an empty workspace id",
+  );
+  assert.match(
+    workspaceSource,
+    /return true;[\s\S]*\} catch \(e\) \{[\s\S]*options\.setError\(addOpencodeCacheHint\(message\)\);[\s\S]*return false;[\s\S]*\}/s,
+    "forgetWorkspace should return false when cleanup throws instead of silently swallowing the failure",
   );
 });

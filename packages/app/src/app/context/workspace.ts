@@ -1565,14 +1565,14 @@ export function createWorkspaceStore(options: {
   async function forgetWorkspace(
     workspaceId: string,
     forgetOptions?: { deleteLocalData?: boolean },
-  ) {
+  ): Promise<boolean> {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
-      return;
+      return false;
     }
 
     const id = workspaceId.trim();
-    if (!id) return;
+    if (!id) return false;
 
     console.log("[workspace] forget", { id });
 
@@ -1590,11 +1590,14 @@ export function createWorkspaceStore(options: {
       }
 
       if (ws.activeId && ws.activeId !== previousActive) {
-        await activateWorkspace(ws.activeId);
+        const activated = await activateWorkspace(ws.activeId);
+        if (!activated) return false;
       }
+      return true;
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       options.setError(addOpencodeCacheHint(message));
+      return false;
     }
   }
 

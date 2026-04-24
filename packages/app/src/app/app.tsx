@@ -6215,7 +6215,10 @@ export default function App() {
         if (!scratch?.id) return;
 
         const cleanupFreshScratchWorkspace = async () => {
-          await workspaceStore.forgetWorkspace(scratch.id, { deleteLocalData: true });
+          const cleanupSucceeded = await workspaceStore.forgetWorkspace(scratch.id, { deleteLocalData: true });
+          if (!cleanupSucceeded) {
+            throw new Error(`Failed to clean up failed scratch workspace ${scratch.id}.`);
+          }
         };
         const emptyPendingDraft = createEmptyComposerDraft();
         const now = Date.now();
