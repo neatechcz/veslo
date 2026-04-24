@@ -19,6 +19,7 @@ import type {
   WorkspaceSessionGroup,
   StartupPreference,
   SidebarSubagentDecoration,
+  LoadedSessionPrefetchInterestChangeHandler,
 } from "../types";
 
 import { reportError } from "../lib/error-reporter";
@@ -26,12 +27,12 @@ import {
   obsidianIsAvailable,
   openInObsidian,
   readObsidianMirrorFile,
-  setWindowTitle,
   writeObsidianMirrorFile,
   type EngineInfo,
   type VesloServerInfo,
   type WorkspaceInfo,
 } from "../lib/tauri";
+import { acquireBlankNativeWindowTitleLease } from "../lib/native-window-title-lease";
 
 import {
   Box,
@@ -100,6 +101,7 @@ import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import { resolveComposerWorkspaceLabel } from "../components/session/composer-workspace-label";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
+import { shouldShowSessionLoadingState } from "../components/session/session-loading-state-model";
 import type { SidebarSectionState } from "../components/session/sidebar";
 import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
 import {
@@ -124,12 +126,33 @@ import {
 } from "./session-navigation";
 import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "./session-layout-width";
 
+function recordSendTrace(event: string, payload?: Record<string, unknown>) {
+  if (typeof window === "undefined") return;
+  try {
+    const root = window as typeof window & {
+      __vesloSendTrace?: Array<Record<string, unknown>>;
+    };
+    const logs = root.__vesloSendTrace ?? [];
+    logs.push({
+      at: new Date().toISOString(),
+      source: "session-page",
+      event,
+      ...(payload ?? {}),
+    });
+    if (logs.length > 120) logs.splice(0, logs.length - 120);
+    root.__vesloSendTrace = logs;
+  } catch {
+    // ignore
+  }
+}
+
 export type SessionViewProps = {
   selectedSessionId: string | null;
   setView: (view: View, sessionId?: string) => void;
   tab: DashboardTab;
   setTab: (tab: DashboardTab) => void;
   setSettingsTab: (tab: SettingsTab) => void;
+  onOpenFeedback: () => void;
   activeWorkspaceDisplay: WorkspaceDisplay;
   activeWorkspaceRoot: string;
   workspaces: WorkspaceInfo[];
@@ -153,6 +176,7 @@ export type SessionViewProps = {
   importingWorkspaceConfig: boolean;
   exportWorkspaceConfig: (workspaceId?: string) => void;
   exportWorkspaceBusy: boolean;
+  engineReady?: boolean;
   clientConnected: boolean;
   authenticatedUser: string | null;
   vesloServerStatus: VesloServerStatus;
@@ -180,7 +204,7 @@ export type SessionViewProps = {
   anyActiveRuns: boolean;
   installUpdateAndRestart: () => void;
   createSessionAndOpen: () => Promise<string | undefined>;
-  sendPromptAsync: (draft: ComposerDraft) => Promise<void>;
+  sendPromptAsync: (draft: ComposerDraft) => Promise<boolean>;
   abortSession: (sessionId?: string) => Promise<void>;
   sessionRevertMessageId: string | null;
   undoLastUserMessage: () => Promise<void>;
@@ -192,11 +216,17 @@ export type SessionViewProps = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
   workspaceSessionPagingById: Record<string, { hasMore: boolean; loadingMore: boolean }>;
   subagentDecorationsBySessionId: Record<string, SidebarSubagentDecoration>;
+  archivedSessionIds: string[];
+  archiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
+  unarchiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
   loadMoreWorkspaceSidebarSessions: (workspaceId: string) => Promise<void> | void;
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
   openRenameWorkspace: (workspaceId: string) => void;
   selectSession: (sessionId: string) => Promise<void> | void;
-  setPendingSessionLoad: (value: { sessionTitle: string; workspaceName: string } | null) => void;
+  pendingSessionLoad: { sessionId: string; workspaceId: string; sessionTitle: string; workspaceName: string } | null;
+  setPendingSessionLoad: (
+    value: { sessionId: string; workspaceId: string; sessionTitle: string; workspaceName: string } | null
+  ) => void;
   messages: MessageWithParts[];
   todos: TodoItem[];
   busyLabel: string | null;
@@ -206,6 +236,8 @@ export type SessionViewProps = {
   summarizeStep: (part: Part) => { title: string; detail?: string };
   expandedStepIds: Set<string>;
   setExpandedStepIds: (updater: (current: Set<string>) => Set<string>) => Set<string>;
+  expandedTimelineSectionIds: Set<string>;
+  setExpandedTimelineSectionIds: (updater: (current: Set<string>) => Set<string>) => Set<string>;
   expandedSidebarSections: SidebarSectionState;
   setExpandedSidebarSections: (
     updater: (current: SidebarSectionState) => SidebarSectionState,
@@ -395,6 +427,7 @@ export default function SessionView(props: SessionViewProps) {
     workspaceId: string | null;
   } | null>(null);
   const [nearBottom, setNearBottom] = createSignal(true);
+  const [stickToBottom, setStickToBottom] = createSignal(true);
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [searchQuery, setSearchQuery] = createSignal("");
   const [searchQueryDebounced, setSearchQueryDebounced] = createSignal("");
@@ -433,6 +466,7 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const sessionTitlebarContext = createMemo(() => {
+    if (props.messages.length === 0) return null;
     const label = sessionTitlebarLabel();
     if (!label) return null;
     return (
@@ -447,12 +481,14 @@ export default function SessionView(props: SessionViewProps) {
     );
   });
 
-  createEffect(() => {
-    void setWindowTitle("").catch((error) => reportError(error, "titlebar.setWindowTitle"));
+  let releaseNativeWindowTitleLease: (() => void) | null = null;
+
+  onMount(() => {
+    releaseNativeWindowTitleLease = acquireBlankNativeWindowTitleLease();
   });
 
   onCleanup(() => {
-    void setWindowTitle("Veslo by Neatech").catch((error) => reportError(error, "titlebar.restoreWindowTitle"));
+    releaseNativeWindowTitleLease?.();
   });
 
   let commandPaletteInputEl: HTMLInputElement | undefined;
@@ -491,7 +527,10 @@ export default function SessionView(props: SessionViewProps) {
   const applySidebarModeForRootWidth = (rootWidth: number) => {
     if (rootWidth <= 0) return;
     setSidebarLayoutState((current) =>
-      reconcileSidebarLayoutForRootWidth(current, rootWidth, leftSidebarWidth()),
+      reconcileSidebarLayoutForRootWidth(current, rootWidth, leftSidebarWidth(), {
+        overlayOnNarrow:
+          leftSidebarResizing() && current.mode === "wide" && current.docked.left ? "left" : null,
+      }),
     );
   };
 
@@ -663,6 +702,15 @@ export default function SessionView(props: SessionViewProps) {
   const hasWorkspaceConfigured = createMemo(() => props.workspaces.length > 0);
   const showWorkspaceSetupEmptyState = createMemo(
     () => !hasWorkspaceConfigured() && !props.selectedSessionId && props.messages.length === 0,
+  );
+  const showSessionLoadingState = createMemo(() =>
+    shouldShowSessionLoadingState({
+      hasWorkspaceSetupEmptyState: showWorkspaceSetupEmptyState(),
+      hasPendingSessionLoad: Boolean(props.pendingSessionLoad),
+      selectedSessionId: props.selectedSessionId,
+      messageCount: props.messages.length,
+      loadingEarlierMessages: props.loadingEarlierMessages,
+    })
   );
   const sessionWorkspaceContextLabel = createMemo(() => {
     if (showWorkspaceSetupEmptyState()) return "";
@@ -867,6 +915,13 @@ export default function SessionView(props: SessionViewProps) {
 
   const [batchedRenderedMessages, setBatchedRenderedMessages] = createSignal<MessageWithParts[]>(renderedMessages());
 
+  // Bypass the batching signal and always use the memo directly.
+  // The signal-based batching path has a SolidJS reactivity gap that
+  // causes messages to flash/disappear during state transitions
+  // (idle → running, browsing → engine start).  The memo path is
+  // reliable because SolidJS memos propagate synchronously.
+  const effectiveRenderedMessages = renderedMessages;
+
   createEffect(() => {
     const next = renderedMessages();
     const sourceMessageCount = props.messages.length;
@@ -941,7 +996,7 @@ export default function SessionView(props: SessionViewProps) {
         status: props.sessionStatus,
         messageCount: props.messages.length,
         partCount: totalPartCount(),
-        renderedMessageCount: batchedRenderedMessages().length,
+        renderedMessageCount: effectiveRenderedMessages().length,
       });
     }, MAIN_THREAD_LAG_INTERVAL_MS);
 
@@ -1685,8 +1740,8 @@ export default function SessionView(props: SessionViewProps) {
   let initialAnchorRafB: number | undefined;
   let initialAnchorGuardTimer: ReturnType<typeof setTimeout> | undefined;
   const attachmentsEnabled = createMemo(() => {
-    if (props.activeWorkspaceDisplay.workspaceType !== "remote") return true;
-    return props.vesloServerStatus === "connected";
+    return props.vesloServerStatus === "connected"
+      && Boolean(props.vesloServerClient);
   });
   const attachmentsDisabledReason = createMemo(() => {
     if (attachmentsEnabled()) return null;
@@ -1697,10 +1752,12 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const scrollToLatest = (behavior: ScrollBehavior = "auto") => {
+    setStickToBottom(true);
     messagesEndEl?.scrollIntoView({ behavior, block: "end" });
   };
 
   const pinToLatestNow = () => {
+    setStickToBottom(true);
     messagesEndEl?.scrollIntoView({ behavior: "auto", block: "end" });
   };
 
@@ -1799,7 +1856,7 @@ export default function SessionView(props: SessionViewProps) {
           return;
         }
 
-        if (nearBottom() && targetStart > currentStart) {
+        if (stickToBottom() && targetStart > currentStart) {
           setMessageWindowStart(targetStart);
         }
       },
@@ -2070,6 +2127,7 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const jumpToLatest = (behavior: ScrollBehavior = "smooth") => {
+    setStickToBottom(true);
     scheduleScrollToLatest(behavior);
   };
 
@@ -2085,7 +2143,9 @@ export default function SessionView(props: SessionViewProps) {
     if (!container || !sentinel) return;
 
     const updateNearBottom = () => {
-      setNearBottom(isAtLatest(container, sentinel));
+      const atLatest = isAtLatest(container, sentinel);
+      setNearBottom(atLatest);
+      setStickToBottom(atLatest);
     };
 
     updateNearBottom();
@@ -2094,7 +2154,15 @@ export default function SessionView(props: SessionViewProps) {
     const observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[0];
-        setNearBottom(Boolean(entry?.isIntersecting) || isAtLatest(container, sentinel));
+        const atLatest = Boolean(entry?.isIntersecting) || isAtLatest(container, sentinel);
+        if (atLatest) {
+          setNearBottom(true);
+          setStickToBottom(true);
+          return;
+        }
+        if (!stickToBottom()) {
+          setNearBottom(false);
+        }
       },
       {
         root: container,
@@ -2133,6 +2201,7 @@ export default function SessionView(props: SessionViewProps) {
         const firstVisit = !topInitializedSessionIds.has(sessionId);
         topInitializedSessionIds.add(sessionId);
         setInitialAnchorPending(true);
+        setStickToBottom(true);
 
         if (!firstVisit) {
           queueMicrotask(() => {
@@ -2354,7 +2423,7 @@ export default function SessionView(props: SessionViewProps) {
     if (!showRunIndicator()) return;
     runProgressSignature();
     if (initialAnchorPending()) return;
-    if (!nearBottom()) return;
+    if (!stickToBottom()) return;
     scheduleScrollToLatest("auto");
   });
 
@@ -2370,7 +2439,7 @@ export default function SessionView(props: SessionViewProps) {
         const [mLen, tLen, pCount] = current;
         const [prevM, prevT, prevP] = previous;
         if (mLen > prevM || tLen > prevT || pCount > prevP) {
-          if (!initialAnchorPending() && nearBottom()) {
+          if (!initialAnchorPending() && stickToBottom()) {
             scheduleScrollToLatest("auto");
           }
           if (showRunIndicator()) {
@@ -3243,14 +3312,39 @@ export default function SessionView(props: SessionViewProps) {
     return null;
   });
 
-  const handleSendPrompt = (draft: ComposerDraft) => {
+  const handleSendPrompt = async (draft: ComposerDraft) => {
+    recordSendTrace("handleSendPrompt:start", {
+      aiAccessBlockedReason: props.aiAccessBlockedReason,
+      busyHint: props.busyHint ?? null,
+      busyLabel: props.busyLabel ?? null,
+    });
     if (props.aiAccessBlockedReason) {
+      recordSendTrace("handleSendPrompt:blocked-ai-access", {
+        aiAccessBlockedReason: props.aiAccessBlockedReason,
+      });
       setToastMessage(props.aiAccessBlockedReason);
-      return;
+      return false;
     }
-    scheduleScrollToLatest("auto");
-    startRun();
-    props.sendPromptAsync(draft).catch(e => reportError(e, "session.sendPrompt"));
+
+    try {
+      const accepted = await props.sendPromptAsync(draft);
+      recordSendTrace("handleSendPrompt:result", {
+        accepted,
+        error: props.error ?? null,
+      });
+      if (!accepted) {
+        setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
+        return false;
+      }
+      setStickToBottom(true);
+      scheduleScrollToLatest("auto");
+      startRun();
+      return true;
+    } catch (e) {
+      reportError(e, "session.sendPrompt");
+      setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
+      return false;
+    }
   };
 
   const handleBrowserAutomationQuickstart = () => {
@@ -3317,9 +3411,13 @@ export default function SessionView(props: SessionViewProps) {
       const session = group?.sessions.find((s) => s.id === sessionId);
       const workspaceName = group?.workspace.displayName ?? group?.workspace.name ?? "";
       const sessionTitle = session?.title ?? "";
-      props.setPendingSessionLoad({ sessionTitle, workspaceName });
+      props.setPendingSessionLoad({
+        sessionId,
+        workspaceId,
+        sessionTitle,
+        workspaceName,
+      });
     }
-
     void openSessionWithWorkspaceActivation({
       activeWorkspaceId: props.activeWorkspaceId,
       getActiveWorkspaceId: () => props.activeWorkspaceId,
@@ -3332,7 +3430,10 @@ export default function SessionView(props: SessionViewProps) {
       .then((result) => {
         if (!shouldShowOverlay) return;
         if (attempt !== pendingSessionLoadAttempt) return;
-        if (result === "blocked") {
+        // Clear the loading overlay once the session is opened (or blocked).
+        // In browsing mode (no engine), onSessionLoadComplete never fires,
+        // so we must clear it here for all terminal results.
+        if (result === "opened" || result === "blocked") {
           props.setPendingSessionLoad(null);
         }
       })
@@ -3352,6 +3453,38 @@ export default function SessionView(props: SessionViewProps) {
       workspaceId: id,
       activateWorkspace: props.activateWorkspace,
       createSession: () => props.createSessionAndOpen(),
+    });
+  };
+
+  const resolveVesloWorkspaceId = (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return null;
+    const workspace =
+      props.workspaces.find((item) => item.id === id) ??
+      props.workspaceSessionGroups.find((group) => group.workspace.id === id)?.workspace;
+    if (workspace?.workspaceType === "remote" && workspace.remoteType === "veslo") {
+      return (
+        workspace.vesloWorkspaceId?.trim() ||
+        parseVesloWorkspaceIdFromUrl(workspace.vesloHostUrl ?? "") ||
+        parseVesloWorkspaceIdFromUrl(workspace.baseUrl ?? "") ||
+        null
+      );
+    }
+    return workspace?.vesloWorkspaceId?.trim() || null;
+  };
+
+  const reportLoadedSessionPrefetchInterest: LoadedSessionPrefetchInterestChangeHandler = (workspaceId, interest) => {
+    const client = props.vesloServerClient;
+    if (!client || props.vesloServerStatus !== "connected") return;
+    const serverWorkspaceId = resolveVesloWorkspaceId(workspaceId);
+    if (!serverWorkspaceId) return;
+
+    void client.prefetchSessionTranscripts(serverWorkspaceId, interest).catch((error) => {
+      console.warn("[session.loaded-session-prefetch] failed", {
+        workspaceId,
+        serverWorkspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
   };
 
@@ -3566,6 +3699,13 @@ export default function SessionView(props: SessionViewProps) {
     Boolean(props.soulStatusByWorkspaceId[props.activeWorkspaceId]?.enabled)
   );
 
+  const runtimeAvailableWithoutClient = createMemo(() => {
+    if (props.clientConnected) return false;
+    if (props.vesloServerStatus !== "connected") return false;
+    if (props.activeWorkspaceDisplay.workspaceType !== "local") return false;
+    return (props.workspaceConnectionStateById[props.activeWorkspaceId]?.status ?? "idle") === "connected";
+  });
+
   const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
   const leftSidebarContent = () => (
     <>
@@ -3602,8 +3742,12 @@ export default function SessionView(props: SessionViewProps) {
             workspaceSessionGroups={props.workspaceSessionGroups}
             workspaceSessionPagingById={props.workspaceSessionPagingById}
             subagentDecorationsBySessionId={props.subagentDecorationsBySessionId}
+            archivedSessionIds={props.archivedSessionIds}
             activeWorkspaceId={props.activeWorkspaceId}
             selectedSessionId={props.selectedSessionId}
+            pendingSelectedSessionId={props.pendingSessionLoad?.sessionId ?? null}
+            pendingSelectedWorkspaceId={props.pendingSessionLoad?.workspaceId ?? null}
+            suspendProjectReorder={Boolean(props.pendingSessionLoad)}
             sessionStatusById={props.sessionStatusById}
             connectingWorkspaceId={props.connectingWorkspaceId}
             workspaceConnectionStateById={props.workspaceConnectionStateById}
@@ -3629,7 +3773,11 @@ export default function SessionView(props: SessionViewProps) {
             onImportWorkspaceConfig={props.importWorkspaceConfig}
             onQuickNewSession={props.openNewSessionWithDirectory}
             onAddDirectorySession={props.openDirectorySessionFromPicker}
+            onOpenArchivedSessions={() => openSettings("archived")}
+            onArchiveSession={props.archiveSession}
+            onUnarchiveSession={props.unarchiveSession}
             onLoadMoreWorkspaceSessions={props.loadMoreWorkspaceSidebarSessions}
+            onLoadedSessionPrefetchInterestChange={reportLoadedSessionPrefetchInterest}
             onOpenSessionSearch={() => openCommandPalette("sessions")}
           />
         </div>
@@ -3648,6 +3796,7 @@ export default function SessionView(props: SessionViewProps) {
       <SidebarStatusControls
         clientConnected={props.clientConnected}
         vesloServerStatus={props.vesloServerStatus}
+        runtimeAvailableWithoutClient={runtimeAvailableWithoutClient()}
         authenticatedUser={props.authenticatedUser}
         onOpenSettings={() => openSettings("general")}
       />
@@ -3673,18 +3822,31 @@ export default function SessionView(props: SessionViewProps) {
     </div>
   );
 
+  const feedbackButtonLabel = () => t("feedback.button", currentLocale());
+
   return (
     <div
       ref={(el) => {
         sessionLayoutRootEl = el;
       }}
+      data-feedback-capture-root
       class="flex h-screen w-full bg-dls-sidebar text-gray-12 font-sans overflow-hidden"
     >
       <TitlebarMenuToggles
         leftActive={leftSidebarToggleActive()}
         rightActive={rightSidebarToggleActive()}
-        leftContent={sessionTitlebarContext()}
-        showBrand={false}
+        centerContent={sessionTitlebarContext()}
+        rightContent={
+          <button
+            type="button"
+            class="mr-1 inline-flex h-6 items-center rounded-md px-2.5 text-[11px] font-medium leading-6 text-gray-10 transition-colors hover:bg-gray-3/70 hover:text-gray-12 focus:outline-none focus-visible:ring-0"
+            onClick={props.onOpenFeedback}
+            aria-label={feedbackButtonLabel()}
+            title={feedbackButtonLabel()}
+          >
+            {feedbackButtonLabel()}
+          </button>
+        }
         hideTitlebar={props.hideTitlebar}
         onToggleLeft={() => toggleSidebarMenu("left")}
         onToggleRight={() => toggleSidebarMenu("right")}
@@ -3818,7 +3980,7 @@ export default function SessionView(props: SessionViewProps) {
         <div class="flex-1 flex overflow-hidden">
           <div class="flex-1 min-w-0 relative overflow-hidden bg-gray-1">
             <div
-              class={`h-full overflow-y-auto px-8 ${showWorkspaceSetupEmptyState() ? "pt-8 pb-20" : "pt-0 pb-32"} scroll-smooth bg-gray-1 ${initialAnchorPending() ? "invisible" : "visible"}`}
+              class={`h-full overflow-y-auto px-8 ${showWorkspaceSetupEmptyState() ? "pt-8 pb-20" : "pt-0 pb-0"} scroll-smooth bg-gray-1 ${nearBottom() ? "chat-scrollbar-hidden" : ""} ${initialAnchorPending() ? "invisible" : "visible"}`}
               style={{ contain: "layout paint style" }}
               ref={(el) => {
                 chatContainerEl = el;
@@ -3831,14 +3993,14 @@ export default function SessionView(props: SessionViewProps) {
                 <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-gray-6 bg-gray-1 text-gray-11">
                   <MessageCircle size={24} />
                 </div>
-                <h3 class="text-2xl font-semibold text-gray-12">{tr("session.start_new_session")}</h3>
-                <p class="mt-2 text-sm text-gray-10">
+                <h3 class="font-product type-title-md text-gray-12">{tr("session.start_new_session")}</h3>
+                <p class="font-reading type-reading-md mt-2 text-gray-10">
                   {tr("session.start_new_session_description")}
                 </p>
                 <div class="mt-6 flex justify-center">
                   <button
                     type="button"
-                    class="rounded-2xl border border-gray-7 bg-gray-12 px-4 py-3 text-sm font-semibold text-gray-1 transition-colors hover:bg-gray-11"
+                    class="font-product type-ui-md rounded-2xl border border-gray-7 bg-gray-12 px-4 py-3 font-semibold text-gray-1 transition-colors hover:bg-gray-11"
                     onClick={() => {
                       void props.openNewSessionWithDirectory();
                     }}
@@ -3848,14 +4010,34 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
               </div>
             </Show>
-            <Show when={props.messages.length === 0 && !showWorkspaceSetupEmptyState()}>
+            <Show when={showSessionLoadingState()}>
+              <div class="mx-auto max-w-xl px-6 py-20 text-center">
+                <div class="mx-auto flex max-w-md flex-col items-center gap-5 rounded-3xl border border-gray-6 bg-gray-2/60 px-8 py-10 shadow-sm">
+                  <div class="flex h-16 w-16 items-center justify-center rounded-3xl border border-gray-6 bg-gray-1 text-gray-10">
+                    <Loader2 size={18} class="animate-spin text-gray-10" />
+                  </div>
+                  <div class="space-y-2">
+                    <h3 class="font-product type-title-sm text-gray-12">
+                      {props.pendingSessionLoad?.sessionTitle || tr("session.opening_conversation")}
+                    </h3>
+                    <Show when={props.pendingSessionLoad?.workspaceName}>
+                      {(workspaceName) => (
+                        <p class="font-product type-ui-sm text-gray-10">{workspaceName()}</p>
+                      )}
+                    </Show>
+                    <p class="font-reading type-ui-md text-gray-10">{tr("session.opening_conversation")}</p>
+                  </div>
+                </div>
+              </div>
+            </Show>
+            <Show when={props.messages.length === 0 && !showWorkspaceSetupEmptyState() && !showSessionLoadingState()}>
               <div class="text-center py-16 px-6 space-y-6">
                 <div class="w-16 h-16 bg-dls-hover rounded-3xl mx-auto flex items-center justify-center border border-dls-border">
                   <Zap class="text-dls-secondary" />
                 </div>
               <div class="space-y-2">
-                <h3 class="text-xl font-medium">{tr("session.quickstart_title")}</h3>
-                <p class="text-dls-secondary text-sm max-w-sm mx-auto">
+                <h3 class="font-product type-title-sm">{tr("session.quickstart_title")}</h3>
+                <p class="font-reading type-reading-md text-dls-secondary max-w-sm mx-auto">
                   {tr("session.quickstart_description")}
                 </p>
               </div>
@@ -3867,8 +4049,8 @@ export default function SessionView(props: SessionViewProps) {
                     void handleBrowserAutomationQuickstart();
                   }}
                 >
-                  <div class="text-sm font-semibold text-dls-text">{tr("session.quickstart_browser_title")}</div>
-                  <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
+                  <div class="font-product type-ui-md font-semibold text-dls-text">{tr("session.quickstart_browser_title")}</div>
+                  <div class="font-reading type-ui-sm mt-1 text-dls-secondary">
                     {tr("session.quickstart_browser_description")}
                   </div>
                 </button>
@@ -3879,8 +4061,8 @@ export default function SessionView(props: SessionViewProps) {
                     void handleSoulQuickstart();
                   }}
                 >
-                  <div class="text-sm font-semibold text-dls-text">{tr("session.quickstart_soul_title")}</div>
-                  <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
+                  <div class="font-product type-ui-md font-semibold text-dls-text">{tr("session.quickstart_soul_title")}</div>
+                  <div class="font-reading type-ui-sm mt-1 text-dls-secondary">
                     {tr("session.quickstart_soul_description")}
                   </div>
                 </button>
@@ -3908,7 +4090,7 @@ export default function SessionView(props: SessionViewProps) {
           </Show>
 
           <MessageList
-            messages={batchedRenderedMessages()}
+            messages={effectiveRenderedMessages()}
             isStreaming={showRunIndicator()}
             developerMode={props.developerMode}
             showThinking={props.showThinking}
@@ -3916,6 +4098,8 @@ export default function SessionView(props: SessionViewProps) {
             workspaceRoot={props.activeWorkspaceRoot}
             expandedStepIds={props.expandedStepIds}
             setExpandedStepIds={props.setExpandedStepIds}
+            expandedTimelineSectionIds={props.expandedTimelineSectionIds}
+            setExpandedTimelineSectionIds={props.setExpandedTimelineSectionIds}
             openSessionById={(sessionId) => props.setView("session", sessionId)}
             searchMatchMessageIds={searchMatchMessageIds()}
             activeSearchMessageId={activeSearchHit()?.messageId ?? null}
@@ -4080,6 +4264,7 @@ export default function SessionView(props: SessionViewProps) {
                 onChooseSessionFolder={chooseFolderForSession}
                 attachmentsEnabled={attachmentsEnabled()}
                 attachmentsDisabledReason={attachmentsDisabledReason()}
+                engineReady={props.engineReady}
               />
               <div class="sticky bottom-0 z-20 -mt-3 bg-gray-1 px-8 pb-3">
                 <div class={`mx-auto flex w-full ${chatBodyWidthClass()} justify-end`}>

@@ -1,14 +1,14 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import fuzzysort from "fuzzysort";
-import { ArrowUp, AtSign, File as FileIcon, Paperclip, Square, Terminal, X, Zap } from "lucide-solid";
+import { ArrowUp, File as FileIcon, Loader2, Paperclip, Square, Terminal, X, Zap } from "lucide-solid";
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
-import { currentLocale, t } from "../../../i18n";
-import { extractFilesFromDataTransfer } from "../../utils/data-transfer-files";
+import { useTranslate } from "../../../i18n";
+import { extractFilesFromDataTransfer, isFileDragTransfer } from "../../utils/data-transfer-files";
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
-import { nextAgentModeOnShiftTab } from "../../pages/session-shortcuts";
+
 
 type MentionOption = {
   id: string;
@@ -32,7 +32,7 @@ type ComposerProps = {
   isStreaming: boolean;
   compactTopSpacing?: boolean;
   compactWidth?: boolean;
-  onSend: (draft: ComposerDraft) => void;
+  onSend: (draft: ComposerDraft) => Promise<boolean>;
   onStop: () => void;
   onDraftChange: (draft: ComposerDraft) => void;
   selectedAgent: string | null;
@@ -52,6 +52,7 @@ type ComposerProps = {
   attachmentsEnabled: boolean;
   attachmentsDisabledReason: string | null;
   listCommands: () => Promise<SlashCommandOption[]>;
+  engineReady?: boolean;
 };
 
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
@@ -62,6 +63,26 @@ const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/web
 const PDF_SIGNATURE_SCAN_BYTES = 2048;
 
 const isImageMime = (mime: string) => ACCEPTED_IMAGE_TYPES.includes(mime);
+
+function recordSendTrace(event: string, payload?: Record<string, unknown>) {
+  if (typeof window === "undefined") return;
+  try {
+    const root = window as typeof window & {
+      __vesloSendTrace?: Array<Record<string, unknown>>;
+    };
+    const logs = root.__vesloSendTrace ?? [];
+    logs.push({
+      at: new Date().toISOString(),
+      source: "composer",
+      event,
+      ...(payload ?? {}),
+    });
+    if (logs.length > 120) logs.splice(0, logs.length - 120);
+    root.__vesloSendTrace = logs;
+  } catch {
+    // ignore
+  }
+}
 
 const fileToDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -364,7 +385,7 @@ const buildRangeFromOffsets = (root: HTMLElement, start: number, end: number) =>
 };
 
 export default function Composer(props: ComposerProps) {
-  const translate = (key: string) => t(key, currentLocale());
+  const translate = useTranslate();
   const composerWidthClass = createMemo(() => "max-w-[960px]");
   let editorRef: HTMLDivElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
@@ -381,8 +402,6 @@ export default function Composer(props: ComposerProps) {
   const [mentionIndex, setMentionIndex] = createSignal(0);
   const [mentionQuery, setMentionQuery] = createSignal("");
   const [mentionOpen, setMentionOpen] = createSignal(false);
-  const [agentOptions, setAgentOptions] = createSignal<Agent[]>([]);
-  const [agentLoaded, setAgentLoaded] = createSignal(false);
   const [searchResults, setSearchResults] = createSignal<string[]>([]);
   const [attachments, setAttachments] = createSignal<ComposerAttachment[]>(
     (props.initialDraft.attachments ?? []).map((attachment) => ({ ...attachment })),
@@ -395,12 +414,7 @@ export default function Composer(props: ComposerProps) {
   const [fileDragOver, setFileDragOver] = createSignal(false);
   const attachmentsDisabled = createMemo(() => !props.attachmentsEnabled);
   const hasDraftContent = createMemo(() => draftText().trim().length > 0 || attachments().length > 0);
-  const selectedMode = createMemo(() => props.selectedAgent ?? "build");
-  const modeOptions = [
-    { value: "build", label: "Build" },
-    { value: "plan", label: "Plan" },
-    { value: "veslo", label: "Task" },
-  ] as const;
+  const isReadonly = createMemo(() => props.selectedAgent === "plan");
 
   const createPasteSpan = (part: Extract<ComposerPart, { type: "paste" }>) => {
     pasteTextById.set(part.id, part.text);
@@ -454,13 +468,6 @@ export default function Composer(props: ComposerProps) {
   const mentionGroups = createMemo<MentionGroup[]>(() => {
     if (!mentionOpen()) return [];
     const query = mentionQuery().trim().toLowerCase();
-    const agents: MentionOption[] = agentOptions().map((agent: Agent) => ({
-      id: `agent:${agent.name}`,
-      kind: "agent" as const,
-      label: agent.name,
-      value: agent.name,
-      display: agent.name,
-    }));
     const seen = new Set<string>();
     const recentFiles: MentionOption[] = props.recentFiles
       .filter((file: string) => {
@@ -486,14 +493,14 @@ export default function Composer(props: ComposerProps) {
         value: file,
         display: file,
       }));
-    const all = [...agents, ...recentFiles, ...searchFiles];
+    const all = [...recentFiles, ...searchFiles];
     const list = query
       ? fuzzysort.go(query, all, { keys: ["display"] }).map((entry: any) => entry.obj)
       : all;
     const groups: MentionGroup[] = [];
     const bucket = new Map<MentionGroup["category"], MentionOption[]>();
     for (const item of list) {
-      const category = item.kind === "agent" ? "agent" : item.recent ? "recent" : "file";
+      const category = item.recent ? "recent" : "file";
       const current = bucket.get(category);
       if (current) {
         current.push(item);
@@ -501,7 +508,7 @@ export default function Composer(props: ComposerProps) {
       }
       bucket.set(category, [item]);
     }
-    const order: MentionGroup["category"][] = ["agent", "file", "recent"];
+    const order: MentionGroup["category"][] = ["file", "recent"];
     for (const category of order) {
       const items = bucket.get(category);
       if (!items?.length) continue;
@@ -943,7 +950,17 @@ export default function Composer(props: ComposerProps) {
     applyHistoryDraft(target);
   };
 
-  const sendDraft = () => {
+  const [sending, setSending] = createSignal(false);
+  createEffect(() => {
+    if (props.isStreaming && sending()) setSending(false);
+  });
+  const sendDisabled = createMemo(() => !hasDraftContent() || props.busy);
+
+  const sendDraft = async () => {
+    recordSendTrace("sendDraft:start", {
+      busy: props.busy,
+      streaming: props.isStreaming,
+    });
     // Ensure any pending debounce updates are committed before sending
     flushDraftChange();
 
@@ -966,7 +983,22 @@ export default function Composer(props: ComposerProps) {
     }
 
     recordHistory(draft);
-    props.onSend(draft);
+    setSending(true);
+    recordSendTrace("sendDraft:onSend", {
+      textLength: text.length,
+      attachmentCount: draft.attachments.length,
+    });
+    const sent = await props.onSend(draft);
+    recordSendTrace("sendDraft:onSend:result", {
+      sent,
+      busy: props.busy,
+      streaming: props.isStreaming,
+    });
+    if (!sent) {
+      setSending(false);
+      return;
+    }
+    // Don't reset sending here — isStreaming will take over and hide the send button.
     setSlashOpen(false);
     setSlashQuery("");
     setAttachments([]);
@@ -1152,16 +1184,6 @@ export default function Composer(props: ComposerProps) {
     emitDraftChange();
   };
 
-  const isFileDragTransfer = (transfer: Pick<DataTransfer, "types" | "files"> | null | undefined) => {
-    if (!transfer) return false;
-    const files = Array.from((transfer.files ?? []) as ArrayLike<File>).filter(Boolean);
-    if (files.length > 0) return true;
-    const types = Array.from((transfer.types ?? []) as ArrayLike<string>)
-      .map((entry) => entry.toLowerCase())
-      .filter(Boolean);
-    return types.includes("files");
-  };
-
   const clearFileDragState = () => {
     fileDragDepth = 0;
     setFileDragOver(false);
@@ -1170,8 +1192,8 @@ export default function Composer(props: ComposerProps) {
   const handleDragEnter = (event: DragEvent) => {
     if (!isFileDragTransfer(event.dataTransfer)) return;
     fileDragDepth += 1;
-    if (attachmentsDisabled()) return;
     event.preventDefault();
+    if (attachmentsDisabled()) return;
     setFileDragOver(true);
   };
 
@@ -1197,36 +1219,71 @@ export default function Composer(props: ComposerProps) {
       const selection = window.getSelection();
       if (selection && selection.rangeCount) {
         const range = selection.getRangeAt(0);
-        if (range.collapsed) {
-          const container = range.startContainer;
-          const offset = range.startOffset;
+        if (!editorRef.contains(range.startContainer) || !editorRef.contains(range.endContainer)) return;
 
-          const resolvePreviousSibling = () => {
-            if (container === editorRef) {
-              return offset > 0 ? editorRef.childNodes[offset - 1] : null;
-            }
-            if (container.nodeType === Node.TEXT_NODE) {
-              const parent = container.parentNode;
-              if (parent === editorRef) {
-                if (offset > 0) return null;
-                return container.previousSibling;
-              }
-            }
-            return null;
-          };
+        const isSlashChip = (node: Node | null): node is HTMLElement =>
+          node instanceof HTMLElement && Boolean(node.dataset.slashCommand);
+        const isSingleSpace = (node: Node | null): node is Text => node instanceof Text && (node.textContent ?? "") === " ";
+        const removeSlashChip = (chip: HTMLElement) => {
+          const next = chip.nextSibling;
+          if (isSingleSpace(next)) {
+            next.parentNode?.removeChild(next);
+          }
+          chip.parentNode?.removeChild(chip);
+        };
 
-          const prev = resolvePreviousSibling();
-          if (prev instanceof HTMLElement && prev.dataset.slashCommand) {
+        if (!range.collapsed) {
+          const selectedChip = Array.from(editorRef.querySelectorAll("span[data-slash-command]")).find((candidate) =>
+            range.intersectsNode(candidate),
+          );
+          if (selectedChip instanceof HTMLElement && selectedChip.dataset.slashCommand) {
             event.preventDefault();
-            // Also remove a single trailing space node if present.
-            const next = prev.nextSibling;
-            if (next && next.nodeType === Node.TEXT_NODE && (next.textContent ?? "") === " ") {
-              next.parentNode?.removeChild(next);
-            }
-            prev.parentNode?.removeChild(prev);
+            removeSlashChip(selectedChip);
             emitDraftChange();
             return;
           }
+        }
+
+        const direction: "backward" | "forward" = event.key === "Backspace" ? "backward" : "forward";
+        const container = range.startContainer;
+        const offset = range.startOffset;
+
+        const resolveBoundaryNode = () => {
+          if (container === editorRef) {
+            if (direction === "backward") {
+              return offset > 0 ? editorRef.childNodes[offset - 1] : null;
+            }
+            return offset < editorRef.childNodes.length ? editorRef.childNodes[offset] : null;
+          }
+
+          if (container.nodeType === Node.TEXT_NODE && container.parentNode === editorRef) {
+            const length = (container.textContent ?? "").length;
+            if (direction === "backward") {
+              if (offset === 0) return container.previousSibling;
+              if (offset === length) return container;
+              return null;
+            }
+            if (offset === length) return container.nextSibling;
+            if (offset === 0) return container;
+            return null;
+          }
+
+          return null;
+        };
+
+        const resolveSlashChip = (candidate: Node | null) => {
+          if (isSlashChip(candidate)) return candidate;
+          if (!isSingleSpace(candidate)) return null;
+          const neighbor = direction === "backward" ? candidate.previousSibling : candidate.nextSibling;
+          return isSlashChip(neighbor) ? neighbor : null;
+        };
+
+        const targetChip = resolveSlashChip(resolveBoundaryNode());
+        if (targetChip) {
+          event.preventDefault();
+          removeSlashChip(targetChip);
+          emitDraftChange();
+          return;
         }
       }
     }
@@ -1315,18 +1372,31 @@ export default function Composer(props: ComposerProps) {
       }
     }
 
-    const nextMode = nextAgentModeOnShiftTab(selectedMode(), {
-      key: event.key,
-      defaultPrevented: event.defaultPrevented,
-      metaKey: event.metaKey,
-      ctrlKey: event.ctrlKey,
-      altKey: event.altKey,
-      shiftKey: event.shiftKey,
-      busy: props.busy,
-    });
-    if (nextMode) {
+    if (
+      event.key === "Enter" &&
+      event.altKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !mentionOpen() &&
+      !slashOpen()
+    ) {
       event.preventDefault();
-      props.onSelectAgent(nextMode);
+      document.execCommand("insertLineBreak");
+      emitDraftChange();
+      return;
+    }
+
+    if (
+      event.key === "Tab" &&
+      event.shiftKey &&
+      !event.defaultPrevented &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !props.busy
+    ) {
+      event.preventDefault();
+      props.onSelectAgent(isReadonly() ? "veslo" : "plan");
       return;
     }
 
@@ -1361,19 +1431,12 @@ export default function Composer(props: ComposerProps) {
 
     if (event.key === "Enter") {
       event.preventDefault();
-      if (props.busy) return;
-      sendDraft();
+      if (sending() || props.busy) return;
+      void sendDraft();
     }
   };
 
-  createEffect(() => {
-    if (!mentionOpen() || agentLoaded()) return;
-    props
-      .listAgents()
-      .then((agents) => setAgentOptions(agents))
-      .catch(() => setAgentOptions([]))
-      .finally(() => setAgentLoaded(true));
-  });
+  // Agent loading removed — agents are no longer shown in @mention dropdown.
 
   createEffect(() => {
     if (!mentionOpen()) {
@@ -1443,8 +1506,8 @@ export default function Composer(props: ComposerProps) {
           onDrop={handleDrop}
           onDragOver={(event: DragEvent) => {
             if (!isFileDragTransfer(event.dataTransfer)) return;
-            if (attachmentsDisabled()) return;
             event.preventDefault();
+            if (attachmentsDisabled()) return;
             setFileDragOver(true);
           }}
         >
@@ -1479,33 +1542,23 @@ export default function Composer(props: ComposerProps) {
                             }}
                             onMouseEnter={() => setMentionIndex(optionIndex())}
                           >
-                            <Show
-                              when={option.kind === "agent"}
-                              fallback={
-                                <>
-                                  <FileIcon size={14} class="text-gray-9" />
-                                  <div class="flex items-center min-w-0 text-xs">
-                                    {(() => {
-                                      const value = option.value;
-                                      const slash = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
-                                      const dir = slash === -1 ? "" : value.slice(0, slash + 1);
-                                      const name = slash === -1 ? value : value.slice(slash + 1);
-                                      return (
-                                        <>
-                                          <span class="text-gray-9 truncate">{dir}</span>
-                                          <Show when={name}>
-                                            <span class="text-gray-11 font-semibold">{name}</span>
-                                          </Show>
-                                        </>
-                                      );
-                                    })()}
-                                  </div>
-                                </>
-                              }
-                            >
-                              <AtSign size={14} class="text-gray-9" />
-                              <span class="text-xs font-semibold text-gray-11">@{option.label}</span>
-                            </Show>
+                            <FileIcon size={14} class="text-gray-9" />
+                            <div class="flex items-center min-w-0 text-xs">
+                              {(() => {
+                                const value = option.value;
+                                const slash = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
+                                const dir = slash === -1 ? "" : value.slice(0, slash + 1);
+                                const name = slash === -1 ? value : value.slice(slash + 1);
+                                return (
+                                  <>
+                                    <span class="text-gray-9 truncate">{dir}</span>
+                                    <Show when={name}>
+                                      <span class="text-gray-11 font-semibold">{name}</span>
+                                    </Show>
+                                  </>
+                                );
+                              })()}
+                            </div>
                           </button>
                         );
                       }}
@@ -1625,7 +1678,7 @@ export default function Composer(props: ComposerProps) {
                 <div class="flex-1 min-w-0">
                   <div class="relative">
                     <Show when={!hasDraftContent()}>
-                      <div class="absolute left-0 top-0 text-gray-9 text-[14px] leading-relaxed pointer-events-none">
+                      <div class="font-reading type-reading-md absolute left-0 top-0 text-gray-9 pointer-events-none">
                         {translate("session.placeholder")}
                       </div>
                     </Show>
@@ -1638,7 +1691,7 @@ export default function Composer(props: ComposerProps) {
                       onKeyDown={handleKeyDown}
                       onPaste={handlePaste}
                       onClick={handleEditorClick}
-                      class="bg-transparent border-none p-0 pb-2 pr-2 text-gray-12 focus:ring-0 text-[14px] leading-relaxed whitespace-pre-wrap break-words resize-none min-h-[24px] max-h-40 overflow-y-auto overflow-x-hidden outline-none"
+                      class="font-reading type-reading-md bg-transparent border-none p-0 pb-2 pr-2 text-gray-12 focus:ring-0 whitespace-pre-wrap break-words resize-none min-h-[24px] max-h-40 overflow-y-auto overflow-x-hidden outline-none"
                     />
 
                     <div class="mt-3 flex items-center justify-between gap-3 pt-2">
@@ -1676,31 +1729,25 @@ export default function Composer(props: ComposerProps) {
                           </button>
                         </div>
 
-                        <div class="inline-flex items-center rounded-lg border border-gray-6/80 bg-gray-2 p-0.5">
-                          <For each={modeOptions}>
-                            {(m) => {
-                              const active = () => selectedMode() === m.value;
-                              return (
-                                <button
-                                  type="button"
-                                  disabled={props.busy}
-                                  class={`px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors ${active()
-                                    ? "bg-gray-4 text-gray-12 shadow-sm"
-                                    : "text-gray-10 hover:text-gray-11"
-                                    }`}
-                                  onClick={() => props.onSelectAgent(m.value)}
-                                >
-                                  {m.label}
-                                </button>
-                              );
-                            }}
-                          </For>
-                        </div>
+                        <button
+                          type="button"
+                          disabled={props.busy}
+                          class={`font-product type-ui-sm inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 font-medium transition-colors ${
+                            isReadonly()
+                              ? "border-blue-6 bg-blue-3 text-blue-11"
+                              : "border-gray-6/80 bg-gray-2 text-gray-10 hover:text-gray-11"
+                          }`}
+                          onClick={() => props.onSelectAgent(isReadonly() ? "veslo" : "plan")}
+                          title={isReadonly() ? "Read-only mode active — click to allow file editing" : "Click to enter read-only mode"}
+                        >
+                          <span class={`inline-block w-1.5 h-1.5 rounded-full ${isReadonly() ? "bg-blue-9" : "bg-gray-8"}`} />
+                          {isReadonly() ? "Jen se ptám" : "Jen se ptám"}
+                        </button>
 
                         <Show when={props.canChooseSessionFolder}>
                           <button
                             type="button"
-                            class="inline-flex shrink-0 items-center rounded-md border border-gray-6 bg-gray-2 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-11"
+                            class="font-product type-ui-xs inline-flex shrink-0 items-center rounded-md border border-gray-6 bg-gray-2 px-2 py-1 font-bold uppercase tracking-widest text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-11"
                             onClick={() => {
                               void props.onChooseSessionFolder();
                             }}
@@ -1716,15 +1763,35 @@ export default function Composer(props: ComposerProps) {
                           fallback={
                             <button
                               type="button"
-                              disabled={!hasDraftContent()}
-                              onClick={sendDraft}
-                              class={`shrink-0 p-1.5 rounded-full transition-colors ${!hasDraftContent()
-                                ? "bg-gray-4 text-gray-10"
-                                : "bg-[#1B29FF] text-white hover:bg-blue-10"
-                                }`}
+                              disabled={sendDisabled()}
+                              onClick={() => {
+                                recordSendTrace("sendButton:click", {
+                                  sending: sending(),
+                                  busy: props.busy,
+                                  hasDraftContent: hasDraftContent(),
+                                });
+                                if (sending() || props.busy) {
+                                  recordSendTrace("sendButton:blocked", {
+                                    sending: sending(),
+                                    busy: props.busy,
+                                  });
+                                  return;
+                                }
+                                void sendDraft();
+                              }}
+                              class={`shrink-0 p-1.5 rounded-full ${
+                                sending()
+                                  ? "bg-[#1B29FF] text-white pointer-events-none"
+                                  : `transition-colors ${sendDisabled()
+                                    ? "bg-gray-4 text-gray-10"
+                                    : "bg-[#1B29FF] text-white hover:bg-blue-10"}`
+                              }`}
                               title={translate("session.send_label")}
                             >
-                              <ArrowUp size={18} />
+                              {sending()
+                                ? <Loader2 size={18} class="animate-spin" />
+                                : <ArrowUp size={18} />
+                              }
                             </button>
                           }
                         >

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAppLaunchEnv } from './app-launcher.js';
+import { createAppLaunchEnv, resolveWebDriverPort } from './app-launcher.js';
 
 test('createAppLaunchEnv forces x11 on linux so GTK-backed Tauri can start in headless E2E runs', () => {
   const env = createAppLaunchEnv(
@@ -19,12 +19,15 @@ test('createAppLaunchEnv forces x11 on linux so GTK-backed Tauri can start in he
 
   assert.equal(env.TAURI_WEBDRIVER_PORT, '4445');
   assert.equal(env.OPENCODE_HOME, '/tmp/opencode-home');
+  assert.equal(env.VESLO_DATA_DIR, '/tmp/opencode-home/.veslo');
+  assert.equal(env.VESLO_APP_DATA_DIR, '/tmp/opencode-home/.veslo/app-data');
+  assert.equal(env.VESLO_APP_LOCAL_DATA_DIR, '/tmp/opencode-home/.veslo/app-local-data');
   assert.equal(env.VESLO_DEN_AUTH_SNAPSHOT_PATH, '/tmp/opencode-home/.veslo/den-auth.json');
   assert.equal(env.GDK_BACKEND, 'x11');
   assert.equal('WAYLAND_DISPLAY' in env, false);
 });
 
-test('createAppLaunchEnv isolates WebView2 storage on Windows so stale app auth does not override the E2E snapshot', () => {
+test('createAppLaunchEnv isolates Windows app, local, and WebView2 storage so stale desktop state does not override the E2E snapshot', () => {
   const env = createAppLaunchEnv(
     {
       USERPROFILE: 'C:\\Users\\micha',
@@ -39,6 +42,15 @@ test('createAppLaunchEnv isolates WebView2 storage on Windows so stale app auth 
 
   assert.equal(env.TAURI_WEBDRIVER_PORT, '4445');
   assert.equal(env.OPENCODE_HOME, 'C:\\temp\\veslo-e2e-home');
+  assert.equal(env.VESLO_DATA_DIR, 'C:\\temp\\veslo-e2e-home\\.veslo');
+  assert.equal(env.VESLO_APP_DATA_DIR, 'C:\\temp\\veslo-e2e-home\\.veslo\\app-data');
+  assert.equal(env.VESLO_APP_LOCAL_DATA_DIR, 'C:\\temp\\veslo-e2e-home\\.veslo\\app-local-data');
   assert.equal(env.VESLO_DEN_AUTH_SNAPSHOT_PATH, 'C:\\temp\\veslo-e2e-home\\.veslo\\den-auth.json');
+  assert.equal(env.APPDATA, 'C:\\temp\\veslo-e2e-home\\AppData\\Roaming');
+  assert.equal(env.LOCALAPPDATA, 'C:\\temp\\veslo-e2e-home\\AppData\\Local');
   assert.equal(env.WEBVIEW2_USER_DATA_FOLDER, 'C:\\temp\\veslo-e2e-home\\webview2');
+});
+
+test('resolveWebDriverPort allows E2E runs to move off a stale default port', () => {
+  assert.equal(resolveWebDriverPort({ E2E_WEBDRIVER_PORT: '4455' }), 4455);
 });

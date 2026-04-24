@@ -11,7 +11,7 @@ use crate::types::{
 };
 use crate::workspace::files::ensure_workspace_files;
 use crate::workspace::state::{
-    load_workspace_state, save_workspace_state, stable_workspace_id,
+    load_workspace_state, private_workspace_root_from_data_dir, save_workspace_state, stable_workspace_id,
     stable_workspace_id_for_remote, stable_workspace_id_for_veslo,
 };
 use crate::workspace::watch::{update_workspace_watch, WorkspaceWatchState};
@@ -24,6 +24,14 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 // ---------------------------------------------------------------------------
 // OpenCode session cleanup (used by workspace_forget)
 // ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn workspace_private_root(app: tauri::AppHandle) -> Result<String, String> {
+    let (data_dir, _) = crate::workspace::state::veslo_state_paths(&app)?;
+    Ok(private_workspace_root_from_data_dir(&data_dir)
+        .to_string_lossy()
+        .to_string())
+}
 
 /// Resolve the path to the global OpenCode SQLite database.
 fn opencode_db_path() -> Option<PathBuf> {

@@ -115,6 +115,7 @@ type DenDesktopSnapshot = {
 
 type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 type DenAuthChangeListener = () => void;
+type DenAuthIdentityComparison = "same" | "different" | "unknown";
 
 let desktopSnapshotWriteQueue: Promise<void> = Promise.resolve();
 const denAuthChangeListeners = new Set<DenAuthChangeListener>();
@@ -412,19 +413,63 @@ function parseSnapshotAuth(snapshot?: DenDesktopSnapshot | null): DenAuthState |
   }
 }
 
+function normalizeAuthIdentityId(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeAuthIdentityEmail(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim().toLowerCase() : null;
+}
+
+function compareDenAuthIdentity(
+  current: DenAuthState | null,
+  snapshot: DenAuthState | null,
+): DenAuthIdentityComparison {
+  const currentId = normalizeAuthIdentityId(current?.user?.id);
+  const snapshotId = normalizeAuthIdentityId(snapshot?.user?.id);
+  if (currentId && snapshotId) {
+    return currentId === snapshotId ? "same" : "different";
+  }
+
+  const currentEmail = normalizeAuthIdentityEmail(current?.user?.email);
+  const snapshotEmail = normalizeAuthIdentityEmail(snapshot?.user?.email);
+  if (currentEmail && snapshotEmail) {
+    return currentEmail === snapshotEmail ? "same" : "different";
+  }
+
+  return "unknown";
+}
+
+function restoreDesktopSnapshotUiState(
+  localStore: Storage | null,
+  snapshot: DenDesktopSnapshot | null,
+): void {
+  writePersistedText(
+    localStore,
+    LANGUAGE_PREF_KEY,
+    typeof snapshot?.language === "string" ? snapshot.language.trim() || null : null,
+  );
+  writePersistedBoolean(
+    localStore,
+    ONBOARDING_COMPLETE_STORAGE_KEY,
+    typeof snapshot?.onboardingComplete === "boolean" ? snapshot.onboardingComplete : null,
+  );
+}
+
+function applySignedOutDesktopSnapshot(localStore: Storage | null, sessionStore: Storage | null): void {
+  writePersistedBoolean(localStore, DEN_KEEP_SIGNED_IN_STORAGE_KEY, false);
+  clearDenAuthFromStorage(localStore);
+  clearDenAuthFromStorage(sessionStore);
+  syncDesktopSnapshotFromCurrentState();
+  emitDenAuthChanged();
+}
+
 export async function hydrateDenAuthFromDesktopSnapshot(): Promise<boolean> {
   if (!isTauriRuntime()) return false;
 
   const localStore = localStorageAccess();
   const sessionStore = sessionStorageAccess();
   if (!localStore) return false;
-
-  const localAuth = readDenAuthFromStorage(localStore);
-  const sessionAuth = readDenAuthFromStorage(sessionStore);
-  if (localAuth || sessionAuth) {
-    syncDesktopSnapshotFromCurrentState();
-    return false;
-  }
 
   let snapshot: DenDesktopSnapshot | null = null;
   try {
@@ -433,29 +478,36 @@ export async function hydrateDenAuthFromDesktopSnapshot(): Promise<boolean> {
     return false;
   }
 
-  if (!snapshot || snapshot.keepSignedIn === false) {
-    if (snapshot?.keepSignedIn === false) {
-      writeDenKeepSignedIn(false);
-      clearDenAuth();
+  const currentAuth = readDenAuth();
+  if (!snapshot) {
+    if (currentAuth) {
+      syncDesktopSnapshotFromCurrentState();
     }
+    return false;
+  }
+
+  if (snapshot.keepSignedIn === false) {
+    applySignedOutDesktopSnapshot(localStore, sessionStore);
     return false;
   }
 
   const state = parseSnapshotAuth(snapshot);
   if (!state) {
+    if (currentAuth) {
+      syncDesktopSnapshotFromCurrentState();
+    }
     return false;
   }
 
-  writePersistedText(
-    localStore,
-    LANGUAGE_PREF_KEY,
-    typeof snapshot.language === "string" ? snapshot.language.trim() || null : null,
-  );
-  writePersistedBoolean(
-    localStore,
-    ONBOARDING_COMPLETE_STORAGE_KEY,
-    typeof snapshot.onboardingComplete === "boolean" ? snapshot.onboardingComplete : null,
-  );
+  if (currentAuth) {
+    const identityComparison = compareDenAuthIdentity(currentAuth, state);
+    if (identityComparison !== "different") {
+      syncDesktopSnapshotFromCurrentState();
+      return false;
+    }
+  }
+
+  restoreDesktopSnapshotUiState(localStore, snapshot);
   writeDenKeepSignedIn(true);
   writeDenAuth(state);
   return true;

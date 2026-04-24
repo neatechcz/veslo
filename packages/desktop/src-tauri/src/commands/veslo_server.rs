@@ -7,8 +7,26 @@ use crate::veslo_server::{
     clear_persisted_veslo_server_info, recover_persisted_veslo_server_info, server_health_ok,
     start_veslo_server,
 };
-use crate::types::VesloServerInfo;
+use crate::types::{VesloServerInfo, WorkspaceState, WorkspaceType};
 use crate::utils::truncate_output;
+use crate::workspace::state::load_workspace_state;
+
+fn active_local_workspace_path(state: &WorkspaceState) -> Option<String> {
+    state
+        .workspaces
+        .iter()
+        .find(|workspace| {
+            workspace.id == state.active_id && workspace.workspace_type == WorkspaceType::Local
+        })
+        .and_then(|workspace| {
+            let path = workspace.path.trim();
+            if path.is_empty() {
+                None
+            } else {
+                Some(path.to_string())
+            }
+        })
+}
 
 fn sanitize_live_info_with_health(
     mut info: VesloServerInfo,
@@ -82,20 +100,49 @@ pub fn veslo_server_restart(
     engine_manager: State<EngineManager>,
     opencode_router_manager: State<OpenCodeRouterManager>,
 ) -> Result<VesloServerInfo, String> {
-    let (workspace_path, opencode_url, opencode_username, opencode_password) = {
+    let (engine_workspace_path, engine_opencode_url, engine_opencode_username, engine_opencode_password) = {
         let engine = engine_manager
             .inner
             .lock()
             .map_err(|_| "engine mutex poisoned".to_string())?;
         (
-            engine
-                .project_dir
-                .clone()
-                .ok_or_else(|| "No active local workspace available".to_string())?,
+            engine.project_dir.clone(),
             engine.base_url.clone(),
             engine.opencode_username.clone(),
             engine.opencode_password.clone(),
         )
+    };
+
+    let engine_workspace_path = engine_workspace_path
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty());
+    let workspace_path = match engine_workspace_path {
+        Some(path) => path,
+        None => {
+            let workspace_state = load_workspace_state(&app)?;
+            active_local_workspace_path(&workspace_state)
+                .ok_or_else(|| "No active local workspace available".to_string())?
+        }
+    };
+
+    let engine_attached = engine_opencode_url
+        .as_deref()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    let opencode_url = if engine_attached {
+        engine_opencode_url
+    } else {
+        None
+    };
+    let opencode_username = if engine_attached {
+        engine_opencode_username
+    } else {
+        None
+    };
+    let opencode_password = if engine_attached {
+        engine_opencode_password
+    } else {
+        None
     };
 
     let opencode_router_health_port = opencode_router_manager
@@ -117,8 +164,49 @@ pub fn veslo_server_restart(
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_live_info_with_health;
-    use crate::types::VesloServerInfo;
+    use super::{active_local_workspace_path, sanitize_live_info_with_health};
+    use crate::types::{
+        RemoteType, VesloServerInfo, WorkspaceInfo, WorkspaceState, WorkspaceType,
+        WORKSPACE_STATE_VERSION,
+    };
+
+    fn workspace(id: &str, path: &str, workspace_type: WorkspaceType) -> WorkspaceInfo {
+        WorkspaceInfo {
+            id: id.to_string(),
+            name: id.to_string(),
+            path: path.to_string(),
+            preset: "starter".to_string(),
+            workspace_type,
+            remote_type: Some(RemoteType::Opencode),
+            base_url: None,
+            directory: None,
+            display_name: None,
+            veslo_host_url: None,
+            veslo_token: None,
+            veslo_workspace_id: None,
+            veslo_workspace_name: None,
+            sandbox_backend: None,
+            sandbox_run_id: None,
+            sandbox_container_name: None,
+        }
+    }
+
+    #[test]
+    fn active_local_workspace_path_selects_active_local_workspace() {
+        let state = WorkspaceState {
+            version: WORKSPACE_STATE_VERSION,
+            active_id: "ws-local".to_string(),
+            workspaces: vec![
+                workspace("ws-remote", "https://example.test", WorkspaceType::Remote),
+                workspace("ws-local", "C:\\workspaces\\private", WorkspaceType::Local),
+            ],
+        };
+
+        assert_eq!(
+            active_local_workspace_path(&state).as_deref(),
+            Some("C:\\workspaces\\private")
+        );
+    }
 
     fn sample_live_info() -> VesloServerInfo {
         VesloServerInfo {

@@ -5,9 +5,24 @@ import {
   AI_ACCESS_INVALID_MESSAGE,
   AI_ACCESS_NOT_CONFIGURED_MESSAGE,
   formatManagedAiAccessConfig,
+  type ManagedAiAccessProfile,
   resolveManagedAiAccess,
+  shouldPreserveManagedAiConfig,
+  shouldEnsureManagedAiLocalGateway,
+  shouldDeferManagedAiAccessRefresh,
 } from "./ai-access.js";
 import { OPENCODE_SESSION_ID_TEMPLATE } from "./opencode.js";
+
+const managedCodexProfile: ManagedAiAccessProfile = {
+  userId: "user_123",
+  providerId: "codex_oauth",
+  defaultModel: {
+    providerID: "codex_oauth",
+    modelID: "gpt-5.4",
+  },
+  allowedModels: ["gpt-5.4"],
+  updatedAt: null,
+};
 
 test("resolveManagedAiAccess returns a configured profile for valid admin policy", () => {
   const result = resolveManagedAiAccess({
@@ -76,6 +91,78 @@ test("resolveManagedAiAccess rejects incomplete admin policy payloads", () => {
   );
 });
 
+test("shouldDeferManagedAiAccessRefresh waits for the local desktop client token before gateway fetch", () => {
+  assert.equal(
+    shouldDeferManagedAiAccessRefresh({
+      gatewayBaseUrl: "http://127.0.0.1:8787",
+      isDesktopRuntime: true,
+      localClientToken: "",
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldDeferManagedAiAccessRefresh({
+      gatewayBaseUrl: "http://127.0.0.1:8787",
+      isDesktopRuntime: true,
+      localClientToken: "client-token",
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldDeferManagedAiAccessRefresh({
+      gatewayBaseUrl: "https://veslo.example.test",
+      isDesktopRuntime: true,
+      localClientToken: "",
+    }),
+    false,
+  );
+});
+
+test("shouldEnsureManagedAiLocalGateway starts the desktop local gateway for signed-in local workspaces", () => {
+  assert.equal(
+    shouldEnsureManagedAiLocalGateway({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      userToken: "den-token",
+      localServerRunning: false,
+      localClientToken: "",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldEnsureManagedAiLocalGateway({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      userToken: "den-token",
+      localServerRunning: true,
+      localClientToken: "",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldEnsureManagedAiLocalGateway({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      userToken: "den-token",
+      localServerRunning: true,
+      localClientToken: "client-token",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldEnsureManagedAiLocalGateway({
+      isDesktopRuntime: false,
+      workspaceType: "local",
+      userToken: "den-token",
+      localServerRunning: false,
+      localClientToken: "",
+    }),
+    false,
+  );
+});
+
 test("formatManagedAiAccessConfig writes admin-managed default model and gateway routing", () => {
   const content = formatManagedAiAccessConfig(
     JSON.stringify({
@@ -102,6 +189,7 @@ test("formatManagedAiAccessConfig writes admin-managed default model and gateway
         updatedAt: "2026-04-08T12:00:00.000Z",
       },
       serverBaseUrl: "https://veslo.example.test",
+      serverClientToken: "veslo-client-token",
       gatewayAccessToken: "den_token_123",
     },
   );
@@ -127,6 +215,7 @@ test("formatManagedAiAccessConfig writes admin-managed default model and gateway
     "x-keep": "1",
   });
   assert.deepEqual(parsed.provider?.openai?.models?.["gpt-4o-mini"]?.headers, {
+    Authorization: "Bearer veslo-client-token",
     "x-veslo-gateway-token": "den_token_123",
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
@@ -136,17 +225,9 @@ test("formatManagedAiAccessConfig routes codex_oauth through the gateway", () =>
   const content = formatManagedAiAccessConfig(
     "{}",
     {
-      profile: {
-        userId: "user_123",
-        providerId: "codex_oauth",
-        defaultModel: {
-          providerID: "codex_oauth",
-          modelID: "gpt-5.4",
-        },
-        allowedModels: ["gpt-5.4"],
-        updatedAt: null,
-      },
+      profile: managedCodexProfile,
       serverBaseUrl: "https://veslo.example.test",
+      serverClientToken: "veslo-client-token",
       gatewayAccessToken: "den_token_123",
     },
   );
@@ -183,9 +264,116 @@ test("formatManagedAiAccessConfig routes codex_oauth through the gateway", () =>
     parsed.provider?.codex_oauth?.options?.baseURL,
     "https://veslo.example.test/ai-gateway/providers/codex_oauth/v1",
   );
+  assert.equal(parsed.provider?.codex_oauth?.options?.apiKey, "veslo-client-token");
   assert.equal(parsed.provider?.codex_oauth?.options?.headers, undefined);
   assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.headers, {
     "x-veslo-gateway-token": "den_token_123",
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
+});
+
+test("shouldPreserveManagedAiConfig keeps existing gateway routing while managed access is still loading", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: managedCodexProfile,
+    serverBaseUrl: "https://veslo.example.test",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "gateway-access-token",
+  });
+
+  assert.equal(
+    shouldPreserveManagedAiConfig({
+      content,
+      managedProfile: null,
+      gatewayBaseUrl: "",
+      serverClientToken: "",
+      gatewayAccessToken: "",
+      accessBusy: true,
+      accessError: null,
+    }),
+    true,
+  );
+});
+
+test("shouldPreserveManagedAiConfig keeps existing gateway routing when the managed gateway token is temporarily unavailable", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: managedCodexProfile,
+    serverBaseUrl: "https://veslo.example.test",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "gateway-access-token",
+  });
+
+  assert.equal(
+    shouldPreserveManagedAiConfig({
+      content,
+      managedProfile: managedCodexProfile,
+      gatewayBaseUrl: "https://veslo.example.test",
+      serverClientToken: "",
+      gatewayAccessToken: "",
+      accessBusy: false,
+      accessError: AI_ACCESS_INVALID_MESSAGE,
+    }),
+    true,
+  );
+});
+
+test("shouldPreserveManagedAiConfig allows model-only fallback when the config is not already gateway-managed", () => {
+  assert.equal(
+    shouldPreserveManagedAiConfig({
+      content: JSON.stringify({
+        $schema: "https://opencode.ai/config.json",
+        model: "codex_oauth/gpt-5.4",
+      }),
+      managedProfile: managedCodexProfile,
+      gatewayBaseUrl: "https://veslo.example.test",
+      serverClientToken: "",
+      gatewayAccessToken: "",
+      accessBusy: false,
+      accessError: AI_ACCESS_INVALID_MESSAGE,
+    }),
+    false,
+  );
+});
+
+test("shouldPreserveManagedAiConfig keeps an existing managed config even when access temporarily reads as not configured", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: managedCodexProfile,
+    serverBaseUrl: "https://veslo.example.test",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "gateway-access-token",
+  });
+
+  assert.equal(
+    shouldPreserveManagedAiConfig({
+      content,
+      managedProfile: null,
+      gatewayBaseUrl: "",
+      serverClientToken: "",
+      gatewayAccessToken: "",
+      accessBusy: false,
+      accessError: AI_ACCESS_NOT_CONFIGURED_MESSAGE,
+    }),
+    true,
+  );
+});
+
+test("shouldPreserveManagedAiConfig keeps an existing managed config when the server client token is temporarily unavailable", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: managedCodexProfile,
+    serverBaseUrl: "https://veslo.example.test",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "gateway-access-token",
+  });
+
+  assert.equal(
+    shouldPreserveManagedAiConfig({
+      content,
+      managedProfile: managedCodexProfile,
+      gatewayBaseUrl: "https://veslo.example.test",
+      serverClientToken: "",
+      gatewayAccessToken: "gateway-access-token",
+      accessBusy: false,
+      accessError: null,
+    }),
+    true,
+  );
 });

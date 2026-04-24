@@ -1,4 +1,6 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import type { Part } from "@opencode-ai/sdk/v2/client";
+import type { MessageInfo } from "../types";
 import { isTauriRuntime } from "../utils";
 import type { ScheduledJob } from "./tauri";
 import { mergeVesloServerSettingsWithEnv } from "./cloud-policy";
@@ -10,7 +12,10 @@ export type VesloServerCapabilities = {
     skills?: {
       read: boolean;
       install: boolean;
-      repo?: { owner: string; name: string; ref: string };
+    };
+    mcp?: {
+      read: boolean;
+      install: boolean;
     };
   };
   plugins: { read: boolean; write: boolean };
@@ -126,6 +131,22 @@ export type VesloHubSkillItem = {
     repo: string;
     ref: string;
     path: string;
+  };
+};
+
+export type VesloHubMcpItem = {
+  id: string;
+  name: string;
+  description?: string;
+  config: {
+    type: "remote" | "local";
+    url?: string;
+    command?: string[];
+    oauth?: boolean;
+  };
+  source: {
+    scope: "org";
+    orgId: string;
   };
 };
 
@@ -439,6 +460,21 @@ export type VesloWorkspaceExport = {
   commands?: Array<{ name: string; description?: string; template?: string }>;
 };
 
+export type VesloSessionArchiveRecord = {
+  sessionId: string;
+  archivedAt: number;
+  titleSnapshot: string;
+  workspaceIdAtArchive?: string;
+  workspaceLabelSnapshot?: string;
+  resolvedDirectoryAtArchive?: string;
+  projectRootAtArchive?: string;
+  projectLabelSnapshot?: string;
+  parentSessionId?: string | null;
+  createdAtSnapshot?: number | null;
+  updatedAtSnapshot?: number | null;
+  workspaceIdentity?: string;
+};
+
 export type VesloArtifactItem = {
   id: string;
   name?: string;
@@ -488,6 +524,30 @@ export type VesloSessionLatestRunArtifacts = {
   workspaceId: string;
   runId: string | null;
   items: VesloSessionArtifactItem[];
+};
+
+export type VesloSessionTranscriptSnapshot = {
+  workspaceId: string;
+  sessionId: string;
+  limit: number;
+  messages: MessageInfo[];
+  partsByMessageId: Record<string, Part[]>;
+  fetchedAt?: number;
+  staleAt?: number;
+};
+
+export type VesloSessionTranscriptPrefetchInput = {
+  clickedSessionId?: string | null;
+  selectedSessionId?: string | null;
+  loadedTopLevelSessionIds: string[];
+  expandedSubagentSessionIds: string[];
+  limit?: number;
+};
+
+export type VesloSessionTranscriptPrefetchResult = {
+  workspaceId: string;
+  queuedSessionIds: string[];
+  items: VesloSessionTranscriptSnapshot[];
 };
 
 export type VesloInboxItem = {
@@ -605,6 +665,11 @@ export type VesloUserAiAccessResult = {
   aiAccess: VesloUserAiAccess | null;
 };
 
+export type VesloManagedAiAccessBundle = {
+  accessToken?: string | null;
+  aiAccess: VesloUserAiAccess | null;
+};
+
 export const DEFAULT_VESLO_SERVER_PORT = 8787;
 
 const STORAGE_URL_OVERRIDE = "veslo.server.urlOverride";
@@ -619,6 +684,45 @@ export function normalizeVesloServerUrl(input: string) {
   if (!trimmed) return null;
   const withProtocol = /^https?:\/\//.test(trimmed) ? trimmed : `http://${trimmed}`;
   return withProtocol.replace(/\/+$/, "");
+}
+
+export function resolveSessionArchiveClientOptions(options: {
+  accountId?: string | null;
+  activeBaseUrl?: string | null;
+  activeToken?: string | null;
+  settingsUrl?: string | null;
+  settingsToken?: string | null;
+  cloudUrl?: string | null;
+  cloudToken?: string | null;
+}) {
+  const accountId = options.accountId?.trim() ?? "";
+  if (!accountId) return null;
+
+  const candidates = [
+    {
+      baseUrl: normalizeVesloServerUrl(options.activeBaseUrl ?? ""),
+      token: options.activeToken?.trim() ?? "",
+    },
+    {
+      baseUrl: normalizeVesloServerUrl(options.settingsUrl ?? ""),
+      token: options.settingsToken?.trim() ?? "",
+    },
+    {
+      baseUrl: normalizeVesloServerUrl(options.cloudUrl ?? ""),
+      token: options.cloudToken?.trim() ?? "",
+    },
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate.baseUrl || !candidate.token) continue;
+    return {
+      baseUrl: candidate.baseUrl,
+      token: candidate.token,
+      accountId,
+    };
+  }
+
+  return null;
 }
 
 function isLikelyLocalHostname(hostname: string) {
@@ -1162,6 +1266,20 @@ function buildGatewayCallerHeaders(userToken: string) {
   };
 }
 
+export async function requestManagedAiAccessBundle(baseUrl: string, userToken: string) {
+  const normalizedBaseUrl = normalizeVesloServerUrl(baseUrl);
+  if (!normalizedBaseUrl) {
+    throw new Error("Managed AI gateway base URL is required");
+  }
+
+  return requestJson<VesloManagedAiAccessBundle>(normalizedBaseUrl, "/api/me/ai-access", {
+    timeoutMs: 30_000,
+    extraHeaders: {
+      Authorization: normalizeBearerToken(userToken, "userToken"),
+    },
+  });
+}
+
 // Use Tauri's fetch when running in the desktop app to avoid CORS issues
 const resolveFetch = () => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
 
@@ -1170,7 +1288,14 @@ const DEFAULT_VESLO_SERVER_TIMEOUT_MS = 10_000;
 async function requestJson<T>(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number; headers?: Record<string, string> } = {},
+  options: {
+    method?: string;
+    token?: string;
+    hostToken?: string;
+    body?: unknown;
+    timeoutMs?: number;
+    extraHeaders?: Record<string, string>;
+  } = {},
 ): Promise<T> {
   const url = `${baseUrl}${path}`;
   const fetchImpl = resolveFetch();
@@ -1179,7 +1304,7 @@ async function requestJson<T>(
     url,
     {
       method: options.method ?? "GET",
-      headers: buildHeaders(options.token, options.hostToken, options.headers),
+      headers: buildHeaders(options.token, options.hostToken, options.extraHeaders),
       body: options.body ? JSON.stringify(options.body) : undefined,
     },
     options.timeoutMs ?? DEFAULT_VESLO_SERVER_TIMEOUT_MS,
@@ -1286,10 +1411,16 @@ async function requestBinary(
   return { data, contentType, filename };
 }
 
-export function createVesloServerClient(options: { baseUrl: string; token?: string; hostToken?: string }) {
+export function createVesloServerClient(options: {
+  baseUrl: string;
+  token?: string;
+  hostToken?: string;
+  accountId?: string;
+}) {
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
   const token = options.token;
   const hostToken = options.hostToken;
+  const accountId = options.accountId?.trim() || undefined;
 
   const timeouts = {
     health: 3_000,
@@ -1299,12 +1430,14 @@ export function createVesloServerClient(options: { baseUrl: string; token?: stri
     deleteWorkspace: 10_000,
     deleteSession: 12_000,
     sessionArtifacts: 10_000,
+    sessionTranscript: 10_000,
     status: 6_000,
     config: 10_000,
     opencodeRouter: 10_000,
     workspaceExport: 30_000,
     workspaceImport: 30_000,
     workspaceProvision: 20_000,
+    aiAccess: 30_000,
     binary: 60_000,
   };
 
@@ -1326,16 +1459,46 @@ export function createVesloServerClient(options: { baseUrl: string; token?: stri
       return requestJsonRaw<VesloOpenCodeRouterBindingsResult>(baseUrl, path, { token, hostToken, timeoutMs: timeouts.opencodeRouter });
     },
     getMyAiAccess: (userToken: string) =>
-      requestJson<VesloUserAiAccessResult>(baseUrl, "/ai-gateway/me/ai-access", {
+      requestJson<VesloManagedAiAccessBundle>(baseUrl, "/ai-gateway/me/ai-access", {
         token,
         hostToken,
-        headers: buildGatewayCallerHeaders(userToken),
+        timeoutMs: timeouts.aiAccess,
+        extraHeaders: buildGatewayCallerHeaders(userToken),
       }),
     opencodeRouterTelegramIdentities: () =>
       requestJsonRaw<VesloOpenCodeRouterTelegramIdentitiesResult>(baseUrl, "/veslo-code-router/identities/telegram", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
     opencodeRouterSlackIdentities: () =>
       requestJsonRaw<VesloOpenCodeRouterSlackIdentitiesResult>(baseUrl, "/veslo-code-router/identities/slack", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
     listWorkspaces: () => requestJson<VesloWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
+    listSessionArchives: () =>
+      requestJson<{ items: VesloSessionArchiveRecord[] }>(baseUrl, "/session-archives", {
+        token,
+        hostToken,
+        extraHeaders: accountId ? { "X-Veslo-Account-Id": accountId } : undefined,
+      }),
+    putSessionArchive: (sessionId: string, payload: Omit<VesloSessionArchiveRecord, "sessionId">) =>
+      requestJson<{ items: VesloSessionArchiveRecord[] }>(
+        baseUrl,
+        `/session-archives/${encodeURIComponent(sessionId)}`,
+        {
+          token,
+          hostToken,
+          method: "PUT",
+          body: payload,
+          extraHeaders: accountId ? { "X-Veslo-Account-Id": accountId } : undefined,
+        },
+      ),
+    deleteSessionArchive: (sessionId: string) =>
+      requestJson<{ items: VesloSessionArchiveRecord[] }>(
+        baseUrl,
+        `/session-archives/${encodeURIComponent(sessionId)}`,
+        {
+          token,
+          hostToken,
+          method: "DELETE",
+          extraHeaders: accountId ? { "X-Veslo-Account-Id": accountId } : undefined,
+        },
+      ),
     activateWorkspace: (workspaceId: string) =>
       requestJson<{ activeId: string; workspace: VesloWorkspaceInfo }>(
         baseUrl,
@@ -1359,6 +1522,18 @@ export function createVesloServerClient(options: { baseUrl: string; token?: stri
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/artifacts/latest-run`,
         { token, hostToken, timeoutMs: timeouts.sessionArtifacts },
+      ),
+    prefetchSessionTranscripts: (workspaceId: string, input: VesloSessionTranscriptPrefetchInput) =>
+      requestJson<VesloSessionTranscriptPrefetchResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/transcript-prefetch`,
+        { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.sessionTranscript },
+      ),
+    getSessionTranscript: (workspaceId: string, sessionId: string, limit = 140) =>
+      requestJson<VesloSessionTranscriptSnapshot>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript?limit=${encodeURIComponent(String(limit))}`,
+        { token, hostToken, timeoutMs: timeouts.sessionTranscript },
       ),
     exportWorkspace: (workspaceId: string) =>
       requestJson<VesloWorkspaceExport>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/export`, {
@@ -1673,11 +1848,34 @@ export function createVesloServerClient(options: { baseUrl: string; token?: stri
           body: payload,
         },
       ),
-    listHubSkills: () =>
-      requestJson<{ items: VesloHubSkillItem[] }>(baseUrl, `/hub/skills`, {
+    listHubSkills: (options?: { denToken?: string; denOrgId?: string }) => {
+      const denToken = options?.denToken?.trim() ?? "";
+      const denOrgId = options?.denOrgId?.trim() ?? "";
+      const extraHeaders = {
+        ...(denToken ? { "x-veslo-den-token": denToken } : {}),
+        ...(denOrgId ? { "x-veslo-den-org-id": denOrgId } : {}),
+      };
+
+      return requestJson<{ items: VesloHubSkillItem[] }>(baseUrl, `/hub/skills`, {
         token,
         hostToken,
-      }),
+        ...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
+      });
+    },
+    listHubMcp: (options?: { denToken?: string; denOrgId?: string }) => {
+      const denToken = options?.denToken?.trim() ?? "";
+      const denOrgId = options?.denOrgId?.trim() ?? "";
+      const extraHeaders = {
+        ...(denToken ? { "x-veslo-den-token": denToken } : {}),
+        ...(denOrgId ? { "x-veslo-den-org-id": denOrgId } : {}),
+      };
+
+      return requestJson<{ items: VesloHubMcpItem[] }>(baseUrl, `/hub/mcp`, {
+        token,
+        hostToken,
+        ...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
+      });
+    },
     installHubSkill: (
       workspaceId: string,
       name: string,
@@ -1696,6 +1894,29 @@ export function createVesloServerClient(options: { baseUrl: string; token?: stri
           },
         },
       ),
+    installHubMcp: (
+      workspaceId: string,
+      name: string,
+      options?: { denToken?: string; denOrgId?: string },
+    ) => {
+      const denToken = options?.denToken?.trim() ?? "";
+      const denOrgId = options?.denOrgId?.trim() ?? "";
+      const extraHeaders = {
+        ...(denToken ? { "x-veslo-den-token": denToken } : {}),
+        ...(denOrgId ? { "x-veslo-den-org-id": denOrgId } : {}),
+      };
+
+      return requestJson<{ ok: boolean; name: string; path: string; action: "added" | "updated"; written: number; skipped: number }>(
+        baseUrl,
+        `/workspace/${workspaceId}/mcp/hub/${encodeURIComponent(name)}`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          ...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
+        },
+      );
+    },
     getSkill: (workspaceId: string, name: string, options?: { includeGlobal?: boolean }) => {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
       return requestJson<VesloSkillContent>(

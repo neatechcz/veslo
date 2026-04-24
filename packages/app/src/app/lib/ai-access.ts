@@ -1,3 +1,5 @@
+import { parse } from "jsonc-parser";
+
 import type { ModelRef } from "../types";
 import type { VesloGatewayProvider, VesloUserAiAccess } from "./veslo-server";
 import { formatConfigWithDefaultModel } from "./model-persistence";
@@ -19,6 +21,129 @@ export type ManagedAiAccessProfile = {
   allowedModels: string[];
   updatedAt: string | null;
 };
+
+function isLoopbackHttpUrl(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  try {
+    const parsed = new URL(trimmed);
+    const hostname = parsed.hostname.trim().toLowerCase();
+    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+  } catch {
+    return false;
+  }
+}
+
+function readConfigObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function parseConfigObject(content: string | null | undefined): Record<string, unknown> {
+  const raw = content?.trim() ?? "";
+  if (!raw) return {};
+  const parsed = parse(raw);
+  return readConfigObject(parsed);
+}
+
+function hasManagedGatewayHeaders(value: unknown): boolean {
+  const headers = readConfigObject(value);
+  const gatewayToken = typeof headers["x-veslo-gateway-token"] === "string"
+    ? headers["x-veslo-gateway-token"].trim()
+    : "";
+  const sessionTemplate = typeof headers["x-veslo-session-id"] === "string"
+    ? headers["x-veslo-session-id"].trim()
+    : "";
+  return Boolean(gatewayToken && sessionTemplate);
+}
+
+function hasManagedGatewayProviderRouting(
+  providerId: string,
+  providerConfig: Record<string, unknown>,
+): boolean {
+  const options = readConfigObject(providerConfig.options);
+  const baseUrl = typeof options.baseURL === "string" ? options.baseURL.trim() : "";
+  const expectedRoute = `/ai-gateway/providers/${providerId}/v1`;
+  if (!baseUrl.endsWith(expectedRoute)) {
+    return false;
+  }
+
+  const models = readConfigObject(providerConfig.models);
+  return Object.values(models).some((model) => hasManagedGatewayHeaders(readConfigObject(model).headers));
+}
+
+function hasManagedAiGatewayRoutingConfig(
+  content: string | null | undefined,
+  providerId?: string | null,
+): boolean {
+  const parsed = parseConfigObject(content);
+  const providers = readConfigObject(parsed.provider);
+  const targetProviderId = providerId?.trim().toLowerCase() ?? "";
+
+  return Object.entries(providers).some(([candidateId, rawConfig]) => {
+    const normalizedId = candidateId.trim().toLowerCase();
+    if (!isGatewayOwnedProvider(normalizedId)) {
+      return false;
+    }
+    if (targetProviderId && normalizedId !== targetProviderId) {
+      return false;
+    }
+    return hasManagedGatewayProviderRouting(normalizedId, readConfigObject(rawConfig));
+  });
+}
+
+export function shouldDeferManagedAiAccessRefresh(input: {
+  gatewayBaseUrl: string | null | undefined;
+  isDesktopRuntime: boolean;
+  localClientToken: string | null | undefined;
+}): boolean {
+  if (!input.isDesktopRuntime) return false;
+  if (!isLoopbackHttpUrl(input.gatewayBaseUrl ?? "")) return false;
+  return !input.localClientToken?.trim();
+}
+
+export function shouldEnsureManagedAiLocalGateway(input: {
+  isDesktopRuntime: boolean;
+  workspaceType: "local" | "remote" | null | undefined;
+  userToken: string | null | undefined;
+  localServerRunning: boolean;
+  localClientToken: string | null | undefined;
+}): boolean {
+  if (!input.isDesktopRuntime) return false;
+  if (input.workspaceType !== "local") return false;
+  if (!input.userToken?.trim()) return false;
+  return !input.localServerRunning || !input.localClientToken?.trim();
+}
+
+export function shouldPreserveManagedAiConfig(input: {
+  content: string | null | undefined;
+  managedProfile: ManagedAiAccessProfile | null;
+  gatewayBaseUrl: string | null | undefined;
+  serverClientToken: string | null | undefined;
+  gatewayAccessToken: string | null | undefined;
+  accessBusy: boolean;
+  accessError: string | null | undefined;
+}): boolean {
+  if (
+    !hasManagedAiGatewayRoutingConfig(
+      input.content,
+      input.managedProfile?.providerId ?? null,
+    )
+  ) {
+    return false;
+  }
+
+  if (input.accessBusy) {
+    return true;
+  }
+
+  return !input.managedProfile ||
+    !input.gatewayBaseUrl?.trim() ||
+    !input.serverClientToken?.trim() ||
+    !input.gatewayAccessToken?.trim();
+}
 
 export function resolveManagedAiAccess(record: VesloUserAiAccess | null | undefined): {
   profile: ManagedAiAccessProfile | null;
@@ -67,6 +192,7 @@ export function formatManagedAiAccessConfig(
   input: {
     profile: ManagedAiAccessProfile;
     serverBaseUrl: string;
+    serverClientToken: string;
     gatewayAccessToken: string;
   },
 ): string {
@@ -74,6 +200,7 @@ export function formatManagedAiAccessConfig(
   return `${applyGatewayProviderRouting(withDefaultModel, {
     providerId: input.profile.providerId,
     serverBaseUrl: input.serverBaseUrl,
+    serverClientToken: input.serverClientToken,
     gatewayAccessToken: input.gatewayAccessToken,
     models: [input.profile.defaultModel.modelID, ...input.profile.allowedModels],
   })}\n`;

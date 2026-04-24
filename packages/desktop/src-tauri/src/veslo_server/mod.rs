@@ -64,6 +64,10 @@ fn persisted_state_path(dir: &Path) -> PathBuf {
 }
 
 fn persisted_state_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Some(override_dir) = crate::paths::app_local_data_dir_override() {
+        return Ok(override_dir);
+    }
+
     app.path()
         .app_local_data_dir()
         .map_err(|e| format!("Failed to resolve app local data dir: {e}"))

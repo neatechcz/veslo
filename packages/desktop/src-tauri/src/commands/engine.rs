@@ -128,6 +128,10 @@ fn format_orchestrator_start_error(
     message
 }
 
+fn should_retry_orchestrator_start(attempt: usize, max_attempts: usize, child_exited: bool) -> bool {
+    child_exited && attempt < max_attempts && max_attempts > 1
+}
+
 #[tauri::command]
 pub fn engine_info(
     manager: State<EngineManager>,
@@ -488,85 +492,6 @@ pub fn engine_start(
     if runtime == EngineRuntime::Orchestrator {
         drop(state);
         let data_dir = orchestrator::resolve_orchestrator_data_dir();
-        let daemon_port = find_free_port()?;
-        let daemon_host = "127.0.0.1".to_string();
-        let opencode_bin = program.to_string_lossy().to_string();
-        let spawn_options = OrchestratorSpawnOptions {
-            data_dir: data_dir.clone(),
-            daemon_host: daemon_host.clone(),
-            daemon_port,
-            opencode_bin,
-            opencode_host: bind_host.clone(),
-            opencode_workdir: project_dir.clone(),
-            opencode_port: Some(port),
-            opencode_username: opencode_username.clone(),
-            opencode_password: opencode_password.clone(),
-            cors: Some("*".to_string()),
-        };
-
-        let (mut rx, child) = orchestrator::spawn_orchestrator_daemon(&app, &spawn_options)?;
-
-        // Persist basic auth (and project dir) so relaunches can attach.
-        let _ = orchestrator::write_orchestrator_auth(
-            &data_dir,
-            opencode_username.as_deref(),
-            opencode_password.as_deref(),
-            Some(project_dir.as_str()),
-        );
-
-        {
-            let mut orchestrator_state = orchestrator_manager
-                .inner
-                .lock()
-                .map_err(|_| "orchestrator mutex poisoned".to_string())?;
-            orchestrator_state.child = Some(child);
-            orchestrator_state.child_exited = false;
-            orchestrator_state.data_dir = Some(data_dir.clone());
-            orchestrator_state.last_stdout = None;
-            orchestrator_state.last_stderr = None;
-        }
-
-        let orchestrator_state_handle = orchestrator_manager.inner.clone();
-        let orchestrator_state_wait_handle = orchestrator_state_handle.clone();
-        tauri::async_runtime::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                match event {
-                    CommandEvent::Stdout(line_bytes) => {
-                        let line = String::from_utf8_lossy(&line_bytes).to_string();
-                        if let Ok(mut state) = orchestrator_state_handle.try_lock() {
-                            let next = state.last_stdout.as_deref().unwrap_or_default().to_string()
-                                + &line;
-                            state.last_stdout = Some(truncate_output(&next, 8000));
-                        }
-                    }
-                    CommandEvent::Stderr(line_bytes) => {
-                        let line = String::from_utf8_lossy(&line_bytes).to_string();
-                        if let Ok(mut state) = orchestrator_state_handle.try_lock() {
-                            let next = state.last_stderr.as_deref().unwrap_or_default().to_string()
-                                + &line;
-                            state.last_stderr = Some(truncate_output(&next, 8000));
-                        }
-                    }
-                    CommandEvent::Terminated(_) => {
-                        if let Ok(mut state) = orchestrator_state_handle.try_lock() {
-                            state.child_exited = true;
-                        }
-                    }
-                    CommandEvent::Error(message) => {
-                        if let Ok(mut state) = orchestrator_state_handle.try_lock() {
-                            state.child_exited = true;
-                            let next = state.last_stderr.as_deref().unwrap_or_default().to_string()
-                                + &message;
-                            state.last_stderr = Some(truncate_output(&next, 8000));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        });
-
-        let daemon_base_url = format!("http://{}:{}", daemon_host, daemon_port);
-
         // veslo-orchestrator doesn't start its daemon HTTP server until it has ensured that
         // OpenCode is available. On fresh installs (or after schema changes), OpenCode can run a
         // one-time SQLite migration that takes longer than a few seconds.
@@ -578,40 +503,156 @@ pub fn engine_start(
             .and_then(|value| value.trim().parse::<u64>().ok())
             .filter(|value| *value >= 1_000)
             .unwrap_or(180_000);
+        let max_start_attempts = std::env::var("VESLO_ORCHESTRATOR_START_ATTEMPTS")
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .filter(|value| *value >= 1)
+            .unwrap_or(2);
+        let daemon_host = "127.0.0.1".to_string();
+        let opencode_bin = program.to_string_lossy().to_string();
 
-        let wait_started_at = std::time::Instant::now();
-        let health = loop {
-            let health_error = match orchestrator::fetch_orchestrator_health(&daemon_base_url) {
-                Ok(health) if health.ok => break health,
-                Ok(_) => "Orchestrator reported unhealthy".to_string(),
-                Err(error) => error,
+        let mut health = None;
+        for attempt in 1..=max_start_attempts {
+            let daemon_port = find_free_port()?;
+            let orchestrator_opencode_port = find_free_port()?;
+            let spawn_options = OrchestratorSpawnOptions {
+                data_dir: data_dir.clone(),
+                daemon_host: daemon_host.clone(),
+                daemon_port,
+                opencode_bin: opencode_bin.clone(),
+                opencode_host: bind_host.clone(),
+                opencode_workdir: project_dir.clone(),
+                opencode_port: Some(orchestrator_opencode_port),
+                opencode_username: opencode_username.clone(),
+                opencode_password: opencode_password.clone(),
+                cors: Some("*".to_string()),
             };
-            let elapsed_ms = wait_started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
-            let (child_exited, stderr) = orchestrator_state_wait_handle
-                .lock()
-                .map(|state| (state.child_exited, state.last_stderr.clone()))
-                .unwrap_or((false, None));
 
-            if child_exited {
-                return Err(format_orchestrator_start_error(
-                    elapsed_ms,
-                    &health_error,
-                    true,
-                    stderr.as_deref(),
-                ));
+            let (mut rx, child) = orchestrator::spawn_orchestrator_daemon(&app, &spawn_options)?;
+
+            // Persist basic auth (and project dir) so relaunches can attach.
+            let _ = orchestrator::write_orchestrator_auth(
+                &data_dir,
+                opencode_username.as_deref(),
+                opencode_password.as_deref(),
+                Some(project_dir.as_str()),
+            );
+
+            {
+                let mut orchestrator_state = orchestrator_manager
+                    .inner
+                    .lock()
+                    .map_err(|_| "orchestrator mutex poisoned".to_string())?;
+                orchestrator_state.child = Some(child);
+                orchestrator_state.child_exited = false;
+                orchestrator_state.data_dir = Some(data_dir.clone());
+                orchestrator_state.last_stdout = None;
+                orchestrator_state.last_stderr = None;
             }
 
-            if elapsed_ms >= health_timeout_ms {
-                return Err(format_orchestrator_start_error(
-                    health_timeout_ms,
-                    &health_error,
-                    false,
-                    stderr.as_deref(),
-                ));
-            }
+            let orchestrator_state_handle = orchestrator_manager.inner.clone();
+            let orchestrator_state_wait_handle = orchestrator_state_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    match event {
+                        CommandEvent::Stdout(line_bytes) => {
+                            let line = String::from_utf8_lossy(&line_bytes).to_string();
+                            if let Ok(mut state) = orchestrator_state_handle.try_lock() {
+                                let next = state.last_stdout.as_deref().unwrap_or_default().to_string()
+                                    + &line;
+                                state.last_stdout = Some(truncate_output(&next, 8000));
+                            }
+                        }
+                        CommandEvent::Stderr(line_bytes) => {
+                            let line = String::from_utf8_lossy(&line_bytes).to_string();
+                            if let Ok(mut state) = orchestrator_state_handle.try_lock() {
+                                let next = state.last_stderr.as_deref().unwrap_or_default().to_string()
+                                    + &line;
+                                state.last_stderr = Some(truncate_output(&next, 8000));
+                            }
+                        }
+                        CommandEvent::Terminated(_) => {
+                            if let Ok(mut state) = orchestrator_state_handle.try_lock() {
+                                state.child_exited = true;
+                            }
+                        }
+                        CommandEvent::Error(message) => {
+                            if let Ok(mut state) = orchestrator_state_handle.try_lock() {
+                                state.child_exited = true;
+                                let next = state.last_stderr.as_deref().unwrap_or_default().to_string()
+                                    + &message;
+                                state.last_stderr = Some(truncate_output(&next, 8000));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            });
 
-            std::thread::sleep(std::time::Duration::from_millis(200));
-        };
+            let daemon_base_url = format!("http://{}:{}", daemon_host, daemon_port);
+            let wait_started_at = std::time::Instant::now();
+
+            let health_result = loop {
+                let health_error = match orchestrator::fetch_orchestrator_health(&daemon_base_url) {
+                    Ok(health) if health.ok => break Ok(health),
+                    Ok(_) => "Orchestrator reported unhealthy".to_string(),
+                    Err(error) => error,
+                };
+                let elapsed_ms = wait_started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
+                let (child_exited, stderr) = orchestrator_state_wait_handle
+                    .lock()
+                    .map(|state| (state.child_exited, state.last_stderr.clone()))
+                    .unwrap_or((false, None));
+
+                if child_exited {
+                    break Err(format_orchestrator_start_error(
+                        elapsed_ms,
+                        &health_error,
+                        true,
+                        stderr.as_deref(),
+                    ));
+                }
+
+                if elapsed_ms >= health_timeout_ms {
+                    break Err(format_orchestrator_start_error(
+                        health_timeout_ms,
+                        &health_error,
+                        false,
+                        stderr.as_deref(),
+                    ));
+                }
+
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            };
+
+            match health_result {
+                Ok(next_health) => {
+                    health = Some(next_health);
+                    break;
+                }
+                Err(error) => {
+                    let child_exited = orchestrator_manager
+                        .inner
+                        .lock()
+                        .map(|state| state.child_exited)
+                        .unwrap_or(false);
+
+                    if should_retry_orchestrator_start(attempt, max_start_attempts, child_exited) {
+                        if let Ok(mut orchestrator_state) = orchestrator_manager.inner.lock() {
+                            OrchestratorManager::stop_locked(&mut orchestrator_state);
+                        }
+                        continue;
+                    }
+
+                    return Err(error);
+                }
+            }
+        }
+
+        let health = health.ok_or_else(|| {
+            "Failed to start orchestrator: retry loop exhausted without a successful health check."
+                .to_string()
+        })?;
         let opencode = health
             .opencode
             .ok_or_else(|| "Orchestrator did not report OpenCode status".to_string())?;
@@ -856,7 +897,7 @@ pub fn engine_start(
 
 #[cfg(test)]
 mod tests {
-    use super::format_orchestrator_start_error;
+    use super::{format_orchestrator_start_error, should_retry_orchestrator_start};
 
     #[test]
     fn formats_orchestrator_timeout_with_captured_stderr() {
@@ -885,5 +926,13 @@ mod tests {
             .contains("Failed to start orchestrator: process exited before health became ready."));
         assert!(message.contains("Connection refused"));
         assert!(!message.contains("waited 2300ms"));
+    }
+
+    #[test]
+    fn retries_orchestrator_start_only_for_nonfinal_early_exit_attempts() {
+        assert!(should_retry_orchestrator_start(1, 2, true));
+        assert!(!should_retry_orchestrator_start(2, 2, true));
+        assert!(!should_retry_orchestrator_start(1, 2, false));
+        assert!(!should_retry_orchestrator_start(1, 1, true));
     }
 }

@@ -29,7 +29,7 @@ function normalizeOptionalBoolean(value: unknown): boolean | null {
 }
 
 function parseSnapshotFile(raw: string): DesktopAuthSeed {
-  const parsed = JSON.parse(raw) as Partial<DesktopAuthSnapshotFile>;
+  const parsed = JSON.parse(raw.replace(/^\uFEFF/, "")) as Partial<DesktopAuthSnapshotFile>;
   return {
     authJson: normalizeOptionalText(parsed.authJson),
     keepSignedIn: normalizeOptionalBoolean(parsed.keepSignedIn),
@@ -82,11 +82,17 @@ export function writeDesktopAuthSeedFile(snapshotPath: string, seed: DesktopAuth
 export function prepareDesktopAuthSeed(
   opencodeHome: string,
   env: Record<string, string | undefined> = process.env,
+  options?: {
+    preserveExisting?: boolean;
+  },
 ): string {
   const snapshotPath = resolveE2EDesktopAuthSnapshotPath(opencodeHome);
   const seed = resolveDesktopAuthSeedFromEnv(env);
   if (seed) {
     writeDesktopAuthSeedFile(snapshotPath, seed);
+  } else if (options?.preserveExisting) {
+    // Custom E2E profiles may already carry a real desktop auth snapshot.
+    // Preserve it unless the caller explicitly provides a replacement seed.
   } else {
     rmSync(snapshotPath, { force: true });
   }

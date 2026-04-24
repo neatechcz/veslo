@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
+  prepareDesktopAuthSeed,
   resolveDesktopAuthSeedFromEnv,
   resolveE2EDesktopAuthSnapshotPath,
   writeDesktopAuthSeedFile,
@@ -85,4 +86,75 @@ test("resolveDesktopAuthSeedFromEnv can import an existing snapshot file", () =>
     onboardingComplete: true,
     source: "desktop-runtime",
   });
+});
+
+test("resolveDesktopAuthSeedFromEnv tolerates a UTF-8 BOM in snapshot files", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "veslo-e2e-auth-seed-bom-"));
+  const sourcePath = join(tempDir, "den-auth.json");
+  writeFileSync(
+    sourcePath,
+    `\uFEFF${JSON.stringify({
+      version: 1,
+      authJson: "{\"token\":\"from-bom\"}",
+      keepSignedIn: true,
+      language: "en",
+      onboardingComplete: true,
+      updatedAt: Date.now(),
+      source: "desktop-runtime",
+    })}`,
+  );
+
+  const seed = resolveDesktopAuthSeedFromEnv({
+    VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: sourcePath,
+  });
+
+  assert.deepEqual(seed, {
+    authJson: "{\"token\":\"from-bom\"}",
+    keepSignedIn: true,
+    language: "en",
+    onboardingComplete: true,
+    source: "desktop-runtime",
+  });
+});
+
+test("prepareDesktopAuthSeed preserves an existing custom-profile snapshot when preserveExisting is enabled", () => {
+  const opencodeHome = mkdtempSync(join(tmpdir(), "veslo-e2e-auth-preserve-"));
+  const snapshotPath = resolveE2EDesktopAuthSnapshotPath(opencodeHome);
+  writeDesktopAuthSeedFile(snapshotPath, {
+    authJson: "{\"token\":\"keep-me\"}",
+    keepSignedIn: true,
+    language: "en",
+    onboardingComplete: true,
+    source: "desktop-runtime",
+  });
+
+  try {
+    const preparedPath = prepareDesktopAuthSeed(opencodeHome, {}, { preserveExisting: true });
+    assert.equal(preparedPath, snapshotPath);
+
+    const parsed = JSON.parse(readFileSync(snapshotPath, "utf8")) as Record<string, unknown>;
+    assert.equal(parsed.authJson, "{\"token\":\"keep-me\"}");
+    assert.equal(parsed.source, "desktop-runtime");
+  } finally {
+    rmSync(opencodeHome, { recursive: true, force: true });
+  }
+});
+
+test("prepareDesktopAuthSeed clears an existing snapshot by default when no replacement seed is provided", () => {
+  const opencodeHome = mkdtempSync(join(tmpdir(), "veslo-e2e-auth-clear-"));
+  const snapshotPath = resolveE2EDesktopAuthSnapshotPath(opencodeHome);
+  writeDesktopAuthSeedFile(snapshotPath, {
+    authJson: "{\"token\":\"stale\"}",
+    keepSignedIn: true,
+    language: "en",
+    onboardingComplete: true,
+    source: "desktop-runtime",
+  });
+
+  try {
+    prepareDesktopAuthSeed(opencodeHome, {});
+    assert.equal(existsSync(snapshotPath), false);
+  } finally {
+    rmSync(opencodeHome, { recursive: true, force: true });
+  }
 });

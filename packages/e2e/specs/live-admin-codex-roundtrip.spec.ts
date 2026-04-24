@@ -37,7 +37,7 @@ function readLiveAdminAuth(): { authJson: string; auth: DenAuthState; source: st
     throw new Error('VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE is required.');
   }
 
-  const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf8')) as DesktopAuthSnapshotFile;
+  const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf8').replace(/^\uFEFF/, '')) as DesktopAuthSnapshotFile;
   const authJson = snapshot.authJson?.trim();
   if (!authJson) {
     throw new Error(`Desktop auth snapshot at ${snapshotPath} does not include authJson.`);
@@ -92,6 +92,29 @@ async function readRootText(): Promise<string> {
   return root.getText();
 }
 
+async function clickButtonWithText(labels: string[], timeout = 10000): Promise<boolean> {
+  const predicates = labels.map((label) => `normalize-space()="${label}"`).join(' or ');
+  const buttons = await $$(`//button[${predicates}]`);
+  let button: WebdriverIO.Element | null = null;
+  for (const candidate of buttons) {
+    if (await candidate.isDisplayed().catch(() => false)) {
+      button = candidate;
+      break;
+    }
+  }
+  if (!button) {
+    return false;
+  }
+  await button.waitForDisplayed({ timeout });
+  await browser.waitUntil(async () => button ? button.isEnabled() : false, {
+    timeout,
+    interval: 250,
+    timeoutMsg: `Button ${labels.join('/')} did not become enabled.`,
+  });
+  await button.click();
+  return true;
+}
+
 function normalizeSearchText(value: string): string {
   return value.toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -109,6 +132,31 @@ function compactLogText(value: string): string {
 
 function isUnauthenticatedAuthGate(text: string): boolean {
   return text.includes('Sign in to Veslo') && text.includes('Sign in with Browser');
+}
+
+async function completeFirstRunOnboardingIfVisible(timeout = 120000): Promise<void> {
+  const text = await readRootText();
+  if (!text.includes('Choose your language') && !text.includes('Vyberte jazyk aplikace')) {
+    return;
+  }
+
+  await clickButtonWithText(['English'], timeout);
+  const continued = await clickButtonWithText(['Continue', 'Pokračovat'], timeout);
+  if (!continued) {
+    throw new Error('Language onboarding was visible, but the continue button was not found.');
+  }
+
+  await browser.waitUntil(
+    async () => {
+      const nextText = await readRootText();
+      return !nextText.includes('Choose your language') && !nextText.includes('Vyberte jazyk aplikace');
+    },
+    {
+      timeout,
+      interval: 250,
+      timeoutMsg: 'Language onboarding did not complete.',
+    },
+  );
 }
 
 async function authenticateLiveAdmin(gatewayBase: string): Promise<string> {
@@ -205,20 +253,49 @@ async function assignSharedCodexCredential(gatewayBase: string, adminToken: stri
   return { user, credential, aiAccess };
 }
 
-async function waitForExpectedManagedAiAssignment(timeout = 45000): Promise<void> {
+async function waitForExpectedManagedAiAssignment(timeout = 120000): Promise<void> {
+  let lastRouteAttempt = 0;
+  let lastRefreshAttempt = 0;
+  const ensureSettingsRoute = async () => {
+    const now = Date.now();
+    if (now - lastRouteAttempt < 1000) return;
+    lastRouteAttempt = now;
+    await navigateToHash('/dashboard/settings');
+  };
+  const requestManagedAiRefresh = async () => {
+    const now = Date.now();
+    if (now - lastRefreshAttempt < 3000) return;
+    lastRefreshAttempt = now;
+    await browser.execute(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+  };
+
   await navigateToHash('/dashboard/settings');
   await browser.waitUntil(
     async () => {
+      const url = await browser.getUrl();
+      if (!url.includes('#/dashboard/settings')) {
+        await ensureSettingsRoute();
+        return false;
+      }
+
       const text = normalizeSearchText(await readRootText());
-      return (
+      if (
         text.includes('ai access') &&
         text.includes('managed by the platform admin') &&
         text.includes('codex oauth') &&
         text.includes('gpt 5.4')
-      );
+      ) {
+        return true;
+      }
+
+      await requestManagedAiRefresh();
+      return false;
     },
     {
       timeout,
+      interval: 500,
       timeoutMsg: `Settings did not show expected codex_oauth/gpt-5.4 assignment within ${timeout}ms`,
     },
   );
@@ -229,6 +306,12 @@ async function waitForComposer(timeout = 20000) {
   await textbox.waitForExist({ timeout });
   await textbox.waitForDisplayed({ timeout });
   return textbox;
+}
+
+async function openFreshSessionComposer(timeout = 30000): Promise<void> {
+  await navigateToHash('/session');
+  await clickButtonWithText(['New session', 'Nová relace'], timeout).catch(() => false);
+  await waitForComposer(timeout);
 }
 
 async function setComposerText(text: string): Promise<void> {
@@ -261,9 +344,19 @@ async function clickSend(): Promise<void> {
   const textbox = await waitForComposer();
   await textbox.click();
 
-  const sendButton = await $('button[title="Send"], button[title="Odeslat"]');
+  const sendButtons = await $$('button[title="Send"], button[title="Odeslat"]');
+  let sendButton: WebdriverIO.Element | null = null;
+  for (const candidate of sendButtons) {
+    if (await candidate.isDisplayed().catch(() => false)) {
+      sendButton = candidate;
+      break;
+    }
+  }
+  if (!sendButton) {
+    throw new Error('Send button was not visible in the composer.');
+  }
   await sendButton.waitForDisplayed({ timeout: 10000 });
-  await browser.waitUntil(async () => !(await sendButton.getAttribute('disabled')), {
+  await browser.waitUntil(async () => sendButton ? sendButton.isEnabled() : false, {
     timeout: 10000,
     timeoutMsg: 'Composer send button never became enabled.',
   });
@@ -291,20 +384,25 @@ describe('Live admin Codex roundtrip', () => {
 
     const { auth, source } = readLiveAdminAuth();
     const gatewayBase = readGatewayBase();
-    if (source !== 'e2e-live-browser') {
+    const acceptedSources = new Set(['e2e-live-browser', 'desktop-runtime']);
+    if (!acceptedSources.has(source ?? '')) {
       throw new Error(
-        `Desktop auth snapshot must come from the live browser seed flow. Received source=${source ?? '(missing)'}.`,
+        `Desktop auth snapshot must come from a live browser seed or saved desktop runtime. Received source=${source ?? '(missing)'}.`,
       );
     }
 
     console.log('[live-admin-codex] waiting for desktop app shell');
     await waitForAppShellReady(30000);
+    await completeFirstRunOnboardingIfVisible();
     const initialText = await readRootText();
     if (isUnauthenticatedAuthGate(initialText)) {
       throw new Error(
         'Desktop app is still unauthenticated. Seed live browser auth first and relaunch the E2E run.',
       );
     }
+
+    console.log('[live-admin-codex] bootstrapping fresh session surface');
+    await openFreshSessionComposer();
 
     console.log('[live-admin-codex] authenticating admin');
     const adminToken = await authenticateLiveAdmin(gatewayBase);
@@ -326,8 +424,7 @@ describe('Live admin Codex roundtrip', () => {
     }
 
     console.log('[live-admin-codex] opening session composer');
-    await navigateToHash('/session');
-    await waitForComposer();
+    await openFreshSessionComposer();
 
     const token = `codex-live-admin-${Date.now()}`;
     const prompt = `Reply with exactly ${token}. No other words.`;

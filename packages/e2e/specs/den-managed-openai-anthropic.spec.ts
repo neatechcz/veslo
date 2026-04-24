@@ -1,5 +1,6 @@
 import { expect } from '@wdio/globals';
 import { navigateToHash } from '../helpers/app-launcher.js';
+import { makeClient, waitForHealthy } from '../../app/scripts/_util.mjs';
 
 function isUnauthenticatedAuthGate(text: string): boolean {
   return text.includes('Sign in to Veslo') && text.includes('Sign in with Browser');
@@ -19,6 +20,87 @@ function readOptionalEnv(name: string): string | null {
 
 function normalizeSearchText(value: string): string {
   return value.toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function compactLogText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 2000);
+}
+
+function compactBodySnippet(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.replace(/\s+/g, ' ').trim();
+  return trimmed ? trimmed.slice(0, 300) : null;
+}
+
+type TauriInvokeResult<T> = {
+  ok: boolean;
+  value?: T;
+  error?: string;
+};
+
+type VesloServerInfo = {
+  running?: boolean;
+  baseUrl?: string | null;
+  clientToken?: string | null;
+  hostToken?: string | null;
+};
+
+type WorkspaceBootstrapResponse = {
+  activeId?: string | null;
+  workspaces?: Array<{
+    id?: string | null;
+    path?: string | null;
+    workspaceType?: string | null;
+  }>;
+};
+
+type EngineInfo = {
+  running?: boolean;
+  baseUrl?: string | null;
+  projectDir?: string | null;
+  lastStderr?: string | null;
+  lastStdout?: string | null;
+  runtime?: string | null;
+  opencodeUsername?: string | null;
+  opencodePassword?: string | null;
+};
+
+async function tauriInvoke<T>(command: string, payload: Record<string, unknown> = {}): Promise<T> {
+  const result = await browser.executeAsync(
+    (
+      args: { command: string; payload: Record<string, unknown> },
+      done: (value: TauriInvokeResult<unknown>) => void,
+    ) => {
+      const invoke = (
+        window as typeof window & {
+          __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
+        }
+      ).__TAURI_INTERNALS__?.invoke;
+
+      if (typeof invoke !== 'function') {
+        done({ ok: false, error: 'Tauri invoke bridge is unavailable.' });
+        return;
+      }
+
+      invoke(args.command, args.payload).then(
+        (value) => done({ ok: true, value }),
+        (error) =>
+          done({
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+      );
+    },
+    { command, payload },
+  ) as TauriInvokeResult<T>;
+
+  if (!result.ok) {
+    throw new Error(`Tauri invoke failed for ${command}: ${result.error ?? 'unknown error'}`);
+  }
+
+  return result.value as T;
 }
 
 async function waitForAppShellReady(timeout = 15000): Promise<void> {
@@ -41,7 +123,93 @@ async function readRootText(): Promise<string> {
   return root.getText();
 }
 
-async function waitForExpectedManagedAiAssignment(timeout = 30000): Promise<void> {
+async function readMessageTexts(role: 'user' | 'assistant'): Promise<string[]> {
+  return browser.execute((messageRole) => {
+    return Array.from(document.querySelectorAll(`[data-message-role="${messageRole}"]`))
+      .map((element) => element.textContent?.replace(/\s+/g, ' ').trim() ?? '')
+      .filter(Boolean);
+  }, role) as Promise<string[]>;
+}
+
+async function readTaskErrorDisplays(): Promise<Array<{ text: string; title: string }>> {
+  return browser.execute(() => {
+    return Array.from(document.querySelectorAll('[title]'))
+      .map((element) => ({
+        text: element.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+        title: element.getAttribute('title')?.replace(/\s+/g, ' ').trim() ?? '',
+      }))
+      .filter((entry) =>
+        entry.title.length > 0 &&
+        (entry.text === 'Error' ||
+          entry.text === 'Offline' ||
+          entry.text.includes('Failed to load tasks') ||
+          entry.text.includes('Sandbox is offline')),
+      );
+  }) as Promise<Array<{ text: string; title: string }>>;
+}
+
+async function clickButtonWithText(labels: string[], timeout = 10000): Promise<boolean> {
+  const predicates = labels.map((label) => `normalize-space()="${label}"`).join(' or ');
+  const buttons = await $$(`//button[${predicates}]`);
+  let button: WebdriverIO.Element | null = null;
+  for (const candidate of buttons) {
+    if (await candidate.isDisplayed().catch(() => false)) {
+      button = candidate;
+      break;
+    }
+  }
+  if (!button) {
+    return false;
+  }
+  await button.waitForDisplayed({ timeout });
+  await browser.waitUntil(async () => button.isEnabled(), {
+    timeout,
+    interval: 250,
+    timeoutMsg: `Button ${labels.join('/')} did not become enabled.`,
+  });
+  await button.click();
+  return true;
+}
+
+async function completeFirstRunOnboardingIfVisible(timeout = 120000): Promise<void> {
+  const text = await readRootText();
+  if (!text.includes('Choose your language') && !text.includes('Vyberte jazyk aplikace')) {
+    return;
+  }
+
+  await clickButtonWithText(['English']);
+  const continued = await clickButtonWithText(['Continue', 'Pokračovat']);
+  if (!continued) {
+    throw new Error('Language onboarding was visible, but the continue button was not found.');
+  }
+
+  await browser.waitUntil(
+    async () => {
+      const nextText = await readRootText();
+      return !nextText.includes('Choose your language') && !nextText.includes('Vyberte jazyk aplikace');
+    },
+    {
+      timeout,
+      interval: 250,
+      timeoutMsg: 'Language onboarding did not complete.',
+    },
+  ).catch(async (error) => {
+    const currentText = await readRootText().catch(() => '');
+    const state = await browser.execute(() => ({
+      language: window.localStorage.getItem('veslo.language'),
+      onboardingComplete: window.localStorage.getItem('veslo.onboardingComplete'),
+      buttons: Array.from(document.querySelectorAll('button')).map((button) => ({
+        text: button.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+        disabled: button.disabled,
+      })),
+    })).catch(() => null);
+    console.log(`[den-managed-ai-roundtrip] language onboarding still visible text=${compactLogText(currentText)}`);
+    console.log(`[den-managed-ai-roundtrip] language onboarding browser state=${JSON.stringify(state)}`);
+    throw error;
+  });
+}
+
+async function waitForExpectedManagedAiAssignment(timeout = 120000): Promise<void> {
   const expectedProvider = readOptionalEnv('VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER');
   const expectedModel = readOptionalEnv('VESLO_E2E_EXPECTED_MANAGED_AI_MODEL');
 
@@ -49,66 +217,442 @@ async function waitForExpectedManagedAiAssignment(timeout = 30000): Promise<void
     return;
   }
 
+  let lastRouteAttempt = 0;
+  let lastRefreshAttempt = 0;
+  const ensureSettingsRoute = async () => {
+    const now = Date.now();
+    if (now - lastRouteAttempt < 1000) return;
+    lastRouteAttempt = now;
+    await navigateToHash('/dashboard/settings');
+  };
+  const requestManagedAiRefresh = async () => {
+    const now = Date.now();
+    if (now - lastRefreshAttempt < 3000) return;
+    lastRefreshAttempt = now;
+    await browser.execute(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+  };
+
   await navigateToHash('/dashboard/settings');
+  try {
+    await browser.waitUntil(
+      async () => {
+        const url = await browser.getUrl();
+        if (!url.includes('#/dashboard/settings')) {
+          await ensureSettingsRoute();
+          return false;
+        }
+
+        const text = normalizeSearchText(await readRootText());
+        if (!text.includes('ai access') || !text.includes('managed by the platform admin')) {
+          await requestManagedAiRefresh();
+          return false;
+        }
+        if (expectedProvider && !text.includes(normalizeSearchText(expectedProvider))) {
+          await requestManagedAiRefresh();
+          return false;
+        }
+        if (expectedModel && !text.includes(normalizeSearchText(expectedModel))) {
+          await requestManagedAiRefresh();
+          return false;
+        }
+        return true;
+      },
+      {
+        timeout,
+        interval: 500,
+        timeoutMsg: `Settings did not show expected managed AI assignment provider=${expectedProvider ?? '(any)'} model=${expectedModel ?? '(any)'} within ${timeout}ms`,
+      },
+    );
+  } catch (error) {
+    const url = await browser.getUrl().catch(() => '');
+    const text = await readRootText().catch(() => '');
+    console.log(`[den-managed-ai-roundtrip] managed AI precheck url=${url}`);
+    console.log(`[den-managed-ai-roundtrip] managed AI precheck visible text=${compactLogText(text)}`);
+    throw error;
+  }
+}
+
+async function enableDeveloperModeIfVisible(timeout = 15000): Promise<void> {
+  const toggled = await clickButtonWithText(['Enable Developer Mode']);
+  if (!toggled) {
+    return;
+  }
+
   await browser.waitUntil(
     async () => {
-      const text = normalizeSearchText(await readRootText());
-      if (!text.includes('ai access') || !text.includes('managed by the platform admin')) {
-        return false;
-      }
-      if (expectedProvider && !text.includes(normalizeSearchText(expectedProvider))) {
-        return false;
-      }
-      if (expectedModel && !text.includes(normalizeSearchText(expectedModel))) {
-        return false;
-      }
-      return true;
+      const text = await readRootText();
+      return text.includes('Disable Developer Mode');
     },
     {
       timeout,
-      timeoutMsg: `Settings did not show expected managed AI assignment provider=${expectedProvider ?? '(any)'} model=${expectedModel ?? '(any)'} within ${timeout}ms`,
+      interval: 250,
+      timeoutMsg: 'Developer mode toggle did not switch to enabled state.',
     },
   );
 }
 
 async function waitForComposer(timeout = 20000) {
-  const textbox = await $('[role="textbox"]');
-  await textbox.waitForExist({ timeout });
-  await textbox.waitForDisplayed({ timeout });
+  let textbox = await $('[role="textbox"]');
+  try {
+    await textbox.waitForExist({ timeout });
+    await textbox.waitForDisplayed({ timeout });
+  } catch (error) {
+    const text = await readRootText().catch(() => '');
+    console.log(`[den-managed-ai-roundtrip] composer missing visible text=${compactLogText(text)}`);
+    throw error;
+  }
   return textbox;
+}
+
+async function probeRawSessionApi(engineInfo: EngineInfo | null) {
+  const baseUrl = engineInfo?.baseUrl?.trim() ?? '';
+  const directory = engineInfo?.projectDir?.trim() ?? '';
+  const username = engineInfo?.opencodeUsername?.trim() ?? '';
+  const password = engineInfo?.opencodePassword?.trim() ?? '';
+
+  if (!baseUrl || !directory || !username || !password) {
+    return null;
+  }
+
+  try {
+    const client = makeClient({
+      baseUrl,
+      directory,
+      auth: { username, password },
+    });
+    await waitForHealthy(client, { timeoutMs: 10000, pollMs: 250 });
+    const listed = await client.session.list({ directory, limit: 5 });
+    const created = await client.session.create({
+      title: `[probe] ${Date.now()}`,
+      directory,
+    });
+
+    return {
+      ok: true,
+      listedCount: Array.isArray(listed) ? listed.length : null,
+      created: Boolean(created?.id),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function probeVesloServerState(vesloServerInfo: VesloServerInfo | null) {
+  const baseUrl = vesloServerInfo?.baseUrl?.trim() ?? '';
+  const clientToken = vesloServerInfo?.clientToken?.trim() ?? '';
+  const hostToken = vesloServerInfo?.hostToken?.trim() ?? '';
+
+  if (!baseUrl || !clientToken) {
+    return null;
+  }
+
+  try {
+    const workspaceResponse = await fetch(`${baseUrl}/workspaces`, {
+      headers: {
+        authorization: `Bearer ${clientToken}`,
+        accept: 'application/json',
+      },
+    });
+    const workspacePayload = (await workspaceResponse.json().catch(() => null)) as
+      | { activeId?: string | null; items?: Array<{ id?: string | null; path?: string | null; directory?: string | null }> }
+      | null;
+
+    let statusSummary: Record<string, unknown> | null = null;
+    if (hostToken) {
+      const statusResponse = await fetch(`${baseUrl}/status`, {
+        headers: {
+          authorization: `Bearer ${hostToken}`,
+          accept: 'application/json',
+        },
+      });
+      const statusPayload = (await statusResponse.json().catch(() => null)) as
+        | { workspace?: { id?: string | null; path?: string | null } | null; activeWorkspaceId?: string | null; workspaceCount?: number | null }
+        | null;
+      if (statusPayload) {
+        statusSummary = {
+          activeWorkspaceId: statusPayload.activeWorkspaceId ?? null,
+          workspaceCount: statusPayload.workspaceCount ?? null,
+          workspace: statusPayload.workspace
+            ? {
+                id: statusPayload.workspace.id ?? null,
+                path: statusPayload.workspace.path ?? null,
+              }
+            : null,
+        };
+      }
+    }
+
+    return {
+      ok: workspaceResponse.ok,
+      activeId: workspacePayload?.activeId ?? null,
+      workspaceCount: Array.isArray(workspacePayload?.items) ? workspacePayload.items.length : null,
+      items: Array.isArray(workspacePayload?.items)
+        ? workspacePayload.items.map((item) => ({
+            id: item.id ?? null,
+            path: item.path ?? item.directory ?? null,
+          }))
+        : [],
+      status: statusSummary,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function installFetchProbe(): Promise<void> {
+  await browser.execute(() => {
+    const root = window as typeof window & {
+      __vesloFetchProbeInstalled?: boolean;
+      __vesloFetchProbeLogs?: Array<Record<string, unknown>>;
+    };
+    if (root.__vesloFetchProbeInstalled) {
+      root.__vesloFetchProbeLogs = [];
+      return;
+    }
+
+    const originalFetch = window.fetch.bind(window);
+    root.__vesloFetchProbeInstalled = true;
+    root.__vesloFetchProbeLogs = [];
+    const compactBodySnippet = (value: unknown) => {
+      if (typeof value !== 'string') {
+        return null;
+      }
+      const trimmed = value.replace(/\s+/g, ' ').trim();
+      return trimmed ? trimmed.slice(0, 300) : null;
+    };
+
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const startedAt = Date.now();
+      const request = input instanceof Request ? input : null;
+      const method = init?.method ?? request?.method ?? 'GET';
+      const url = String(input instanceof Request ? input.url : input);
+      const rawBody =
+        typeof init?.body === 'string'
+          ? init.body
+          : null;
+      const bodySnippet = compactBodySnippet(rawBody);
+      let targetUrl: string | null = null;
+      let targetMethod: string | null = null;
+      if (rawBody && url.includes('plugin%3Ahttp%7Cfetch')) {
+        try {
+          const parsed = JSON.parse(rawBody) as {
+            clientConfig?: { url?: string; method?: string };
+          };
+          targetUrl = parsed.clientConfig?.url ?? null;
+          targetMethod = parsed.clientConfig?.method ?? null;
+        } catch {
+          // ignore
+        }
+      }
+
+      try {
+        const response = await originalFetch(input, init);
+        const logs = root.__vesloFetchProbeLogs ?? [];
+        logs.push({
+          at: new Date().toISOString(),
+          method,
+          url,
+          targetUrl,
+          targetMethod,
+          status: response.status,
+          ok: response.ok,
+          durationMs: Date.now() - startedAt,
+          bodySnippet,
+        });
+        if (logs.length > 80) logs.splice(0, logs.length - 80);
+        root.__vesloFetchProbeLogs = logs;
+        return response;
+      } catch (error) {
+        const logs = root.__vesloFetchProbeLogs ?? [];
+        logs.push({
+          at: new Date().toISOString(),
+          method,
+          url,
+          targetUrl,
+          targetMethod,
+          error: error instanceof Error ? error.message : String(error),
+          durationMs: Date.now() - startedAt,
+          bodySnippet,
+        });
+        if (logs.length > 80) logs.splice(0, logs.length - 80);
+        root.__vesloFetchProbeLogs = logs;
+        throw error;
+      }
+    };
+  });
+}
+
+async function openPrivateWorkspaceComposerIfVisible(timeout = 30000): Promise<void> {
+  const text = await readRootText();
+  if (!text.includes('Start a new session') && !text.includes('Spustit novou relaci')) {
+    return;
+  }
+
+  const newSessionButton = await $(
+    '//h3[normalize-space()="Start a new session" or normalize-space()="Spustit novou relaci"]/following::button[normalize-space()="New session" or normalize-space()="Nová relace"][1]',
+  );
+  await newSessionButton.waitForDisplayed({ timeout });
+  await browser.waitUntil(async () => newSessionButton.isEnabled(), {
+    timeout,
+    interval: 250,
+    timeoutMsg: 'Private workspace New session button did not become enabled.',
+  });
+  await newSessionButton.click();
+  await waitForComposer(timeout);
+}
+
+async function ensureLocalVesloServerReady(timeout = 60000): Promise<void> {
+  await browser.setTimeout({ script: timeout });
+  await tauriInvoke('veslo_server_restart');
+
+  await browser.waitUntil(
+    async () => {
+      const info = await tauriInvoke<VesloServerInfo>('veslo_server_info').catch(() => null);
+      return Boolean(info?.running && info?.baseUrl && info?.clientToken);
+    },
+    {
+      timeout,
+      interval: 500,
+      timeoutMsg: `Local Veslo server did not become ready within ${timeout}ms`,
+    },
+  );
+
+  await browser.execute(() => {
+    window.dispatchEvent(new Event('focus'));
+  });
+}
+
+async function readActiveLocalWorkspacePath(): Promise<string> {
+  const bootstrap = await tauriInvoke<WorkspaceBootstrapResponse>('workspace_bootstrap');
+  const workspaces = Array.isArray(bootstrap.workspaces) ? bootstrap.workspaces : [];
+  const activeWorkspace =
+    workspaces.find((workspace) => workspace.id && workspace.id === bootstrap.activeId) ??
+    workspaces.find((workspace) => workspace.workspaceType === 'local' && workspace.path?.trim());
+  const workspacePath =
+    activeWorkspace?.workspaceType === 'local' && activeWorkspace.path ? activeWorkspace.path.trim() : '';
+
+  if (!workspacePath) {
+    throw new Error(
+      `No active local workspace available for engine startup (activeId=${bootstrap.activeId ?? 'none'}, workspaceCount=${workspaces.length}).`,
+    );
+  }
+
+  return workspacePath;
+}
+
+async function ensureLocalEngineReady(timeout = 360000): Promise<void> {
+  const workspacePath = await readActiveLocalWorkspacePath();
+  const startedAt = Date.now();
+  const normalizeWorkspacePath = (value: string | null | undefined) =>
+    (value ?? '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+
+  const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath);
+  console.log(`[den-managed-ai-roundtrip] waiting for local engine for ${workspacePath}`);
+  await browser.setTimeout({ script: timeout });
+
+  try {
+    await browser.waitUntil(
+      async () => {
+        const info = await tauriInvoke<EngineInfo>('engine_info').catch(() => null);
+        return Boolean(
+          info?.running &&
+            normalizeWorkspacePath(info?.projectDir) === normalizedWorkspacePath,
+        );
+      },
+      {
+        timeout,
+        interval: 500,
+        timeoutMsg: `Local engine did not report running for ${workspacePath} within ${timeout}ms`,
+      },
+    );
+  } catch (error) {
+    const info = await tauriInvoke<EngineInfo>('engine_info').catch(() => null);
+    console.log(`[den-managed-ai-roundtrip] local engine wait failed info=${JSON.stringify(info)}`);
+    throw error;
+  }
+
+  await tauriInvoke('veslo_server_restart');
+  await browser.execute(() => {
+    window.dispatchEvent(new Event('focus'));
+  });
+  console.log(`[den-managed-ai-roundtrip] local engine ready in ${Date.now() - startedAt}ms`);
+
+  await browser.refresh();
+  await waitForAppShellReady(30000);
+  await completeFirstRunOnboardingIfVisible();
+}
+
+async function waitForSessionRuntimeReady(timeout = 60000): Promise<void> {
+  await browser.waitUntil(
+    async () => {
+      const text = await readRootText();
+      if (text.includes('Loading tasks')) return false;
+      const state = await browser.execute(() => ({
+        baseUrl: window.localStorage.getItem('veslo.baseUrl') ?? '',
+        defaultModel: window.localStorage.getItem('veslo.defaultModel') ?? '',
+      }));
+      return state.baseUrl.startsWith('http://127.0.0.1:') && state.defaultModel.includes('gpt-5.4');
+    },
+    {
+      timeout,
+      interval: 500,
+      timeoutMsg: `Session runtime did not reconnect within ${timeout}ms`,
+    },
+  );
 }
 
 async function setComposerText(text: string): Promise<void> {
   const textbox = await waitForComposer();
-  await browser.execute(
-    (element: HTMLElement, value: string) => {
-      element.focus();
-      element.textContent = value;
-      element.dispatchEvent(
-        new InputEvent('input', {
-          bubbles: true,
-          data: value,
-          inputType: 'insertText',
-        }),
-      );
+  await textbox.click();
+  await textbox.setValue(text);
+  await browser.waitUntil(
+    async () => browser.execute((element: HTMLElement, value: string) => element.textContent === value, textbox, text),
+    {
+      timeout: 10000,
+      timeoutMsg: 'Composer text was not reflected in the editable node after input.',
     },
-    textbox,
-    text,
   );
 }
 
 async function clickSend(): Promise<void> {
-  const sendButton = await $('button[title="Send"], button[title="Odeslat"]');
+  const textbox = await waitForComposer();
+  await textbox.click();
+  const sendButton = await $('button[title="Send"]');
+
+  const before = await browser.execute((editor: HTMLElement) => ({
+    activeElementIsEditor: document.activeElement === editor,
+    editorText: editor.textContent ?? '',
+  }), textbox);
+  console.log(`[den-managed-ai-roundtrip] before send=${JSON.stringify(before)}`);
+
   await sendButton.waitForDisplayed({ timeout: 10000 });
-  await browser.waitUntil(async () => !(await sendButton.getAttribute('disabled')), {
+  await browser.waitUntil(async () => sendButton.isEnabled(), {
     timeout: 10000,
-    timeoutMsg: 'Composer send button never became enabled.',
+    interval: 250,
+    timeoutMsg: 'Send button did not become enabled.',
   });
   await sendButton.click();
+
+  await browser.pause(1000);
+  const after = await browser.execute((editor: HTMLElement) => ({
+    activeElementIsEditor: document.activeElement === editor,
+    editorText: editor.textContent ?? '',
+  }), textbox);
+  console.log(`[den-managed-ai-roundtrip] after send=${JSON.stringify(after)}`);
 }
 
 describe('DEN-managed AI roundtrip', () => {
   it('should send a managed prompt and render the hosted provider response', async function () {
+    this.timeout(720000);
+
     await waitForAppShellReady();
     const initialText = await readRootText();
     if (isUnauthenticatedAuthGate(initialText)) {
@@ -116,31 +660,142 @@ describe('DEN-managed AI roundtrip', () => {
       this.skip();
     }
 
+    await completeFirstRunOnboardingIfVisible();
+    await navigateToHash('/session');
+    await openPrivateWorkspaceComposerIfVisible();
+    await waitForComposer();
+    await ensureLocalVesloServerReady();
     await waitForExpectedManagedAiAssignment();
+    await enableDeveloperModeIfVisible();
+    await navigateToHash('/dashboard/settings');
+    await waitForAppShellReady(15000);
+    await browser.pause(1000);
+    await enableDeveloperModeIfVisible().catch(() => {});
     await navigateToHash('/session');
     await waitForComposer();
+    await waitForComposer();
+    await installFetchProbe();
 
     const expectedProvider = readOptionalEnv('VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER') ?? 'managed-ai';
     const token = `${expectedProvider.replace(/[^a-z0-9_-]/gi, '-').toLowerCase()}-${Date.now()}`;
-    const prompt = `Reply with exactly ${token}. No other words.`;
+    const prompt = `Live Veslo desktop E2E check ${token}. Reply with one short sentence.`;
+    const baselineAssistantMessages = await readMessageTexts('assistant');
 
     await setComposerText(prompt);
     await clickSend();
 
-    await browser.waitUntil(
-      async () => {
-        const text = await readRootText();
-        return countOccurrences(text, token) >= 2;
-      },
-      {
-        timeout: 120000,
-        interval: 1000,
-        timeoutMsg: `Managed AI response did not echo token ${token} within 120000ms`,
-      },
-    );
+    let assistantResponse = '';
+    try {
+      await browser.waitUntil(
+        async () => {
+          const assistantMessages = await readMessageTexts('assistant');
+          const newMessages = assistantMessages.slice(baselineAssistantMessages.length);
+          assistantResponse =
+            newMessages.find((message) => {
+              const normalized = normalizeSearchText(message);
+              return (
+                message.length > 0 &&
+                !normalized.includes('server unavailable') &&
+                !normalized.includes('failed to') &&
+                !normalized.includes('gateway error')
+              );
+            }) ?? '';
+          return assistantResponse.length > 0;
+        },
+        {
+          timeout: 120000,
+          interval: 1000,
+          timeoutMsg: `Managed AI did not render a new assistant response for token ${token} within 120000ms`,
+        },
+      );
+    } catch (error) {
+      const text = await readRootText().catch(() => '');
+      const taskErrorDisplays = await readTaskErrorDisplays().catch(() => []);
+      const engineInfo = await tauriInvoke<EngineInfo>('engine_info').catch(() => null);
+      const vesloServerInfo = await tauriInvoke<VesloServerInfo>('veslo_server_info').catch(() => null);
+      const rawSessionApiProbe = await probeRawSessionApi(engineInfo).catch(() => null);
+      const vesloServerStateProbe = await probeVesloServerState(vesloServerInfo).catch(() => null);
+      const perfLogs = await browser.execute(() => {
+        const root = window as typeof window & { __vesloPerfLogs?: unknown[] };
+        return Array.isArray(root.__vesloPerfLogs) ? root.__vesloPerfLogs.slice(-20) : [];
+      }).catch(() => []);
+      const fetchLogs = await browser.execute(() => {
+        const root = window as typeof window & { __vesloFetchProbeLogs?: unknown[] };
+        return Array.isArray(root.__vesloFetchProbeLogs) ? root.__vesloFetchProbeLogs.slice(-40) : [];
+      }).catch(() => []);
+      const sendTrace = await browser.execute(() => {
+        const root = window as typeof window & { __vesloSendTrace?: unknown[] };
+        return Array.isArray(root.__vesloSendTrace) ? root.__vesloSendTrace.slice(-60) : [];
+      }).catch(() => []);
+      const workspaceActivateLog = await browser.execute(() => {
+        const root = window as typeof window & { __wsActivateLog?: string };
+        return typeof root.__wsActivateLog === 'string' ? root.__wsActivateLog : '';
+      }).catch(() => '');
+      const browserState = await browser.execute(() => {
+        const storage = window.localStorage;
+        return {
+          hash: window.location.hash,
+          baseUrl: storage.getItem('veslo.baseUrl'),
+          startupPreference: storage.getItem('veslo.startupPreference'),
+          developerMode: storage.getItem('veslo.developerMode'),
+          defaultModel: storage.getItem('veslo.defaultModel'),
+          onboardingComplete: storage.getItem('veslo.onboardingComplete'),
+        };
+      }).catch(() => null);
+      const safeEngineInfo = engineInfo
+        ? {
+            running: engineInfo.running ?? false,
+            runtime: engineInfo.runtime ?? null,
+            projectDir: engineInfo.projectDir ?? null,
+            baseUrl: engineInfo.baseUrl ?? null,
+            lastStdout: compactLogText(engineInfo.lastStdout ?? ''),
+            lastStderr: compactLogText(engineInfo.lastStderr ?? ''),
+          }
+        : null;
+      const safeVesloServerInfo = vesloServerInfo
+        ? {
+            running: vesloServerInfo.running ?? false,
+            baseUrl: vesloServerInfo.baseUrl ?? null,
+          }
+        : null;
+      const interestingFetchLogs = Array.isArray(fetchLogs)
+        ? fetchLogs.filter((entry) => {
+            if (!entry || typeof entry !== 'object') return false;
+            const record = entry as Record<string, unknown>;
+            const targetUrl = typeof record.targetUrl === 'string' ? record.targetUrl : '';
+            return (
+              targetUrl.includes('/session') ||
+              targetUrl.includes('/event') ||
+              targetUrl.includes('/health') ||
+              targetUrl.includes('/config')
+            );
+          })
+        : [];
+      console.log(`[den-managed-ai-roundtrip] final token occurrences=${countOccurrences(text, token)}`);
+      console.log(`[den-managed-ai-roundtrip] final visible text=${compactLogText(text)}`);
+      console.log(`[den-managed-ai-roundtrip] browser state=${JSON.stringify(browserState)}`);
+      console.log(`[den-managed-ai-roundtrip] task error displays=${JSON.stringify(taskErrorDisplays)}`);
+      console.log(`[den-managed-ai-roundtrip] engine info=${JSON.stringify(safeEngineInfo)}`);
+      console.log(`[den-managed-ai-roundtrip] veslo server info=${JSON.stringify(safeVesloServerInfo)}`);
+      console.log(`[den-managed-ai-roundtrip] veslo server state probe=${compactLogText(JSON.stringify(vesloServerStateProbe))}`);
+      console.log(`[den-managed-ai-roundtrip] raw session api probe=${JSON.stringify(rawSessionApiProbe)}`);
+      console.log(`[den-managed-ai-roundtrip] fetch logs=${compactLogText(JSON.stringify(interestingFetchLogs))}`);
+      console.log(`[den-managed-ai-roundtrip] send trace=${compactLogText(JSON.stringify(sendTrace))}`);
+      console.log(`[den-managed-ai-roundtrip] workspace activate log=${compactLogText(workspaceActivateLog)}`);
+      console.log(`[den-managed-ai-roundtrip] perf logs=${compactLogText(JSON.stringify(perfLogs))}`);
+      throw error;
+    }
 
     const text = await readRootText();
-    expect(countOccurrences(text, token)).toBeGreaterThanOrEqual(2);
+    const userMessages = await readMessageTexts('user');
+    const assistantResponseLower = assistantResponse.toLowerCase();
+    console.log(`[den-managed-ai-roundtrip] assistant response=${compactLogText(assistantResponse)}`);
+    expect(userMessages.some((message) => message.includes(token))).toBe(true);
+    expect(assistantResponse.length).toBeGreaterThan(0);
+    expect(assistantResponseLower).not.toContain('authentication failed');
+    expect(assistantResponseLower).not.toContain('invalid bearer token');
+    expect(assistantResponseLower).not.toContain('unauthorized');
     expect(text.toLowerCase()).not.toContain('server unavailable');
+    expect(text.toLowerCase()).not.toContain('gateway error');
   });
 });

@@ -31,6 +31,8 @@ const GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS = new Set([
   "xveslogatewaytoken",
   "xveslosessionid",
 ]);
+const SERVER_PATCH_COMPARISON_SECRET_VALUE = "__veslo_secret__";
+const SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE = "__veslo_gateway_token__";
 
 export const OPENCODE_SESSION_ID_TEMPLATE = "${OPENCODE_SESSION_ID}";
 
@@ -228,11 +230,57 @@ function sanitizeGatewayProviderModel(value: unknown): {
   return { config: sanitized, headers };
 }
 
+function normalizeConfigForServerPatchComparison(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeConfigForServerPatchComparison(item));
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const input = value as Record<string, unknown>;
+  const output: Record<string, unknown> = {};
+
+  for (const [key, rawValue] of Object.entries(input)) {
+    const normalizedKey = normalizeConfigKey(key);
+    if (normalizedKey === "xveslogatewaytoken") {
+      output[key] =
+        typeof rawValue === "string" && rawValue.trim()
+          ? SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE
+          : rawValue;
+      continue;
+    }
+
+    if (isGatewayProviderSecretKey(normalizedKey)) {
+      output[key] =
+        typeof rawValue === "string" && rawValue.trim()
+          ? SERVER_PATCH_COMPARISON_SECRET_VALUE
+          : rawValue;
+      continue;
+    }
+
+    output[key] = normalizeConfigForServerPatchComparison(rawValue);
+  }
+
+  return output;
+}
+
+export function managedConfigContentsMatchForServerPatch(
+  currentContent: string | null | undefined,
+  desiredContent: string | null | undefined,
+): boolean {
+  const current = normalizeConfigForServerPatchComparison(parseConfigContent(currentContent));
+  const desired = normalizeConfigForServerPatchComparison(parseConfigContent(desiredContent));
+  return JSON.stringify(current) === JSON.stringify(desired);
+}
+
 export function applyGatewayProviderRouting(
   content: string | null | undefined,
   input: {
     providerId: GatewayOwnedProviderId;
     serverBaseUrl: string;
+    serverClientToken: string;
     gatewayAccessToken: string;
     models?: string[];
   },
@@ -245,6 +293,11 @@ export function applyGatewayProviderRouting(
   const serverBaseUrl = input.serverBaseUrl.trim().replace(/\/+$/, "");
   if (!serverBaseUrl) {
     throw new Error("Server base URL is required");
+  }
+
+  const serverClientToken = input.serverClientToken.trim();
+  if (!serverClientToken) {
+    throw new Error("Server client token is required");
   }
 
   const gatewayAccessToken = input.gatewayAccessToken.trim();
@@ -274,6 +327,7 @@ export function applyGatewayProviderRouting(
       ...existingModel.config,
       headers: {
         ...existingModel.headers,
+        ...(providerId === "codex_oauth" ? {} : { Authorization: `Bearer ${serverClientToken}` }),
         "x-veslo-gateway-token": gatewayAccessToken,
         "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
       },
@@ -296,6 +350,7 @@ export function applyGatewayProviderRouting(
       : {}),
     options: {
       ...existingOptions,
+      ...(providerId === "codex_oauth" ? { apiKey: serverClientToken } : {}),
       baseURL: `${serverBaseUrl}/ai-gateway/providers/${providerId}/v1`,
       ...(Object.keys(existingHeaders).length > 0 ? { headers: existingHeaders } : {}),
     },

@@ -20,6 +20,23 @@ pub fn home_dir() -> Option<PathBuf> {
     None
 }
 
+pub fn env_path(var_name: &str) -> Option<PathBuf> {
+    let value = env::var(var_name).ok()?;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(trimmed))
+}
+
+pub fn app_data_dir_override() -> Option<PathBuf> {
+    env_path("VESLO_APP_DATA_DIR")
+}
+
+pub fn app_local_data_dir_override() -> Option<PathBuf> {
+    env_path("VESLO_APP_LOCAL_DATA_DIR").or_else(|| app_data_dir_override().map(|dir| dir.join("local")))
+}
+
 pub fn candidate_xdg_data_dirs() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     let Some(home) = home_dir() else {

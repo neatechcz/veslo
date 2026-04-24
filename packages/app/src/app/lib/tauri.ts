@@ -185,6 +185,10 @@ export async function workspaceCreate(input: {
   });
 }
 
+export async function workspacePrivateRoot(): Promise<string> {
+  return invoke<string>("workspace_private_root");
+}
+
 export async function workspaceCopyIntoFolder(input: {
   sourcePath: string;
   targetPath: string;

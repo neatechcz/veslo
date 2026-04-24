@@ -12,6 +12,7 @@ import type {
 import {
   addOpencodeCacheHint,
   clearStartupPreference,
+  createSingleFlight,
   isTauriRuntime,
   isPrivateWorkspacePathForRoot,
   normalizeDirectoryPath,
@@ -31,7 +32,7 @@ import {
   type VesloServerSettings,
   type VesloWorkspaceInfo,
 } from "../lib/veslo-server";
-import { appDataDir, homeDir } from "@tauri-apps/api/path";
+import { homeDir } from "@tauri-apps/api/path";
 import {
   engineInfo,
   engineStart,
@@ -42,6 +43,7 @@ import {
   workspaceBootstrap,
   workspaceCreate,
   workspaceForget,
+  workspacePrivateRoot,
   workspaceVesloRead,
   workspaceSetActive,
   workspaceUpdateDisplayName,
@@ -54,16 +56,15 @@ import type { OpencodeConnectStatus, ProviderListItem } from "../types";
 import { t, currentLocale, isLanguage } from "../../i18n";
 import { mapConfigProvidersToList } from "../utils/providers";
 import { withTimeoutOrThrow } from "../utils/promise-timeout";
-import {
-  activateVesloHostWorkspaceWithTimeout,
-  runWorkspaceEngineRestartWithTimeouts,
-} from "../utils/workspace-switch-timeouts";
+import { connectOrRecoverLocalBootstrap } from "../utils/bootstrap-local-recovery";
+import { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecycle";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { createWorkspaceActivateGuard } from "./workspace-activate-guard";
 import { createOnboardingLanguageGate } from "./onboarding-language-gate";
 import { createConfigStore } from "../stores/config-store";
 import { createEngineStore } from "../stores/engine-store";
 import { createRemoteStore } from "../stores/remote-store";
+import { shouldAutoBootstrapRemoteServer } from "../utils/startup-server-bootstrap";
 
 export type { MigrationRepairResult } from "../stores/config-store";
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
@@ -143,11 +144,15 @@ export function createWorkspaceStore(options: {
   isWindowsPlatform: () => boolean;
   vesloServerSettings: () => VesloServerSettings;
   updateVesloServerSettings: (next: VesloServerSettings) => void;
+  preferServerByDefault?: () => boolean;
   vesloServerClient?: () => VesloServerClient | null;
   setOpencodeConnectStatus?: (status: OpencodeConnectStatus | null) => void;
   onEngineStable?: () => void;
   engineRuntime?: () => EngineRuntime;
   developerMode: () => boolean;
+  setEngineReady?: (value: boolean) => void;
+  populateSidebarFromDb?: (workspaceId: string, directory: string) => Promise<void>;
+  hydrateLatestSessionFromDb?: (workspaceId: string, directory: string) => Promise<void>;
 }) {
   const cloudOnlyMessage = (code: string, detail: string) => `${code}: ${detail}`;
   const blockLocalAction = (code: string, detail: string) => {
@@ -190,6 +195,7 @@ export function createWorkspaceStore(options: {
 
   const wsActivateGuard = createWorkspaceActivateGuard();
   const connectInFlightByKey = new Map<string, Promise<boolean>>();
+  const ensureEngineForWorkspaceSingleFlight = createSingleFlight<boolean>();
 
   // Late-bound reference for the remote store — populated after createRemoteStore().
   const remoteStoreRef: {
@@ -209,7 +215,6 @@ export function createWorkspaceStore(options: {
   const CONNECT_PENDING_PERMISSIONS_TIMEOUT_MS = 8_000;
   const WORKSPACE_IO_TIMEOUT_MS = 8_000;
   const WORKSPACE_SET_ACTIVE_TIMEOUT_MS = 8_000;
-  const ENGINE_INFO_TIMEOUT_MS = 12_000;
   const START_HOST_TIMEOUT_MS = 45_000;
   const WORKSPACE_ACTIVATE_TIMEOUT_MS = 30_000;
   const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS = 15_000;
@@ -340,8 +345,7 @@ export function createWorkspaceStore(options: {
     const cached = privateWorkspaceRoot().trim();
     if (cached) return cached;
     if (!isTauriRuntime()) return "";
-    const base = (await appDataDir()).replace(/[\\/]+$/, "");
-    const next = `${base}/private-workspaces`;
+    const next = (await workspacePrivateRoot()).replace(/[\\/]+$/, "");
     setPrivateWorkspaceRoot(next);
     return next;
   };
@@ -855,6 +859,13 @@ export function createWorkspaceStore(options: {
     syncActiveWorkspaceId(id);
     setProjectDir(nextRoot);
 
+    // For local→local workspace switches in Tauri, signal that the engine is not ready
+    // for the new workspace BEFORE any await. This prevents reactive effects (idle-loader,
+    // SSE sync) from trying to contact the engine API during the async setup phase.
+    if (!isRemote && wasLocalConnection && workspaceChanged && isTauriRuntime() && options.populateSidebarFromDb) {
+      options.setEngineReady?.(false);
+    }
+
     if (isTauriRuntime()) {
       if (isRemote) {
         setWorkspaceConfig(null);
@@ -957,44 +968,16 @@ export function createWorkspaceStore(options: {
       if (canReuseHost && runtime === "veslo-orchestrator") {
         try {
           const reuseStart = Date.now();
-          _wsLog("[workspace:activate] STEP 4a.1 — activateOrchestratorWorkspace...", { path: next.path });
-          await activateOrchestratorWorkspace({
-            workspacePath: next.path,
-            name: next.displayName?.trim() || next.name?.trim() || null,
+          _wsLog("[workspace:activate] STEP 4a.1 — localRuntimeLifecycle.reattachOrchestratorWorkspace...", {
+            path: next.path,
           });
-          _wsLog("[workspace:activate] STEP 4a.2 — activateVesloHostWorkspace...");
-          await activateVesloHostWorkspaceWithTimeout(
-            () => activateVesloHostWorkspace(next.path),
-          );
-          _wsLog("[workspace:activate] STEP 4a.3 — engineInfo...");
-
-          const nextInfo = await withTimeoutOrThrow(
-            engineInfo(),
-            { timeoutMs: ENGINE_INFO_TIMEOUT_MS, label: "engine_info" },
-          );
-          _wsLog("[workspace:activate] STEP 4a.3 — engineInfo DONE");
-          engineStore.setEngine(nextInfo);
-
-          const username = nextInfo.opencodeUsername?.trim() ?? "";
-          const password = nextInfo.opencodePassword?.trim() ?? "";
-          const auth = username && password ? { username, password } : undefined;
-          engineStore.setEngineAuth(auth ?? null);
-
-          if (nextInfo.baseUrl) {
-            _wsLog("[workspace:activate] STEP 4a.4 — connectToServer...", { baseUrl: nextInfo.baseUrl });
-            connectedToLocalHost = await connectToServer(
-              nextInfo.baseUrl,
-              next.path,
-              {
-                workspaceId: next.id,
-                workspaceType: "local",
-                targetRoot: next.path,
-                reason: "workspace-attach-local",
-              },
-              auth,
-              { navigate: false },
-            );
-          }
+          connectedToLocalHost = await localRuntimeLifecycle.reattachOrchestratorWorkspace({
+            workspacePath: next.path,
+            workspaceId: next.id,
+            workspaceName: next.displayName?.trim() || next.name?.trim() || null,
+            reason: "workspace-attach-local",
+            navigate: false,
+          });
           wsDebug("activate:remote->local:reuseHost:done", {
             ok: connectedToLocalHost,
             ms: Date.now() - reuseStart,
@@ -1024,7 +1007,47 @@ export function createWorkspaceStore(options: {
       }
     }
 
-    // When running locally, restart the engine when workspace changes
+    // BROWSING MODE: Load sessions/messages directly from SQLite so the user
+    // can browse history without waiting for engine startup.  Entered when
+    // switching between local workspaces (wasLocalConnection truthy) OR on
+    // cold boot when no engine is running yet (client is null and startup
+    // preference has already been set to "local" by this function).
+    const canBrowseOffline =
+      !isRemote && workspaceChanged && isTauriRuntime() && options.populateSidebarFromDb;
+    const isColdBoot = !options.client() && options.startupPreference() === "local";
+    if (canBrowseOffline && (wasLocalConnection || isColdBoot)) {
+      _wsLog("[workspace:activate] STEP 5-BROWSE — browsing mode, loading from SQLite", { id, path: next.path });
+      wsDebug("activate:local->local:browsingMode", { id, nextPath: next.path });
+
+      // Don't clear session state or client connection here.
+      // Session state (selectedSessionId, messages, todos) is keyed by
+      // session ID so data from different workspaces doesn't collide.
+      // The client + server connection is kept alive so the status dot
+      // stays green — engineReady(false) below prevents API calls for
+      // the wrong workspace, and ensureEngineForWorkspace reconnects
+      // to the correct workspace on demand.
+
+      try {
+        await options.populateSidebarFromDb!(id, next.path);
+      } catch (e) {
+        _wsLog("[workspace:activate] STEP 5-BROWSE — populateSidebarFromDb failed", e);
+      }
+
+      try {
+        if (options.hydrateLatestSessionFromDb) {
+          await options.hydrateLatestSessionFromDb(id, next.path);
+        }
+      } catch (e) {
+        _wsLog("[workspace:activate] STEP 5-BROWSE — hydrateLatestSessionFromDb failed", e);
+      }
+
+      options.setEngineReady?.(false);
+      updateWorkspaceConnectionState(id, { status: "connected", message: null });
+      wsDebug("activate:local->local:browsingMode:done", { id, ms: Date.now() - activateStart });
+      return true;
+    }
+
+    // When running locally, restart the engine when workspace changes (fallback for non-Tauri)
     let engineRestartFailed = false;
     if (!isRemote && wasLocalConnection && workspaceChanged) {
       if (isSuperseded()) {
@@ -1041,89 +1064,20 @@ export function createWorkspaceStore(options: {
       try {
         const runtime = resolveEngineRuntime();
         _wsLog("[workspace:activate] STEP 5 — runtime =", runtime);
-        if (runtime === "veslo-orchestrator") {
-          _wsLog("[workspace:activate] STEP 5.1 — activateOrchestratorWorkspace...");
-          await activateOrchestratorWorkspace({
-            workspacePath: next.path,
-            name: next.displayName?.trim() || next.name?.trim() || null,
-          });
-          _wsLog("[workspace:activate] STEP 5.2 — activateVesloHostWorkspace...");
-          await activateVesloHostWorkspaceWithTimeout(
-            () => activateVesloHostWorkspace(next.path),
-          );
-          _wsLog("[workspace:activate] STEP 5.3 — engineInfo...");
-
-          const newInfo = await withTimeoutOrThrow(
-            engineInfo(),
-            { timeoutMs: ENGINE_INFO_TIMEOUT_MS, label: "engine_info" },
-          );
-          _wsLog("[workspace:activate] STEP 5.3 — engineInfo DONE");
-          engineStore.setEngine(newInfo);
-
-          const username = newInfo.opencodeUsername?.trim() ?? "";
-          const password = newInfo.opencodePassword?.trim() ?? "";
-          const auth = username && password ? { username, password } : undefined;
-          engineStore.setEngineAuth(auth ?? null);
-
-          if (newInfo.baseUrl) {
-            _wsLog("[workspace:activate] STEP 5.4 — connectToServer...");
-            const ok = await connectToServer(
-              newInfo.baseUrl,
-              next.path,
-              {
-                workspaceId: next.id,
-                workspaceType: "local",
-                targetRoot: next.path,
-                reason: "workspace-orchestrator-switch",
-              },
-              auth,
-              { navigate: false },
-            );
-            if (!ok) {
-              engineRestartFailed = true;
-              options.setError("Failed to reconnect after worker switch");
-            }
-          }
-        } else {
-          _wsLog("[workspace:activate] STEP 5.1b — runWorkspaceEngineRestartWithTimeouts (non-orchestrator)...");
-          const { stopResult: info, startResult: newInfo } = await runWorkspaceEngineRestartWithTimeouts({
-            stop: () => engineStop(),
-            start: () =>
-              engineStart(next.path, {
-                preferSidecar: options.engineSource() === "sidecar",
-                opencodeBinPath:
-                  options.engineSource() === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
-                runtime,
-                workspacePaths: resolveWorkspacePaths(),
-              }),
-          });
-          engineStore.setEngine(info);
-          engineStore.setEngine(newInfo);
-
-          const username = newInfo.opencodeUsername?.trim() ?? "";
-          const password = newInfo.opencodePassword?.trim() ?? "";
-          const auth = username && password ? { username, password } : undefined;
-          engineStore.setEngineAuth(auth ?? null);
-
-          // Reconnect to server
-          if (newInfo.baseUrl) {
-            const ok = await connectToServer(
-              newInfo.baseUrl,
-              next.path,
-              {
-                workspaceId: next.id,
-                workspaceType: "local",
-                targetRoot: next.path,
-                reason: "workspace-restart",
-              },
-              auth,
-              { navigate: false },
-            );
-            if (!ok) {
-              engineRestartFailed = true;
-              options.setError("Failed to reconnect after worker switch");
-            }
-          }
+        _wsLog("[workspace:activate] STEP 5.1 — localRuntimeLifecycle.restartWorkspaceRuntime...", {
+          path: next.path,
+          runtime,
+        });
+        const ok = await localRuntimeLifecycle.restartWorkspaceRuntime({
+          workspacePath: next.path,
+          workspaceId: next.id,
+          workspaceName: next.displayName?.trim() || next.name?.trim() || null,
+          reason: runtime === "veslo-orchestrator" ? "workspace-orchestrator-switch" : "workspace-restart",
+          navigate: false,
+        });
+        if (!ok) {
+          engineRestartFailed = true;
+          options.setError("Failed to reconnect after worker switch");
         }
       } catch (e) {
         engineRestartFailed = true;
@@ -1225,6 +1179,7 @@ export function createWorkspaceStore(options: {
       options.setOpencodeConnectStatus?.(connectMeta);
 
       const connectMetrics: NonNullable<OpencodeConnectStatus["metrics"]> = {};
+      let publishedClient = false;
 
       try {
         let resolvedDirectory = directory?.trim() ?? "";
@@ -1261,10 +1216,16 @@ export function createWorkspaceStore(options: {
           }
         }
 
+        options.setSelectedSessionId(null);
+        options.setMessages([]);
+        options.setTodos([]);
+        options.setSessionStatusById({});
+
         options.setClient(nextClient);
         options.setConnectedVersion(health.version);
         options.setBaseUrl(nextBaseUrl);
         options.setClientDirectory(resolvedDirectory);
+        publishedClient = true;
 
         const providersPromise = (async () => {
           const providersAt = Date.now();
@@ -1344,11 +1305,6 @@ export function createWorkspaceStore(options: {
         options.setProviderDefaults(providerState.defaults);
         options.setProviderConnectedIds(providerState.connectedIds);
 
-        options.setSelectedSessionId(null);
-        options.setMessages([]);
-        options.setTodos([]);
-        options.setSessionStatusById({});
-
         options.refreshSkills({ force: true }).catch(e => reportError(e, "workspace.refreshSkills"));
         options.refreshPlugins().catch(e => reportError(e, "workspace.refreshPlugins"));
         if (navigate && !options.selectedSessionId()) {
@@ -1365,11 +1321,22 @@ export function createWorkspaceStore(options: {
         wsDebug("connect:done", { ok: true, ms: Date.now() - connectStart });
         return true;
       } catch (e) {
+        const message = e instanceof Error ? e.message : safeStringify(e);
+        connectMetrics.totalMs = Date.now() - connectStart;
+        if (publishedClient) {
+          wsDebug("connect:degraded", { ms: Date.now() - connectStart, message });
+          reportError(e, "workspace.connect.postHealthy");
+          options.setOpencodeConnectStatus?.({
+            ...connectMeta,
+            status: "connected",
+            error: addOpencodeCacheHint(message),
+            metrics: connectMetrics,
+          });
+          return true;
+        }
         options.setClient(null);
         options.setConnectedVersion(null);
-        const message = e instanceof Error ? e.message : safeStringify(e);
         wsDebug("connect:error", { ms: Date.now() - connectStart, message });
-        connectMetrics.totalMs = Date.now() - connectStart;
         options.setOpencodeConnectStatus?.({
           ...connectMeta,
           status: "error",
@@ -1787,6 +1754,7 @@ export function createWorkspaceStore(options: {
     resolveEngineRuntime,
     resolveWorkspacePaths,
     activateOrchestratorWorkspace,
+    activateVesloHostWorkspace,
     blockLocalAction,
     markOnboardingComplete,
     resolveWelcomeOnboardingStep,
@@ -1912,9 +1880,58 @@ export function createWorkspaceStore(options: {
     try { fetch("http://127.0.0.1:9876", { method: "POST", body: line, mode: "no-cors" }).catch(() => {}); } catch { /* ignore */ }
   }
 
+  async function bootstrapConfiguredRemoteServer(input: {
+    hostUrl: string;
+    token?: string | null;
+    directory?: string | null;
+  }) {
+    const hostUrl = normalizeVesloServerUrl(input.hostUrl ?? "") ?? "";
+    const token = input.token?.trim() ?? "";
+    const directory = input.directory?.trim() ?? "";
+    const activeRemoteWorkspace =
+      activeWorkspaceInfo()?.workspaceType === "remote" ? activeWorkspaceInfo() : null;
+    const matchedRemoteWorkspace = hostUrl
+      ? workspaces().find((workspace) => {
+          if (workspace.workspaceType !== "remote") return false;
+          const workspaceHost = normalizeVesloServerUrl(
+            workspace.vesloHostUrl ?? workspace.baseUrl ?? workspace.path ?? "",
+          );
+          return Boolean(workspaceHost && workspaceHost === hostUrl);
+        }) ?? null
+      : null;
+    const preferredRemoteWorkspace = matchedRemoteWorkspace ?? activeRemoteWorkspace;
+
+    if (preferredRemoteWorkspace?.workspaceType === "remote") {
+      options.setOnboardingStep("connecting");
+      const ok = await activateWorkspace(preferredRemoteWorkspace.id);
+      if (ok) return true;
+
+      if (isTauriRuntime()) {
+        try {
+          const ws = await workspaceForget(preferredRemoteWorkspace.id);
+          setWorkspaces(ws.workspaces);
+          syncActiveWorkspaceId(ws.activeId);
+          clearWorkspaceConnectionState(preferredRemoteWorkspace.id);
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    if (!hostUrl) return false;
+
+    options.setOnboardingStep("connecting");
+    return await remoteStoreRef.createRemoteWorkspaceFlow({
+      vesloHostUrl: hostUrl,
+      vesloToken: token || null,
+      directory: directory || null,
+      displayName: null,
+    });
+  }
+
   async function bootstrapOnboarding() {
     bootTrace("bootstrapOnboarding START");
-    const startupPref = readStartupPreference();
+    const startupPref = options.startupPreference() ?? readStartupPreference();
     const onboardingComplete = (() => {
       try {
         return window.localStorage.getItem(ONBOARDING_COMPLETE_STORAGE_KEY) === "1";
@@ -2034,53 +2051,12 @@ export function createWorkspaceStore(options: {
       const cloudHostUrl = normalizeVesloServerUrl(settings.urlOverride ?? "") ?? "";
       const cloudToken = settings.token?.trim() ?? "";
       const cloudDirectory = options.clientDirectory().trim() ? options.clientDirectory().trim() : null;
-      const normalizedCloudHost = normalizeVesloServerUrl(cloudHostUrl) ?? "";
-
-      const activeRemoteWorkspace = activeWorkspaceInfo()?.workspaceType === "remote"
-        ? activeWorkspaceInfo()
-        : null;
-      const cloudMatchedRemoteWorkspace = normalizedCloudHost
-        ? workspaces().find((workspace) => {
-            if (workspace.workspaceType !== "remote") return false;
-            const workspaceHost = normalizeVesloServerUrl(
-              workspace.vesloHostUrl ?? workspace.baseUrl ?? workspace.path ?? "",
-            );
-            return Boolean(workspaceHost && workspaceHost === normalizedCloudHost);
-          }) ?? null
-        : null;
-      const preferredRemoteWorkspace = cloudMatchedRemoteWorkspace ?? activeRemoteWorkspace;
-
-      if (preferredRemoteWorkspace?.workspaceType === "remote") {
-        options.setOnboardingStep("connecting");
-        const ok = await activateWorkspace(preferredRemoteWorkspace.id);
-        if (ok) {
-          return;
-        }
-
-        if (isTauriRuntime()) {
-          try {
-            const ws = await workspaceForget(preferredRemoteWorkspace.id);
-            setWorkspaces(ws.workspaces);
-            syncActiveWorkspaceId(ws.activeId);
-            clearWorkspaceConnectionState(preferredRemoteWorkspace.id);
-          } catch {
-            // ignore
-          }
-        }
-      }
-
-      if (cloudHostUrl) {
-        options.setOnboardingStep("connecting");
-        const ok = await remoteStoreRef.createRemoteWorkspaceFlow({
-          vesloHostUrl: cloudHostUrl,
-          vesloToken: cloudToken || null,
-          directory: cloudDirectory,
-          displayName: null,
-        });
-        if (ok) {
-          return;
-        }
-      }
+      const ok = await bootstrapConfiguredRemoteServer({
+        hostUrl: cloudHostUrl,
+        token: cloudToken || null,
+        directory: cloudDirectory,
+      });
+      if (ok) return;
 
       options.setOnboardingStep("server");
       return;
@@ -2103,6 +2079,26 @@ export function createWorkspaceStore(options: {
       options.setStartupPreference(startupPref);
     }
 
+    const settings = options.vesloServerSettings();
+    const configuredServerUrl = normalizeVesloServerUrl(settings.urlOverride ?? "") ?? "";
+    const shouldAutoBootstrapServer = shouldAutoBootstrapRemoteServer({
+      cloudOnlyMode: CLOUD_ONLY_MODE,
+      startupPreference: startupPref,
+      hasConfiguredServerUrl: Boolean(configuredServerUrl),
+      preferServerByDefault: options.preferServerByDefault?.() ?? false,
+    });
+
+    if (shouldAutoBootstrapServer) {
+      const ok = await bootstrapConfiguredRemoteServer({
+        hostUrl: configuredServerUrl,
+        token: settings.token ?? null,
+        directory: options.clientDirectory().trim() ? options.clientDirectory().trim() : null,
+      });
+      if (ok) return;
+      options.setOnboardingStep("server");
+      return;
+    }
+
     if (startupPref === "server") {
       bootTrace("→ setOnboardingStep('server') and RETURN");
       options.setOnboardingStep("server");
@@ -2111,40 +2107,118 @@ export function createWorkspaceStore(options: {
 
     bootTrace("activeWorkspacePath=", activeWorkspacePath().trim() || "(empty)");
     if (activeWorkspacePath().trim()) {
+      const workspacePath = activeWorkspacePath().trim();
+      const runningEngineProjectDir = info?.projectDir?.trim() ?? "";
+      const canReuseRunningEngine =
+        normalizeDirectoryPath(runningEngineProjectDir) !== "" &&
+        normalizeDirectoryPath(runningEngineProjectDir) === normalizeDirectoryPath(workspacePath);
       options.setStartupPreference("local");
 
-      if (info?.running && info.baseUrl) {
-        _wsLog("[workspace:bootstrap] engine already running, connectToServer...", { baseUrl: info.baseUrl, projectDir: info.projectDir });
+      if (info?.running && info.baseUrl && canReuseRunningEngine) {
+        const engineBaseUrl = info.baseUrl;
+        _wsLog("[workspace:bootstrap] engine already running, connectToServer...", { baseUrl: engineBaseUrl, projectDir: info.projectDir });
         bootTrace("engine running, connectToServer...");
         options.setOnboardingStep("connecting");
-        const ok = await connectToServer(
-          info.baseUrl,
-          (activeWorkspacePath().trim() || info.projectDir || undefined),
-          {
-            workspaceId: activeWorkspace?.id || undefined,
-            workspaceType: "local",
-            targetRoot: activeWorkspacePath().trim() || undefined,
-            reason: "bootstrap-local",
-          },
-          engineStore.engineAuth() ?? undefined,
-        );
-        bootTrace("connectToServer ok=", ok);
+        let ok = false;
+        try {
+          ok = await connectOrRecoverLocalBootstrap({
+            connect: async () => {
+              const connected = await connectToServer(
+                engineBaseUrl,
+                (workspacePath || info.projectDir || undefined),
+                {
+                  workspaceId: activeWorkspace?.id || undefined,
+                  workspaceType: "local",
+                  targetRoot: workspacePath || undefined,
+                  reason: "bootstrap-local",
+                },
+                engineStore.engineAuth() ?? undefined,
+                { navigate: false },
+              );
+              bootTrace("connectToServer ok=", connected);
+              return connected;
+            },
+            onRecover: (cause) => {
+              const reason = cause.kind === "connect-threw"
+                ? cause.error instanceof Error
+                  ? cause.error.message
+                  : String(cause.error)
+                : "connectToServer returned false";
+              _wsLog("[workspace:bootstrap] local reattach failed, recovering with startHost...", {
+                baseUrl: engineBaseUrl,
+                workspacePath,
+                reason,
+              });
+              bootTrace("local reattach failed, recovering with startHost:", reason);
+            },
+            startHost: async () => {
+              return await withTimeoutOrThrow(
+                engineStore.startHost({ workspacePath, navigate: false }),
+                { timeoutMs: START_HOST_TIMEOUT_MS, label: "bootstrap_startHost" },
+              );
+            },
+          });
+        } catch (e) {
+          _wsLog("[workspace:bootstrap] recovery startHost FAILED/TIMED OUT:", e instanceof Error ? e.message : String(e));
+          bootTrace("recovery startHost timed out or failed:", e instanceof Error ? e.message : String(e));
+        }
         if (!ok) {
-          options.setStartupPreference(null);
-          options.setOnboardingStep(resolveWelcomeOnboardingStep());
+          options.setOnboardingStep("local");
           return;
         }
         markOnboardingComplete();
         return;
       }
 
-      _wsLog("[workspace:bootstrap] startHost...", { workspacePath: activeWorkspacePath().trim() });
+      if (info?.running && info.baseUrl && !canReuseRunningEngine) {
+        _wsLog("[workspace:bootstrap] running engine project mismatch, restarting host...", {
+          workspacePath,
+          runningEngineProjectDir,
+        });
+        bootTrace("running engine project mismatch, restarting host...", runningEngineProjectDir);
+      }
+
+      // BROWSING MODE BOOT: Load sessions from SQLite directly instead of
+      // starting the engine (which takes ~2.5s and wipes state via
+      // connectToServer).  The engine starts on-demand when the user sends a
+      // message (via ensureEngineForWorkspace in sendPrompt).
+      if (isTauriRuntime() && options.populateSidebarFromDb) {
+        _wsLog("[workspace:bootstrap] browsing mode boot — loading sidebar from DB", { workspacePath });
+        bootTrace("browsing mode boot — populateSidebarFromDb...");
+        options.setStartupPreference("local");
+        options.setEngineReady?.(false);
+        try {
+          await options.populateSidebarFromDb(activeWorkspace?.id ?? "", workspacePath);
+        } catch (e) {
+          _wsLog("[workspace:bootstrap] populateSidebarFromDb failed", e);
+        }
+        try {
+          if (options.hydrateLatestSessionFromDb && activeWorkspace) {
+            await options.hydrateLatestSessionFromDb(activeWorkspace.id, workspacePath);
+          }
+        } catch (e) {
+          _wsLog("[workspace:bootstrap] hydrateLatestSessionFromDb failed", e);
+        }
+        markOnboardingComplete();
+
+        // Start the engine in the background so veslo-server connects
+        // (green status dot).  The user can already browse sessions from
+        // SQLite while this runs (~2-3s).
+        void ensureEngineForWorkspace().catch((e) => {
+          _wsLog("[workspace:bootstrap] background engine start failed (non-fatal)", e);
+        });
+
+        return;
+      }
+
+      // Non-Tauri fallback: start engine the traditional way
+      _wsLog("[workspace:bootstrap] startHost...", { workspacePath });
       bootTrace("startHost...");
       options.setOnboardingStep("connecting");
       let ok = false;
       try {
         ok = await withTimeoutOrThrow(
-          engineStore.startHost({ workspacePath: activeWorkspacePath().trim() }),
+          engineStore.startHost({ workspacePath, navigate: false }),
           { timeoutMs: START_HOST_TIMEOUT_MS, label: "bootstrap_startHost" },
         );
       } catch (e) {
@@ -2278,6 +2352,101 @@ export function createWorkspaceStore(options: {
     }
   }
 
+  /**
+   * Minimal engine connection — creates client, waits for healthy, sets client signal.
+   * Does NOT clear session state, load sessions, or navigate.
+   * SSE subscription starts automatically via createEffect watching client().
+   */
+  async function connectToEngineQuiet(
+    baseUrl: string,
+    directory: string,
+    auth?: OpencodeAuth,
+  ): Promise<boolean> {
+    const nextClient = createClient(baseUrl, directory, auth);
+    const health = await waitForHealthy(nextClient, { timeoutMs: DEFAULT_CONNECT_HEALTH_TIMEOUT_MS });
+    options.setClient(nextClient);
+    options.setConnectedVersion(health.version);
+    options.setBaseUrl(baseUrl);
+    options.setClientDirectory(directory);
+    return true;
+  }
+
+  const localRuntimeLifecycle = createLocalRuntimeLifecycle({
+    engineSource: options.engineSource,
+    engineCustomBinPath: options.engineCustomBinPath,
+    resolveEngineRuntime,
+    resolveWorkspacePaths,
+    setEngine: engineStore.setEngine,
+    setEngineAuth: engineStore.setEngineAuth,
+    startEngine: engineStart,
+    stopEngine: engineStop,
+    readEngineInfo: engineInfo,
+    activateOrchestratorWorkspace,
+    activateVesloHostWorkspace,
+    connectToServer,
+    connectQuiet: connectToEngineQuiet,
+  });
+
+  /**
+   * Start the engine for the active workspace and connect without disrupting
+   * the current session view. Used when sending a message in browsing mode.
+   *
+   * Order: engine restart → quiet connect → loadSessions → engineReady(true)
+   * The engineReady guard in SSE sync prevents sidebar overwrite until sessions are loaded.
+   */
+  async function ensureEngineForWorkspace(): Promise<boolean> {
+    const id = activeWorkspaceId();
+    const workspace = workspaces().find((w) => w.id === id);
+    if (!workspace?.path) return false;
+
+    return await ensureEngineForWorkspaceSingleFlight(workspace.id || workspace.path, async () => {
+      _wsLog("[workspace:ensureEngine] starting engine for browsing mode", { id, path: workspace.path });
+
+      try {
+        let ok = false;
+        try {
+          const runtime = resolveEngineRuntime();
+          ok = await localRuntimeLifecycle.restartWorkspaceRuntime({
+            workspacePath: workspace.path,
+            workspaceId: workspace.id,
+            workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
+            reason: runtime === "veslo-orchestrator" ? "browse-attach-orchestrator" : "browse-attach-direct",
+            connectMode: "quiet",
+          });
+        } catch (restartError) {
+          // Orchestrator not running yet (cold boot browsing mode).
+          // Fall back to startHost which launches from scratch.
+          _wsLog("[workspace:ensureEngine] restartWorkspaceRuntime failed, trying startHost...", {
+            id,
+            error: restartError instanceof Error ? restartError.message : String(restartError),
+          });
+          ok = await localRuntimeLifecycle.startHost({
+            workspacePath: workspace.path,
+            workspaceId: workspace.id,
+            reason: "browse-cold-start",
+            navigate: false,
+          });
+        }
+        if (!ok) return false;
+
+        // Load sessions while engineReady is still false (SSE sync guard protects sidebar)
+        await options.loadSessions(workspace.path);
+
+        // Now set engineReady — SSE sync fires with correct session data
+        options.setEngineReady?.(true);
+        updateWorkspaceConnectionState(id, { status: "connected", message: null });
+        options.onEngineStable?.();
+        _wsLog("[workspace:ensureEngine] engine started successfully", { id });
+        return true;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : safeStringify(e);
+        _wsLog("[workspace:ensureEngine] engine start failed", { id, error: message });
+        options.setError(message);
+        return false;
+      }
+    });
+  }
+
   return {
     engine: engineStore.engine,
     engineDoctorResult: engineStore.engineDoctorResult,
@@ -2318,6 +2487,7 @@ export function createWorkspaceStore(options: {
     refreshEngine: engineStore.refreshEngine,
     refreshEngineDoctor: engineStore.refreshEngineDoctor,
     activateWorkspace,
+    ensureEngineForWorkspace,
     testWorkspaceConnection,
     connectToServer,
     createWorkspaceFlow,

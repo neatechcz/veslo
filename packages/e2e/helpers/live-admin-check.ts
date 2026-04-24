@@ -50,6 +50,11 @@ export async function waitForAdminBrowserCallback(
           '';
 
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        if (!code || !sessionId) {
+          res.end('<!doctype html><html><body><h1>Admin callback reached</h1><p>Auth parameters are still missing. Return to the sign-in flow.</p></body></html>');
+          return;
+        }
+
         res.end('<!doctype html><html><body><h1>Admin sign-in received</h1><p>You can return to Codex.</p></body></html>');
 
         clearTimeout(timer);

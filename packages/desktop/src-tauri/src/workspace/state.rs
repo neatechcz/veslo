@@ -16,12 +16,19 @@ pub fn stable_workspace_id(path: &str) -> String {
 }
 
 pub fn veslo_state_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+    let data_dir = if let Some(override_dir) = crate::paths::app_data_dir_override() {
+        override_dir
+    } else {
+        app.path()
+            .app_data_dir()
+            .map_err(|e| format!("Failed to resolve app data dir: {e}"))?
+    };
     let file_path = data_dir.join("veslo-workspaces.json");
     Ok((data_dir, file_path))
+}
+
+pub fn private_workspace_root_from_data_dir(data_dir: &PathBuf) -> PathBuf {
+    data_dir.join("private-workspaces")
 }
 
 fn read_workspace_state_file(path: &PathBuf) -> Result<WorkspaceState, String> {
@@ -307,7 +314,8 @@ pub fn stable_workspace_id_for_veslo(host_url: &str, workspace_id: Option<&str>)
 #[cfg(test)]
 mod tests {
     use super::{
-        legacy_state_candidates, load_workspace_state_from_paths, try_load_legacy_workspace_state,
+        legacy_state_candidates, load_workspace_state_from_paths, private_workspace_root_from_data_dir,
+        try_load_legacy_workspace_state,
     };
     use crate::types::{RemoteType, WorkspaceInfo, WorkspaceState, WorkspaceType};
     use std::fs;
@@ -316,6 +324,15 @@ mod tests {
 
     fn temp_root(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!("veslo-workspace-state-{label}-{}", Uuid::new_v4()))
+    }
+
+    #[test]
+    fn private_workspace_root_is_nested_under_resolved_workspace_data_dir() {
+        let data_dir = PathBuf::from("/tmp/veslo-profile/app-data");
+        assert_eq!(
+            private_workspace_root_from_data_dir(&data_dir),
+            data_dir.join("private-workspaces"),
+        );
     }
 
     #[test]

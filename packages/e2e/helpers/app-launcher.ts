@@ -1,15 +1,19 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { join, resolve, dirname, win32 } from 'node:path';
+import { join, resolve, dirname, win32, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prepareDesktopAuthSeed } from './desktop-auth-seed.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const WEBDRIVER_PORT = 4445;
+const DEFAULT_WEBDRIVER_PORT = 4445;
+const WEBDRIVER_PORT = resolveWebDriverPort();
 const LAUNCH_TIMEOUT = parseInt(process.env.E2E_LAUNCH_TIMEOUT ?? '30000', 10);
 const POLL_INTERVAL = 250;
+const REAL_PROFILE_ENV = process.env.E2E_USE_EXISTING_PROFILE?.trim() === '1';
+const CUSTOM_BINARY_PATH = process.env.E2E_TAURI_BINARY?.trim() ?? '';
+const CUSTOM_OPENCODE_HOME = process.env.E2E_OPENCODE_HOME?.trim() ?? '';
 
 let appProcess: ChildProcess | null = null;
 let appProcessOwnedByHarness = false;
@@ -21,11 +25,40 @@ type AppLaunchEnvOptions = {
   snapshotPath: string;
 };
 
+export function resolveWebDriverPort(env: Record<string, string | undefined> = process.env): number {
+  const raw = env.E2E_WEBDRIVER_PORT?.trim();
+  if (!raw) return DEFAULT_WEBDRIVER_PORT;
+
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid E2E_WEBDRIVER_PORT: ${raw}`);
+  }
+
+  return port;
+}
+
+async function fetchWebDriverStatus(port: number, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
+  try {
+    return await fetch(`http://127.0.0.1:${port}/status`, {
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function resolveDesktopRoot(): string {
   return resolve(join(__dirname, '..', '..', 'desktop'));
 }
 
 function resolveBinaryPath(): string {
+  if (CUSTOM_BINARY_PATH) {
+    if (existsSync(CUSTOM_BINARY_PATH)) return CUSTOM_BINARY_PATH;
+    throw new Error(`Tauri binary not found at ${CUSTOM_BINARY_PATH}. Check E2E_TAURI_BINARY.`);
+  }
+
   const desktopRoot = resolveDesktopRoot();
   const platform = process.platform;
   const tauriTarget = join(desktopRoot, 'src-tauri', 'target', 'debug');
@@ -53,7 +86,8 @@ async function pollStatus(port: number, timeout: number): Promise<void> {
 
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(url);
+      const remaining = Math.max(1, deadline - Date.now());
+      const res = await fetchWebDriverStatus(port, Math.min(POLL_INTERVAL, remaining));
       if (res.ok) return;
     } catch {
       // Not ready yet
@@ -65,9 +99,8 @@ async function pollStatus(port: number, timeout: number): Promise<void> {
 }
 
 async function hasReadyWebDriverServer(port: number): Promise<boolean> {
-  const url = `http://127.0.0.1:${port}/status`;
   try {
-    const res = await fetch(url);
+    const res = await fetchWebDriverStatus(port, 1_000);
     return res.ok;
   } catch {
     return false;
@@ -78,18 +111,28 @@ export function createAppLaunchEnv(
   baseEnv: NodeJS.ProcessEnv,
   options: AppLaunchEnvOptions,
 ): NodeJS.ProcessEnv {
+  const platform = options.platform ?? process.platform;
+  const joinForPlatform = platform === 'win32' ? win32.join : posix.join;
+  const vesloDataDir = joinForPlatform(options.opencodeHome, '.veslo');
+  const vesloAppDataDir = joinForPlatform(vesloDataDir, 'app-data');
+  const vesloAppLocalDataDir = joinForPlatform(vesloDataDir, 'app-local-data');
   const env: NodeJS.ProcessEnv = {
     ...baseEnv,
     TAURI_WEBDRIVER_PORT: String(options.port),
     OPENCODE_HOME: options.opencodeHome,
+    VESLO_DATA_DIR: vesloDataDir,
+    VESLO_APP_DATA_DIR: vesloAppDataDir,
+    VESLO_APP_LOCAL_DATA_DIR: vesloAppLocalDataDir,
     VESLO_DEN_AUTH_SNAPSHOT_PATH: options.snapshotPath,
   };
 
-  if ((options.platform ?? process.platform) === 'win32') {
+  if (platform === 'win32') {
+    env.APPDATA = win32.join(options.opencodeHome, 'AppData', 'Roaming');
+    env.LOCALAPPDATA = win32.join(options.opencodeHome, 'AppData', 'Local');
     env.WEBVIEW2_USER_DATA_FOLDER = win32.join(options.opencodeHome, 'webview2');
   }
 
-  if ((options.platform ?? process.platform) === 'linux') {
+  if (platform === 'linux') {
     delete env.WAYLAND_DISPLAY;
     env.GDK_BACKEND = 'x11';
   }
@@ -117,14 +160,40 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   console.log(`[e2e] WebDriver port: ${port}`);
 
   const tmpDir = join(resolveDesktopRoot(), '..', 'e2e', '.tmp-opencode-home');
-  const snapshotPath = prepareDesktopAuthSeed(tmpDir);
+  let env: NodeJS.ProcessEnv;
 
-  appProcess = spawn(binaryPath, [], {
-    env: createAppLaunchEnv(process.env, {
+  if (CUSTOM_OPENCODE_HOME) {
+    const snapshotPath = prepareDesktopAuthSeed(CUSTOM_OPENCODE_HOME, process.env, {
+      preserveExisting: true,
+    });
+    env = createAppLaunchEnv(process.env, {
+      port,
+      opencodeHome: CUSTOM_OPENCODE_HOME,
+      snapshotPath,
+    });
+    console.log(`[e2e] Using custom OPENCODE_HOME: ${CUSTOM_OPENCODE_HOME}`);
+  } else if (!REAL_PROFILE_ENV) {
+    const snapshotPath = prepareDesktopAuthSeed(tmpDir);
+    env = createAppLaunchEnv(process.env, {
       port,
       opencodeHome: tmpDir,
       snapshotPath,
-    }),
+    });
+    console.log(`[e2e] Using isolated OPENCODE_HOME: ${tmpDir}`);
+  } else {
+    env = {
+      ...process.env,
+      TAURI_WEBDRIVER_PORT: String(port),
+    } as NodeJS.ProcessEnv;
+    if (process.platform === 'linux') {
+      delete env.WAYLAND_DISPLAY;
+      env.GDK_BACKEND = 'x11';
+    }
+    console.log('[e2e] Using the app\'s existing profile and OPENCODE_HOME.');
+  }
+
+  appProcess = spawn(binaryPath, [], {
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   appProcessOwnedByHarness = true;

@@ -6,5 +6,6 @@ export * from "./models";
 export * from "./paths";
 export * from "./persistence";
 export * from "./messages";
+export * from "./single-flight";
 export * from "./tools";
 export * from "./format";
