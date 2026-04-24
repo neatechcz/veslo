@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import type { ComposerDraft } from "../types";
@@ -12,6 +13,8 @@ import {
   setSessionComposerDraft,
   setSessionComposerPrompt,
 } from "./session-composer-drafts.js";
+
+const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 
 const withText = (text: string, extras?: Partial<ComposerDraft>): ComposerDraft => ({
   ...createEmptyComposerDraft(),
@@ -93,4 +96,12 @@ test("real session drafts and pending drafts do not overwrite one another", () =
   assert.equal(getSessionComposerDraft(store, { storageKey: sessionStorageKey }).text, "Real session");
   assert.equal(getSessionComposerDraft(store, { storageKey: pendingStorageKey }).text, "Pending draft");
   assert.equal(getSessionComposerDraft(store, { storageKey: pendingStorageKey }).attachments.length, 1);
+});
+
+test("active pending drafts are mirrored back into durable desktop storage for restart restore", () => {
+  assert.match(
+    appSource,
+    /let pendingDraftPersistenceQueue: Promise<void> = Promise\.resolve\(\);[\s\S]*createEffect\(\(\) => \{[\s\S]*if \(!isTauriRuntime\(\)\) return;[\s\S]*if \(!activePendingDraftStorageReady\(\)\) return;[\s\S]*const pendingDraftKey = activePendingDraftKey\(\);[\s\S]*const pendingDraftMetaValue = activePendingDraftMeta\(\);[\s\S]*if \(!pendingDraftKey \|\| !pendingDraftMetaValue\) return;[\s\S]*const persistedDraft = composerDraft\(\);[\s\S]*const pendingDraftId = pendingDraftMetaValue\.id\.trim\(\);[\s\S]*if \(!pendingDraftId\) return;[\s\S]*pendingDraftPersistenceQueue = pendingDraftPersistenceQueue[\s\S]*await pendingSessionDraftsPut\(\{[\s\S]*id: pendingDraftId,[\s\S]*kind: pendingDraftMetaValue\.kind,[\s\S]*workspaceId: pendingDraftMetaValue\.workspaceId,[\s\S]*directory: pendingDraftMetaValue\.directory \?\? null,[\s\S]*privateWorkspaceId: pendingDraftMetaValue\.privateWorkspaceId \?\? null,[\s\S]*composer: persistedDraft,[\s\S]*\}\);[\s\S]*reportError\(error, "pendingDrafts\.persist"\);[\s\S]*\}\);/s,
+    "active pending drafts should persist composer changes through the desktop draft store so restart reopen restores text and attachments",
+  );
 });

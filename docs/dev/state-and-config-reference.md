@@ -37,6 +37,7 @@ Common keys:
 Session/sidebar convenience state also lives in local storage, for example:
 
 - last selected session per workspace
+- active pending draft key
 - session directory override map
 - subagent decoration preferences
 - left sidebar width
@@ -44,6 +45,8 @@ Session/sidebar convenience state also lives in local storage, for example:
 - project grouping and collapse state
 
 Treat these as UI state, not product contract, unless a feature depends on them explicitly.
+
+Pending draft content itself is additionally mirrored into the desktop pending-draft store so unpublished drafts survive restart with their current text and attachment chips.
 
 During workspace switches, the sidebar may already have task rows for the target workspace while the global session store still reflects the previous workspace or is startup-empty. The sidebar must keep those existing target rows until scoped sessions for the target workspace load, so a transient empty store does not hide a remote worker's project list.
 
@@ -156,6 +159,18 @@ Some lightweight status values are persisted in browser storage for UI continuit
 - `veslo.notionSkillInstalled`
 
 Treat them as UI hints. The integration itself still depends on the real config/runtime state.
+
+## Pending Draft Persistence
+
+Desktop pending drafts are stored outside browser local storage in the Tauri app data directory.
+
+Current behavior:
+
+- pending draft metadata and attachment copies live in the desktop pending-draft store
+- browser local storage keeps the active pending draft key so the app can restore the same unpublished draft on restart
+- `New session` is globally singleton while unpublished: reopening it returns to the existing private pending draft
+- project pending drafts are keyed by workspace plus normalized directory
+- pending drafts remain out of the sidebar until a real session is created by sending them
 
 ## Precedence Rules
 

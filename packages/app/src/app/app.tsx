@@ -3765,6 +3765,38 @@ export default function App() {
     writeActivePendingDraftKey(activePendingDraftKey());
   });
 
+  let pendingDraftPersistenceQueue: Promise<void> = Promise.resolve();
+
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (!activePendingDraftStorageReady()) return;
+    const pendingDraftKey = activePendingDraftKey();
+    const pendingDraftMetaValue = activePendingDraftMeta();
+    if (!pendingDraftKey || !pendingDraftMetaValue) return;
+    if (selectedSessionId()) return;
+
+    const persistedDraft = composerDraft();
+    const pendingDraftId = pendingDraftMetaValue.id.trim();
+    if (!pendingDraftId) return;
+
+    pendingDraftPersistenceQueue = pendingDraftPersistenceQueue
+      .then(async () => {
+        await pendingSessionDraftsPut({
+          id: pendingDraftId,
+          kind: pendingDraftMetaValue.kind,
+          workspaceId: pendingDraftMetaValue.workspaceId,
+          directory: pendingDraftMetaValue.directory ?? null,
+          privateWorkspaceId: pendingDraftMetaValue.privateWorkspaceId ?? null,
+          createdAt: pendingDraftMetaValue.createdAt,
+          updatedAt: Date.now(),
+          composer: persistedDraft,
+        });
+      })
+      .catch((error) => {
+        reportError(error, "pendingDrafts.persist");
+      });
+  });
+
   createEffect(() => {
     if (typeof window === "undefined") return;
     const workspaceId = workspaceStore.activeWorkspaceId();
