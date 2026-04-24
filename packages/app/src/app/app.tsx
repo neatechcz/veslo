@@ -73,7 +73,10 @@ import {
   fetchSharedBundle,
   buildImportPayloadFromBundle,
 } from "./lib/shared-bundles";
-import { createSessionFromDirectorySelection } from "./pages/session-navigation";
+import {
+  openPendingDraftFromDirectorySelection,
+  openPendingDraftWithWorkspaceActivation,
+} from "./pages/session-navigation";
 import {
   SIDEBAR_SESSION_PAGE_SIZE,
   deriveSidebarHasMore,
@@ -6265,14 +6268,102 @@ export default function App() {
     await createSessionAndOpen();
   };
 
+  const openDirectoryPendingDraft = async (input: { workspaceId: string; directory: string }) => {
+    if (!isTauriRuntime()) {
+      const createdSessionId = await createSessionAndOpen();
+      return createdSessionId?.trim() ?? "";
+    }
+
+    const workspaceId = input.workspaceId.trim();
+    const directory = normalizeDirectoryPath(input.directory);
+    if (!workspaceId || !directory) return "";
+
+    try {
+      const pendingDraftKey = resolvePendingDraftKey({
+        kind: "directory",
+        workspaceId,
+        directory,
+      });
+      const pendingDrafts = await pendingSessionDraftsList();
+      const existingPendingDraft =
+        pendingDrafts.find(
+          (draft) =>
+            resolvePendingDraftKey({
+              kind: draft.kind,
+              workspaceId: draft.workspaceId,
+              directory: draft.directory ?? null,
+              privateWorkspaceId: draft.privateWorkspaceId ?? null,
+            }) === pendingDraftKey,
+        ) ?? null;
+
+      if (existingPendingDraft) {
+        const loadedPendingDraft = await pendingSessionDraftsGet(existingPendingDraft.id);
+        if (loadedPendingDraft) {
+          setActivePendingDraftKey(pendingDraftKey);
+          setActivePendingDraftMeta(existingPendingDraft);
+          setComposerDraftBySessionId((current) =>
+            setSessionComposerDraft(current, { storageKey: pendingDraftKey }, loadedPendingDraft.draft.composer),
+          );
+          setView("session");
+          return pendingDraftKey;
+        }
+      }
+
+      const emptyPendingDraft = createEmptyComposerDraft();
+      const now = Date.now();
+      const pendingDraft = await pendingSessionDraftsPut({
+        id: `pending-directory-${workspaceId}-${now}`,
+        kind: "directory",
+        workspaceId,
+        directory,
+        privateWorkspaceId: null,
+        createdAt: now,
+        updatedAt: now,
+        composer: emptyPendingDraft,
+      });
+      setActivePendingDraftKey(pendingDraftKey);
+      setActivePendingDraftMeta(pendingDraft);
+      setComposerDraftBySessionId((current) =>
+        setSessionComposerDraft(current, { storageKey: pendingDraftKey }, emptyPendingDraft),
+      );
+      setView("session");
+      return pendingDraftKey;
+    } catch (error) {
+      reportError(error, "pendingDrafts.directory");
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      setError(addOpencodeCacheHint(message));
+      return "";
+    }
+  };
+
+  const openPendingDirectoryDraftInWorkspace = async (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return false;
+
+    const workspace =
+      workspaceStore.workspaces().find((entry) => entry.id === id) ??
+      (workspaceStore.activeWorkspaceDisplay().id === id ? workspaceStore.activeWorkspaceDisplay() : null);
+    const directory = workspace?.directory?.trim() || workspace?.path?.trim() || "";
+    if (!directory) return false;
+
+    return await openPendingDraftWithWorkspaceActivation({
+      activeWorkspaceId: workspaceStore.activeWorkspaceId(),
+      getActiveWorkspaceId: () => workspaceStore.activeWorkspaceId(),
+      workspaceId: id,
+      activateWorkspace: (nextWorkspaceId) =>
+        workspaceStore.activateWorkspace(nextWorkspaceId, { promoteToFront: true }),
+      openPendingDraft: () => openDirectoryPendingDraft({ workspaceId: id, directory }),
+    });
+  };
+
   const openDirectorySessionFromPicker = async () => {
-    return await createSessionFromDirectorySelection({
+    return await openPendingDraftFromDirectorySelection({
       activeWorkspaceId: workspaceStore.activeWorkspaceId(),
       getActiveWorkspaceId: () => workspaceStore.activeWorkspaceId(),
       pickDirectory: () => workspaceStore.pickWorkspaceFolder(),
       ensureWorkspaceForFolder: workspaceStore.ensureWorkspaceForFolder,
       activateWorkspace: (workspaceId) => workspaceStore.activateWorkspace(workspaceId, { promoteToFront: true }),
-      createSession: () => createSessionAndOpen(),
+      openPendingDraft: ({ workspaceId, directory }) => openDirectoryPendingDraft({ workspaceId, directory }),
     });
   };
 
@@ -7582,6 +7673,9 @@ export default function App() {
       openDirectorySessionFromPicker: () => {
         void openDirectorySessionFromPicker();
       },
+      openPendingDirectoryDraftInWorkspace: (workspaceId: string) => {
+        void openPendingDirectoryDraftInWorkspace(workspaceId);
+      },
       importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
       importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
       exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
@@ -7829,6 +7923,9 @@ export default function App() {
     openNewSessionWithDirectory,
     openDirectorySessionFromPicker: () => {
       void openDirectorySessionFromPicker();
+    },
+    openPendingDirectoryDraftInWorkspace: (workspaceId: string) => {
+      void openPendingDirectoryDraftInWorkspace(workspaceId);
     },
     canChooseSessionFolder:
       (() => {

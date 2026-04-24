@@ -92,7 +92,7 @@ type Props = {
   onActivateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onDeleteSession?: (workspaceId: string, sessionId: string) => void;
-  onCreateTaskInWorkspace: (workspaceId: string) => void;
+  onOpenPendingDirectoryDraftInWorkspace: (workspaceId: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
   onOpenSoul: (workspaceId: string) => void;
@@ -1730,7 +1730,7 @@ export default function WorkspaceSessionList(props: Props) {
                         <button
                           type="button"
                           class="p-1 rounded-md text-gray-8 hover:text-gray-11 hover:bg-gray-3"
-                          onClick={() => props.onCreateTaskInWorkspace(workspace().id)}
+                          onClick={() => props.onOpenPendingDirectoryDraftInWorkspace(workspace().id)}
                           disabled={props.newTaskDisabled}
                           aria-label={tr("sidebar.create_session_in_project")}
                           title={tr("sidebar.create_session_in_project")}

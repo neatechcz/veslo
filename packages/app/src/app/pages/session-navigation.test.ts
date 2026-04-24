@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { resolvePendingDraftKey } from "../lib/pending-session-drafts.js";
 import {
   createSessionFromDirectorySelection,
   createSessionWithWorkspaceActivation,
   openSessionWithWorkspaceActivation,
 } from "./session-navigation.js";
+import * as sessionNavigation from "./session-navigation.js";
 
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 
@@ -16,6 +18,61 @@ const openNewSessionSource =
   openNewSessionStart >= 0 && openNewSessionEnd >= 0
     ? appSource.slice(openNewSessionStart, openNewSessionEnd)
     : "";
+const openDirectorySessionStart = appSource.indexOf("  const openDirectorySessionFromPicker = async () => {");
+const openDirectorySessionEnd = appSource.indexOf("  const chooseFolderForCurrentSession = async () => {", openDirectorySessionStart);
+const openDirectorySessionSource =
+  openDirectorySessionStart >= 0 && openDirectorySessionEnd >= 0
+    ? appSource.slice(openDirectorySessionStart, openDirectorySessionEnd)
+    : "";
+
+const openPendingDraftWithWorkspaceActivation = () => {
+  const fn = (
+    sessionNavigation as typeof sessionNavigation & {
+      openPendingDraftWithWorkspaceActivation?: (
+        input: {
+          activeWorkspaceId: string;
+          getActiveWorkspaceId?: () => string;
+          workspaceId: string;
+          activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+          openPendingDraft: () => Promise<string | boolean | undefined> | string | boolean | undefined | void;
+        },
+      ) => Promise<boolean>;
+    }
+  ).openPendingDraftWithWorkspaceActivation;
+  assert.equal(
+    typeof fn,
+    "function",
+    "session-navigation should export a pending-draft activation helper alongside real-session creation",
+  );
+  return fn;
+};
+
+const openPendingDraftFromDirectorySelection = () => {
+  const fn = (
+    sessionNavigation as typeof sessionNavigation & {
+      openPendingDraftFromDirectorySelection?: (
+        input: {
+          activeWorkspaceId: string;
+          getActiveWorkspaceId?: () => string;
+          pickDirectory: () => Promise<string | null> | string | null;
+          ensureWorkspaceForFolder: (
+            folder: string,
+          ) => Promise<{ id: string } | null> | { id: string } | null;
+          activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+          openPendingDraft: (
+            target: { workspaceId: string; directory: string },
+          ) => Promise<string | boolean | undefined> | string | boolean | undefined | void;
+        },
+      ) => Promise<"cancelled" | "blocked" | "opened">;
+    }
+  ).openPendingDraftFromDirectorySelection;
+  assert.equal(
+    typeof fn,
+    "function",
+    "session-navigation should export a picker flow for pending directory drafts",
+  );
+  return fn;
+};
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -174,6 +231,28 @@ test("creates session after successful cross-workspace activation", async () => 
   assert.deepEqual(created, ["created"]);
 });
 
+test("pending draft activation opens the workspace draft without creating a real session immediately", async () => {
+  const activated: string[] = [];
+  const openedDrafts: string[] = [];
+
+  const result = await openPendingDraftWithWorkspaceActivation()({
+    activeWorkspaceId: "ws-active",
+    workspaceId: "ws-other",
+    activateWorkspace: async (id) => {
+      activated.push(id);
+      return true;
+    },
+    openPendingDraft: async () => {
+      openedDrafts.push("pending:ws-other");
+      return "pending:ws-other";
+    },
+  });
+
+  assert.equal(result, true);
+  assert.deepEqual(activated, ["ws-other"]);
+  assert.deepEqual(openedDrafts, ["pending:ws-other"]);
+});
+
 test("picker-driven directory session flow cancels cleanly when no folder is selected", async () => {
   const ensured: string[] = [];
   const activated: string[] = [];
@@ -298,6 +377,96 @@ test("picker-driven directory session flow stops when ensured workspace cannot a
   assert.deepEqual(created, []);
 });
 
+test("picker-driven pending directory draft flow reopens the same target for the same normalized directory", async () => {
+  const openedTargets: string[] = [];
+  let currentActive = "ws-active";
+
+  const openDirectoryDraft = openPendingDraftFromDirectorySelection();
+
+  const first = await openDirectoryDraft({
+    activeWorkspaceId: currentActive,
+    getActiveWorkspaceId: () => currentActive,
+    pickDirectory: async () => "/tmp/project-a/",
+    ensureWorkspaceForFolder: async () => ({ id: "ws-project-a" }),
+    activateWorkspace: async (id) => {
+      currentActive = id;
+      return true;
+    },
+    openPendingDraft: async ({ workspaceId, directory }) => {
+      const target = resolvePendingDraftKey({ kind: "directory", workspaceId, directory });
+      openedTargets.push(target);
+      return target;
+    },
+  });
+
+  currentActive = "ws-active";
+
+  const second = await openDirectoryDraft({
+    activeWorkspaceId: currentActive,
+    getActiveWorkspaceId: () => currentActive,
+    pickDirectory: async () => "/tmp/project-a",
+    ensureWorkspaceForFolder: async () => ({ id: "ws-project-a" }),
+    activateWorkspace: async (id) => {
+      currentActive = id;
+      return true;
+    },
+    openPendingDraft: async ({ workspaceId, directory }) => {
+      const target = resolvePendingDraftKey({ kind: "directory", workspaceId, directory });
+      openedTargets.push(target);
+      return target;
+    },
+  });
+
+  assert.equal(first, "opened");
+  assert.equal(second, "opened");
+  assert.equal(openedTargets[0], openedTargets[1]);
+});
+
+test("picker-driven pending directory draft flow keeps different projects on different targets", async () => {
+  const openedTargets: string[] = [];
+  let currentActive = "ws-active";
+
+  const openDirectoryDraft = openPendingDraftFromDirectorySelection();
+
+  const first = await openDirectoryDraft({
+    activeWorkspaceId: currentActive,
+    getActiveWorkspaceId: () => currentActive,
+    pickDirectory: async () => "/tmp/project-shared",
+    ensureWorkspaceForFolder: async () => ({ id: "ws-project-a" }),
+    activateWorkspace: async (id) => {
+      currentActive = id;
+      return true;
+    },
+    openPendingDraft: async ({ workspaceId, directory }) => {
+      const target = resolvePendingDraftKey({ kind: "directory", workspaceId, directory });
+      openedTargets.push(target);
+      return target;
+    },
+  });
+
+  currentActive = "ws-active";
+
+  const second = await openDirectoryDraft({
+    activeWorkspaceId: currentActive,
+    getActiveWorkspaceId: () => currentActive,
+    pickDirectory: async () => "/tmp/project-shared",
+    ensureWorkspaceForFolder: async () => ({ id: "ws-project-b" }),
+    activateWorkspace: async (id) => {
+      currentActive = id;
+      return true;
+    },
+    openPendingDraft: async ({ workspaceId, directory }) => {
+      const target = resolvePendingDraftKey({ kind: "directory", workspaceId, directory });
+      openedTargets.push(target);
+      return target;
+    },
+  });
+
+  assert.equal(first, "opened");
+  assert.equal(second, "opened");
+  assert.notEqual(openedTargets[0], openedTargets[1]);
+});
+
 test("first New session creates one private workspace and opens a persisted pending draft", () => {
   assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
   assert.match(
@@ -386,6 +555,20 @@ test("picker-driven directory session flow forwards the selected path unchanged 
 
   assert.equal(result, "blocked");
   assert.deepEqual(ensured, ["  /tmp/project with spaces  "]);
+});
+
+test("directory picker flow opens a pending draft instead of creating a real session immediately", () => {
+  assert.notEqual(openDirectorySessionSource, "", "Directory picker flow should exist in app.tsx");
+  assert.match(
+    openDirectorySessionSource,
+    /return await openPendingDraftFromDirectorySelection\(\{[\s\S]*pickDirectory: \(\) => workspaceStore\.pickWorkspaceFolder\(\),[\s\S]*ensureWorkspaceForFolder: workspaceStore\.ensureWorkspaceForFolder,[\s\S]*activateWorkspace: \(workspaceId\) => workspaceStore\.activateWorkspace\(workspaceId, \{ promoteToFront: true \}\),/s,
+    "the picker flow should use the pending-draft navigation helper with the existing workspace activation contract",
+  );
+  assert.doesNotMatch(
+    openDirectorySessionSource,
+    /createSession: \(\) => createSessionAndOpen\(\)/,
+    "the picker flow should stop creating real sessions immediately",
+  );
 });
 
 // ---------------------------------------------------------------------------

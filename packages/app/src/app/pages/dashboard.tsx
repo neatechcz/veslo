@@ -75,10 +75,7 @@ import {
   readLeftSidebarWidth,
   writeLeftSidebarWidth,
 } from "../components/layout/left-sidebar-width-prefs";
-import {
-  createSessionWithWorkspaceActivation,
-  openSessionWithWorkspaceActivation,
-} from "./session-navigation";
+import { openSessionWithWorkspaceActivation } from "./session-navigation";
 import {
   resolveDashboardTabSelectionAction,
   resolveLeftMenuAction,
@@ -177,6 +174,7 @@ export type DashboardViewProps = {
   openCreateRemoteWorkspace: () => void;
   openNewSessionWithDirectory: () => void;
   openDirectorySessionFromPicker: () => void;
+  openPendingDirectoryDraftInWorkspace: (workspaceId: string) => void;
   importWorkspaceConfig: () => void;
   importingWorkspaceConfig: boolean;
   exportWorkspaceConfig: (workspaceId?: string) => void;
@@ -495,18 +493,6 @@ export default function DashboardView(props: DashboardViewProps) {
       activateWorkspace: props.activateWorkspace,
       // Route-driven selection: navigate first and let the route effect own selectSession.
       openSession: (nextSessionId) => props.setView("session", nextSessionId),
-    });
-  };
-
-  const createTaskInWorkspace = (workspaceId: string) => {
-    const id = workspaceId.trim();
-    if (!id) return;
-    void createSessionWithWorkspaceActivation({
-      activeWorkspaceId: props.activeWorkspaceId,
-      getActiveWorkspaceId: () => props.activeWorkspaceId,
-      workspaceId: id,
-      activateWorkspace: props.activateWorkspace,
-      createSession: () => props.createSessionAndOpen(),
     });
   };
 
@@ -1415,7 +1401,7 @@ export default function DashboardView(props: DashboardViewProps) {
               isPrivateWorkspacePath={props.isPrivateWorkspacePath}
               onActivateWorkspace={props.activateWorkspace}
               onOpenSession={openSessionFromList}
-              onCreateTaskInWorkspace={createTaskInWorkspace}
+              onOpenPendingDirectoryDraftInWorkspace={props.openPendingDirectoryDraftInWorkspace}
               onOpenRenameWorkspace={props.openRenameWorkspace}
               onShareWorkspace={(workspaceId) => setShareWorkspaceId(workspaceId)}
               onOpenSoul={openSoulForWorkspace}

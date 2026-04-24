@@ -17,6 +17,14 @@ export type CreateSessionWithWorkspaceActivationInput = {
   createSession: () => Promise<string | undefined> | string | undefined | void;
 };
 
+export type OpenPendingDraftWithWorkspaceActivationInput = {
+  activeWorkspaceId: string;
+  getActiveWorkspaceId?: () => string;
+  workspaceId: string;
+  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  openPendingDraft: () => Promise<string | boolean | undefined> | string | boolean | undefined | void;
+};
+
 export type CreateSessionFromDirectorySelectionInput = {
   activeWorkspaceId: string;
   getActiveWorkspaceId?: () => string;
@@ -28,7 +36,21 @@ export type CreateSessionFromDirectorySelectionInput = {
   createSession: () => Promise<string | undefined> | string | undefined | void;
 };
 
+export type OpenPendingDraftFromDirectorySelectionInput = {
+  activeWorkspaceId: string;
+  getActiveWorkspaceId?: () => string;
+  pickDirectory: () => Promise<string | null> | string | null;
+  ensureWorkspaceForFolder: (
+    folder: string,
+  ) => Promise<{ id: string } | null> | { id: string } | null;
+  activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  openPendingDraft: (
+    target: { workspaceId: string; directory: string },
+  ) => Promise<string | boolean | undefined> | string | boolean | undefined | void;
+};
+
 export type CreateSessionFromDirectorySelectionResult = "cancelled" | "blocked" | "created";
+export type OpenPendingDraftFromDirectorySelectionResult = "cancelled" | "blocked" | "opened";
 
 // Keep cross-worker session navigation single-flight to avoid overlapping
 // activateWorkspace calls when users click between workers rapidly.
@@ -36,6 +58,8 @@ let openSessionNavigationQueue: Promise<void> = Promise.resolve();
 let openSessionNavigationToken = 0;
 let createSessionNavigationQueue: Promise<void> = Promise.resolve();
 let createSessionNavigationToken = 0;
+let openPendingDraftNavigationQueue: Promise<void> = Promise.resolve();
+let openPendingDraftNavigationToken = 0;
 
 export async function openSessionWithWorkspaceActivation(
   input: OpenSessionWithWorkspaceActivationInput,
@@ -101,6 +125,38 @@ export async function createSessionWithWorkspaceActivation(
   return await task;
 }
 
+export async function openPendingDraftWithWorkspaceActivation(
+  input: OpenPendingDraftWithWorkspaceActivationInput,
+): Promise<boolean> {
+  const workspaceId = input.workspaceId.trim();
+  const activeWorkspaceId = input.activeWorkspaceId.trim();
+  const getActiveWorkspaceId = () => input.getActiveWorkspaceId?.().trim() || activeWorkspaceId;
+  if (!workspaceId) return false;
+
+  const token = ++openPendingDraftNavigationToken;
+
+  const run = async () => {
+    if (token !== openPendingDraftNavigationToken) return false;
+
+    if (workspaceId !== getActiveWorkspaceId()) {
+      const activated = await Promise.resolve(input.activateWorkspace(workspaceId));
+      if (!activated) return false;
+    }
+
+    if (token !== openPendingDraftNavigationToken) return false;
+    const opened = await Promise.resolve(input.openPendingDraft());
+    if (typeof opened === "string") return opened.trim().length > 0;
+    return opened !== undefined && opened !== null && opened !== false;
+  };
+
+  const task = openPendingDraftNavigationQueue.then(run, run);
+  openPendingDraftNavigationQueue = task.then(
+    () => undefined,
+    () => undefined,
+  );
+  return await task;
+}
+
 export async function createSessionFromDirectorySelection(
   input: CreateSessionFromDirectorySelectionInput,
 ): Promise<CreateSessionFromDirectorySelectionResult> {
@@ -125,4 +181,27 @@ export async function createSessionFromDirectorySelection(
   });
 
   return created ? "created" : "blocked";
+}
+
+export async function openPendingDraftFromDirectorySelection(
+  input: OpenPendingDraftFromDirectorySelectionInput,
+): Promise<OpenPendingDraftFromDirectorySelectionResult> {
+  const selectedDirectory = await Promise.resolve(input.pickDirectory());
+  if (selectedDirectory == null || selectedDirectory.trim() === "") return "cancelled";
+
+  const activeWorkspaceIdBeforeEnsure =
+    input.getActiveWorkspaceId?.().trim() || input.activeWorkspaceId.trim();
+
+  const workspace = await Promise.resolve(input.ensureWorkspaceForFolder(selectedDirectory));
+  const workspaceId = workspace?.id?.trim() ?? "";
+  if (!workspaceId) return "blocked";
+
+  const opened = await openPendingDraftWithWorkspaceActivation({
+    activeWorkspaceId: activeWorkspaceIdBeforeEnsure,
+    workspaceId,
+    activateWorkspace: input.activateWorkspace,
+    openPendingDraft: () => input.openPendingDraft({ workspaceId, directory: selectedDirectory }),
+  });
+
+  return opened ? "opened" : "blocked";
 }
