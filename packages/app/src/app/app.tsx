@@ -1774,6 +1774,7 @@ export default function App() {
       if (!pendingDraftKey) return null;
       return {
         key: pendingDraftKey,
+        meta: activePendingDraftMeta(),
         draftId: activePendingDraftMeta()?.id?.trim() || null,
       };
     })();
@@ -1785,6 +1786,13 @@ export default function App() {
 
     const model = selectedSessionModel();
     let promptSystem: string | undefined;
+    const restorePendingDraftAfterSendFailure = () => {
+      if (pendingDraftSendState) {
+        setActivePendingDraftKey(pendingDraftSendState.key);
+        setActivePendingDraftMeta(pendingDraftSendState.meta);
+        setView("session");
+      }
+    };
 
     try {
       const stagedAttachments = await stageAttachmentsIntoSessionDirectory(resolvedDraft, sessionID);
@@ -1801,6 +1809,7 @@ export default function App() {
       resolvedDraft = routedDraft.draft;
       promptSystem = routedDraft.system;
     } catch (error) {
+      restorePendingDraftAfterSendFailure();
       setError(error instanceof Error ? error.message : safeStringify(error));
       return false;
     }
@@ -1902,7 +1911,14 @@ export default function App() {
         const pendingDraftStorageKey = pendingDraftSendState.key;
         const pendingDraftId = pendingDraftSendState.draftId;
         if (pendingDraftId && isTauriRuntime()) {
-          await pendingSessionDraftsDelete(pendingDraftId);
+          try {
+            const deleted = await pendingSessionDraftsDelete(pendingDraftId);
+            if (!deleted) {
+              console.warn("[pendingDrafts.consume] failed to delete pending draft", { pendingDraftId });
+            }
+          } catch (error) {
+            reportError(error, "pendingDrafts.consume");
+          }
         }
         clearActivePendingDraftState();
         setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, { storageKey: pendingDraftStorageKey }));
@@ -1915,6 +1931,7 @@ export default function App() {
       });
       return true;
     } catch (e) {
+      restorePendingDraftAfterSendFailure();
       finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
         sessionID,
         mode: resolvedDraft.mode,

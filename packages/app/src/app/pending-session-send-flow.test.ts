@@ -25,3 +25,19 @@ test("failed sends do not consume pending draft state", () => {
     "failed sends must leave the pending draft intact",
   );
 });
+
+test("failed pending draft sends restore the pending draft route instead of leaving the empty real session selected", () => {
+  assert.match(
+    appSource,
+    /if \(pendingDraftSendState\) \{\s*setActivePendingDraftKey\(pendingDraftSendState\.key\);\s*setActivePendingDraftMeta\(pendingDraftSendState\.meta\);\s*setView\("session"\);\s*\}/s,
+    "pending-draft send failures should return the UI to the pending draft route",
+  );
+});
+
+test("pending draft cleanup failures are handled separately from prompt handoff success", () => {
+  assert.match(
+    appSource,
+    /if \(pendingDraftId && isTauriRuntime\(\)\) \{\s*try \{[\s\S]*const deleted = await pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*if \(!deleted\) \{[\s\S]*console\.warn\([\s\S]*\}[\s\S]*\} catch \(error\) \{[\s\S]*reportError\(error, "pendingDrafts\.consume"\);[\s\S]*\}\s*\}/s,
+    "pending-draft cleanup should report delete errors without converting a successful prompt handoff into a send failure",
+  );
+});
