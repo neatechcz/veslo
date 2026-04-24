@@ -4,7 +4,6 @@ mod config;
 mod engine;
 mod fs;
 mod opencode_router;
-mod veslo_server;
 mod opkg;
 mod orchestrator;
 mod paths;
@@ -12,6 +11,7 @@ mod platform;
 mod types;
 mod updater;
 mod utils;
+mod veslo_server;
 mod workspace;
 
 pub use types::*;
@@ -27,19 +27,21 @@ use commands::engine::{
 use commands::misc::{
     app_build_info, obsidian_is_available, open_in_obsidian, opencode_db_migrate,
     opencode_db_update_session_directory, opencode_mcp_auth, read_obsidian_mirror_file,
-    reset_opencode_cache, reset_veslo_state,
-    write_obsidian_mirror_file,
+    reset_opencode_cache, reset_veslo_state, write_obsidian_mirror_file,
 };
 use commands::opencode_router::{
     opencodeRouter_config_set, opencodeRouter_info, opencodeRouter_start, opencodeRouter_status,
     opencodeRouter_stop,
 };
-use commands::veslo_server::{veslo_server_info, veslo_server_restart};
 use commands::opkg::{import_skill, opkg_install};
 use commands::orchestrator::{
     orchestrator_instance_dispose, orchestrator_start_detached, orchestrator_status,
     orchestrator_workspace_activate, sandbox_cleanup_veslo_containers, sandbox_debug_probe,
     sandbox_doctor, sandbox_stop,
+};
+use commands::pending_session_drafts::{
+    pending_session_drafts_delete, pending_session_drafts_get, pending_session_drafts_list,
+    pending_session_drafts_put,
 };
 use commands::scheduler::{scheduler_delete_job, scheduler_list_jobs};
 use commands::session_reader::{opencode_db_read_sessions, opencode_db_read_transcript};
@@ -47,18 +49,19 @@ use commands::skills::{
     install_skill_template, list_local_skills, read_local_skill, uninstall_skill, write_local_skill,
 };
 use commands::updater::updater_environment;
+use commands::veslo_server::{veslo_server_info, veslo_server_restart};
 use commands::window::set_window_decorations;
 use commands::workspace::{
     workspace_add_authorized_root, workspace_bootstrap, workspace_copy_into_folder,
     workspace_create, workspace_create_remote, workspace_export_config, workspace_forget,
-    workspace_import_config, workspace_veslo_read, workspace_veslo_write, workspace_set_active,
-    workspace_update_display_name, workspace_update_remote,
+    workspace_import_config, workspace_set_active, workspace_update_display_name,
+    workspace_update_remote, workspace_veslo_read, workspace_veslo_write,
 };
 use engine::manager::EngineManager;
 use opencode_router::manager::OpenCodeRouterManager;
-use veslo_server::manager::VesloServerManager;
 use orchestrator::manager::OrchestratorManager;
 use tauri::{Emitter, Manager};
+use veslo_server::manager::VesloServerManager;
 use workspace::watch::WorkspaceWatchState;
 
 fn stop_managed_services(app_handle: &tauri::AppHandle) {
@@ -192,6 +195,10 @@ pub fn run() {
             opencode_db_read_transcript,
             scheduler_list_jobs,
             scheduler_delete_job,
+            pending_session_drafts_list,
+            pending_session_drafts_get,
+            pending_session_drafts_put,
+            pending_session_drafts_delete,
             set_window_decorations
         ])
         .build(tauri::generate_context!())

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 import { validateMcpServerName } from "../mcp";
+import type { ComposerAttachment, ComposerDraft, ComposerPart } from "../types";
 
 export type EngineInfo = {
   running: boolean;
@@ -140,6 +141,225 @@ export type WorkspaceExportSummary = {
   included: number;
   excluded: string[];
 };
+
+export type PendingSessionDraftKind = "new-private" | "directory";
+
+export type PendingSessionDraftCommand = NonNullable<ComposerDraft["command"]>;
+
+export type PendingSessionDraftAttachmentSummary = Omit<ComposerAttachment, "dataUrl">;
+
+export type PendingSessionDraftSummary = {
+  id: string;
+  kind: PendingSessionDraftKind;
+  workspaceId: string;
+  directory?: string | null;
+  privateWorkspaceId?: string | null;
+  createdAt: number;
+  updatedAt: number;
+  composer: {
+    mode: ComposerDraft["mode"];
+    parts: ComposerPart[];
+    attachments: PendingSessionDraftAttachmentSummary[];
+    text: string;
+    resolvedText?: string | null;
+    command?: PendingSessionDraftCommand | null;
+  };
+};
+
+export type PendingSessionDraft = {
+  id: string;
+  kind: PendingSessionDraftKind;
+  workspaceId: string;
+  directory?: string | null;
+  privateWorkspaceId?: string | null;
+  createdAt: number;
+  updatedAt: number;
+  composer: ComposerDraft;
+};
+
+export type PendingSessionDraftAttachmentFailure = {
+  attachmentId: string;
+  name: string;
+  message: string;
+};
+
+export type PendingSessionDraftGetResult = {
+  draft: PendingSessionDraft;
+  attachmentFailures: PendingSessionDraftAttachmentFailure[];
+};
+
+type RawPendingSessionDraftAttachmentSummary = PendingSessionDraftAttachmentSummary;
+
+type RawPendingSessionDraftAttachmentPayload = PendingSessionDraftAttachmentSummary & {
+  bytes: number[];
+};
+
+type RawPendingSessionDraftComposerSummary = {
+  mode: ComposerDraft["mode"];
+  parts: ComposerPart[];
+  attachments: PendingSessionDraftAttachmentSummary[];
+  text: string;
+  resolvedText?: string | null;
+  command?: PendingSessionDraftCommand | null;
+};
+
+type RawPendingSessionDraftComposerPayload = {
+  mode: ComposerDraft["mode"];
+  parts: ComposerPart[];
+  attachments: RawPendingSessionDraftAttachmentPayload[];
+  text: string;
+  resolvedText?: string | null;
+  command?: PendingSessionDraftCommand | null;
+};
+
+type RawPendingSessionDraftSummary = PendingSessionDraftSummary;
+
+type RawPendingSessionDraft = Omit<PendingSessionDraft, "composer"> & {
+  composer: RawPendingSessionDraftComposerPayload;
+};
+
+type RawPendingSessionDraftGetResult = {
+  draft: RawPendingSessionDraft;
+  attachmentFailures: PendingSessionDraftAttachmentFailure[];
+};
+
+type RawPendingSessionDraftAttachmentInput = RawPendingSessionDraftAttachmentSummary & {
+  bytes: number[];
+};
+
+type RawPendingSessionDraftComposerInput = Omit<
+  RawPendingSessionDraftComposerSummary,
+  "attachments"
+> & {
+  attachments: RawPendingSessionDraftAttachmentInput[];
+};
+
+export type PendingSessionDraftPutInput = Omit<PendingSessionDraft, "composer"> & {
+  composer: ComposerDraft;
+};
+
+const dataUrlToBytes = async (dataUrl: string, attachmentName: string): Promise<number[]> => {
+  const response = await fetch(dataUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to read attachment ${attachmentName}.`);
+  }
+  return Array.from(new Uint8Array(await response.arrayBuffer()));
+};
+
+const bytesToDataUrl = (bytes: number[], mimeType: string): Promise<string> => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => {
+    if (typeof reader.result === "string") {
+      resolve(reader.result);
+      return;
+    }
+    reject(new Error("Failed to rebuild pending draft attachment data URL."));
+  };
+  reader.onerror = () => {
+    reject(new Error("Failed to rebuild pending draft attachment data URL."));
+  };
+  reader.readAsDataURL(new Blob([new Uint8Array(bytes)], { type: mimeType || "application/octet-stream" }));
+});
+
+const serializePendingSessionDraftComposer = async (
+  composer: ComposerDraft,
+): Promise<RawPendingSessionDraftComposerInput> => ({
+  mode: composer.mode,
+  parts: composer.parts,
+  attachments: await Promise.all(
+    composer.attachments.map(async (attachment) => ({
+      id: attachment.id,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      size: attachment.size,
+      kind: attachment.kind,
+      bytes: await dataUrlToBytes(attachment.dataUrl, attachment.name),
+    })),
+  ),
+  text: composer.text,
+  resolvedText: composer.resolvedText ?? null,
+  command: composer.command ?? null,
+});
+
+const deserializePendingSessionDraft = async (
+  draft: RawPendingSessionDraft,
+): Promise<PendingSessionDraft> => ({
+  id: draft.id,
+  kind: draft.kind,
+  workspaceId: draft.workspaceId,
+  directory: draft.directory ?? null,
+  privateWorkspaceId: draft.privateWorkspaceId ?? null,
+  createdAt: draft.createdAt,
+  updatedAt: draft.updatedAt,
+  composer: {
+    mode: draft.composer.mode,
+    parts: draft.composer.parts,
+    attachments: await Promise.all(
+      draft.composer.attachments.map(async (attachment) => ({
+        id: attachment.id,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        kind: attachment.kind,
+        dataUrl: await bytesToDataUrl(attachment.bytes, attachment.mimeType),
+      })),
+    ),
+    text: draft.composer.text,
+    resolvedText: draft.composer.resolvedText ?? undefined,
+    command: draft.composer.command ?? undefined,
+  },
+});
+
+export async function pendingSessionDraftsList(): Promise<PendingSessionDraftSummary[]> {
+  return invoke<RawPendingSessionDraftSummary[]>("pending_session_drafts_list");
+}
+
+export async function pendingSessionDraftsGet(
+  draftId: string,
+): Promise<PendingSessionDraftGetResult | null> {
+  const safeDraftId = draftId.trim();
+  if (!safeDraftId) {
+    throw new Error("draftId is required");
+  }
+
+  const result = await invoke<RawPendingSessionDraftGetResult | null>("pending_session_drafts_get", {
+    draftId: safeDraftId,
+  });
+  if (!result) {
+    return null;
+  }
+
+  return {
+    draft: await deserializePendingSessionDraft(result.draft),
+    attachmentFailures: result.attachmentFailures,
+  };
+}
+
+export async function pendingSessionDraftsPut(
+  draft: PendingSessionDraftPutInput,
+): Promise<PendingSessionDraftSummary> {
+  return invoke<RawPendingSessionDraftSummary>("pending_session_drafts_put", {
+    draft: {
+      id: draft.id,
+      kind: draft.kind,
+      workspaceId: draft.workspaceId,
+      directory: draft.directory ?? null,
+      privateWorkspaceId: draft.privateWorkspaceId ?? null,
+      createdAt: draft.createdAt,
+      updatedAt: draft.updatedAt,
+      composer: await serializePendingSessionDraftComposer(draft.composer),
+    },
+  });
+}
+
+export async function pendingSessionDraftsDelete(draftId: string): Promise<boolean> {
+  const safeDraftId = draftId.trim();
+  if (!safeDraftId) {
+    throw new Error("draftId is required");
+  }
+
+  return invoke<boolean>("pending_session_drafts_delete", { draftId: safeDraftId });
+}
 
 export async function engineStart(
   projectDir: string,
