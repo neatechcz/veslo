@@ -1803,6 +1803,7 @@ export default function App() {
         providers: providers(),
       });
       if (routedDraft.error) {
+        restorePendingDraftAfterSendFailure();
         setError(routedDraft.error);
         return false;
       }
