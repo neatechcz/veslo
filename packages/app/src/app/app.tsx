@@ -3766,6 +3766,7 @@ export default function App() {
   });
 
   let pendingDraftPersistenceQueue: Promise<void> = Promise.resolve();
+  let pendingDraftPersistenceGeneration = 0;
 
   createEffect(() => {
     if (!isTauriRuntime()) return;
@@ -3778,9 +3779,16 @@ export default function App() {
     const persistedDraft = composerDraft();
     const pendingDraftId = pendingDraftMetaValue.id.trim();
     if (!pendingDraftId) return;
+    const generation = ++pendingDraftPersistenceGeneration;
 
     pendingDraftPersistenceQueue = pendingDraftPersistenceQueue
       .then(async () => {
+        if (pendingDraftPersistenceGeneration !== generation) return;
+        const activePendingDraftKeyValue = activePendingDraftKey();
+        const activePendingDraftId = activePendingDraftMeta()?.id.trim() || "";
+        if (selectedSessionId()) return;
+        if (activePendingDraftKeyValue !== pendingDraftKey) return;
+        if (activePendingDraftId !== pendingDraftId) return;
         await pendingSessionDraftsPut({
           id: pendingDraftId,
           kind: pendingDraftMetaValue.kind,
