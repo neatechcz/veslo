@@ -152,7 +152,15 @@ fn list_pending_session_drafts(root: &Path) -> Result<Vec<PendingSessionDraftSum
             continue;
         }
 
-        drafts.push(read_pending_session_draft_summary(&path)?);
+        match read_pending_session_draft_summary(&path) {
+            Ok(summary) => drafts.push(summary),
+            Err(error) => {
+                eprintln!(
+                    "[pending_session_drafts] skipping unreadable draft {}: {error}",
+                    path.display()
+                );
+            }
+        }
     }
 
     drafts.sort_by(|left, right| {
@@ -168,6 +176,17 @@ fn put_pending_session_draft(
     root: &Path,
     input: PendingSessionDraftPutInput,
 ) -> Result<PendingSessionDraftSummary, String> {
+    put_pending_session_draft_with_commit_hook(root, input, |_| Ok(()))
+}
+
+fn put_pending_session_draft_with_commit_hook<F>(
+    root: &Path,
+    input: PendingSessionDraftPutInput,
+    before_activate: F,
+) -> Result<PendingSessionDraftSummary, String>
+where
+    F: FnOnce(&Path) -> Result<(), String>,
+{
     fs::create_dir_all(root).map_err(|e| format!("Failed to create {}: {e}", root.display()))?;
 
     let attachment_inputs = input.composer.attachments.clone();
@@ -194,20 +213,88 @@ fn put_pending_session_draft(
         .map_err(|e| format!("Failed to write {}: {e}", draft_json_path.display()))?;
 
     let target_dir = draft_dir(root, &summary.id);
-    if target_dir.exists() {
-        fs::remove_dir_all(&target_dir)
-            .map_err(|e| format!("Failed to replace {}: {e}", target_dir.display()))?;
-    }
-
-    if let Err(error) = fs::rename(&staging_dir, &target_dir) {
+    if let Err(error) =
+        commit_staged_pending_session_draft(&staging_dir, &target_dir, &summary.id, before_activate)
+    {
         let _ = fs::remove_dir_all(&staging_dir);
-        return Err(format!(
-            "Failed to move draft {} into place: {error}",
-            summary.id
-        ));
+        return Err(error);
     }
 
     Ok(summary)
+}
+
+fn commit_staged_pending_session_draft<F>(
+    staging_dir: &Path,
+    target_dir: &Path,
+    draft_id: &str,
+    before_activate: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&Path) -> Result<(), String>,
+{
+    let backup_dir = target_dir
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!(
+            ".pending-session-draft-backup-{}-{}",
+            draft_id,
+            Uuid::new_v4().simple()
+        ));
+
+    let backup_dir = if target_dir.exists() {
+        fs::rename(target_dir, &backup_dir).map_err(|e| {
+            format!(
+                "Failed to stage previous draft {}: {e}",
+                target_dir.display()
+            )
+        })?;
+        Some(backup_dir)
+    } else {
+        None
+    };
+
+    let activation_result = before_activate(target_dir).and_then(|_| {
+        fs::rename(staging_dir, target_dir)
+            .map_err(|e| format!("Failed to move draft {draft_id} into place: {e}"))
+    });
+
+    if let Err(error) = activation_result {
+        if let Some(backup_dir) = &backup_dir {
+            restore_pending_session_draft_backup(target_dir, backup_dir)?;
+        }
+        return Err(error);
+    }
+
+    if let Some(backup_dir) = backup_dir {
+        remove_path_if_exists(&backup_dir).map_err(|e| {
+            format!(
+                "Failed to clean up previous draft backup {}: {e}",
+                backup_dir.display()
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+fn restore_pending_session_draft_backup(
+    target_dir: &Path,
+    backup_dir: &Path,
+) -> Result<(), String> {
+    if target_dir.exists() {
+        remove_path_if_exists(target_dir).map_err(|e| {
+            format!(
+                "Failed to remove failed replacement {} during restore: {e}",
+                target_dir.display()
+            )
+        })?;
+    }
+    fs::rename(backup_dir, target_dir).map_err(|e| {
+        format!(
+            "Failed to restore previous draft from {}: {e}",
+            backup_dir.display()
+        )
+    })
 }
 
 fn get_pending_session_draft(
@@ -299,6 +386,18 @@ fn attachment_file_path(draft_dir: &Path, attachment_id: &str) -> PathBuf {
         .join(attachment_storage_name(attachment_id))
 }
 
+fn remove_path_if_exists(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    if path.is_dir() {
+        fs::remove_dir_all(path).map_err(|e| format!("Failed to remove {}: {e}", path.display()))
+    } else {
+        fs::remove_file(path).map_err(|e| format!("Failed to remove {}: {e}", path.display()))
+    }
+}
+
 fn read_pending_session_draft_summary(
     draft_dir: &Path,
 ) -> Result<PendingSessionDraftSummary, String> {
@@ -387,10 +486,36 @@ fn validate_and_build_summary(
     let kind = validate_draft_kind(&input.kind)?;
     let workspace_id = validate_non_empty(&input.workspace_id, "workspace_id")?;
     let mode = validate_non_empty(&input.composer.mode, "composer.mode")?;
+    let directory = validate_optional_string(input.directory);
+    let private_workspace_id = validate_optional_string(input.private_workspace_id);
 
+    match kind.as_str() {
+        "directory" => {
+            if directory.is_none() {
+                return Err("directory drafts require directory".to_string());
+            }
+            if private_workspace_id.is_some() {
+                return Err("directory drafts must not include private_workspace_id".to_string());
+            }
+        }
+        "new-private" => {
+            if private_workspace_id.is_none() {
+                return Err("new-private drafts require private_workspace_id".to_string());
+            }
+            if directory.is_some() {
+                return Err("new-private drafts must not include directory".to_string());
+            }
+        }
+        _ => {}
+    }
+
+    let mut attachment_ids = std::collections::HashSet::new();
     let mut attachments = Vec::with_capacity(input.composer.attachments.len());
     for attachment in &input.composer.attachments {
         let attachment_id = validate_attachment_id(&attachment.id)?;
+        if !attachment_ids.insert(attachment_id.clone()) {
+            return Err(format!("duplicate attachment.id: {}", attachment_id));
+        }
         let name = validate_non_empty(&attachment.name, "attachment.name")?;
         let mime_type = validate_non_empty(&attachment.mime_type, "attachment.mime_type")?;
         let kind = validate_attachment_kind(&attachment.kind)?;
@@ -407,8 +532,8 @@ fn validate_and_build_summary(
         id,
         kind,
         workspace_id,
-        directory: validate_optional_string(input.directory),
-        private_workspace_id: validate_optional_string(input.private_workspace_id),
+        directory,
+        private_workspace_id,
         created_at: input.created_at,
         updated_at: input.updated_at,
         composer: PendingSessionDraftComposerMetadata {
@@ -465,7 +590,8 @@ pub fn pending_session_drafts_delete(app: AppHandle, draft_id: String) -> Result
 mod tests {
     use super::{
         attachment_file_path, delete_pending_session_draft, get_pending_session_draft,
-        list_pending_session_drafts, put_pending_session_draft, PendingSessionDraftAttachmentInput,
+        list_pending_session_drafts, put_pending_session_draft,
+        put_pending_session_draft_with_commit_hook, PendingSessionDraftAttachmentInput,
         PendingSessionDraftAttachmentMetadata, PendingSessionDraftAttachmentPayload,
         PendingSessionDraftComposerInput, PendingSessionDraftComposerMetadata,
         PendingSessionDraftComposerPayload, PendingSessionDraftGetResult,
@@ -549,6 +675,14 @@ mod tests {
         input.composer.attachments[0].id = attachment_id.to_string();
         input.composer.attachments[0].name = "diagram v2.png".to_string();
         input.composer.attachments[0].mime_type = "image/png".to_string();
+        input
+    }
+
+    fn sample_new_private_put_input() -> PendingSessionDraftPutInput {
+        let mut input = sample_put_input();
+        input.kind = "new-private".to_string();
+        input.directory = None;
+        input.private_workspace_id = Some("private-workspace-1".to_string());
         input
     }
 
@@ -683,6 +817,47 @@ mod tests {
     }
 
     #[test]
+    fn put_preserves_last_good_draft_when_commit_swap_fails() {
+        let dir = TestDir::new();
+        put_pending_session_draft(dir.path(), sample_put_input()).expect("draft should be saved");
+
+        let mut updated = sample_put_input();
+        updated.updated_at = 1_710_000_001_000;
+        updated.composer.text = "Updated draft text".to_string();
+        updated.composer.resolved_text = Some("Updated draft text".to_string());
+
+        let error = put_pending_session_draft_with_commit_hook(dir.path(), updated, |target_dir| {
+            fs::write(target_dir, b"conflict").map_err(|write_error| {
+                format!(
+                    "failed to create injected conflict at {}: {write_error}",
+                    target_dir.display()
+                )
+            })
+        })
+        .expect_err("injected commit conflict should fail");
+        assert!(error.contains("Failed to move draft"));
+
+        let loaded = get_pending_session_draft(dir.path(), "draft-1")
+            .expect("load should still succeed")
+            .expect("previous draft should remain");
+        assert_eq!(loaded, expected_get_result());
+    }
+
+    #[test]
+    fn list_skips_corrupt_draft_directories_and_returns_valid_drafts() {
+        let dir = TestDir::new();
+        put_pending_session_draft(dir.path(), sample_put_input()).expect("draft should be saved");
+
+        let corrupt_dir = dir.path().join("corrupt-draft");
+        fs::create_dir_all(&corrupt_dir).expect("corrupt draft dir should exist");
+        fs::write(corrupt_dir.join("draft.json"), "{not valid json")
+            .expect("corrupt draft file should be written");
+
+        let listed = list_pending_session_drafts(dir.path()).expect("list should succeed");
+        assert_eq!(listed, vec![expected_summary()]);
+    }
+
+    #[test]
     fn get_round_trips_metadata_and_attachment_bytes() {
         let dir = TestDir::new();
         put_pending_session_draft(dir.path(), sample_put_input()).expect("draft should be saved");
@@ -721,6 +896,66 @@ mod tests {
             list_pending_session_drafts(dir.path()).expect("list should succeed"),
             Vec::<PendingSessionDraftSummary>::new()
         );
+    }
+
+    #[test]
+    fn put_rejects_duplicate_attachment_ids_within_one_draft() {
+        let dir = TestDir::new();
+        let mut input = sample_put_input();
+        input.composer.attachments[1].id = input.composer.attachments[0].id.clone();
+
+        let error =
+            put_pending_session_draft(dir.path(), input).expect_err("duplicate ids should fail");
+
+        assert!(error.contains("duplicate attachment.id"));
+    }
+
+    #[test]
+    fn put_rejects_directory_draft_without_directory() {
+        let dir = TestDir::new();
+        let mut input = sample_put_input();
+        input.directory = None;
+
+        let error = put_pending_session_draft(dir.path(), input)
+            .expect_err("directory draft without directory should fail");
+
+        assert!(error.contains("directory drafts require directory"));
+    }
+
+    #[test]
+    fn put_rejects_directory_draft_with_private_workspace_id() {
+        let dir = TestDir::new();
+        let mut input = sample_put_input();
+        input.private_workspace_id = Some("private-workspace-1".to_string());
+
+        let error = put_pending_session_draft(dir.path(), input)
+            .expect_err("directory draft with private workspace id should fail");
+
+        assert!(error.contains("directory drafts must not include private_workspace_id"));
+    }
+
+    #[test]
+    fn put_rejects_new_private_draft_without_private_workspace_id() {
+        let dir = TestDir::new();
+        let mut input = sample_new_private_put_input();
+        input.private_workspace_id = None;
+
+        let error = put_pending_session_draft(dir.path(), input)
+            .expect_err("new-private draft without private workspace id should fail");
+
+        assert!(error.contains("new-private drafts require private_workspace_id"));
+    }
+
+    #[test]
+    fn put_rejects_new_private_draft_with_directory() {
+        let dir = TestDir::new();
+        let mut input = sample_new_private_put_input();
+        input.directory = Some("/tmp/workspace".to_string());
+
+        let error = put_pending_session_draft(dir.path(), input)
+            .expect_err("new-private draft with directory should fail");
+
+        assert!(error.contains("new-private drafts must not include directory"));
     }
 
     #[test]
