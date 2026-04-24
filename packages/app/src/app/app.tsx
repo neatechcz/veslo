@@ -6197,7 +6197,8 @@ export default function App() {
           if (pendingDraft) {
             const pendingWorkspaceId = (existingPendingDraft.privateWorkspaceId ?? existingPendingDraft.workspaceId).trim();
             if (!pendingWorkspaceId) return;
-            await workspaceStore.activateWorkspace(pendingWorkspaceId);
+            const activatedPendingWorkspace = await workspaceStore.activateWorkspace(pendingWorkspaceId);
+            if (!activatedPendingWorkspace) return;
             setActivePendingDraftKey(newPrivatePendingDraftKey);
             setActivePendingDraftMeta(existingPendingDraft);
             setComposerDraftBySessionId((current) => setSessionComposerDraft(
@@ -6228,7 +6229,8 @@ export default function App() {
 
         // Activate in browsing mode (no engine start). Engine + session
         // creation still happen on-demand when the user sends a message.
-        await workspaceStore.activateWorkspace(scratch.id);
+        const activatedScratchWorkspace = await workspaceStore.activateWorkspace(scratch.id);
+        if (!activatedScratchWorkspace) return;
         setActivePendingDraftKey(newPrivatePendingDraftKey);
         setActivePendingDraftMeta(pendingDraft);
         setComposerDraftBySessionId((current) => setSessionComposerDraft(

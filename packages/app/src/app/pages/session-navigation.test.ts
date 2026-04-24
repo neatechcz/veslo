@@ -307,7 +307,7 @@ test("first New session creates one private workspace and opens a persisted pend
   );
   assert.match(
     openNewSessionSource,
-    /const scratch = await workspaceStore\.createScratchWorkspace\(\);[\s\S]*const emptyPendingDraft = createEmptyComposerDraft\(\);[\s\S]*const now = Date\.now\(\);[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*kind: "new-private"[\s\S]*workspaceId: scratch\.id[\s\S]*privateWorkspaceId: scratch\.id[\s\S]*createdAt: now[\s\S]*updatedAt: now[\s\S]*composer: emptyPendingDraft[\s\S]*\}\);[\s\S]*await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: newPrivatePendingDraftKey \}[\s\S]*?emptyPendingDraft[\s\S]*?\)\);[\s\S]*setView\("session"\);/s,
+    /const scratch = await workspaceStore\.createScratchWorkspace\(\);[\s\S]*const emptyPendingDraft = createEmptyComposerDraft\(\);[\s\S]*const now = Date\.now\(\);[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*kind: "new-private"[\s\S]*workspaceId: scratch\.id[\s\S]*privateWorkspaceId: scratch\.id[\s\S]*createdAt: now[\s\S]*updatedAt: now[\s\S]*composer: emptyPendingDraft[\s\S]*\}\);[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) return;[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: newPrivatePendingDraftKey \}[\s\S]*?emptyPendingDraft[\s\S]*?\)\);[\s\S]*setView\("session"\);/s,
     "the first New session should create one private workspace, persist one pending draft, and open the draft route",
   );
 });
@@ -316,7 +316,7 @@ test("second New session reopens the same pending draft and does not create anot
   assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
   assert.match(
     openNewSessionSource,
-    /if \(existingPendingDraft\) \{\s*const pendingDraft = await pendingSessionDraftsGet\(existingPendingDraft\.id\);[\s\S]*if \(pendingDraft\) \{\s*const pendingWorkspaceId = \(existingPendingDraft\.privateWorkspaceId \?\? existingPendingDraft\.workspaceId\)\.trim\(\);[\s\S]*if \(!pendingWorkspaceId\) return;[\s\S]*await workspaceStore\.activateWorkspace\(pendingWorkspaceId\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: newPrivatePendingDraftKey \}[\s\S]*?pendingDraft\.draft\.composer[\s\S]*?\)\);[\s\S]*setView\("session"\);[\s\S]*return;\s*\}\s*\}/s,
+    /if \(existingPendingDraft\) \{\s*const pendingDraft = await pendingSessionDraftsGet\(existingPendingDraft\.id\);[\s\S]*if \(pendingDraft\) \{\s*const pendingWorkspaceId = \(existingPendingDraft\.privateWorkspaceId \?\? existingPendingDraft\.workspaceId\)\.trim\(\);[\s\S]*if \(!pendingWorkspaceId\) return;[\s\S]*const activatedPendingWorkspace = await workspaceStore\.activateWorkspace\(pendingWorkspaceId\);[\s\S]*if \(!activatedPendingWorkspace\) return;[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: newPrivatePendingDraftKey \}[\s\S]*?pendingDraft\.draft\.composer[\s\S]*?\)\);[\s\S]*setView\("session"\);[\s\S]*return;\s*\}\s*\}/s,
     "repeat New session should reopen the existing private pending draft instead of creating a new workspace",
   );
   const existingBranchMatch = openNewSessionSource.match(/if \(existingPendingDraft\) \{[\s\S]*?return;\s*\}/);
@@ -330,6 +330,20 @@ test("second New session reopens the same pending draft and does not create anot
     openNewSessionSource,
     /deleteSessionComposerDraft\(current, null\)/,
     "repeat New session should not clear the draft bucket before reopening the same pending draft",
+  );
+});
+
+test("New session blocks pending draft activation when workspace activation fails", () => {
+  assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
+  assert.match(
+    openNewSessionSource,
+    /const activatedPendingWorkspace = await workspaceStore\.activateWorkspace\(pendingWorkspaceId\);[\s\S]*if \(!activatedPendingWorkspace\) return;[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*setView\("session"\);/s,
+    "reopening an existing private pending draft must stop before route activation when workspace activation fails",
+  );
+  assert.match(
+    openNewSessionSource,
+    /const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) return;[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setView\("session"\);/s,
+    "creating a fresh private pending draft must stop before route activation when workspace activation fails",
   );
 });
 

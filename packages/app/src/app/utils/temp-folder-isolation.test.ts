@@ -677,3 +677,17 @@ test("after pending draft deletion New session falls back to a fresh private wor
     "scratch workspaces should still create a fresh private workspace folder for each new draft",
   );
 });
+
+test("fresh private pending draft flow blocks before route activation when workspace activation fails", () => {
+  const openNewSessionStart = appSource.indexOf("  const openNewSessionWithDirectory = async () => {");
+  const openNewSessionEnd = appSource.indexOf("  const openDirectorySessionFromPicker = async () => {", openNewSessionStart);
+  assert.notEqual(openNewSessionStart, -1, "New session flow should exist in app.tsx");
+  assert.notEqual(openNewSessionEnd, -1, "New session flow end should exist in app.tsx");
+  const openNewSessionSource = appSource.slice(openNewSessionStart, openNewSessionEnd);
+
+  assert.match(
+    openNewSessionSource,
+    /const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) return;[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setView\("session"\);/s,
+    "fresh private pending drafts must not activate route state unless scratch workspace activation succeeds",
+  );
+});
