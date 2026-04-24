@@ -6216,6 +6216,11 @@ export default function App() {
 
         const emptyPendingDraft = createEmptyComposerDraft();
         const now = Date.now();
+
+        // Activate in browsing mode (no engine start). Engine + session
+        // creation still happen on-demand when the user sends a message.
+        const activatedScratchWorkspace = await workspaceStore.activateWorkspace(scratch.id);
+        if (!activatedScratchWorkspace) return;
         const pendingDraft = await pendingSessionDraftsPut({
           id: `pending-new-private-${scratch.id}`,
           kind: "new-private",
@@ -6226,11 +6231,6 @@ export default function App() {
           updatedAt: now,
           composer: emptyPendingDraft,
         });
-
-        // Activate in browsing mode (no engine start). Engine + session
-        // creation still happen on-demand when the user sends a message.
-        const activatedScratchWorkspace = await workspaceStore.activateWorkspace(scratch.id);
-        if (!activatedScratchWorkspace) return;
         setActivePendingDraftKey(newPrivatePendingDraftKey);
         setActivePendingDraftMeta(pendingDraft);
         setComposerDraftBySessionId((current) => setSessionComposerDraft(
