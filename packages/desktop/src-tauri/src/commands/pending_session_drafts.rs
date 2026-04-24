@@ -135,6 +135,7 @@ fn list_pending_session_drafts(root: &Path) -> Result<Vec<PendingSessionDraftSum
         return Ok(Vec::new());
     }
 
+    let surfaced_backup_dirs = recover_or_surface_backup_only_drafts(root)?;
     let mut drafts = Vec::new();
     for entry in
         fs::read_dir(root).map_err(|e| format!("Failed to read {}: {e}", root.display()))?
@@ -162,6 +163,17 @@ fn list_pending_session_drafts(root: &Path) -> Result<Vec<PendingSessionDraftSum
             }
         }
     }
+    for path in surfaced_backup_dirs {
+        match read_pending_session_draft_summary(&path) {
+            Ok(summary) => drafts.push(summary),
+            Err(error) => {
+                eprintln!(
+                    "[pending_session_drafts] skipping surfaced backup draft {}: {error}",
+                    path.display()
+                );
+            }
+        }
+    }
 
     drafts.sort_by(|left, right| {
         right
@@ -176,9 +188,10 @@ fn put_pending_session_draft(
     root: &Path,
     input: PendingSessionDraftPutInput,
 ) -> Result<PendingSessionDraftSummary, String> {
-    put_pending_session_draft_with_commit_hook(root, input, |_| Ok(()))
+    put_pending_session_draft_with_commit_hooks(root, input, |_| Ok(()), |_| Ok(()))
 }
 
+#[cfg(test)]
 fn put_pending_session_draft_with_commit_hook<F>(
     root: &Path,
     input: PendingSessionDraftPutInput,
@@ -186,6 +199,19 @@ fn put_pending_session_draft_with_commit_hook<F>(
 ) -> Result<PendingSessionDraftSummary, String>
 where
     F: FnOnce(&Path) -> Result<(), String>,
+{
+    put_pending_session_draft_with_commit_hooks(root, input, before_activate, |_| Ok(()))
+}
+
+fn put_pending_session_draft_with_commit_hooks<F, G>(
+    root: &Path,
+    input: PendingSessionDraftPutInput,
+    before_activate: F,
+    before_backup_cleanup: G,
+) -> Result<PendingSessionDraftSummary, String>
+where
+    F: FnOnce(&Path) -> Result<(), String>,
+    G: FnOnce(&Path) -> Result<(), String>,
 {
     fs::create_dir_all(root).map_err(|e| format!("Failed to create {}: {e}", root.display()))?;
 
@@ -213,9 +239,13 @@ where
         .map_err(|e| format!("Failed to write {}: {e}", draft_json_path.display()))?;
 
     let target_dir = draft_dir(root, &summary.id);
-    if let Err(error) =
-        commit_staged_pending_session_draft(&staging_dir, &target_dir, &summary.id, before_activate)
-    {
+    if let Err(error) = commit_staged_pending_session_draft(
+        &staging_dir,
+        &target_dir,
+        &summary.id,
+        before_activate,
+        before_backup_cleanup,
+    ) {
         let _ = fs::remove_dir_all(&staging_dir);
         return Err(error);
     }
@@ -223,23 +253,21 @@ where
     Ok(summary)
 }
 
-fn commit_staged_pending_session_draft<F>(
+fn commit_staged_pending_session_draft<F, G>(
     staging_dir: &Path,
     target_dir: &Path,
     draft_id: &str,
     before_activate: F,
+    before_backup_cleanup: G,
 ) -> Result<(), String>
 where
     F: FnOnce(&Path) -> Result<(), String>,
+    G: FnOnce(&Path) -> Result<(), String>,
 {
-    let backup_dir = target_dir
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join(format!(
-            ".pending-session-draft-backup-{}-{}",
-            draft_id,
-            Uuid::new_v4().simple()
-        ));
+    let backup_dir = pending_session_draft_backup_dir(
+        target_dir.parent().unwrap_or_else(|| Path::new(".")),
+        draft_id,
+    );
 
     let backup_dir = if target_dir.exists() {
         fs::rename(target_dir, &backup_dir).map_err(|e| {
@@ -266,12 +294,19 @@ where
     }
 
     if let Some(backup_dir) = backup_dir {
-        remove_path_if_exists(&backup_dir).map_err(|e| {
-            format!(
-                "Failed to clean up previous draft backup {}: {e}",
+        if let Err(error) = before_backup_cleanup(&backup_dir).and_then(|_| {
+            remove_path_if_exists(&backup_dir).map_err(|e| {
+                format!(
+                    "Failed to clean up previous draft backup {}: {e}",
+                    backup_dir.display()
+                )
+            })
+        }) {
+            eprintln!(
+                "[pending_session_drafts] leaving stale backup {} after successful commit: {error}",
                 backup_dir.display()
-            )
-        })?;
+            );
+        }
     }
 
     Ok(())
@@ -297,15 +332,65 @@ fn restore_pending_session_draft_backup(
     })
 }
 
+fn recover_or_surface_backup_only_drafts(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut surfaced_paths = Vec::new();
+    for (draft_id, backup_dir, _) in latest_pending_session_draft_backup_dirs(root)? {
+        let live_dir = draft_dir(root, &draft_id);
+        if live_dir.exists() {
+            continue;
+        }
+        match fs::rename(&backup_dir, &live_dir) {
+            Ok(()) => {}
+            Err(error) => {
+                eprintln!(
+                    "[pending_session_drafts] failed to restore backup {} to {}: {error}",
+                    backup_dir.display(),
+                    live_dir.display()
+                );
+                surfaced_paths.push(backup_dir);
+            }
+        }
+    }
+    Ok(surfaced_paths)
+}
+
+fn resolve_pending_session_draft_dir(
+    root: &Path,
+    draft_id: &str,
+) -> Result<Option<PathBuf>, String> {
+    let live_dir = draft_dir(root, draft_id);
+    if live_dir.exists() {
+        return Ok(Some(live_dir));
+    }
+
+    for (backup_draft_id, backup_dir, _) in latest_pending_session_draft_backup_dirs(root)? {
+        if backup_draft_id != draft_id {
+            continue;
+        }
+        match fs::rename(&backup_dir, &live_dir) {
+            Ok(()) => return Ok(Some(live_dir)),
+            Err(error) => {
+                eprintln!(
+                    "[pending_session_drafts] failed to restore backup {} to {}: {error}",
+                    backup_dir.display(),
+                    live_dir.display()
+                );
+                return Ok(Some(backup_dir));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 fn get_pending_session_draft(
     root: &Path,
     draft_id: &str,
 ) -> Result<Option<PendingSessionDraftGetResult>, String> {
     let draft_id = validate_storage_id(draft_id, "draft_id")?;
-    let draft_dir = draft_dir(root, &draft_id);
-    if !draft_dir.exists() {
+    let Some(draft_dir) = resolve_pending_session_draft_dir(root, &draft_id)? else {
         return Ok(None);
-    }
+    };
 
     let summary = read_pending_session_draft_summary(&draft_dir)?;
     let mut attachments = Vec::new();
@@ -354,10 +439,9 @@ fn get_pending_session_draft(
 
 fn delete_pending_session_draft(root: &Path, draft_id: &str) -> Result<bool, String> {
     let draft_id = validate_storage_id(draft_id, "draft_id")?;
-    let target_dir = draft_dir(root, &draft_id);
-    if !target_dir.exists() {
+    let Some(target_dir) = resolve_pending_session_draft_dir(root, &draft_id)? else {
         return Ok(false);
-    }
+    };
 
     fs::remove_dir_all(&target_dir)
         .map_err(|e| format!("Failed to remove {}: {e}", target_dir.display()))?;
@@ -378,6 +462,69 @@ fn draft_dir(root: &Path, draft_id: &str) -> PathBuf {
 
 fn draft_json_path(draft_dir: &Path) -> PathBuf {
     draft_dir.join("draft.json")
+}
+
+fn pending_session_draft_backup_dir(root: &Path, draft_id: &str) -> PathBuf {
+    root.join(format!(
+        ".pending-session-draft-backup-{}-{}",
+        draft_id,
+        Uuid::new_v4().simple()
+    ))
+}
+
+fn parse_pending_session_draft_backup_name(name: &str) -> Option<String> {
+    let prefix = ".pending-session-draft-backup-";
+    let remainder = name.strip_prefix(prefix)?;
+    let (draft_id, suffix) = remainder.rsplit_once('-')?;
+    if draft_id.is_empty() || suffix.is_empty() {
+        return None;
+    }
+    Some(draft_id.to_string())
+}
+
+fn latest_pending_session_draft_backup_dirs(
+    root: &Path,
+) -> Result<Vec<(String, PathBuf, std::time::SystemTime)>, String> {
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut latest_by_draft: std::collections::HashMap<String, (PathBuf, std::time::SystemTime)> =
+        std::collections::HashMap::new();
+
+    for entry in
+        fs::read_dir(root).map_err(|e| format!("Failed to read {}: {e}", root.display()))?
+    {
+        let entry = entry.map_err(|e| format!("Failed to read draft entry: {e}"))?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let Some(draft_id) = parse_pending_session_draft_backup_name(name) else {
+            continue;
+        };
+        let modified_at = entry
+            .metadata()
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+
+        match latest_by_draft.get(&draft_id) {
+            Some((_, current_modified_at)) if *current_modified_at >= modified_at => {}
+            _ => {
+                latest_by_draft.insert(draft_id, (path, modified_at));
+            }
+        }
+    }
+
+    Ok(latest_by_draft
+        .into_iter()
+        .map(|(draft_id, (path, modified_at))| (draft_id, path, modified_at))
+        .collect())
 }
 
 fn attachment_file_path(draft_dir: &Path, attachment_id: &str) -> PathBuf {
@@ -591,11 +738,12 @@ mod tests {
     use super::{
         attachment_file_path, delete_pending_session_draft, get_pending_session_draft,
         list_pending_session_drafts, put_pending_session_draft,
-        put_pending_session_draft_with_commit_hook, PendingSessionDraftAttachmentInput,
-        PendingSessionDraftAttachmentMetadata, PendingSessionDraftAttachmentPayload,
-        PendingSessionDraftComposerInput, PendingSessionDraftComposerMetadata,
-        PendingSessionDraftComposerPayload, PendingSessionDraftGetResult,
-        PendingSessionDraftPutInput, PendingSessionDraftRecord, PendingSessionDraftSummary,
+        put_pending_session_draft_with_commit_hook, put_pending_session_draft_with_commit_hooks,
+        PendingSessionDraftAttachmentInput, PendingSessionDraftAttachmentMetadata,
+        PendingSessionDraftAttachmentPayload, PendingSessionDraftComposerInput,
+        PendingSessionDraftComposerMetadata, PendingSessionDraftComposerPayload,
+        PendingSessionDraftGetResult, PendingSessionDraftPutInput, PendingSessionDraftRecord,
+        PendingSessionDraftSummary,
     };
     use serde_json::json;
     use std::fs;
@@ -844,6 +992,42 @@ mod tests {
     }
 
     #[test]
+    fn get_recovers_backup_only_draft_when_live_path_is_missing() {
+        let dir = TestDir::new();
+        put_pending_session_draft(dir.path(), sample_put_input()).expect("draft should be saved");
+
+        let live_dir = dir.path().join("draft-1");
+        let backup_dir = dir
+            .path()
+            .join(".pending-session-draft-backup-draft-1-manual");
+        fs::rename(&live_dir, &backup_dir).expect("draft should be moved to backup-only state");
+
+        let loaded = get_pending_session_draft(dir.path(), "draft-1")
+            .expect("load should succeed")
+            .expect("backup draft should be recovered");
+
+        assert_eq!(loaded, expected_get_result());
+        assert!(live_dir.exists(), "live draft path should be restored");
+    }
+
+    #[test]
+    fn list_recovers_backup_only_draft_when_live_path_is_missing() {
+        let dir = TestDir::new();
+        put_pending_session_draft(dir.path(), sample_put_input()).expect("draft should be saved");
+
+        let live_dir = dir.path().join("draft-1");
+        let backup_dir = dir
+            .path()
+            .join(".pending-session-draft-backup-draft-1-manual");
+        fs::rename(&live_dir, &backup_dir).expect("draft should be moved to backup-only state");
+
+        let listed = list_pending_session_drafts(dir.path()).expect("list should succeed");
+
+        assert_eq!(listed, vec![expected_summary()]);
+        assert!(live_dir.exists(), "live draft path should be restored");
+    }
+
+    #[test]
     fn list_skips_corrupt_draft_directories_and_returns_valid_drafts() {
         let dir = TestDir::new();
         put_pending_session_draft(dir.path(), sample_put_input()).expect("draft should be saved");
@@ -956,6 +1140,36 @@ mod tests {
             .expect_err("new-private draft with directory should fail");
 
         assert!(error.contains("new-private drafts must not include directory"));
+    }
+
+    #[test]
+    fn put_succeeds_when_backup_cleanup_fails_after_new_draft_is_active() {
+        let dir = TestDir::new();
+        put_pending_session_draft(dir.path(), sample_put_input()).expect("draft should be saved");
+
+        let mut updated = sample_put_input();
+        updated.updated_at = 1_710_000_001_000;
+        updated.composer.text = "Updated draft text".to_string();
+        updated.composer.resolved_text = Some("Updated draft text".to_string());
+
+        let written = put_pending_session_draft_with_commit_hooks(
+            dir.path(),
+            updated,
+            |_target_dir: &Path| Ok(()),
+            |backup_dir: &Path| {
+                Err(format!(
+                    "simulated cleanup failure for {}",
+                    backup_dir.display()
+                ))
+            },
+        )
+        .expect("save should succeed despite backup cleanup failure");
+
+        assert_eq!(written.updated_at, 1_710_000_001_000);
+        let loaded = get_pending_session_draft(dir.path(), "draft-1")
+            .expect("load should succeed")
+            .expect("updated draft should exist");
+        assert_eq!(loaded.draft.composer.text, "Updated draft text");
     }
 
     #[test]
