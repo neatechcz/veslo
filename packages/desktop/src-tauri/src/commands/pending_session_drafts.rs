@@ -439,12 +439,21 @@ fn get_pending_session_draft(
 
 fn delete_pending_session_draft(root: &Path, draft_id: &str) -> Result<bool, String> {
     let draft_id = validate_storage_id(draft_id, "draft_id")?;
-    let Some(target_dir) = resolve_pending_session_draft_dir(root, &draft_id)? else {
-        return Ok(false);
-    };
+    let mut target_paths = Vec::new();
+    let live_dir = draft_dir(root, &draft_id);
+    if live_dir.exists() {
+        target_paths.push(live_dir);
+    }
+    target_paths.extend(pending_session_draft_backup_dirs_for_draft(root, &draft_id)?);
 
-    fs::remove_dir_all(&target_dir)
-        .map_err(|e| format!("Failed to remove {}: {e}", target_dir.display()))?;
+    if target_paths.is_empty() {
+        return Ok(false);
+    }
+
+    for target_path in target_paths {
+        remove_path_if_exists(&target_path)?;
+    }
+
     Ok(true)
 }
 
@@ -525,6 +534,36 @@ fn latest_pending_session_draft_backup_dirs(
         .into_iter()
         .map(|(draft_id, (path, modified_at))| (draft_id, path, modified_at))
         .collect())
+}
+
+fn pending_session_draft_backup_dirs_for_draft(
+    root: &Path,
+    draft_id: &str,
+) -> Result<Vec<PathBuf>, String> {
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut backup_dirs = Vec::new();
+    for entry in
+        fs::read_dir(root).map_err(|e| format!("Failed to read {}: {e}", root.display()))?
+    {
+        let entry = entry.map_err(|e| format!("Failed to read draft entry: {e}"))?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if parse_pending_session_draft_backup_name(name).as_deref() != Some(draft_id) {
+            continue;
+        }
+        backup_dirs.push(path);
+    }
+
+    Ok(backup_dirs)
 }
 
 fn attachment_file_path(draft_dir: &Path, attachment_id: &str) -> PathBuf {
@@ -737,7 +776,8 @@ pub fn pending_session_drafts_delete(app: AppHandle, draft_id: String) -> Result
 mod tests {
     use super::{
         attachment_file_path, delete_pending_session_draft, get_pending_session_draft,
-        list_pending_session_drafts, put_pending_session_draft,
+        list_pending_session_drafts, latest_pending_session_draft_backup_dirs,
+        put_pending_session_draft,
         put_pending_session_draft_with_commit_hook, put_pending_session_draft_with_commit_hooks,
         PendingSessionDraftAttachmentInput, PendingSessionDraftAttachmentMetadata,
         PendingSessionDraftAttachmentPayload, PendingSessionDraftComposerInput,
@@ -1079,6 +1119,54 @@ mod tests {
         assert_eq!(
             list_pending_session_drafts(dir.path()).expect("list should succeed"),
             Vec::<PendingSessionDraftSummary>::new()
+        );
+    }
+
+    #[test]
+    fn delete_removes_stale_backups_so_draft_cannot_be_resurrected() {
+        let dir = TestDir::new();
+        put_pending_session_draft(dir.path(), sample_put_input()).expect("draft should be saved");
+
+        let mut updated = sample_put_input();
+        updated.updated_at = 1_710_000_001_000;
+        updated.composer.text = "Updated draft text".to_string();
+        updated.composer.resolved_text = Some("Updated draft text".to_string());
+        put_pending_session_draft_with_commit_hooks(
+            dir.path(),
+            updated,
+            |_target_dir: &Path| Ok(()),
+            |backup_dir: &Path| {
+                Err(format!(
+                    "simulated cleanup failure for {}",
+                    backup_dir.display()
+                ))
+            },
+        )
+        .expect("save should succeed despite backup cleanup failure");
+
+        let stale_backups =
+            latest_pending_session_draft_backup_dirs(dir.path()).expect("backup scan should work");
+        assert_eq!(stale_backups.len(), 1, "stale backup should exist before delete");
+
+        let deleted =
+            delete_pending_session_draft(dir.path(), "draft-1").expect("delete should succeed");
+
+        assert!(deleted, "delete should report success");
+        assert_eq!(
+            get_pending_session_draft(dir.path(), "draft-1").expect("get should succeed"),
+            None,
+            "deleted draft should not be recoverable from stale backup"
+        );
+        assert_eq!(
+            list_pending_session_drafts(dir.path()).expect("list should succeed"),
+            Vec::<PendingSessionDraftSummary>::new(),
+            "deleted draft should not reappear in list"
+        );
+        assert!(
+            latest_pending_session_draft_backup_dirs(dir.path())
+                .expect("backup scan should work")
+                .is_empty(),
+            "delete should remove stale backup artifacts"
         );
     }
 
