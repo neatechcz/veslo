@@ -307,7 +307,7 @@ test("first New session creates one private workspace and opens a persisted pend
   );
   assert.match(
     openNewSessionSource,
-    /const scratch = await workspaceStore\.createScratchWorkspace\(\);[\s\S]*const emptyPendingDraft = createEmptyComposerDraft\(\);[\s\S]*const now = Date\.now\(\);[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) return;[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*kind: "new-private"[\s\S]*workspaceId: scratch\.id[\s\S]*privateWorkspaceId: scratch\.id[\s\S]*createdAt: now[\s\S]*updatedAt: now[\s\S]*composer: emptyPendingDraft[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: newPrivatePendingDraftKey \}[\s\S]*?emptyPendingDraft[\s\S]*?\)\);[\s\S]*setView\("session"\);/s,
+    /const scratch = await workspaceStore\.createScratchWorkspace\(\);[\s\S]*const emptyPendingDraft = createEmptyComposerDraft\(\);[\s\S]*const now = Date\.now\(\);[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*kind: "new-private"[\s\S]*workspaceId: scratch\.id[\s\S]*privateWorkspaceId: scratch\.id[\s\S]*createdAt: now[\s\S]*updatedAt: now[\s\S]*composer: emptyPendingDraft[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: newPrivatePendingDraftKey \}[\s\S]*?emptyPendingDraft[\s\S]*?\)\);[\s\S]*setView\("session"\);/s,
     "the first New session should create one private workspace, persist one pending draft, and open the draft route",
   );
   assert.doesNotMatch(
@@ -347,7 +347,7 @@ test("New session blocks pending draft activation when workspace activation fail
   );
   assert.match(
     openNewSessionSource,
-    /const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) return;[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setView\("session"\);/s,
+    /const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setView\("session"\);/s,
     "creating a fresh private pending draft must stop before route activation when workspace activation fails",
   );
 });

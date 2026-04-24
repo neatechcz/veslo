@@ -6220,7 +6220,10 @@ export default function App() {
         // Activate in browsing mode (no engine start). Engine + session
         // creation still happen on-demand when the user sends a message.
         const activatedScratchWorkspace = await workspaceStore.activateWorkspace(scratch.id);
-        if (!activatedScratchWorkspace) return;
+        if (!activatedScratchWorkspace) {
+          await workspaceStore.forgetWorkspace(scratch.id, { deleteLocalData: true });
+          return;
+        }
         const pendingDraft = await pendingSessionDraftsPut({
           id: `pending-new-private-${scratch.id}`,
           kind: "new-private",
