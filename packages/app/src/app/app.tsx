@@ -6214,35 +6214,43 @@ export default function App() {
         const scratch = await workspaceStore.createScratchWorkspace();
         if (!scratch?.id) return;
 
+        const cleanupFreshScratchWorkspace = async () => {
+          await workspaceStore.forgetWorkspace(scratch.id, { deleteLocalData: true });
+        };
         const emptyPendingDraft = createEmptyComposerDraft();
         const now = Date.now();
 
-        // Activate in browsing mode (no engine start). Engine + session
-        // creation still happen on-demand when the user sends a message.
-        const activatedScratchWorkspace = await workspaceStore.activateWorkspace(scratch.id);
-        if (!activatedScratchWorkspace) {
-          await workspaceStore.forgetWorkspace(scratch.id, { deleteLocalData: true });
+        try {
+          // Activate in browsing mode (no engine start). Engine + session
+          // creation still happen on-demand when the user sends a message.
+          const activatedScratchWorkspace = await workspaceStore.activateWorkspace(scratch.id);
+          if (!activatedScratchWorkspace) {
+            await cleanupFreshScratchWorkspace();
+            return;
+          }
+          const pendingDraft = await pendingSessionDraftsPut({
+            id: `pending-new-private-${scratch.id}`,
+            kind: "new-private",
+            workspaceId: scratch.id,
+            directory: null,
+            privateWorkspaceId: scratch.id,
+            createdAt: now,
+            updatedAt: now,
+            composer: emptyPendingDraft,
+          });
+          setActivePendingDraftKey(newPrivatePendingDraftKey);
+          setActivePendingDraftMeta(pendingDraft);
+          setComposerDraftBySessionId((current) => setSessionComposerDraft(
+            current,
+            { storageKey: newPrivatePendingDraftKey },
+            emptyPendingDraft,
+          ));
+          setView("session");
           return;
+        } catch (error) {
+          await cleanupFreshScratchWorkspace();
+          throw error;
         }
-        const pendingDraft = await pendingSessionDraftsPut({
-          id: `pending-new-private-${scratch.id}`,
-          kind: "new-private",
-          workspaceId: scratch.id,
-          directory: null,
-          privateWorkspaceId: scratch.id,
-          createdAt: now,
-          updatedAt: now,
-          composer: emptyPendingDraft,
-        });
-        setActivePendingDraftKey(newPrivatePendingDraftKey);
-        setActivePendingDraftMeta(pendingDraft);
-        setComposerDraftBySessionId((current) => setSessionComposerDraft(
-          current,
-          { storageKey: newPrivatePendingDraftKey },
-          emptyPendingDraft,
-        ));
-        setView("session");
-        return;
       } catch (error) {
         reportError(error, "pendingDrafts.newPrivate");
         const message = error instanceof Error ? error.message : safeStringify(error);

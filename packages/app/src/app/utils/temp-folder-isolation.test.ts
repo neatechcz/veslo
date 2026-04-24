@@ -687,7 +687,7 @@ test("fresh private pending draft flow blocks before route activation when works
 
   assert.match(
     openNewSessionSource,
-    /const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setView\("session"\);/s,
+    /const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*\};[\s\S]*try \{[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setView\("session"\);/s,
     "fresh private pending drafts must not be persisted or activated unless scratch workspace activation succeeds",
   );
   assert.doesNotMatch(
@@ -697,7 +697,12 @@ test("fresh private pending draft flow blocks before route activation when works
   );
   assert.match(
     openNewSessionSource,
-    /if \(!activatedScratchWorkspace\) \{[\s\S]*await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*return;[\s\S]*\}/s,
+    /if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}/s,
     "fresh private pending draft failure must clean up the just-created scratch workspace",
+  );
+  assert.match(
+    openNewSessionSource,
+    /catch \(error\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}/s,
+    "fresh private pending draft failure must also clean up the scratch workspace when activation or persistence throws",
   );
 });
