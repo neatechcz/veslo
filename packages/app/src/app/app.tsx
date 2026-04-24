@@ -6311,8 +6311,12 @@ export default function App() {
 
       const emptyPendingDraft = createEmptyComposerDraft();
       const now = Date.now();
+      const pendingDraftIdSuffix =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${now}-${Math.random().toString(16).slice(2)}`;
       const pendingDraft = await pendingSessionDraftsPut({
-        id: `pending-directory-${workspaceId}-${now}`,
+        id: `pending-directory-${pendingDraftIdSuffix}`,
         kind: "directory",
         workspaceId,
         directory,
@@ -6340,19 +6344,18 @@ export default function App() {
     const id = workspaceId.trim();
     if (!id) return false;
 
-    const workspace =
-      workspaceStore.workspaces().find((entry) => entry.id === id) ??
-      (workspaceStore.activeWorkspaceDisplay().id === id ? workspaceStore.activeWorkspaceDisplay() : null);
-    const directory = workspace?.directory?.trim() || workspace?.path?.trim() || "";
-    if (!directory) return false;
-
     return await openPendingDraftWithWorkspaceActivation({
       activeWorkspaceId: workspaceStore.activeWorkspaceId(),
       getActiveWorkspaceId: () => workspaceStore.activeWorkspaceId(),
       workspaceId: id,
       activateWorkspace: (nextWorkspaceId) =>
         workspaceStore.activateWorkspace(nextWorkspaceId, { promoteToFront: true }),
-      openPendingDraft: () => openDirectoryPendingDraft({ workspaceId: id, directory }),
+      openPendingDraft: () => {
+        const activeWorkspace = workspaceStore.activeWorkspaceDisplay();
+        const directory = activeWorkspace.directory?.trim() || activeWorkspace.path?.trim() || "";
+        if (!directory) return "";
+        return openDirectoryPendingDraft({ workspaceId: id, directory });
+      },
     });
   };
 

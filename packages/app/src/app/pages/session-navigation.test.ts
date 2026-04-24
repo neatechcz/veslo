@@ -24,6 +24,23 @@ const openDirectorySessionSource =
   openDirectorySessionStart >= 0 && openDirectorySessionEnd >= 0
     ? appSource.slice(openDirectorySessionStart, openDirectorySessionEnd)
     : "";
+const openDirectoryPendingDraftStart = appSource.indexOf("  const openDirectoryPendingDraft = async (input: { workspaceId: string; directory: string }) => {");
+const openDirectoryPendingDraftEnd = appSource.indexOf("  const openPendingDirectoryDraftInWorkspace = async (workspaceId: string) => {", openDirectoryPendingDraftStart);
+const openDirectoryPendingDraftSource =
+  openDirectoryPendingDraftStart >= 0 && openDirectoryPendingDraftEnd >= 0
+    ? appSource.slice(openDirectoryPendingDraftStart, openDirectoryPendingDraftEnd)
+    : "";
+const openPendingDirectoryDraftInWorkspaceStart = appSource.indexOf(
+  "  const openPendingDirectoryDraftInWorkspace = async (workspaceId: string) => {",
+);
+const openPendingDirectoryDraftInWorkspaceEnd = appSource.indexOf(
+  "  const openDirectorySessionFromPicker = async () => {",
+  openPendingDirectoryDraftInWorkspaceStart,
+);
+const openPendingDirectoryDraftInWorkspaceSource =
+  openPendingDirectoryDraftInWorkspaceStart >= 0 && openPendingDirectoryDraftInWorkspaceEnd >= 0
+    ? appSource.slice(openPendingDirectoryDraftInWorkspaceStart, openPendingDirectoryDraftInWorkspaceEnd)
+    : "";
 
 const openPendingDraftWithWorkspaceActivation = () => {
   const fn = (
@@ -568,6 +585,38 @@ test("directory picker flow opens a pending draft instead of creating a real ses
     openDirectorySessionSource,
     /createSession: \(\) => createSessionAndOpen\(\)/,
     "the picker flow should stop creating real sessions immediately",
+  );
+});
+
+test("project plus resolves the directory after workspace activation instead of failing early on stale metadata", () => {
+  assert.notEqual(
+    openPendingDirectoryDraftInWorkspaceSource,
+    "",
+    "Project plus flow should exist in app.tsx",
+  );
+  assert.doesNotMatch(
+    openPendingDirectoryDraftInWorkspaceSource,
+    /const workspace =[\s\S]*const directory = workspace\?\.directory\?\.trim\(\) \|\| workspace\?\.path\?\.trim\(\) \|\| "";\s*if \(!directory\) return false;/s,
+    "project plus should not depend on pre-activation directory metadata before it even tries to activate the workspace",
+  );
+  assert.match(
+    openPendingDirectoryDraftInWorkspaceSource,
+    /openPendingDraft: \(\) => \{[\s\S]*const activeWorkspace = workspaceStore\.activeWorkspaceDisplay\(\);[\s\S]*const directory = activeWorkspace\.directory\?\.trim\(\) \|\| activeWorkspace\.path\?\.trim\(\) \|\| "";\s*if \(!directory\) return "";\s*return openDirectoryPendingDraft\(\{ workspaceId: id, directory \}\);[\s\S]*\}/s,
+    "project plus should resolve the directory from the activated workspace state right before opening the pending draft",
+  );
+});
+
+test("fresh directory pending drafts use collision-resistant ids", () => {
+  assert.notEqual(openDirectoryPendingDraftSource, "", "Directory pending draft flow should exist in app.tsx");
+  assert.doesNotMatch(
+    openDirectoryPendingDraftSource,
+    /id: `pending-directory-\$\{workspaceId\}-\$\{now\}`/,
+    "fresh directory drafts should not rely on workspace id plus millisecond clock for uniqueness",
+  );
+  assert.match(
+    openDirectoryPendingDraftSource,
+    /typeof crypto !== "undefined" && typeof crypto\.randomUUID === "function"[\s\S]*crypto\.randomUUID\(\)[\s\S]*Math\.random\(\)\.toString\(16\)\.slice\(2\)/s,
+    "fresh directory drafts should add a collision-resistant suffix independent of clock granularity",
   );
 });
 
