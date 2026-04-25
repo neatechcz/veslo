@@ -4,6 +4,10 @@ import test from "node:test";
 
 const sessionSource = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
+const workspaceSessionListSource = readFileSync(
+  new URL("../components/session/workspace-session-list.tsx", import.meta.url),
+  "utf8",
+);
 
 test("session view props expose the directory-picked session callback", () => {
   assert.match(
@@ -34,6 +38,59 @@ test("dashboard wires the directory-picked session callback into WorkspaceSessio
     dashboardSource,
     /onAddDirectorySession=\{props\.openDirectorySessionFromPicker\}/,
     "Dashboard should pass the picker-driven callback into WorkspaceSessionList",
+  );
+});
+
+test("session view props expose the project pending-draft callback", () => {
+  assert.match(
+    sessionSource,
+    /openPendingDirectoryDraftInWorkspace: \(workspaceId: string\) => void;/,
+    "SessionViewProps should expose the project pending-draft callback",
+  );
+});
+
+test("dashboard view props expose the project pending-draft callback", () => {
+  assert.match(
+    dashboardSource,
+    /openPendingDirectoryDraftInWorkspace: \(workspaceId: string\) => void;/,
+    "DashboardViewProps should expose the project pending-draft callback",
+  );
+});
+
+test("WorkspaceSessionList exposes the project pending-draft callback", () => {
+  assert.match(
+    workspaceSessionListSource,
+    /onOpenPendingDirectoryDraftInWorkspace: \(workspaceId: string\) => void;/,
+    "WorkspaceSessionList should expose the per-project pending-draft callback",
+  );
+});
+
+test("session wires the project pending-draft callback into WorkspaceSessionList", () => {
+  assert.match(
+    sessionSource,
+    /onOpenPendingDirectoryDraftInWorkspace=\{props\.openPendingDirectoryDraftInWorkspace\}/,
+    "Session should pass the per-project pending-draft callback into WorkspaceSessionList",
+  );
+});
+
+test("dashboard wires the project pending-draft callback into WorkspaceSessionList", () => {
+  assert.match(
+    dashboardSource,
+    /onOpenPendingDirectoryDraftInWorkspace=\{props\.openPendingDirectoryDraftInWorkspace\}/,
+    "Dashboard should pass the per-project pending-draft callback into WorkspaceSessionList",
+  );
+});
+
+test("project plus button uses the pending-draft callback instead of real-session creation wiring", () => {
+  assert.match(
+    workspaceSessionListSource,
+    /onClick=\{\(\) => props\.onOpenPendingDirectoryDraftInWorkspace\(workspace\(\)\.id\)\}/,
+    "WorkspaceSessionList should route the project plus button into the pending-draft callback",
+  );
+  assert.doesNotMatch(
+    workspaceSessionListSource,
+    /props\.onCreateTaskInWorkspace/,
+    "WorkspaceSessionList should stop referring to the old real-session creation callback",
   );
 });
 

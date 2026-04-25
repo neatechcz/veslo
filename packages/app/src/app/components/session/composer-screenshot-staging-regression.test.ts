@@ -17,7 +17,7 @@ test("staging failure blocks send with an explicit error and no draft clear", ()
 
   assert.match(
     stagingWindow,
-    /const stagedAttachments = await stageAttachmentsIntoSessionDirectory\(resolvedDraft, sessionID\);\s*const routedDraft = routeStagedAttachmentsForModel\(\{[\s\S]*?\}\);\s*if \(routedDraft\.error\) \{\s*setError\(routedDraft\.error\);\s*return false;\s*\}\s*resolvedDraft = routedDraft\.draft;\s*promptSystem = routedDraft\.system;\s*\} catch \(error\) \{\s*setError\(error instanceof Error \? error\.message : safeStringify\(error\)\);\s*return false;\s*\}/s,
+    /const stagedAttachments = await stageAttachmentsIntoSessionDirectory\(resolvedDraft, sessionID\);\s*const routedDraft = routeStagedAttachmentsForModel\(\{[\s\S]*?\}\);\s*if \(routedDraft\.error\) \{\s*restorePendingDraftAfterSendFailure\(\);\s*setError\(routedDraft\.error\);\s*return false;\s*\}\s*resolvedDraft = routedDraft\.draft;\s*promptSystem = routedDraft\.system;\s*\} catch \(error\) \{\s*restorePendingDraftAfterSendFailure\(\);\s*setError\(error instanceof Error \? error\.message : safeStringify\(error\)\);\s*return false;\s*\}/s,
     "send flow should hard-fail when attachment staging fails",
   );
 
@@ -25,6 +25,14 @@ test("staging failure blocks send with an explicit error and no draft clear", ()
     stagingWindow,
     /setPrompt\(""\)|setAttachments\(\[\]\)/,
     "staging failure should not clear the composer before aborting",
+  );
+});
+
+test("send flow snapshots pending draft context before materializing a real session", () => {
+  assert.match(
+    appSource,
+    /let sessionID = selectedSessionId\(\);\s*const pendingDraftSendState = \(\(\) => \{[\s\S]*const pendingDraftKey = \(activePendingDraftKey\(\) \?\? ""\)\.trim\(\);[\s\S]*if \(sessionID\) return null;[\s\S]*if \(!pendingDraftKey\) return null;[\s\S]*return \{[\s\S]*key: pendingDraftKey,[\s\S]*\};[\s\S]*\}\)\(\);\s*if \(!sessionID\) \{\s*await createSessionAndOpen\(\);\s*sessionID = selectedSessionId\(\);\s*\}/s,
+    "send flow should snapshot pending draft identity before creating the real session so failure paths can preserve the draft",
   );
 });
 
@@ -81,7 +89,7 @@ test("send flow blocks screenshot analysis on non-vision models instead of relyi
 
   assert.match(
     appSource,
-    /if \(routedDraft\.error\) \{\s*setError\(routedDraft\.error\);\s*return false;\s*\}/s,
+    /if \(routedDraft\.error\) \{\s*restorePendingDraftAfterSendFailure\(\);\s*setError\(routedDraft\.error\);\s*return false;\s*\}/s,
     "non-vision screenshot sends should fail with a visible error before the prompt runs",
   );
 

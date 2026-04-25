@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -6,6 +7,9 @@ import {
   normalizeDirectoryPath,
   commandPathFromWorkspaceRoot,
 } from "./index.js";
+
+const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const workspaceSource = readFileSync(new URL("../context/workspace.ts", import.meta.url), "utf8");
 
 // ---------------------------------------------------------------------------
 // Temporary folder isolation tests
@@ -648,4 +652,80 @@ test("bootstrap startHost must be guarded by a timeout to prevent indefinite fre
 
   // The key assertion: without the timeout, this test would hang forever.
   // With the fix, it completes promptly.
+});
+
+test("after pending draft deletion New session falls back to a fresh private workspace", () => {
+  const openNewSessionStart = appSource.indexOf("  const openNewSessionWithDirectory = async () => {");
+  const openNewSessionEnd = appSource.indexOf("  const openDirectorySessionFromPicker = async () => {", openNewSessionStart);
+  assert.notEqual(openNewSessionStart, -1, "New session flow should exist in app.tsx");
+  assert.notEqual(openNewSessionEnd, -1, "New session flow end should exist in app.tsx");
+  const openNewSessionSource = appSource.slice(openNewSessionStart, openNewSessionEnd);
+
+  assert.match(
+    openNewSessionSource,
+    /const pendingDrafts = \(await pendingSessionDraftsList\(\)\)\.filter\(\(draft\) => !isConsumedPendingDraftId\(draft\.id\)\);[\s\S]*const existingPendingDraft = pendingDrafts\.find\(\(draft\) => draft\.kind === "new-private"\) \?\? null;[\s\S]*if \(existingPendingDraft\) \{[\s\S]*return;\s*\}[\s\S]*const scratch = await workspaceStore\.createScratchWorkspace\(\);/s,
+    "when the private pending draft is missing, New session should fall through to fresh scratch workspace creation",
+  );
+  assert.match(
+    workspaceSource,
+    /const runId = makeRunId\(\)\.replace\(\/\[\^a-z0-9-\]\+\/gi, ""\)\.slice\(0, 24\) \|\| `\$\{Date\.now\(\)\}`;/,
+    "scratch workspaces should still derive a fresh unique run id",
+  );
+  assert.match(
+    workspaceSource,
+    /const folder = `\$\{root\}\/\$\{Date\.now\(\)\}-\$\{runId\}`;/,
+    "scratch workspaces should still create a fresh private workspace folder for each new draft",
+  );
+});
+
+test("fresh private pending draft flow blocks before route activation when workspace activation fails", () => {
+  const openNewSessionStart = appSource.indexOf("  const openNewSessionWithDirectory = async () => {");
+  const openNewSessionEnd = appSource.indexOf("  const openDirectorySessionFromPicker = async () => {", openNewSessionStart);
+  assert.notEqual(openNewSessionStart, -1, "New session flow should exist in app.tsx");
+  assert.notEqual(openNewSessionEnd, -1, "New session flow end should exist in app.tsx");
+  const openNewSessionSource = appSource.slice(openNewSessionStart, openNewSessionEnd);
+
+  assert.match(
+    openNewSessionSource,
+    /const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*const cleanupSucceeded = await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}[\s\S]*\};[\s\S]*try \{[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setView\("session"\);/s,
+    "fresh private pending drafts must not be persisted or activated unless scratch workspace activation succeeds",
+  );
+  assert.doesNotMatch(
+    openNewSessionSource,
+    /const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);/s,
+    "fresh private pending drafts must not be written before scratch workspace activation succeeds",
+  );
+  assert.match(
+    openNewSessionSource,
+    /if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}/s,
+    "fresh private pending draft failure must clean up the just-created scratch workspace",
+  );
+  assert.match(
+    openNewSessionSource,
+    /catch \(error\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}/s,
+    "fresh private pending draft failure must also clean up the scratch workspace when activation or persistence throws",
+  );
+});
+
+test("forgetWorkspace reports cleanup success to callers", () => {
+  assert.match(
+    workspaceSource,
+    /async function forgetWorkspace\(\s*workspaceId: string,\s*forgetOptions\?: \{ deleteLocalData\?: boolean \},\s*\): Promise<boolean> \{/s,
+    "workspace cleanup should report a boolean success signal",
+  );
+  assert.match(
+    workspaceSource,
+    /if \(!isTauriRuntime\(\)\) \{[\s\S]*return false;[\s\S]*\}/s,
+    "forgetWorkspace should report failure when desktop cleanup is unavailable",
+  );
+  assert.match(
+    workspaceSource,
+    /if \(!id\) return false;/,
+    "forgetWorkspace should report failure for an empty workspace id",
+  );
+  assert.match(
+    workspaceSource,
+    /return true;[\s\S]*\} catch \(e\) \{[\s\S]*options\.setError\(addOpencodeCacheHint\(message\)\);[\s\S]*return false;[\s\S]*\}/s,
+    "forgetWorkspace should return false when cleanup throws instead of silently swallowing the failure",
+  );
 });

@@ -122,10 +122,7 @@ import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
 import ArtifactsPanel from "../components/session/artifacts-panel";
 import type { ArtifactFamily } from "../components/session/artifact-family-model";
-import {
-  createSessionWithWorkspaceActivation,
-  openSessionWithWorkspaceActivation,
-} from "./session-navigation";
+import { openSessionWithWorkspaceActivation } from "./session-navigation";
 import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "./session-layout-width";
 
 export type SessionViewProps = {
@@ -151,6 +148,7 @@ export type SessionViewProps = {
   openCreateRemoteWorkspace: () => void;
   openNewSessionWithDirectory: () => void;
   openDirectorySessionFromPicker: () => void;
+  openPendingDirectoryDraftInWorkspace: (workspaceId: string) => void;
   canChooseSessionFolder: boolean;
   chooseFolderForCurrentSession: () => Promise<boolean>;
   showRemoteActions?: boolean;
@@ -3493,18 +3491,6 @@ export default function SessionView(props: SessionViewProps) {
       });
   };
 
-  const createTaskInWorkspace = (workspaceId: string) => {
-    const id = workspaceId.trim();
-    if (!id) return;
-    void createSessionWithWorkspaceActivation({
-      activeWorkspaceId: props.activeWorkspaceId,
-      getActiveWorkspaceId: () => props.activeWorkspaceId,
-      workspaceId: id,
-      activateWorkspace: props.activateWorkspace,
-      createSession: () => props.createSessionAndOpen(),
-    });
-  };
-
   const resolveVesloWorkspaceId = (workspaceId: string) => {
     const id = workspaceId.trim();
     if (!id) return null;
@@ -3821,7 +3807,7 @@ export default function SessionView(props: SessionViewProps) {
             onActivateWorkspace={props.activateWorkspace}
             onOpenSession={openSessionFromList}
             onDeleteSession={openDeleteSessionModalForSession}
-            onCreateTaskInWorkspace={createTaskInWorkspace}
+            onOpenPendingDirectoryDraftInWorkspace={props.openPendingDirectoryDraftInWorkspace}
             onOpenRenameWorkspace={props.openRenameWorkspace}
             onShareWorkspace={(workspaceId) => setShareWorkspaceId(workspaceId)}
             onOpenSoul={openSoul}

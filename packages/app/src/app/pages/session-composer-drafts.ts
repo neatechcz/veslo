@@ -1,10 +1,23 @@
 import type { ComposerDraft, ComposerPart } from "../types";
+import { resolveComposerStorageKey } from "../lib/pending-session-drafts";
 
-const NO_SESSION_DRAFT_KEY = "__no-session__";
+type ComposerDraftStorageTarget =
+  | string
+  | null
+  | undefined
+  | {
+    sessionId?: string | null;
+    storageKey?: string | null;
+  };
 
-const normalizeDraftSessionKey = (sessionId: string | null | undefined) => {
-  const trimmed = (sessionId ?? "").trim();
-  return trimmed || NO_SESSION_DRAFT_KEY;
+const resolveDraftStorageKey = (target: ComposerDraftStorageTarget) => {
+  if (typeof target === "object" && target !== null) {
+    const explicitStorageKey = (target.storageKey ?? "").trim();
+    if (explicitStorageKey) return explicitStorageKey;
+    return resolveComposerStorageKey({ sessionId: target.sessionId });
+  }
+
+  return resolveComposerStorageKey({ sessionId: target });
 };
 
 const cloneComposerPart = (part: ComposerPart): ComposerPart => {
@@ -33,18 +46,18 @@ export const createEmptyComposerDraft = (text = ""): ComposerDraft => ({
 
 export const getSessionComposerDraft = (
   draftsBySessionId: Record<string, ComposerDraft>,
-  sessionId: string | null | undefined,
+  target: ComposerDraftStorageTarget,
 ): ComposerDraft => {
-  const key = normalizeDraftSessionKey(sessionId);
+  const key = resolveDraftStorageKey(target);
   return cloneComposerDraft(draftsBySessionId[key] ?? createEmptyComposerDraft());
 };
 
 export const setSessionComposerDraft = (
   draftsBySessionId: Record<string, ComposerDraft>,
-  sessionId: string | null | undefined,
+  target: ComposerDraftStorageTarget,
   draft: ComposerDraft,
 ): Record<string, ComposerDraft> => {
-  const key = normalizeDraftSessionKey(sessionId);
+  const key = resolveDraftStorageKey(target);
   return {
     ...draftsBySessionId,
     [key]: cloneComposerDraft(draft),
@@ -53,19 +66,19 @@ export const setSessionComposerDraft = (
 
 export const setSessionComposerPrompt = (
   draftsBySessionId: Record<string, ComposerDraft>,
-  sessionId: string | null | undefined,
+  target: ComposerDraftStorageTarget,
   prompt: string,
 ): Record<string, ComposerDraft> => setSessionComposerDraft(
   draftsBySessionId,
-  sessionId,
+  target,
   createEmptyComposerDraft(prompt),
 );
 
 export const deleteSessionComposerDraft = (
   draftsBySessionId: Record<string, ComposerDraft>,
-  sessionId: string | null | undefined,
+  target: ComposerDraftStorageTarget,
 ): Record<string, ComposerDraft> => {
-  const key = normalizeDraftSessionKey(sessionId);
+  const key = resolveDraftStorageKey(target);
   if (!(key in draftsBySessionId)) return draftsBySessionId;
   const next = { ...draftsBySessionId };
   delete next[key];

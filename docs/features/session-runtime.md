@@ -31,6 +31,18 @@ Main source of truth:
 
 - `packages/app/src/app/components/session/composer.tsx`
 
+## Pending Drafts
+
+Unstarted sessions are modeled as pending drafts.
+
+Current behavior:
+
+- pending drafts are durable local state
+- pending drafts do not appear in the sidebar until the user presses `Run`
+- `New session` reopens the one existing unpublished private draft instead of creating another unpublished private worker
+- project `+` actions reopen the pending draft for that project directory when one already exists
+- a real OpenCode session is materialized only when the pending draft is sent successfully
+
 ## Global Model and Thinking Behavior
 
 Session UI can expose model-related controls, but future runs still follow the product's global model policy.

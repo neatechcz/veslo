@@ -1,11 +1,95 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { resolvePendingDraftKey } from "../lib/pending-session-drafts.js";
 import {
   createSessionFromDirectorySelection,
   createSessionWithWorkspaceActivation,
   openSessionWithWorkspaceActivation,
 } from "./session-navigation.js";
+import * as sessionNavigation from "./session-navigation.js";
+
+const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+
+const openNewSessionStart = appSource.indexOf("  const openNewSessionWithDirectory = async () => {");
+const openNewSessionEnd = appSource.indexOf("  const openDirectorySessionFromPicker = async () => {", openNewSessionStart);
+const openNewSessionSource =
+  openNewSessionStart >= 0 && openNewSessionEnd >= 0
+    ? appSource.slice(openNewSessionStart, openNewSessionEnd)
+    : "";
+const openDirectorySessionStart = appSource.indexOf("  const openDirectorySessionFromPicker = async () => {");
+const openDirectorySessionEnd = appSource.indexOf("  const chooseFolderForCurrentSession = async () => {", openDirectorySessionStart);
+const openDirectorySessionSource =
+  openDirectorySessionStart >= 0 && openDirectorySessionEnd >= 0
+    ? appSource.slice(openDirectorySessionStart, openDirectorySessionEnd)
+    : "";
+const openDirectoryPendingDraftStart = appSource.indexOf("  const openDirectoryPendingDraft = async (input: { workspaceId: string; directory: string }) => {");
+const openDirectoryPendingDraftEnd = appSource.indexOf("  const openPendingDirectoryDraftInWorkspace = async (workspaceId: string) => {", openDirectoryPendingDraftStart);
+const openDirectoryPendingDraftSource =
+  openDirectoryPendingDraftStart >= 0 && openDirectoryPendingDraftEnd >= 0
+    ? appSource.slice(openDirectoryPendingDraftStart, openDirectoryPendingDraftEnd)
+    : "";
+const openPendingDirectoryDraftInWorkspaceStart = appSource.indexOf(
+  "  const openPendingDirectoryDraftInWorkspace = async (workspaceId: string) => {",
+);
+const openPendingDirectoryDraftInWorkspaceEnd = appSource.indexOf(
+  "  const openDirectorySessionFromPicker = async () => {",
+  openPendingDirectoryDraftInWorkspaceStart,
+);
+const openPendingDirectoryDraftInWorkspaceSource =
+  openPendingDirectoryDraftInWorkspaceStart >= 0 && openPendingDirectoryDraftInWorkspaceEnd >= 0
+    ? appSource.slice(openPendingDirectoryDraftInWorkspaceStart, openPendingDirectoryDraftInWorkspaceEnd)
+    : "";
+
+const openPendingDraftWithWorkspaceActivation = () => {
+  const fn = (
+    sessionNavigation as typeof sessionNavigation & {
+      openPendingDraftWithWorkspaceActivation?: (
+        input: {
+          activeWorkspaceId: string;
+          getActiveWorkspaceId?: () => string;
+          workspaceId: string;
+          activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+          openPendingDraft: () => Promise<string | boolean | undefined> | string | boolean | undefined | void;
+        },
+      ) => Promise<boolean>;
+    }
+  ).openPendingDraftWithWorkspaceActivation;
+  assert.equal(
+    typeof fn,
+    "function",
+    "session-navigation should export a pending-draft activation helper alongside real-session creation",
+  );
+  return fn;
+};
+
+const openPendingDraftFromDirectorySelection = () => {
+  const fn = (
+    sessionNavigation as typeof sessionNavigation & {
+      openPendingDraftFromDirectorySelection?: (
+        input: {
+          activeWorkspaceId: string;
+          getActiveWorkspaceId?: () => string;
+          pickDirectory: () => Promise<string | null> | string | null;
+          ensureWorkspaceForFolder: (
+            folder: string,
+          ) => Promise<{ id: string } | null> | { id: string } | null;
+          activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+          openPendingDraft: (
+            target: { workspaceId: string; directory: string },
+          ) => Promise<string | boolean | undefined> | string | boolean | undefined | void;
+        },
+      ) => Promise<"cancelled" | "blocked" | "opened">;
+    }
+  ).openPendingDraftFromDirectorySelection;
+  assert.equal(
+    typeof fn,
+    "function",
+    "session-navigation should export a picker flow for pending directory drafts",
+  );
+  return fn;
+};
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -164,6 +248,28 @@ test("creates session after successful cross-workspace activation", async () => 
   assert.deepEqual(created, ["created"]);
 });
 
+test("pending draft activation opens the workspace draft without creating a real session immediately", async () => {
+  const activated: string[] = [];
+  const openedDrafts: string[] = [];
+
+  const result = await openPendingDraftWithWorkspaceActivation()({
+    activeWorkspaceId: "ws-active",
+    workspaceId: "ws-other",
+    activateWorkspace: async (id) => {
+      activated.push(id);
+      return true;
+    },
+    openPendingDraft: async () => {
+      openedDrafts.push("pending:ws-other");
+      return "pending:ws-other";
+    },
+  });
+
+  assert.equal(result, true);
+  assert.deepEqual(activated, ["ws-other"]);
+  assert.deepEqual(openedDrafts, ["pending:ws-other"]);
+});
+
 test("picker-driven directory session flow cancels cleanly when no folder is selected", async () => {
   const ensured: string[] = [];
   const activated: string[] = [];
@@ -288,6 +394,168 @@ test("picker-driven directory session flow stops when ensured workspace cannot a
   assert.deepEqual(created, []);
 });
 
+test("picker-driven pending directory draft flow reopens the same target for the same normalized directory", async () => {
+  const openedTargets: string[] = [];
+  let currentActive = "ws-active";
+
+  const openDirectoryDraft = openPendingDraftFromDirectorySelection();
+
+  const first = await openDirectoryDraft({
+    activeWorkspaceId: currentActive,
+    getActiveWorkspaceId: () => currentActive,
+    pickDirectory: async () => "/tmp/project-a/",
+    ensureWorkspaceForFolder: async () => ({ id: "ws-project-a" }),
+    activateWorkspace: async (id) => {
+      currentActive = id;
+      return true;
+    },
+    openPendingDraft: async ({ workspaceId, directory }) => {
+      const target = resolvePendingDraftKey({ kind: "directory", workspaceId, directory });
+      openedTargets.push(target);
+      return target;
+    },
+  });
+
+  currentActive = "ws-active";
+
+  const second = await openDirectoryDraft({
+    activeWorkspaceId: currentActive,
+    getActiveWorkspaceId: () => currentActive,
+    pickDirectory: async () => "/tmp/project-a",
+    ensureWorkspaceForFolder: async () => ({ id: "ws-project-a" }),
+    activateWorkspace: async (id) => {
+      currentActive = id;
+      return true;
+    },
+    openPendingDraft: async ({ workspaceId, directory }) => {
+      const target = resolvePendingDraftKey({ kind: "directory", workspaceId, directory });
+      openedTargets.push(target);
+      return target;
+    },
+  });
+
+  assert.equal(first, "opened");
+  assert.equal(second, "opened");
+  assert.equal(openedTargets[0], openedTargets[1]);
+});
+
+test("picker-driven pending directory draft flow keeps different projects on different targets", async () => {
+  const openedTargets: string[] = [];
+  let currentActive = "ws-active";
+
+  const openDirectoryDraft = openPendingDraftFromDirectorySelection();
+
+  const first = await openDirectoryDraft({
+    activeWorkspaceId: currentActive,
+    getActiveWorkspaceId: () => currentActive,
+    pickDirectory: async () => "/tmp/project-shared",
+    ensureWorkspaceForFolder: async () => ({ id: "ws-project-a" }),
+    activateWorkspace: async (id) => {
+      currentActive = id;
+      return true;
+    },
+    openPendingDraft: async ({ workspaceId, directory }) => {
+      const target = resolvePendingDraftKey({ kind: "directory", workspaceId, directory });
+      openedTargets.push(target);
+      return target;
+    },
+  });
+
+  currentActive = "ws-active";
+
+  const second = await openDirectoryDraft({
+    activeWorkspaceId: currentActive,
+    getActiveWorkspaceId: () => currentActive,
+    pickDirectory: async () => "/tmp/project-shared",
+    ensureWorkspaceForFolder: async () => ({ id: "ws-project-b" }),
+    activateWorkspace: async (id) => {
+      currentActive = id;
+      return true;
+    },
+    openPendingDraft: async ({ workspaceId, directory }) => {
+      const target = resolvePendingDraftKey({ kind: "directory", workspaceId, directory });
+      openedTargets.push(target);
+      return target;
+    },
+  });
+
+  assert.equal(first, "opened");
+  assert.equal(second, "opened");
+  assert.notEqual(openedTargets[0], openedTargets[1]);
+});
+
+test("first New session creates one private workspace and opens a persisted pending draft", () => {
+  assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
+  assert.match(
+    openNewSessionSource,
+    /const newPrivatePendingDraftKey = resolvePendingDraftKey\(\{ kind: "new-private" \}\);[\s\S]*const pendingDrafts = \(await pendingSessionDraftsList\(\)\)\.filter\(\(draft\) => !isConsumedPendingDraftId\(draft\.id\)\);[\s\S]*const existingPendingDraft = pendingDrafts\.find\(\(draft\) => draft\.kind === "new-private"\) \?\? null;/s,
+    "New session should look for an existing private pending draft before creating a workspace",
+  );
+  assert.match(
+    openNewSessionSource,
+    /const scratch = await workspaceStore\.createScratchWorkspace\(\);[\s\S]*const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*const cleanupSucceeded = await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}[\s\S]*\};[\s\S]*const emptyPendingDraft = createEmptyComposerDraft\(\);[\s\S]*const now = Date\.now\(\);[\s\S]*try \{[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*kind: "new-private"[\s\S]*workspaceId: scratch\.id[\s\S]*privateWorkspaceId: scratch\.id[\s\S]*createdAt: now[\s\S]*updatedAt: now[\s\S]*composer: emptyPendingDraft[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: newPrivatePendingDraftKey \}[\s\S]*?emptyPendingDraft[\s\S]*?\)\);[\s\S]*setView\("session"\);[\s\S]*return;[\s\S]*\} catch \(error\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}/s,
+    "the first New session should create one private workspace, persist one pending draft, and open the draft route",
+  );
+  assert.doesNotMatch(
+    openNewSessionSource,
+    /const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);/s,
+    "the fresh private pending draft must not be persisted before scratch workspace activation succeeds",
+  );
+});
+
+test("second New session reopens the same pending draft and does not create another private workspace", () => {
+  assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
+  assert.match(
+    openNewSessionSource,
+    /if \(existingPendingDraft\) \{\s*const pendingDraft = await pendingSessionDraftsGet\(existingPendingDraft\.id\);[\s\S]*if \(pendingDraft\) \{\s*const restoreError = formatPendingDraftAttachmentRestoreError\(pendingDraft\.attachmentFailures\);[\s\S]*if \(restoreError\) \{\s*setError\(restoreError\);[\s\S]*\}\s*const pendingWorkspaceId = \(existingPendingDraft\.privateWorkspaceId \?\? existingPendingDraft\.workspaceId\)\.trim\(\);[\s\S]*if \(!pendingWorkspaceId\) return;[\s\S]*const activatedPendingWorkspace = await workspaceStore\.activateWorkspace\(pendingWorkspaceId\);[\s\S]*if \(!activatedPendingWorkspace\) return;[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*setComposerDraftBySessionId\(\(current\) => setSessionComposerDraft\([\s\S]*?\{ storageKey: newPrivatePendingDraftKey \}[\s\S]*?pendingDraft\.draft\.composer[\s\S]*?\)\);[\s\S]*setView\("session"\);[\s\S]*return;\s*\}\s*\}/s,
+    "repeat New session should reopen the existing private pending draft instead of creating a new workspace",
+  );
+  const existingBranchMatch = openNewSessionSource.match(/if \(existingPendingDraft\) \{[\s\S]*?return;\s*\}/);
+  const existingBranch = existingBranchMatch?.[0] ?? "";
+  assert.doesNotMatch(
+    existingBranch,
+    /createScratchWorkspace/,
+    "reopening an existing private pending draft must not create another scratch workspace",
+  );
+  assert.doesNotMatch(
+    openNewSessionSource,
+    /deleteSessionComposerDraft\(current, null\)/,
+    "repeat New session should not clear the draft bucket before reopening the same pending draft",
+  );
+});
+
+test("New session blocks pending draft activation when workspace activation fails", () => {
+  assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
+  assert.match(
+    openNewSessionSource,
+    /const activatedPendingWorkspace = await workspaceStore\.activateWorkspace\(pendingWorkspaceId\);[\s\S]*if \(!activatedPendingWorkspace\) return;[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(existingPendingDraft\);[\s\S]*setView\("session"\);/s,
+    "reopening an existing private pending draft must stop before route activation when workspace activation fails",
+  );
+  assert.match(
+    openNewSessionSource,
+    /const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*if \(!activatedScratchWorkspace\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*return;[\s\S]*\}[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*setActivePendingDraftKey\(newPrivatePendingDraftKey\);[\s\S]*setActivePendingDraftMeta\(pendingDraft\);[\s\S]*setView\("session"\);/s,
+    "creating a fresh private pending draft must stop before route activation when workspace activation fails",
+  );
+});
+
+test("fresh New session cleans up the scratch workspace when activation or persistence throws", () => {
+  assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
+  assert.match(
+    openNewSessionSource,
+    /const cleanupFreshScratchWorkspace = async \(\) => \{[\s\S]*const cleanupSucceeded = await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}[\s\S]*\};[\s\S]*try \{[\s\S]*const activatedScratchWorkspace = await workspaceStore\.activateWorkspace\(scratch\.id\);[\s\S]*const pendingDraft = await pendingSessionDraftsPut\(\{[\s\S]*\}\);[\s\S]*\} catch \(error\) \{[\s\S]*await cleanupFreshScratchWorkspace\(\);[\s\S]*throw error;[\s\S]*\}/s,
+    "fresh New session must roll back the scratch workspace when activation or draft persistence throws",
+  );
+});
+
+test("fresh New session surfaces cleanup failure instead of silently assuming rollback succeeded", () => {
+  assert.notEqual(openNewSessionSource, "", "New session flow should exist in app.tsx");
+  assert.match(
+    openNewSessionSource,
+    /const cleanupSucceeded = await workspaceStore\.forgetWorkspace\(scratch\.id, \{ deleteLocalData: true \}\);[\s\S]*if \(!cleanupSucceeded\) \{[\s\S]*throw new Error\(`Failed to clean up failed scratch workspace \$\{scratch\.id\}\.`\);[\s\S]*\}/s,
+    "fresh New session must treat scratch-workspace cleanup failure as an error",
+  );
+});
+
 test("picker-driven directory session flow forwards the selected path unchanged to workspace resolution", async () => {
   const ensured: string[] = [];
 
@@ -304,6 +572,52 @@ test("picker-driven directory session flow forwards the selected path unchanged 
 
   assert.equal(result, "blocked");
   assert.deepEqual(ensured, ["  /tmp/project with spaces  "]);
+});
+
+test("directory picker flow opens a pending draft instead of creating a real session immediately", () => {
+  assert.notEqual(openDirectorySessionSource, "", "Directory picker flow should exist in app.tsx");
+  assert.match(
+    openDirectorySessionSource,
+    /return await openPendingDraftFromDirectorySelection\(\{[\s\S]*pickDirectory: \(\) => workspaceStore\.pickWorkspaceFolder\(\),[\s\S]*ensureWorkspaceForFolder: workspaceStore\.ensureWorkspaceForFolder,[\s\S]*activateWorkspace: \(workspaceId\) => workspaceStore\.activateWorkspace\(workspaceId, \{ promoteToFront: true \}\),/s,
+    "the picker flow should use the pending-draft navigation helper with the existing workspace activation contract",
+  );
+  assert.doesNotMatch(
+    openDirectorySessionSource,
+    /createSession: \(\) => createSessionAndOpen\(\)/,
+    "the picker flow should stop creating real sessions immediately",
+  );
+});
+
+test("project plus resolves the directory after workspace activation instead of failing early on stale metadata", () => {
+  assert.notEqual(
+    openPendingDirectoryDraftInWorkspaceSource,
+    "",
+    "Project plus flow should exist in app.tsx",
+  );
+  assert.doesNotMatch(
+    openPendingDirectoryDraftInWorkspaceSource,
+    /const workspace =[\s\S]*const directory = workspace\?\.directory\?\.trim\(\) \|\| workspace\?\.path\?\.trim\(\) \|\| "";\s*if \(!directory\) return false;/s,
+    "project plus should not depend on pre-activation directory metadata before it even tries to activate the workspace",
+  );
+  assert.match(
+    openPendingDirectoryDraftInWorkspaceSource,
+    /openPendingDraft: \(\) => \{[\s\S]*const activeWorkspace = workspaceStore\.activeWorkspaceDisplay\(\);[\s\S]*const directory = activeWorkspace\.directory\?\.trim\(\) \|\| activeWorkspace\.path\?\.trim\(\) \|\| "";\s*if \(!directory\) return "";\s*return openDirectoryPendingDraft\(\{ workspaceId: id, directory \}\);[\s\S]*\}/s,
+    "project plus should resolve the directory from the activated workspace state right before opening the pending draft",
+  );
+});
+
+test("fresh directory pending drafts use collision-resistant ids", () => {
+  assert.notEqual(openDirectoryPendingDraftSource, "", "Directory pending draft flow should exist in app.tsx");
+  assert.doesNotMatch(
+    openDirectoryPendingDraftSource,
+    /id: `pending-directory-\$\{workspaceId\}-\$\{now\}`/,
+    "fresh directory drafts should not rely on workspace id plus millisecond clock for uniqueness",
+  );
+  assert.match(
+    openDirectoryPendingDraftSource,
+    /typeof crypto !== "undefined" && typeof crypto\.randomUUID === "function"[\s\S]*crypto\.randomUUID\(\)[\s\S]*Math\.random\(\)\.toString\(16\)\.slice\(2\)/s,
+    "fresh directory drafts should add a collision-resistant suffix independent of clock granularity",
+  );
 });
 
 // ---------------------------------------------------------------------------
