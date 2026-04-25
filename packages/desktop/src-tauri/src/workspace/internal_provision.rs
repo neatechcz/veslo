@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::fs::copy_dir_recursive;
 use include_dir::{include_dir, Dir};
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +18,6 @@ const ROUTING_BLOCK_END: &str = "<!-- VESLO_INTERNAL_ROUTING_END -->";
 const AGENT_BLOCK_START: &str = "<!-- VESLO_AGENT_INSTRUCTIONS_START -->";
 const AGENT_BLOCK_END: &str = "<!-- VESLO_AGENT_INSTRUCTIONS_END -->";
 
-
 static INTERNAL_PACKS_DIR: Dir<'_> =
     include_dir!("$CARGO_MANIFEST_DIR/../../../internal/veslo-internal-packs");
 
@@ -25,6 +25,12 @@ static INTERNAL_PACKS_DIR: Dir<'_> =
 struct WriteStats {
     written: u32,
     unchanged: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PackProvisionMode {
+    Symlink,
+    Copy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -175,10 +181,7 @@ fn managed_veslo_agent_instructions_block() -> String {
     )
 }
 
-fn ensure_veslo_agent_routing(
-    workspace_root: &Path,
-    stats: &mut WriteStats,
-) -> Result<(), String> {
+fn ensure_veslo_agent_routing(workspace_root: &Path, stats: &mut WriteStats) -> Result<(), String> {
     let path = workspace_root
         .join(".opencode")
         .join("agents")
@@ -187,8 +190,8 @@ fn ensure_veslo_agent_routing(
         return Ok(());
     }
 
-    let raw = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let raw =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
 
     let mut next = upsert_managed_block(
         &raw,
@@ -243,10 +246,7 @@ pub fn provision_central_packs(app_data_dir: &Path) -> Result<PathBuf, String> {
 }
 
 /// Remove old versioned central pack directories, keeping only `current_version`.
-fn cleanup_stale_central_packs(
-    app_data_dir: &Path,
-    current_version: &str,
-) -> Result<(), String> {
+fn cleanup_stale_central_packs(app_data_dir: &Path, current_version: &str) -> Result<(), String> {
     let packs_parent = app_data_dir.join("internal-packs");
     if !packs_parent.exists() {
         return Ok(());
@@ -269,33 +269,124 @@ fn cleanup_stale_central_packs(
     Ok(())
 }
 
+fn remove_existing_pack_path(path: &Path) -> Result<(), String> {
+    if !(path.exists() || path.symlink_metadata().is_ok()) {
+        return Ok(());
+    }
+
+    let meta = path
+        .symlink_metadata()
+        .map_err(|e| format!("Failed to stat {}: {e}", path.display()))?;
+
+    if meta.file_type().is_symlink() {
+        #[cfg(windows)]
+        {
+            fs::remove_dir(path)
+                .or_else(|_| fs::remove_file(path))
+                .map_err(|e| format!("Failed to remove old symlink {}: {e}", path.display()))?;
+        }
+        #[cfg(not(windows))]
+        {
+            fs::remove_file(path)
+                .map_err(|e| format!("Failed to remove old symlink {}: {e}", path.display()))?;
+        }
+        return Ok(());
+    }
+
+    if meta.is_dir() {
+        fs::remove_dir_all(path)
+            .map_err(|e| format!("Failed to remove directory {}: {e}", path.display()))?;
+        return Ok(());
+    }
+
+    fs::remove_file(path).map_err(|e| format!("Failed to remove file {}: {e}", path.display()))
+}
+
+fn copy_central_pack_dir(
+    source: &Path,
+    destination: &Path,
+    stats: &mut WriteStats,
+) -> Result<(), String> {
+    remove_existing_pack_path(destination)?;
+    copy_dir_recursive(source, destination)?;
+    stats.written += 1;
+    Ok(())
+}
+
+fn should_fallback_to_copy_after_symlink_error(error: &str) -> bool {
+    #[cfg(windows)]
+    {
+        error.contains("os error 1314")
+            || error.contains("A required privilege is not held by the client")
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = error;
+        false
+    }
+}
+
+fn provision_central_packs_into_workspace(
+    central_dir: &Path,
+    internal_root: &Path,
+    stats: &mut WriteStats,
+) -> Result<PackProvisionMode, String> {
+    let mut any_pack_updated = false;
+
+    for pack_name in PACKS {
+        let link_path = internal_root.join(pack_name);
+        let target_path = central_dir.join(pack_name);
+        match ensure_symlink(&target_path, &link_path) {
+            Ok(updated) => {
+                if updated {
+                    any_pack_updated = true;
+                }
+            }
+            Err(error) if should_fallback_to_copy_after_symlink_error(&error) => {
+                for fallback_pack_name in PACKS {
+                    copy_central_pack_dir(
+                        &central_dir.join(fallback_pack_name),
+                        &internal_root.join(fallback_pack_name),
+                        stats,
+                    )?;
+                }
+                return Ok(PackProvisionMode::Copy);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    if any_pack_updated {
+        stats.written += 1;
+    }
+
+    Ok(PackProvisionMode::Symlink)
+}
+
 /// Create a symlink from `link` to `target`. If `link` exists as a real directory,
 /// remove it first. If it's a symlink pointing elsewhere, replace it.
 #[cfg(unix)]
 fn ensure_symlink(target: &Path, link: &Path) -> Result<bool, String> {
     if link.exists() || link.symlink_metadata().is_ok() {
-        let meta = link.symlink_metadata().map_err(|e| {
-            format!("Failed to stat {}: {e}", link.display())
-        })?;
+        let meta = link
+            .symlink_metadata()
+            .map_err(|e| format!("Failed to stat {}: {e}", link.display()))?;
 
         if meta.file_type().is_symlink() {
-            let current_target = fs::read_link(link).map_err(|e| {
-                format!("Failed to read symlink {}: {e}", link.display())
-            })?;
+            let current_target = fs::read_link(link)
+                .map_err(|e| format!("Failed to read symlink {}: {e}", link.display()))?;
             if current_target == target {
                 return Ok(false);
             }
-            fs::remove_file(link).map_err(|e| {
-                format!("Failed to remove old symlink {}: {e}", link.display())
-            })?;
+            fs::remove_file(link)
+                .map_err(|e| format!("Failed to remove old symlink {}: {e}", link.display()))?;
         } else if meta.is_dir() {
-            fs::remove_dir_all(link).map_err(|e| {
-                format!("Failed to remove directory {}: {e}", link.display())
-            })?;
+            fs::remove_dir_all(link)
+                .map_err(|e| format!("Failed to remove directory {}: {e}", link.display()))?;
         } else {
-            fs::remove_file(link).map_err(|e| {
-                format!("Failed to remove file {}: {e}", link.display())
-            })?;
+            fs::remove_file(link)
+                .map_err(|e| format!("Failed to remove file {}: {e}", link.display()))?;
         }
     }
 
@@ -312,28 +403,24 @@ fn ensure_symlink(target: &Path, link: &Path) -> Result<bool, String> {
 #[cfg(windows)]
 fn ensure_symlink(target: &Path, link: &Path) -> Result<bool, String> {
     if link.exists() || link.symlink_metadata().is_ok() {
-        let meta = link.symlink_metadata().map_err(|e| {
-            format!("Failed to stat {}: {e}", link.display())
-        })?;
+        let meta = link
+            .symlink_metadata()
+            .map_err(|e| format!("Failed to stat {}: {e}", link.display()))?;
 
         if meta.file_type().is_symlink() {
-            let current_target = fs::read_link(link).map_err(|e| {
-                format!("Failed to read symlink {}: {e}", link.display())
-            })?;
+            let current_target = fs::read_link(link)
+                .map_err(|e| format!("Failed to read symlink {}: {e}", link.display()))?;
             if current_target == target {
                 return Ok(false);
             }
-            fs::remove_dir(link).map_err(|e| {
-                format!("Failed to remove old symlink {}: {e}", link.display())
-            })?;
+            fs::remove_dir(link)
+                .map_err(|e| format!("Failed to remove old symlink {}: {e}", link.display()))?;
         } else if meta.is_dir() {
-            fs::remove_dir_all(link).map_err(|e| {
-                format!("Failed to remove directory {}: {e}", link.display())
-            })?;
+            fs::remove_dir_all(link)
+                .map_err(|e| format!("Failed to remove directory {}: {e}", link.display()))?;
         } else {
-            fs::remove_file(link).map_err(|e| {
-                format!("Failed to remove file {}: {e}", link.display())
-            })?;
+            fs::remove_file(link)
+                .map_err(|e| format!("Failed to remove file {}: {e}", link.display()))?;
         }
     }
 
@@ -366,22 +453,16 @@ pub fn provision_internal_workspace_assets(
         .map_err(|e| format!("Failed to create {}: {e}", agents_root.display()))?;
 
     let mut stats = WriteStats::default();
+    let mut pack_provision_mode = if central_packs_dir.is_some() {
+        PackProvisionMode::Symlink
+    } else {
+        PackProvisionMode::Copy
+    };
 
     // 1) Provision internal packs under .opencode/veslo/internal/<pack>/...
     if let Some(central_dir) = central_packs_dir {
-        // Symlink mode: point each pack to the central store
-        let mut any_pack_updated = false;
-        for pack_name in PACKS {
-            let link_path = internal_root.join(pack_name);
-            let target_path = central_dir.join(pack_name);
-            if ensure_symlink(&target_path, &link_path)? {
-                any_pack_updated = true;
-            }
-        }
-        // Symlink mode should stay idempotent: only mark updated when a link changed.
-        if any_pack_updated {
-            stats.written += 1;
-        }
+        pack_provision_mode =
+            provision_central_packs_into_workspace(central_dir, &internal_root, &mut stats)?;
     } else {
         // Copy mode: write packs directly (fallback when no central store)
         for pack_name in PACKS {
@@ -404,7 +485,11 @@ pub fn provision_internal_workspace_assets(
     fs::create_dir_all(&plugins_root)
         .map_err(|e| format!("Failed to create {}: {e}", plugins_root.display()))?;
     let plugin_path = plugins_root.join(DELEGATE_PLUGIN_FILE);
-    write_if_changed(&plugin_path, delegate_plugin_source().as_bytes(), &mut stats)?;
+    write_if_changed(
+        &plugin_path,
+        delegate_plugin_source().as_bytes(),
+        &mut stats,
+    )?;
 
     // 4) Upsert managed blocks in veslo.md (routing + agent instructions)
     ensure_veslo_agent_routing(workspace_root, &mut stats)?;
@@ -422,10 +507,9 @@ pub fn provision_internal_workspace_assets(
         plugins: vec![DELEGATE_PLUGIN_FILE.to_string()],
         routing_block_version: ROUTING_BLOCK_VERSION,
         packs_mode: Some(
-            if central_packs_dir.is_some() {
-                "symlink"
-            } else {
-                "copy"
+            match pack_provision_mode {
+                PackProvisionMode::Symlink => "symlink",
+                PackProvisionMode::Copy => "copy",
             }
             .to_string(),
         ),
@@ -1033,5 +1117,41 @@ mod tests {
         assert!(veslo_agent.contains("Do not print raw JSON"));
 
         fs::remove_dir_all(workspace_root).unwrap();
+    }
+
+    #[test]
+    fn copy_central_pack_dir_replaces_existing_directory_for_windows_symlink_fallback() {
+        let workspace_root = temp_workspace_root("central-copy");
+        let central_root = temp_workspace_root("central-copy-src");
+        let central_docx = central_root.join("docx");
+        fs::create_dir_all(&central_docx).unwrap();
+        fs::write(central_docx.join("SKILL.md"), "central docx skill").unwrap();
+        fs::create_dir_all(central_docx.join("nested")).unwrap();
+        fs::write(central_docx.join("nested").join("helper.txt"), "helper").unwrap();
+
+        let destination = workspace_root
+            .join(".opencode")
+            .join("veslo")
+            .join("internal")
+            .join("docx");
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(destination.join("stale.txt"), "stale").unwrap();
+
+        let mut stats = WriteStats::default();
+        copy_central_pack_dir(&central_docx, &destination, &mut stats).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(destination.join("SKILL.md")).unwrap(),
+            "central docx skill"
+        );
+        assert_eq!(
+            fs::read_to_string(destination.join("nested").join("helper.txt")).unwrap(),
+            "helper"
+        );
+        assert!(!destination.join("stale.txt").exists());
+        assert_eq!(stats.written, 1);
+
+        fs::remove_dir_all(workspace_root).unwrap();
+        fs::remove_dir_all(central_root).unwrap();
     }
 }

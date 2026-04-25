@@ -14,6 +14,7 @@ export const AI_ACCESS_NOT_CONFIGURED_MESSAGE =
 export const AI_ACCESS_INVALID_MESSAGE =
   "Assigned AI access is incomplete. Ask your platform admin to update it.";
 export const DEFAULT_MANAGED_AI_GATEWAY_BASE_URL = "https://veslo-ai-gateway-dev.onrender.com";
+const REDACTED_SECRET_VALUE = "[REDACTED]";
 
 export type ManagedAiAccessProfile = {
   userId: string;
@@ -224,6 +225,50 @@ export function resolveManagedAiAccess(record: VesloUserAiAccess | null | undefi
         ? record.updatedAt
         : null,
     },
+    reason: null,
+  };
+}
+
+function normalizeGatewayAccessToken(value: string | null | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed || trimmed === REDACTED_SECRET_VALUE) return "";
+  return trimmed;
+}
+
+export function resolveManagedAiAccessBundleState(input: {
+  aiAccess: VesloUserAiAccess | null | undefined;
+  accessToken: string | null | undefined;
+  fallbackAccessToken: string | null | undefined;
+  requireGatewayAccessToken: boolean;
+}): {
+  profile: ManagedAiAccessProfile | null;
+  gatewayAccessToken: string;
+  reason: string | null;
+} {
+  const { profile: resolvedProfile, reason: resolvedReason } = resolveManagedAiAccess(input.aiAccess);
+  if (!resolvedProfile) {
+    return {
+      profile: null,
+      gatewayAccessToken: "",
+      reason: resolvedReason ?? AI_ACCESS_NOT_CONFIGURED_MESSAGE,
+    };
+  }
+
+  const gatewayAccessToken =
+    normalizeGatewayAccessToken(input.accessToken) ||
+    normalizeGatewayAccessToken(input.fallbackAccessToken);
+
+  if (input.requireGatewayAccessToken && !gatewayAccessToken) {
+    return {
+      profile: null,
+      gatewayAccessToken: "",
+      reason: AI_ACCESS_INVALID_MESSAGE,
+    };
+  }
+
+  return {
+    profile: resolvedProfile,
+    gatewayAccessToken,
     reason: null,
   };
 }

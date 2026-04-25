@@ -326,11 +326,10 @@ import {
 import { resolveArtifactFamilies } from "./components/session/artifact-family-model";
 import {
   AI_ACCESS_ADMIN_MANAGED_MESSAGE,
-  AI_ACCESS_INVALID_MESSAGE,
   AI_ACCESS_LOADING_MESSAGE,
   AI_ACCESS_NOT_CONFIGURED_MESSAGE,
   formatManagedAiAccessConfig,
-  resolveManagedAiAccess,
+  resolveManagedAiAccessBundleState,
   resolveManagedAiGatewayBaseUrl,
   shouldPreserveManagedAiConfig,
   shouldEnsureManagedAiLocalGateway,
@@ -4849,16 +4848,12 @@ export default function App() {
     void loadManagedAiAccess
       .then((response) => {
         if (cancelled) return;
-        const gatewayAccessToken =
-          typeof response.accessToken === "string" ? response.accessToken.trim() : "";
-        const { profile: resolvedProfile, reason: resolvedReason } = resolveManagedAiAccess(response.aiAccess);
-        const requiresGatewayAccessToken = Boolean(resolvedProfile && managedAiBaseUrl);
-        const profile =
-          requiresGatewayAccessToken && !gatewayAccessToken ? null : resolvedProfile;
-        const reason =
-          requiresGatewayAccessToken && !gatewayAccessToken
-            ? AI_ACCESS_INVALID_MESSAGE
-            : resolvedReason;
+        const { profile, gatewayAccessToken, reason } = resolveManagedAiAccessBundleState({
+          aiAccess: response.aiAccess,
+          accessToken: response.accessToken,
+          fallbackAccessToken: userToken,
+          requireGatewayAccessToken: Boolean(managedAiBaseUrl),
+        });
         setManagedAiAccess(profile);
         setManagedAiGatewayAccessToken(profile ? gatewayAccessToken : "");
         setManagedAiAccessError(profile ? null : reason ?? AI_ACCESS_NOT_CONFIGURED_MESSAGE);

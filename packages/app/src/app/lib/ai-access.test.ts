@@ -8,6 +8,7 @@ import {
   formatManagedAiAccessConfig,
   type ManagedAiAccessProfile,
   resolveManagedAiAccess,
+  resolveManagedAiAccessBundleState,
   resolveManagedAiGatewayBaseUrl,
   shouldPreserveManagedAiConfig,
   shouldEnsureManagedAiLocalGateway,
@@ -91,6 +92,51 @@ test("resolveManagedAiAccess rejects incomplete admin policy payloads", () => {
       reason: AI_ACCESS_INVALID_MESSAGE,
     },
   );
+});
+
+test("resolveManagedAiAccessBundleState uses the DEN token when the gateway omits a separate access token", () => {
+  const result = resolveManagedAiAccessBundleState({
+    aiAccess: {
+      id: "ai_access_123",
+      userId: "user_123",
+      enabled: true,
+      provider: "codex_oauth",
+      defaultModel: "gpt-5.4",
+      allowedModels: ["gpt-5.4"],
+      updatedAt: "2026-04-24T15:05:18.147Z",
+    },
+    accessToken: null,
+    fallbackAccessToken: "den-user-token",
+    requireGatewayAccessToken: true,
+  });
+
+  assert.equal(result.reason, null);
+  assert.equal(result.gatewayAccessToken, "den-user-token");
+  assert.deepEqual(result.profile, {
+    ...managedCodexProfile,
+    updatedAt: "2026-04-24T15:05:18.147Z",
+  });
+});
+
+test("resolveManagedAiAccessBundleState ignores redacted gateway tokens and uses the DEN token fallback", () => {
+  const result = resolveManagedAiAccessBundleState({
+    aiAccess: {
+      id: "ai_access_123",
+      userId: "user_123",
+      enabled: true,
+      provider: "codex_oauth",
+      defaultModel: "gpt-5.4",
+      allowedModels: ["gpt-5.4"],
+      updatedAt: null,
+    },
+    accessToken: "[REDACTED]",
+    fallbackAccessToken: "den-user-token",
+    requireGatewayAccessToken: true,
+  });
+
+  assert.equal(result.reason, null);
+  assert.equal(result.gatewayAccessToken, "den-user-token");
+  assert.deepEqual(result.profile, managedCodexProfile);
 });
 
 test("shouldDeferManagedAiAccessRefresh waits for the local desktop client token before gateway fetch", () => {
