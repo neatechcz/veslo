@@ -43,6 +43,7 @@ const schema = z.object({
   YOUTRACK_MCP_COMMAND: z.string().optional(),
   YOUTRACK_MCP_ARGS: z.string().optional(),
   YOUTRACK_MCP_TIMEOUT_MS: z.string().optional(),
+  YOUTRACK_MCP_WIRE_PROTOCOL: z.enum(["content-length", "line"]).optional(),
 })
 
 const parsed = schema.parse(process.env)
@@ -147,5 +148,6 @@ export const env = {
     mcpCommand: parsed.YOUTRACK_MCP_COMMAND?.trim() || null,
     mcpArgs: parseJsonStringArray(parsed.YOUTRACK_MCP_ARGS, "YOUTRACK_MCP_ARGS"),
     mcpTimeoutMs: parsePositiveNumber(parsed.YOUTRACK_MCP_TIMEOUT_MS, 20_000, "YOUTRACK_MCP_TIMEOUT_MS"),
+    mcpWireProtocol: parsed.YOUTRACK_MCP_WIRE_PROTOCOL ?? "content-length",
   },
 }

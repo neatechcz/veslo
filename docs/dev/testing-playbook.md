@@ -110,6 +110,8 @@ Requirements:
 - set `E2E_YOUTRACK_PROJECT_KEY` if the target project differs from `VSLO`
 - set `E2E_YOUTRACK_MCP_WIRE_PROTOCOL=content-length` only when using a Content-Length framed MCP server; the local wrapper defaults to line-delimited JSON-RPC
 
+When `E2E_DEN_AUTH_JSON` is provided, the live spec treats it as authoritative and does not replace loopback Den auth from the desktop snapshot. This allows a Coding Agent run to point the real desktop UI at a locally started Den instance whose projector uses the local YouTrack MCP wrapper.
+
 Run from `packages/e2e`:
 
 ```bash

@@ -27,10 +27,14 @@ export type McpStdioClientConfig = {
   timeoutMs?: number
   cwd?: string
   env?: NodeJS.ProcessEnv
+  wireProtocol?: "content-length" | "line"
 }
 
-function encodeMessage(message: Record<string, unknown>) {
+function encodeMessage(message: Record<string, unknown>, wireProtocol: "content-length" | "line") {
   const payload = JSON.stringify(message)
+  if (wireProtocol === "line") {
+    return `${payload}\n`
+  }
   return `Content-Length: ${Buffer.byteLength(payload, "utf8")}\r\n\r\n${payload}`
 }
 
@@ -80,8 +84,33 @@ function parseJsonRpcResponses(buffer: string) {
   }
 }
 
+function parseLineJsonRpcResponses(buffer: string) {
+  const messages: JsonRpcResponse[] = []
+  const lines = buffer.split(/\r?\n/)
+  const remaining = lines.pop() ?? ""
+
+  for (const line of lines) {
+    if (!line.trim()) {
+      continue
+    }
+    messages.push(JSON.parse(line) as JsonRpcResponse)
+  }
+
+  return {
+    messages,
+    remaining,
+  }
+}
+
+function parseProtocolJsonRpcResponses(buffer: string, wireProtocol: "content-length" | "line") {
+  return wireProtocol === "line"
+    ? parseLineJsonRpcResponses(buffer)
+    : parseJsonRpcResponses(buffer)
+}
+
 export function createMcpStdioClient(config: McpStdioClientConfig) {
   const timeoutMs = config.timeoutMs ?? 20_000
+  const wireProtocol = config.wireProtocol ?? "content-length"
 
   return {
     async callTool(name: string, args: Record<string, unknown>) {
@@ -117,7 +146,7 @@ export function createMcpStdioClient(config: McpStdioClientConfig) {
       }
 
       function sendMessage(message: Record<string, unknown>) {
-        child.stdin.write(encodeMessage(message), "utf8")
+        child.stdin.write(encodeMessage(message, wireProtocol), "utf8")
       }
 
       function request(method: string, params?: unknown) {
@@ -151,7 +180,7 @@ export function createMcpStdioClient(config: McpStdioClientConfig) {
       child.stdout.on("data", (chunk: Buffer | string) => {
         try {
           stdoutBuffer += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk)
-          const { messages, remaining } = parseJsonRpcResponses(stdoutBuffer)
+          const { messages, remaining } = parseProtocolJsonRpcResponses(stdoutBuffer, wireProtocol)
           stdoutBuffer = remaining
 
           for (const message of messages) {

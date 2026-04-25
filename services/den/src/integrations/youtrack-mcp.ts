@@ -28,6 +28,7 @@ export type YouTrackMcpConfig = {
   command: string | null
   args?: string[]
   timeoutMs?: number
+  wireProtocol?: "content-length" | "line"
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -125,11 +126,16 @@ function normalizeSearchIssuesResult(result: unknown): SearchIssueResult[] {
     })
   }
 
-  if (isObject(structured) && Array.isArray(structured.items)) {
-    return structured.items.flatMap((entry) => {
-      const issue = readIssueSearchResult(entry)
-      return issue ? [issue] : []
-    })
+  if (isObject(structured)) {
+    for (const key of ["issuesPage", "items", "issues"]) {
+      const entries = structured[key]
+      if (Array.isArray(entries)) {
+        return entries.flatMap((entry) => {
+          const issue = readIssueSearchResult(entry)
+          return issue ? [issue] : []
+        })
+      }
+    }
   }
 
   const firstContentText = readFirstTextContent(result)
@@ -143,6 +149,10 @@ function normalizeSearchIssuesResult(result: unknown): SearchIssueResult[] {
   }
 
   return []
+}
+
+function readFeedbackIdFromIssueDescription(description: string) {
+  return readString(/^Feedback ID:\s*([^\s]+)/m.exec(description)?.[1])
 }
 
 export function createYouTrackMcpIssueClient(config: YouTrackMcpConfig) {
@@ -161,7 +171,34 @@ export function createYouTrackMcpIssueClient(config: YouTrackMcpConfig) {
     command: config.command,
     args: config.args ?? [],
     timeoutMs: config.timeoutMs,
+    wireProtocol: config.wireProtocol,
   })
+
+  async function findIssueByFeedbackId(input: { project: string; feedbackId: string }): Promise<CreateIssueResult | null> {
+    const searchResult = await mcpClient.callTool("search_issues", {
+      query: `project: ${input.project} "Feedback ID: ${input.feedbackId}"`,
+      limit: 1,
+      customFieldsToReturn: [],
+    })
+
+    const existingIssue = normalizeSearchIssuesResult(searchResult)[0]
+    if (!existingIssue?.issueId) {
+      return null
+    }
+
+    if (existingIssue.issueUrl) {
+      return {
+        issueId: existingIssue.issueId,
+        issueUrl: existingIssue.issueUrl,
+      }
+    }
+
+    const issueDetails = await mcpClient.callTool("get_issue", {
+      issueId: existingIssue.issueId,
+    })
+
+    return normalizeCreateIssueResult(issueDetails)
+  }
 
   return {
     async createIssue(input: CreateIssueInput): Promise<CreateIssueResult> {
@@ -171,33 +208,28 @@ export function createYouTrackMcpIssueClient(config: YouTrackMcpConfig) {
         description: input.description,
       })
 
-      return normalizeCreateIssueResult(result)
+      try {
+        return normalizeCreateIssueResult(result)
+      } catch (error) {
+        const feedbackId = readFeedbackIdFromIssueDescription(input.description)
+        if (!feedbackId) {
+          throw error
+        }
+
+        const existingIssue = await findIssueByFeedbackId({
+          project: input.project,
+          feedbackId,
+        })
+        if (existingIssue) {
+          return existingIssue
+        }
+
+        throw error
+      }
     },
 
     async findIssueByFeedbackId(input: { project: string; feedbackId: string }): Promise<CreateIssueResult | null> {
-      const searchResult = await mcpClient.callTool("search_issues", {
-        query: `project: ${input.project} "Feedback ID: ${input.feedbackId}"`,
-        limit: 1,
-        customFieldsToReturn: [],
-      })
-
-      const existingIssue = normalizeSearchIssuesResult(searchResult)[0]
-      if (!existingIssue?.issueId) {
-        return null
-      }
-
-      if (existingIssue.issueUrl) {
-        return {
-          issueId: existingIssue.issueId,
-          issueUrl: existingIssue.issueUrl,
-        }
-      }
-
-      const issueDetails = await mcpClient.callTool("get_issue", {
-        issueId: existingIssue.issueId,
-      })
-
-      return normalizeCreateIssueResult(issueDetails)
+      return findIssueByFeedbackId(input)
     },
   }
 }

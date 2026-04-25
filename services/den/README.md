@@ -66,9 +66,12 @@ cp .env.development .env
 - `POLAR_SUCCESS_URL` redirect URL after successful checkout (required when paywall enabled)
 - `POLAR_RETURN_URL` return URL shown in checkout (required when paywall enabled)
 - `YOUTRACK_PROJECT_KEY` default YouTrack project key used for feedback issues
-- `YOUTRACK_MCP_COMMAND` command used to start the locally installed YouTrack MCP server on the Den host
+- `YOUTRACK_MCP_COMMAND` command used to start the installed YouTrack MCP server on the Den host
 - `YOUTRACK_MCP_ARGS` optional JSON string array of extra MCP command arguments
 - `YOUTRACK_MCP_TIMEOUT_MS` timeout for one MCP tool call (default `20000`)
+- `YOUTRACK_MCP_WIRE_PROTOCOL` stdio framing for the MCP command: `content-length` by default, or `line` for the local wrapper used by the live desktop smoke
+- `YOUTRACK_MCP_URL` optional remote MCP URL forwarded to child MCP wrappers that read it from the environment
+- `YOUTRACK_MCP_TOKEN` optional remote MCP token forwarded to child MCP wrappers that read it from the environment
 
 ## Auth setup (Better Auth)
 
@@ -136,6 +139,8 @@ pnpm db:migrate
 The workflow `.github/workflows/deploy-den.yml` updates Render env vars and deploys the service only when it is run manually from GitHub Actions. Pushes and merges to `main` or `dev` must not deploy Den by themselves.
 
 The workflow also patches the configured Render control-plane service with `autoDeploy: no` on every manual run. Keep native Render Auto-Deploy off for this service.
+
+The deployment workflow preserves existing Render YouTrack projector variables when matching GitHub secrets/vars are not provided, then writes them back during the env sync. This prevents a manual Den deploy from silently disabling feedback projection.
 
 See `docs/dev/cloud-deployments.md` for the canonical operator procedure.
 

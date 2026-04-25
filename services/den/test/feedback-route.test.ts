@@ -335,3 +335,17 @@ test("den index mounts feedback router and raises the JSON body size limit", () 
   assert.doesNotMatch(indexSource, /express\.json\(\{\s*limit:\s*"10mb"\s*\}\)/)
   assert.match(routeSource, /express\.json\(\{\s*limit:\s*"10mb"\s*\}\)/)
 })
+
+test("den startup ensures feedback persistence tables and indexes", () => {
+  const indexSource = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8")
+
+  assert.ok(indexSource.includes("CREATE TABLE IF NOT EXISTS \\`feedback_report\\`"))
+  assert.ok(indexSource.includes("CREATE TABLE IF NOT EXISTS \\`feedback_projector_attempt\\`"))
+  assert.match(indexSource, /ensureIndex\("feedback_report", "feedback_report_org_id", \["org_id"\]\)/)
+  assert.match(indexSource, /ensureIndex\("feedback_report", "feedback_report_user_id", \["user_id"\]\)/)
+  assert.match(indexSource, /ensureIndex\("feedback_report", "feedback_report_status", \["status"\]\)/)
+  assert.ok(indexSource.includes('"feedback_report_next_projector_attempt_at"'))
+  assert.ok(indexSource.includes('["next_projector_attempt_at"]'))
+  assert.ok(indexSource.includes('"feedback_projector_attempt_feedback_id"'))
+  assert.ok(indexSource.includes('["feedback_id"]'))
+})

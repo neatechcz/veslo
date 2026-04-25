@@ -102,6 +102,13 @@ jobs:
           DEN_POLAR_API_BASE: ${{ vars.DEN_POLAR_API_BASE }}
           DEN_POLAR_SUCCESS_URL: ${{ vars.DEN_POLAR_SUCCESS_URL }}
           DEN_POLAR_RETURN_URL: ${{ vars.DEN_POLAR_RETURN_URL }}
+          DEN_YOUTRACK_PROJECT_KEY: ${{ vars.DEN_YOUTRACK_PROJECT_KEY }}
+          DEN_YOUTRACK_MCP_COMMAND: ${{ vars.DEN_YOUTRACK_MCP_COMMAND }}
+          DEN_YOUTRACK_MCP_ARGS: ${{ secrets.DEN_YOUTRACK_MCP_ARGS }}
+          DEN_YOUTRACK_MCP_TIMEOUT_MS: ${{ vars.DEN_YOUTRACK_MCP_TIMEOUT_MS }}
+          DEN_YOUTRACK_MCP_WIRE_PROTOCOL: ${{ vars.DEN_YOUTRACK_MCP_WIRE_PROTOCOL }}
+          DEN_YOUTRACK_MCP_URL: ${{ secrets.DEN_YOUTRACK_MCP_URL }}
+          DEN_YOUTRACK_MCP_TOKEN: ${{ secrets.DEN_YOUTRACK_MCP_TOKEN }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           POLAR_ACCESS_TOKEN: ${{ secrets.POLAR_ACCESS_TOKEN }}
           POLAR_PRODUCT_ID: ${{ secrets.POLAR_PRODUCT_ID }}
@@ -209,6 +216,70 @@ jobs:
                   text = err.read().decode("utf-8", "replace")
                   raise RuntimeError(f"{method} {path} failed ({err.code}): {text[:600]}")
 
+          _, existing_env_rows = request("GET", f"/services/{service_id}/env-vars")
+
+          def read_existing_render_env_values(rows) -> dict[str, str]:
+              values: dict[str, str] = {}
+              for row in rows or []:
+                  if not isinstance(row, dict):
+                      continue
+                  candidate = row.get("envVar")
+                  if not isinstance(candidate, dict):
+                      candidate = row
+                  key = candidate.get("key")
+                  value = candidate.get("value")
+                  if isinstance(key, str) and isinstance(value, str):
+                      values[key] = value
+              return values
+
+          existing_env_values = read_existing_render_env_values(existing_env_rows)
+
+          def configured_or_existing(source_key: str, render_key: str, default: str = "") -> str:
+              configured = (os.environ.get(source_key) or "").strip()
+              if configured:
+                  return configured
+              existing = (existing_env_values.get(render_key) or "").strip()
+              if existing:
+                  return existing
+              return default
+
+          youtrack_project_key = configured_or_existing("DEN_YOUTRACK_PROJECT_KEY", "YOUTRACK_PROJECT_KEY", "VSLO")
+          youtrack_mcp_command = configured_or_existing("DEN_YOUTRACK_MCP_COMMAND", "YOUTRACK_MCP_COMMAND")
+          youtrack_mcp_args = configured_or_existing("DEN_YOUTRACK_MCP_ARGS", "YOUTRACK_MCP_ARGS")
+          youtrack_mcp_timeout_ms = configured_or_existing(
+              "DEN_YOUTRACK_MCP_TIMEOUT_MS",
+              "YOUTRACK_MCP_TIMEOUT_MS",
+              "20000",
+          )
+          youtrack_mcp_wire_protocol = configured_or_existing(
+              "DEN_YOUTRACK_MCP_WIRE_PROTOCOL",
+              "YOUTRACK_MCP_WIRE_PROTOCOL",
+              "content-length",
+          )
+          youtrack_mcp_url = configured_or_existing("DEN_YOUTRACK_MCP_URL", "YOUTRACK_MCP_URL")
+          youtrack_mcp_token = configured_or_existing("DEN_YOUTRACK_MCP_TOKEN", "YOUTRACK_MCP_TOKEN")
+
+          if youtrack_mcp_args:
+              parsed_args = json.loads(youtrack_mcp_args)
+              if not isinstance(parsed_args, list) or any(not isinstance(item, str) for item in parsed_args):
+                  raise RuntimeError("DEN_YOUTRACK_MCP_ARGS must be a JSON string array")
+
+          if youtrack_mcp_wire_protocol not in {"content-length", "line"}:
+              raise RuntimeError("DEN_YOUTRACK_MCP_WIRE_PROTOCOL must be content-length or line")
+
+          print(
+              "YouTrack projector config:",
+              json.dumps(
+                  {
+                      "projectKey": youtrack_project_key,
+                      "hasCommand": bool(youtrack_mcp_command),
+                      "hasRemoteUrl": bool(youtrack_mcp_url),
+                      "hasRemoteToken": bool(youtrack_mcp_token),
+                      "wireProtocol": youtrack_mcp_wire_protocol,
+                  }
+              ),
+          )
+
           _, service = request("GET", f"/services/{service_id}")
           source_patch = {}
           if service.get("repo") != control_plane_repo:
@@ -286,6 +357,13 @@ jobs:
               {"key": "POLAR_BENEFIT_ID", "value": polar_benefit_id},
               {"key": "POLAR_SUCCESS_URL", "value": polar_success_url},
               {"key": "POLAR_RETURN_URL", "value": polar_return_url},
+              {"key": "YOUTRACK_PROJECT_KEY", "value": youtrack_project_key},
+              {"key": "YOUTRACK_MCP_COMMAND", "value": youtrack_mcp_command},
+              {"key": "YOUTRACK_MCP_ARGS", "value": youtrack_mcp_args},
+              {"key": "YOUTRACK_MCP_TIMEOUT_MS", "value": youtrack_mcp_timeout_ms},
+              {"key": "YOUTRACK_MCP_WIRE_PROTOCOL", "value": youtrack_mcp_wire_protocol},
+              {"key": "YOUTRACK_MCP_URL", "value": youtrack_mcp_url},
+              {"key": "YOUTRACK_MCP_TOKEN", "value": youtrack_mcp_token},
           ]
 
           request("PUT", f"/services/{service_id}/env-vars", env_vars)

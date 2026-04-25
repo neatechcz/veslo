@@ -4,18 +4,18 @@ import { expect } from "@wdio/globals";
 
 import { navigateToHash } from "../helpers/app-launcher.js";
 import {
+  hasExplicitLiveFeedbackDenAuth,
+  parseSafeDenAuthSummary,
+  shouldRepairDenAuthForLiveFeedback,
+  type SafeDenAuthSummary,
+} from "../helpers/live-feedback-den-auth.js";
+import {
   assertMcpCommandAvailable,
   resolveLiveFeedbackYouTrackConfig,
   waitForYouTrackFeedbackIssue,
   writeLiveFeedbackArtifact,
   type LiveFeedbackArtifact,
 } from "../helpers/live-feedback-youtrack.js";
-
-type SafeDenAuthSummary = {
-  denApiBase: string | null;
-  orgId: string | null;
-  userEmail: string | null;
-};
 
 const LIVE_SMOKE_ENABLED = process.env.E2E_LIVE_FEEDBACK_YOUTRACK?.trim() === "1";
 
@@ -43,33 +43,61 @@ async function seedDenAuthFromEnvIfPresent() {
 }
 
 async function readSafeDenAuthSummary(): Promise<SafeDenAuthSummary | null> {
-  return await browser.execute(() => {
-    function parseAuth(raw: string | null) {
-      if (!raw) return null;
-      try {
-        const parsed = JSON.parse(raw) as {
-          denApiBase?: string;
-          orgId?: string;
-          user?: { email?: string };
-        };
-        return {
-          denApiBase: typeof parsed.denApiBase === "string" ? parsed.denApiBase : null,
-          orgId: typeof parsed.orgId === "string" ? parsed.orgId : null,
-          userEmail: typeof parsed.user?.email === "string" ? parsed.user.email : null,
-        };
-      } catch {
-        return null;
-      }
+  const raw = await browser.execute(() => {
+    return window.localStorage.getItem("veslo.den.auth")
+      ?? window.sessionStorage.getItem("veslo.den.auth");
+  });
+  return parseSafeDenAuthSummary(raw);
+}
+
+async function readDesktopSnapshotAuthJson(): Promise<string | null> {
+  return await browser.executeAsync((done: (value: string | null) => void) => {
+    const invoke = (window as unknown as {
+      __TAURI_INTERNALS__?: {
+        invoke?: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
+      };
+    }).__TAURI_INTERNALS__?.invoke;
+
+    if (!invoke) {
+      done(null);
+      return;
     }
 
-    return parseAuth(window.localStorage.getItem("veslo.den.auth"))
-      ?? parseAuth(window.sessionStorage.getItem("veslo.den.auth"));
+    invoke<{ authJson?: string | null }>("den_auth_snapshot_read")
+      .then((snapshot) => {
+        done(typeof snapshot.authJson === "string" && snapshot.authJson.trim() ? snapshot.authJson : null);
+      })
+      .catch(() => done(null));
   });
+}
+
+async function writeDenAuthJson(authJson: string) {
+  await browser.execute((nextAuthJson: string) => {
+    JSON.parse(nextAuthJson);
+    window.localStorage.setItem("veslo.den.auth", nextAuthJson);
+    window.localStorage.setItem("veslo.den.keepSignedIn", "1");
+    window.sessionStorage.removeItem("veslo.den.auth");
+  }, authJson);
+}
+
+async function repairLoopbackDenAuthFromDesktopSnapshot() {
+  const current = await readSafeDenAuthSummary();
+  const snapshotAuthJson = await readDesktopSnapshotAuthJson();
+  const replacement = parseSafeDenAuthSummary(snapshotAuthJson);
+
+  if (!shouldRepairDenAuthForLiveFeedback(current, replacement) || !snapshotAuthJson) {
+    return current;
+  }
+
+  await writeDenAuthJson(snapshotAuthJson);
+  return await readSafeDenAuthSummary();
 }
 
 async function requireDenAuthSummary() {
   await seedDenAuthFromEnvIfPresent();
-  const summary = await readSafeDenAuthSummary();
+  const summary = hasExplicitLiveFeedbackDenAuth()
+    ? await readSafeDenAuthSummary()
+    : await repairLoopbackDenAuthFromDesktopSnapshot();
   if (!summary?.denApiBase || !summary.orgId) {
     throw new Error(
       "Live feedback-to-YouTrack smoke requires Den auth. Run with E2E_USE_EXISTING_PROFILE=1 for a signed-in desktop profile, or provide E2E_DEN_AUTH_JSON.",
@@ -97,11 +125,15 @@ type ElementWithQuery = {
 };
 
 async function readInlineError(dialog: ElementWithQuery) {
-  const alert = await dialog.$('[role="alert"]');
-  if (!(await alert.isExisting())) return null;
-  if (!(await alert.isDisplayed())) return null;
-  const text = await alert.getText();
-  return text.trim() || null;
+  try {
+    const alert = await dialog.$('[role="alert"]');
+    if (!(await alert.isExisting())) return null;
+    if (!(await alert.isDisplayed())) return null;
+    const text = await alert.getText();
+    return text.trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 async function submitFeedbackFromUi(title: string, description: string) {
