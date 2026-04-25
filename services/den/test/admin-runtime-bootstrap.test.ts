@@ -1,0 +1,17 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+
+Object.assign(process.env, {
+  DATABASE_URL: "mysql://root:root@127.0.0.1:3306/veslo_den",
+  BETTER_AUTH_SECRET: "12345678901234567890123456789012",
+  BETTER_AUTH_URL: "https://den.example.test",
+})
+
+const adminRuntime = await import("../src/http/admin-runtime.js")
+
+test("bootstrap platform admin allowlist recognizes michal.sara@neatech.cz", () => {
+  assert.equal(typeof adminRuntime.isBootstrapPlatformAdminEmail, "function")
+  assert.equal(adminRuntime.isBootstrapPlatformAdminEmail("michal.sara@neatech.cz"), true)
+  assert.equal(adminRuntime.isBootstrapPlatformAdminEmail("MICHAL.SARA@NEATECH.CZ"), true)
+  assert.equal(adminRuntime.isBootstrapPlatformAdminEmail("someone@example.com"), false)
+})

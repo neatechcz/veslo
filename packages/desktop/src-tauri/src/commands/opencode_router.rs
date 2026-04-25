@@ -29,6 +29,20 @@ fn check_health_endpoint(port: u16) -> Option<serde_json::Value> {
 const OPENCODE_ROUTER_STARTUP_WAIT_MS: u64 = 5_000;
 const OPENCODE_ROUTER_MAX_START_ATTEMPTS: usize = 5;
 
+fn resolve_opencode_router_command(
+    app: &AppHandle,
+) -> Result<tauri_plugin_shell::process::Command, tauri_plugin_shell::Error> {
+    use tauri_plugin_shell::ShellExt;
+
+    match app.shell().sidecar("veslo-code-router") {
+        Ok(command) => Ok(command),
+        Err(_) => match app.shell().sidecar("opencode-router") {
+            Ok(command) => Ok(command),
+            Err(_) => Ok(app.shell().command("opencode-router")),
+        },
+    }
+}
+
 fn append_output(slot: &mut Option<String>, line: &str) {
     let existing = slot.as_deref().unwrap_or_default();
     let next = format!("{existing}{line}");
@@ -444,12 +458,8 @@ pub async fn opencodeRouter_config_set(
     key: String,
     value: String,
 ) -> Result<(), String> {
-    use tauri_plugin_shell::ShellExt;
-
-    let command = match app.shell().sidecar("opencode-router") {
-        Ok(command) => command,
-        Err(_) => app.shell().command("opencode-router"),
-    };
+    let command =
+        resolve_opencode_router_command(&app).map_err(|e| format!("Failed to resolve router command: {e}"))?;
 
     let output = command
         .args(["config", "set", &key, &value])
@@ -470,12 +480,8 @@ async fn opencodeRouter_json(
     args: &[&str],
     context: &str,
 ) -> Result<serde_json::Value, String> {
-    use tauri_plugin_shell::ShellExt;
-
-    let command = match app.shell().sidecar("opencode-router") {
-        Ok(command) => command,
-        Err(_) => app.shell().command("opencode-router"),
-    };
+    let command =
+        resolve_opencode_router_command(app).map_err(|e| format!("Failed to resolve router command: {e}"))?;
 
     let output = command
         .args(args)
@@ -493,12 +499,7 @@ async fn opencodeRouter_json(
 }
 
 async fn opencodeRouter_version(app: &AppHandle) -> Option<String> {
-    use tauri_plugin_shell::ShellExt;
-
-    let command = match app.shell().sidecar("opencode-router") {
-        Ok(command) => command,
-        Err(_) => app.shell().command("opencode-router"),
-    };
+    let command = resolve_opencode_router_command(app).ok()?;
 
     let output = command.args(["--version"]).output().await.ok()?;
     if !output.status.success() {

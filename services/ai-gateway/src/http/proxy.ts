@@ -1,67 +1,75 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 
+import type { AiAccessRepository } from "../access/repository.js";
+import { readBearerToken } from "../auth/user-session.js";
+import type { GatewaySessionResolver } from "../auth/gateway-session.js";
+import type { CredentialRepository } from "../credentials/repository.js";
+import type { SecretStore } from "../credentials/secret-store.js";
 import type { TokenBroker } from "../credentials/token-broker.js";
 import type { LeaseBroker } from "../leases/lease-broker.js";
-import type { ProviderTransport } from "../providers/transport.js";
+import type { AnthropicProviderTransport, CodexOAuthProviderTransport, OpenAiProviderTransport } from "../providers/transport.js";
+import type { UsageRepository } from "../usage/repository.js";
+import { createAnthropicProxyRouter } from "./providers/anthropic.js";
+import { createCodexOAuthProxyRouter } from "./providers/codex-oauth.js";
+import { createOpenAiProxyRouter } from "./providers/openai.js";
 
 export type ProxyDependencies = {
+  aiAccess?: AiAccessRepository;
+  gatewaySessions: GatewaySessionResolver;
+  credentials: CredentialRepository;
+  secrets: SecretStore;
+  usageRepository: UsageRepository;
   leaseBroker: LeaseBroker;
   tokenBroker: TokenBroker;
-  transport: ProviderTransport;
+  openAiTransport: OpenAiProviderTransport;
+  anthropicTransport: AnthropicProviderTransport;
+  codexOAuthTransport: CodexOAuthProviderTransport;
 };
-
-function getHeaderAsString(value: string | string[] | undefined): string | null {
-  if (typeof value === "string" && value.length > 0) {
-    return value;
-  }
-
-  if (Array.isArray(value) && value.length > 0 && typeof value[0] === "string") {
-    return value[0];
-  }
-
-  return null;
-}
 
 export function createProxyRouter(deps: ProxyDependencies) {
   const router = Router();
-
-  router.post("/v1/chat/completions", async (req, res) => {
-    try {
-      const sessionId = getHeaderAsString(req.header("x-veslo-session-id"));
-      if (!sessionId) {
-        res.status(400).json({ error: "missing_session_id" });
-        return;
-      }
-
-      const lease = await deps.leaseBroker.getOrCreateActiveLease(sessionId);
-      const upstreamAuth = await deps.tokenBroker.getUpstreamAuth({
-        bindingId: lease.activeBindingId,
-      });
-
-      const upstreamResponse = await deps.transport.chatCompletions({
-        upstreamAuth,
-        body: req.body,
-      });
-
-      if (upstreamResponse.headers) {
-        for (const [headerName, headerValue] of Object.entries(upstreamResponse.headers)) {
-          res.setHeader(headerName, headerValue);
-        }
-      }
-
-      res.status(upstreamResponse.status);
-
-      if (typeof upstreamResponse.body === "object") {
-        res.json(upstreamResponse.body);
-        return;
-      }
-
-      res.send(upstreamResponse.body as never);
-    } catch (error) {
-      console.error("proxy_request_failed", error);
-      res.status(502).json({ error: "proxy_request_failed" });
+  router.use("/providers", async (req, res, next) => {
+    const token = readGatewayAccessToken(req);
+    if (!token) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
     }
+
+    const session = await deps.gatewaySessions.resolveSession(token);
+    if (!session) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+
+    res.locals.gatewaySession = session;
+    if (deps.aiAccess) {
+      const aiAccess = await deps.aiAccess.getUserAiAccess(session.user.id);
+      if (!aiAccess?.enabled) {
+        res.status(403).json({ error: "ai_access_not_configured" });
+        return;
+      }
+      res.locals.gatewayAiAccess = aiAccess;
+    }
+    next();
   });
 
+  router.use("/providers/openai", createOpenAiProxyRouter(deps));
+  router.use("/providers/anthropic", createAnthropicProxyRouter(deps));
+  router.use("/providers/codex_oauth", createCodexOAuthProxyRouter(deps));
+
   return router;
+}
+
+function readGatewayAccessToken(req: Request) {
+  const bearerToken = readBearerToken(req.header("authorization"));
+  if (bearerToken) {
+    return bearerToken;
+  }
+
+  const gatewayTokenHeader = req.header("x-veslo-gateway-token")?.trim() ?? "";
+  if (!gatewayTokenHeader) {
+    return null;
+  }
+
+  return readBearerToken(gatewayTokenHeader) ?? gatewayTokenHeader;
 }

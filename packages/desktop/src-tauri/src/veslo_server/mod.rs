@@ -64,12 +64,16 @@ fn persisted_state_path(dir: &Path) -> PathBuf {
 }
 
 fn persisted_state_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Some(override_dir) = crate::paths::app_local_data_dir_override() {
+        return Ok(override_dir);
+    }
+
     app.path()
         .app_local_data_dir()
         .map_err(|e| format!("Failed to resolve app local data dir: {e}"))
 }
 
-fn server_health_ok(base_url: &str) -> bool {
+pub(crate) fn server_health_ok(base_url: &str) -> bool {
     let trimmed = base_url.trim().trim_end_matches('/');
     if trimmed.is_empty() {
         return false;
@@ -126,6 +130,16 @@ pub fn read_persisted_veslo_server_info(dir: &Path) -> Result<Option<VesloServer
 pub fn recover_persisted_veslo_server_info(app: &AppHandle) -> Result<Option<VesloServerInfo>, String> {
     let dir = persisted_state_dir(app)?;
     read_persisted_veslo_server_info(&dir)
+}
+
+pub fn clear_persisted_veslo_server_info(app: &AppHandle) -> Result<(), String> {
+    let dir = persisted_state_dir(app)?;
+    let path = persisted_state_path(&dir);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("Failed to remove {}: {error}", path.display())),
+    }
 }
 
 fn persist_veslo_server_info(app: &AppHandle, info: &VesloServerInfo) -> Result<(), String> {

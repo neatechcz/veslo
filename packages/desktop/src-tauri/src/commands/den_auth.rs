@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -7,13 +7,17 @@ use crate::paths::home_dir;
 use crate::utils::now_ms;
 
 #[cfg(target_os = "macos")]
+use std::path::Path;
+#[cfg(target_os = "macos")]
 use std::process::Command;
 #[cfg(target_os = "macos")]
 use std::time::SystemTime;
 #[cfg(target_os = "macos")]
 use walkdir::WalkDir;
 
+#[cfg(target_os = "macos")]
 const DEN_AUTH_KEY: &str = "veslo.den.auth";
+#[cfg(target_os = "macos")]
 const DEN_KEEP_SIGNED_IN_KEY: &str = "veslo.den.keepSignedIn";
 const DEN_AUTH_SNAPSHOT_VERSION: u32 = 1;
 
@@ -22,6 +26,8 @@ const DEN_AUTH_SNAPSHOT_VERSION: u32 = 1;
 pub struct DenAuthSnapshot {
     pub auth_json: Option<String>,
     pub keep_signed_in: Option<bool>,
+    pub language: Option<String>,
+    pub onboarding_complete: Option<bool>,
     pub source: Option<String>,
 }
 
@@ -31,6 +37,8 @@ struct DenAuthSnapshotFile {
     version: u32,
     auth_json: Option<String>,
     keep_signed_in: Option<bool>,
+    language: Option<String>,
+    onboarding_complete: Option<bool>,
     updated_at: u64,
     source: Option<String>,
 }
@@ -99,6 +107,8 @@ fn read_den_auth_snapshot_file() -> Option<DenAuthSnapshot> {
     Some(DenAuthSnapshot {
         auth_json: normalize_optional_text(parsed.auth_json),
         keep_signed_in: parsed.keep_signed_in,
+        language: normalize_optional_text(parsed.language),
+        onboarding_complete: parsed.onboarding_complete,
         source: parsed.source,
     })
 }
@@ -114,6 +124,8 @@ fn write_den_auth_snapshot_file(snapshot: &DenAuthSnapshot) -> Result<(), String
         version: DEN_AUTH_SNAPSHOT_VERSION,
         auth_json: normalize_optional_text(snapshot.auth_json.clone()),
         keep_signed_in: snapshot.keep_signed_in,
+        language: normalize_optional_text(snapshot.language.clone()),
+        onboarding_complete: snapshot.onboarding_complete,
         updated_at: now_ms(),
         source: snapshot.source.clone(),
     };
@@ -293,6 +305,14 @@ fn should_prefer_legacy_over_snapshot_file(
     snapshot_uses_loopback(snapshot_file) && !snapshot_uses_loopback(legacy_snapshot)
 }
 
+#[cfg(not(target_os = "macos"))]
+fn should_prefer_legacy_over_snapshot_file(
+    _snapshot_file: &DenAuthSnapshot,
+    _legacy_snapshot: &DenAuthSnapshot,
+) -> bool {
+    false
+}
+
 #[cfg(target_os = "macos")]
 fn read_legacy_webkit_snapshot() -> Option<DenAuthSnapshot> {
     let mut selected: Option<(u8, SystemTime, DenAuthSnapshot)> = None;
@@ -315,6 +335,8 @@ fn read_legacy_webkit_snapshot() -> Option<DenAuthSnapshot> {
         let snapshot = DenAuthSnapshot {
             auth_json: Some(auth_json),
             keep_signed_in,
+            language: None,
+            onboarding_complete: None,
             source: Some(format!("legacy-webkit:{}", db.path.display())),
         };
 
@@ -363,6 +385,8 @@ pub fn den_auth_snapshot_read() -> Result<DenAuthSnapshot, String> {
     Ok(DenAuthSnapshot {
         auth_json: None,
         keep_signed_in: None,
+        language: None,
+        onboarding_complete: None,
         source: Some("empty".to_string()),
     })
 }
@@ -371,10 +395,14 @@ pub fn den_auth_snapshot_read() -> Result<DenAuthSnapshot, String> {
 pub fn den_auth_snapshot_write(
     auth_json: Option<String>,
     keep_signed_in: Option<bool>,
+    language: Option<String>,
+    onboarding_complete: Option<bool>,
 ) -> Result<(), String> {
     write_den_auth_snapshot_file(&DenAuthSnapshot {
         auth_json: normalize_optional_text(auth_json),
         keep_signed_in,
+        language: normalize_optional_text(language),
+        onboarding_complete,
         source: Some("desktop-runtime".to_string()),
     })
 }
@@ -382,7 +410,8 @@ pub fn den_auth_snapshot_write(
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_webkit_storage_hex_value, den_auth_snapshot_read, parse_keep_signed_in,
+        decode_webkit_storage_hex_value, den_auth_snapshot_read, den_auth_snapshot_write,
+        parse_keep_signed_in,
         resolve_den_auth_snapshot_path,
     };
     use std::fs;
@@ -610,6 +639,43 @@ mod tests {
             std::env::set_var("HOME", previous);
         } else {
             std::env::remove_var("HOME");
+        }
+
+        let _ = fs::remove_dir_all(temp_home);
+    }
+
+    #[test]
+    fn den_auth_snapshot_round_trips_language_and_onboarding_complete() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+
+        let temp_home = unique_temp_home("veslo-den-auth-roundtrip");
+        fs::create_dir_all(&temp_home).expect("temp home");
+        let snapshot_path = temp_home.join("den-auth.json");
+
+        let previous_snapshot_path = std::env::var("VESLO_DEN_AUTH_SNAPSHOT_PATH").ok();
+        std::env::set_var(
+            "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+            snapshot_path.to_string_lossy().to_string(),
+        );
+
+        den_auth_snapshot_write(
+            Some(r#"{"token":"token_123"}"#.to_string()),
+            Some(true),
+            Some("en".to_string()),
+            Some(true),
+        )
+        .expect("snapshot write");
+
+        let snapshot = den_auth_snapshot_read().expect("snapshot read");
+        assert_eq!(snapshot.auth_json, Some(r#"{"token":"token_123"}"#.to_string()));
+        assert_eq!(snapshot.keep_signed_in, Some(true));
+        assert_eq!(snapshot.language, Some("en".to_string()));
+        assert_eq!(snapshot.onboarding_complete, Some(true));
+
+        if let Some(previous) = previous_snapshot_path {
+            std::env::set_var("VESLO_DEN_AUTH_SNAPSHOT_PATH", previous);
+        } else {
+            std::env::remove_var("VESLO_DEN_AUTH_SNAPSHOT_PATH");
         }
 
         let _ = fs::remove_dir_all(temp_home);

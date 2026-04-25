@@ -649,6 +649,27 @@ export type VesloReloadEvent = {
   timestamp: number;
 };
 
+export type VesloGatewayProvider = "openai" | "anthropic" | "codex_oauth";
+
+export type VesloUserAiAccess = {
+  id: string;
+  userId: string;
+  enabled: boolean;
+  provider: VesloGatewayProvider | null;
+  defaultModel: string | null;
+  allowedModels: string[];
+  updatedAt: string | null;
+};
+
+export type VesloUserAiAccessResult = {
+  aiAccess: VesloUserAiAccess | null;
+};
+
+export type VesloManagedAiAccessBundle = {
+  accessToken?: string | null;
+  aiAccess: VesloUserAiAccess | null;
+};
+
 export const DEFAULT_VESLO_SERVER_PORT = 8787;
 
 const STORAGE_URL_OVERRIDE = "veslo.server.urlOverride";
@@ -1231,6 +1252,34 @@ function buildAuthHeaders(token?: string, hostToken?: string, extra?: Record<str
   return headers;
 }
 
+function normalizeBearerToken(token: string, label: string): string {
+  const trimmed = token.trim();
+  if (!trimmed) {
+    throw new Error(`${label} is required`);
+  }
+  return /^Bearer\s+/i.test(trimmed) ? trimmed : `Bearer ${trimmed}`;
+}
+
+function buildGatewayCallerHeaders(userToken: string) {
+  return {
+    "X-Veslo-Gateway-Authorization": normalizeBearerToken(userToken, "userToken"),
+  };
+}
+
+export async function requestManagedAiAccessBundle(baseUrl: string, userToken: string) {
+  const normalizedBaseUrl = normalizeVesloServerUrl(baseUrl);
+  if (!normalizedBaseUrl) {
+    throw new Error("Managed AI gateway base URL is required");
+  }
+
+  return requestJson<VesloManagedAiAccessBundle>(normalizedBaseUrl, "/api/me/ai-access", {
+    timeoutMs: 30_000,
+    extraHeaders: {
+      Authorization: normalizeBearerToken(userToken, "userToken"),
+    },
+  });
+}
+
 // Use Tauri's fetch when running in the desktop app to avoid CORS issues
 const resolveFetch = () => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
 
@@ -1388,6 +1437,7 @@ export function createVesloServerClient(options: {
     workspaceExport: 30_000,
     workspaceImport: 30_000,
     workspaceProvision: 20_000,
+    aiAccess: 30_000,
     binary: 60_000,
   };
 
@@ -1408,6 +1458,13 @@ export function createVesloServerClient(options: {
       const path = suffix ? `/veslo-code-router/bindings?${suffix}` : "/veslo-code-router/bindings";
       return requestJsonRaw<VesloOpenCodeRouterBindingsResult>(baseUrl, path, { token, hostToken, timeoutMs: timeouts.opencodeRouter });
     },
+    getMyAiAccess: (userToken: string) =>
+      requestJson<VesloManagedAiAccessBundle>(baseUrl, "/ai-gateway/me/ai-access", {
+        token,
+        hostToken,
+        timeoutMs: timeouts.aiAccess,
+        extraHeaders: buildGatewayCallerHeaders(userToken),
+      }),
     opencodeRouterTelegramIdentities: () =>
       requestJsonRaw<VesloOpenCodeRouterTelegramIdentitiesResult>(baseUrl, "/veslo-code-router/identities/telegram", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
     opencodeRouterSlackIdentities: () =>

@@ -6,11 +6,17 @@ const source = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
 const appStyles = readFileSync(new URL("../index.css", import.meta.url), "utf8");
 
 test("session send flow starts run UI only after the send is accepted", () => {
-  assert.match(
-    source,
-    /const handleSendPrompt = async \(draft: ComposerDraft\) => \{\s*try \{\s*const accepted = await props\.sendPromptAsync\(draft\);\s*if \(!accepted\) \{\s*setToastMessage\(props\.error \?\? tr\("session.connect_server_to_attach"\)\);\s*return false;\s*\}\s*setStickToBottom\(true\);\s*scheduleScrollToLatest\("auto"\);\s*startRun\(\);\s*return true;/s,
-    "session should only enter sending state after the prompt enqueue succeeds",
-  );
+  const handlerStart = source.indexOf("const handleSendPrompt = async (draft: ComposerDraft) => {");
+  const sendCall = source.indexOf("const accepted = await props.sendPromptAsync(draft);", handlerStart);
+  const rejectedBranch = source.indexOf("if (!accepted) {", sendCall);
+  const stickToBottom = source.indexOf("setStickToBottom(true);", rejectedBranch);
+  const startRun = source.indexOf("startRun();", stickToBottom);
+
+  assert.notEqual(handlerStart, -1, "session send handler should exist");
+  assert.ok(sendCall > handlerStart, "session should await prompt enqueue before send UI starts");
+  assert.ok(rejectedBranch > sendCall, "session should check whether the prompt was accepted");
+  assert.ok(stickToBottom > rejectedBranch, "session should only pin to latest after accepted send");
+  assert.ok(startRun > stickToBottom, "session should only enter sending state after the prompt enqueue succeeds");
 });
 
 test("message growth keeps bottom pin active when user is already near the latest content", () => {

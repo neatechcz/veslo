@@ -3,7 +3,8 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle"
 import { bearer } from "better-auth/plugins/bearer"
 import { db } from "./db/index.js"
 import * as schema from "./db/schema.js"
-import { env } from "./env.js"
+import { fireAndForgetAuthEmail, sendResetPasswordAuthEmail, sendVerificationAuthEmail } from "./email/auth-mailer.js"
+import { env, isAuthEmailConfigured } from "./env.js"
 import { ensureDefaultOrg } from "./orgs.js"
 
 const socialProviders = env.github.clientId && env.github.clientSecret
@@ -11,6 +12,24 @@ const socialProviders = env.github.clientId && env.github.clientSecret
       github: {
         clientId: env.github.clientId,
         clientSecret: env.github.clientSecret,
+      },
+    }
+  : undefined
+
+const authEmailVerification = isAuthEmailConfigured()
+  ? {
+      sendOnSignUp: true,
+      autoSignInAfterVerification: false,
+      sendVerificationEmail: async ({ user, url }: { user: { email: string }; url: string }) => {
+        void fireAndForgetAuthEmail(sendVerificationAuthEmail({ to: user.email, url }), "verification email")
+      },
+    }
+  : undefined
+
+const authEmailPasswordReset = isAuthEmailConfigured()
+  ? {
+      sendResetPassword: async ({ user, url }: { user: { email: string }; url: string }) => {
+        void fireAndForgetAuthEmail(sendResetPasswordAuthEmail({ to: user.email, url }), "password reset email")
       },
     }
   : undefined
@@ -25,8 +44,11 @@ export const auth = betterAuth({
     schema,
   }),
   plugins: [bearer()],
+  ...(authEmailVerification ? { emailVerification: authEmailVerification } : {}),
   emailAndPassword: {
     enabled: true,
+    requireEmailVerification: false,
+    ...(authEmailPasswordReset ?? {}),
   },
   databaseHooks: {
     user: {

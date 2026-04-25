@@ -50,7 +50,11 @@ const FILE_SESSION_CATALOG_DEFAULT_LIMIT = 2000;
 const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
 const SESSION_TRANSCRIPT_DEFAULT_LIMIT = 140;
 const SESSION_TRANSCRIPT_MAX_LIMIT = 200;
+const AI_GATEWAY_DEFAULT_PORT = 4034;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
+const GATEWAY_CALLER_AUTH_HEADER = "x-veslo-gateway-authorization";
+const GATEWAY_ACCESS_TOKEN_HEADER = "x-veslo-gateway-token";
+const GATEWAY_SESSION_ID_HEADER = "x-veslo-session-id";
 
 const REDACTED_CONFIG_KEYS = [
   "password",
@@ -711,6 +715,106 @@ async function proxyOpenCodeRouterRequest(input: {
   }
 }
 
+function resolveAiGatewayBaseUrl(): string {
+  const override =
+    process.env.VESLO_MANAGED_AI_BASE_URL?.trim() ||
+    process.env.VESLO_AI_GATEWAY_BASE_URL?.trim();
+  if (override) {
+    return override.replace(/\/+$/, "");
+  }
+  const port = parseInteger(process.env.AI_GATEWAY_PORT) ?? AI_GATEWAY_DEFAULT_PORT;
+  return `http://127.0.0.1:${port}`;
+}
+
+function requireAiGatewayCallerAuth(request: Request): string {
+  const authorization = request.headers.get(GATEWAY_CALLER_AUTH_HEADER)?.trim() ?? "";
+  if (!authorization) {
+    throw new ApiError(401, "gateway_unauthorized", "Gateway caller authorization is required");
+  }
+  return authorization;
+}
+
+function requireAiGatewayAccessToken(request: Request): string {
+  const accessToken = request.headers.get(GATEWAY_ACCESS_TOKEN_HEADER)?.trim() ?? "";
+  if (!accessToken) {
+    throw new ApiError(401, "gateway_unauthorized", "Gateway access token is required");
+  }
+  return `Bearer ${accessToken}`;
+}
+
+function requireAiGatewaySessionId(request: Request): string {
+  const sessionId = request.headers.get(GATEWAY_SESSION_ID_HEADER)?.trim() ?? "";
+  if (!sessionId) {
+    throw new ApiError(400, "gateway_session_required", "Gateway session id is required");
+  }
+  return sessionId;
+}
+
+async function proxyAiGatewayRequest(input: {
+  request: Request;
+  url: URL;
+  gatewayPath: string;
+  auth: "caller" | "gateway-token";
+  requireSessionId?: boolean;
+}) {
+  const baseUrl = resolveAiGatewayBaseUrl();
+  const target = new URL(baseUrl);
+  target.pathname = input.gatewayPath.startsWith("/") ? input.gatewayPath : `/${input.gatewayPath}`;
+  target.search = input.url.search;
+
+  const headers = new Headers(input.request.headers);
+  headers.set(
+    "Authorization",
+    input.auth === "caller" ? requireAiGatewayCallerAuth(input.request) : requireAiGatewayAccessToken(input.request),
+  );
+  if (input.requireSessionId) {
+    headers.set(GATEWAY_SESSION_ID_HEADER, requireAiGatewaySessionId(input.request));
+  }
+  headers.delete(GATEWAY_CALLER_AUTH_HEADER);
+  headers.delete(GATEWAY_ACCESS_TOKEN_HEADER);
+  headers.delete("x-veslo-host-token");
+  headers.delete("x-veslo-client-id");
+  headers.delete("host");
+  headers.delete("origin");
+  headers.delete("content-length");
+
+  const method = input.request.method.toUpperCase();
+  const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
+
+  let response: Response;
+  try {
+    response = await fetch(target.toString(), {
+      method,
+      headers,
+      body,
+    });
+  } catch (error) {
+    throw new ApiError(503, "ai_gateway_unreachable", "AI gateway is not reachable on this host", {
+      baseUrl,
+      targetUrl: target.toString(),
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    return response;
+  }
+
+  const text = await response.text();
+  let json: unknown = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    return new Response(text, {
+      status: response.status,
+      headers: contentType ? { "Content-Type": contentType } : undefined,
+    });
+  }
+
+  return jsonResponse(redactSensitiveConfig(json), response.status);
+}
+
 function jsonResponse(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -743,7 +847,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   headers.set("Access-Control-Allow-Origin", allowOrigin);
   headers.set(
     "Access-Control-Allow-Headers",
-    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, x-veslo-account-id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
+    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, x-veslo-account-id, X-Veslo-Gateway-Authorization, X-Veslo-Gateway-Token, X-Veslo-Session-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
   );
   headers.set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
   headers.set("Vary", "Origin");
@@ -1610,6 +1714,45 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     ensureWritable(config);
     const ownerKey = resolveArchiveOwnerKey(ctx.request);
     return jsonResponse({ items: await sessionArchives.delete(ownerKey, ctx.params.sessionId) });
+  });
+
+  addRoute(routes, "GET", "/ai-gateway/me/ai-access", "client", async (ctx) => {
+    return proxyAiGatewayRequest({
+      request: ctx.request,
+      url: ctx.url,
+      gatewayPath: "/api/me/ai-access",
+      auth: "caller",
+    });
+  });
+
+  addRoute(routes, "POST", "/ai-gateway/providers/openai/v1/chat/completions", "client", async (ctx) => {
+    return proxyAiGatewayRequest({
+      request: ctx.request,
+      url: ctx.url,
+      gatewayPath: "/providers/openai/v1/chat/completions",
+      auth: "gateway-token",
+      requireSessionId: true,
+    });
+  });
+
+  addRoute(routes, "POST", "/ai-gateway/providers/anthropic/v1/messages", "client", async (ctx) => {
+    return proxyAiGatewayRequest({
+      request: ctx.request,
+      url: ctx.url,
+      gatewayPath: "/providers/anthropic/v1/messages",
+      auth: "gateway-token",
+      requireSessionId: true,
+    });
+  });
+
+  addRoute(routes, "POST", "/ai-gateway/providers/codex_oauth/v1/chat/completions", "client", async (ctx) => {
+    return proxyAiGatewayRequest({
+      request: ctx.request,
+      url: ctx.url,
+      gatewayPath: "/providers/codex_oauth/v1/chat/completions",
+      auth: "gateway-token",
+      requireSessionId: true,
+    });
   });
 
   addRoute(routes, "GET", "/tokens", "host", async () => {

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   clearDenAuth,
   exchangeHandoffCode,
+  flushPendingDesktopSnapshotWrite,
   getDesktopBrowserAuthStatus,
   hydrateDenAuthFromDesktopSnapshot,
   parseAuthCompleteDeepLink,
@@ -13,8 +14,9 @@ import {
   resolveAuthenticatedDenUserLabel,
   resolvePreferredDenUserLabel,
   startDesktopBrowserAuth,
-  writeDenKeepSignedIn,
+  subscribeDenAuthChanges,
   writeDenAuth,
+  writeDenKeepSignedIn,
 } from "./den-auth.js";
 
 class MemoryStorage implements Storage {
@@ -580,6 +582,305 @@ test("hydrateDenAuthFromDesktopSnapshot skips import when keepSignedIn is false 
     assert.equal(readDenAuth(), null);
     assert.equal(readDenKeepSignedIn(), false);
   } finally {
+    storage.restore();
+  }
+});
+
+test("hydrateDenAuthFromDesktopSnapshot replaces stale browser auth when desktop snapshot user differs", async () => {
+  const staleAuth = {
+    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    token: "token_stale_browser",
+    orgId: "org_stale",
+    user: { id: "user_stale", email: "stale@example.com" },
+    org: { id: "org_stale" },
+  };
+  const snapshotAuth = {
+    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    token: "token_snapshot_newer",
+    orgId: "org_snapshot",
+    user: { id: "user_snapshot", email: "snapshot@example.com" },
+    org: { id: "org_snapshot" },
+  };
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  const storage = installDomStorage({
+    tauriInvoke: async (command, args) => {
+      calls.push({ command, args });
+      if (command === "den_auth_snapshot_read") {
+        return {
+          authJson: JSON.stringify(snapshotAuth),
+          keepSignedIn: true,
+          source: "desktop-runtime",
+        };
+      }
+      if (command === "den_auth_snapshot_write") {
+        return null;
+      }
+      throw new Error(`Unexpected invoke command: ${command}`);
+    },
+  });
+
+  try {
+    writeDenAuth(staleAuth);
+    await flushPendingDesktopSnapshotWrite();
+    calls.length = 0;
+
+    const imported = await hydrateDenAuthFromDesktopSnapshot();
+    await flushPendingDesktopSnapshotWrite();
+
+    assert.equal(imported, true);
+    assert.deepEqual(readDenAuth(), snapshotAuth);
+    assert.equal(readDenKeepSignedIn(), true);
+    assert.equal(calls.some((entry) => entry.command === "den_auth_snapshot_read"), true);
+  } finally {
+    storage.restore();
+  }
+});
+
+test("hydrateDenAuthFromDesktopSnapshot preserves browser auth when snapshot matches the current user", async () => {
+  const currentAuth = {
+    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    token: "token_current_browser",
+    orgId: "org_current",
+    user: { id: "user_same", email: "same@example.com" },
+    org: { id: "org_current" },
+  };
+  const snapshotAuth = {
+    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    token: "token_snapshot_older",
+    orgId: "org_snapshot",
+    user: { id: "user_same", email: "same@example.com" },
+    org: { id: "org_snapshot" },
+  };
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  const storage = installDomStorage({
+    tauriInvoke: async (command, args) => {
+      calls.push({ command, args });
+      if (command === "den_auth_snapshot_read") {
+        return {
+          authJson: JSON.stringify(snapshotAuth),
+          keepSignedIn: true,
+          source: "desktop-runtime",
+        };
+      }
+      if (command === "den_auth_snapshot_write") {
+        return null;
+      }
+      throw new Error(`Unexpected invoke command: ${command}`);
+    },
+  });
+
+  try {
+    writeDenAuth(currentAuth);
+    await flushPendingDesktopSnapshotWrite();
+    calls.length = 0;
+
+    const imported = await hydrateDenAuthFromDesktopSnapshot();
+    await flushPendingDesktopSnapshotWrite();
+
+    assert.equal(imported, false);
+    assert.deepEqual(readDenAuth(), currentAuth);
+    const snapshotWrite = calls.filter((entry) => entry.command === "den_auth_snapshot_write").at(-1);
+    assert.ok(snapshotWrite);
+    assert.match(String(snapshotWrite.args?.authJson ?? ""), /token_current_browser/);
+  } finally {
+    storage.restore();
+  }
+});
+
+test("hydrateDenAuthFromDesktopSnapshot clears stale browser auth when desktop snapshot disables keep signed in", async () => {
+  const staleAuth = {
+    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    token: "token_stale_browser",
+    orgId: "org_stale",
+    user: { id: "user_stale", email: "stale@example.com" },
+    org: { id: "org_stale" },
+  };
+  const snapshotAuth = {
+    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    token: "token_snapshot_signed_out",
+    orgId: "org_snapshot",
+    user: { id: "user_snapshot", email: "snapshot@example.com" },
+    org: { id: "org_snapshot" },
+  };
+  const storage = installDomStorage({
+    tauriInvoke: async (command) => {
+      if (command === "den_auth_snapshot_read") {
+        return {
+          authJson: JSON.stringify(snapshotAuth),
+          keepSignedIn: false,
+          source: "desktop-runtime",
+        };
+      }
+      if (command === "den_auth_snapshot_write") {
+        return null;
+      }
+      throw new Error(`Unexpected invoke command: ${command}`);
+    },
+  });
+
+  try {
+    writeDenAuth(staleAuth);
+    await flushPendingDesktopSnapshotWrite();
+
+    const imported = await hydrateDenAuthFromDesktopSnapshot();
+    await flushPendingDesktopSnapshotWrite();
+
+    assert.equal(imported, false);
+    assert.equal(readDenAuth(), null);
+    assert.equal(readDenKeepSignedIn(), false);
+  } finally {
+    storage.restore();
+  }
+});
+
+test("hydrateDenAuthFromDesktopSnapshot restores language and onboarding completion flags", async () => {
+  const authState = {
+    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    token: "token_from_snapshot",
+    orgId: "org_789",
+    user: { id: "user_789", email: "seeded@example.com" },
+    org: { id: "org_789", slug: "seeded-org" },
+  };
+  const storage = installDomStorage({
+    tauriInvoke: async (command) => {
+      if (command === "den_auth_snapshot_read") {
+        return {
+          authJson: JSON.stringify(authState),
+          keepSignedIn: true,
+          language: "en",
+          onboardingComplete: true,
+          source: "e2e-seed",
+        };
+      }
+      if (command === "den_auth_snapshot_write") {
+        return null;
+      }
+      throw new Error(`Unexpected invoke command: ${command}`);
+    },
+  });
+
+  try {
+    clearDenAuth();
+    storage.localStorage.removeItem("veslo.language");
+    storage.localStorage.removeItem("veslo.onboardingComplete");
+
+    const imported = await hydrateDenAuthFromDesktopSnapshot();
+    assert.equal(imported, true);
+    assert.deepEqual(readDenAuth(), authState);
+    assert.equal(storage.localStorage.getItem("veslo.language"), "en");
+    assert.equal(storage.localStorage.getItem("veslo.onboardingComplete"), "1");
+  } finally {
+    storage.restore();
+  }
+});
+
+test("writeDenAuth syncs desktop snapshot with language and onboarding metadata", async () => {
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  const storage = installDomStorage({
+    tauriInvoke: async (command, args) => {
+      calls.push({ command, args });
+      if (command === "den_auth_snapshot_write") {
+        return null;
+      }
+      throw new Error(`Unexpected invoke command: ${command}`);
+    },
+  });
+
+  try {
+    storage.localStorage.setItem("veslo.language", "en");
+    storage.localStorage.setItem("veslo.onboardingComplete", "1");
+
+    const authState = {
+      denApiBase: "https://den-control-plane-veslo.onrender.com",
+      token: "token_for_snapshot_sync",
+      orgId: "org_sync",
+      user: { id: "user_sync", email: "sync@example.com" },
+      org: { id: "org_sync", slug: "sync-org" },
+    };
+
+    writeDenAuth(authState);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const snapshotWrite = calls.filter((entry) => entry.command === "den_auth_snapshot_write").at(-1);
+    assert.ok(snapshotWrite);
+    assert.equal(snapshotWrite.args?.keepSignedIn, true);
+    assert.equal(snapshotWrite.args?.language, "en");
+    assert.equal(snapshotWrite.args?.onboardingComplete, true);
+    assert.equal(typeof snapshotWrite.args?.authJson, "string");
+  } finally {
+    storage.restore();
+  }
+});
+
+test("flushPendingDesktopSnapshotWrite waits for the queued desktop snapshot write", async () => {
+  let resolveWrite: (() => void) | undefined;
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  const storage = installDomStorage({
+    tauriInvoke: async (command, args) => {
+      calls.push({ command, args });
+      if (command === "den_auth_snapshot_write") {
+        await new Promise<void>((resolve) => {
+          resolveWrite = () => resolve();
+        });
+        return null;
+      }
+      throw new Error(`Unexpected invoke command: ${command}`);
+    },
+  });
+
+  try {
+    const authState = {
+      denApiBase: "https://den-control-plane-veslo.onrender.com",
+      token: "token_for_flush",
+      orgId: "org_flush",
+      user: { id: "user_flush", email: "flush@example.com" },
+      org: { id: "org_flush", slug: "flush-org" },
+    };
+
+    writeDenAuth(authState);
+
+    let flushed = false;
+    const pendingFlush = flushPendingDesktopSnapshotWrite().then(() => {
+      flushed = true;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(flushed, false);
+    assert.equal(calls.some((entry) => entry.command === "den_auth_snapshot_write"), true);
+
+    if (!resolveWrite) {
+      throw new Error("Expected desktop snapshot write to be pending");
+    }
+    resolveWrite();
+    await pendingFlush;
+    assert.equal(flushed, true);
+  } finally {
+    storage.restore();
+  }
+});
+
+test("subscribeDenAuthChanges fires when auth state changes", () => {
+  const storage = installDomStorage();
+  const notifications: string[] = [];
+  const unsubscribe = subscribeDenAuthChanges(() => {
+    notifications.push("changed");
+  });
+
+  try {
+    writeDenAuth({
+      denApiBase: "https://den-control-plane-veslo.onrender.com",
+      token: "token_for_subscription",
+      orgId: "org_subscription",
+      user: { id: "user_subscription", email: "subscription@example.com" },
+      org: { id: "org_subscription", slug: "subscription-org" },
+    });
+    clearDenAuth();
+    writeDenKeepSignedIn(false);
+
+    assert.equal(notifications.length, 3);
+  } finally {
+    unsubscribe();
     storage.restore();
   }
 });

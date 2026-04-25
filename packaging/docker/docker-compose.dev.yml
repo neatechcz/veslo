@@ -31,6 +31,83 @@ x-shared: &shared
     - ${VESLO_HOST_OPENCODE_DATA_DIR:-./workspace/.veslo-host-opencode-data}:/persist/.veslo-host-opencode-data:ro
 
 services:
+  ai-gateway-db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: veslo_ai_gateway
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_USER: gateway
+      MYSQL_PASSWORD: gateway
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -proot --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    volumes:
+      - ai-gateway-db-data:/var/lib/mysql
+
+  den-db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: den
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_USER: den
+      MYSQL_PASSWORD: den
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -proot --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 240s
+    volumes:
+      - den-db-data:/var/lib/mysql
+
+  den:
+    <<: *shared
+    depends_on:
+      den-db:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+          curl ca-certificates >/dev/null 2>&1
+
+        corepack enable && corepack prepare pnpm@10.27.0 --activate
+
+        echo "[den] Installing dependencies..."
+        pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
+
+        echo ""
+        echo "============================================"
+        echo "  Veslo Den"
+        echo "  URL:    http://localhost:${DEN_PORT:-8788}"
+        echo "  Health: http://localhost:${DEN_PORT:-8788}/health"
+        echo "============================================"
+        echo ""
+
+        exec pnpm --filter @neatech/den dev
+    ports:
+      - "${DEN_PORT:-8788}:8788"
+    environment:
+      CI: "true"
+      PORT: "8788"
+      DATABASE_URL: mysql://den:den@den-db:3306/den
+      BETTER_AUTH_SECRET: dev_only_den_better_auth_secret_key_32b__
+      BETTER_AUTH_URL: http://host.docker.internal:${DEN_PORT:-8788}
+      CORS_ORIGINS: http://127.0.0.1:${VESLO_AI_GATEWAY_PORT:-4034},http://localhost:${VESLO_AI_GATEWAY_PORT:-4034},http://127.0.0.1:${DEN_PORT:-8788},http://localhost:${DEN_PORT:-8788}
+      DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "false"
+      PROVISIONER_MODE: stub
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8788/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
   orchestrator:
     <<: *shared
     entrypoint: ["/bin/sh", "-c"]
@@ -180,7 +257,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 90s
+      # Cold boot installs dependencies and compiles sidecars before veslo-server binds :8787.
+      start_period: 240s
     environment:
       CI: "true"
       VESLO_TOKEN: ${VESLO_TOKEN:-}
@@ -190,6 +268,11 @@ services:
 
   ai-gateway:
     <<: *shared
+    depends_on:
+      ai-gateway-db:
+        condition: service_healthy
+      den:
+        condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -208,11 +291,20 @@ services:
         echo "============================================"
         echo ""
 
+        echo "[ai-gateway] Applying database migrations..."
+        pnpm --filter @neatech/ai-gateway db:migrate
+
         exec pnpm --filter @neatech/ai-gateway dev
     ports:
       - "${VESLO_AI_GATEWAY_PORT:-4034}:4034"
     environment:
       CI: "true"
+      AI_GATEWAY_DATABASE_URL: mysql://gateway:gateway@ai-gateway-db:3306/veslo_ai_gateway
+      AI_GATEWAY_SECRET_KEY: dev_only_ai_gateway_secret_key_32b__
+      AI_GATEWAY_OPENAI_CLIENT_ID: veslo-dev-openai-client
+      AI_GATEWAY_OPENAI_CLIENT_SECRET: veslo-dev-openai-secret
+      AI_GATEWAY_OPENAI_REDIRECT_BASE: http://127.0.0.1:${VESLO_AI_GATEWAY_PORT:-4034}/auth/openai
+      AI_GATEWAY_DEN_API_BASE: http://den:8788
 
   web:
     <<: *shared
@@ -266,6 +358,10 @@ services:
       VESLO_DEV_ID: ${VESLO_DEV_ID:-default}
 
 volumes:
+  ai-gateway-db-data:
+    name: veslo-dev-ai-gateway-db-data
+  den-db-data:
+    name: veslo-dev-den-db-data
   pnpm-store:
     name: veslo-dev-pnpm-store
   bun-install:

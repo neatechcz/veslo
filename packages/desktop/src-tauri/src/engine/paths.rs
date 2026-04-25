@@ -11,8 +11,14 @@ const OPENCODE_CMD: &str = "opencode.cmd";
 #[cfg(not(windows))]
 const OPENCODE_EXECUTABLE: &str = "opencode";
 
-pub fn opencode_executable_name() -> &'static str {
-    OPENCODE_EXECUTABLE
+#[cfg(windows)]
+const BUNDLED_OPENCODE_EXECUTABLE_NAMES: [&str; 2] = ["veslo-code.exe", "opencode.exe"];
+
+#[cfg(not(windows))]
+const BUNDLED_OPENCODE_EXECUTABLE_NAMES: [&str; 2] = ["veslo-code", "opencode"];
+
+pub fn bundled_opencode_executable_names() -> &'static [&'static str] {
+    &BUNDLED_OPENCODE_EXECUTABLE_NAMES
 }
 
 pub fn candidate_opencode_paths() -> Vec<PathBuf> {

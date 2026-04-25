@@ -82,6 +82,8 @@ Meaning:
 - `veslo.den.desktopAuthPending`
   Temporary desktop auth handoff state during browser sign-in.
 
+In Tauri startup flows, the desktop auth snapshot is allowed to repair stale browser auth state. If the snapshot explicitly represents a signed-out state, or if the snapshot user identity conflicts with the browser-stored user identity, the snapshot wins before the rest of app bootstrap continues. Matching or identity-ambiguous browser auth stays in place and re-syncs the desktop snapshot instead.
+
 ## Veslo Server Connection State
 
 Managed by `packages/app/src/app/lib/veslo-server.ts`.

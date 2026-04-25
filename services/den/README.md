@@ -34,6 +34,9 @@ cp .env.development .env
 - `WORKER_TOKEN_ENCRYPTION_KEY` optional key material for encrypting worker host/client tokens at rest (falls back to `BETTER_AUTH_SECRET` when unset)
 - `GITHUB_CLIENT_ID` optional OAuth app client ID for GitHub sign-in
 - `GITHUB_CLIENT_SECRET` optional OAuth app client secret for GitHub sign-in
+- `LETTR_API_KEY` optional Lettr API key used to send Better Auth verification and password reset emails. Blank or unset values disable email verification and password reset delivery.
+- `AUTH_EMAIL_ADDRESS` optional sender address for auth emails, for example `noreply@mail.veslo.work`. Blank or unset values disable email verification and password reset delivery.
+- `AUTH_EMAIL_FROM_NAME` optional sender display name for auth emails, for example `Veslo`.
 - `PORT` server port
 - `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS). In production, wildcard `*` is rejected. Desktop CORS origins (`tauri://localhost`, `http://localhost:1420`, `http://localhost:1421`) are appended server-side to the Express CORS allowlist.
 - `PROVISIONER_MODE` `stub` or `render`
@@ -74,6 +77,15 @@ cp .env.development .env
 - `YOUTRACK_MCP_TOKEN` optional remote MCP token forwarded to child MCP wrappers that read it from the environment
 
 ## Auth setup (Better Auth)
+
+Set `LETTR_API_KEY` and `AUTH_EMAIL_ADDRESS` to enable email verification and password reset delivery through Lettr. `AUTH_EMAIL_FROM_NAME` is optional. Blank or unset values disable email verification and password reset delivery.
+
+The root onboarding page (`GET /?desktopOnboarding=1`) now supports the desktop browser auth flow end to end:
+
+- sign in and sign up
+- resend verification email
+- forgot-password reset requests
+- reset-password completion from emailed links
 
 Generate Better Auth schema (Drizzle):
 
@@ -151,6 +163,7 @@ Required GitHub Actions secrets:
 - `RENDER_OWNER_ID`
 - `DEN_DATABASE_URL`
 - `DEN_BETTER_AUTH_SECRET`
+- `DEN_LETTR_API_KEY` when hosted verification or password reset emails should be enabled
 
 Optional GitHub Actions secrets (enable GitHub social sign-in):
 
@@ -173,7 +186,18 @@ Optional GitHub Actions variable:
 - `DEN_POLAR_API_BASE` (defaults to `https://api.polar.sh`)
 - `DEN_POLAR_SUCCESS_URL` (defaults to `https://app.veslo.neatech.com`)
 - `DEN_POLAR_RETURN_URL` (defaults to `DEN_POLAR_SUCCESS_URL`)
+- `DEN_AUTH_EMAIL_ADDRESS` sender email value for hosted auth emails, for example `noreply@mail.veslo.work`
+- `DEN_AUTH_EMAIL_FROM_NAME` optional sender display name for hosted auth emails, for example `Veslo`
+- `DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED` (`true`/`false`, defaults to `false`)
 
 Required additional secret when using vanity worker domains:
 
 - `VERCEL_TOKEN`
+
+For hosted auth-email testing:
+
+- set `DEN_LETTR_API_KEY` and `DEN_AUTH_EMAIL_ADDRESS` to enable verification and password-reset email delivery on Render
+- set `DEN_AUTH_EMAIL_FROM_NAME` when you want the sender to display as `Veslo`
+- set `DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true` only when you want the desktop handoff to hard-block unverified users
+- if `DEN_DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true`, both `DEN_LETTR_API_KEY` and `DEN_AUTH_EMAIL_ADDRESS` must be configured or the deploy workflow will fail validation
+- if those GitHub repo inputs are blank, the deploy workflow preserves the current Render values for `LETTR_API_KEY`, `AUTH_EMAIL_ADDRESS`, `AUTH_EMAIL_FROM_NAME`, and `DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED` instead of clearing them

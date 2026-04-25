@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 
-import type { OnboardingStep } from "../types";
+import type { EngineRuntime, OnboardingStep } from "../types";
 import {
   addOpencodeCacheHint,
   isTauriRuntime,
@@ -78,7 +78,7 @@ export interface EngineStoreDeps {
   ) => Promise<boolean>;
 
   // Orchestrator / runtime helpers
-  resolveEngineRuntime: () => EngineInfo["runtime"];
+  resolveEngineRuntime: () => EngineRuntime;
   resolveWorkspacePaths: () => string[];
   activateOrchestratorWorkspace: (input: { workspacePath: string; name?: string | null }) => Promise<any>;
   activateVesloHostWorkspace: (workspacePath: string) => Promise<any>;

@@ -128,7 +128,13 @@ test("GET /hub/mcp returns items from den org catalog", async () => {
 
   expect(response.status).toBe(200);
   const payload = await response.json() as {
-    items: Array<{ id: string; name: string; config: { type: string; url?: string; oauth?: boolean } }>;
+    items: Array<{
+      id: string;
+      name: string;
+      description?: string;
+      config: { type: string; url?: string; oauth?: boolean };
+      source?: { scope: string; orgId?: string };
+    }>;
   };
   expect(payload.items).toEqual([
     {

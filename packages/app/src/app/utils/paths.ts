@@ -1,7 +1,18 @@
 import type { WorkspaceInfo } from "../lib/tauri";
 
 export function isTauriRuntime() {
-  return typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__ != null;
+  if (typeof window === "undefined") return false;
+
+  const candidateWindow = window as any;
+  if (candidateWindow.__TAURI_INTERNALS__ != null) {
+    return true;
+  }
+
+  const hostname =
+    typeof candidateWindow.location?.hostname === "string"
+      ? candidateWindow.location.hostname.trim().toLowerCase()
+      : "";
+  return hostname === "tauri.localhost";
 }
 
 export function isWindowsPlatform() {

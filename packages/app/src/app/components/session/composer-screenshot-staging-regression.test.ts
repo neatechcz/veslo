@@ -31,7 +31,7 @@ test("staging failure blocks send with an explicit error and no draft clear", ()
 test("send flow snapshots pending draft context before materializing a real session", () => {
   assert.match(
     appSource,
-    /let sessionID = selectedSessionId\(\);\s*const pendingDraftSendState = \(\(\) => \{[\s\S]*const pendingDraftKey = \(activePendingDraftKey\(\) \?\? ""\)\.trim\(\);[\s\S]*if \(sessionID\) return null;[\s\S]*if \(!pendingDraftKey\) return null;[\s\S]*return \{[\s\S]*key: pendingDraftKey,[\s\S]*\};[\s\S]*\}\)\(\);\s*if \(!sessionID\) \{\s*await createSessionAndOpen\(\);\s*sessionID = selectedSessionId\(\);\s*\}/s,
+    /let sessionID = selectedSessionId\(\);\s*const pendingDraftSendState = \(\(\) => \{[\s\S]*const pendingDraftKey = \(activePendingDraftKey\(\) \?\? ""\)\.trim\(\);[\s\S]*if \(sessionID\) return null;[\s\S]*if \(!pendingDraftKey\) return null;[\s\S]*return \{[\s\S]*key: pendingDraftKey,[\s\S]*\};[\s\S]*\}\)\(\);\s*if \(!sessionID\) \{[\s\S]*sessionID = \(await createSessionAndOpen\(\)\) \?\? selectedSessionId\(\);[\s\S]*\}/s,
     "send flow should snapshot pending draft identity before creating the real session so failure paths can preserve the draft",
   );
 });
@@ -59,7 +59,7 @@ test("composer awaits send confirmation before clearing draft and attachments", 
 
   assert.match(
     composerSource,
-    /const sent = await props\.onSend\(draft\);\s*if \(!sent\) \{\s*setSending\(false\);\s*return;\s*\}\s*\/\/ Don't reset sending here[\s\S]*setSlashOpen\(false\);\s*setSlashQuery\(""\);\s*setAttachments\(\[\]\);\s*setEditorText\(""\);/s,
+    /const sent = await props\.onSend\(draft\);[\s\S]*if \(!sent\) \{\s*setSending\(false\);\s*return;\s*\}\s*\/\/ Don't reset sending here[\s\S]*setSlashOpen\(false\);\s*setSlashQuery\(""\);\s*setAttachments\(\[\]\);\s*setEditorText\(""\);/s,
     "composer should clear draft state only after send succeeds",
   );
 });

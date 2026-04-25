@@ -64,6 +64,26 @@ const PDF_SIGNATURE_SCAN_BYTES = 2048;
 
 const isImageMime = (mime: string) => ACCEPTED_IMAGE_TYPES.includes(mime);
 
+function recordSendTrace(event: string, payload?: Record<string, unknown>) {
+  if (typeof window === "undefined") return;
+  try {
+    const root = window as typeof window & {
+      __vesloSendTrace?: Array<Record<string, unknown>>;
+    };
+    const logs = root.__vesloSendTrace ?? [];
+    logs.push({
+      at: new Date().toISOString(),
+      source: "composer",
+      event,
+      ...(payload ?? {}),
+    });
+    if (logs.length > 120) logs.splice(0, logs.length - 120);
+    root.__vesloSendTrace = logs;
+  } catch {
+    // ignore
+  }
+}
+
 const fileToDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -934,8 +954,13 @@ export default function Composer(props: ComposerProps) {
   createEffect(() => {
     if (props.isStreaming && sending()) setSending(false);
   });
+  const sendDisabled = createMemo(() => !hasDraftContent() || props.busy);
 
   const sendDraft = async () => {
+    recordSendTrace("sendDraft:start", {
+      busy: props.busy,
+      streaming: props.isStreaming,
+    });
     // Ensure any pending debounce updates are committed before sending
     flushDraftChange();
 
@@ -959,7 +984,16 @@ export default function Composer(props: ComposerProps) {
 
     recordHistory(draft);
     setSending(true);
+    recordSendTrace("sendDraft:onSend", {
+      textLength: text.length,
+      attachmentCount: draft.attachments.length,
+    });
     const sent = await props.onSend(draft);
+    recordSendTrace("sendDraft:onSend:result", {
+      sent,
+      busy: props.busy,
+      streaming: props.isStreaming,
+    });
     if (!sent) {
       setSending(false);
       return;
@@ -1729,15 +1763,26 @@ export default function Composer(props: ComposerProps) {
                           fallback={
                             <button
                               type="button"
-                              disabled={!hasDraftContent()}
+                              disabled={sendDisabled()}
                               onClick={() => {
-                                if (sending() || props.busy) return;
+                                recordSendTrace("sendButton:click", {
+                                  sending: sending(),
+                                  busy: props.busy,
+                                  hasDraftContent: hasDraftContent(),
+                                });
+                                if (sending() || props.busy) {
+                                  recordSendTrace("sendButton:blocked", {
+                                    sending: sending(),
+                                    busy: props.busy,
+                                  });
+                                  return;
+                                }
                                 void sendDraft();
                               }}
                               class={`shrink-0 p-1.5 rounded-full ${
                                 sending()
                                   ? "bg-[#1B29FF] text-white pointer-events-none"
-                                  : `transition-colors ${!hasDraftContent()
+                                  : `transition-colors ${sendDisabled()
                                     ? "bg-gray-4 text-gray-10"
                                     : "bg-[#1B29FF] text-white hover:bg-blue-10"}`
                               }`}

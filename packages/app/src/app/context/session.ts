@@ -838,7 +838,6 @@ export function createSessionStore(options: {
           }
         } finally {
           setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
-          options.onSessionLoadComplete?.();
         }
         return;
       }

@@ -366,6 +366,14 @@ describe("session transcript prefetch routes", () => {
       hostTokenSource: "cli",
       logFormat: "pretty",
       logRequests: false,
+      debugLogs: {
+        enabled: false,
+        ingestUrl: null,
+        ingestToken: null,
+        batchMaxEvents: 200,
+        batchMaxBytes: 256 * 1024,
+        spoolMaxBytes: 100 * 1024 * 1024,
+      },
     });
     runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
 

@@ -1,0 +1,108 @@
+name: Ops DEN Platform Admin
+
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: DEN user email to grant platform_admin
+        required: true
+        type: string
+      apply:
+        description: Apply the grant. Leave false for a dry run.
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  grant:
+    runs-on: ubuntu-latest
+    if: github.repository == 'neatechcz/veslo'
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install DEN dependencies
+        run: pnpm install --filter @neatech/den... --frozen-lockfile
+
+      - name: Grant platform admin role
+        working-directory: services/den
+        env:
+          DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
+          TARGET_EMAIL: ${{ inputs.email }}
+          APPLY_GRANT: ${{ inputs.apply }}
+        run: |
+          node <<'NODE'
+          const mysql = require("mysql2/promise");
+          const crypto = require("node:crypto");
+
+          (async () => {
+            const databaseUrl = process.env.DATABASE_URL;
+            const targetEmail = (process.env.TARGET_EMAIL || "").trim().toLowerCase();
+            const applyGrant = (process.env.APPLY_GRANT || "false").toLowerCase() === "true";
+
+            if (!databaseUrl) {
+              throw new Error("DATABASE_URL is required");
+            }
+            if (!targetEmail || !targetEmail.includes("@")) {
+              throw new Error("TARGET_EMAIL must be a valid email");
+            }
+
+            const connection = await mysql.createConnection(databaseUrl);
+            try {
+              const [users] = await connection.execute(
+                "SELECT id, email FROM `user` WHERE lower(email) = ? LIMIT 1",
+                [targetEmail],
+              );
+              const user = Array.isArray(users) ? users[0] : null;
+              if (!user?.id || !user?.email) {
+                throw new Error(`user_not_found:${targetEmail}`);
+              }
+
+              const [existingRows] = await connection.execute(
+                "SELECT id, role FROM platform_role WHERE user_id = ? AND role = 'platform_admin' LIMIT 1",
+                [user.id],
+              );
+              const existing = Array.isArray(existingRows) ? existingRows[0] : null;
+
+              if (applyGrant && !existing) {
+                await connection.execute(
+                  "INSERT INTO platform_role (id, user_id, role, created_at) VALUES (?, ?, 'platform_admin', CURRENT_TIMESTAMP(3)) ON DUPLICATE KEY UPDATE role = 'platform_admin'",
+                  [`platform_role_${crypto.randomUUID()}`, user.id],
+                );
+              }
+
+              const [afterRows] = await connection.execute(
+                "SELECT id, role FROM platform_role WHERE user_id = ? AND role = 'platform_admin' LIMIT 1",
+                [user.id],
+              );
+              const after = Array.isArray(afterRows) ? afterRows[0] : null;
+
+              console.log(JSON.stringify({
+                email: user.email,
+                userId: user.id,
+                hadPlatformAdminRole: Boolean(existing),
+                applied: applyGrant,
+                hasPlatformAdminRole: Boolean(after),
+              }));
+            } finally {
+              await connection.end();
+            }
+          })().catch((error) => {
+            console.error(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+          });
+          NODE

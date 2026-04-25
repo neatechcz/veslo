@@ -4,7 +4,7 @@ import { formatBytes, formatRelativeTime, isTauriRuntime, isWindowsPlatform } fr
 
 import Button from "../components/button";
 import { CircleAlert, Copy, Download, FolderOpen, Loader2, PlugZap, RefreshCcw, Smartphone, X, Zap } from "lucide-solid";
-import type { OpencodeConnectStatus, ProviderListItem, SessionArchiveItem, SettingsTab, StartupPreference } from "../types";
+import type { OpencodeConnectStatus, SessionArchiveItem, SettingsTab, StartupPreference } from "../types";
 import type {
   VesloAuditEntry,
   VesloServerCapabilities,
@@ -47,11 +47,6 @@ export type SettingsViewProps = {
   busy: boolean;
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
-  providers: ProviderListItem[];
-  providerConnectedIds: string[];
-  providerAuthBusy: boolean;
-  openProviderAuthModal: () => Promise<void>;
-  disconnectProvider: (providerId: string) => Promise<string | void>;
   vesloServerStatus: VesloServerStatus;
   vesloServerUrl: string;
   vesloReconnectBusy: boolean;
@@ -79,9 +74,12 @@ export type SettingsViewProps = {
   engineRuntime: "direct" | "veslo-orchestrator";
   setEngineRuntime: (value: "direct" | "veslo-orchestrator") => void;
   isWindows: boolean;
-  defaultModelLabel: string;
-  defaultModelRef: string;
-  openDefaultModelPicker: () => void;
+  aiAccessBusy: boolean;
+  aiAccessConfigured: boolean;
+  aiAccessMessage: string;
+  aiAccessProviderLabel: string | null;
+  aiAccessDefaultModelLabel: string | null;
+  aiAccessAllowedModels: string[];
   showThinking: boolean;
   toggleShowThinking: () => void;
   autoCompactContext: boolean;
@@ -285,10 +283,6 @@ export default function SettingsView(props: SettingsViewProps) {
     return "bg-gray-4/60 text-gray-11 border-gray-7/50";
   };
 
-  const [providerConnectError, setProviderConnectError] = createSignal<string | null>(null);
-  const [providerDisconnectStatus, setProviderDisconnectStatus] = createSignal<string | null>(null);
-  const [providerDisconnectError, setProviderDisconnectError] = createSignal<string | null>(null);
-  const [providerDisconnectingId, setProviderDisconnectingId] = createSignal<string | null>(null);
   const [vesloReconnectStatus, setVesloReconnectStatus] = createSignal<string | null>(null);
   const [vesloReconnectError, setVesloReconnectError] = createSignal<string | null>(null);
   const [vesloRestartBusy, setVesloRestartBusy] = createSignal(false);
@@ -301,72 +295,22 @@ export default function SettingsView(props: SettingsViewProps) {
   const [denApiBaseError, setDenApiBaseError] = createSignal<string | null>(null);
   const activeDenApiBase = createMemo(() => denApiBaseOverride() || defaultDenApiBase);
   const denApiBaseDirty = createMemo(() => denApiBaseDraft().trim() !== activeDenApiBase());
-  const providerConnectedCount = createMemo(() => (props.providerConnectedIds ?? []).length);
-  const providerAvailableCount = createMemo(() => (props.providers ?? []).length);
-  const connectedProviders = createMemo(() => {
-    const connectedIds = props.providerConnectedIds ?? [];
-    if (!connectedIds.length) return [] as { id: string; name: string }[];
-    const providersById = new Map((props.providers ?? []).map((provider) => [provider.id, provider]));
-    return connectedIds
-      .map((id) => {
-        const provider = providersById.get(id);
-        const label = provider?.name?.trim() || provider?.id?.trim() || id.trim();
-        return { id, name: label || id };
-      })
-      .filter((entry) => entry.id.trim());
+  const aiAccessStatusLabel = createMemo(() => {
+    if (props.aiAccessBusy) return "Loading";
+    if (!props.aiAccessConfigured) return "Needs admin";
+    return "Configured";
   });
-  const providerStatusLabel = createMemo(() => {
-    if (!providerAvailableCount()) return "Unavailable";
-    if (!providerConnectedCount()) return "Not connected";
-    return `${providerConnectedCount()} connected`;
-  });
-  const providerStatusStyle = createMemo(() => {
-    if (!providerAvailableCount()) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
-    if (!providerConnectedCount()) return "bg-amber-7/10 text-amber-11 border-amber-7/20";
+  const aiAccessStatusStyle = createMemo(() => {
+    if (props.aiAccessBusy) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
+    if (!props.aiAccessConfigured) return "bg-amber-7/10 text-amber-11 border-amber-7/20";
     return "bg-green-7/10 text-green-11 border-green-7/20";
   });
-  const providerSummary = createMemo(() => {
-    if (!providerAvailableCount()) return "Connect to OpenCode to load providers.";
-    const connected = providerConnectedCount();
-    const available = providerAvailableCount();
-    if (!connected) return `${available} available`;
-    return `${connected} connected · ${available} available`;
+  const aiAccessAllowedModelsSummary = createMemo(() => {
+    const models = props.aiAccessAllowedModels.filter((value) => value.trim().length > 0);
+    if (!models.length) return "Only the admin default model is allowed.";
+    if (models.length === 1) return models[0]!;
+    return `${models.length} allowed models`;
   });
-
-  const handleOpenProviderAuth = async () => {
-    if (props.busy || props.providerAuthBusy) return;
-    setProviderConnectError(null);
-    setProviderDisconnectError(null);
-    setProviderDisconnectStatus(null);
-    try {
-      await props.openProviderAuthModal();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to open providers";
-      setProviderConnectError(message);
-    }
-  };
-
-  const handleDisconnectProvider = async (providerId: string) => {
-    const resolved = providerId.trim();
-    if (!resolved || props.busy || props.providerAuthBusy || providerDisconnectingId()) return;
-    const confirmed =
-      typeof window === "undefined"
-        ? true
-        : window.confirm(`Disconnect ${resolved}? This removes the stored credentials.`);
-    if (!confirmed) return;
-    setProviderDisconnectError(null);
-    setProviderDisconnectStatus(null);
-    setProviderDisconnectingId(resolved);
-    try {
-      const result = await props.disconnectProvider(resolved);
-      setProviderDisconnectStatus(result || `Disconnected ${resolved}.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to disconnect provider";
-      setProviderDisconnectError(message);
-    } finally {
-      setProviderDisconnectingId(null);
-    }
-  };
 
   const handleReconnectVesloServer = async () => {
     if (props.busy || props.vesloReconnectBusy) return;
@@ -599,7 +543,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
     const tabs: SettingsTab[] = ["general", "archived"];
-    if (props.developerMode) tabs.push("model", "advanced", "debug");
+    if (props.developerMode) tabs.push("advanced", "debug");
     return tabs;
   });
 
@@ -933,6 +877,105 @@ export default function SettingsView(props: SettingsViewProps) {
       <Switch>
         <Match when={activeTab() === "general"}>
           <div class="space-y-6">
+            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="flex items-center gap-2">
+                    <PlugZap size={16} class="text-gray-11" />
+                    <div class="text-sm font-medium text-gray-12">AI access</div>
+                  </div>
+                  <div class="text-xs text-gray-9 mt-1">Provider and model assignment is managed by the platform admin.</div>
+                </div>
+                <div class={`text-xs px-2 py-1 rounded-full border ${aiAccessStatusStyle()}`}>
+                  {aiAccessStatusLabel()}
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 px-4 py-3 space-y-3">
+                <div class="text-xs text-gray-10">{props.aiAccessMessage}</div>
+                <Show
+                  when={props.aiAccessConfigured}
+                  fallback={<div class="text-[11px] text-gray-8">Users can sign in, but prompts stay blocked until an admin assigns access.</div>}
+                >
+                  <div class="grid gap-3 md:grid-cols-3">
+                    <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
+                      <div class="text-[11px] uppercase tracking-wide text-gray-8">Provider</div>
+                      <div class="text-sm font-medium text-gray-12 mt-1">{props.aiAccessProviderLabel ?? "Not assigned"}</div>
+                    </div>
+                    <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
+                      <div class="text-[11px] uppercase tracking-wide text-gray-8">Default model</div>
+                      <div class="text-sm font-medium text-gray-12 mt-1">{props.aiAccessDefaultModelLabel ?? "Not assigned"}</div>
+                    </div>
+                    <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
+                      <div class="text-[11px] uppercase tracking-wide text-gray-8">Allowed models</div>
+                      <div class="text-sm font-medium text-gray-12 mt-1">{aiAccessAllowedModelsSummary()}</div>
+                    </div>
+                  </div>
+                </Show>
+              </div>
+            </div>
+
+            <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
+              <div>
+                <div class="text-sm font-medium text-gray-12">Run preferences</div>
+                <div class="text-xs text-gray-10">User-level display and thinking controls still apply to runs.</div>
+              </div>
+
+              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-gray-12">{translate("settings.technical_details_label")}</div>
+                  <div class="text-xs text-gray-7">{translate("settings.technical_details_description")}</div>
+                </div>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3 shrink-0"
+                  onClick={props.toggleShowThinking}
+                  disabled={props.busy}
+                >
+                  {props.showThinking ? "On" : "Off"}
+                </Button>
+              </div>
+
+              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-gray-12">Auto context compaction</div>
+                  <div class="text-xs text-gray-7">Automatically compact after a run completes.</div>
+                </div>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3 shrink-0"
+                  disabled
+                >
+                  Always on
+                </Button>
+              </div>
+
+              <div class="bg-gray-1 p-3 rounded-xl border border-gray-6 space-y-2">
+                <div>
+                  <div class="text-sm text-gray-12">{translate("session.thinking_effort")}</div>
+                  <div class="text-xs text-gray-7">Default thinking mode for new sessions.</div>
+                </div>
+                <div class="flex gap-1.5 flex-wrap">
+                  <For each={MODEL_VARIANT_OPTIONS}>
+                    {(option) => (
+                      <button
+                        type="button"
+                        class={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                          props.modelVariant === option.value
+                            ? "bg-gray-12 text-gray-1"
+                            : "bg-gray-3 text-gray-11 hover:bg-gray-4 hover:text-gray-12"
+                        }`}
+                        onClick={() => props.setModelVariant(option.value)}
+                        disabled={props.busy}
+                      >
+                        {translate(option.labelKey)}
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </div>
+            </div>
+
             <Show when={showGeneralUpdateControls()}>
               <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
                 <div class="flex items-start justify-between gap-4">
@@ -1117,154 +1160,6 @@ export default function SettingsView(props: SettingsViewProps) {
                 </Show>
               </div>
             </Show>
-          </div>
-        </Match>
-
-        <Match when={activeTab() === "model"}>
-          <div class="space-y-6">
-            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <div class="flex items-center gap-2">
-                    <PlugZap size={16} class="text-gray-11" />
-                    <div class="text-sm font-medium text-gray-12">Providers</div>
-                  </div>
-                  <div class="text-xs text-gray-9 mt-1">Connect services for models and tools.</div>
-                </div>
-                <div class={`text-xs px-2 py-1 rounded-full border ${providerStatusStyle()}`}>
-                  {providerStatusLabel()}
-                </div>
-              </div>
-
-              <div class="flex flex-wrap items-center gap-3">
-                <Button
-                  variant="secondary"
-                  onClick={handleOpenProviderAuth}
-                  disabled={props.busy || props.providerAuthBusy}
-                >
-                  {props.providerAuthBusy ? "Loading providers..." : "Connect provider"}
-                </Button>
-                <div class="text-xs text-gray-10">{providerSummary()}</div>
-              </div>
-
-              <Show when={connectedProviders().length > 0}>
-                <div class="space-y-2">
-                  <For each={connectedProviders()}>
-                    {(provider) => (
-                      <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-2">
-                        <div class="min-w-0">
-                          <div class="text-sm font-medium text-gray-12 truncate">{provider.name}</div>
-                          <div class="text-[11px] text-gray-8 font-mono truncate">{provider.id}</div>
-                        </div>
-                        <Button
-                          variant="outline"
-                          class="text-xs h-8 py-0 px-3"
-                          onClick={() => void handleDisconnectProvider(provider.id)}
-                          disabled={props.busy || props.providerAuthBusy || providerDisconnectingId() !== null}
-                        >
-                          {providerDisconnectingId() === provider.id ? "Disconnecting..." : "Disconnect"}
-                        </Button>
-                      </div>
-                    )}
-                  </For>
-                </div>
-              </Show>
-
-              <Show when={providerConnectError()}>
-                <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
-                  {providerConnectError()}
-                </div>
-              </Show>
-              <Show when={providerDisconnectStatus()}>
-                <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-2 text-xs text-gray-10">
-                  {providerDisconnectStatus()}
-                </div>
-              </Show>
-              <Show when={providerDisconnectError()}>
-                <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
-                  {providerDisconnectError()}
-                </div>
-              </Show>
-
-              <div class="text-[11px] text-gray-9">
-                API keys are stored locally by OpenCode. Set your default model in the <span class="font-medium">Model</span> tab.
-              </div>
-            </div>
-            <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
-              <div>
-                <div class="text-sm font-medium text-gray-12">{translate("settings.model_title")}</div>
-                <div class="text-xs text-gray-10">{translate("settings.model_hint")}</div>
-              </div>
-
-              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-                <div class="min-w-0">
-                  <div class="text-sm text-gray-12 truncate">{props.defaultModelLabel}</div>
-                  <div class="text-xs text-gray-7 font-mono truncate">{props.defaultModelRef}</div>
-                </div>
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3 shrink-0"
-                  onClick={props.openDefaultModelPicker}
-                  disabled={props.busy}
-                >
-                  {translate("settings.change")}
-                </Button>
-              </div>
-
-              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-                <div class="min-w-0">
-                  <div class="text-sm text-gray-12">{translate("settings.technical_details_label")}</div>
-                  <div class="text-xs text-gray-7">{translate("settings.technical_details_description")}</div>
-                </div>
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3 shrink-0"
-                  onClick={props.toggleShowThinking}
-                  disabled={props.busy}
-                >
-                  {props.showThinking ? "On" : "Off"}
-                </Button>
-              </div>
-
-              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-                <div class="min-w-0">
-                  <div class="text-sm text-gray-12">Auto context compaction</div>
-                  <div class="text-xs text-gray-7">Automatically compact after a run completes.</div>
-                </div>
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3 shrink-0"
-                  disabled
-                >
-                  Always on
-                </Button>
-              </div>
-
-              <div class="bg-gray-1 p-3 rounded-xl border border-gray-6 space-y-2">
-                <div>
-                  <div class="text-sm text-gray-12">{translate("session.thinking_effort")}</div>
-                  <div class="text-xs text-gray-7">Default thinking mode for new sessions.</div>
-                </div>
-                <div class="flex gap-1.5 flex-wrap">
-                  <For each={MODEL_VARIANT_OPTIONS}>
-                    {(option) => (
-                      <button
-                        type="button"
-                        class={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                          props.modelVariant === option.value
-                            ? "bg-gray-12 text-gray-1"
-                            : "bg-gray-3 text-gray-11 hover:bg-gray-4 hover:text-gray-12"
-                        }`}
-                        onClick={() => props.setModelVariant(option.value)}
-                        disabled={props.busy}
-                      >
-                        {translate(option.labelKey)}
-                      </button>
-                    )}
-                  </For>
-                </div>
-              </div>
-            </div>
           </div>
         </Match>
 

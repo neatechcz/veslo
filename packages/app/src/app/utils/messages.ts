@@ -3,6 +3,7 @@ import type {
   MessageGroup,
   MessageInfo,
   MessageWithParts,
+  ModelRef,
   OpencodeEvent,
   PlaceholderAssistantMessage,
 } from "../types";
@@ -138,6 +139,29 @@ export function extractSessionId(value: unknown): string | null {
   if (record.part && typeof record.part === "object") {
     const nested = extractSessionId(record.part);
     if (nested) return nested;
+  }
+
+  return null;
+}
+
+export function modelFromUserMessage(info: MessageInfo): ModelRef | null {
+  if (!info || typeof info !== "object") return null;
+  if ((info as { role?: unknown }).role !== "user") return null;
+
+  const model = (info as { model?: unknown }).model;
+  if (!model || typeof model !== "object") return null;
+
+  const providerID = (model as { providerID?: unknown }).providerID;
+  const modelID = (model as { modelID?: unknown }).modelID;
+
+  if (typeof providerID !== "string" || typeof modelID !== "string") return null;
+  return { providerID, modelID };
+}
+
+export function lastUserModelFromMessages(list: MessageWithParts[]): ModelRef | null {
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    const model = modelFromUserMessage(list[index]?.info);
+    if (model) return model;
   }
 
   return null;

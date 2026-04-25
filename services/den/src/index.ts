@@ -14,8 +14,20 @@ import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { requireSession } from "./http/session.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
 import { desktopAuthV2Router } from "./http/desktop-auth-v2.js"
-import { createAdminRuntimeRouter } from "./http/admin-runtime.js"
+import { createAdminRuntimeRouter, requirePlatformAdminSnapshot } from "./http/admin-runtime.js"
 import { createFeedbackRouter } from "./http/feedback.js"
+import { createManagedAiAdminUiRouter } from "./managed-ai/http/admin.js"
+import {
+  DefaultOpenAiOAuthClient,
+  createUnavailableOpenAiOAuthClient,
+} from "./managed-ai/credentials/openai-oauth.js"
+import { createProxyRouter } from "./managed-ai/http/proxy.js"
+import { createUserCredentialsRouter } from "./managed-ai/http/user-credentials.js"
+import {
+  createDefaultProxyDependencies,
+  createDefaultRuntimeState,
+  createDefaultUserCredentialDependencies,
+} from "./managed-ai/runtime/default-runtime.js"
 import { orgsRouter } from "./http/orgs.js"
 import { orgMcpCatalogRouter } from "./http/org-mcp-catalog.js"
 import { orgSkillsCatalogRouter } from "./http/org-skills-catalog.js"
@@ -23,6 +35,7 @@ import { workersRouter } from "./http/workers.js"
 import { createYouTrackMcpIssueClient } from "./integrations/youtrack-mcp.js"
 
 const app = express()
+const managedAiRuntime = env.managedAi.enabled ? createDefaultRuntimeState() : null
 const currentFile = fileURLToPath(import.meta.url)
 const publicDir = path.resolve(path.dirname(currentFile), "../public")
 const feedbackProjector = createFeedbackProjector({
@@ -61,6 +74,21 @@ app.use("/v1", feedbackRouter)
 app.use(express.json())
 app.use(express.static(publicDir))
 
+if (managedAiRuntime) {
+  app.use(
+    createManagedAiAdminUiRouter({
+      getAdminSession: requirePlatformAdminSnapshot,
+      openAiOAuth: createOpenAiOAuthClient(),
+      alerts: managedAiRuntime.alerts,
+      audit: managedAiRuntime.audit,
+      credentials: managedAiRuntime.credentials,
+      secrets: managedAiRuntime.secrets,
+    }),
+  )
+  app.use(createUserCredentialsRouter(createDefaultUserCredentialDependencies(managedAiRuntime)))
+  app.use(createProxyRouter(createDefaultProxyDependencies(managedAiRuntime)))
+}
+
 app.get("/health", (_, res) => {
   res.json({ ok: true })
 })
@@ -84,12 +112,26 @@ app.get("/v1/me", asyncRoute(async (req, res) => {
 
 app.use("/v1/desktop-auth", desktopAuthRouter)
 app.use("/v2/desktop-auth", desktopAuthV2Router)
-app.use("/v1/admin", createAdminRuntimeRouter())
+app.use("/v1/admin", createAdminRuntimeRouter({ managedAi: managedAiRuntime }))
+app.use("/admin/api", createAdminRuntimeRouter({ managedAi: managedAiRuntime }))
 app.use("/v1/orgs", orgsRouter)
 app.use("/v1/orgs", orgMcpCatalogRouter)
 app.use("/v1/orgs", orgSkillsCatalogRouter)
 app.use("/v1/workers", workersRouter)
 app.use(errorMiddleware)
+
+function createOpenAiOAuthClient() {
+  const config = env.managedAi.openAi
+  if (!config.clientId || !config.clientSecret || !config.redirectBase) {
+    return createUnavailableOpenAiOAuthClient()
+  }
+
+  return new DefaultOpenAiOAuthClient({
+    clientId: config.clientId,
+    clientSecret: config.clientSecret,
+    redirectBase: config.redirectBase,
+  })
+}
 
 const identifierPattern = /^[a-zA-Z0-9_]+$/
 
@@ -599,6 +641,9 @@ async function ensureTables() {
 
 async function bootstrap() {
   await ensureTables()
+  if (env.managedAi.enabled) {
+    console.log("[den] managed-ai runtime enabled")
+  }
   app.listen(env.port, () => {
     console.log(`den listening on ${env.port} (provisioner=${env.provisionerMode})`)
   })

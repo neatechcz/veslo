@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createVesloServerClient,
   deriveLocalVesloServerUrlFromOpencodeBaseUrl,
+  requestManagedAiAccessBundle,
   resolveSessionArchiveClientOptions,
 } from "./veslo-server.js";
 
@@ -129,6 +130,68 @@ test("non-archive requests do not include the account id header", async () => {
   }
 });
 
+test("requestManagedAiAccessBundle fetches the raw managed gateway bundle with the DEN bearer token", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method?: string; headers: Headers; body: string | null }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    const body = init?.body;
+    calls.push({
+      url: String(input),
+      method: init?.method,
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body: typeof body === "string" ? body : null,
+    });
+    return new Response(
+      JSON.stringify({
+        accessToken: "gateway-access-token",
+        aiAccess: {
+          id: "ai_access_123",
+          userId: "user_123",
+          enabled: true,
+          provider: "codex_oauth",
+          defaultModel: "gpt-5.4",
+          allowedModels: ["gpt-5.4"],
+          updatedAt: "2026-04-24T08:00:00.000Z",
+        },
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const response = await requestManagedAiAccessBundle(
+      "https://veslo-ai-gateway-dev.onrender.com",
+      "den-user-token",
+    );
+
+    assert.deepEqual(response, {
+      accessToken: "gateway-access-token",
+      aiAccess: {
+        id: "ai_access_123",
+        userId: "user_123",
+        enabled: true,
+        provider: "codex_oauth",
+        defaultModel: "gpt-5.4",
+        allowedModels: ["gpt-5.4"],
+        updatedAt: "2026-04-24T08:00:00.000Z",
+      },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.url, "https://veslo-ai-gateway-dev.onrender.com/api/me/ai-access");
+    assert.equal(calls[0]?.method, "GET");
+    assert.equal(calls[0]?.headers.get("authorization"), "Bearer den-user-token");
+    assert.equal(calls[0]?.headers.get("content-type"), "application/json");
+    assert.equal(calls[0]?.body, null);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("listHubSkills forwards den auth context headers when provided", async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; headers: Headers }> = [];
@@ -236,5 +299,105 @@ test("installHubMcp forwards den auth context headers when provided", async () =
     assert.equal(calls[0]?.headers.get("x-veslo-den-org-id"), "org_123");
   } finally {
     globalThis.fetch = previousFetch;
+  }
+});
+
+test("createVesloServerClient exposes getMyAiAccess", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalSetTimeout = globalThis.setTimeout;
+  const calls: Array<{ url: string; method: string; headers: Record<string, string>; body: unknown }> = [];
+  const timeoutDelays: number[] = [];
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    const url = String(input);
+    let body: unknown = null;
+    if (typeof init?.body === "string") {
+      body = JSON.parse(init.body);
+    }
+
+    calls.push({
+      url,
+      method: init?.method ?? "GET",
+      headers: Object.fromEntries(headers.entries()),
+      body,
+    });
+
+    if (url.endsWith("/ai-gateway/me/ai-access")) {
+      return new Response(
+        JSON.stringify({
+          accessToken: "managed-gateway-token",
+          aiAccess: {
+            id: "ai_access_123",
+            userId: "user_123",
+            enabled: true,
+            provider: "openai",
+            defaultModel: "gpt-4o-mini",
+            allowedModels: ["gpt-4o-mini", "gpt-4.1"],
+            updatedAt: "2026-04-08T12:00:00.000Z",
+          },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+
+    if (url.endsWith("/ai-gateway/providers/anthropic/credentials/cred_anthropic")) {
+      return new Response(JSON.stringify({ credential: { id: "cred_anthropic", state: "revoked" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  }) as typeof fetch;
+  globalThis.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+    timeoutDelays.push(Number(timeout));
+    return originalSetTimeout(handler, timeout, ...args);
+  }) as typeof setTimeout;
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "http://127.0.0.1:8787",
+      token: "veslo-server-token",
+      hostToken: "veslo-host-token",
+    });
+
+    assert.equal(typeof client.getMyAiAccess, "function");
+
+    const response = await client.getMyAiAccess("den-user-token");
+
+    assert.deepEqual(response, {
+      accessToken: "managed-gateway-token",
+      aiAccess: {
+        id: "ai_access_123",
+        userId: "user_123",
+        enabled: true,
+        provider: "openai",
+        defaultModel: "gpt-4o-mini",
+        allowedModels: ["gpt-4o-mini", "gpt-4.1"],
+        updatedAt: "2026-04-08T12:00:00.000Z",
+      },
+    });
+
+    assert.deepEqual(calls, [
+      {
+        url: "http://127.0.0.1:8787/ai-gateway/me/ai-access",
+        method: "GET",
+        headers: {
+          authorization: "Bearer veslo-server-token",
+          "content-type": "application/json",
+          "x-veslo-gateway-authorization": "Bearer den-user-token",
+          "x-veslo-host-token": "veslo-host-token",
+        },
+        body: null,
+      },
+    ]);
+    assert.equal(timeoutDelays[0], 30_000);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.setTimeout = originalSetTimeout;
   }
 });

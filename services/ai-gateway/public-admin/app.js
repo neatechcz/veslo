@@ -28,6 +28,8 @@ const state = {
   selectedAuditId: null,
   selectedUserId: null,
   userMode: "edit",
+  userAiAccessByUserId: {},
+  userAiAccessAvailableCredentialsByUserId: {},
 };
 
 const els = {
@@ -46,6 +48,11 @@ const els = {
   pageEyebrow: document.getElementById("page-eyebrow"),
   navItems: Array.from(document.querySelectorAll("[data-route]")),
   pages: Array.from(document.querySelectorAll("[data-page]")),
+  credentialCreateProvider: document.getElementById("credential-create-provider"),
+  credentialCreateName: document.getElementById("credential-create-name"),
+  credentialCreateSecret: document.getElementById("credential-create-secret"),
+  credentialCreateSubmit: document.getElementById("credential-create-submit"),
+  credentialCreateStatus: document.getElementById("credential-create-status"),
   credentialsTableBody: document.getElementById("credentials-table-body"),
   credentialDetail: document.getElementById("credential-detail"),
   sessionList: document.getElementById("session-list"),
@@ -73,9 +80,16 @@ const els = {
   userRole: document.getElementById("user-role"),
   userPlatformAdmin: document.getElementById("user-platform-admin"),
   userSendInvite: document.getElementById("user-send-invite"),
+  userAiAccessEnabled: document.getElementById("user-ai-access-enabled"),
+  userAiAccessProvider: document.getElementById("user-ai-access-provider"),
+  userAiAccessCredential: document.getElementById("user-ai-access-credential"),
+  userAiAccessDefaultModel: document.getElementById("user-ai-access-default-model"),
+  userAiAccessAllowedModels: document.getElementById("user-ai-access-allowed-models"),
+  userAiAccessStatus: document.getElementById("user-ai-access-status"),
   userDisableButton: document.getElementById("user-disable-button"),
   userDeleteButton: document.getElementById("user-delete-button"),
   userSaveButton: document.getElementById("user-save-button"),
+  userSaveStatus: document.getElementById("user-save-status"),
   auditSearch: document.getElementById("audit-search"),
   auditDateRange: document.getElementById("audit-date-range"),
   auditActorFilter: document.getElementById("audit-actor-filter"),
@@ -171,12 +185,33 @@ async function sha256Base64Url(value) {
 function readAuthCallbackParams() {
   const params = new URLSearchParams(location.search);
   const code = params.get("code")?.trim() || "";
-  const sessionId = params.get("sessionId")?.trim() || "";
+  const sessionId =
+    params.get("transactionId")?.trim() ||
+    params.get("sessionId")?.trim() ||
+    "";
   return code ? { code, sessionId } : null;
 }
 
 function clearAuthCallbackParams() {
   history.replaceState(null, "", location.pathname);
+}
+
+function normalizeBrowserAuthorizeUrl(rawUrl) {
+  const value = typeof rawUrl === "string" ? rawUrl.trim() : "";
+  if (!value) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(value, location.origin);
+    const runningLocally = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+    if (runningLocally && parsed.hostname === "host.docker.internal") {
+      parsed.hostname = location.hostname === "127.0.0.1" ? "127.0.0.1" : "localhost";
+    }
+    return parsed.toString();
+  } catch {
+    return value;
+  }
 }
 
 function escapeHtml(value) {
@@ -204,6 +239,92 @@ function formatDate(value) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function normalizeAiAccess(payload) {
+  if (!payload || typeof payload !== "object") {
+    return {
+      enabled: false,
+      credentialId: null,
+      provider: "",
+      defaultModel: "",
+      allowedModels: [],
+      updatedAt: null,
+    };
+  }
+
+  const allowedModels = Array.isArray(payload.allowedModels)
+    ? payload.allowedModels.filter((entry) => typeof entry === "string").map((entry) => entry.trim()).filter(Boolean)
+    : [];
+
+  return {
+    id: typeof payload.id === "string" ? payload.id : "",
+    userId: typeof payload.userId === "string" ? payload.userId : "",
+    enabled: payload.enabled === true,
+    credentialId: typeof payload.credentialId === "string" ? payload.credentialId : null,
+    provider: typeof payload.provider === "string" ? payload.provider : "",
+    defaultModel: typeof payload.defaultModel === "string" ? payload.defaultModel : "",
+    allowedModels,
+    updatedAt: typeof payload.updatedAt === "string" ? payload.updatedAt : null,
+  };
+}
+
+function currentUserAiAccess(userId) {
+  return normalizeAiAccess(state.userAiAccessByUserId[userId] || null);
+}
+
+function normalizeAvailableCredentials(payload) {
+  if (!Array.isArray(payload)) {
+    return [];
+  }
+
+  return payload
+    .filter((entry) => entry && typeof entry === "object")
+    .map((entry) => ({
+      id: typeof entry.id === "string" ? entry.id.trim() : "",
+      name: typeof entry.name === "string" ? entry.name.trim() : "",
+    }))
+    .filter((entry) => entry.id)
+    .map((entry) => ({
+      id: entry.id,
+      name: entry.name || entry.id,
+    }));
+}
+
+function currentUserAiAccessAvailableCredentials(userId) {
+  return normalizeAvailableCredentials(state.userAiAccessAvailableCredentialsByUserId[userId] || []);
+}
+
+function formatAllowedModels(models) {
+  return (models || []).join("\n");
+}
+
+function parseAllowedModelsInput(value) {
+  return value
+    .split(/[\n,]/g)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function readAiAccessFormValue() {
+  return {
+    enabled: els.userAiAccessEnabled.checked,
+    provider: els.userAiAccessProvider.value || null,
+    defaultModel: els.userAiAccessDefaultModel.value.trim() || null,
+    allowedModels: parseAllowedModelsInput(els.userAiAccessAllowedModels.value),
+  };
+}
+
+function readAiAccessCredentialValue() {
+  const selectedProvider = els.userAiAccessProvider.value || "";
+  if (selectedProvider === "codex_oauth") {
+    const selectedCredentialId = els.userAiAccessCredential.value.trim();
+    return selectedCredentialId || null;
+  }
+
+  const user = currentUser();
+  const currentAiAccess = user?.id ? currentUserAiAccess(user.id) : normalizeAiAccess(null);
+  return currentAiAccess.provider === selectedProvider ? currentAiAccess.credentialId : null;
 }
 
 function summarizeUser(user) {
@@ -249,7 +370,11 @@ function showApp() {
 
 function setActivePage(page) {
   state.page = page;
-  history.replaceState(null, "", page === "overview" ? "/admin" : `/admin/${page}`);
+  const nextPath = page === "overview" ? "/admin" : `/admin/${page}`;
+  const nextUrl = `${nextPath}${location.search}${location.hash}`;
+  if (location.pathname !== nextPath) {
+    history.replaceState(null, "", nextUrl);
+  }
   els.navItems.forEach((item) => item.classList.toggle("active", item.dataset.route === page));
   els.pages.forEach((panel) => {
     const active = panel.dataset.page === page || (page === "overview" && panel.dataset.page === "overview");
@@ -313,11 +438,23 @@ async function bootstrapSession() {
   setStatus("Checking session", "validating stored token");
   const { response, payload } = await api("/session", { method: "GET" });
   if (!response.ok) {
-    state.token = "";
     state.session = null;
     state.user = null;
-    localStorage.removeItem(STORAGE_KEY);
-    showLogin(payload?.error === "unauthorized" ? "Your session expired. Sign in again." : "Unable to verify session.");
+    const shouldClearToken = payload?.error === "unauthorized" || payload?.error === "forbidden"
+    if (shouldClearToken) {
+      state.token = ""
+      localStorage.removeItem(STORAGE_KEY)
+    }
+    showLogin(
+      shouldClearToken && payload?.error === "unauthorized"
+        ? "Your session expired. Sign in again."
+        : shouldClearToken && payload?.error === "forbidden"
+          ? "You do not have admin access."
+          : "Unable to verify session.",
+    )
+    if (!shouldClearToken) {
+      setStatus("Session check failed", "stored token kept")
+    }
     return;
   }
 
@@ -361,7 +498,7 @@ async function startBrowserAuth() {
       return;
     }
 
-    const authorizeUrl = typeof payload?.authorizeUrl === "string" ? payload.authorizeUrl.trim() : "";
+    const authorizeUrl = normalizeBrowserAuthorizeUrl(typeof payload?.authorizeUrl === "string" ? payload.authorizeUrl : "");
     const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId.trim() : "";
     if (!authorizeUrl || !sessionId) {
       showLogin("Browser sign in started, but the response was incomplete.");
@@ -409,7 +546,11 @@ async function completeBrowserAuth() {
     });
 
     if (!response.ok) {
-      showLogin(payload?.error || payload?.message || "Browser sign in failed.");
+      showLogin(
+        payload?.error === "forbidden"
+          ? "You do not have admin access."
+          : payload?.error || payload?.message || "Browser sign in failed.",
+      );
       return true;
     }
 
@@ -523,6 +664,50 @@ async function loadAudit() {
   }
 }
 
+async function loadUserAiAccess(userId) {
+  const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
+  if (!resolvedUserId) {
+    return null;
+  }
+
+  const payload = await fetchJson(`/users/${encodeURIComponent(resolvedUserId)}/ai-access`);
+  const aiAccess = normalizeAiAccess(payload?.aiAccess || null);
+  state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
+    payload?.availableCredentials,
+  );
+  state.userAiAccessByUserId[resolvedUserId] = aiAccess;
+  return aiAccess;
+}
+
+async function saveUserAiAccess(userId, input = null) {
+  const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
+  if (!resolvedUserId) {
+    return;
+  }
+
+  const aiAccessInput = input && typeof input === "object"
+    ? {
+        enabled: input.enabled === true,
+        provider: typeof input.provider === "string" ? input.provider : null,
+        defaultModel: typeof input.defaultModel === "string" ? input.defaultModel : null,
+        allowedModels: Array.isArray(input.allowedModels) ? input.allowedModels : [],
+        credentialId: typeof input.credentialId === "string" ? input.credentialId : null,
+      }
+    : {
+        ...readAiAccessFormValue(),
+        credentialId: readAiAccessCredentialValue(),
+      };
+
+  const saved = await fetchJson(`/users/${encodeURIComponent(resolvedUserId)}/ai-access`, {
+    method: "PUT",
+    body: JSON.stringify(aiAccessInput),
+  });
+  state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
+    saved?.availableCredentials,
+  );
+  state.userAiAccessByUserId[resolvedUserId] = normalizeAiAccess(saved?.aiAccess || null);
+}
+
 async function loadUsers() {
   try {
     const payload = await fetchJson("/users");
@@ -534,8 +719,24 @@ async function loadUsers() {
       state.userMode = "create";
     }
     renderUsers();
+    if (state.userMode !== "create" && state.selectedUserId) {
+      await loadUserAiAccess(state.selectedUserId);
+      const user = currentUser();
+      if (user) {
+        populateUserEditor(user);
+      }
+    }
+    setUserSaveStatus(
+      state.userMode === "create"
+        ? "Fill in the profile and save to create the user."
+        : "Directory changes and AI access assignments are applied separately.",
+    );
   } catch (error) {
     console.error("loadUsers failed", error);
+    setUserSaveStatus(
+      `Unable to load users: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
   }
 }
 
@@ -588,7 +789,7 @@ function renderCredentials() {
 
   els.credentialsTableBody.innerHTML = rows || `<tr><td colspan="6">No credentials found.</td></tr>`;
 
-  const selected = state.credentials.find((entry) => entry.id === state.selectedCredentialId) || state.credentials[0];
+  const selected = currentCredential();
   if (selected) {
     els.credentialDetail.innerHTML = `
       <p class="eyebrow">Selected credential</p>
@@ -601,8 +802,9 @@ function renderCredentials() {
         <div class="detail-line"><span>Total tokens</span><strong>${escapeHtml(formatNumber(selected.totalTokens))}</strong></div>
       </div>
       <div class="button-row">
-        <button class="button button-secondary" type="button">Drain</button>
-        <button class="button button-secondary" type="button">Rotate</button>
+        <button class="button button-secondary" type="button" data-credential-action="drain">Drain</button>
+        <button class="button button-secondary" type="button" data-credential-action="rotate">Rotate</button>
+        <button class="button button-secondary" type="button" data-credential-action="revoke">Revoke</button>
         <button class="button button-primary" type="button" data-route-alerts>Open alerts</button>
       </div>
     `;
@@ -686,7 +888,7 @@ function renderAlerts() {
     </article>
   `).join("") || `<article class="alert-card active"><div class="alert-head"><strong>No alerts</strong></div><p>No active alert records.</p></article>`;
 
-  const selected = state.alerts.find((entry) => entry.id === state.selectedAlertId) || state.alerts[0];
+  const selected = currentAlert();
   if (selected) {
     const credential = state.credentials.find((entry) => entry.id === selected.credentialId);
     els.alertDetail.innerHTML = `
@@ -699,9 +901,9 @@ function renderAlerts() {
         <div class="detail-line"><span>Status</span><strong>${escapeHtml(selected.status)}</strong></div>
       </div>
       <div class="button-row">
-        <button class="button button-secondary" type="button">Acknowledge</button>
-        <button class="button button-secondary" type="button">Escalate</button>
-        <button class="button button-primary" type="button">Resolve</button>
+        <button class="button button-secondary" type="button" data-alert-action="acknowledge">Acknowledge</button>
+        <button class="button button-primary" type="button" data-alert-action="resolve">Resolve</button>
+        <button class="button button-secondary" type="button" data-route-audit>Open audit</button>
       </div>
     `;
   }
@@ -738,6 +940,14 @@ function filteredUsers() {
   });
 }
 
+function findUserByEmail(email) {
+  const normalized = typeof email === "string" ? email.trim().toLowerCase() : "";
+  if (!normalized) {
+    return null;
+  }
+  return state.users.find((user) => typeof user.email === "string" && user.email.trim().toLowerCase() === normalized) || null;
+}
+
 function currentUser() {
   if (state.userMode === "create") {
     return null;
@@ -745,9 +955,60 @@ function currentUser() {
   return state.users.find((entry) => entry.id === state.selectedUserId) || null;
 }
 
+function currentCredential() {
+  return state.credentials.find((entry) => entry.id === state.selectedCredentialId) || state.credentials[0] || null;
+}
+
+function currentAlert() {
+  return state.alerts.find((entry) => entry.id === state.selectedAlertId) || state.alerts[0] || null;
+}
+
+function renderAiAccessCredentialOptions(user, aiAccess) {
+  const availableCredentials = user?.id ? currentUserAiAccessAvailableCredentials(user.id) : [];
+  const options = [
+    `<option value="">Select assigned credential</option>`,
+    ...availableCredentials.map(
+      (credential) =>
+        `<option value="${escapeHtml(credential.id)}">${escapeHtml(credential.name)}</option>`,
+    ),
+  ];
+
+  els.userAiAccessCredential.innerHTML = options.join("");
+  const selectedCredentialId =
+    aiAccess.provider === "codex_oauth" &&
+    availableCredentials.some((entry) => entry.id === aiAccess.credentialId)
+      ? aiAccess.credentialId
+      : "";
+  els.userAiAccessCredential.value = selectedCredentialId || "";
+  els.userAiAccessCredential.disabled =
+    state.userMode === "create" ||
+    !user ||
+    els.userAiAccessProvider.value !== "codex_oauth" ||
+    availableCredentials.length === 0;
+}
+
+function updateAiAccessStatusText(user, aiAccess) {
+  if (state.userMode === "create") {
+    els.userAiAccessStatus.textContent = "Create the user first, then assign provider and models.";
+    return;
+  }
+
+  const selectedProvider = els.userAiAccessProvider.value || "";
+  const availableCredentials = user?.id ? currentUserAiAccessAvailableCredentials(user.id) : [];
+  if (selectedProvider === "codex_oauth" && availableCredentials.length === 0) {
+    els.userAiAccessStatus.textContent = "Create a shared Codex runtime credential first, then assign it here.";
+    return;
+  }
+
+  els.userAiAccessStatus.textContent = aiAccess.updatedAt
+    ? `Assignments updated ${formatDate(aiAccess.updatedAt)}.`
+    : "Assignments are enforced by the gateway for this signed-in user.";
+}
+
 function populateUserEditor(user) {
   const isCreate = state.userMode === "create";
   const membership = user?.memberships?.[0];
+  const aiAccess = user?.id ? currentUserAiAccess(user.id) : normalizeAiAccess(null);
   els.userEditorStatus.textContent = isCreate ? "Create user" : userStatus(user);
   els.userEditorTitle.textContent = isCreate ? "New user" : (user?.name || user?.email || "User");
   els.userName.value = user?.name || "";
@@ -768,6 +1029,16 @@ function populateUserEditor(user) {
   els.userDisableButton.textContent = user?.disabled ? "Enable user" : "Disable user";
   els.userDisableButton.disabled = isCreate || !user;
   els.userDeleteButton.disabled = isCreate || !user;
+  els.userAiAccessEnabled.checked = aiAccess.enabled;
+  els.userAiAccessEnabled.disabled = isCreate || !user;
+  els.userAiAccessProvider.value = aiAccess.provider || "";
+  els.userAiAccessProvider.disabled = isCreate || !user;
+  renderAiAccessCredentialOptions(user, aiAccess);
+  els.userAiAccessDefaultModel.value = aiAccess.defaultModel || "";
+  els.userAiAccessDefaultModel.disabled = isCreate || !user;
+  els.userAiAccessAllowedModels.value = formatAllowedModels(aiAccess.allowedModels);
+  els.userAiAccessAllowedModels.disabled = isCreate || !user;
+  updateAiAccessStatusText(user, aiAccess);
 }
 
 function renderUsers() {
@@ -842,6 +1113,159 @@ function enterCreateMode() {
   setActivePage("users");
   showApp();
   renderUsers();
+  setUserSaveStatus("Fill in the profile and save to create the user.");
+}
+
+async function refreshCredentialOperations() {
+  await Promise.all([
+    loadCredentials(),
+    loadSessions(),
+    loadAlerts(),
+    loadAudit(),
+  ]);
+  renderOverview();
+}
+
+async function refreshSelectedUserAiAccessOptions() {
+  if (state.userMode === "create" || !state.selectedUserId) {
+    return;
+  }
+
+  await loadUserAiAccess(state.selectedUserId);
+  const user = currentUser();
+  if (user) {
+    populateUserEditor(user);
+  }
+}
+
+function setCredentialCreateStatus(message, tone = "neutral") {
+  els.credentialCreateStatus.textContent = message;
+  if (tone === "neutral") {
+    delete els.credentialCreateStatus.dataset.tone;
+    return;
+  }
+  els.credentialCreateStatus.dataset.tone = tone;
+}
+
+function setUserSaveStatus(message, tone = "neutral") {
+  els.userSaveStatus.textContent = message;
+  if (tone === "neutral") {
+    delete els.userSaveStatus.dataset.tone;
+    return;
+  }
+  els.userSaveStatus.dataset.tone = tone;
+}
+
+function resetCredentialCreateForm() {
+  els.credentialCreateName.value = "";
+  els.credentialCreateSecret.value = "";
+}
+
+async function createCredential() {
+  const provider = els.credentialCreateProvider.value.trim();
+  const name = els.credentialCreateName.value.trim();
+  const secret = els.credentialCreateSecret.value.trim();
+
+  if (!provider || !secret) {
+    setCredentialCreateStatus("Provider and secret are required.", "error");
+    return;
+  }
+
+  els.credentialCreateSubmit.disabled = true;
+  setCredentialCreateStatus("Creating credential", "pending");
+
+  try {
+    const requestBody = { provider, secret };
+    if (name) {
+      requestBody.name = name;
+    }
+
+    const payload = await fetchJson("/credentials", {
+      method: "POST",
+      body: JSON.stringify(requestBody),
+    });
+    state.selectedCredentialId = payload?.credential?.id || state.selectedCredentialId;
+    resetCredentialCreateForm();
+    setCredentialCreateStatus("Credential created and attached to the platform pool.", "success");
+    await refreshCredentialOperations();
+    await refreshSelectedUserAiAccessOptions();
+  } catch (error) {
+    setCredentialCreateStatus(
+      `Unable to create credential: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
+  } finally {
+    els.credentialCreateSubmit.disabled = false;
+  }
+}
+
+async function refreshAlertOperations() {
+  await Promise.all([
+    loadCredentials(),
+    loadAlerts(),
+    loadAudit(),
+  ]);
+  renderOverview();
+}
+
+function openAlertsForSelectedCredential() {
+  const credential = currentCredential();
+  if (credential) {
+    const matchingAlert = state.alerts.find((entry) =>
+      entry.credentialId === credential.id ||
+      credential.linkedAlertIds.includes(entry.id),
+    );
+    if (matchingAlert) {
+      state.selectedAlertId = matchingAlert.id;
+    }
+  }
+
+  setActivePage("alerts");
+  showApp();
+  renderAlerts();
+}
+
+async function runCredentialAction(action) {
+  const credential = currentCredential();
+  if (!credential || !action) {
+    return;
+  }
+
+  const confirmationMessages = {
+    drain: `Drain ${credential.name}? New sessions will stop using this credential.`,
+    rotate: `Rotate ${credential.name}? Active sessions will move to another healthy credential if one is available.`,
+    revoke: `Revoke ${credential.name}? Existing sessions may lose access if no replacement is available.`,
+  };
+
+  const confirmed = window.confirm(confirmationMessages[action] || `Apply ${action} to ${credential.name}?`);
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    await fetchJson(`/credentials/${encodeURIComponent(credential.id)}/${action}`, {
+      method: "POST",
+    });
+    await refreshCredentialOperations();
+  } catch (error) {
+    window.alert(`Unable to ${action} credential: ${error instanceof Error ? error.message : "unknown_error"}`);
+  }
+}
+
+async function runAlertAction(action) {
+  const alert = currentAlert();
+  if (!alert || !action) {
+    return;
+  }
+
+  try {
+    await fetchJson(`/alerts/${encodeURIComponent(alert.id)}/${action}`, {
+      method: "POST",
+    });
+    await refreshAlertOperations();
+  } catch (error) {
+    window.alert(`Unable to ${action} alert: ${error instanceof Error ? error.message : "unknown_error"}`);
+  }
 }
 
 async function saveUser() {
@@ -852,9 +1276,28 @@ async function saveUser() {
     orgId: els.userOrg.value || null,
     orgRole: els.userRole.value === "owner" ? "owner" : "member",
   };
+  const aiAccessInput = {
+    ...readAiAccessFormValue(),
+    credentialId: readAiAccessCredentialValue(),
+  };
+  const wasCreating = state.userMode === "create";
 
   try {
-    if (state.userMode === "create") {
+    els.userSaveButton.disabled = true;
+    setUserSaveStatus(wasCreating ? "Creating user..." : "Saving user...", "pending");
+    if (wasCreating) {
+      const existingUser = findUserByEmail(payload.email);
+      if (existingUser) {
+        state.userMode = "edit";
+        state.selectedUserId = existingUser.id;
+        renderUsers();
+        await loadUserAiAccess(existingUser.id);
+        populateUserEditor(existingUser);
+        setUserSaveStatus("That email already exists. Showing the existing user record instead.", "error");
+        return;
+      }
+    }
+    if (wasCreating) {
       const created = await fetchJson("/users", {
         method: "POST",
         body: JSON.stringify(payload),
@@ -876,9 +1319,26 @@ async function saveUser() {
     }
 
     await loadUsers();
+    const selectedUser = currentUser();
+    if (selectedUser?.id) {
+      await saveUserAiAccess(selectedUser.id, aiAccessInput);
+      await loadUserAiAccess(selectedUser.id);
+      populateUserEditor(selectedUser);
+    }
     await loadAudit();
+    setUserSaveStatus(
+      wasCreating
+        ? "User created. Review AI access separately if needed."
+        : "User changes saved.",
+      "success",
+    );
   } catch (error) {
-    window.alert(`Unable to save user: ${error instanceof Error ? error.message : "unknown_error"}`);
+    setUserSaveStatus(
+      `Unable to save user: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
+  } finally {
+    els.userSaveButton.disabled = false;
   }
 }
 
@@ -952,6 +1412,7 @@ function bindActions() {
   els.refreshButton.addEventListener("click", () => void bootstrapSession());
   els.createUserButton.addEventListener("click", enterCreateMode);
   els.createUserButtonInline.addEventListener("click", enterCreateMode);
+  els.credentialCreateSubmit.addEventListener("click", () => void createCredential());
   els.userSaveButton.addEventListener("click", () => void saveUser());
   els.userDisableButton.addEventListener("click", () => void toggleUserDisabled());
   els.userDeleteButton.addEventListener("click", () => void deleteUser());
@@ -961,6 +1422,19 @@ function bindActions() {
     if (!row) return;
     state.selectedCredentialId = row.dataset.credentialId;
     renderCredentials();
+  });
+
+  els.credentialDetail.addEventListener("click", (event) => {
+    const actionButton = event.target.closest("[data-credential-action]");
+    if (actionButton) {
+      void runCredentialAction(actionButton.dataset.credentialAction);
+      return;
+    }
+
+    const routeAlerts = event.target.closest("[data-route-alerts]");
+    if (routeAlerts) {
+      openAlertsForSelectedCredential();
+    }
   });
 
   els.sessionList.addEventListener("click", (event) => {
@@ -977,12 +1451,39 @@ function bindActions() {
     renderAlerts();
   });
 
+  els.alertDetail.addEventListener("click", (event) => {
+    const actionButton = event.target.closest("[data-alert-action]");
+    if (actionButton) {
+      void runAlertAction(actionButton.dataset.alertAction);
+      return;
+    }
+
+    const routeAudit = event.target.closest("[data-route-audit]");
+    if (routeAudit) {
+      setActivePage("audit");
+      showApp();
+      renderAudit();
+    }
+  });
+
   els.userList.addEventListener("click", (event) => {
     const card = event.target.closest("[data-user-id]");
     if (!card) return;
     state.userMode = "edit";
     state.selectedUserId = card.dataset.userId;
     renderUsers();
+    if (state.selectedUserId) {
+      void loadUserAiAccess(state.selectedUserId)
+        .then(() => {
+          const user = currentUser();
+          if (user) {
+            populateUserEditor(user);
+          }
+        })
+        .catch(() => {
+          els.userAiAccessStatus.textContent = "Unable to load AI access assignment.";
+        });
+    }
   });
 
   els.auditList.addEventListener("click", (event) => {
@@ -995,6 +1496,12 @@ function bindActions() {
   els.userSearch.addEventListener("input", renderUsers);
   els.userStatusFilter.addEventListener("change", renderUsers);
   els.userRoleFilter.addEventListener("change", renderUsers);
+  els.userAiAccessProvider.addEventListener("change", () => {
+    const user = currentUser();
+    const aiAccess = user?.id ? currentUserAiAccess(user.id) : normalizeAiAccess(null);
+    renderAiAccessCredentialOptions(user, aiAccess);
+    updateAiAccessStatusText(user, aiAccess);
+  });
   els.auditSearch.addEventListener("input", renderAudit);
   els.auditActorFilter.addEventListener("change", renderAudit);
   els.auditEntityFilter.addEventListener("change", renderAudit);

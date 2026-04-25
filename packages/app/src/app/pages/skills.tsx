@@ -719,14 +719,14 @@ export default function SkillsView(props: SkillsViewProps) {
                         <span class="rounded-md border border-dls-border bg-dls-hover px-2 py-1 font-mono">
                           {skill.source.owner}/{skill.source.repo}
                         </span>
-	                        <Show when={skill.trigger}>
-	                          <span
-	                            class="inline-block max-w-full rounded-md border border-dls-border bg-dls-hover px-2 py-1 truncate"
-	                            title={translate("skills.trigger_title", { trigger: skill.trigger ?? "" })}
-	                          >
-	                            {translate("skills.trigger_label")} {skill.trigger}
-	                          </span>
-	                        </Show>
+                        <Show when={skill.trigger}>
+                          <span
+                            class="inline-block max-w-full rounded-md border border-dls-border bg-dls-hover px-2 py-1 truncate"
+                            title={translate("skills.trigger_title", { trigger: skill.trigger ?? "" }) || ""}
+                          >
+                            {translate("skills.trigger_label")} {skill.trigger}
+                          </span>
+                        </Show>
                       </div>
                     </div>
                   </div>

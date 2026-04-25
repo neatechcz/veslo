@@ -62,11 +62,17 @@ test("post-health connect failures keep the healthy client attached", () => {
   );
 });
 
-test("browsing mode clears the stale live client before SQLite-backed session browsing", () => {
+test("browsing mode keeps the live client but marks the engine not ready before SQLite-backed browsing", () => {
   assert.match(
     source,
-    /if \(!isRemote && wasLocalConnection && workspaceChanged && isTauriRuntime\(\) && options\.populateSidebarFromDb\) \{[\s\S]*options\.setSelectedSessionId\(null\);[\s\S]*options\.setMessages\(\[\]\);[\s\S]*options\.setTodos\(\[\]\);[\s\S]*options\.setSessionStatusById\(\{\}\);[\s\S]*options\.setClient\(null\);[\s\S]*options\.setClientDirectory\(""\);/s,
-    "browse mode must drop the previous workspace client so session opens use SQLite fallback instead of the wrong engine",
+    /if \(!isRemote && wasLocalConnection && workspaceChanged && isTauriRuntime\(\) && options\.populateSidebarFromDb\) \{[\s\S]*options\.setEngineReady\?\.\(false\);[\s\S]*\}/s,
+    "browse mode must mark the engine not ready before async SQLite hydration",
+  );
+
+  assert.match(
+    source,
+    /Don't clear session state or client connection here\.[\s\S]*engineReady\(false\) below prevents API calls/,
+    "browse mode should keep the live client attached while preventing wrong-workspace API calls",
   );
 });
 

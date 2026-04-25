@@ -195,7 +195,7 @@ test("clicking selected rows still opens session detail while selected parents t
 
   assert.match(
     source,
-    /onClick=\{\(\) => handleSessionRowClick\(row, hasChildren\)\}/,
+    /onClick=\{\(event\) => handleSessionRowPress\(event, row, hasChildren\)\}/,
     "session rows should route click behavior through the selected-row-aware handler",
   );
 });
@@ -388,7 +388,7 @@ test("session rows use archive action and open submenu on right-click", () => {
 
   assert.match(
     source,
-    /pendingArchiveConfirmButtonRef\.contains\(target\)[\s\S]*window\.addEventListener\("pointerdown", cancelPendingArchive\);/,
+    /useOutsideClick\(\s*\(\) => Boolean\(pendingArchiveConfirmationSessionId\(\)\),\s*\(\) => pendingArchiveConfirmButtonRef,\s*\(\) => setPendingArchiveConfirmationSessionId\(null\),\s*\);/s,
     "pending archive confirmation should cancel when clicking outside the inline confirm button",
   );
 

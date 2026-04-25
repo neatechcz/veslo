@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Den Control Plane</title>
+    <title>Veslo Desktop Auth</title>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body {
@@ -68,6 +68,19 @@
       }
       .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
       .btn-primary:hover:not(:disabled) { background: #1e40af; }
+      .btn-secondary {
+        width: 100%;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 10px;
+        background: #fff;
+        color: #0f172a;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .btn-secondary:disabled { opacity: 0.6; cursor: not-allowed; }
+      .btn-secondary:hover:not(:disabled) { background: #f8fafc; }
       .toggle-row {
         text-align: center;
         font-size: 13px;
@@ -82,6 +95,30 @@
         cursor: pointer;
         text-decoration: underline;
       }
+      .helper-row {
+        display: flex;
+        gap: 10px;
+        margin-top: 12px;
+        flex-wrap: wrap;
+      }
+      .helper-row .btn-primary,
+      .helper-row .btn-secondary {
+        flex: 1 1 160px;
+        margin-bottom: 0;
+      }
+      .note-box {
+        border-radius: 10px;
+        border: 1px solid #dbeafe;
+        background: #eff6ff;
+        color: #1e3a8a;
+        font-size: 13px;
+        line-height: 1.5;
+        padding: 12px 14px;
+      }
+      .note-box p + p {
+        margin-top: 8px;
+      }
+      .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
       .error-text { color: #dc2626; font-size: 13px; margin-top: 8px; }
       .success-card {
         text-align: center;
@@ -141,8 +178,8 @@
     <div id="onboard-view" class="onboard-container hidden">
       <!-- Auth form -->
       <div id="onboard-form" class="onboard-card">
-        <h1 id="onboard-title">Welcome back</h1>
-        <p id="onboard-subtitle" class="subtitle">Sign in to continue to Openwork.</p>
+        <h1 id="onboard-title">Sign in to Veslo</h1>
+        <p id="onboard-subtitle" class="subtitle">Sign in with your account to continue to Veslo.</p>
 
         <form id="auth-form">
           <div id="name-field" class="field hidden">
@@ -160,6 +197,9 @@
           <button id="auth-submit" class="btn-primary" type="submit">Sign in</button>
         </form>
 
+        <div class="toggle-row">
+          <button id="forgot-password" type="button">Forgot password?</button>
+        </div>
         <div id="auth-error" class="error-text hidden"></div>
 
         <div class="toggle-row">
@@ -168,10 +208,90 @@
         </div>
       </div>
 
+      <div id="forgot-password-card" class="onboard-card hidden">
+        <h1>Forgot your password?</h1>
+        <p class="subtitle">Request a private reset link for your Veslo account.</p>
+
+        <form id="forgot-password-form">
+          <div class="field">
+            <label for="forgot-password-email">Email</label>
+            <input id="forgot-password-email" type="email" autocomplete="email" required />
+          </div>
+          <button id="forgot-password-submit" class="btn-primary" type="submit">Send reset link</button>
+        </form>
+
+        <div id="forgot-password-status" class="note-box" style="margin-top: 12px">
+          If the address exists, we will send a reset link without revealing whether it is registered.
+        </div>
+
+        <div class="toggle-row">
+          <button id="forgot-password-back" type="button">Return to sign in</button>
+        </div>
+      </div>
+
+      <div id="reset-password-card" class="onboard-card hidden">
+        <h1>Choose a new password</h1>
+        <p class="subtitle">Use the latest email link to set a new password for Veslo.</p>
+
+        <div id="reset-password-message" class="note-box hidden" style="margin-bottom: 12px"></div>
+        <div id="reset-password-error" class="error-text hidden"></div>
+
+        <form id="reset-password-form">
+          <div class="field">
+            <label for="reset-password-token">Reset token</label>
+            <input id="reset-password-token" class="mono" type="text" readonly />
+          </div>
+          <div class="field">
+            <label for="reset-password-new-password">New password</label>
+            <input id="reset-password-new-password" type="password" autocomplete="new-password" required />
+          </div>
+          <button id="reset-password-submit" class="btn-primary" type="submit">Update password</button>
+        </form>
+
+        <div class="toggle-row">
+          <button id="reset-password-back" type="button">Return to sign in</button>
+        </div>
+      </div>
+
+      <div id="verify-required-card" class="onboard-card hidden">
+        <h1>Verify your email</h1>
+        <p class="subtitle">Veslo can continue signing you in now, but cloud-gated actions still require a verified email address.</p>
+
+        <div class="note-box">
+          <p id="verify-required-email">Check the inbox for your latest verification message.</p>
+          <p>Use the resend action if the email expired or never arrived.</p>
+        </div>
+
+        <div id="verify-required-status" class="note-box hidden" style="margin-top: 12px"></div>
+        <div id="verify-required-error" class="error-text hidden"></div>
+
+        <div class="helper-row">
+          <button id="resend-verification" class="btn-secondary" type="button">Resend verification email</button>
+          <button id="continue-to-veslo" class="btn-primary" type="button">Continue to Veslo</button>
+        </div>
+
+        <div class="toggle-row">
+          <button id="verify-required-back" type="button">Back to sign in</button>
+        </div>
+      </div>
+
+      <div id="verify-email-card" class="onboard-card hidden">
+        <h1 id="verify-email-title">Email verified</h1>
+        <p id="verify-email-subtitle" class="subtitle">Your email address is ready for the next Veslo sign-in.</p>
+
+        <div id="verify-email-message" class="note-box">
+          Verification succeeded. Return to Veslo and continue your sign-in flow.
+        </div>
+
+        <div class="toggle-row">
+          <button id="verify-email-return" type="button">Return to sign in</button>
+        </div>
+      </div>
+
       <!-- Success -->
       <div id="onboard-success" class="onboard-card success-card hidden">
-        <h1>Signed in!</h1>
-        <p>Returning to the app…</p>
+        <h1>Signed in to Veslo</h1>
+        <p>Returning to the app...</p>
         <p id="onboard-success-hint" class="subtitle hidden" style="margin-top: 10px">
           If the app did not open, <a id="onboard-open-app" href="#" style="color: #1B29FF">open Veslo</a>.
         </p>
@@ -179,8 +299,8 @@
 
       <!-- Busy -->
       <div id="onboard-busy" class="onboard-card success-card hidden">
-        <h1>Connecting…</h1>
-        <p>Setting up your session.</p>
+        <h1>Connecting to Veslo...</h1>
+        <p>Setting up your desktop session.</p>
       </div>
     </div>
 
@@ -243,8 +363,18 @@
         const onboardingTransactionId = (search.get("tid") || "").trim();
         const onboardingState = (search.get("state") || "").trim();
         const requestedIntent = (search.get("intent") || "").trim().toLowerCase();
-        let mode = requestedIntent === "signup" ? "sign-up" : "sign-in"; // default to sign-in for returning users
+        const requestedView = (search.get("view") || "").trim().toLowerCase();
+        let mode = requestedIntent === "signup" ? "sign-up" : "sign-in";
+        let resetToken = (search.get("token") || "").trim();
+        let viewError = (search.get("error") || "").trim();
+        let activeView = requestedView || (search.get("token") ? "reset-password" : "auth");
         let bearerToken = "";
+        let authError = "";
+        let verificationEmail = "";
+        let verificationInfo = "";
+        let verificationError = "";
+        let forgotStatus = "If the address exists, we will send a reset link without revealing whether it is registered.";
+        let resetInfo = "";
 
         const form = document.getElementById("auth-form");
         const title = document.getElementById("onboard-title");
@@ -254,34 +384,111 @@
         const passwordInput = document.getElementById("auth-password");
         const submitBtn = document.getElementById("auth-submit");
         const errorEl = document.getElementById("auth-error");
+        const forgotPasswordBtn = document.getElementById("forgot-password");
         const togglePrompt = document.getElementById("toggle-prompt");
         const toggleBtn = document.getElementById("toggle-mode");
 
         const formCard = document.getElementById("onboard-form");
+        const forgotCard = document.getElementById("forgot-password-card");
+        const forgotForm = document.getElementById("forgot-password-form");
+        const forgotEmailInput = document.getElementById("forgot-password-email");
+        const forgotSubmit = document.getElementById("forgot-password-submit");
+        const forgotStatusEl = document.getElementById("forgot-password-status");
+        const forgotBack = document.getElementById("forgot-password-back");
+        const resetCard = document.getElementById("reset-password-card");
+        const resetForm = document.getElementById("reset-password-form");
+        const resetTokenInput = document.getElementById("reset-password-token");
+        const resetPasswordInput = document.getElementById("reset-password-new-password");
+        const resetSubmit = document.getElementById("reset-password-submit");
+        const resetErrorEl = document.getElementById("reset-password-error");
+        const resetMessageEl = document.getElementById("reset-password-message");
+        const resetBack = document.getElementById("reset-password-back");
+        const verifyRequiredCard = document.getElementById("verify-required-card");
+        const verifyRequiredEmail = document.getElementById("verify-required-email");
+        const verifyRequiredStatus = document.getElementById("verify-required-status");
+        const verifyRequiredError = document.getElementById("verify-required-error");
+        const resendVerificationBtn = document.getElementById("resend-verification");
+        const continueToVesloBtn = document.getElementById("continue-to-veslo");
+        const verifyRequiredBack = document.getElementById("verify-required-back");
+        const verifyEmailCard = document.getElementById("verify-email-card");
+        const verifyEmailTitle = document.getElementById("verify-email-title");
+        const verifyEmailSubtitle = document.getElementById("verify-email-subtitle");
+        const verifyEmailMessage = document.getElementById("verify-email-message");
+        const verifyEmailReturn = document.getElementById("verify-email-return");
         const successCard = document.getElementById("onboard-success");
         const openAppHint = document.getElementById("onboard-success-hint");
         const openAppLink = document.getElementById("onboard-open-app");
         const busyCard = document.getElementById("onboard-busy");
 
+        function buildDesktopOnboardingUrl(view, extras = {}) {
+          const url = new URL(window.location.href);
+          url.searchParams.set("desktopOnboarding", "1");
+          if (onboardingTransactionId) url.searchParams.set("tid", onboardingTransactionId);
+          if (onboardingState) url.searchParams.set("state", onboardingState);
+          if (requestedIntent) url.searchParams.set("intent", requestedIntent);
+          url.searchParams.set("view", view);
+          for (const [key, value] of Object.entries(extras)) {
+            if (value == null || value === "") {
+              url.searchParams.delete(key);
+            } else {
+              url.searchParams.set(key, String(value));
+            }
+          }
+          return url.toString();
+        }
+
+        function createSessionHeaders(json = true) {
+          const headers = json ? { "Content-Type": "application/json" } : {};
+          if (bearerToken) {
+            headers["Authorization"] = "Bearer " + bearerToken;
+          }
+          return headers;
+        }
+
+        function setInlineMessage(element, message) {
+          element.textContent = message || "";
+          element.classList.toggle("hidden", !message);
+        }
+
+        function buildViewExtras(view) {
+          if (view === "reset-password") {
+            return { token: resetToken, error: viewError };
+          }
+          if (view === "verify-email") {
+            return { error: viewError };
+          }
+          return { token: null, error: null };
+        }
+
+        function hideAllCards() {
+          formCard.classList.add("hidden");
+          forgotCard.classList.add("hidden");
+          resetCard.classList.add("hidden");
+          verifyRequiredCard.classList.add("hidden");
+          verifyEmailCard.classList.add("hidden");
+          successCard.classList.add("hidden");
+          busyCard.classList.add("hidden");
+        }
+
         function updateUI() {
           if (mode === "sign-up") {
-            title.textContent = "Get started";
-            subtitle.textContent = "Create an account to use Openwork.";
+            title.textContent = "Create your Veslo account";
+            subtitle.textContent = "Create an account to use Veslo on this device.";
             nameField.classList.remove("hidden");
             passwordInput.autocomplete = "new-password";
             submitBtn.textContent = "Create account";
             togglePrompt.textContent = "Already have an account?";
             toggleBtn.textContent = "Sign in";
           } else {
-            title.textContent = "Welcome back";
-            subtitle.textContent = "Sign in to continue to Openwork.";
+            title.textContent = "Sign in to Veslo";
+            subtitle.textContent = "Sign in with your account to continue to Veslo.";
             nameField.classList.add("hidden");
             passwordInput.autocomplete = "current-password";
             submitBtn.textContent = "Sign in";
             togglePrompt.textContent = "Need an account?";
             toggleBtn.textContent = "Create account";
           }
-          errorEl.classList.add("hidden");
+          setInlineMessage(errorEl, authError);
           if (openAppHint) {
             openAppHint.classList.add("hidden");
           }
@@ -290,67 +497,112 @@
           }
         }
 
-        toggleBtn.addEventListener("click", () => {
-          mode = mode === "sign-in" ? "sign-up" : "sign-in";
-          updateUI();
-        });
-
-        function showError(msg) {
-          errorEl.textContent = msg;
-          errorEl.classList.remove("hidden");
+        function showError(message) {
+          authError = message || "";
+          setInlineMessage(errorEl, authError);
         }
 
-        form.addEventListener("submit", async (e) => {
-          e.preventDefault();
-          errorEl.classList.add("hidden");
-          submitBtn.disabled = true;
-          submitBtn.textContent = "Working…";
+        function updateForgotPasswordUI() {
+          forgotEmailInput.value = forgotEmailInput.value.trim() || emailInput.value.trim();
+          forgotStatusEl.textContent = forgotStatus;
+        }
 
-          try {
-            const endpoint = mode === "sign-up"
-              ? "/api/auth/sign-up/email"
-              : "/api/auth/sign-in/email";
-
-            const body = { email: emailInput.value, password: passwordInput.value };
-            if (mode === "sign-up") {
-              body.name = document.getElementById("auth-name").value || "Openwork User";
-            }
-
-            const res = await fetch(endpoint, {
-              method: "POST",
-              credentials: "include",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body),
-            });
-
-            const data = await res.json().catch(() => null);
-
-            if (!res.ok) {
-              const msg = data?.message || data?.error || `Request failed (${res.status})`;
-              updateUI();
-              showError(msg);
-              return;
-            }
-
-            bearerToken = data?.token || "";
-            // Auth succeeded — now do the handoff
-            await doHandoff();
-          } catch (err) {
-            updateUI();
-            showError(err.message || "Network error");
-          } finally {
-            submitBtn.disabled = false;
+        function updateResetPasswordUI() {
+          resetTokenInput.value = resetToken;
+          setInlineMessage(resetMessageEl, resetInfo);
+          setInlineMessage(resetErrorEl, viewError);
+          if (!resetToken) {
+            setInlineMessage(resetErrorEl, "The reset link is missing its token. Request a new password reset email.");
+            resetSubmit.disabled = true;
+            return;
           }
-        });
+          resetSubmit.disabled = false;
+        }
 
-        async function doHandoff() {
-          formCard.classList.add("hidden");
+        function updateVerifyRequiredUI() {
+          verifyRequiredEmail.textContent = verificationEmail
+            ? `Signed in as ${verificationEmail}. Check your inbox for the latest verification message.`
+            : "Check the inbox for your latest verification message.";
+          setInlineMessage(verifyRequiredStatus, verificationInfo);
+          setInlineMessage(verifyRequiredError, verificationError);
+        }
+
+        function updateVerifyEmailUI() {
+          const hasError = viewError.length > 0;
+          verifyEmailTitle.textContent = hasError ? "Verification needs attention" : "Email verified";
+          verifyEmailSubtitle.textContent = hasError
+            ? "The link could not be completed. Use the latest verification email or request another one from Veslo."
+            : "Your email address is verified and ready for the next Veslo sign-in.";
+          verifyEmailMessage.textContent = hasError
+            ? viewError
+            : "Verification succeeded. Return to Veslo and continue your sign-in flow.";
+        }
+
+        function renderView(updateUrl = true) {
+          hideAllCards();
+          if (updateUrl && activeView !== "busy" && activeView !== "success") {
+            window.history.replaceState({}, "", buildDesktopOnboardingUrl(activeView, buildViewExtras(activeView)));
+          }
+
+          if (activeView === "forgot-password") {
+            updateForgotPasswordUI();
+            forgotCard.classList.remove("hidden");
+            forgotEmailInput.focus();
+            return;
+          }
+
+          if (activeView === "reset-password") {
+            updateResetPasswordUI();
+            resetCard.classList.remove("hidden");
+            if (resetToken) {
+              resetPasswordInput.focus();
+            }
+            return;
+          }
+
+          if (activeView === "verify-required") {
+            updateVerifyRequiredUI();
+            verifyRequiredCard.classList.remove("hidden");
+            return;
+          }
+
+          if (activeView === "verify-email") {
+            updateVerifyEmailUI();
+            verifyEmailCard.classList.remove("hidden");
+            return;
+          }
+
+          updateUI();
+          formCard.classList.remove("hidden");
+          emailInput.focus();
+        }
+
+        function setView(view) {
+          activeView = view;
+          renderView(true);
+        }
+
+        function restoreAfterHandoffError(message, fallbackView) {
+          const returnView = fallbackView || "auth";
+          activeView = returnView;
+          if (returnView === "verify-required") {
+            verificationError = message;
+            verificationInfo = "";
+          } else {
+            authError = message;
+          }
+          renderView(false);
+        }
+
+        async function doHandoff(fallbackView = activeView) {
+          hideAllCards();
           busyCard.classList.remove("hidden");
 
           try {
-            const headers = { "Content-Type": "application/json" };
-            if (bearerToken) {
-              headers["Authorization"] = "Bearer " + bearerToken;
+            if (fallbackView === "verify-required") {
+              verificationError = "";
+            } else {
+              authError = "";
             }
 
             if (onboardingTransactionId && onboardingState) {
@@ -358,7 +610,7 @@
                 method: "POST",
                 credentials: "include",
                 headers: {
-                  ...headers,
+                  ...createSessionHeaders(true),
                   "x-veslo-desktop-auth-transport": "json",
                 },
                 redirect: "manual",
@@ -391,6 +643,10 @@
                   }
                 }
                 busyCard.classList.add("hidden");
+                if (fallbackView === "verify-required") {
+                  restoreAfterHandoffError(errorMessage, fallbackView);
+                  return;
+                }
                 formCard.classList.remove("hidden");
                 updateUI();
                 showError(errorMessage);
@@ -417,20 +673,16 @@
             const res = await fetch("/v1/desktop-auth/handoff", {
               method: "POST",
               credentials: "include",
-              headers,
+              headers: createSessionHeaders(true),
               body: JSON.stringify(body),
             });
 
             const data = await res.json().catch(() => null);
             if (!res.ok || !data?.code) {
-              busyCard.classList.add("hidden");
-              formCard.classList.remove("hidden");
-              updateUI();
-              showError(data?.error || "Handoff failed");
+              restoreAfterHandoffError(data?.error || "Handoff failed", fallbackView);
               return;
             }
 
-            // Success — redirect to deep link
             busyCard.classList.add("hidden");
             successCard.classList.remove("hidden");
             const fallbackParams = new URLSearchParams();
@@ -450,15 +702,225 @@
             }
             window.location.assign(redirectUrl);
           } catch (err) {
-            busyCard.classList.add("hidden");
-            formCard.classList.remove("hidden");
-            updateUI();
-            showError(err.message || "Network error during handoff");
+            restoreAfterHandoffError(err.message || "Network error during handoff", fallbackView);
           }
         }
 
-        updateUI();
-        emailInput.focus();
+        toggleBtn.addEventListener("click", () => {
+          mode = mode === "sign-in" ? "sign-up" : "sign-in";
+          authError = "";
+          renderView(false);
+        });
+
+        forgotPasswordBtn.addEventListener("click", () => {
+          setView("forgot-password");
+        });
+
+        forgotBack.addEventListener("click", () => {
+          setView("auth");
+        });
+
+        resetBack.addEventListener("click", () => {
+          viewError = "";
+          resetInfo = "";
+          setView("auth");
+        });
+
+        verifyRequiredBack.addEventListener("click", () => {
+          verificationError = "";
+          verificationInfo = "";
+          setView("auth");
+        });
+
+        verifyEmailReturn.addEventListener("click", () => {
+          viewError = "";
+          setView("auth");
+        });
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          authError = "";
+          submitBtn.disabled = true;
+          submitBtn.textContent = "Working...";
+
+          try {
+            const endpoint = mode === "sign-up"
+              ? "/api/auth/sign-up/email"
+              : "/api/auth/sign-in/email";
+
+            const body = {
+              email: emailInput.value.trim(),
+              password: passwordInput.value,
+            };
+            if (mode === "sign-up") {
+              body.name = document.getElementById("auth-name").value || "Veslo User";
+              body.callbackURL = buildDesktopOnboardingUrl("verify-email");
+            }
+
+            const response = await fetch(endpoint, {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            const data = await response.json().catch(() => null);
+
+            if (!response.ok) {
+              showError(data?.message || data?.error || `Request failed (${response.status})`);
+              renderView(false);
+              return;
+            }
+
+            bearerToken = data?.token || "";
+
+            const me = await fetch("/v1/me", {
+              method: "GET",
+              credentials: "include",
+              headers: createSessionHeaders(false),
+            });
+            const mePayload = await me.json().catch(() => null);
+            const emailVerified = mePayload?.user?.emailVerified === true;
+
+            if (me.ok && !emailVerified) {
+              verificationEmail = (mePayload?.user?.email || emailInput.value || "").trim();
+              verificationInfo = mode === "sign-up"
+                ? "Check your inbox for the verification email. You can still continue to Veslo right now."
+                : "Your account is signed in, but cloud-gated actions still require email verification.";
+              verificationError = "";
+              activeView = "verify-required";
+              renderView(true);
+              return;
+            }
+
+            await doHandoff("auth");
+          } catch (error) {
+            showError(error.message || "Network error");
+            renderView(false);
+          } finally {
+            submitBtn.disabled = false;
+            if (activeView === "auth") {
+              updateUI();
+            }
+          }
+        });
+
+        forgotForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const trimmedEmail = forgotEmailInput.value.trim();
+          if (!trimmedEmail) return;
+
+          forgotSubmit.disabled = true;
+          forgotSubmit.textContent = "Sending...";
+          try {
+            await fetch("/api/auth/request-password-reset", {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                email: trimmedEmail,
+                redirectTo: buildDesktopOnboardingUrl("reset-password"),
+              }),
+            });
+          } finally {
+            forgotStatus = "If the address exists, a password reset link will arrive shortly.";
+            forgotSubmit.disabled = false;
+            forgotSubmit.textContent = "Send reset link";
+            updateForgotPasswordUI();
+          }
+        });
+
+        resetForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          if (!resetToken || !resetPasswordInput.value.trim()) {
+            return;
+          }
+
+          resetInfo = "";
+          viewError = "";
+          resetSubmit.disabled = true;
+          resetSubmit.textContent = "Updating...";
+          updateResetPasswordUI();
+
+          try {
+            const response = await fetch("/api/auth/reset-password", {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                token: resetToken,
+                newPassword: resetPasswordInput.value,
+              }),
+            });
+
+            if (!response.ok) {
+              const payload = await response.text().catch(() => "");
+              viewError = payload.trim() || `Reset failed with ${response.status}.`;
+              updateResetPasswordUI();
+              return;
+            }
+
+            resetInfo = "Your password has been updated. Return to sign in and use the new password.";
+            resetPasswordInput.value = "";
+            viewError = "";
+            updateResetPasswordUI();
+          } catch (error) {
+            viewError = error.message || "Unknown network error";
+            updateResetPasswordUI();
+          } finally {
+            resetSubmit.disabled = false;
+            resetSubmit.textContent = "Update password";
+          }
+        });
+
+        resendVerificationBtn.addEventListener("click", async () => {
+          if (!verificationEmail) return;
+
+          verificationInfo = "";
+          verificationError = "";
+          resendVerificationBtn.disabled = true;
+          resendVerificationBtn.textContent = "Sending...";
+          updateVerifyRequiredUI();
+
+          try {
+            const response = await fetch("/api/auth/send-verification-email", {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                email: verificationEmail,
+                callbackURL: buildDesktopOnboardingUrl("verify-email"),
+              }),
+            });
+            const payload = await response.json().catch(() => null);
+            if (!response.ok) {
+              verificationError = payload?.message || payload?.error || `Verification resend failed with ${response.status}.`;
+              updateVerifyRequiredUI();
+              return;
+            }
+
+            verificationInfo = "Verification email sent. Check your inbox for the latest link.";
+            updateVerifyRequiredUI();
+          } catch (error) {
+            verificationError = error.message || "Unknown network error";
+            updateVerifyRequiredUI();
+          } finally {
+            resendVerificationBtn.disabled = false;
+            resendVerificationBtn.textContent = "Resend verification email";
+          }
+        });
+
+        continueToVesloBtn.addEventListener("click", async () => {
+          continueToVesloBtn.disabled = true;
+          continueToVesloBtn.textContent = "Continuing...";
+          try {
+            await doHandoff("verify-required");
+          } finally {
+            continueToVesloBtn.disabled = false;
+            continueToVesloBtn.textContent = "Continue to Veslo";
+          }
+        });
+
+        renderView(true);
       }
 
       /* ======== Original Demo ======== */

@@ -7,11 +7,11 @@ const enLocaleSource = readFileSync(new URL("../../i18n/locales/en.ts", import.m
 const csLocaleSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
 const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
 
-test("settings exposes archived, model, and advanced tabs when developer mode is enabled", () => {
+test("settings exposes archived and developer tabs when developer mode is enabled", () => {
   assert.match(source, /const tabs: SettingsTab\[\] = \["general", "archived"\]/);
-  assert.match(source, /if \(props\.developerMode\) tabs\.push\("model", "advanced", "debug"\);/);
+  assert.match(source, /if \(props\.developerMode\) tabs\.push\("advanced", "debug"\);/);
   assert.match(source, /<Match when=\{activeTab\(\) === "archived"\}>/);
-  assert.match(source, /<Match when=\{activeTab\(\) === "model"\}>/);
+  assert.doesNotMatch(source, /<Match when=\{activeTab\(\) === "model"\}>/);
   assert.match(source, /<Match when=\{activeTab\(\) === "advanced"\}>/);
   assert.match(source, /const\s+showGeneralUpdateControls\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
   assert.match(source, /const\s+generalUpdateLabel\s*=\s*createMemo\s*\(\s*\(\)\s*=>/);
@@ -27,7 +27,8 @@ test("settings exposes archived, model, and advanced tabs when developer mode is
   assert.match(generalSection, /translate\("settings\.theme_light"\)/);
   assert.match(generalSection, /translate\("settings\.theme_dark"\)/);
   assert.doesNotMatch(generalSection, /System mode follows your OS preference automatically\./);
-  assert.doesNotMatch(generalSection, /Providers/);
+  assert.match(generalSection, />AI access</);
+  assert.match(generalSection, /managed by the platform admin/i);
   assert.doesNotMatch(generalSection, /settings\.archived_sessions_label/);
 });
 

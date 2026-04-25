@@ -11,7 +11,7 @@ use crate::types::{
 };
 use crate::workspace::files::{ensure_workspace_files, seed_soul_templates};
 use crate::workspace::state::{
-    load_workspace_state, save_workspace_state, stable_workspace_id,
+    load_workspace_state, private_workspace_root_from_data_dir, save_workspace_state, stable_workspace_id,
     stable_workspace_id_for_remote, stable_workspace_id_for_veslo,
 };
 use crate::workspace::watch::{update_workspace_watch, WorkspaceWatchState};
@@ -24,6 +24,14 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 // ---------------------------------------------------------------------------
 // OpenCode session cleanup (used by workspace_forget)
 // ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn workspace_private_root(app: tauri::AppHandle) -> Result<String, String> {
+    let (data_dir, _) = crate::workspace::state::veslo_state_paths(&app)?;
+    Ok(private_workspace_root_from_data_dir(&data_dir)
+        .to_string_lossy()
+        .to_string())
+}
 
 /// Resolve the path to the global OpenCode SQLite database.
 fn opencode_db_path() -> Option<PathBuf> {
@@ -266,11 +274,7 @@ pub fn workspace_forget(
         return Err("workspaceId is required".to_string());
     }
 
-    let forgotten_workspace = state
-        .workspaces
-        .iter()
-        .find(|w| w.id == id)
-        .cloned();
+    let forgotten_workspace = state.workspaces.iter().find(|w| w.id == id).cloned();
 
     let before = state.workspaces.len();
     state.workspaces.retain(|w| w.id != id);
@@ -460,24 +464,27 @@ pub fn workspace_create(
     ensure_workspace_files(&folder, &preset, Some(&templates_dir), Some(&data_dir))?;
 
     let mut state = load_workspace_state(&app)?;
-    upsert_workspace(&mut state.workspaces, WorkspaceInfo {
-        id: id.clone(),
-        name: workspace_name,
-        path: folder,
-        preset,
-        workspace_type: WorkspaceType::Local,
-        remote_type: None,
-        base_url: None,
-        directory: None,
-        display_name: None,
-        veslo_host_url: None,
-        veslo_token: None,
-        veslo_workspace_id: None,
-        veslo_workspace_name: None,
-        sandbox_backend: None,
-        sandbox_run_id: None,
-        sandbox_container_name: None,
-    });
+    upsert_workspace(
+        &mut state.workspaces,
+        WorkspaceInfo {
+            id: id.clone(),
+            name: workspace_name,
+            path: folder,
+            preset,
+            workspace_type: WorkspaceType::Local,
+            remote_type: None,
+            base_url: None,
+            directory: None,
+            display_name: None,
+            veslo_host_url: None,
+            veslo_token: None,
+            veslo_workspace_id: None,
+            veslo_workspace_name: None,
+            sandbox_backend: None,
+            sandbox_run_id: None,
+            sandbox_container_name: None,
+        },
+    );
     state.active_id = id.clone();
     save_workspace_state(&app, &state)?;
     let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
@@ -563,30 +570,33 @@ pub fn workspace_create_remote(
     let path = directory.clone().unwrap_or_default();
 
     let mut state = load_workspace_state(&app)?;
-    upsert_workspace(&mut state.workspaces, WorkspaceInfo {
-        id: id.clone(),
-        name,
-        path,
-        preset: "remote".to_string(),
-        workspace_type: WorkspaceType::Remote,
-        remote_type: Some(remote_type),
-        base_url: Some(base_url),
-        directory,
-        display_name,
-        veslo_host_url,
-        veslo_token,
-        veslo_workspace_id,
-        veslo_workspace_name,
-        sandbox_backend: sandbox_backend
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
-        sandbox_run_id: sandbox_run_id
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
-        sandbox_container_name: sandbox_container_name
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
-    });
+    upsert_workspace(
+        &mut state.workspaces,
+        WorkspaceInfo {
+            id: id.clone(),
+            name,
+            path,
+            preset: "remote".to_string(),
+            workspace_type: WorkspaceType::Remote,
+            remote_type: Some(remote_type),
+            base_url: Some(base_url),
+            directory,
+            display_name,
+            veslo_host_url,
+            veslo_token,
+            veslo_workspace_id,
+            veslo_workspace_name,
+            sandbox_backend: sandbox_backend
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+            sandbox_run_id: sandbox_run_id
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+            sandbox_container_name: sandbox_container_name
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+        },
+    );
     state.active_id = id.clone();
     save_workspace_state(&app, &state)?;
     let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
@@ -859,6 +869,66 @@ fn normalize_zip_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+const REDACTED_SECRET_VALUE: &str = "[REDACTED]";
+
+fn normalize_exported_config_key(input: &str) -> String {
+    input
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect()
+}
+
+fn is_sensitive_exported_config_key(key: &str) -> bool {
+    let normalized = normalize_exported_config_key(key);
+    if normalized.is_empty() || normalized == "tokensource" {
+        return false;
+    }
+    matches!(
+        normalized.as_str(),
+        "password" | "token" | "secret" | "apikey" | "accesskey" | "privatekey" | "authorization"
+    ) || normalized.ends_with("password")
+        || normalized.ends_with("token")
+        || normalized.ends_with("secret")
+        || normalized.ends_with("apikey")
+        || normalized.ends_with("accesskey")
+        || normalized.ends_with("privatekey")
+}
+
+fn redact_exported_json_value(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Array(items) => {
+            for item in items {
+                redact_exported_json_value(item);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (key, child) in map.iter_mut() {
+                if is_sensitive_exported_config_key(key) {
+                    let should_redact = !matches!(child, serde_json::Value::Null)
+                        && !matches!(child, serde_json::Value::String(text) if text.is_empty());
+                    if should_redact {
+                        *child = serde_json::Value::String(REDACTED_SECRET_VALUE.to_string());
+                    }
+                    continue;
+                }
+                redact_exported_json_value(child);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn redact_exported_opencode_config(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let mut value: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|e| format!("Failed to parse opencode.json for export redaction: {e}"))?;
+    redact_exported_json_value(&mut value);
+    let mut output = serde_json::to_vec_pretty(&value)
+        .map_err(|e| format!("Failed to serialize redacted opencode.json: {e}"))?;
+    output.push(b'\n');
+    Ok(output)
+}
+
 fn is_secret_name(name: &str) -> bool {
     let lower = name.to_lowercase();
     if lower == ".env" || lower.starts_with(".env.") {
@@ -985,6 +1055,9 @@ pub fn workspace_export_config(
         input
             .read_to_end(&mut buffer)
             .map_err(|e| format!("Failed to read {}: {e}", src.display()))?;
+        if rel == "opencode.json" {
+            buffer = redact_exported_opencode_config(&buffer)?;
+        }
         zip.write_all(&buffer)
             .map_err(|e| format!("Failed to write {}: {e}", src.display()))?;
         included_paths.push(rel);
@@ -1153,24 +1226,27 @@ pub fn workspace_import_config(
     let id = stable_workspace_id(&target_dir);
 
     let mut state = load_workspace_state(&app)?;
-    upsert_workspace(&mut state.workspaces, WorkspaceInfo {
-        id: id.clone(),
-        name,
-        path: target_dir.clone(),
-        preset,
-        workspace_type: WorkspaceType::Local,
-        remote_type: None,
-        base_url: None,
-        directory: None,
-        display_name: None,
-        veslo_host_url: None,
-        veslo_token: None,
-        veslo_workspace_id: None,
-        veslo_workspace_name: None,
-        sandbox_backend: None,
-        sandbox_run_id: None,
-        sandbox_container_name: None,
-    });
+    upsert_workspace(
+        &mut state.workspaces,
+        WorkspaceInfo {
+            id: id.clone(),
+            name,
+            path: target_dir.clone(),
+            preset,
+            workspace_type: WorkspaceType::Local,
+            remote_type: None,
+            base_url: None,
+            directory: None,
+            display_name: None,
+            veslo_host_url: None,
+            veslo_token: None,
+            veslo_workspace_id: None,
+            veslo_workspace_name: None,
+            sandbox_backend: None,
+            sandbox_run_id: None,
+            sandbox_container_name: None,
+        },
+    );
     state.active_id = id.clone();
     save_workspace_state(&app, &state)?;
 
@@ -1226,8 +1302,14 @@ mod tests {
     fn workspace_forget_default_keeps_local_files() {
         let root = temp_workspace_root("detach");
         cleanup_workspace_local_state(&root, WorkspaceForgetMode::DetachOnly);
-        assert!(root.join(".opencode").is_dir(), ".opencode should remain for detach");
-        assert!(root.join("opencode.jsonc").is_file(), "opencode.jsonc should remain for detach");
+        assert!(
+            root.join(".opencode").is_dir(),
+            ".opencode should remain for detach"
+        );
+        assert!(
+            root.join("opencode.jsonc").is_file(),
+            "opencode.jsonc should remain for detach"
+        );
         fs::remove_dir_all(&root).expect("cleanup");
     }
 
@@ -1235,7 +1317,10 @@ mod tests {
     fn workspace_forget_delete_local_data_removes_local_files() {
         let root = temp_workspace_root("delete");
         cleanup_workspace_local_state(&root, WorkspaceForgetMode::DeleteLocalData);
-        assert!(!root.join(".opencode").exists(), ".opencode should be removed for destructive mode");
+        assert!(
+            !root.join(".opencode").exists(),
+            ".opencode should be removed for destructive mode"
+        );
         assert!(
             !root.join("opencode.jsonc").exists(),
             "opencode.jsonc should be removed for destructive mode"
@@ -1320,5 +1405,43 @@ mod tests {
             .map(|workspace| workspace.id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(ids, vec!["ws-a", "ws-b", "ws-c"]);
+    }
+
+    #[test]
+    fn redact_exported_opencode_config_hides_gateway_tokens() {
+        let redacted = redact_exported_opencode_config(
+            br#"{
+              "provider": {
+                "openai": {
+                  "models": {
+                    "gpt-4o-mini": {
+                      "headers": {
+                        "x-veslo-gateway-token": "gateway-access-token",
+                        "x-veslo-session-id": "${OPENCODE_SESSION_ID}",
+                        "x-extra": "keep-me"
+                      }
+                    }
+                  }
+                }
+              }
+            }"#,
+        )
+        .expect("redact opencode config");
+
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&redacted).expect("parse redacted config");
+
+        assert_eq!(
+            parsed["provider"]["openai"]["models"]["gpt-4o-mini"]["headers"]["x-veslo-gateway-token"],
+            "[REDACTED]"
+        );
+        assert_eq!(
+            parsed["provider"]["openai"]["models"]["gpt-4o-mini"]["headers"]["x-veslo-session-id"],
+            "${OPENCODE_SESSION_ID}"
+        );
+        assert_eq!(
+            parsed["provider"]["openai"]["models"]["gpt-4o-mini"]["headers"]["x-extra"],
+            "keep-me"
+        );
     }
 }

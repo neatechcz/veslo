@@ -24,17 +24,16 @@ test("settings renders archived sessions inside the archived tab only", () => {
 
 test("settings tab list starts with general and archived before developer-only tabs", () => {
   assert.match(source, /const tabs: SettingsTab\[] = \["general", "archived"\]/);
-  assert.match(source, /if \(props\.developerMode\) tabs\.push\("model", "advanced", "debug"\);/);
+  assert.match(source, /if \(props\.developerMode\) tabs\.push\("advanced", "debug"\);/);
 });
 
-test("settings keeps appearance controls in general and provider wiring in model", () => {
-  const modelSection = source.match(/<Match when=\{activeTab\(\) === "model"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
-
+test("settings keeps appearance and admin-managed ai access in general", () => {
   assert.match(generalSection, /translate\("settings\.appearance_title"\)/);
   assert.doesNotMatch(generalSection, /System mode follows your OS preference automatically\./);
-  assert.doesNotMatch(generalSection, /Providers/);
-  assert.match(modelSection, /Providers/);
-  assert.doesNotMatch(archivedSection, /Providers/);
+  assert.match(generalSection, />AI access</);
+  assert.match(generalSection, /managed by the platform admin/i);
+  assert.doesNotMatch(source, /<Match when=\{activeTab\(\) === "model"\}>/);
+  assert.doesNotMatch(archivedSection, />AI access</);
 });
 
 test("settings exposes unavailable-on-this-device copy for archived sessions", () => {

@@ -57,7 +57,7 @@ test("session hides the centered directory context when the chat is empty", () =
 test("session renders the disclaimer outside the composer", () => {
   assert.match(
     source,
-    /\{\(_sessionKey\) => \(\s*<>\s*<Composer[\s\S]*\/>[\s\S]*session\.composer_disclaimer[\s\S]*<\/>\s*\)\}/,
+    /\{\(_sessionKey\) => \(\s*<>[\s\S]*<Composer[\s\S]*\/>[\s\S]*session\.composer_disclaimer[\s\S]*<\/>\s*\)\}/,
     "session should render the disclaimer in session layout, not inside the Composer component",
   );
 });

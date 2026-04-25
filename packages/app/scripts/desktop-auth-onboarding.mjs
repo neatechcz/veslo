@@ -95,5 +95,25 @@ assert.equal(
   "workspace.ts must reference clearDenAuth for invalid auth fallback",
 );
 
+// ── e. onboarding.tsx – Veslo browser auth copy ────────────────────────
+
+const onboarding = readFileSync(new URL("../src/app/pages/onboarding.tsx", import.meta.url), "utf8");
+
+assert.equal(
+  onboarding.includes("Sign in to Veslo"),
+  true,
+  "desktop onboarding must brand browser auth entry as Veslo",
+);
+assert.equal(
+  onboarding.includes("Email verification and password recovery happen in the browser."),
+  true,
+  "desktop onboarding must explain that verification and password recovery happen in the browser flow",
+);
+assert.equal(
+  onboarding.includes("Sign in to Openwork"),
+  false,
+  "desktop onboarding must not keep the old Openwork auth heading",
+);
+
 // ── done ────────────────────────────────────────────────────────────────
-console.log(JSON.stringify({ ok: true, checks: 13 }));
+console.log(JSON.stringify({ ok: true, checks: 16 }));

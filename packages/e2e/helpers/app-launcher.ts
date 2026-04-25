@@ -1,12 +1,14 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve, dirname, win32, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { prepareDesktopAuthSeed } from './desktop-auth-seed.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const WEBDRIVER_PORT = 4445;
+const DEFAULT_WEBDRIVER_PORT = 4445;
+const WEBDRIVER_PORT = resolveWebDriverPort();
 const LAUNCH_TIMEOUT = parseInt(process.env.E2E_LAUNCH_TIMEOUT ?? '30000', 10);
 const POLL_INTERVAL = 250;
 const REAL_PROFILE_ENV = process.env.E2E_USE_EXISTING_PROFILE?.trim() === '1';
@@ -22,6 +24,37 @@ const APP_IDENTIFIERS = [
 
 let appProcess: ChildProcess | null = null;
 let appProcessOwnedByHarness = false;
+
+type AppLaunchEnvOptions = {
+  platform?: NodeJS.Platform;
+  port: number;
+  opencodeHome: string;
+  snapshotPath: string;
+};
+
+export function resolveWebDriverPort(env: Record<string, string | undefined> = process.env): number {
+  const raw = env.E2E_WEBDRIVER_PORT?.trim();
+  if (!raw) return DEFAULT_WEBDRIVER_PORT;
+
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid E2E_WEBDRIVER_PORT: ${raw}`);
+  }
+
+  return port;
+}
+
+async function fetchWebDriverStatus(port: number, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
+  try {
+    return await fetch(`http://127.0.0.1:${port}/status`, {
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function resolveDesktopRoot(): string {
   return resolve(join(__dirname, '..', '..', 'desktop'));
@@ -60,7 +93,8 @@ async function pollStatus(port: number, timeout: number): Promise<void> {
 
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(url);
+      const remaining = Math.max(1, deadline - Date.now());
+      const res = await fetchWebDriverStatus(port, Math.min(POLL_INTERVAL, remaining));
       if (res.ok) return;
     } catch {
       // Not ready yet
@@ -72,40 +106,50 @@ async function pollStatus(port: number, timeout: number): Promise<void> {
 }
 
 async function hasReadyWebDriverServer(port: number): Promise<boolean> {
-  const url = `http://127.0.0.1:${port}/status`;
   try {
-    const res = await fetch(url);
+    const res = await fetchWebDriverStatus(port, 1_000);
     return res.ok;
   } catch {
     return false;
   }
 }
 
-function prepareIsolatedProfileEnv(env: NodeJS.ProcessEnv): void {
-  rmSync(ISOLATED_PROFILE_ROOT, { recursive: true, force: true });
+export function createAppLaunchEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  options: AppLaunchEnvOptions,
+): NodeJS.ProcessEnv {
+  const platform = options.platform ?? process.platform;
+  const joinForPlatform = platform === 'win32' ? win32.join : posix.join;
+  const vesloDataDir = joinForPlatform(options.opencodeHome, '.veslo');
+  const vesloAppDataDir = joinForPlatform(vesloDataDir, 'app-data');
+  const vesloAppLocalDataDir = joinForPlatform(vesloDataDir, 'app-local-data');
+  const env: NodeJS.ProcessEnv = {
+    ...baseEnv,
+    TAURI_WEBDRIVER_PORT: String(options.port),
+    OPENCODE_HOME: options.opencodeHome,
+    VESLO_DATA_DIR: vesloDataDir,
+    VESLO_APP_DATA_DIR: vesloAppDataDir,
+    VESLO_APP_LOCAL_DATA_DIR: vesloAppLocalDataDir,
+    VESLO_DEN_AUTH_SNAPSHOT_PATH: options.snapshotPath,
+  };
 
-  const xdgData = join(ISOLATED_PROFILE_ROOT, '.local', 'share');
-  const xdgConfig = join(ISOLATED_PROFILE_ROOT, '.config');
-  const xdgCache = join(ISOLATED_PROFILE_ROOT, '.cache');
-  const appData = join(ISOLATED_PROFILE_ROOT, 'AppData', 'Roaming');
-  const localAppData = join(ISOLATED_PROFILE_ROOT, 'AppData', 'Local');
-  const orchestratorData = join(ISOLATED_PROFILE_ROOT, '.veslo', 'orchestrator');
-  const opencodeHome = CUSTOM_OPENCODE_HOME || join(ISOLATED_PROFILE_ROOT, '.opencode');
-  const workspacePath = join(ISOLATED_PROFILE_ROOT, 'workspaces', 'visual-workspace');
-
-  for (const dir of [ISOLATED_PROFILE_ROOT, xdgData, xdgConfig, xdgCache, appData, localAppData, orchestratorData, opencodeHome, workspacePath]) {
-    mkdirSync(dir, { recursive: true });
+  if (platform === 'win32') {
+    env.APPDATA = win32.join(options.opencodeHome, 'AppData', 'Roaming');
+    env.LOCALAPPDATA = win32.join(options.opencodeHome, 'AppData', 'Local');
+    env.WEBVIEW2_USER_DATA_FOLDER = win32.join(options.opencodeHome, 'webview2');
   }
 
-  env.HOME = ISOLATED_PROFILE_ROOT;
-  env.USERPROFILE = ISOLATED_PROFILE_ROOT;
-  env.XDG_DATA_HOME = xdgData;
-  env.XDG_CONFIG_HOME = xdgConfig;
-  env.XDG_CACHE_HOME = xdgCache;
-  env.APPDATA = appData;
-  env.LOCALAPPDATA = localAppData;
-  env.VESLO_DATA_DIR = orchestratorData;
-  env.OPENCODE_HOME = opencodeHome;
+  if (platform === 'linux') {
+    delete env.WAYLAND_DISPLAY;
+    env.GDK_BACKEND = 'x11';
+  }
+
+  return env;
+}
+
+function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv): void {
+  const workspacePath = join(root, 'workspaces', 'visual-workspace');
+  mkdirSync(workspacePath, { recursive: true });
 
   const workspaceState = {
     version: 4,
@@ -123,23 +167,22 @@ function prepareIsolatedProfileEnv(env: NodeJS.ProcessEnv): void {
     }],
   };
 
-  const stateDirs =
-    process.platform === 'darwin'
-      ? APP_IDENTIFIERS.map(id => join(ISOLATED_PROFILE_ROOT, 'Library', 'Application Support', id))
+  const xdgData = env.XDG_DATA_HOME ?? join(root, '.local', 'share');
+  const appData = env.APPDATA ?? join(root, 'AppData', 'Roaming');
+  const localAppData = env.LOCALAPPDATA ?? join(root, 'AppData', 'Local');
+  const stateDirs = [
+    env.VESLO_APP_DATA_DIR,
+    env.VESLO_APP_LOCAL_DATA_DIR,
+    ...(process.platform === 'darwin'
+      ? APP_IDENTIFIERS.map(id => join(root, 'Library', 'Application Support', id))
       : process.platform === 'win32'
         ? APP_IDENTIFIERS.flatMap(id => [join(appData, id), join(localAppData, id)])
-        : APP_IDENTIFIERS.map(id => join(xdgData, id));
+        : APP_IDENTIFIERS.map(id => join(xdgData, id))),
+  ].filter((dir): dir is string => Boolean(dir));
 
   for (const dir of stateDirs) {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'veslo-workspaces.json'), JSON.stringify(workspaceState, null, 2));
-  }
-
-  console.log(`[e2e] Using isolated app profile: ${ISOLATED_PROFILE_ROOT}`);
-  if (CUSTOM_OPENCODE_HOME) {
-    console.log(`[e2e] Using custom OPENCODE_HOME: ${CUSTOM_OPENCODE_HOME}`);
-  } else {
-    console.log(`[e2e] Using isolated OPENCODE_HOME: ${opencodeHome}`);
   }
 }
 
@@ -162,18 +205,47 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   console.log(`[e2e] Launching Tauri binary: ${binaryPath}`);
   console.log(`[e2e] WebDriver port: ${port}`);
 
-  const env = {
-    ...process.env,
-    TAURI_WEBDRIVER_PORT: String(port),
-  } as NodeJS.ProcessEnv;
+  const tmpDir = join(resolveDesktopRoot(), '..', 'e2e', '.tmp-opencode-home');
+  let env: NodeJS.ProcessEnv;
 
-  if (!REAL_PROFILE_ENV) {
-    prepareIsolatedProfileEnv(env);
-  } else if (CUSTOM_OPENCODE_HOME) {
-    env.OPENCODE_HOME = CUSTOM_OPENCODE_HOME;
-    console.log(`[e2e] Using the app's existing profile with custom OPENCODE_HOME: ${CUSTOM_OPENCODE_HOME}`);
+  if (CUSTOM_OPENCODE_HOME) {
+    const snapshotPath = prepareDesktopAuthSeed(CUSTOM_OPENCODE_HOME, process.env, {
+      preserveExisting: true,
+    });
+    env = createAppLaunchEnv(process.env, {
+      port,
+      opencodeHome: CUSTOM_OPENCODE_HOME,
+      snapshotPath,
+    });
+    seedDefaultWorkspaceState(CUSTOM_OPENCODE_HOME, env);
+    console.log(`[e2e] Using custom OPENCODE_HOME: ${CUSTOM_OPENCODE_HOME}`);
+  } else if (!REAL_PROFILE_ENV) {
+    rmSync(ISOLATED_PROFILE_ROOT, { recursive: true, force: true });
+    rmSync(tmpDir, { recursive: true, force: true });
+    const snapshotPath = prepareDesktopAuthSeed(tmpDir);
+    env = createAppLaunchEnv(process.env, {
+      port,
+      opencodeHome: tmpDir,
+      snapshotPath,
+    });
+    env.HOME = ISOLATED_PROFILE_ROOT;
+    env.USERPROFILE = ISOLATED_PROFILE_ROOT;
+    env.XDG_DATA_HOME = join(ISOLATED_PROFILE_ROOT, '.local', 'share');
+    env.XDG_CONFIG_HOME = join(ISOLATED_PROFILE_ROOT, '.config');
+    env.XDG_CACHE_HOME = join(ISOLATED_PROFILE_ROOT, '.cache');
+    seedDefaultWorkspaceState(ISOLATED_PROFILE_ROOT, env);
+    console.log(`[e2e] Using isolated app profile: ${ISOLATED_PROFILE_ROOT}`);
+    console.log(`[e2e] Using isolated OPENCODE_HOME: ${tmpDir}`);
   } else {
-    console.log("[e2e] Using the app's existing profile and OPENCODE_HOME.");
+    env = {
+      ...process.env,
+      TAURI_WEBDRIVER_PORT: String(port),
+    } as NodeJS.ProcessEnv;
+    if (process.platform === 'linux') {
+      delete env.WAYLAND_DISPLAY;
+      env.GDK_BACKEND = 'x11';
+    }
+    console.log('[e2e] Using the app\'s existing profile and OPENCODE_HOME.');
   }
 
   appProcess = spawn(binaryPath, [], {

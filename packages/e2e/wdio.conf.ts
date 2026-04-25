@@ -1,14 +1,18 @@
 import { join } from 'node:path';
-import { ensureWebDriverReady, startApp, stopApp } from './helpers/app-launcher.js';
-import type { Options } from '@wdio/types';
+import { ensureWebDriverReady, resolveWebDriverPort, startApp, stopApp } from './helpers/app-launcher.js';
 
-const WEBDRIVER_PORT = 4445;
+const WEBDRIVER_PORT = resolveWebDriverPort();
+
+export function resolveMochaTimeout(env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env): number {
+  const parsed = Number(env.E2E_MOCHA_TIMEOUT ?? '180000');
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 180000;
+}
 
 const platformDir = process.platform === 'darwin' ? 'macos'
   : process.platform === 'win32' ? 'windows'
   : 'linux';
 
-export const config: Options.Testrunner = {
+export const config = {
   runner: 'local',
 
   specs: ['./specs/*.spec.ts'],
@@ -35,7 +39,7 @@ export const config: Options.Testrunner = {
 
   mochaOpts: {
     ui: 'bdd',
-    timeout: 60000,
+    timeout: resolveMochaTimeout(),
   },
 
   services: [

@@ -12,6 +12,7 @@ import type {
 import {
   addOpencodeCacheHint,
   clearStartupPreference,
+  createSingleFlight,
   isTauriRuntime,
   isPrivateWorkspacePathForRoot,
   normalizeDirectoryPath,
@@ -19,7 +20,7 @@ import {
   safeStringify,
   writeStartupPreference,
 } from "../utils";
-import { LANGUAGE_PREF_KEY } from "../constants";
+import { LANGUAGE_PREF_KEY, ONBOARDING_COMPLETE_STORAGE_KEY } from "../constants";
 import { reportError } from "../lib/error-reporter";
 import { unwrap } from "../lib/opencode";
 import { readDenAuth, clearDenAuth, validateDenAuth } from "../lib/den-auth";
@@ -31,7 +32,7 @@ import {
   type VesloServerSettings,
   type VesloWorkspaceInfo,
 } from "../lib/veslo-server";
-import { appDataDir, homeDir } from "@tauri-apps/api/path";
+import { homeDir } from "@tauri-apps/api/path";
 import {
   engineInfo,
   engineStart,
@@ -42,6 +43,7 @@ import {
   workspaceBootstrap,
   workspaceCreate,
   workspaceForget,
+  workspacePrivateRoot,
   workspaceVesloRead,
   workspaceSetActive,
   workspaceUpdateDisplayName,
@@ -193,6 +195,7 @@ export function createWorkspaceStore(options: {
 
   const wsActivateGuard = createWorkspaceActivateGuard();
   const connectInFlightByKey = new Map<string, Promise<boolean>>();
+  const ensureEngineForWorkspaceSingleFlight = createSingleFlight<boolean>();
 
   // Late-bound reference for the remote store — populated after createRemoteStore().
   const remoteStoreRef: {
@@ -342,8 +345,7 @@ export function createWorkspaceStore(options: {
     const cached = privateWorkspaceRoot().trim();
     if (cached) return cached;
     if (!isTauriRuntime()) return "";
-    const base = (await appDataDir()).replace(/[\\/]+$/, "");
-    const next = `${base}/private-workspaces`;
+    const next = (await workspacePrivateRoot()).replace(/[\\/]+$/, "");
     setPrivateWorkspaceRoot(next);
     return next;
   };
@@ -1700,7 +1702,7 @@ export function createWorkspaceStore(options: {
   function markOnboardingComplete() {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem("veslo.onboardingComplete", "1");
+      window.localStorage.setItem(ONBOARDING_COMPLETE_STORAGE_KEY, "1");
     } catch {
       // ignore
     }
@@ -1935,7 +1937,7 @@ export function createWorkspaceStore(options: {
     const startupPref = options.startupPreference() ?? readStartupPreference();
     const onboardingComplete = (() => {
       try {
-        return window.localStorage.getItem("veslo.onboardingComplete") === "1";
+        return window.localStorage.getItem(ONBOARDING_COMPLETE_STORAGE_KEY) === "1";
       } catch {
         return false;
       }
@@ -2400,50 +2402,52 @@ export function createWorkspaceStore(options: {
     const workspace = workspaces().find((w) => w.id === id);
     if (!workspace?.path) return false;
 
-    _wsLog("[workspace:ensureEngine] starting engine for browsing mode", { id, path: workspace.path });
+    return await ensureEngineForWorkspaceSingleFlight(workspace.id || workspace.path, async () => {
+      _wsLog("[workspace:ensureEngine] starting engine for browsing mode", { id, path: workspace.path });
 
-    try {
-      let ok = false;
       try {
-        const runtime = resolveEngineRuntime();
-        ok = await localRuntimeLifecycle.restartWorkspaceRuntime({
-          workspacePath: workspace.path,
-          workspaceId: workspace.id,
-          workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
-          reason: runtime === "veslo-orchestrator" ? "browse-attach-orchestrator" : "browse-attach-direct",
-          connectMode: "quiet",
-        });
-      } catch (restartError) {
-        // Orchestrator not running yet (cold boot browsing mode).
-        // Fall back to startHost which launches from scratch.
-        _wsLog("[workspace:ensureEngine] restartWorkspaceRuntime failed, trying startHost...", {
-          id,
-          error: restartError instanceof Error ? restartError.message : String(restartError),
-        });
-        ok = await localRuntimeLifecycle.startHost({
-          workspacePath: workspace.path,
-          workspaceId: workspace.id,
-          reason: "browse-cold-start",
-          navigate: false,
-        });
+        let ok = false;
+        try {
+          const runtime = resolveEngineRuntime();
+          ok = await localRuntimeLifecycle.restartWorkspaceRuntime({
+            workspacePath: workspace.path,
+            workspaceId: workspace.id,
+            workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
+            reason: runtime === "veslo-orchestrator" ? "browse-attach-orchestrator" : "browse-attach-direct",
+            connectMode: "quiet",
+          });
+        } catch (restartError) {
+          // Orchestrator not running yet (cold boot browsing mode).
+          // Fall back to startHost which launches from scratch.
+          _wsLog("[workspace:ensureEngine] restartWorkspaceRuntime failed, trying startHost...", {
+            id,
+            error: restartError instanceof Error ? restartError.message : String(restartError),
+          });
+          ok = await localRuntimeLifecycle.startHost({
+            workspacePath: workspace.path,
+            workspaceId: workspace.id,
+            reason: "browse-cold-start",
+            navigate: false,
+          });
+        }
+        if (!ok) return false;
+
+        // Load sessions while engineReady is still false (SSE sync guard protects sidebar)
+        await options.loadSessions(workspace.path);
+
+        // Now set engineReady — SSE sync fires with correct session data
+        options.setEngineReady?.(true);
+        updateWorkspaceConnectionState(id, { status: "connected", message: null });
+        options.onEngineStable?.();
+        _wsLog("[workspace:ensureEngine] engine started successfully", { id });
+        return true;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : safeStringify(e);
+        _wsLog("[workspace:ensureEngine] engine start failed", { id, error: message });
+        options.setError(message);
+        return false;
       }
-      if (!ok) return false;
-
-      // Load sessions while engineReady is still false (SSE sync guard protects sidebar)
-      await options.loadSessions(workspace.path);
-
-      // Now set engineReady — SSE sync fires with correct session data
-      options.setEngineReady?.(true);
-      updateWorkspaceConnectionState(id, { status: "connected", message: null });
-      options.onEngineStable?.();
-      _wsLog("[workspace:ensureEngine] engine started successfully", { id });
-      return true;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      _wsLog("[workspace:ensureEngine] engine start failed", { id, error: message });
-      options.setError(message);
-      return false;
-    }
+    });
   }
 
   return {

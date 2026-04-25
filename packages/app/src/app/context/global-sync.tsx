@@ -19,7 +19,7 @@ import type {
 import type { McpStatusMap, TodoItem } from "../types";
 import { unwrap } from "../lib/opencode";
 import { safeStringify } from "../utils";
-import { mapConfigProvidersToList } from "../utils/providers";
+import { isGatewayOwnedProvider, mapConfigProvidersToList, mergeConnectedProviderIds } from "../utils/providers";
 import { useGlobalSDK } from "./global-sdk";
 
 export type WorkspaceState = {
@@ -115,14 +115,20 @@ export function GlobalSyncProvider(props: ParentProps) {
   };
 
   const refreshProviders = async () => {
+    const preserveGatewayConnections = (connected: string[]) =>
+      mergeConnectedProviderIds(
+        connected,
+        (globalStore.provider.connected ?? []).filter((providerId) => isGatewayOwnedProvider(providerId)),
+      );
+
     try {
       const result = unwrap(await globalSDK.client().provider.list());
-      setGlobalStore("provider", result);
+      setGlobalStore("provider", { ...result, connected: preserveGatewayConnections(result.connected ?? []) });
     } catch {
       const fallback = unwrap(await globalSDK.client().config.providers()) as ConfigProvidersResponse;
       setGlobalStore("provider", {
         all: mapConfigProvidersToList(fallback.providers),
-        connected: [],
+        connected: preserveGatewayConnections([]),
         default: fallback.default,
       });
     }

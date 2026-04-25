@@ -8,6 +8,7 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 const DEFAULT_VESLO_PORT: u16 = 8787;
+const DEFAULT_MANAGED_AI_BASE_URL: &str = "https://veslo-ai-gateway-dev.onrender.com";
 const VESLO_SERVER_DEV_WATCH_ENV: &str = "VESLO_SERVER_DEV_WATCH";
 const VESLO_SERVER_DEV_DIR_ENV: &str = "VESLO_SERVER_DEV_DIR";
 
@@ -99,6 +100,30 @@ pub fn build_veslo_args(
     args
 }
 
+fn resolve_managed_ai_base_url_from_env(
+    managed_ai_base_url: Option<&str>,
+    legacy_ai_gateway_base_url: Option<&str>,
+) -> String {
+    managed_ai_base_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            legacy_ai_gateway_base_url
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or(DEFAULT_MANAGED_AI_BASE_URL)
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn resolve_managed_ai_base_url() -> String {
+    resolve_managed_ai_base_url_from_env(
+        std::env::var("VESLO_MANAGED_AI_BASE_URL").ok().as_deref(),
+        std::env::var("VESLO_AI_GATEWAY_BASE_URL").ok().as_deref(),
+    )
+}
+
 pub fn spawn_veslo_server(
     app: &AppHandle,
     host: &str,
@@ -139,7 +164,8 @@ pub fn spawn_veslo_server(
             .map(|path| Path::new(path))
             .unwrap_or_else(|| Path::new("."));
         command.args(server_args).current_dir(cwd)
-    };
+    }
+    .env("VESLO_MANAGED_AI_BASE_URL", resolve_managed_ai_base_url());
 
     if let Some(port) = opencode_router_health_port {
         command = command.env("OPENCODE_ROUTER_HEALTH_PORT", port.to_string());
@@ -198,5 +224,29 @@ mod tests {
             "0.0.0.0".to_string(),
         ];
         assert_eq!(build_veslo_server_dev_watch_args(args), expected);
+    }
+
+    #[test]
+    fn managed_ai_base_url_prefers_new_env() {
+        let resolved = resolve_managed_ai_base_url_from_env(
+            Some(" https://managed.example.test/ "),
+            Some("https://legacy.example.test/"),
+        );
+
+        assert_eq!(resolved, "https://managed.example.test");
+    }
+
+    #[test]
+    fn managed_ai_base_url_falls_back_to_legacy_env() {
+        let resolved = resolve_managed_ai_base_url_from_env(None, Some("https://legacy.example.test/"));
+
+        assert_eq!(resolved, "https://legacy.example.test");
+    }
+
+    #[test]
+    fn managed_ai_base_url_defaults_to_hosted_den() {
+        let resolved = resolve_managed_ai_base_url_from_env(None, None);
+
+        assert_eq!(resolved, DEFAULT_MANAGED_AI_BASE_URL);
     }
 }

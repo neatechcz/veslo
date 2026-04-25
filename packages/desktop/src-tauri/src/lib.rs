@@ -54,8 +54,8 @@ use commands::window::set_window_decorations;
 use commands::workspace::{
     workspace_add_authorized_root, workspace_bootstrap, workspace_copy_into_folder,
     workspace_create, workspace_create_remote, workspace_export_config, workspace_forget,
-    workspace_import_config, workspace_set_active, workspace_update_display_name,
-    workspace_update_remote, workspace_veslo_read, workspace_veslo_write,
+    workspace_import_config, workspace_private_root, workspace_veslo_read, workspace_veslo_write,
+    workspace_set_active, workspace_update_display_name, workspace_update_remote,
 };
 use engine::manager::EngineManager;
 use opencode_router::manager::OpenCodeRouterManager;
@@ -157,6 +157,7 @@ pub fn run() {
             workspace_set_active,
             workspace_copy_into_folder,
             workspace_create,
+            workspace_private_root,
             workspace_create_remote,
             workspace_update_display_name,
             workspace_update_remote,

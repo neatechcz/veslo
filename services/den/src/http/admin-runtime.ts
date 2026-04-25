@@ -22,6 +22,8 @@ import { env } from "../env.js"
 import { resolveMembershipOrganizations, isPlatformAdmin } from "./org-auth.js"
 import { requireSession } from "./session.js"
 import { createAdminRouter, type AdminRouteDeps, type AdminSessionSnapshot, type AdminUserMembership, type AdminUserRecord } from "./admin.js"
+import { createManagedAiAdminRouteDeps } from "../managed-ai/http/admin.js"
+import type { RuntimeState } from "../managed-ai/runtime/default-runtime.js"
 
 type ListedUserRow = {
   id: string
@@ -31,6 +33,7 @@ type ListedUserRow = {
 }
 
 const bootstrapPlatformAdminEmails = new Set([
+  "michal.sara@neatech.cz",
   "vaclav.soukup@neatec.cz",
   "vaclav.soukup@neotech.cz",
 ])
@@ -39,11 +42,11 @@ function randomPassword() {
   return `${randomBytes(8).toString("hex")}Aa1!`
 }
 
-function isBootstrapPlatformAdminEmail(email: string | null) {
+export function isBootstrapPlatformAdminEmail(email: string | null) {
   return typeof email === "string" && bootstrapPlatformAdminEmails.has(email.trim().toLowerCase())
 }
 
-async function requirePlatformAdminSnapshot(req: express.Request, res: express.Response): Promise<AdminSessionSnapshot | null> {
+export async function requirePlatformAdminSnapshot(req: express.Request, res: express.Response): Promise<AdminSessionSnapshot | null> {
   const session = await requireSession(req, res)
   if (!session) {
     return null
@@ -588,7 +591,11 @@ async function deleteAdminUser(req: express.Request, res: express.Response) {
   return { ok: true } as const
 }
 
-export function createAdminRuntimeRouter() {
+export type CreateAdminRuntimeRouterOptions = {
+  managedAi?: RuntimeState | null
+}
+
+export function createAdminRuntimeRouter(options: CreateAdminRuntimeRouterOptions = {}) {
   const deps: AdminRouteDeps = {
     getSessionSnapshot: requirePlatformAdminSnapshot,
     listUsers: async (req, res) => {
@@ -603,6 +610,22 @@ export function createAdminRuntimeRouter() {
     disableUser: disableAdminUser,
     enableUser: enableAdminUser,
     deleteUser: deleteAdminUser,
+  }
+
+  if (options.managedAi) {
+    Object.assign(
+      deps,
+      createManagedAiAdminRouteDeps({
+        getAdminSession: requirePlatformAdminSnapshot,
+        aiAccess: options.managedAi.aiAccess,
+        alerts: options.managedAi.alerts,
+        audit: options.managedAi.audit,
+        credentials: options.managedAi.credentials,
+        leases: options.managedAi.leases,
+        secrets: options.managedAi.secrets,
+        usage: options.managedAi.usage,
+      }),
+    )
   }
 
   return createAdminRouter(deps)

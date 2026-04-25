@@ -119,13 +119,13 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
 test("by-project rows keep the title wrapper without a branch toggle button", () => {
   assert.match(
     source,
-    /<div class="relative min-w-0 flex-1">/,
+    /<span class="relative min-w-0 flex-1">/,
     "by-project rows should keep the title/content wrapper around the label",
   );
 
   assert.match(
     source,
-    /<div class="relative min-w-0 flex-1">[\s\S]*<div class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-12 truncate"/,
+    /<span class="relative min-w-0 flex-1">[\s\S]*<span class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-12 truncate"/,
     "by-project rows should keep the title line structure after removing the dedicated toggle",
   );
 
@@ -137,13 +137,13 @@ test("by-project rows keep the title wrapper without a branch toggle button", ()
 
   assert.doesNotMatch(
     source,
-    /<div class="relative min-w-0 flex-1">[\s\S]*<div class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-11 truncate font-medium"/,
+    /<span class="relative min-w-0 flex-1">[\s\S]*<span class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-11 truncate font-medium"/,
     "by-project row titles should no longer force a medium font weight",
   );
 
   assert.doesNotMatch(
     source,
-    /<div class="relative min-w-0 flex-1">[\s\S]*<div class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-11 truncate"/,
+    /<span class="relative min-w-0 flex-1">[\s\S]*<span class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-11 truncate"/,
     "by-project row titles should no longer use the muted gray-11 text tone",
   );
 

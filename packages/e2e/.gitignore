@@ -1,5 +1,6 @@
 .tmp-opencode-home/
 .tmp-veslo-home/
 .tmp-live-feedback-youtrack/
+.tmp-opencode-home-live/
 __snapshots__/**/actual/
 __snapshots__/**/diff/

@@ -129,22 +129,27 @@ fi
 VESLO_PORT="$(pick_port)"
 WEB_PORT="$(pick_port)"
 VESLO_AI_GATEWAY_PORT="$(pick_port)"
+DEN_PORT="$(pick_port)"
 if [ "$WEB_PORT" = "$VESLO_PORT" ]; then
   WEB_PORT="$(pick_port)"
 fi
 while [ "$VESLO_AI_GATEWAY_PORT" = "$VESLO_PORT" ] || [ "$VESLO_AI_GATEWAY_PORT" = "$WEB_PORT" ]; do
   VESLO_AI_GATEWAY_PORT="$(pick_port)"
 done
+while [ "$DEN_PORT" = "$VESLO_PORT" ] || [ "$DEN_PORT" = "$WEB_PORT" ] || [ "$DEN_PORT" = "$VESLO_AI_GATEWAY_PORT" ]; do
+  DEN_PORT="$(pick_port)"
+done
 
 echo "Starting Docker Compose project: $PROJECT" >&2
 echo "- VESLO_PORT=$VESLO_PORT" >&2
 echo "- WEB_PORT=$WEB_PORT" >&2
 echo "- VESLO_AI_GATEWAY_PORT=$VESLO_AI_GATEWAY_PORT" >&2
+echo "- DEN_PORT=$DEN_PORT" >&2
 
 start_stack() {
   local config_dir="$1"
   local data_dir="$2"
-  VESLO_DEV_ID="$DEV_ID" VESLO_PORT="$VESLO_PORT" WEB_PORT="$WEB_PORT" VESLO_AI_GATEWAY_PORT="$VESLO_AI_GATEWAY_PORT" \
+  VESLO_DEV_ID="$DEV_ID" VESLO_PORT="$VESLO_PORT" WEB_PORT="$WEB_PORT" VESLO_AI_GATEWAY_PORT="$VESLO_AI_GATEWAY_PORT" DEN_PORT="$DEN_PORT" \
     VESLO_HOST_OPENCODE_CONFIG_DIR="$config_dir" \
     VESLO_HOST_OPENCODE_DATA_DIR="$data_dir" \
     docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d
@@ -174,6 +179,8 @@ echo "" >&2
 echo "Veslo web UI:        http://localhost:$WEB_PORT" >&2
 echo "Veslo server:        http://localhost:$VESLO_PORT" >&2
 echo "Veslo AI gateway:    http://localhost:$VESLO_AI_GATEWAY_PORT" >&2
+echo "Veslo Den:           http://localhost:$DEN_PORT" >&2
+echo "AI gateway DB:       mysql://gateway:gateway@ai-gateway-db:3306/veslo_ai_gateway (container-internal)" >&2
 echo "Token file:          $ROOT_DIR/tmp/.dev-env-$DEV_ID" >&2
 echo "" >&2
 echo "To stop this stack:" >&2

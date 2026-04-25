@@ -5,6 +5,7 @@ import { z } from "zod"
 import { recordAuditEvent } from "../audit.js"
 import { db } from "../db/index.js"
 import { AuthUserTable, OrgMembershipTable, OrgRole, OrgTable } from "../db/schema.js"
+import { requireVerifiedEmail } from "./email-verification.js"
 import { asyncRoute } from "./errors.js"
 import { resolveMembershipOrganizations, requireOrganizationAccess, serializeOrganization, readRequestedOrganizationId, isPlatformAdmin } from "./org-auth.js"
 import { requireSession } from "./session.js"
@@ -139,6 +140,10 @@ orgsRouter.post("/:orgId/members", asyncRoute(async (req, res) => {
     return
   }
 
+  if (!requireVerifiedEmail(res, context.session)) {
+    return
+  }
+
   const parsed = addMemberSchema.safeParse(req.body ?? {})
   if (!parsed.success) {
     res.status(400).json({ error: "invalid_request", details: parsed.error.flatten() })
@@ -212,6 +217,10 @@ orgsRouter.patch("/:orgId/members/:memberId", asyncRoute(async (req, res) => {
     minimumRole: "owner",
   })
   if (!context) {
+    return
+  }
+
+  if (!requireVerifiedEmail(res, context.session)) {
     return
   }
 
@@ -292,6 +301,10 @@ orgsRouter.delete("/:orgId/members/:memberId", asyncRoute(async (req, res) => {
     minimumRole: "owner",
   })
   if (!context) {
+    return
+  }
+
+  if (!requireVerifiedEmail(res, context.session)) {
     return
   }
 

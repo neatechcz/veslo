@@ -1,7 +1,9 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { parse } from "jsonc-parser";
 
 import { isTauriRuntime } from "../utils";
+import { isGatewayOwnedProvider, type GatewayOwnedProviderId } from "../utils/providers";
 import { fetchWithTimeout } from "./http";
 
 export type FieldsResult<T> =
@@ -18,6 +20,21 @@ export type OpencodeAuth = {
 const DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS = 10_000;
 const OAUTH_OPENCODE_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const MCP_AUTH_OPENCODE_REQUEST_TIMEOUT_MS = 90_000;
+const GATEWAY_PROVIDER_SECRET_OPTION_KEYS = new Set([
+  "apikey",
+  "apikeyid",
+  "accesstoken",
+  "refreshtoken",
+  "token",
+]);
+const GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS = new Set([
+  "xveslogatewaytoken",
+  "xveslosessionid",
+]);
+const SERVER_PATCH_COMPARISON_SECRET_VALUE = "__veslo_secret__";
+const SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE = "__veslo_gateway_token__";
+
+export const OPENCODE_SESSION_ID_TEMPLATE = "${OPENCODE_SESSION_ID}";
 
 function getRequestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
@@ -120,6 +137,235 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     headers: Object.keys(headers).length ? headers : undefined,
     fetch: fetchImpl,
   });
+}
+
+function normalizeConfigKey(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isGatewayProviderSecretKey(normalizedKey: string): boolean {
+  if (!normalizedKey) return false;
+  if (GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS.has(normalizedKey)) return false;
+  if (normalizedKey === "authorization") return true;
+  if (normalizedKey === "apikey") return true;
+  if (normalizedKey === "accesskey") return true;
+  if (normalizedKey === "privatekey") return true;
+  if (normalizedKey.endsWith("token")) return true;
+  if (normalizedKey.endsWith("secret")) return true;
+  if (normalizedKey.endsWith("apikey")) return true;
+  if (normalizedKey.endsWith("accesskey")) return true;
+  if (normalizedKey.endsWith("privatekey")) return true;
+  return false;
+}
+
+function readConfigObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function parseConfigContent(content?: string | null): Record<string, unknown> {
+  const raw = content?.trim() ?? "";
+  if (!raw) return {};
+
+  const parsed = parse(raw);
+  return readConfigObject(parsed);
+}
+
+function sanitizeGatewayProviderHeaders(value: unknown): Record<string, string> {
+  const headers = readConfigObject(value);
+  const sanitized: Record<string, string> = {};
+
+  for (const [key, rawValue] of Object.entries(headers)) {
+    if (isGatewayProviderSecretKey(normalizeConfigKey(key))) {
+      continue;
+    }
+    if (typeof rawValue !== "string") continue;
+    sanitized[key] = rawValue;
+  }
+
+  return sanitized;
+}
+
+function sanitizeGatewayProviderOptions(value: unknown): Record<string, unknown> {
+  const options = readConfigObject(value);
+  const sanitized: Record<string, unknown> = {};
+
+  for (const [key, rawValue] of Object.entries(options)) {
+    const normalizedKey = normalizeConfigKey(key);
+    if (GATEWAY_PROVIDER_SECRET_OPTION_KEYS.has(normalizedKey)) {
+      continue;
+    }
+    if (normalizedKey === "headers") {
+      sanitized[key] = sanitizeGatewayProviderHeaders(rawValue);
+      continue;
+    }
+    sanitized[key] = rawValue;
+  }
+
+  return sanitized;
+}
+
+function sanitizeGatewayProviderModel(value: unknown): {
+  config: Record<string, unknown>;
+  headers: Record<string, string>;
+} {
+  const model = readConfigObject(value);
+  const sanitized: Record<string, unknown> = {};
+  let headers: Record<string, string> = {};
+
+  for (const [key, rawValue] of Object.entries(model)) {
+    const normalizedKey = normalizeConfigKey(key);
+    if (isGatewayProviderSecretKey(normalizedKey)) {
+      continue;
+    }
+    if (normalizedKey === "headers") {
+      headers = sanitizeGatewayProviderHeaders(rawValue);
+      continue;
+    }
+    sanitized[key] = rawValue;
+  }
+
+  return { config: sanitized, headers };
+}
+
+function normalizeConfigForServerPatchComparison(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeConfigForServerPatchComparison(item));
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const input = value as Record<string, unknown>;
+  const output: Record<string, unknown> = {};
+
+  for (const [key, rawValue] of Object.entries(input)) {
+    const normalizedKey = normalizeConfigKey(key);
+    if (normalizedKey === "xveslogatewaytoken") {
+      output[key] =
+        typeof rawValue === "string" && rawValue.trim()
+          ? SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE
+          : rawValue;
+      continue;
+    }
+
+    if (isGatewayProviderSecretKey(normalizedKey)) {
+      output[key] =
+        typeof rawValue === "string" && rawValue.trim()
+          ? SERVER_PATCH_COMPARISON_SECRET_VALUE
+          : rawValue;
+      continue;
+    }
+
+    output[key] = normalizeConfigForServerPatchComparison(rawValue);
+  }
+
+  return output;
+}
+
+export function managedConfigContentsMatchForServerPatch(
+  currentContent: string | null | undefined,
+  desiredContent: string | null | undefined,
+): boolean {
+  const current = normalizeConfigForServerPatchComparison(parseConfigContent(currentContent));
+  const desired = normalizeConfigForServerPatchComparison(parseConfigContent(desiredContent));
+  return JSON.stringify(current) === JSON.stringify(desired);
+}
+
+export function applyGatewayProviderRouting(
+  content: string | null | undefined,
+  input: {
+    providerId: GatewayOwnedProviderId;
+    serverBaseUrl: string;
+    serverClientToken: string;
+    gatewayAccessToken: string;
+    models?: string[];
+  },
+) {
+  const providerId = input.providerId.trim().toLowerCase();
+  if (!isGatewayOwnedProvider(providerId)) {
+    throw new Error(`Gateway routing is not supported for provider: ${input.providerId}`);
+  }
+
+  const serverBaseUrl = input.serverBaseUrl.trim().replace(/\/+$/, "");
+  if (!serverBaseUrl) {
+    throw new Error("Server base URL is required");
+  }
+
+  const serverClientToken = input.serverClientToken.trim();
+  if (!serverClientToken) {
+    throw new Error("Server client token is required");
+  }
+
+  const gatewayAccessToken = input.gatewayAccessToken.trim();
+  if (!gatewayAccessToken) {
+    throw new Error("Gateway access token is required");
+  }
+
+  const parsed = parseConfigContent(content);
+  const providerRoot = readConfigObject(parsed.provider);
+  const existingProvider = readConfigObject(providerRoot[providerId]);
+  const existingOptions = sanitizeGatewayProviderOptions(existingProvider.options);
+  const existingHeaders = sanitizeGatewayProviderHeaders(existingOptions.headers);
+  const existingModels = readConfigObject(existingProvider.models);
+  const assignedModels = Array.from(
+    new Set((input.models ?? []).map((value) => value.trim()).filter(Boolean)),
+  );
+  const routedModels = assignedModels.reduce<Record<string, unknown>>((models, modelId) => {
+    const existingModel = sanitizeGatewayProviderModel(existingModels[modelId]);
+    models[modelId] = {
+      ...(providerId === "codex_oauth"
+        ? {
+            name: modelId,
+            tool_call: true,
+            reasoning: true,
+          }
+        : {}),
+      ...existingModel.config,
+      headers: {
+        ...existingModel.headers,
+        ...(providerId === "codex_oauth" ? {} : { Authorization: `Bearer ${serverClientToken}` }),
+        "x-veslo-gateway-token": gatewayAccessToken,
+        "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
+      },
+    };
+    return models;
+  }, {});
+
+  const nextProvider: Record<string, unknown> = {
+    ...existingProvider,
+    ...(providerId === "codex_oauth"
+      ? {
+          name: typeof existingProvider.name === "string" && existingProvider.name.trim()
+            ? existingProvider.name
+            : "Veslo Codex OAuth",
+          npm: typeof existingProvider.npm === "string" && existingProvider.npm.trim()
+            ? existingProvider.npm
+            : "@ai-sdk/openai-compatible",
+          env: Array.isArray(existingProvider.env) ? existingProvider.env : [],
+        }
+      : {}),
+    options: {
+      ...existingOptions,
+      ...(providerId === "codex_oauth" ? { apiKey: serverClientToken } : {}),
+      baseURL: `${serverBaseUrl}/ai-gateway/providers/${providerId}/v1`,
+      ...(Object.keys(existingHeaders).length > 0 ? { headers: existingHeaders } : {}),
+    },
+  };
+
+  if (assignedModels.length > 0) {
+    nextProvider.models = routedModels;
+  }
+
+  parsed.provider = {
+    ...providerRoot,
+    [providerId]: nextProvider,
+  };
+
+  return JSON.stringify(parsed, null, 2);
 }
 
 export async function waitForHealthy(

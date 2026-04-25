@@ -13,7 +13,9 @@ import { once } from "node:events";
 
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { TuiHandle } from "./tui/app.js";
+import { reconcileOpencodeVersion } from "./opencode-version.js";
 import { sanitizeRuntimePayloadForLogs } from "./security.js";
+import { readVersionManifestFromDirs, type VersionInfo, type VersionManifest } from "./version-manifest.js";
 
 type ApprovalMode = "manual" | "auto";
 
@@ -85,6 +87,7 @@ const DEFAULT_APPROVAL_TIMEOUT = 30000;
 const DEFAULT_OPENCODE_USERNAME = "opencode";
 const DEFAULT_OPENCODE_HOT_RELOAD_DEBOUNCE_MS = 700;
 const DEFAULT_OPENCODE_HOT_RELOAD_COOLDOWN_MS = 1500;
+const DEFAULT_MANAGED_AI_BASE_URL = "https://veslo-ai-gateway-dev.onrender.com";
 
 const SANDBOX_INTERNAL_OPENCODE_PORT = 4096;
 const SANDBOX_INTERNAL_VESLO_PORT = DEFAULT_VESLO_PORT;
@@ -106,11 +109,6 @@ type ChildHandle = {
   child: ReturnType<typeof spawn>;
 };
 
-type VersionInfo = {
-  version: string;
-  sha256: string;
-};
-
 type SidecarName = "veslo-server" | "veslo-code-router" | "veslo-code";
 
 type SidecarTarget =
@@ -120,11 +118,6 @@ type SidecarTarget =
   | "linux-arm64"
   | "windows-x64"
   | "windows-arm64";
-
-type VersionManifest = {
-  dir: string;
-  entries: Record<string, VersionInfo>;
-};
 
 type RemoteSidecarAsset = {
   asset?: string;
@@ -987,20 +980,12 @@ function resolveBinCommand(bin: string): { command: string; prefixArgs: string[]
 }
 
 async function readVersionManifest(): Promise<VersionManifest | null> {
-  const candidates = [dirname(process.execPath), dirname(fileURLToPath(import.meta.url))];
-  for (const dir of candidates) {
-    const manifestPath = join(dir, "versions.json");
-    if (await fileExists(manifestPath)) {
-      try {
-        const payload = await readFile(manifestPath, "utf8");
-        const entries = JSON.parse(payload) as Record<string, VersionInfo>;
-        return { dir, entries };
-      } catch {
-        return { dir, entries: {} };
-      }
-    }
-  }
-  return null;
+  return readVersionManifestFromDirs(
+    [dirname(process.execPath), dirname(fileURLToPath(import.meta.url))],
+    {
+      target: process.env.TAURI_ENV_TARGET_TRIPLE ?? process.env.TARGET ?? null,
+    },
+  );
 }
 
 const remoteManifestCache = new Map<string, Promise<RemoteSidecarManifest | null>>();
@@ -2603,6 +2588,12 @@ async function startVesloServer(options: {
   runId: string;
   logFormat: LogFormat;
 }) {
+  const managedAiBaseUrl = (
+    process.env.VESLO_MANAGED_AI_BASE_URL?.trim() ||
+    process.env.VESLO_AI_GATEWAY_BASE_URL?.trim() ||
+    DEFAULT_MANAGED_AI_BASE_URL
+  ).replace(/\/+$/, "");
+
   const args = [
     "--host",
     options.host,
@@ -2663,6 +2654,7 @@ async function startVesloServer(options: {
       ),
       ...(options.opencodeRouterHealthPort ? { OPENCODE_ROUTER_HEALTH_PORT: String(options.opencodeRouterHealthPort) } : {}),
       ...(options.opencodeRouterDataDir ? { OPENCODE_ROUTER_DATA_DIR: options.opencodeRouterDataDir } : {}),
+      VESLO_MANAGED_AI_BASE_URL: managedAiBaseUrl,
       ...(options.opencodeBaseUrl ? { VESLO_OPENCODE_BASE_URL: options.opencodeBaseUrl } : {}),
       ...(options.opencodeDirectory ? { VESLO_OPENCODE_DIRECTORY: options.opencodeDirectory } : {}),
       ...(options.opencodeUsername ? { VESLO_OPENCODE_USERNAME: options.opencodeUsername } : {}),
@@ -3255,18 +3247,12 @@ async function verifyOpenCodeRouterVersion(binary: ResolvedBinary): Promise<stri
 
 async function verifyOpencodeVersion(binary: ResolvedBinary): Promise<string | undefined> {
   const actual = await readCliVersion(binary.bin);
-  // When the binary was explicitly provided via --opencode-bin (source "external"),
-  // a strict version check would break desktop app users whenever a new opencode
-  // release ships on GitHub before Veslo updates its bundled binary. Log a
-  // warning instead of throwing so the caller can still proceed.
-  if (binary.source === "external" && binary.expectedVersion && actual && binary.expectedVersion !== actual) {
+  if (!actual) {
     process.stderr.write(
-      `[veslo-orchestrator] Warning: opencode version mismatch (expected ${binary.expectedVersion}, got ${actual}). Proceeding with ${binary.bin}.\n`,
+      `[veslo-orchestrator] Warning: unable to determine opencode version from ${binary.bin}. Proceeding without a version check.\n`,
     );
-    return actual;
   }
-  assertVersionMatch("veslo-code", binary.expectedVersion, actual, binary.bin);
-  return actual;
+  return reconcileOpencodeVersion(binary, actual);
 }
 
 async function verifyVesloServer(input: {

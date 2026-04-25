@@ -9,6 +9,11 @@ export const LM_STUDIO_PROVIDER_ID = "lmstudio";
 export const LM_STUDIO_PROVIDER_NAME = "LM Studio (local)";
 export const LM_STUDIO_PROVIDER_NPM = "@ai-sdk/openai-compatible";
 export const LM_STUDIO_DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1";
+export const GATEWAY_OWNED_PROVIDER_IDS = ["openai", "anthropic", "codex_oauth"] as const;
+
+export type GatewayOwnedProviderId = (typeof GATEWAY_OWNED_PROVIDER_IDS)[number];
+
+const GATEWAY_OWNED_PROVIDER_SET = new Set<string>(GATEWAY_OWNED_PROVIDER_IDS);
 
 export const resolveLmStudioBaseUrl = (
   explicitInput?: string | null,
@@ -27,8 +32,30 @@ export const resolveLmStudioBaseUrl = (
   return LM_STUDIO_DEFAULT_BASE_URL;
 };
 
+export const isGatewayOwnedProvider = (
+  providerId?: string | null,
+): providerId is GatewayOwnedProviderId => GATEWAY_OWNED_PROVIDER_SET.has(providerId?.trim().toLowerCase() ?? "");
+
+export const isGatewayOAuthProvider = (providerId?: string | null) =>
+  (providerId?.trim().toLowerCase() ?? "") === "openai";
+
+export const isGatewayApiKeyProvider = (providerId?: string | null) =>
+  (providerId?.trim().toLowerCase() ?? "") === "anthropic";
+
 export const isApiCredentialRequired = (providerId?: string | null) =>
   (providerId?.trim().toLowerCase() ?? "") !== LM_STUDIO_PROVIDER_ID;
+
+export const mergeConnectedProviderIds = (...groups: Array<readonly (string | null | undefined)[]>) => {
+  const merged = new Set<string>();
+  for (const group of groups) {
+    for (const value of group ?? []) {
+      const trimmed = value?.trim();
+      if (!trimmed) continue;
+      merged.add(trimmed);
+    }
+  }
+  return Array.from(merged);
+};
 
 export const extractOpenAiCompatibleModelIds = (payload: unknown) => {
   if (!payload || typeof payload !== "object") return [] as string[];

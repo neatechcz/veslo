@@ -3,28 +3,32 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./feedback-modal.tsx", import.meta.url), "utf8");
+const modalShellSource = readFileSync(new URL("./modal-shell.tsx", import.meta.url), "utf8");
+const modalFocusSource = readFileSync(new URL("./use-modal-focus.ts", import.meta.url), "utf8");
+const modalErrorSource = readFileSync(new URL("./modal-error.tsx", import.meta.url), "utf8");
 
 test("feedback modal exposes accessible dialog semantics", () => {
-  assert.match(source, /role="dialog"/, "feedback modal should expose dialog semantics");
-  assert.match(source, /aria-modal="true"/, "feedback modal should mark the dialog as modal");
-  assert.match(source, /aria-labelledby=\{titleId\}/, "feedback modal should label the dialog via its heading");
-  assert.match(source, /<h3 id=\{titleId\}/, "feedback modal heading should provide the dialog label target");
+  assert.match(modalShellSource, /role=\{props\.role \?\? "dialog"\}/, "shared modal shell should expose dialog semantics");
+  assert.match(modalShellSource, /aria-modal="true"/, "shared modal shell should mark the dialog as modal");
+  assert.match(source, /ariaLabelledBy=\{titleId\}/, "feedback modal should label the dialog via its heading");
+  assert.match(source, /titleId=\{titleId\}/, "feedback modal heading should provide the dialog label target");
   assert.match(source, /tabIndex=\{-1\}/, "feedback modal container should be programmatically focusable");
 });
 
 test("feedback modal closes on Escape and traps focus inside the dialog", () => {
-  assert.match(source, /event\.key === "Escape"/, "feedback modal should listen for Escape");
-  assert.match(source, /event\.key !== "Tab"/, "feedback modal should intercept Tab navigation");
-  assert.match(source, /window\.addEventListener\("keydown", handleKeyDown, true\)/, "feedback modal should register a capturing keydown handler while open");
-  assert.match(source, /querySelectorAll<HTMLElement>\(FOCUSABLE_SELECTOR\)/, "feedback modal should discover focusable elements inside the dialog");
-  assert.match(source, /dialogRef\.contains\(activeElement\)/, "feedback modal should keep focus within the dialog boundary");
-  assert.match(source, /firstFocusable\.focus\(\)|lastFocusable\.focus\(\)/, "feedback modal should wrap focus between the first and last tabbable controls");
+  assert.match(source, /useFocusTrap\(/, "feedback modal should use the shared focus trap");
+  assert.match(modalFocusSource, /event\.key === "Escape"/, "focus trap should listen for Escape");
+  assert.match(modalFocusSource, /event\.key !== "Tab"/, "focus trap should intercept Tab navigation");
+  assert.match(modalFocusSource, /window\.addEventListener\("keydown", handleKeyDown, true\)/, "focus trap should register a capturing keydown handler while open");
+  assert.match(modalFocusSource, /querySelectorAll<HTMLElement>\(FOCUSABLE_SELECTOR\)/, "focus trap should discover focusable elements inside the dialog");
+  assert.match(modalFocusSource, /dialogRef\.contains\(activeElement\)/, "focus trap should keep focus within the dialog boundary");
+  assert.match(modalFocusSource, /firstFocusable\.focus\(\)|lastFocusable\.focus\(\)/, "focus trap should wrap focus between the first and last tabbable controls");
 });
 
 test("feedback modal cleans up scheduled initial focus when closing", () => {
-  assert.match(source, /const focusFrame = requestAnimationFrame\(/, "feedback modal should keep a handle for the scheduled initial focus");
-  assert.match(source, /cancelAnimationFrame\(focusFrame\)/, "feedback modal should cancel the scheduled focus frame during cleanup");
-  assert.match(source, /let focusFrameCancelled = false|let isFocusFrameActive = true/, "feedback modal should guard the focus callback against stale execution");
+  assert.match(modalFocusSource, /const frame = requestAnimationFrame\(/, "focus trap should keep a handle for the scheduled initial focus");
+  assert.match(modalFocusSource, /cancelAnimationFrame\(frame\)/, "focus trap should cancel the scheduled focus frame during cleanup");
+  assert.match(modalFocusSource, /let cancelled = false/, "focus trap should guard the focus callback against stale execution");
 });
 
 test("feedback modal blocks duplicate submit activation while persistence is in flight", () => {
@@ -39,6 +43,6 @@ test("feedback modal blocks duplicate submit activation while persistence is in 
 
 test("feedback modal renders inline submit errors from the app shell", () => {
   assert.match(source, /error: string \| null;/, "feedback modal props should accept a dedicated inline error message");
-  assert.match(source, /<Show when=\{props\.error\}>/, "feedback modal should render submit errors inline when present");
-  assert.match(source, /role="alert"/, "feedback modal error surface should announce failures accessibly");
+  assert.match(source, /<ModalError error=\{props\.error\} \/>/, "feedback modal should render submit errors inline when present");
+  assert.match(modalErrorSource, /role="alert"/, "modal error surface should announce failures accessibly");
 });
