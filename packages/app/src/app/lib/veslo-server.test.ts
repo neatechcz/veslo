@@ -8,6 +8,8 @@ import {
   resolveSessionArchiveClientOptions,
 } from "./veslo-server.js";
 
+const LOCAL_SESSION_ARCHIVE_OWNER_KEY = "local:desktop";
+
 test("deriveLocalVesloServerUrlFromOpencodeBaseUrl rewrites local loopback hosts to Veslo port", () => {
   const derived = deriveLocalVesloServerUrlFromOpencodeBaseUrl("http://127.0.0.1:64792");
   assert.equal(derived, "http://127.0.0.1:8787");
@@ -62,6 +64,46 @@ test("resolveSessionArchiveClientOptions falls back to stored settings when acti
     token: "settings-token",
     accountId: "usr_123",
   });
+});
+
+test("resolveSessionArchiveClientOptions allows local archive state without a cloud account", () => {
+  const resolved = resolveSessionArchiveClientOptions({
+    accountId: null,
+    activeBaseUrl: "http://127.0.0.1:8787",
+    activeToken: " local-client-token ",
+    settingsUrl: "https://veslo.example",
+    settingsToken: "remote-token",
+  });
+
+  assert.deepEqual(resolved, {
+    baseUrl: "http://127.0.0.1:8787",
+    token: "local-client-token",
+    accountId: LOCAL_SESSION_ARCHIVE_OWNER_KEY,
+  });
+});
+
+test("resolveSessionArchiveClientOptions rejects remote archive state without a cloud account", () => {
+  const resolved = resolveSessionArchiveClientOptions({
+    accountId: null,
+    activeBaseUrl: "https://veslo.example",
+    activeToken: "remote-token",
+    settingsUrl: "https://settings.veslo.example",
+    settingsToken: "settings-token",
+  });
+
+  assert.equal(resolved, null);
+});
+
+test("resolveSessionArchiveClientOptions does not fall back to local settings after a remote archive endpoint without an account", () => {
+  const resolved = resolveSessionArchiveClientOptions({
+    accountId: null,
+    activeBaseUrl: "https://veslo.example",
+    activeToken: "remote-token",
+    settingsUrl: "http://127.0.0.1:8787",
+    settingsToken: "local-client-token",
+  });
+
+  assert.equal(resolved, null);
 });
 
 test("session archive requests include the account id header", async () => {

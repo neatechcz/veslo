@@ -228,6 +228,7 @@ export default function WorkspaceSessionList(props: Props) {
   const isSessionArchived = (sessionId: string) => archivedSessionIdSet().has(sessionId.trim());
   const isArchiveConfirmationPending = (sessionId: string) =>
     pendingArchiveConfirmationSessionId() === sessionId.trim();
+  const sessionHoverActionsSuspended = createMemo(() => Boolean(props.pendingSelectedSessionId?.trim()));
   const shouldShowSessionRow = (row: FlatSessionRow) => !isSessionArchived(row.session.id);
 
   const recentRows = createMemo<FlatSessionRow[]>(() =>
@@ -1484,7 +1485,11 @@ export default function WorkspaceSessionList(props: Props) {
                           </button>
 
                           <span
-                            class="pointer-events-none absolute right-2 bottom-1 text-[11px] text-gray-9 whitespace-nowrap transition-opacity group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
+                            class={`pointer-events-none absolute right-2 bottom-1 text-[11px] text-gray-9 whitespace-nowrap transition-opacity ${
+                              sessionHoverActionsSuspended()
+                                ? ""
+                                : "group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
+                            }`}
                             title={formatSessionTimestampTooltip(displayTimestamp(session()), currentLocale())}
                           >
                             {formatSessionRelativeAge(displayTimestamp(session()))}
@@ -1494,6 +1499,8 @@ export default function WorkspaceSessionList(props: Props) {
                             class={`absolute right-2 bottom-1 transition-opacity ${
                               archiveConfirmationPending()
                                 ? "opacity-100"
+                                : sessionHoverActionsSuspended()
+                                ? "pointer-events-none opacity-0"
                                 : "opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100"
                             }`}
                           >
@@ -1815,7 +1822,11 @@ export default function WorkspaceSessionList(props: Props) {
                                 </button>
 
                                 <span
-                                  class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-9 whitespace-nowrap transition-opacity group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
+                                  class={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-9 whitespace-nowrap transition-opacity ${
+                                    sessionHoverActionsSuspended()
+                                      ? ""
+                                      : "group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
+                                  }`}
                                   title={formatSessionTimestampTooltip(displayTimestamp(session()), currentLocale())}
                                 >
                                   {formatSessionRelativeAge(displayTimestamp(session()))}
@@ -1825,6 +1836,8 @@ export default function WorkspaceSessionList(props: Props) {
                                   class={`absolute right-2 top-1/2 -translate-y-1/2 transition-opacity ${
                                     archiveConfirmationPending()
                                       ? "opacity-100"
+                                      : sessionHoverActionsSuspended()
+                                      ? "pointer-events-none opacity-0"
                                       : "opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100"
                                   }`}
                                 >

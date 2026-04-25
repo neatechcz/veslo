@@ -13,6 +13,7 @@ export const AI_ACCESS_NOT_CONFIGURED_MESSAGE =
   "Your AI access has not been configured by the platform admin yet.";
 export const AI_ACCESS_INVALID_MESSAGE =
   "Assigned AI access is incomplete. Ask your platform admin to update it.";
+export const DEFAULT_MANAGED_AI_GATEWAY_BASE_URL = "https://veslo-ai-gateway-dev.onrender.com";
 
 export type ManagedAiAccessProfile = {
   userId: string;
@@ -32,6 +33,46 @@ function isLoopbackHttpUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function normalizeHttpUrl(value: string | null | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed);
+    parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return trimmed.replace(/\/+$/, "");
+  }
+}
+
+export function resolveManagedAiGatewayBaseUrl(input: {
+  settingsUrl: string | null | undefined;
+  gatewayClientBaseUrl: string | null | undefined;
+  localFallbackBaseUrl: string | null | undefined;
+  isDesktopRuntime: boolean;
+}): string {
+  const settingsUrl = normalizeHttpUrl(input.settingsUrl);
+  const gatewayClientBaseUrl = normalizeHttpUrl(input.gatewayClientBaseUrl);
+  const localFallbackBaseUrl = normalizeHttpUrl(input.localFallbackBaseUrl);
+  const desktopLocalBaseUrl = gatewayClientBaseUrl || localFallbackBaseUrl;
+
+  if (input.isDesktopRuntime && isLoopbackHttpUrl(desktopLocalBaseUrl)) {
+    return "";
+  }
+
+  if (input.isDesktopRuntime) {
+    return DEFAULT_MANAGED_AI_GATEWAY_BASE_URL;
+  }
+
+  if (settingsUrl && !isLoopbackHttpUrl(settingsUrl)) {
+    return settingsUrl;
+  }
+
+  return gatewayClientBaseUrl && !isLoopbackHttpUrl(gatewayClientBaseUrl)
+    ? gatewayClientBaseUrl
+    : "";
 }
 
 function readConfigObject(value: unknown): Record<string, unknown> {

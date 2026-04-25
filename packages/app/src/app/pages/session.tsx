@@ -3428,10 +3428,9 @@ export default function SessionView(props: SessionViewProps) {
       .then((result) => {
         if (!shouldShowOverlay) return;
         if (attempt !== pendingSessionLoadAttempt) return;
-        // Clear the loading overlay once the session is opened (or blocked).
-        // In browsing mode (no engine), onSessionLoadComplete never fires,
-        // so we must clear it here for all terminal results.
-        if (result === "opened" || result === "blocked") {
+        // Opened routes keep the inline loading state until selectSession
+        // completes transcript hydration and fires onSessionLoadComplete.
+        if (result === "blocked" || result === "superseded") {
           props.setPendingSessionLoad(null);
         }
       })

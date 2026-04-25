@@ -331,6 +331,7 @@ import {
   AI_ACCESS_NOT_CONFIGURED_MESSAGE,
   formatManagedAiAccessConfig,
   resolveManagedAiAccess,
+  resolveManagedAiGatewayBaseUrl,
   shouldPreserveManagedAiConfig,
   shouldEnsureManagedAiLocalGateway,
   shouldDeferManagedAiAccessRefresh,
@@ -636,9 +637,9 @@ export default function App() {
     return createVesloServerClient({ baseUrl, token: auth.token, hostToken: auth.hostToken });
   });
 
-  const vesloArchiveClient = createMemo(() => {
+  const vesloArchiveClientOptions = createMemo(() => {
     const auth = vesloServerAuth();
-    const resolved = resolveSessionArchiveClientOptions({
+    return resolveSessionArchiveClientOptions({
       accountId: authenticatedAccountId(),
       activeBaseUrl: vesloServerBaseUrl(),
       activeToken: auth.token,
@@ -647,6 +648,12 @@ export default function App() {
       cloudUrl: cloudEnvironment.vesloUrl,
       cloudToken: cloudEnvironment.token,
     });
+  });
+
+  const sessionArchiveOwnerKey = createMemo(() => vesloArchiveClientOptions()?.accountId ?? "");
+
+  const vesloArchiveClient = createMemo(() => {
+    const resolved = vesloArchiveClientOptions();
     if (!resolved) return null;
     return createVesloServerClient(resolved);
   });
@@ -683,13 +690,12 @@ export default function App() {
 
   const managedAiGatewayBaseUrl = createMemo(() => {
     const settings = vesloServerSettings();
-    const remoteUrl = normalizeVesloServerUrl(settings.urlOverride ?? "") ?? "";
-    if (remoteUrl && !isLoopbackUrl(remoteUrl)) {
-      return remoteUrl;
-    }
-
-    const activeBaseUrl = gatewayVesloServerClient()?.baseUrl?.trim() ?? "";
-    return activeBaseUrl && !isLoopbackUrl(activeBaseUrl) ? activeBaseUrl : "";
+    return resolveManagedAiGatewayBaseUrl({
+      settingsUrl: normalizeVesloServerUrl(settings.urlOverride ?? "") ?? "",
+      gatewayClientBaseUrl: gatewayVesloServerClient()?.baseUrl?.trim() ?? "",
+      localFallbackBaseUrl: vesloServerLocalFallbackBaseUrl(),
+      isDesktopRuntime: isTauriRuntime(),
+    });
   });
 
   const devtoolsVesloClient = createMemo(() => vesloServerClient());
@@ -3632,8 +3638,8 @@ export default function App() {
 
   const loadSessionArchives = async () => {
     const client = vesloArchiveClient();
-    const accountId = authenticatedAccountId()?.trim() ?? "";
-    if (!client || !accountId) {
+    const ownerKey = sessionArchiveOwnerKey();
+    if (!client || !ownerKey) {
       setSessionArchiveRecords([]);
       setSessionArchiveReady(true);
       return;
@@ -3646,8 +3652,8 @@ export default function App() {
   let lastSessionArchiveClientKey = "";
   createEffect(() => {
     const client = vesloArchiveClient();
-    const accountId = authenticatedAccountId()?.trim() ?? "";
-    const key = client && accountId ? `${client.baseUrl}::${client.token ?? ""}::${accountId}` : "";
+    const ownerKey = sessionArchiveOwnerKey();
+    const key = client && ownerKey ? `${client.baseUrl}::${client.token ?? ""}::${ownerKey}` : "";
     if (key === lastSessionArchiveClientKey) return;
     lastSessionArchiveClientKey = key;
     setSessionArchiveReady(false);
@@ -3661,23 +3667,23 @@ export default function App() {
   let sessionArchiveMigrationRunning = false;
   createEffect(() => {
     const client = vesloArchiveClient();
-    const accountId = authenticatedAccountId()?.trim() ?? "";
+    const ownerKey = sessionArchiveOwnerKey();
     const ready = sessionArchiveReady();
     const records = sessionArchiveRecords();
     const groups = sidebarWorkspaceGroups();
 
-    if (!client || !accountId || !ready || sessionArchiveMigrationRunning) return;
-    if (readArchiveMigrationDone(accountId)) return;
+    if (!client || !ownerKey || !ready || sessionArchiveMigrationRunning) return;
+    if (readArchiveMigrationDone(ownerKey)) return;
 
     const legacyIds = readLegacyArchivedSessionIds();
     if (legacyIds.length === 0) {
-      writeArchiveMigrationDone(accountId);
+      writeArchiveMigrationDone(ownerKey);
       return;
     }
 
     if (records.length > 0) {
       clearLegacyArchivedSessionIds();
-      writeArchiveMigrationDone(accountId);
+      writeArchiveMigrationDone(ownerKey);
       return;
     }
 
@@ -3687,7 +3693,7 @@ export default function App() {
         groups.length > 0 && groups.every((group) => group.status === "ready" || group.status === "error");
       if (allGroupsSettled) {
         clearLegacyArchivedSessionIds();
-        writeArchiveMigrationDone(accountId);
+        writeArchiveMigrationDone(ownerKey);
       }
       return;
     }
@@ -3702,7 +3708,7 @@ export default function App() {
         }
         applySessionArchiveRecords(latest);
         clearLegacyArchivedSessionIds();
-        writeArchiveMigrationDone(accountId);
+        writeArchiveMigrationDone(ownerKey);
       } catch (error) {
         reportError(error, "sessionArchives.migrateLegacy");
       } finally {
@@ -3713,9 +3719,9 @@ export default function App() {
 
   const archiveSidebarSession = async (workspaceId: string, sessionId: string) => {
     const client = vesloArchiveClient();
-    const accountId = authenticatedAccountId()?.trim() ?? "";
-    if (!client || !accountId) {
-      setError("Cloud sign-in is required to archive sessions.");
+    const ownerKey = sessionArchiveOwnerKey();
+    if (!client || !ownerKey) {
+      setError("A Veslo server connection or cloud sign-in is required to archive sessions.");
       return;
     }
 
@@ -3730,15 +3736,15 @@ export default function App() {
       );
       applySessionArchiveRecords(response.items ?? []);
       clearLegacyArchivedSessionIds();
-      writeArchiveMigrationDone(accountId);
+      writeArchiveMigrationDone(ownerKey);
     });
   };
 
   const unarchiveSession = async (sessionId: string) => {
     const client = vesloArchiveClient();
-    const accountId = authenticatedAccountId()?.trim() ?? "";
-    if (!client || !accountId) {
-      setError("Cloud sign-in is required to unarchive sessions.");
+    const ownerKey = sessionArchiveOwnerKey();
+    if (!client || !ownerKey) {
+      setError("A Veslo server connection or cloud sign-in is required to unarchive sessions.");
       return;
     }
 
@@ -3746,7 +3752,7 @@ export default function App() {
       const response = await client.deleteSessionArchive(sessionId);
       applySessionArchiveRecords(response.items ?? []);
       clearLegacyArchivedSessionIds();
-      writeArchiveMigrationDone(accountId);
+      writeArchiveMigrationDone(ownerKey);
     });
   };
 

@@ -27,7 +27,7 @@ test("recent show-less memo reads its baseline only after the helper is declared
 test("recent rows keep timestamp on the right and replace it with menu trigger on hover", () => {
   assert.match(
     source,
-    /class="pointer-events-none absolute right-2 bottom-1 text-\[11px\] text-gray-9 whitespace-nowrap transition-opacity group-hover\/session-row:opacity-0 group-focus-within\/session-row:opacity-0"/,
+    /class=\{`pointer-events-none absolute right-2 bottom-1 text-\[11px\] text-gray-9 whitespace-nowrap transition-opacity \$\{[\s\S]*sessionHoverActionsSuspended\(\)[\s\S]*group-hover\/session-row:opacity-0 group-focus-within\/session-row:opacity-0/,
     "timestamp should be pinned to the metadata baseline (bottom) and disappear on row hover/focus",
   );
 
@@ -75,7 +75,7 @@ test("by-project session rows reserve right space and swap time for three-dot me
 
   assert.match(
     source,
-    /class="pointer-events-none absolute right-2 top-1\/2 -translate-y-1\/2 text-\[11px\] text-gray-9 whitespace-nowrap transition-opacity group-hover\/session-row:opacity-0 group-focus-within\/session-row:opacity-0"/,
+    /class=\{`pointer-events-none absolute right-2 top-1\/2 -translate-y-1\/2 text-\[11px\] text-gray-9 whitespace-nowrap transition-opacity \$\{[\s\S]*sessionHoverActionsSuspended\(\)[\s\S]*group-hover\/session-row:opacity-0 group-focus-within\/session-row:opacity-0/,
     "by-project rows should show right-aligned time that disappears on hover/focus",
   );
 
@@ -132,6 +132,26 @@ test("session hover action uses archive icon instead of three dots", () => {
   );
 });
 
+test("session hover archive action stays hidden while another session is pending load", () => {
+  assert.match(
+    source,
+    /const sessionHoverActionsSuspended = createMemo\(\(\) => Boolean\(props\.pendingSelectedSessionId\?\.trim\(\)\)\);/,
+    "session list should derive a hover-action suspension flag from the pending selected session",
+  );
+
+  assert.match(
+    source,
+    /sessionHoverActionsSuspended\(\)\s*\?\s*""\s*:\s*"group-hover\/session-row:opacity-0 group-focus-within\/session-row:opacity-0"/,
+    "timestamps should not disappear under a stationary cursor while session loading is pending",
+  );
+
+  assert.match(
+    source,
+    /sessionHoverActionsSuspended\(\)\s*\?\s*"pointer-events-none opacity-0"\s*:\s*"opacity-0 group-hover\/session-row:opacity-100 group-focus-within\/session-row:opacity-100"/,
+    "archive hover actions should stay hidden and non-interactive while session loading is pending",
+  );
+});
+
 test("recent rows keep metadata tucked closer to the title line without a branch toggle button", () => {
   assert.match(
     source,
@@ -171,7 +191,7 @@ test("recent rows keep metadata tucked closer to the title line without a branch
 
   assert.match(
     source,
-    /class="pointer-events-none absolute right-2 bottom-1 text-\[11px\] text-gray-9 whitespace-nowrap transition-opacity group-hover\/session-row:opacity-0 group-focus-within\/session-row:opacity-0"/,
+    /class=\{`pointer-events-none absolute right-2 bottom-1 text-\[11px\] text-gray-9 whitespace-nowrap transition-opacity \$\{[\s\S]*sessionHoverActionsSuspended\(\)[\s\S]*group-hover\/session-row:opacity-0 group-focus-within\/session-row:opacity-0/,
     "recent row timestamp should sit slightly tighter to the row bottom edge",
   );
 

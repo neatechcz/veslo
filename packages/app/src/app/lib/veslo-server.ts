@@ -686,6 +686,18 @@ export function normalizeVesloServerUrl(input: string) {
   return withProtocol.replace(/\/+$/, "");
 }
 
+export const LOCAL_SESSION_ARCHIVE_OWNER_KEY = "local:desktop";
+
+function isLoopbackVesloServerUrl(input: string) {
+  try {
+    const parsed = new URL(input);
+    const hostname = parsed.hostname.trim().toLowerCase();
+    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+  } catch {
+    return false;
+  }
+}
+
 export function resolveSessionArchiveClientOptions(options: {
   accountId?: string | null;
   activeBaseUrl?: string | null;
@@ -696,7 +708,6 @@ export function resolveSessionArchiveClientOptions(options: {
   cloudToken?: string | null;
 }) {
   const accountId = options.accountId?.trim() ?? "";
-  if (!accountId) return null;
 
   const candidates = [
     {
@@ -715,10 +726,12 @@ export function resolveSessionArchiveClientOptions(options: {
 
   for (const candidate of candidates) {
     if (!candidate.baseUrl || !candidate.token) continue;
+    const ownerKey = accountId || (isLoopbackVesloServerUrl(candidate.baseUrl) ? LOCAL_SESSION_ARCHIVE_OWNER_KEY : "");
+    if (!ownerKey) return null;
     return {
       baseUrl: candidate.baseUrl,
       token: candidate.token,
-      accountId,
+      accountId: ownerKey,
     };
   }
 

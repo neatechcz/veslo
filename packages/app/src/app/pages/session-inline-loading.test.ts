@@ -38,6 +38,25 @@ test("session loading moves from fullscreen app overlay into the center pane", (
   );
 });
 
+test("session switch keeps inline loading until transcript hydration completes", () => {
+  const openSessionStart = sessionSource.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string) => {");
+  const openSessionEnd = sessionSource.indexOf("  const resolveVesloWorkspaceId = (workspaceId: string) => {", openSessionStart);
+  assert.notEqual(openSessionStart, -1, "openSessionFromList should exist");
+  assert.notEqual(openSessionEnd, -1, "openSessionFromList block end should exist");
+  const openSessionSource = sessionSource.slice(openSessionStart, openSessionEnd);
+
+  assert.match(
+    openSessionSource,
+    /if \(result === "blocked" \|\| result === "superseded"\) \{\s*props\.setPendingSessionLoad\(null\);\s*\}/s,
+    "session click navigation should only clear the inline loading state for terminal non-open results",
+  );
+  assert.doesNotMatch(
+    openSessionSource,
+    /result === "opened"[\s\S]*props\.setPendingSessionLoad\(null\)/s,
+    "opened navigation must keep pendingSessionLoad alive until onSessionLoadComplete fires after transcript hydration",
+  );
+});
+
 test("pending draft write-back only runs while the bare pending draft route owns the composer bucket", () => {
   assert.match(
     appSource,

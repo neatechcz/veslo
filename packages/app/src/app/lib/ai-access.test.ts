@@ -4,9 +4,11 @@ import test from "node:test";
 import {
   AI_ACCESS_INVALID_MESSAGE,
   AI_ACCESS_NOT_CONFIGURED_MESSAGE,
+  DEFAULT_MANAGED_AI_GATEWAY_BASE_URL,
   formatManagedAiAccessConfig,
   type ManagedAiAccessProfile,
   resolveManagedAiAccess,
+  resolveManagedAiGatewayBaseUrl,
   shouldPreserveManagedAiConfig,
   shouldEnsureManagedAiLocalGateway,
   shouldDeferManagedAiAccessRefresh,
@@ -160,6 +162,52 @@ test("shouldEnsureManagedAiLocalGateway starts the desktop local gateway for sig
       localClientToken: "",
     }),
     false,
+  );
+});
+
+test("resolveManagedAiGatewayBaseUrl keeps desktop local-first even when env config has a remote Veslo URL", () => {
+  assert.equal(
+    resolveManagedAiGatewayBaseUrl({
+      settingsUrl: "https://den-worker-dev-dev-cloud-worker-2.onrender.com",
+      gatewayClientBaseUrl: "http://127.0.0.1:8787",
+      localFallbackBaseUrl: "http://127.0.0.1:8787",
+      isDesktopRuntime: true,
+    }),
+    "",
+  );
+
+  assert.equal(
+    resolveManagedAiGatewayBaseUrl({
+      settingsUrl: "https://den-worker-dev-dev-cloud-worker-2.onrender.com",
+      gatewayClientBaseUrl: "",
+      localFallbackBaseUrl: "http://127.0.0.1:8787",
+      isDesktopRuntime: true,
+    }),
+    "",
+  );
+});
+
+test("resolveManagedAiGatewayBaseUrl uses managed AI gateway instead of remote Veslo URL in desktop remote workspaces", () => {
+  assert.equal(
+    resolveManagedAiGatewayBaseUrl({
+      settingsUrl: "https://den-worker-dev-dev-cloud-worker-2.onrender.com",
+      gatewayClientBaseUrl: "https://den-worker-dev-dev-cloud-worker-2.onrender.com",
+      localFallbackBaseUrl: "",
+      isDesktopRuntime: true,
+    }),
+    DEFAULT_MANAGED_AI_GATEWAY_BASE_URL,
+  );
+});
+
+test("resolveManagedAiGatewayBaseUrl still uses remote URLs outside desktop local mode", () => {
+  assert.equal(
+    resolveManagedAiGatewayBaseUrl({
+      settingsUrl: "https://veslo-ai-gateway-dev.onrender.com",
+      gatewayClientBaseUrl: "",
+      localFallbackBaseUrl: "",
+      isDesktopRuntime: false,
+    }),
+    "https://veslo-ai-gateway-dev.onrender.com",
   );
 });
 

@@ -77,6 +77,8 @@ Main model source:
 
 Session archive behavior removes sessions from the active primary list and exposes archived items through Settings.
 
+In local desktop mode, archive state can be persisted through the local Veslo server without a cloud sign-in by using a local desktop archive owner key. Remote/cloud archive state still requires a stable signed-in account identity so records do not mix across users.
+
 If archive semantics change, update this doc and `docs/features/settings-and-preferences.md`.
 
 ## Feedback
