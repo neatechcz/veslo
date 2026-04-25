@@ -1,4 +1,6 @@
 import { mkdir } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { expect } from "@wdio/globals";
 
@@ -48,8 +50,11 @@ type CandidateSession = {
 const SIDEBAR_VIEW_MODE_KEY = "veslo.sidebar-session-view.v1";
 const SESSION_ROW_SELECTOR = '[data-session-sidebar-row="true"]';
 const USE_REAL_PROFILE = process.env.E2E_USE_EXISTING_PROFILE?.trim() === "1";
-const EVIDENCE_DIR =
-  "/Users/vaclavsoukup/AI agent projects/Veslo/.worktrees/codex/cross-workspace-sidebar-prefetch/evidence/2026-04-11-cross-workspace-sidebar-prefetch";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const EVIDENCE_DIR = resolve(
+  process.env.E2E_SESSION_PREFETCH_EVIDENCE_DIR?.trim() || resolve(__dirname, "..", ".tmp-session-prefetch-evidence"),
+);
 const EVIDENCE_PATH = `${EVIDENCE_DIR}/real-profile-cross-workspace-prefetch.png`;
 const OVERLAY_SELECTOR = 'div[class*="z-[60]"][class*="overflow-hidden"][class*="bg-gray-1/90"]';
 

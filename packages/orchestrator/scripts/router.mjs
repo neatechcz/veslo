@@ -143,7 +143,7 @@ daemon.stderr.on("data", (chunk) => {
 });
 
 try {
-  await waitFor(`${daemonUrl}/health`, daemon, daemonLogs);
+  await waitFor(`${daemonUrl}/health`, daemon, daemonLogs, 90_000);
 
   const addedA = await runCli(["workspace", "add", workspaceA, "--json"], dataDir);
   const addedB = await runCli(["workspace", "add", workspaceB, "--json"], dataDir);
