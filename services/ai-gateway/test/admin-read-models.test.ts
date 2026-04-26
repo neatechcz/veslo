@@ -7,6 +7,7 @@ import {
   createDefaultAdminService,
   type AdminSessionSnapshot,
   type AuditRecord,
+  type AdminCredentialUsageRecord,
   type CredentialRecord,
   type SessionRecord,
   type UsageResponse,
@@ -164,6 +165,7 @@ function createAdminApp(overrides: {
   usage?: UsageResponse
   alerts?: AlertRecord[]
   audit?: AuditRecord[]
+  codexStatusProvider?: { getStatus(input: { credentialId: string; credentialName: string }): Promise<AdminCredentialUsageRecord["upstreamStatus"]> }
 }) {
   const service = createDefaultAdminService("http://den.example.test", {
     denClient: createDenClient(),
@@ -198,6 +200,7 @@ function createAdminApp(overrides: {
         return overrides.audit ?? []
       },
     },
+    codexStatusProvider: overrides.codexStatusProvider,
   })
 
   return createApp({ admin: service })
@@ -277,6 +280,32 @@ test("admin usage endpoint includes every credential with recorded usage and Cod
       }),
     ],
     usage: createUsageResponse("credential"),
+    codexStatusProvider: {
+      async getStatus() {
+        return {
+          available: true,
+          source: "codex_exec_rate_limits",
+          label: "Codex limits available",
+          detail: null,
+          checkedAt: "2026-04-26T12:00:00.000Z",
+          planType: "plus",
+          limits: {
+            fiveHour: {
+              label: "5h",
+              usedPercent: 30,
+              windowMinutes: 300,
+              resetAt: "2026-04-26T15:00:00.000Z",
+            },
+            weekly: {
+              label: "Weekly",
+              usedPercent: 33,
+              windowMinutes: 10080,
+              resetAt: "2026-05-01T12:00:00.000Z",
+            },
+          },
+        }
+      },
+    },
   })
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -313,10 +342,26 @@ test("admin usage endpoint includes every credential with recorded usage and Cod
         totalRequests: 0,
         lastUsedAt: null,
         upstreamStatus: {
-          available: false,
-          source: "unavailable",
-          label: "Codex limits unavailable",
-          detail: "Codex status probe is not configured.",
+          available: true,
+          source: "codex_exec_rate_limits",
+          label: "Codex limits available",
+          detail: null,
+          checkedAt: "2026-04-26T12:00:00.000Z",
+          planType: "plus",
+          limits: {
+            fiveHour: {
+              label: "5h",
+              usedPercent: 30,
+              windowMinutes: 300,
+              resetAt: "2026-04-26T15:00:00.000Z",
+            },
+            weekly: {
+              label: "Weekly",
+              usedPercent: 33,
+              windowMinutes: 10080,
+              resetAt: "2026-05-01T12:00:00.000Z",
+            },
+          },
         },
       },
     ])

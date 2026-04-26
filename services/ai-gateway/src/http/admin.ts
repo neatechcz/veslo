@@ -23,7 +23,7 @@ import { env } from "../env.js";
 import type { AdminSessionRecord, LeaseProvider } from "../leases/repository.js";
 import { isAiGatewayProvider } from "../providers/ids.js";
 import { MySqlUsageRepository } from "../usage/mysql-repository.js";
-import { UnavailableCodexCredentialStatusProvider, type CodexCredentialStatusProvider, type CodexUsageStatus } from "../usage/codex-status.js";
+import { CachedCodexCredentialStatusProvider, UnavailableCodexCredentialStatusProvider, type CodexCredentialStatusProvider, type CodexUsageStatus } from "../usage/codex-status.js";
 import type { AggregateUsageInput, UsageAggregateResponse, UsageCredentialAggregate, UsageGroupBy as RepositoryUsageGroupBy, UsageRepository } from "../usage/repository.js";
 
 export type AdminSessionUser = {
@@ -222,6 +222,10 @@ type AdminCredentialActionRepository = {
 
 type AdminCredentialWriteRepository = {
   createPlatformCredential(input: CreatePlatformCredentialInput): Promise<GatewayCredentialRecord>;
+};
+
+type CredentialSecretLookupRepository = {
+  getCredentialRecordById(credentialId: string): Promise<{ secretRef: string } | null>;
 };
 
 type AdminReadModelDependencies = {
@@ -688,6 +692,8 @@ export function createDefaultAdminService(
     deps.credentialActionRepository ?? getDefaultRepositories().credentialActionRepository;
   const getCredentialWriteRepository = () =>
     deps.credentialWriteRepository ?? getDefaultRepositories().credentialWriteRepository;
+  const getCredentialSecretLookupRepository = () =>
+    (deps.credentialWriteRepository ?? getDefaultRepositories().credentialWriteRepository) as unknown as CredentialSecretLookupRepository;
   const getSessionReadRepository = () =>
     deps.sessionReadRepository ?? getDefaultRepositories().sessionReadRepository;
   const getAiAccessRepository = () =>
@@ -696,11 +702,25 @@ export function createDefaultAdminService(
     deps.alertRepository ?? getDefaultRepositories().alertRepository;
   const getUsageRepository = () =>
     deps.usageRepository ?? getDefaultRepositories().usageRepository;
-  const codexStatusProvider = deps.codexStatusProvider ?? new UnavailableCodexCredentialStatusProvider();
   const getAuditRepository = () =>
     deps.auditRepository ?? getDefaultRepositories().auditRepository;
   const getSecretStore = () =>
     deps.secretStore ?? getDefaultRepositories().secretStore;
+  const codexStatusProvider =
+    deps.codexStatusProvider ??
+    (getCredentialSecretLookupRepository()
+      ? new CachedCodexCredentialStatusProvider({
+          loadCredentialAuthJson: async (credentialId) => {
+            const credential = await getCredentialSecretLookupRepository().getCredentialRecordById(credentialId);
+            if (!credential) {
+              return null;
+            }
+
+            const secret = await getSecretStore().get(credential.secretRef).catch(() => null);
+            return secret?.kind === "codex_auth_json" ? secret.authJson : null;
+          },
+        })
+      : new UnavailableCodexCredentialStatusProvider());
 
   async function recordAuditEvent(input: {
     actorUserId?: string | null;

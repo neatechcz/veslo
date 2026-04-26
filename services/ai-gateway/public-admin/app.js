@@ -883,7 +883,7 @@ function renderUsage() {
       <td>${escapeHtml(formatNumber(credential.totalTokens))}</td>
       <td>${escapeHtml(formatNumber(credential.activeLeases))}</td>
       <td>${escapeHtml(formatDate(credential.lastUsedAt))}</td>
-      <td><span class="status-chip ${escapeHtml(upstreamStatus.tone)}">${escapeHtml(upstreamStatus.label)}</span><span>${escapeHtml(upstreamStatus.detail)}</span></td>
+      <td><span class="status-chip ${escapeHtml(upstreamStatus.tone)}">${escapeHtml(upstreamStatus.label)}</span><span>${escapeHtml(upstreamStatus.detail)}</span><span>${escapeHtml(upstreamStatus.limitSummary)}</span></td>
     </tr>`;
   }).join("") || `<tr><td colspan="8">No credential usage matched the selected filters.</td></tr>`;
 }
@@ -906,11 +906,13 @@ function formatCredentialUpstreamStatus(credential) {
   }
 
   if (status.available) {
+    const limitSummary = formatCredentialLimitSummary(status);
     return {
       label: status.label || "Codex status available",
       detail: [status.detail, status.checkedAt ? `Checked ${formatDate(status.checkedAt)}` : ""]
         .filter(Boolean)
         .join(" "),
+      limitSummary,
       tone: "success",
     };
   }
@@ -918,8 +920,30 @@ function formatCredentialUpstreamStatus(credential) {
   return {
     label: status.label || "Codex limits unavailable",
     detail: status.detail || "Status probe did not return limits.",
+    limitSummary: "",
     tone: "warning",
   };
+}
+
+function formatCredentialLimitSummary(status) {
+  const limits = status?.limits;
+  if (!limits) {
+    return "";
+  }
+
+  const lines = [limits.fiveHour, limits.weekly]
+    .filter(Boolean)
+    .map((entry) => {
+      const used = typeof entry.usedPercent === "number" ? `${Math.round(entry.usedPercent)}% used` : "usage unknown";
+      const reset = entry.resetAt ? `resets ${formatDate(entry.resetAt)}` : "reset unknown";
+      return `${entry.label}: ${used}, ${reset}`;
+    });
+
+  if (typeof status.planType === "string" && status.planType.trim()) {
+    lines.unshift(`Plan ${status.planType}`);
+  }
+
+  return lines.join(" | ");
 }
 
 function renderAlerts() {

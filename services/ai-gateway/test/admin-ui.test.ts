@@ -196,8 +196,11 @@ test("GET /admin/app.js renders credential usage and Codex limits status", async
     assert.match(script, /usageCredentialTableBody/)
     assert.match(script, /credentialUsage/)
     assert.match(script, /formatCredentialUpstreamStatus/)
+    assert.match(script, /formatCredentialLimitSummary/)
     assert.match(script, /Codex limits unavailable/)
     assert.match(script, /No upstream status/)
+    assert.match(script, /limits\.fiveHour/)
+    assert.match(script, /limits\.weekly/)
   } finally {
     server.close()
     await once(server, "close")

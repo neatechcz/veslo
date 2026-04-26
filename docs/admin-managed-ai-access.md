@@ -35,7 +35,7 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 - Platform admins can enable/disable access, pick the assigned provider, set the default model, and optionally restrict allowed models.
 - The DEN admin `Credentials` page is the place to connect/reconnect OpenAI and create/rotate shared Anthropic and Codex runtime credentials.
 - The hosted admin `Usage` page shows recorded usage for every credential, including credentials with zero recorded traffic.
-- Codex runtime credentials include best-effort upstream limits/status metadata when a safe status probe or cached status is available. If status cannot be read, the Usage page still renders historical usage and marks Codex limits as unavailable.
+- Codex runtime credentials include best-effort upstream limits metadata with cached `5h` and `weekly` windows when a credential-scoped probe succeeds. If limits cannot be read, the Usage page still renders historical usage and marks Codex limits as unavailable.
 
 ## Platform credential pools
 
