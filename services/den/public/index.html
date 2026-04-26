@@ -360,6 +360,7 @@
       function initOnboarding() {
         const search = new URLSearchParams(window.location.search);
         const DESKTOP_AUTH_CONTEXT_STORAGE_KEY = "veslo.desktopAuthContext";
+        const DESKTOP_AUTH_CONTEXT_TTL_MS = 15 * 60 * 1000;
         const onboardingSessionId = (search.get("sid") || "").trim();
         let onboardingTransactionId = (search.get("tid") || "").trim();
         let onboardingState = (search.get("state") || "").trim();
@@ -423,10 +424,15 @@
 
         function readDesktopAuthContext() {
           try {
-            const raw = window.sessionStorage.getItem(DESKTOP_AUTH_CONTEXT_STORAGE_KEY);
+            const raw = window.localStorage.getItem(DESKTOP_AUTH_CONTEXT_STORAGE_KEY);
             if (!raw) return null;
             const parsed = JSON.parse(raw);
             if (!parsed || typeof parsed !== "object") return null;
+            const expiresAt = typeof parsed.expiresAt === "number" ? parsed.expiresAt : 0;
+            if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+              clearDesktopAuthContext();
+              return null;
+            }
             return {
               transactionId: typeof parsed.transactionId === "string" ? parsed.transactionId.trim() : "",
               state: typeof parsed.state === "string" ? parsed.state.trim() : "",
@@ -442,10 +448,11 @@
             return;
           }
           try {
-            window.sessionStorage.setItem(DESKTOP_AUTH_CONTEXT_STORAGE_KEY, JSON.stringify({
+            window.localStorage.setItem(DESKTOP_AUTH_CONTEXT_STORAGE_KEY, JSON.stringify({
               transactionId: onboardingTransactionId,
               state: onboardingState,
               intent: onboardingIntent || "",
+              expiresAt: Date.now() + DESKTOP_AUTH_CONTEXT_TTL_MS,
             }));
           } catch {
             // Ignore storage failures and continue with URL-driven state only.
@@ -454,7 +461,7 @@
 
         function clearDesktopAuthContext() {
           try {
-            window.sessionStorage.removeItem(DESKTOP_AUTH_CONTEXT_STORAGE_KEY);
+            window.localStorage.removeItem(DESKTOP_AUTH_CONTEXT_STORAGE_KEY);
           } catch {
             // Ignore storage failures.
           }

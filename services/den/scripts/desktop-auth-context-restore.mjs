@@ -10,12 +10,22 @@ const source = readFileSync(sourcePath, "utf8");
 assert.equal(
   source.includes("veslo.desktopAuthContext"),
   true,
-  "hosted desktop onboarding must persist desktop auth context in session storage",
+  "hosted desktop onboarding must persist desktop auth context in browser storage",
 );
 assert.equal(
-  source.includes("sessionStorage.getItem"),
+  source.includes("localStorage.getItem"),
   true,
-  "hosted desktop onboarding must read session storage for desktop auth context restoration",
+  "hosted desktop onboarding must read local storage for cross-tab desktop auth context restoration",
+);
+assert.equal(
+  source.includes("localStorage.setItem") && source.includes("localStorage.removeItem"),
+  true,
+  "hosted desktop onboarding must write and clear local storage desktop auth context",
+);
+assert.equal(
+  source.includes("expiresAt"),
+  true,
+  "hosted desktop onboarding must persist a desktop auth context expiry",
 );
 assert.equal(
   source.includes("onboardingTransactionId") && source.includes("onboardingState"),
@@ -28,4 +38,4 @@ assert.equal(
   "hosted desktop onboarding must clear restored desktop auth context after completion",
 );
 
-console.log(JSON.stringify({ ok: true, checks: 4 }));
+console.log(JSON.stringify({ ok: true, checks: 6 }));
