@@ -270,7 +270,10 @@ export async function exchangeLiveDesktopAuthCode(
 
   const userId = normalizeOptionalText(payload?.user && (payload.user as JsonRecord).id);
   const orgId = normalizeOptionalText(payload?.org && (payload.org as JsonRecord).id);
-  const token = normalizeOptionalText(payload?.token) ?? normalizeOptionalText(options.code);
+  const token =
+    normalizeOptionalText(payload?.accessToken) ??
+    normalizeOptionalText(payload?.token) ??
+    normalizeOptionalText(options.code);
 
   if (!userId || !orgId || !token) {
     throw new Error('Desktop auth exchange returned an invalid response.');

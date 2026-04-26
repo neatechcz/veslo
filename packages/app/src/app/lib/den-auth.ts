@@ -967,6 +967,7 @@ export async function exchangeHandoffCode(
 
     const payload = (await response.json()) as {
       token?: string;
+      accessToken?: string;
       user?: { id?: string; name?: string; email?: string };
       org?: { id?: string; name?: string; slug?: string; role?: string };
     };
@@ -979,7 +980,7 @@ export async function exchangeHandoffCode(
 
     const state: DenAuthState = {
       denApiBase,
-      token: payload.token ?? code,
+      token: payload.accessToken ?? payload.token ?? code,
       orgId,
       user: {
         id: userId,

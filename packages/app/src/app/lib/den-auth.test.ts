@@ -370,6 +370,67 @@ test("exchangeHandoffCode uses v2 exchange with transaction proof when PKCE proo
   }
 });
 
+test("exchangeHandoffCode accepts accessToken from the v2 exchange contract", async () => {
+  const storage = installDomStorage();
+  const previousFetch = globalThis.fetch;
+
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+
+    if (url.endsWith("/v2/desktop-auth/exchange")) {
+      return new Response(
+        JSON.stringify({
+          accessToken: "pkce-access-token",
+          tokenType: "Bearer",
+          expiresIn: 3600,
+          user: { id: "user_v2_contract" },
+          org: { id: "org_v2_contract", slug: "v2-contract-org", role: "owner" },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    if (url.endsWith("/v1/me")) {
+      return new Response(
+        JSON.stringify({
+          user: { id: "user_v2_contract", name: "Contract User", email: "contract@example.com" },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  try {
+    const result = await exchangeHandoffCode("v2-code-contract", {
+      sessionId: "dat_contract",
+      state: "state_contract_123456789012",
+      codeVerifier: "verifier_contract_123",
+    });
+
+    assert.deepEqual(result, {
+      ok: true,
+      state: {
+        denApiBase: "https://den-control-plane-veslo.onrender.com",
+        token: "pkce-access-token",
+        orgId: "org_v2_contract",
+        user: { id: "user_v2_contract", name: "Contract User", email: "contract@example.com" },
+        org: { id: "org_v2_contract", name: undefined, slug: "v2-contract-org", role: "owner" },
+      },
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    storage.restore();
+  }
+});
+
 test("resolvePreferredDenUserLabel prefers email over name and id", () => {
   assert.equal(
     resolvePreferredDenUserLabel({
