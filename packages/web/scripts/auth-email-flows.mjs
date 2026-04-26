@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(resolve(here, "../components/cloud-control.tsx"), "utf8");
+const verifyEmailPageSource = readFileSync(resolve(here, "../app/verify-email/page.tsx"), "utf8");
 
 assert.ok(existsSync(resolve(here, "../app/forgot-password/page.tsx")), "forgot-password page must exist");
 assert.ok(existsSync(resolve(here, "../app/reset-password/page.tsx")), "reset-password page must exist");
@@ -25,6 +26,27 @@ assert.ok(
 assert.ok(
   source.includes("email_verification_required"),
   "cloud-control.tsx must handle verified-email gating responses",
+);
+assert.ok(
+  verifyEmailPageSource.includes("desktopOnboarding") &&
+    verifyEmailPageSource.includes("URLSearchParams"),
+  "verify-email page must detect desktop onboarding handoff state",
+);
+assert.ok(
+  verifyEmailPageSource.includes('buildAuthCallbackUrl("/")'),
+  "verify-email page must route desktop verification back into the canonical onboarding page",
+);
+assert.ok(
+  !verifyEmailPageSource.includes("/v1/desktop-auth/handoff"),
+  "verify-email page must not fork its own desktop handoff request",
+);
+assert.ok(
+  !verifyEmailPageSource.includes("veslo://auth-complete"),
+  "verify-email page must not build the desktop deep link directly",
+);
+assert.ok(
+  source.includes("&transactionId="),
+  "cloud-control desktop auth deep link must include transactionId",
 );
 
 console.log("auth-email-flows: all assertions passed");

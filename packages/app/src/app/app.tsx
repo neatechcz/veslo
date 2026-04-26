@@ -226,6 +226,7 @@ import {
   getDenApiBase,
   startDesktopBrowserAuth,
   readDesktopAuthExchangeProof,
+  readPendingDesktopAuthSession,
   clearDesktopAuthExchangeProof,
 } from "./lib/den-auth";
 import { currentLocale, isLanguage, setLocale, t, type Language } from "../i18n";
@@ -4628,6 +4629,53 @@ export default function App() {
     });
   };
 
+  const openDesktopAuthUrl = async (url: string) => {
+    if (isTauriRuntime()) {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(url);
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const resumePendingDesktopBrowserAuth = async (reopenBrowser: boolean): Promise<boolean> => {
+    const pending = readPendingDesktopAuthSession();
+    if (!pending) {
+      return false;
+    }
+
+    setError(null);
+    startDesktopAuthStatusPolling(pending.sessionId);
+    if (reopenBrowser && pending.authorizeUrl) {
+      await openDesktopAuthUrl(pending.authorizeUrl);
+    }
+    return true;
+  };
+
+  const startDesktopBrowserSignIn = async () => {
+    setError(null);
+    if (await resumePendingDesktopBrowserAuth(true)) {
+      return;
+    }
+
+    let url = `${getDenApiBase()}/?desktopOnboarding=1`;
+    const startResult = await startDesktopBrowserAuth("signin");
+    if (startResult.ok) {
+      url = startResult.authorizeUrl;
+      startDesktopAuthStatusPolling(startResult.sessionId);
+    } else {
+      console.warn("[den-auth] /start failed, falling back to legacy onboarding URL:", startResult.error);
+    }
+    await openDesktopAuthUrl(url);
+  };
+
+  const resumeDesktopBrowserSignIn = async () => {
+    if (await resumePendingDesktopBrowserAuth(false)) {
+      return;
+    }
+    await startDesktopBrowserSignIn();
+  };
+
   const queueAuthCompleteDeepLink = (rawUrl: string): boolean => {
     const payload = parseAuthCompleteDeepLink(rawUrl);
     if (!payload) {
@@ -4645,11 +4693,6 @@ export default function App() {
   };
 
   onMount(() => {
-    const pendingExchangeProof = readDesktopAuthExchangeProof();
-    if (pendingExchangeProof) {
-      startDesktopAuthStatusPolling(pendingExchangeProof.sessionId);
-    }
-
     if (typeof window !== "undefined") {
       try {
         clearLegacySessionModelPersistence(window.localStorage);
@@ -8228,23 +8271,8 @@ export default function App() {
     },
     themeMode: themeMode(),
     setThemeMode,
-    onSignInWithBrowser: async () => {
-      setError(null);
-      let url = `${getDenApiBase()}/?desktopOnboarding=1`;
-      const startResult = await startDesktopBrowserAuth("signin");
-      if (startResult.ok) {
-        url = startResult.authorizeUrl;
-        startDesktopAuthStatusPolling(startResult.sessionId);
-      } else {
-        console.warn("[den-auth] /start failed, falling back to legacy onboarding URL:", startResult.error);
-      }
-      if (isTauriRuntime()) {
-        const { openUrl } = await import("@tauri-apps/plugin-opener");
-        await openUrl(url);
-      } else {
-        window.open(url, "_blank", "noopener,noreferrer");
-      }
-    },
+    onSignInWithBrowser: startDesktopBrowserSignIn,
+    onResumeBrowserSignIn: resumeDesktopBrowserSignIn,
     authExchangeBusy: authCompleteExchangeBusy(),
     keepSignedIn: denKeepSignedIn(),
     onKeepSignedInChange: setDenKeepSignedInPreference,

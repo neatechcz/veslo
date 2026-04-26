@@ -1,9 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { buildAuthCallbackUrl } from "../../lib/auth-urls";
+
+const DESKTOP_ONBOARDING_PARAM = "desktopOnboarding";
 
 export default function VerifyEmailPage() {
   const [error, setError] = useState("");
+  const [returnHref, setReturnHref] = useState("/");
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -11,7 +15,12 @@ export default function VerifyEmailPage() {
     }
 
     const searchParams = new URLSearchParams(window.location.search);
-    setError(searchParams.get("error") ?? "");
+    const nextError = searchParams.get("error") ?? "";
+
+    setError(nextError);
+    if (!nextError && searchParams.get(DESKTOP_ONBOARDING_PARAM) === "1") {
+      setReturnHref(buildAuthCallbackUrl("/"));
+    }
   }, []);
 
   return (
@@ -62,7 +71,7 @@ export default function VerifyEmailPage() {
 
             <div className="ow-inline-row">
               <p className="ow-caption">Next step</p>
-              <a href="/" className="ow-link">
+              <a href={returnHref} className="ow-link">
                 Return to Veslo
               </a>
             </div>

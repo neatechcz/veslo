@@ -84,6 +84,12 @@ export type DesktopAuthExchangeProof = {
 
 type PendingDesktopAuth = DesktopAuthExchangeProof & {
   expiresAt: number;
+  authorizeUrl?: string;
+};
+
+export type PendingDesktopAuthSession = {
+  sessionId: string;
+  authorizeUrl: string | null;
 };
 
 export type DesktopAuthStartResult =
@@ -717,6 +723,10 @@ function readPendingDesktopAuth(): PendingDesktopAuth | null {
       state: candidate.state,
       codeVerifier: candidate.codeVerifier,
       expiresAt: candidate.expiresAt,
+      authorizeUrl:
+        typeof candidate.authorizeUrl === "string" && candidate.authorizeUrl.trim()
+          ? candidate.authorizeUrl.trim()
+          : undefined,
     };
   } catch {
     return null;
@@ -758,6 +768,16 @@ export function readDesktopAuthExchangeProof(sessionId?: string | null): Desktop
     sessionId: pending.sessionId,
     state: pending.state,
     codeVerifier: pending.codeVerifier,
+  };
+}
+
+export function readPendingDesktopAuthSession(sessionId?: string | null): PendingDesktopAuthSession | null {
+  const pending = readPendingDesktopAuth();
+  if (!pending) return null;
+  if (sessionId && pending.sessionId !== sessionId) return null;
+  return {
+    sessionId: pending.sessionId,
+    authorizeUrl: pending.authorizeUrl?.trim() || null,
   };
 }
 
@@ -823,6 +843,7 @@ export async function startDesktopBrowserAuth(intent: "signin" | "signup" = "sig
       state,
       codeVerifier,
       expiresAt,
+      authorizeUrl,
     });
 
     return { ok: true, authorizeUrl, sessionId };

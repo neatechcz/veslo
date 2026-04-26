@@ -68,6 +68,16 @@ assert.equal(
   true,
   "app.tsx must contain auth-complete deep link handling",
 );
+assert.equal(
+  app.includes("readPendingDesktopAuthSession"),
+  true,
+  "app.tsx must reuse pending desktop auth session data for retry/resume flows",
+);
+assert.equal(
+  app.includes("startDesktopAuthStatusPolling(pendingExchangeProof.sessionId)"),
+  false,
+  "app.tsx must not auto-resume desktop browser auth polling on startup",
+);
 
 // Isolate the handler function to verify it is free of veslo.server refs
 const handlerStart = app.indexOf("const queueAuthCompleteDeepLink");
@@ -116,4 +126,4 @@ assert.equal(
 );
 
 // ── done ────────────────────────────────────────────────────────────────
-console.log(JSON.stringify({ ok: true, checks: 16 }));
+console.log(JSON.stringify({ ok: true, checks: 17 }));

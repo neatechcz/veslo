@@ -183,6 +183,12 @@ test("startDesktopBrowserAuth uses v2 start and stores exchange proof by transac
     assert.equal(proof?.sessionId, "dat_123");
     assert.equal(typeof proof?.state, "string");
     assert.equal(typeof proof?.codeVerifier, "string");
+    const storedPending = storage.localStorage.getItem("veslo.den.desktopAuthPending");
+    assert.equal(storedPending?.includes("\"authorizeUrl\":"), true);
+    assert.equal(
+      storedPending?.includes("https://den-control-plane-veslo.onrender.com/?desktopOnboarding=1&tid=dat_123&state=abc"),
+      true,
+    );
   } finally {
     globalThis.fetch = previousFetch;
     restoreCrypto();

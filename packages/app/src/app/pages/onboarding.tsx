@@ -71,6 +71,7 @@ export type OnboardingViewProps = {
   themeMode: "light" | "dark" | "system";
   setThemeMode: (value: "light" | "dark" | "system") => void;
   onSignInWithBrowser: () => void;
+  onResumeBrowserSignIn: () => void;
   authExchangeBusy: boolean;
   keepSignedIn: boolean;
   onKeepSignedInChange: (value: boolean) => void;
@@ -268,7 +269,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                 <Button
                   variant="secondary"
                   class="w-full"
-                  onClick={() => props.onSignInWithBrowser()}
+                  onClick={() => props.onResumeBrowserSignIn()}
                 >
                   I already signed in
                 </Button>

@@ -37,6 +37,10 @@ Important pieces:
 - deep-link completion returns to the desktop app
 - a temporary pending auth state is stored during the handoff
 
+If browser sign-in requires email verification, the verification callback page preserves the active desktop onboarding query context and routes the user back into the same onboarding page. The canonical onboarding page then completes the normal desktop handoff to the `veslo://auth-complete` deep link.
+
+The hosted desktop onboarding page also caches the current desktop auth transaction context in browser session storage. If a later auth or verification return lands back on the onboarding page without the original transaction query, the hosted page restores that context before attempting the desktop handoff. This keeps the original desktop auth transaction alive across browser-managed redirects.
+
 Key persistent settings:
 
 - `veslo.den.auth`

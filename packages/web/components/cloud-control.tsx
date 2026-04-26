@@ -1046,6 +1046,7 @@ export function CloudControlPanel() {
   const [openAccordion, setOpenAccordion] = useState<"connect" | "actions" | "advanced" | null>(null);
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
   const [desktopOnboarding, setDesktopOnboarding] = useState(false);
+  const [desktopTransactionId, setDesktopTransactionId] = useState<string | null>(null);
   const [handoffBusy, setHandoffBusy] = useState(false);
   const [handoffDone, setHandoffDone] = useState(false);
   const [handoffError, setHandoffError] = useState<string | null>(null);
@@ -1580,6 +1581,7 @@ export function CloudControlPanel() {
     const params = new URLSearchParams(window.location.search);
     if (params.get(DESKTOP_ONBOARDING_PARAM) === "1") {
       setDesktopOnboarding(true);
+      setDesktopTransactionId(params.get("tid") ?? params.get("transactionId"));
       setAuthMode("sign-in");
       setAuthInfo(getAuthInfoForMode("sign-in"));
     }
@@ -1628,12 +1630,15 @@ export function CloudControlPanel() {
       }
 
       setHandoffDone(true);
-      window.location.href = `veslo://auth-complete?code=${encodeURIComponent(payload.code)}`;
+      const transactionSuffix = desktopTransactionId
+        ? `&transactionId=${encodeURIComponent(desktopTransactionId)}`
+        : "";
+      window.location.href = `veslo://auth-complete?code=${encodeURIComponent(payload.code)}${transactionSuffix}`;
     }).catch(() => {
       setHandoffBusy(false);
       setHandoffError("Network error during handoff.");
     });
-  }, [desktopOnboarding, user?.id, authToken, orgsBusy, organizations.length, selectedOrgId, handoffBusy, handoffDone]);
+  }, [desktopOnboarding, desktopTransactionId, user?.id, authToken, orgsBusy, organizations.length, selectedOrgId, handoffBusy, handoffDone]);
 
   useEffect(() => {
     if (!paymentReturned || !user) {

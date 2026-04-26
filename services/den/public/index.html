@@ -359,12 +359,13 @@
       /* ======== Desktop Onboarding ======== */
       function initOnboarding() {
         const search = new URLSearchParams(window.location.search);
+        const DESKTOP_AUTH_CONTEXT_STORAGE_KEY = "veslo.desktopAuthContext";
         const onboardingSessionId = (search.get("sid") || "").trim();
-        const onboardingTransactionId = (search.get("tid") || "").trim();
-        const onboardingState = (search.get("state") || "").trim();
-        const requestedIntent = (search.get("intent") || "").trim().toLowerCase();
+        let onboardingTransactionId = (search.get("tid") || "").trim();
+        let onboardingState = (search.get("state") || "").trim();
+        let onboardingIntent = (search.get("intent") || "").trim().toLowerCase();
         const requestedView = (search.get("view") || "").trim().toLowerCase();
-        let mode = requestedIntent === "signup" ? "sign-up" : "sign-in";
+        let mode = onboardingIntent === "signup" ? "sign-up" : "sign-in";
         let resetToken = (search.get("token") || "").trim();
         let viewError = (search.get("error") || "").trim();
         let activeView = requestedView || (search.get("token") ? "reset-password" : "auth");
@@ -420,12 +421,68 @@
         const openAppLink = document.getElementById("onboard-open-app");
         const busyCard = document.getElementById("onboard-busy");
 
+        function readDesktopAuthContext() {
+          try {
+            const raw = window.sessionStorage.getItem(DESKTOP_AUTH_CONTEXT_STORAGE_KEY);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== "object") return null;
+            return {
+              transactionId: typeof parsed.transactionId === "string" ? parsed.transactionId.trim() : "",
+              state: typeof parsed.state === "string" ? parsed.state.trim() : "",
+              intent: typeof parsed.intent === "string" ? parsed.intent.trim().toLowerCase() : "",
+            };
+          } catch {
+            return null;
+          }
+        }
+
+        function persistDesktopAuthContext() {
+          if (!onboardingTransactionId || !onboardingState) {
+            return;
+          }
+          try {
+            window.sessionStorage.setItem(DESKTOP_AUTH_CONTEXT_STORAGE_KEY, JSON.stringify({
+              transactionId: onboardingTransactionId,
+              state: onboardingState,
+              intent: onboardingIntent || "",
+            }));
+          } catch {
+            // Ignore storage failures and continue with URL-driven state only.
+          }
+        }
+
+        function clearDesktopAuthContext() {
+          try {
+            window.sessionStorage.removeItem(DESKTOP_AUTH_CONTEXT_STORAGE_KEY);
+          } catch {
+            // Ignore storage failures.
+          }
+        }
+
+        if (!onboardingTransactionId || !onboardingState) {
+          const restoredContext = readDesktopAuthContext();
+          if (restoredContext) {
+            if (!onboardingTransactionId) {
+              onboardingTransactionId = restoredContext.transactionId;
+            }
+            if (!onboardingState) {
+              onboardingState = restoredContext.state;
+            }
+            if (!onboardingIntent) {
+              onboardingIntent = restoredContext.intent;
+            }
+          }
+        }
+
+        persistDesktopAuthContext();
+
         function buildDesktopOnboardingUrl(view, extras = {}) {
           const url = new URL(window.location.href);
           url.searchParams.set("desktopOnboarding", "1");
           if (onboardingTransactionId) url.searchParams.set("tid", onboardingTransactionId);
           if (onboardingState) url.searchParams.set("state", onboardingState);
-          if (requestedIntent) url.searchParams.set("intent", requestedIntent);
+          if (onboardingIntent) url.searchParams.set("intent", onboardingIntent);
           url.searchParams.set("view", view);
           for (const [key, value] of Object.entries(extras)) {
             if (value == null || value === "") {
@@ -655,6 +712,7 @@
 
               busyCard.classList.add("hidden");
               successCard.classList.remove("hidden");
+              clearDesktopAuthContext();
               if (openAppLink) {
                 openAppLink.href = redirectUrl;
               }
@@ -685,6 +743,7 @@
 
             busyCard.classList.add("hidden");
             successCard.classList.remove("hidden");
+            clearDesktopAuthContext();
             const fallbackParams = new URLSearchParams();
             fallbackParams.set("code", String(data.code));
             if (typeof data?.sessionId === "string" && data.sessionId) {
