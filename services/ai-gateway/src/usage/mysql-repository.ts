@@ -5,6 +5,7 @@ import { credentialUsageEventTable } from "../db/schema.js"
 import type {
   AggregateUsageInput,
   RecordUsageInput,
+  UsageCredentialAggregate,
   UsageAggregateLabel,
   UsageAggregateResponse,
   UsageAggregateSeries,
@@ -16,6 +17,7 @@ type UsageEventRow = {
   userId: string
   totalTokens: number
   totalRequests: number
+  createdAt: string | null
 }
 
 export class MySqlUsageRepository implements UsageRepository {
@@ -49,6 +51,7 @@ export class MySqlUsageRepository implements UsageRepository {
       userId: row.owner_user_id,
       totalTokens: row.input_tokens + row.output_tokens,
       totalRequests: 1,
+      createdAt: formatDate(row.created_at),
     }))
 
     const summary = events.reduce(
@@ -73,6 +76,7 @@ export class MySqlUsageRepository implements UsageRepository {
       topCredentials: aggregateTop(events, (event) => ({ id: event.credentialId, label: event.credentialId })),
       topUsers: aggregateTop(events, (event) => ({ id: event.userId, label: event.userId })),
       topOrgs: [],
+      credentialUsage: aggregateCredentialUsage(events),
     }
   }
 }
@@ -144,6 +148,26 @@ function uniqueLabels(entries: UsageAggregateLabel[]) {
   return Array.from(seen.entries()).map(([id, label]) => ({ id, label }))
 }
 
+function aggregateCredentialUsage(events: UsageEventRow[]): UsageCredentialAggregate[] {
+  const buckets = new Map<string, UsageCredentialAggregate>()
+
+  for (const event of events) {
+    const existing = buckets.get(event.credentialId) ?? {
+      id: event.credentialId,
+      label: event.credentialId,
+      totalTokens: 0,
+      totalRequests: 0,
+      lastUsedAt: null,
+    }
+    existing.totalTokens += event.totalTokens
+    existing.totalRequests += event.totalRequests
+    existing.lastUsedAt = latestDate(existing.lastUsedAt, event.createdAt)
+    buckets.set(event.credentialId, existing)
+  }
+
+  return Array.from(buckets.values()).sort((left, right) => right.totalTokens - left.totalTokens)
+}
+
 function aggregateTop(
   events: UsageEventRow[],
   pick: (event: UsageEventRow) => UsageAggregateLabel,
@@ -160,4 +184,22 @@ function aggregateTop(
   return Array.from(buckets.entries())
     .map(([id, value]) => ({ id, label: value.label, totalTokens: value.totalTokens }))
     .sort((left, right) => right.totalTokens - left.totalTokens)
+}
+
+function formatDate(value: Date | string | null): string | null {
+  if (!value) {
+    return null
+  }
+
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString()
+}
+
+function latestDate(left: string | null, right: string | null): string | null {
+  if (!left) {
+    return right
+  }
+  if (!right) {
+    return left
+  }
+  return left > right ? left : right
 }

@@ -123,6 +123,7 @@ const usageRepositoryContractCheck: UsageRepository = {
       topCredentials: [],
       topUsers: [],
       topOrgs: [],
+      credentialUsage: [],
     };
   },
 };

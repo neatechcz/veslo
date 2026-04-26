@@ -559,6 +559,18 @@ td span,
   grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
 }
 
+.usage-credential-card {
+  margin-top: 18px;
+}
+
+.section-head.compact {
+  margin-bottom: 12px;
+}
+
+.credential-usage-table {
+  min-width: 980px;
+}
+
 .chart-card {
   grid-column: 1 / span 1;
   min-height: 360px;

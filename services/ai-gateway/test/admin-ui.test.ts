@@ -27,7 +27,7 @@ test("GET /admin/credentials serves the admin shell with an admin-only platform 
     assert.match(html, /id="credential-create-submit"/)
     assert.match(html, /Codex \/ ChatGPT runtime profile/)
     assert.match(html, /<option value="codex_oauth">Codex \/ ChatGPT runtime<\/option>/)
-    assert.match(html, /Paste the provider API key or Codex auth JSON\./)
+    assert.match(html, /Paste the provider API key or the full Codex auth\.json\./)
   } finally {
     server.close()
     await once(server, "close")
@@ -156,6 +156,48 @@ test("GET /admin/users includes admin-managed ai access controls in the user edi
     assert.match(html, /id="user-ai-access-allowed-models"/)
     assert.match(html, /id="user-save-status"/)
     assert.match(html, /<option value="codex_oauth">Codex \/ ChatGPT runtime<\/option>/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/usage includes a credential usage section", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/usage`)
+
+    assert.equal(response.status, 200)
+    const html = await response.text()
+    assert.match(html, /Credential usage/i)
+    assert.match(html, /id="usage-credential-table-body"/)
+    assert.match(html, /Codex limits/i)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js renders credential usage and Codex limits status", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /usageCredentialTableBody/)
+    assert.match(script, /credentialUsage/)
+    assert.match(script, /formatCredentialUpstreamStatus/)
+    assert.match(script, /Codex limits unavailable/)
+    assert.match(script, /No upstream status/)
   } finally {
     server.close()
     await once(server, "close")

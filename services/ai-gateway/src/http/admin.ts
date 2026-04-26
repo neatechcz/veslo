@@ -23,7 +23,8 @@ import { env } from "../env.js";
 import type { AdminSessionRecord, LeaseProvider } from "../leases/repository.js";
 import { isAiGatewayProvider } from "../providers/ids.js";
 import { MySqlUsageRepository } from "../usage/mysql-repository.js";
-import type { AggregateUsageInput, UsageAggregateResponse, UsageGroupBy as RepositoryUsageGroupBy, UsageRepository } from "../usage/repository.js";
+import { UnavailableCodexCredentialStatusProvider, type CodexCredentialStatusProvider, type CodexUsageStatus } from "../usage/codex-status.js";
+import type { AggregateUsageInput, UsageAggregateResponse, UsageCredentialAggregate, UsageGroupBy as RepositoryUsageGroupBy, UsageRepository } from "../usage/repository.js";
 
 export type AdminSessionUser = {
   id: string;
@@ -71,7 +72,17 @@ export type AuditRecord = AuditEventRecord;
 
 export type UsageGroupBy = RepositoryUsageGroupBy;
 
-export type UsageResponse = UsageAggregateResponse;
+export type AdminCredentialUsageRecord = UsageCredentialAggregate & {
+  name: string;
+  provider: string | null;
+  state: CredentialState | null;
+  activeLeases: number;
+  upstreamStatus: CodexUsageStatus | null;
+};
+
+export type UsageResponse = Omit<UsageAggregateResponse, "credentialUsage"> & {
+  credentialUsage: AdminCredentialUsageRecord[];
+};
 
 export type AdminUserAiAccessRecord = {
   id: string;
@@ -222,6 +233,7 @@ type AdminReadModelDependencies = {
   aiAccessRepository?: AiAccessRepository;
   alertRepository?: AlertRepository;
   usageRepository?: UsageRepository;
+  codexStatusProvider?: CodexCredentialStatusProvider;
   auditRepository?: AuditRepository;
   secretStore?: SecretStore;
   now?: () => Date;
@@ -469,6 +481,42 @@ function formatProviderLabel(provider: string) {
   return provider;
 }
 
+function readCredentialUsage(usage: UsageAggregateResponse): UsageCredentialAggregate[] {
+  if (Array.isArray(usage.credentialUsage) && usage.credentialUsage.length > 0) {
+    return usage.credentialUsage;
+  }
+
+  const requestsByCredentialId = new Map(
+    usage.groupBy === "credential"
+      ? usage.series.map((entry) => [entry.key, entry.totalRequests] as const)
+      : [],
+  );
+
+  return usage.topCredentials.map((entry) => ({
+    id: entry.id,
+    label: entry.label,
+    totalTokens: entry.totalTokens,
+    totalRequests: requestsByCredentialId.get(entry.id) ?? 0,
+    lastUsedAt: null,
+  }));
+}
+
+function mergeCredentialFilters(
+  credentials: CredentialRecord[],
+  existingFilters: UsageAggregateResponse["filters"]["credentials"],
+) {
+  const filters = new Map<string, string>();
+  for (const credential of credentials) {
+    filters.set(credential.id, credential.name);
+  }
+  for (const filter of existingFilters) {
+    if (!filters.has(filter.id)) {
+      filters.set(filter.id, filter.label);
+    }
+  }
+  return Array.from(filters.entries()).map(([id, label]) => ({ id, label }));
+}
+
 function toIsoString(value: Date | string | null) {
   if (value instanceof Date) {
     return value.toISOString();
@@ -648,6 +696,7 @@ export function createDefaultAdminService(
     deps.alertRepository ?? getDefaultRepositories().alertRepository;
   const getUsageRepository = () =>
     deps.usageRepository ?? getDefaultRepositories().usageRepository;
+  const codexStatusProvider = deps.codexStatusProvider ?? new UnavailableCodexCredentialStatusProvider();
   const getAuditRepository = () =>
     deps.auditRepository ?? getDefaultRepositories().auditRepository;
   const getSecretStore = () =>
@@ -724,6 +773,73 @@ export function createDefaultAdminService(
       throw new HttpError("credential_not_found", 404);
     }
     return credential;
+  }
+
+  async function withCredentialUsage(
+    usage: UsageAggregateResponse,
+    credentials: CredentialRecord[],
+    statusProvider: CodexCredentialStatusProvider,
+  ): Promise<UsageResponse> {
+    const historicalUsage = readCredentialUsage(usage);
+    const historicalByCredentialId = new Map(historicalUsage.map((entry) => [entry.id, entry]));
+    const credentialLabels = new Map(credentials.map((credential) => [credential.id, credential.name]));
+    const credentialUsage =
+      credentials.length > 0
+        ? await Promise.all(
+            credentials.map(async (credential) => {
+              const historical = historicalByCredentialId.get(credential.id);
+              return {
+                id: credential.id,
+                label: credential.name,
+                name: credential.name,
+                provider: credential.provider,
+                state: credential.state,
+                activeLeases: credential.activeLeases,
+                totalTokens: historical?.totalTokens ?? 0,
+                totalRequests: historical?.totalRequests ?? 0,
+                lastUsedAt: historical?.lastUsedAt ?? null,
+                upstreamStatus:
+                  credential.provider === "codex_oauth"
+                    ? await statusProvider.getStatus({
+                        credentialId: credential.id,
+                        credentialName: credential.name,
+                      })
+                    : null,
+              };
+            }),
+          )
+        : historicalUsage.map((entry) => ({
+            id: entry.id,
+            label: entry.label,
+            name: entry.label,
+            provider: null,
+            state: null,
+            activeLeases: 0,
+            totalTokens: entry.totalTokens,
+            totalRequests: entry.totalRequests,
+            lastUsedAt: entry.lastUsedAt,
+            upstreamStatus: null,
+          }));
+
+    return {
+      ...usage,
+      filters: {
+        ...usage.filters,
+        credentials: mergeCredentialFilters(credentials, usage.filters.credentials),
+      },
+      series:
+        usage.groupBy === "credential"
+          ? usage.series.map((entry) => ({
+              ...entry,
+              label: credentialLabels.get(entry.key) ?? entry.label,
+            }))
+          : usage.series,
+      topCredentials: usage.topCredentials.map((entry) => ({
+        ...entry,
+        label: credentialLabels.get(entry.id) ?? entry.label,
+      })),
+      credentialUsage,
+    };
   }
 
   return {
@@ -909,7 +1025,11 @@ export function createDefaultAdminService(
       if (!usageRepository.aggregateUsage) {
         throw new HttpError("usage_read_model_unavailable", 503);
       }
-      return usageRepository.aggregateUsage(input);
+      const [usage, credentials] = await Promise.all([
+        usageRepository.aggregateUsage(input),
+        getCredentialReadRepository().listAdminCredentials(),
+      ]);
+      return withCredentialUsage(usage, credentials, codexStatusProvider);
     },
     async listAlerts() {
       return { alerts: await getAlertRepository().listAlerts() };

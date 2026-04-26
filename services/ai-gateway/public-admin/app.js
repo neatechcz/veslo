@@ -66,6 +66,7 @@ const els = {
   usageTotalRequests: document.getElementById("usage-total-requests"),
   usageTopCredential: document.getElementById("usage-top-credential"),
   usageSeries: document.getElementById("usage-series"),
+  usageCredentialTableBody: document.getElementById("usage-credential-table-body"),
   alertList: document.getElementById("alert-list"),
   alertDetail: document.getElementById("alert-detail"),
   userSearch: document.getElementById("user-search"),
@@ -847,7 +848,7 @@ function renderUsage() {
     return;
   }
 
-  const { filters, series, summary, topCredentials } = state.usage;
+  const { credentialUsage = [], filters, series, summary, topCredentials } = state.usage;
   els.usageGroupBy.value = state.usageFilters.groupBy;
   els.usageCredentialFilter.innerHTML = `<option value="">All credentials</option>${filters.credentials.map((entry) => `<option value="${escapeHtml(entry.id)}"${entry.id === state.usageFilters.credentialId ? " selected" : ""}>${escapeHtml(entry.label)}</option>`).join("")}`;
   els.usageUserFilter.innerHTML = `<option value="">All users</option>${filters.users.map((entry) => `<option value="${escapeHtml(entry.id)}"${entry.id === state.usageFilters.userId ? " selected" : ""}>${escapeHtml(entry.label)}</option>`).join("")}`;
@@ -871,6 +872,54 @@ function renderUsage() {
       <span class="status-chip">${escapeHtml(formatNumber(entry.totalTokens))} tokens</span>
     </article>
   `).join("") || `<article class="list-card active"><div><strong>No usage</strong><p>No usage matched the selected filters.</p></div></article>`;
+
+  els.usageCredentialTableBody.innerHTML = credentialUsage.map((credential) => {
+    const upstreamStatus = formatCredentialUpstreamStatus(credential);
+    return `<tr>
+      <td><strong>${escapeHtml(credential.name || credential.label || credential.id)}</strong><span>${escapeHtml(credential.id)}</span></td>
+      <td>${escapeHtml(formatProviderName(credential.provider))}</td>
+      <td><span class="status-chip">${escapeHtml(credential.state || "unknown")}</span></td>
+      <td>${escapeHtml(formatNumber(credential.totalRequests))}</td>
+      <td>${escapeHtml(formatNumber(credential.totalTokens))}</td>
+      <td>${escapeHtml(formatNumber(credential.activeLeases))}</td>
+      <td>${escapeHtml(formatDate(credential.lastUsedAt))}</td>
+      <td><span class="status-chip ${escapeHtml(upstreamStatus.tone)}">${escapeHtml(upstreamStatus.label)}</span><span>${escapeHtml(upstreamStatus.detail)}</span></td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="8">No credential usage matched the selected filters.</td></tr>`;
+}
+
+function formatProviderName(provider) {
+  if (provider === "openai") return "OpenAI";
+  if (provider === "anthropic") return "Anthropic";
+  if (provider === "codex_oauth") return "Codex / ChatGPT";
+  return provider || "Unknown";
+}
+
+function formatCredentialUpstreamStatus(credential) {
+  const status = credential?.upstreamStatus;
+  if (!status) {
+    return {
+      label: "No upstream status",
+      detail: "Historical usage only.",
+      tone: "info",
+    };
+  }
+
+  if (status.available) {
+    return {
+      label: status.label || "Codex status available",
+      detail: [status.detail, status.checkedAt ? `Checked ${formatDate(status.checkedAt)}` : ""]
+        .filter(Boolean)
+        .join(" "),
+      tone: "success",
+    };
+  }
+
+  return {
+    label: status.label || "Codex limits unavailable",
+    detail: status.detail || "Status probe did not return limits.",
+    tone: "warning",
+  };
 }
 
 function renderAlerts() {

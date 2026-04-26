@@ -62,19 +62,22 @@ function createDenClient(session = createSession()) {
   }
 }
 
-function createCredential(id: string): CredentialRecord {
+function createCredential(
+  id: string,
+  overrides: Partial<Pick<CredentialRecord, "provider" | "type" | "state" | "activeLeases" | "totalTokens">> = {},
+): CredentialRecord {
   return {
     id,
     name: `Credential ${id}`,
-    provider: "openai",
-    type: "oauth",
-    state: "healthy",
+    provider: overrides.provider ?? "openai",
+    type: overrides.type ?? "oauth",
+    state: overrides.state ?? "healthy",
     scope: "user_admin",
-    activeLeases: 2,
+    activeLeases: overrides.activeLeases ?? 2,
     alertCount: 0,
     lastRefreshAt: "2026-04-02T10:00:00.000Z",
     lastFailureAt: null,
-    totalTokens: 144,
+    totalTokens: overrides.totalTokens ?? 144,
     nextRotationAt: null,
     linkedAlertIds: [],
   }
@@ -124,6 +127,20 @@ function createUsageResponse(groupBy: UsageResponse["groupBy"]): UsageResponse {
     topCredentials: [{ id: "cred_openai_1", label: "Credential cred_openai_1", totalTokens: 900 }],
     topUsers: [{ id: "user_admin", label: "Admin", totalTokens: 900 }],
     topOrgs: [],
+    credentialUsage: [
+      {
+        id: "cred_openai_1",
+        label: "Credential cred_openai_1",
+        name: "Credential cred_openai_1",
+        provider: null,
+        state: null,
+        activeLeases: 0,
+        totalTokens: 900,
+        totalRequests: 9,
+        lastUsedAt: null,
+        upstreamStatus: null,
+      },
+    ],
   }
 }
 
@@ -243,6 +260,66 @@ test("admin usage endpoint aggregates by credential and user", async () => {
 
     assert.equal(response.status, 200)
     assert.deepEqual(await response.json(), expected)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("admin usage endpoint includes every credential with recorded usage and Codex limits status", async () => {
+  const app = createAdminApp({
+    credentials: [
+      createCredential("cred_openai_1"),
+      createCredential("cred_codex_1", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+    ],
+    usage: createUsageResponse("credential"),
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/usage?groupBy=credential`, {
+      headers: AUTHORIZATION,
+    })
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.credentialUsage, [
+      {
+        id: "cred_openai_1",
+        label: "Credential cred_openai_1",
+        name: "Credential cred_openai_1",
+        provider: "openai",
+        state: "healthy",
+        activeLeases: 2,
+        totalTokens: 900,
+        totalRequests: 9,
+        lastUsedAt: null,
+        upstreamStatus: null,
+      },
+      {
+        id: "cred_codex_1",
+        label: "Credential cred_codex_1",
+        name: "Credential cred_codex_1",
+        provider: "codex_oauth",
+        state: "healthy",
+        activeLeases: 0,
+        totalTokens: 0,
+        totalRequests: 0,
+        lastUsedAt: null,
+        upstreamStatus: {
+          available: false,
+          source: "unavailable",
+          label: "Codex limits unavailable",
+          detail: "Codex status probe is not configured.",
+        },
+      },
+    ])
   } finally {
     server.close()
     await once(server, "close")
