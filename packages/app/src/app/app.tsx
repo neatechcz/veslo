@@ -4521,6 +4521,7 @@ export default function App() {
           clearDesktopAuthExchangeProof(exchangeProof?.sessionId);
           requestManagedAiAccessRefresh();
           setError(null);
+          setOnboardingStep("connecting");
           setView("onboarding");
           setBooting(true);
           const rebootstrapTimeout = setTimeout(() => {
@@ -7520,6 +7521,7 @@ export default function App() {
             if (!imported || onboardingStep() !== "auth") {
               return;
             }
+            setOnboardingStep("connecting");
             setBooting(true);
             void workspaceStore.bootstrapOnboarding().finally(() => {
               setBooting(false);

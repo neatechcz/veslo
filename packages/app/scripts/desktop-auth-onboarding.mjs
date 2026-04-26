@@ -88,6 +88,16 @@ assert.equal(
   true,
   "app.tsx must retry onboarding only when delayed desktop auth hydration arrives after the auth gate",
 );
+assert.equal(
+  app.includes("setOnboardingStep(\"connecting\");\n          setView(\"onboarding\");"),
+  true,
+  "app.tsx must leave the auth gate immediately after a successful desktop browser sign-in",
+);
+assert.equal(
+  app.includes("setOnboardingStep(\"connecting\");\n            setBooting(true);"),
+  true,
+  "app.tsx must switch delayed desktop auth recovery from auth to connecting before retrying bootstrap",
+);
 
 // Isolate the handler function to verify it is free of veslo.server refs
 const handlerStart = app.indexOf("const queueAuthCompleteDeepLink");
@@ -136,4 +146,4 @@ assert.equal(
 );
 
 // ── done ────────────────────────────────────────────────────────────────
-console.log(JSON.stringify({ ok: true, checks: 19 }));
+console.log(JSON.stringify({ ok: true, checks: 21 }));
