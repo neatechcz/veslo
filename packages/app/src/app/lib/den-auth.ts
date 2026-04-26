@@ -497,12 +497,14 @@ export async function hydrateDenAuthFromDesktopSnapshot(): Promise<boolean> {
     return false;
   }
 
-  if (snapshot.keepSignedIn === false) {
+  const snapshotKeepSignedIn = snapshot.keepSignedIn !== false;
+  const state = parseSnapshotAuth(snapshot);
+
+  if (!state && snapshot.keepSignedIn === false) {
     applySignedOutDesktopSnapshot(localStore, sessionStore);
     return false;
   }
 
-  const state = parseSnapshotAuth(snapshot);
   if (!state) {
     if (currentAuth) {
       syncDesktopSnapshotFromCurrentState();
@@ -513,13 +515,19 @@ export async function hydrateDenAuthFromDesktopSnapshot(): Promise<boolean> {
   if (currentAuth) {
     const identityComparison = compareDenAuthIdentity(currentAuth, state);
     if (identityComparison !== "different") {
+      const currentKeepSignedIn = readDenKeepSignedIn();
       syncDesktopSnapshotFromCurrentState();
+      restoreDesktopSnapshotUiState(localStore, snapshot);
+      if (currentKeepSignedIn !== snapshotKeepSignedIn) {
+        writeDenKeepSignedIn(snapshotKeepSignedIn);
+        return true;
+      }
       return false;
     }
   }
 
   restoreDesktopSnapshotUiState(localStore, snapshot);
-  writeDenKeepSignedIn(true);
+  writeDenKeepSignedIn(snapshotKeepSignedIn);
   writeDenAuth(state);
   return true;
 }

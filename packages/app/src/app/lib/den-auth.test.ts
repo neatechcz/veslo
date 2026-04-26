@@ -558,7 +558,7 @@ test("writeDenAuth skips desktop snapshot writes during WebDriver sessions", asy
   }
 });
 
-test("hydrateDenAuthFromDesktopSnapshot skips import when keepSignedIn is false in desktop snapshot", async () => {
+test("hydrateDenAuthFromDesktopSnapshot treats keepSignedIn false with auth as a session-only sign-in", async () => {
   const authState = {
     denApiBase: "https://den-control-plane-veslo.onrender.com",
     token: "token_from_snapshot",
@@ -584,9 +584,50 @@ test("hydrateDenAuthFromDesktopSnapshot skips import when keepSignedIn is false 
 
   try {
     const imported = await hydrateDenAuthFromDesktopSnapshot();
-    assert.equal(imported, false);
-    assert.equal(readDenAuth(), null);
+    assert.equal(imported, true);
+    assert.deepEqual(readDenAuth(), authState);
     assert.equal(readDenKeepSignedIn(), false);
+  } finally {
+    storage.restore();
+  }
+});
+
+test("hydrateDenAuthFromDesktopSnapshot imports auth into session storage when snapshot disables keep signed in", async () => {
+  const authState = {
+    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    token: "token_from_snapshot_session_only",
+    orgId: "org_session_only",
+    user: { id: "user_session_only", email: "session-only@example.com" },
+    org: { id: "org_session_only" },
+  };
+  const storage = installDomStorage({
+    tauriInvoke: async (command) => {
+      if (command === "den_auth_snapshot_read") {
+        return {
+          authJson: JSON.stringify(authState),
+          keepSignedIn: false,
+          source: "desktop-runtime",
+        };
+      }
+      if (command === "den_auth_snapshot_write") {
+        return null;
+      }
+      throw new Error(`Unexpected invoke command: ${command}`);
+    },
+  });
+
+  try {
+    clearDenAuth();
+    writeDenKeepSignedIn(true);
+
+    const imported = await hydrateDenAuthFromDesktopSnapshot();
+    await flushPendingDesktopSnapshotWrite();
+
+    assert.equal(imported, true);
+    assert.deepEqual(readDenAuth(), authState);
+    assert.equal(readDenKeepSignedIn(), false);
+    assert.match(storage.sessionStorage.getItem("veslo.den.auth") ?? "", /token_from_snapshot_session_only/);
+    assert.equal(storage.localStorage.getItem("veslo.den.auth"), null);
   } finally {
     storage.restore();
   }
@@ -693,7 +734,7 @@ test("hydrateDenAuthFromDesktopSnapshot preserves browser auth when snapshot mat
   }
 });
 
-test("hydrateDenAuthFromDesktopSnapshot clears stale browser auth when desktop snapshot disables keep signed in", async () => {
+test("hydrateDenAuthFromDesktopSnapshot replaces stale browser auth with a session-only snapshot sign-in", async () => {
   const staleAuth = {
     denApiBase: "https://den-control-plane-veslo.onrender.com",
     token: "token_stale_browser",
@@ -713,6 +754,45 @@ test("hydrateDenAuthFromDesktopSnapshot clears stale browser auth when desktop s
       if (command === "den_auth_snapshot_read") {
         return {
           authJson: JSON.stringify(snapshotAuth),
+          keepSignedIn: false,
+          source: "desktop-runtime",
+        };
+      }
+      if (command === "den_auth_snapshot_write") {
+        return null;
+      }
+      throw new Error(`Unexpected invoke command: ${command}`);
+    },
+  });
+
+  try {
+    writeDenAuth(staleAuth);
+    await flushPendingDesktopSnapshotWrite();
+
+    const imported = await hydrateDenAuthFromDesktopSnapshot();
+    await flushPendingDesktopSnapshotWrite();
+
+    assert.equal(imported, true);
+    assert.deepEqual(readDenAuth(), snapshotAuth);
+    assert.equal(readDenKeepSignedIn(), false);
+  } finally {
+    storage.restore();
+  }
+});
+
+test("hydrateDenAuthFromDesktopSnapshot clears stale browser auth when snapshot is explicitly signed out", async () => {
+  const staleAuth = {
+    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    token: "token_stale_browser",
+    orgId: "org_stale",
+    user: { id: "user_stale", email: "stale@example.com" },
+    org: { id: "org_stale" },
+  };
+  const storage = installDomStorage({
+    tauriInvoke: async (command) => {
+      if (command === "den_auth_snapshot_read") {
+        return {
+          authJson: null,
           keepSignedIn: false,
           source: "desktop-runtime",
         };
