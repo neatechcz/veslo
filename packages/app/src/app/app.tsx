@@ -7504,12 +7504,28 @@ export default function App() {
 
     if (isTauriRuntime()) {
       try {
+        const hydrationPromise = hydrateDenAuthFromDesktopSnapshot().catch(() => false);
+        let hydrationTimedOut = false;
         await Promise.race([
-          hydrateDenAuthFromDesktopSnapshot().catch(() => {}),
+          hydrationPromise,
           new Promise<void>((resolve) => {
-            window.setTimeout(resolve, 1500);
+            window.setTimeout(() => {
+              hydrationTimedOut = true;
+              resolve();
+            }, 1500);
           }),
         ]);
+        if (hydrationTimedOut) {
+          void hydrationPromise.then((imported) => {
+            if (!imported || onboardingStep() !== "auth") {
+              return;
+            }
+            setBooting(true);
+            void workspaceStore.bootstrapOnboarding().finally(() => {
+              setBooting(false);
+            });
+          });
+        }
       } catch {
         // ignore desktop auth snapshot hydration failures
       }

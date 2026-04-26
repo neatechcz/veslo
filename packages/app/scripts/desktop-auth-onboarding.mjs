@@ -78,6 +78,16 @@ assert.equal(
   false,
   "app.tsx must not auto-resume desktop browser auth polling on startup",
 );
+assert.equal(
+  app.includes("const hydrationPromise = hydrateDenAuthFromDesktopSnapshot().catch(() => false)"),
+  true,
+  "app.tsx must preserve the desktop auth hydration promise for slow-start recovery",
+);
+assert.equal(
+  app.includes("if (!imported || onboardingStep() !== \"auth\")"),
+  true,
+  "app.tsx must retry onboarding only when delayed desktop auth hydration arrives after the auth gate",
+);
 
 // Isolate the handler function to verify it is free of veslo.server refs
 const handlerStart = app.indexOf("const queueAuthCompleteDeepLink");
@@ -126,4 +136,4 @@ assert.equal(
 );
 
 // ── done ────────────────────────────────────────────────────────────────
-console.log(JSON.stringify({ ok: true, checks: 17 }));
+console.log(JSON.stringify({ ok: true, checks: 19 }));
