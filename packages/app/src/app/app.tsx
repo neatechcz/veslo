@@ -5474,26 +5474,14 @@ export default function App() {
     setPendingSkillFallbackAutoReload(false);
   });
 
+  // Legacy skill-fallback auto-reload removed. OpenCode now hot-reloads
+  // skills, and the auto-reload was kicking off engine restarts during
+  // workspace browsing — wiping the user's session view. The reload-required
+  // banner is still shown via markReloadRequired so the user can reload
+  // explicitly if they need to.
   createEffect(() => {
     if (!pendingSkillFallbackAutoReload()) return;
-    if (!reloadRequired()) {
-      setPendingSkillFallbackAutoReload(false);
-      return;
-    }
-    if (reloadBusy()) return;
-
-    const reasons = reloadReasons();
-    if (reasons.length !== 1 || reasons[0] !== "skills") {
-      setPendingSkillFallbackAutoReload(false);
-      return;
-    }
-
-    if (reloadTrigger()?.type !== "skill") return;
-    if (!canReloadWorkspace()) return;
-    if (activeReloadBlockingSessions().length > 0) return;
-
     setPendingSkillFallbackAutoReload(false);
-    void reloadWorkspaceEngineAndResume();
   });
 
   const forceStopActiveSessionsAndReload = async () => {
@@ -7521,6 +7509,13 @@ export default function App() {
             if (!imported || onboardingStep() !== "auth") {
               return;
             }
+            // If the synchronous boot path already established a client by
+            // the time the delayed hydration finishes, the retry bootstrap
+            // is redundant — and would race the user's current session
+            // view through bootstrapOnboarding → connectToServer.
+            if (client()) {
+              return;
+            }
             setOnboardingStep("connecting");
             setBooting(true);
             void workspaceStore.bootstrapOnboarding().finally(() => {
@@ -7710,6 +7705,11 @@ export default function App() {
             });
             setLastKnownConfigSnapshot(desiredSnapshot);
             markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+            // Engine needs to be reloaded so it picks up the new managed-AI
+            // tokens — without it message sends hang in "thinking" because
+            // the gateway rejects the stale Authorization header. The race
+            // with workspace switching is handled by the stale-workspace
+            // ABORT and idempotent SKIP guards inside connectToServer.
             if (
               shouldAutoReloadManagedAiConfig({
                 hasManagedProfile: true,

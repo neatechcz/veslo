@@ -1068,6 +1068,16 @@ export function createSessionStore(options: {
       workspaceSessionIds.add(sessionID);
       return true;
     }
+    // The currently-selected session is the user's active context. Accept
+    // its events even if workspaceSessionIds is briefly out of sync — for
+    // example right after an engine reload, when the SSE reconnect clears
+    // workspaceSessionIds before loadSessions() repopulates it. Without
+    // this, session.status / session.idle events get dropped and the run
+    // indicator hangs at "thinking" forever.
+    if (sessionID === options.selectedSessionId()) {
+      workspaceSessionIds.add(sessionID);
+      return true;
+    }
     return false;
   };
 

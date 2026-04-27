@@ -720,6 +720,9 @@ export default {
   "settings.hide_titlebar_hint": "Skryje titlebar okna. Užitečné pro dlaždicové správce oken na Linuxu (Hyprland, i3, sway).",
   "settings.updates_not_supported": "Aktualizace nejsou v tomto prostředí podporovány.",
   "settings.updates_desktop_only": "Aktualizace jsou dostupné jen v desktopové aplikaci.",
+  "settings.account.title": "Účet",
+  "settings.account.sign_out": "Odhlásit",
+  "settings.account.sign_out_confirm": "Opravdu se chcete odhlásit? Aplikace se restartuje.",
   // ==================== Reload ====================
   "reload.toast_title": "Dostupné aktualizace",
   "reload.toast_description": "Znovu načtěte pracovní prostor a použijte změny konfigurace.",

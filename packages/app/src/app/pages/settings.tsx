@@ -3,7 +3,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onMou
 import { formatBytes, formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
 
 import Button from "../components/button";
-import { CircleAlert, Copy, Download, FolderOpen, Loader2, PlugZap, RefreshCcw, Smartphone, X, Zap } from "lucide-solid";
+import { CircleAlert, Copy, Download, FolderOpen, Loader2, LogOut, PlugZap, RefreshCcw, Smartphone, User, X, Zap } from "lucide-solid";
 import type { OpencodeConnectStatus, SessionArchiveItem, SettingsTab, StartupPreference } from "../types";
 import type {
   VesloAuditEntry,
@@ -31,9 +31,11 @@ import {
   sandboxDebugProbe,
 } from "../lib/tauri";
 import {
+  clearDenAuth,
   getDefaultDenApiBase,
   getDenApiBase,
   readDenApiBaseOverride,
+  readDenAuth,
   writeDenApiBaseOverride,
 } from "../lib/den-auth";
 import { resolveSettingsTabLabel, resolveVisibleSettingsTab } from "../lib/settings-tab-label";
@@ -877,6 +879,7 @@ export default function SettingsView(props: SettingsViewProps) {
       <Switch>
         <Match when={activeTab() === "general"}>
           <div class="space-y-6">
+            <UserAccountSection />
             <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
               <div class="flex items-start justify-between gap-4">
                 <div>
@@ -2230,5 +2233,67 @@ export default function SettingsView(props: SettingsViewProps) {
         </Match>
       </Switch>
     </section>
+  );
+}
+
+function UserAccountSection() {
+  const translate = (key: string) => t(key, currentLocale());
+  const auth = readDenAuth();
+  const userEmail = auth?.user?.email?.trim() || "";
+  const userName = auth?.user?.name?.trim() || "";
+  const orgName = auth?.org?.name?.trim() || "";
+  const [signingOut, setSigningOut] = createSignal(false);
+
+  const handleSignOut = async () => {
+    if (signingOut()) return;
+    const confirmed = window.confirm(translate("settings.account.sign_out_confirm"));
+    if (!confirmed) return;
+    setSigningOut(true);
+    try {
+      clearDenAuth();
+      // Reload so the app re-runs bootstrapOnboarding from a clean slate.
+      window.location.reload();
+    } catch (error) {
+      setSigningOut(false);
+      console.error("[settings] sign out failed", error);
+    }
+  };
+
+  return (
+    <Show when={userEmail || userName}>
+      <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+        <div class="flex items-start justify-between gap-4">
+          <div class="flex items-start gap-3 min-w-0">
+            <User size={16} class="text-gray-11 shrink-0 mt-0.5" />
+            <div class="min-w-0">
+              <div class="text-sm font-medium text-gray-12">{translate("settings.account.title")}</div>
+              <Show when={userName}>
+                <div class="text-xs text-gray-10 mt-0.5 truncate">{userName}</div>
+              </Show>
+              <Show when={userEmail}>
+                <div class="text-xs text-gray-9 truncate">{userEmail}</div>
+              </Show>
+              <Show when={orgName}>
+                <div class="text-[11px] text-gray-8 mt-0.5 truncate">{orgName}</div>
+              </Show>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            class="text-xs h-8 py-0 px-3 shrink-0 flex items-center gap-1.5"
+            onClick={() => void handleSignOut()}
+            disabled={signingOut()}
+          >
+            <Show
+              when={!signingOut()}
+              fallback={<Loader2 size={13} class="animate-spin" />}
+            >
+              <LogOut size={13} />
+            </Show>
+            {translate("settings.account.sign_out")}
+          </Button>
+        </div>
+      </div>
+    </Show>
   );
 }

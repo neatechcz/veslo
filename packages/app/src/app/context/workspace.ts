@@ -1140,11 +1140,65 @@ export function createWorkspaceStore(options: {
       return existing;
     }
 
+    const incomingDirectory = directory?.trim() ?? "";
+
+    // Stale-workspace abort: if this connect targets a local workspace that
+    // is no longer active (the user switched away while a delayed engine
+    // reload was in flight), bail out. Otherwise we would rebind the client
+    // to the previous workspace and the UI would show its sessions instead
+    // of the one the user just selected.
+    const activeRoot = activeWorkspaceRoot().trim();
+    if (
+      context?.workspaceType === "local" &&
+      activeRoot &&
+      incomingDirectory &&
+      activeRoot !== incomingDirectory
+    ) {
+      wsDebug("connect:abort-stale-workspace", {
+        baseUrl: nextBaseUrl,
+        directory: incomingDirectory,
+        activeRoot,
+        reason: context?.reason ?? null,
+      });
+      console.log("[workspace] connect ABORT (stale workspace — user switched away)", {
+        baseUrl: nextBaseUrl,
+        directory: incomingDirectory,
+        activeRoot,
+        reason: context?.reason ?? null,
+      });
+      return false;
+    }
+
+    // Idempotent reconnect: if we are already connected to the same baseUrl
+    // and directory, skip. connectToServer always wipes selectedSessionId,
+    // messages and todos, so a redundant call (e.g. delayed auth-hydration
+    // retry firing bootstrapOnboarding a second time) would race the user's
+    // current session view and force a re-fetch.
+    if (
+      options.client() &&
+      (options.baseUrl()?.trim() ?? "") === nextBaseUrl &&
+      (options.clientDirectory()?.trim() ?? "") === incomingDirectory
+    ) {
+      wsDebug("connect:idempotent-skip", {
+        baseUrl: nextBaseUrl,
+        directory: incomingDirectory || null,
+        reason: context?.reason ?? null,
+      });
+      console.log("[workspace] connect SKIP (idempotent — already connected)", {
+        baseUrl: nextBaseUrl,
+        directory: incomingDirectory || null,
+        reason: context?.reason ?? null,
+      });
+      return true;
+    }
+
     const run = (async () => {
       console.log("[workspace] connect", {
         baseUrl: nextBaseUrl,
         directory: directory ?? null,
         workspaceType: context?.workspaceType ?? null,
+        reason: context?.reason ?? null,
+        quiet: connectOptions?.quiet ?? false,
       });
       const connectStart = Date.now();
       wsDebug("connect:start", {
@@ -1216,10 +1270,21 @@ export function createWorkspaceStore(options: {
           }
         }
 
-        options.setSelectedSessionId(null);
-        options.setMessages([]);
-        options.setTodos([]);
-        options.setSessionStatusById({});
+        // Only wipe session view state when we are switching to a DIFFERENT
+        // workspace directory. Engine reloads on the same directory (e.g.
+        // managed AI config patch, manual reload, hot config swap) just need
+        // a fresh client + baseUrl — the session/messages on disk are still
+        // valid, and clearing them forces a redundant re-fetch and visibly
+        // blanks the UI for ~300ms.
+        const previousDirectory = (options.clientDirectory()?.trim() ?? "");
+        const directoryChanged =
+          !options.client() || previousDirectory !== (resolvedDirectory ?? "");
+        if (directoryChanged) {
+          options.setSelectedSessionId(null);
+          options.setMessages([]);
+          options.setTodos([]);
+          options.setSessionStatusById({});
+        }
 
         options.setClient(nextClient);
         options.setConnectedVersion(health.version);
