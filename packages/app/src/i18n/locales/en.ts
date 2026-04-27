@@ -723,9 +723,6 @@ export default {
   "settings.hide_titlebar_hint": "Hide the window titlebar. Useful for tiling window managers on Linux (Hyprland, i3, sway).",
   "settings.updates_not_supported": "Updates are not supported in this environment.",
   "settings.updates_desktop_only": "Updates are only available in the desktop app.",
-  "settings.account.title": "Account",
-  "settings.account.sign_out": "Sign out",
-  "settings.account.sign_out_confirm": "Sign out? The app will reload.",
 
   // ==================== Reload ====================
   "reload.toast_title": "Updates available",

@@ -160,6 +160,15 @@ const workspaceKindLabel = (workspace: WorkspaceInfo) =>
 const sidebarControlTooltipClass =
   "relative after:pointer-events-none after:absolute after:left-1/2 after:bottom-full after:z-30 after:mb-1 after:-translate-x-1/2 after:rounded-md after:border after:border-gray-6 after:bg-gray-1 after:px-2 after:py-1 after:text-[10px] after:font-medium after:leading-none after:text-gray-11 after:whitespace-nowrap after:opacity-0 after:shadow-lg after:transition-opacity after:duration-150 after:delay-[250ms] hover:after:opacity-100 focus-visible:after:opacity-100 after:content-[attr(data-tooltip)]";
 
+const sessionRowClass = (isSelected: boolean, extraClass?: string) => {
+  const base =
+    "relative w-full appearance-none border-none bg-transparent flex items-center rounded-xl px-3 py-1 text-left transition-colors focus-visible:outline-none";
+  const state = isSelected
+    ? "bg-gray-5 text-gray-12 before:content-[''] before:absolute before:left-1 before:top-1 before:bottom-1 before:w-0.5 before:rounded-full before:bg-indigo-9"
+    : "hover:bg-gray-3/70 text-gray-12";
+  return [base, extraClass, state].filter(Boolean).join(" ");
+};
+
 export default function WorkspaceSessionList(props: Props) {
   const tr = (key: string) => t(key, currentLocale());
   const loadMoreLabel = (count: number) => tr("sidebar.load_more").replace("{count}", String(count));
@@ -1418,9 +1427,8 @@ export default function WorkspaceSessionList(props: Props) {
                           <button
                             type="button"
                             data-session-sidebar-row="true"
-                            class={`w-full appearance-none border-none bg-transparent flex items-center rounded-xl px-3 py-1 pr-12 text-left transition-colors focus-visible:outline-none ${
-                              isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
-                            }`}
+                            class={sessionRowClass(isSelected(), "pr-12")}
+                            aria-current={isSelected() ? "page" : undefined}
                             style={rowIndentStyle(row)}
                             onMouseUp={(event) => handleSessionRowMouseUp(event, row, hasChildren)}
                             onClick={(event) => handleSessionRowPress(event, row, hasChildren)}
@@ -1788,9 +1796,8 @@ export default function WorkspaceSessionList(props: Props) {
                                 <button
                                   type="button"
                                   data-session-sidebar-row="true"
-                                  class={`w-full appearance-none border-none bg-transparent flex items-center gap-2 rounded-xl px-3 py-1 pr-12 text-left transition-colors focus-visible:outline-none ${
-                                    isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70 text-gray-12"
-                                  }`}
+                                  class={sessionRowClass(isSelected(), "gap-2 pr-12")}
+                                  aria-current={isSelected() ? "page" : undefined}
                                   style={rowIndentStyle(row)}
                                   onMouseUp={(event) => handleSessionRowMouseUp(event, row, hasChildren)}
                                   onClick={(event) => handleSessionRowPress(event, row, hasChildren)}

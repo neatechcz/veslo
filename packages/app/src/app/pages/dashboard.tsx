@@ -110,6 +110,8 @@ export type DashboardViewProps = {
   baseUrl: string;
   clientConnected: boolean;
   authenticatedUser: string | null;
+  onLogout: () => Promise<void> | void;
+  onSignIn: () => Promise<void> | void;
   busy: boolean;
   busyHint: string | null;
   busyLabel: string | null;
@@ -1357,6 +1359,8 @@ export default function DashboardView(props: DashboardViewProps) {
             runtimeAvailableWithoutClient={runtimeAvailableWithoutClient()}
             authenticatedUser={props.authenticatedUser}
             onOpenSettings={() => openSettings("general")}
+            onLogout={props.onLogout}
+            onSignIn={props.onSignIn}
           />
           <div
             class="absolute inset-y-0 right-0 w-2 cursor-col-resize"

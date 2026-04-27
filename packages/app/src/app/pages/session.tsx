@@ -177,6 +177,8 @@ export type SessionViewProps = {
   engineReady?: boolean;
   clientConnected: boolean;
   authenticatedUser: string | null;
+  onLogout: () => Promise<void> | void;
+  onSignIn: () => Promise<void> | void;
   vesloServerStatus: VesloServerStatus;
   startupPreference: StartupPreference | null;
   hideTitlebar: boolean;
@@ -3784,6 +3786,8 @@ export default function SessionView(props: SessionViewProps) {
         runtimeAvailableWithoutClient={runtimeAvailableWithoutClient()}
         authenticatedUser={props.authenticatedUser}
         onOpenSettings={() => openSettings("general")}
+        onLogout={props.onLogout}
+        onSignIn={props.onSignIn}
       />
     </>
   );
