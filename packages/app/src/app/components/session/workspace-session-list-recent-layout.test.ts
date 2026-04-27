@@ -7,7 +7,7 @@ const source = readFileSync(new URL("./workspace-session-list.tsx", import.meta.
 test("recent rows reserve right space for timestamp/menu to avoid title overlap", () => {
   assert.match(
     source,
-    /class=\{sessionRowClass\(isSelected\(\), "pr-12"\)\}/,
+    /class=\{`w-full [^`]*flex items-center rounded-xl px-3 py-1 pr-12 text-left transition-colors [^`]*\$\{/,
     "recent rows should reserve a right column so timestamp and menu never overlap labels",
   );
 });
@@ -69,7 +69,7 @@ test("left sidebar session list uses tighter vertical spacing", () => {
 test("by-project session rows reserve right space and swap time for three-dot menu on hover", () => {
   assert.match(
     source,
-    /class=\{sessionRowClass\(isSelected\(\), "gap-2 pr-12"\)\}/,
+    /class=\{`w-full [^`]*flex items-center gap-2 rounded-xl px-3 py-1 pr-12 text-left transition-colors [^`]*\$\{/,
     "by-project rows should reserve a right column so timestamp and menu never overlap labels",
   );
 

@@ -663,6 +663,9 @@ export default {
   "settings.hide_titlebar_hint": "隐藏窗口标题栏。适合 Linux 平铺窗口管理器（Hyprland、i3、sway）。",
   "settings.updates_not_supported": "此环境不支持更新。",
   "settings.updates_desktop_only": "更新仅在桌面应用中可用。",
+  "settings.account.title": "账户",
+  "settings.account.sign_out": "退出登录",
+  "settings.account.sign_out_confirm": "确认退出登录？应用将重新加载。",
 
   // ==================== Reload ====================
   "reload.toast_title": "需要重新加载",

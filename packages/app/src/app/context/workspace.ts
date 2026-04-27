@@ -1027,15 +1027,12 @@ export function createWorkspaceStore(options: {
       // the wrong workspace, and ensureEngineForWorkspace reconnects
       // to the correct workspace on demand.
 
-      const _tPopulate = Date.now();
       try {
         await options.populateSidebarFromDb!(id, next.path);
       } catch (e) {
         _wsLog("[workspace:activate] STEP 5-BROWSE — populateSidebarFromDb failed", e);
       }
-      _wsLog("[perf] STEP 5-BROWSE populateSidebarFromDb", { id, ms: Date.now() - _tPopulate });
 
-      const _tHydrate = Date.now();
       try {
         if (options.hydrateLatestSessionFromDb) {
           await options.hydrateLatestSessionFromDb(id, next.path);
@@ -1043,7 +1040,6 @@ export function createWorkspaceStore(options: {
       } catch (e) {
         _wsLog("[workspace:activate] STEP 5-BROWSE — hydrateLatestSessionFromDb failed", e);
       }
-      _wsLog("[perf] STEP 5-BROWSE hydrateLatestSessionFromDb", { id, ms: Date.now() - _tHydrate });
 
       options.setEngineReady?.(false);
       updateWorkspaceConnectionState(id, { status: "connected", message: null });
