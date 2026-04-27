@@ -1071,6 +1071,15 @@ export default function App() {
   const [engineReady, setEngineReady] = createSignal(true);
   const mountTime = Date.now();
   const [lastKnownConfigSnapshot, setLastKnownConfigSnapshot] = createSignal("");
+  // Tracks which Veslo server token we already triggered a managed-AI engine
+  // reload for. The Veslo server mints a fresh client token on every restart,
+  // so opencode.jsonc files in workspaces that were not visited since the
+  // last restart still hold the old apiKey. Patching them on workspace
+  // switch is fast, but `reloadWorkspaceEngine()` blocks the UI for ~1-3s
+  // per workspace. Since the engine is shared across workspaces, one reload
+  // is enough — subsequent patches just update the file on disk and the
+  // engine picks up the new token on its next read.
+  const [lastReloadedForServerToken, setLastReloadedForServerToken] = createSignal("");
   const [developerMode, setDeveloperMode] = createSignal(false);
   const [documentVisible, setDocumentVisible] = createSignal(true);
 
@@ -2792,6 +2801,13 @@ export default function App() {
   const [managedAiAccessRetryAttempt, setManagedAiAccessRetryAttempt] = createSignal(0);
   const [managedAiBootstrapPendingCount, setManagedAiBootstrapPendingCount] = createSignal(0);
   const managedAiAccessModel = createMemo(() => managedAiAccess()?.defaultModel ?? null);
+  // When the managed AI profile changes (admin reassigns user, credential
+  // is rotated, etc.) we need to reload the engine again on the next
+  // workspace patch — even if the server token didn't change.
+  createEffect(() => {
+    managedAiAccess();
+    setLastReloadedForServerToken("");
+  });
   const managedAiBootstrapBusy = createMemo(
     () => managedAiAccessBusy() || managedAiBootstrapPendingCount() > 0,
   );
@@ -7706,18 +7722,23 @@ export default function App() {
             setLastKnownConfigSnapshot(desiredSnapshot);
             markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
             // Engine needs to be reloaded so it picks up the new managed-AI
-            // tokens — without it message sends hang in "thinking" because
-            // the gateway rejects the stale Authorization header. The race
-            // with workspace switching is handled by the stale-workspace
-            // ABORT and idempotent SKIP guards inside connectToServer.
+            // tokens — but only ONCE per Veslo server token. The engine is
+            // shared across workspaces, so after the first reload all
+            // subsequent workspace patches just update opencode.jsonc on
+            // disk; the engine reads the fresh apiKey on its next call.
+            // The race with workspace switching is handled by the
+            // stale-workspace ABORT and idempotent SKIP guards inside
+            // connectToServer.
             if (
               shouldAutoReloadManagedAiConfig({
                 hasManagedProfile: true,
                 hasConfigChanged: true,
                 hasActiveRuns: anyActiveRuns(),
                 canReloadWorkspace: canReloadWorkspace(),
-              })
+              }) &&
+              lastReloadedForServerToken() !== gatewayClientToken
             ) {
+              setLastReloadedForServerToken(gatewayClientToken);
               await reloadWorkspaceEngine();
             }
             return;
@@ -7763,14 +7784,17 @@ export default function App() {
           }
           setLastKnownConfigSnapshot(getConfigSnapshot(content));
           markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+          // Reload engine only once per Veslo server token — see comment above.
           if (
             shouldAutoReloadManagedAiConfig({
               hasManagedProfile: true,
               hasConfigChanged: true,
               hasActiveRuns: anyActiveRuns(),
               canReloadWorkspace: canReloadWorkspace(),
-            })
+            }) &&
+            lastReloadedForServerToken() !== gatewayClientToken
           ) {
+            setLastReloadedForServerToken(gatewayClientToken);
             await reloadWorkspaceEngine();
           }
           return;
