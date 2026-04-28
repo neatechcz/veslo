@@ -282,12 +282,12 @@ export function createSystemState(options: {
 
   async function reloadEngineInstance() {
     const initialClient = options.client();
-    if (!initialClient) return;
+    if (!initialClient) return false;
 
     const override = options.canReloadWorkspaceEngine?.();
     if (override === false) {
       setReloadError("Reload is unavailable for this worker.");
-      return;
+      return false;
     }
 
     // if (anyActiveRuns()) {
@@ -303,7 +303,7 @@ export function createSystemState(options: {
         const ok = await options.reloadWorkspaceEngine();
         if (ok === false) {
           setReloadError("Failed to reload the engine.");
-          return;
+          return false;
         }
       } else {
         unwrap(await initialClient.instance.dispose());
@@ -372,8 +372,10 @@ export function createSystemState(options: {
       if (options.notion && options.notion.status() === "connected" && options.notion.skillInstalled()) {
         options.notion.setTryPromptVisible(true);
       }
+      return true;
     } catch (e) {
       setReloadError(e instanceof Error ? e.message : safeStringify(e));
+      return false;
     } finally {
       setReloadBusy(false);
       setReloadLastFinishedAt(Date.now());
@@ -381,7 +383,7 @@ export function createSystemState(options: {
   }
 
   async function reloadWorkspaceEngine() {
-    await reloadEngineInstance();
+    return reloadEngineInstance();
   }
 
   async function repairOpencodeCache() {

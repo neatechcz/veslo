@@ -7738,8 +7738,10 @@ export default function App() {
               }) &&
               lastReloadedForServerToken() !== gatewayClientToken
             ) {
-              setLastReloadedForServerToken(gatewayClientToken);
-              await reloadWorkspaceEngine();
+              const managedAiReloaded = await reloadWorkspaceEngine();
+              if (managedAiReloaded) {
+                setLastReloadedForServerToken(gatewayClientToken);
+              }
             }
             return;
           }
@@ -7794,8 +7796,10 @@ export default function App() {
             }) &&
             lastReloadedForServerToken() !== gatewayClientToken
           ) {
-            setLastReloadedForServerToken(gatewayClientToken);
-            await reloadWorkspaceEngine();
+            const managedAiReloaded = await reloadWorkspaceEngine();
+            if (managedAiReloaded) {
+              setLastReloadedForServerToken(gatewayClientToken);
+            }
           }
           return;
         }
