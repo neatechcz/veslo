@@ -95,6 +95,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
   private readonly ttlMs: number;
   private readonly now: () => Date;
   private readonly cache = new Map<string, CachedStatusEntry>();
+  private readonly inFlight = new Map<string, Promise<CodexUsageStatus>>();
 
   constructor(deps: CachedCodexCredentialStatusProviderDeps) {
     this.loadCredentialAuthJson = deps.loadCredentialAuthJson;
@@ -119,35 +120,49 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
       return cached.status;
     }
 
-    let status = unavailableStatus("Credential is missing Codex auth.json.");
-    try {
-      const authJson = await this.loadCredentialAuthJson(input.credentialId);
-      if (!authJson?.trim()) {
-        status = unavailableStatus("Credential is missing Codex auth.json.");
-      } else {
-        const result = await this.probe({
-          credentialId: input.credentialId,
-          credentialName: input.credentialName,
-          authJson,
-        });
-        status = result.rateLimits
-          ? codexUsageStatusFromRateLimits(result.rateLimits, result.checkedAt, result.detail)
-          : result.ok === true
-            ? codexUsageStatusUnknownLimits(result.checkedAt, result.detail)
-            : unavailableStatus(result.detail || "Codex probe did not return rate limits.", result.checkedAt);
-      }
-    } catch (error) {
-      status = unavailableStatus(
-        error instanceof Error && error.message ? error.message : "Codex probe failed.",
-        this.now().toISOString(),
-      );
+    const current = this.inFlight.get(input.credentialId);
+    if (current) {
+      return current;
     }
 
-    this.cache.set(input.credentialId, {
-      expiresAt: nowMs + this.ttlMs,
-      status,
-    });
-    return status;
+    const refresh = (async () => {
+      let status = unavailableStatus("Credential is missing Codex auth.json.");
+      try {
+        const authJson = await this.loadCredentialAuthJson(input.credentialId);
+        if (!authJson?.trim()) {
+          status = unavailableStatus("Credential is missing Codex auth.json.");
+        } else {
+          const result = await this.probe({
+            credentialId: input.credentialId,
+            credentialName: input.credentialName,
+            authJson,
+          });
+          status = result.rateLimits
+            ? codexUsageStatusFromRateLimits(result.rateLimits, result.checkedAt, result.detail)
+            : result.ok === true
+              ? codexUsageStatusUnknownLimits(result.checkedAt, result.detail)
+              : unavailableStatus(result.detail || "Codex probe did not return rate limits.", result.checkedAt);
+        }
+      } catch (error) {
+        status = unavailableStatus(
+          error instanceof Error && error.message ? error.message : "Codex probe failed.",
+          this.now().toISOString(),
+        );
+      }
+
+      this.cache.set(input.credentialId, {
+        expiresAt: nowMs + this.ttlMs,
+        status,
+      });
+      return status;
+    })();
+    this.inFlight.set(input.credentialId, refresh);
+
+    try {
+      return await refresh;
+    } finally {
+      this.inFlight.delete(input.credentialId);
+    }
   }
 }
 
