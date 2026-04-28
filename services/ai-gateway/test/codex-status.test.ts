@@ -139,6 +139,60 @@ test("parseRateLimitsFromSessionLog ignores top-level rate limits during fallbac
   });
 });
 
+test("parseRateLimitsFromSessionLog skips invalid newer rate limits and finds older valid snapshot", () => {
+  const sessionLog = [
+    JSON.stringify({
+      timestamp: "2026-04-28T09:55:00.000Z",
+      type: "event_msg",
+      payload: {
+        type: "agent_message",
+        message: {
+          metadata: {
+            rate_limits: {
+              primary: {
+                used_percent: "42",
+                window_minutes: "300",
+                resets_at: "1777370400",
+              },
+              plan_type: "team",
+            },
+          },
+        },
+      },
+    }),
+    JSON.stringify({
+      timestamp: "2026-04-28T10:00:00.000Z",
+      type: "event_msg",
+      payload: {
+        type: "agent_message",
+        message: {
+          metadata: {
+            rate_limits: {
+              primary: {
+                used_percent: "90",
+                window_minutes: "not-a-number",
+                resets_at: "1777370400",
+              },
+              secondary: {},
+              plan_type: "team",
+            },
+          },
+        },
+      },
+    }),
+  ].join("\n");
+
+  assert.deepEqual(parseRateLimitsFromSessionLog(sessionLog), {
+    primary: {
+      used_percent: 42,
+      window_minutes: 300,
+      resets_at: 1777370400,
+    },
+    secondary: null,
+    plan_type: "team",
+  });
+});
+
 test("codexUsageStatusFromRateLimits exposes 5h and weekly windows", () => {
   const status = codexUsageStatusFromRateLimits(
     {

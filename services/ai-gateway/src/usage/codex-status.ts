@@ -224,9 +224,15 @@ function readRateLimitsSnapshot(value: unknown): CodexRateLimitsSnapshot | null 
     return null;
   }
 
+  const primary = readRateLimitWindow(record.primary);
+  const secondary = readRateLimitWindow(record.secondary);
+  if (!primary && !secondary) {
+    return null;
+  }
+
   return {
-    primary: readRateLimitWindow(record.primary),
-    secondary: readRateLimitWindow(record.secondary),
+    primary,
+    secondary,
     plan_type: getString(record, "plan_type"),
   };
 }
@@ -264,9 +270,14 @@ function readRateLimitWindow(value: unknown): CodexRateLimitWindowSnapshot | nul
     return null;
   }
 
+  const windowMinutes = getNumber(record, "window_minutes");
+  if (!Number.isFinite(windowMinutes) || Number(windowMinutes) <= 0) {
+    return null;
+  }
+
   return {
     used_percent: getNumber(record, "used_percent"),
-    window_minutes: getNumber(record, "window_minutes"),
+    window_minutes: windowMinutes,
     resets_at: getNumber(record, "resets_at"),
   };
 }
