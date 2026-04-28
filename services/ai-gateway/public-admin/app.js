@@ -785,13 +785,15 @@ function renderCredentials() {
       <td><a href="/admin/alerts" data-open-alerts="${escapeHtml(credential.id)}">${escapeHtml(String(credential.alertCount))} active alerts</a></td>
       <td>${escapeHtml(String(credential.activeLeases))}</td>
       <td>${escapeHtml(formatDate(credential.lastRefreshAt))}</td>
+      <td>${renderCredentialCodexStatus(credential)}</td>
     </tr>`;
   }).join("");
 
-  els.credentialsTableBody.innerHTML = rows || `<tr><td colspan="6">No credentials found.</td></tr>`;
+  els.credentialsTableBody.innerHTML = rows || `<tr><td colspan="7">No credentials found.</td></tr>`;
 
   const selected = currentCredential();
   if (selected) {
+    const selectedUpstreamStatus = formatCredentialUpstreamStatus(selected);
     els.credentialDetail.innerHTML = `
       <p class="eyebrow">Selected credential</p>
       <h3>${escapeHtml(selected.name)}</h3>
@@ -801,6 +803,10 @@ function renderCredentials() {
         <div class="detail-line"><span>Last failure</span><strong>${escapeHtml(formatDate(selected.lastFailureAt))}</strong></div>
         <div class="detail-line"><span>Rotation</span><strong>${escapeHtml(formatDate(selected.nextRotationAt))}</strong></div>
         <div class="detail-line"><span>Total tokens</span><strong>${escapeHtml(formatNumber(selected.totalTokens))}</strong></div>
+        ${selected.provider === "codex_oauth" ? `
+          <div class="detail-line"><span>Codex upstream</span><strong>${escapeHtml(selectedUpstreamStatus.label)}</strong></div>
+          <div class="detail-line"><span>Codex limits</span><strong>${escapeHtml(selectedUpstreamStatus.limitSummary || "5h: unknown | Weekly: unknown")}</strong></div>
+        ` : ""}
       </div>
       <div class="button-row">
         <button class="button button-secondary" type="button" data-credential-action="drain">Drain</button>
@@ -907,13 +913,14 @@ function formatCredentialUpstreamStatus(credential) {
 
   if (status.available) {
     const limitSummary = formatCredentialLimitSummary(status);
+    const hasLimits = Boolean(status.limits?.fiveHour || status.limits?.weekly);
     return {
-      label: status.label || "Codex status available",
+      label: status.label || (hasLimits ? "Codex limits available" : "Codex OK, limits unknown"),
       detail: [status.detail, status.checkedAt ? `Checked ${formatDate(status.checkedAt)}` : ""]
         .filter(Boolean)
         .join(" "),
       limitSummary,
-      tone: "success",
+      tone: hasLimits ? "success" : "info",
     };
   }
 
@@ -925,25 +932,40 @@ function formatCredentialUpstreamStatus(credential) {
   };
 }
 
+function renderCredentialCodexStatus(credential) {
+  if (credential.provider !== "codex_oauth") {
+    return `<span class="muted">N/A</span>`;
+  }
+
+  const upstreamStatus = formatCredentialUpstreamStatus(credential);
+  return `<span class="status-chip ${escapeHtml(upstreamStatus.tone)}">${escapeHtml(upstreamStatus.label)}</span><span>${escapeHtml(upstreamStatus.limitSummary)}</span><span>${escapeHtml(upstreamStatus.detail)}</span>`;
+}
+
 function formatCredentialLimitSummary(status) {
   const limits = status?.limits;
   if (!limits) {
     return "";
   }
 
-  const lines = [limits.fiveHour, limits.weekly]
-    .filter(Boolean)
-    .map((entry) => {
-      const used = typeof entry.usedPercent === "number" ? `${Math.round(entry.usedPercent)}% used` : "usage unknown";
-      const reset = entry.resetAt ? `resets ${formatDate(entry.resetAt)}` : "reset unknown";
-      return `${entry.label}: ${used}, ${reset}`;
-    });
+  const lines = [
+    formatLimitWindowSummary("5h", limits.fiveHour),
+    formatLimitWindowSummary("Weekly", limits.weekly),
+  ];
 
   if (typeof status.planType === "string" && status.planType.trim()) {
     lines.unshift(`Plan ${status.planType}`);
   }
 
   return lines.join(" | ");
+}
+
+function formatLimitWindowSummary(label, entry) {
+  if (!entry) {
+    return `${label}: unknown`;
+  }
+  const used = typeof entry.usedPercent === "number" ? `${Math.round(entry.usedPercent)}% used` : "usage unknown";
+  const reset = entry.resetAt ? `resets ${formatDate(entry.resetAt)}` : "reset unknown";
+  return `${entry.label || label}: ${used}, ${reset}`;
 }
 
 function renderAlerts() {

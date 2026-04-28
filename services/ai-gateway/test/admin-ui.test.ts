@@ -28,6 +28,7 @@ test("GET /admin/credentials serves the admin shell with an admin-only platform 
     assert.match(html, /Codex \/ ChatGPT runtime profile/)
     assert.match(html, /<option value="codex_oauth">Codex \/ ChatGPT runtime<\/option>/)
     assert.match(html, /Paste the provider API key or the full Codex auth\.json\./)
+    assert.match(html, /<th>Last refresh<\/th>\s*<th>Codex limits<\/th>/)
   } finally {
     server.close()
     await once(server, "close")
@@ -197,6 +198,10 @@ test("GET /admin/app.js renders credential usage and Codex limits status", async
     assert.match(script, /credentialUsage/)
     assert.match(script, /formatCredentialUpstreamStatus/)
     assert.match(script, /formatCredentialLimitSummary/)
+    assert.match(script, /renderCredentialCodexStatus/)
+    assert.match(script, /Codex OK, limits unknown/)
+    assert.match(script, /5h: unknown/)
+    assert.match(script, /Weekly: unknown/)
     assert.match(script, /Codex limits unavailable/)
     assert.match(script, /No upstream status/)
     assert.match(script, /limits\.fiveHour/)
