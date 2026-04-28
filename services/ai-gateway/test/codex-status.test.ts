@@ -54,6 +54,49 @@ test("parseRateLimitsFromSessionLog reads Codex token_count rate limits", () => 
   });
 });
 
+test("parseRateLimitsFromSessionLog finds nested Codex rate limits with string numbers", () => {
+  const sessionLog = [
+    JSON.stringify({
+      timestamp: "2026-04-28T10:00:00.000Z",
+      type: "event_msg",
+      payload: {
+        type: "agent_message",
+        message: {
+          metadata: {
+            rate_limits: {
+              primary: {
+                used_percent: "72.5",
+                window_minutes: "300",
+                resets_at: "1777370400",
+              },
+              secondary: {
+                used_percent: "41",
+                window_minutes: "10080",
+                resets_at: "1777816800",
+              },
+              plan_type: "team",
+            },
+          },
+        },
+      },
+    }),
+  ].join("\n");
+
+  assert.deepEqual(parseRateLimitsFromSessionLog(sessionLog), {
+    primary: {
+      used_percent: 72.5,
+      window_minutes: 300,
+      resets_at: 1777370400,
+    },
+    secondary: {
+      used_percent: 41,
+      window_minutes: 10080,
+      resets_at: 1777816800,
+    },
+    plan_type: "team",
+  });
+});
+
 test("codexUsageStatusFromRateLimits exposes 5h and weekly windows", () => {
   const status = codexUsageStatusFromRateLimits(
     {
@@ -80,6 +123,24 @@ test("codexUsageStatusFromRateLimits exposes 5h and weekly windows", () => {
   assert.equal(status.limits?.fiveHour?.usedPercent, 30);
   assert.equal(status.limits?.weekly?.label, "Weekly");
   assert.equal(status.limits?.weekly?.usedPercent, 33);
+});
+
+test("codexUsageStatusFromRateLimits keeps partial 5h and weekly windows distinct", () => {
+  const status = codexUsageStatusFromRateLimits(
+    {
+      primary: {
+        used_percent: 88,
+        window_minutes: 10080,
+        resets_at: 1777816800,
+      },
+      plan_type: "plus",
+    },
+    "2026-04-28T10:00:00.000Z",
+  );
+
+  assert.equal(status.limits?.fiveHour, null);
+  assert.equal(status.limits?.weekly?.label, "Weekly");
+  assert.equal(status.limits?.weekly?.usedPercent, 88);
 });
 
 test("CachedCodexCredentialStatusProvider reuses recent probe results", async () => {

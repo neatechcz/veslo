@@ -197,14 +197,18 @@ export function parseRateLimitsFromSessionLog(text: string): CodexRateLimitsSnap
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     try {
       const parsed = JSON.parse(lines[index] ?? "");
-      const rateLimits = getRecord(getRecord(parsed, "payload"), "info")?.rate_limits;
-      const tokenType = getString(getRecord(parsed, "payload"), "type");
-      if (tokenType !== "token_count") {
-        continue;
+      const payload = getRecord(parsed, "payload");
+      const tokenType = getString(payload, "type");
+      if (tokenType === "token_count") {
+        const snapshot = readRateLimitsSnapshot(getRecord(payload, "info")?.rate_limits);
+        if (snapshot) {
+          return snapshot;
+        }
       }
-      const snapshot = readRateLimitsSnapshot(rateLimits);
-      if (snapshot) {
-        return snapshot;
+
+      const fallback = findRateLimitsSnapshot(parsed);
+      if (fallback) {
+        return fallback;
       }
     } catch {
       continue;
@@ -225,6 +229,31 @@ function readRateLimitsSnapshot(value: unknown): CodexRateLimitsSnapshot | null 
     secondary: readRateLimitWindow(record.secondary),
     plan_type: getString(record, "plan_type"),
   };
+}
+
+function findRateLimitsSnapshot(value: unknown, depth = 0): CodexRateLimitsSnapshot | null {
+  if (depth > 6) {
+    return null;
+  }
+
+  const record = getRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const direct = readRateLimitsSnapshot(record.rate_limits);
+  if (direct) {
+    return direct;
+  }
+
+  for (const key of ["payload", "info", "message", "data", "event", "metadata"]) {
+    const nested = findRateLimitsSnapshot(record[key], depth + 1);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
 }
 
 function readRateLimitWindow(value: unknown): CodexRateLimitWindowSnapshot | null {
@@ -444,7 +473,14 @@ function getString(record: Record<string, unknown> | null, key: string): string 
 
 function getNumber(record: Record<string, unknown> | null, key: string): number | null {
   const value = record?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 type ProcessResult = {
