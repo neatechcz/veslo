@@ -5,7 +5,12 @@ import path from "node:path";
 
 import { materializeCodexAuthJson } from "../providers/codex-cli-worker-transport.js";
 
-export type CodexUsageStatusSource = "codex_exec_rate_limits" | "codex_status" | "codex_login_status" | "unavailable";
+export type CodexUsageStatusSource =
+  | "codex_exec_rate_limits"
+  | "codex_exec_no_rate_limits"
+  | "codex_status"
+  | "codex_login_status"
+  | "unavailable";
 
 export type CodexUsageLimitWindow = {
   label: string;
@@ -56,6 +61,7 @@ type CachedStatusEntry = {
 type ProbeResult = {
   checkedAt: string;
   rateLimits: CodexRateLimitsSnapshot | null;
+  ok?: boolean;
   detail?: string | null;
 };
 
@@ -89,6 +95,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
   private readonly ttlMs: number;
   private readonly now: () => Date;
   private readonly cache = new Map<string, CachedStatusEntry>();
+  private readonly inFlight = new Map<string, Promise<CodexUsageStatus>>();
 
   constructor(deps: CachedCodexCredentialStatusProviderDeps) {
     this.loadCredentialAuthJson = deps.loadCredentialAuthJson;
@@ -113,33 +120,49 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
       return cached.status;
     }
 
-    let status = unavailableStatus("Credential is missing Codex auth.json.");
-    try {
-      const authJson = await this.loadCredentialAuthJson(input.credentialId);
-      if (!authJson?.trim()) {
-        status = unavailableStatus("Credential is missing Codex auth.json.");
-      } else {
-        const result = await this.probe({
-          credentialId: input.credentialId,
-          credentialName: input.credentialName,
-          authJson,
-        });
-        status = result.rateLimits
-          ? codexUsageStatusFromRateLimits(result.rateLimits, result.checkedAt, result.detail)
-          : unavailableStatus(result.detail || "Codex probe did not return rate limits.", result.checkedAt);
-      }
-    } catch (error) {
-      status = unavailableStatus(
-        error instanceof Error && error.message ? error.message : "Codex probe failed.",
-        this.now().toISOString(),
-      );
+    const current = this.inFlight.get(input.credentialId);
+    if (current) {
+      return current;
     }
 
-    this.cache.set(input.credentialId, {
-      expiresAt: nowMs + this.ttlMs,
-      status,
-    });
-    return status;
+    const refresh = (async () => {
+      let status = unavailableStatus("Credential is missing Codex auth.json.");
+      try {
+        const authJson = await this.loadCredentialAuthJson(input.credentialId);
+        if (!authJson?.trim()) {
+          status = unavailableStatus("Credential is missing Codex auth.json.");
+        } else {
+          const result = await this.probe({
+            credentialId: input.credentialId,
+            credentialName: input.credentialName,
+            authJson,
+          });
+          status = result.rateLimits
+            ? codexUsageStatusFromRateLimits(result.rateLimits, result.checkedAt, result.detail)
+            : result.ok === true
+              ? codexUsageStatusUnknownLimits(result.checkedAt, result.detail)
+              : unavailableStatus(result.detail || "Codex probe did not return rate limits.", result.checkedAt);
+        }
+      } catch (error) {
+        status = unavailableStatus(
+          error instanceof Error && error.message ? error.message : "Codex probe failed.",
+          this.now().toISOString(),
+        );
+      }
+
+      this.cache.set(input.credentialId, {
+        expiresAt: nowMs + this.ttlMs,
+        status,
+      });
+      return status;
+    })();
+    this.inFlight.set(input.credentialId, refresh);
+
+    try {
+      return await refresh;
+    } finally {
+      this.inFlight.delete(input.credentialId);
+    }
   }
 }
 
@@ -188,6 +211,20 @@ export function codexUsageStatusFromRateLimits(
   };
 }
 
+function codexUsageStatusUnknownLimits(checkedAt: string, detail?: string | null): CodexUsageStatus {
+  return {
+    available: true,
+    source: "codex_exec_no_rate_limits",
+    label: "Codex OK, limits unknown",
+    detail: detail ?? null,
+    checkedAt,
+    limits: {
+      fiveHour: null,
+      weekly: null,
+    },
+  };
+}
+
 export function parseRateLimitsFromSessionLog(text: string): CodexRateLimitsSnapshot | null {
   const lines = text
     .split(/\r?\n/g)
@@ -197,14 +234,18 @@ export function parseRateLimitsFromSessionLog(text: string): CodexRateLimitsSnap
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     try {
       const parsed = JSON.parse(lines[index] ?? "");
-      const rateLimits = getRecord(getRecord(parsed, "payload"), "info")?.rate_limits;
-      const tokenType = getString(getRecord(parsed, "payload"), "type");
-      if (tokenType !== "token_count") {
-        continue;
+      const payload = getRecord(parsed, "payload");
+      const tokenType = getString(payload, "type");
+      if (tokenType === "token_count") {
+        const snapshot = readRateLimitsSnapshot(getRecord(payload, "info")?.rate_limits);
+        if (snapshot) {
+          return snapshot;
+        }
       }
-      const snapshot = readRateLimitsSnapshot(rateLimits);
-      if (snapshot) {
-        return snapshot;
+
+      const fallback = findRateLimitsSnapshot(parsed, 0, false);
+      if (fallback) {
+        return fallback;
       }
     } catch {
       continue;
@@ -220,11 +261,44 @@ function readRateLimitsSnapshot(value: unknown): CodexRateLimitsSnapshot | null 
     return null;
   }
 
+  const primary = readRateLimitWindow(record.primary);
+  const secondary = readRateLimitWindow(record.secondary);
+  if (!primary && !secondary) {
+    return null;
+  }
+
   return {
-    primary: readRateLimitWindow(record.primary),
-    secondary: readRateLimitWindow(record.secondary),
+    primary,
+    secondary,
     plan_type: getString(record, "plan_type"),
   };
+}
+
+function findRateLimitsSnapshot(value: unknown, depth = 0, allowDirect = true): CodexRateLimitsSnapshot | null {
+  if (depth > 6) {
+    return null;
+  }
+
+  const record = getRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  if (allowDirect) {
+    const direct = readRateLimitsSnapshot(record.rate_limits);
+    if (direct) {
+      return direct;
+    }
+  }
+
+  for (const key of ["payload", "info", "message", "data", "event", "metadata"]) {
+    const nested = findRateLimitsSnapshot(record[key], depth + 1);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
 }
 
 function readRateLimitWindow(value: unknown): CodexRateLimitWindowSnapshot | null {
@@ -233,9 +307,14 @@ function readRateLimitWindow(value: unknown): CodexRateLimitWindowSnapshot | nul
     return null;
   }
 
+  const windowMinutes = getNumber(record, "window_minutes");
+  if (!Number.isFinite(windowMinutes) || Number(windowMinutes) <= 0) {
+    return null;
+  }
+
   return {
     used_percent: getNumber(record, "used_percent"),
-    window_minutes: getNumber(record, "window_minutes"),
+    window_minutes: windowMinutes,
     resets_at: getNumber(record, "resets_at"),
   };
 }
@@ -306,6 +385,7 @@ async function runCodexExecRateLimitProbe(input: {
       return {
         checkedAt,
         rateLimits,
+        ok: result.exitCode === 0 && !result.timedOut,
         detail: summarizeProbeDetail(result),
       };
     }
@@ -313,6 +393,7 @@ async function runCodexExecRateLimitProbe(input: {
     return {
       checkedAt,
       rateLimits: null,
+      ok: result.exitCode === 0 && !result.timedOut,
       detail: summarizeProbeFailure(result, "Codex rate limit snapshot was not found."),
     };
   } finally {
@@ -444,7 +525,14 @@ function getString(record: Record<string, unknown> | null, key: string): string 
 
 function getNumber(record: Record<string, unknown> | null, key: string): number | null {
   const value = record?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 type ProcessResult = {

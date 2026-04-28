@@ -51,3 +51,15 @@ test("managed AI bootstrap skips veslo-server config patches when the computed m
     "managed AI config writes through veslo-server should no-op when the generated config only differs by server-redacted secrets, while still tracking the real secret-bearing snapshot",
   );
 });
+
+test("managed AI reload coalescing records the server token only after a successful reload", () => {
+  const reloadBlocks = source.match(
+    /if \(\s*shouldAutoReloadManagedAiConfig\(\{[\s\S]*?\}\) &&\s*lastReloadedForServerToken\(\) !== gatewayClientToken\s*\) \{\s*const managedAiReloaded = await reloadWorkspaceEngine\(\);\s*if \(managedAiReloaded\) \{\s*setLastReloadedForServerToken\(gatewayClientToken\);\s*\}\s*\}/g,
+  );
+
+  assert.equal(
+    reloadBlocks?.length,
+    2,
+    "both managed AI reload branches should mark the server token only after reloadWorkspaceEngine reports success",
+  );
+});

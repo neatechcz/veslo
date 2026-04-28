@@ -64,7 +64,9 @@ export type AdminUserRecord = {
   }>;
 };
 
-export type CredentialRecord = AdminCredentialRecord;
+export type CredentialRecord = AdminCredentialRecord & {
+  upstreamStatus?: CodexUsageStatus | null;
+};
 
 export type SessionRecord = AdminSessionRecord;
 
@@ -797,6 +799,27 @@ export function createDefaultAdminService(
     });
   }
 
+  async function withCodexUpstreamStatus(
+    credentials: CredentialRecord[],
+    statusProvider: CodexCredentialStatusProvider,
+  ): Promise<CredentialRecord[]> {
+    return Promise.all(
+      credentials.map(async (credential) => {
+        if (credential.provider !== "codex_oauth") {
+          return credential;
+        }
+
+        return {
+          ...credential,
+          upstreamStatus: await statusProvider.getStatus({
+            credentialId: credential.id,
+            credentialName: credential.name,
+          }),
+        };
+      }),
+    );
+  }
+
   async function listEligibleCodexCredentials(): Promise<EligibleCodexCredential[]> {
     const credentials = await getCredentialReadRepository().listAdminCredentials();
     const candidates = credentials.filter((entry) => entry.provider === "codex_oauth" && entry.state === "healthy");
@@ -884,10 +907,12 @@ export function createDefaultAdminService(
                 lastUsedAt: historical?.lastUsedAt ?? null,
                 upstreamStatus:
                   credential.provider === "codex_oauth"
-                    ? await statusProvider.getStatus({
-                        credentialId: credential.id,
-                        credentialName: credential.name,
-                      })
+                    ? Object.hasOwn(credential, "upstreamStatus")
+                      ? credential.upstreamStatus ?? null
+                      : await statusProvider.getStatus({
+                          credentialId: credential.id,
+                          credentialName: credential.name,
+                        })
                     : null,
               };
             }),
@@ -1049,7 +1074,9 @@ export function createDefaultAdminService(
       });
     },
     async listCredentials() {
-      return { credentials: await listCredentialsWithAlerts() };
+      return {
+        credentials: await withCodexUpstreamStatus(await listCredentialsWithAlerts(), codexStatusProvider),
+      };
     },
     async createCredential(_token, input, actorUserId) {
       const validated = validateCreateCredentialInput(input);
@@ -1128,7 +1155,11 @@ export function createDefaultAdminService(
         usageRepository.aggregateUsage(input),
         getCredentialReadRepository().listAdminCredentials(),
       ]);
-      return withCredentialUsage(usage, credentials, codexStatusProvider);
+      return withCredentialUsage(
+        usage,
+        await withCodexUpstreamStatus(credentials, codexStatusProvider),
+        codexStatusProvider,
+      );
     },
     async listAlerts() {
       return { alerts: await getAlertRepository().listAlerts() };

@@ -212,7 +212,6 @@ import { createStartupGuard } from "./utils/startup-guard";
 import { computeWorkspaceSwitchOverlayHoldMs } from "./utils/workspace-switch-overlay";
 import {
   parseAuthCompleteDeepLink,
-  clearDenAuth,
   exchangeHandoffCode,
   flushPendingDesktopSnapshotWrite,
   getDesktopBrowserAuthStatus,
@@ -2814,11 +2813,6 @@ export default function App() {
   );
   const requestManagedAiAccessRefresh = () => {
     setManagedAiAccessRefreshNonce((value) => value + 1);
-  };
-  const logoutLocalDenAuth = async () => {
-    clearDenAuth();
-    await flushPendingDesktopSnapshotWrite();
-    requestManagedAiAccessRefresh();
   };
   const denGatewayAccessToken = createMemo(() => {
     denAuthRevision();
@@ -7701,15 +7695,6 @@ export default function App() {
       managedProfile && gatewayClient && gatewayClientToken && gatewayAccessToken ? beginManagedAiBootstrap() : null;
 
     const writeConfig = async () => {
-      console.log("[perf] writeConfig start", {
-        root,
-        canUseVesloServer,
-        hasManagedProfile: !!managedProfile,
-        hasGatewayClient: !!gatewayClient,
-        hasGatewayClientToken: !!gatewayClientToken,
-        hasGatewayAccessToken: !!gatewayAccessToken,
-        vesloServerStatus: vesloServerStatus(),
-      });
       try {
         if (canUseVesloServer) {
           const config = await vesloClient.getConfig(vesloWorkspaceId);
@@ -7726,29 +7711,11 @@ export default function App() {
               },
             );
             const desiredSnapshot = getConfigSnapshot(content);
-            if (lastKnownConfigSnapshot() === desiredSnapshot) {
-              const knownBaseURL = (lastKnownConfigSnapshot().match(/"baseURL":"([^"]+)"/) ?? [])[1];
-              const desiredBaseURL = (content.match(/"baseURL"\s*:\s*"([^"]+)"/) ?? [])[1];
-              const currentBaseURL = (currentOpencodeContent.match(/"baseURL"\s*:\s*"([^"]+)"/) ?? [])[1];
-              console.log("[perf] writeConfig SKIP (snapshot unchanged)", {
-                root,
-                knownBaseURL,
-                desiredBaseURL,
-                currentBaseURL,
-                snapshotMatch: knownBaseURL === desiredBaseURL,
-              });
-              return;
-            }
+            if (lastKnownConfigSnapshot() === desiredSnapshot) return;
             if (managedConfigContentsMatchForServerPatch(currentOpencodeContent, content)) {
-              console.log("[perf] writeConfig SKIP (managed match)", {
-                root,
-                currentBaseURL: (currentOpencodeContent.match(/"baseURL"\s*:\s*"([^"]+)"/) ?? [])[1],
-                desiredBaseURL: (content.match(/"baseURL"\s*:\s*"([^"]+)"/) ?? [])[1],
-              });
               setLastKnownConfigSnapshot(desiredSnapshot);
               return;
             }
-            console.log("[perf] writeConfig PATCHING", { root });
             await vesloClient.patchConfig(vesloWorkspaceId, {
               opencode: JSON.parse(content) as Record<string, unknown>,
             });
@@ -7771,8 +7738,10 @@ export default function App() {
               }) &&
               lastReloadedForServerToken() !== gatewayClientToken
             ) {
-              setLastReloadedForServerToken(gatewayClientToken);
-              await reloadWorkspaceEngine();
+              const managedAiReloaded = await reloadWorkspaceEngine();
+              if (managedAiReloaded) {
+                setLastReloadedForServerToken(gatewayClientToken);
+              }
             }
             return;
           }
@@ -7827,8 +7796,10 @@ export default function App() {
             }) &&
             lastReloadedForServerToken() !== gatewayClientToken
           ) {
-            setLastReloadedForServerToken(gatewayClientToken);
-            await reloadWorkspaceEngine();
+            const managedAiReloaded = await reloadWorkspaceEngine();
+            if (managedAiReloaded) {
+              setLastReloadedForServerToken(gatewayClientToken);
+            }
           }
           return;
         }
@@ -8395,8 +8366,6 @@ export default function App() {
       baseUrl: baseUrl(),
       clientConnected: Boolean(client()),
       authenticatedUser: authenticatedUser(),
-      onLogout: logoutLocalDenAuth,
-      onSignIn: startDesktopBrowserSignIn,
       busy: busy(),
       busyHint: busyHint(),
       busyLabel: busyLabel(),
@@ -8732,8 +8701,6 @@ export default function App() {
     engineReady: engineReady(),
     clientConnected: Boolean(client()),
     authenticatedUser: authenticatedUser(),
-    onLogout: logoutLocalDenAuth,
-    onSignIn: startDesktopBrowserSignIn,
     vesloServerStatus: vesloServerStatus(),
     startupPreference: startupPreference(),
     hideTitlebar: hideTitlebar(),
