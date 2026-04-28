@@ -226,6 +226,65 @@ test("admin credentials endpoint returns repository-backed credentials", async (
   }
 })
 
+test("admin credentials endpoint includes Codex upstream limit status", async () => {
+  const app = createAdminApp({
+    credentials: [
+      createCredential("cred_openai_1"),
+      createCredential("cred_codex_1", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+    ],
+    codexStatusProvider: {
+      async getStatus() {
+        return {
+          available: true,
+          source: "codex_exec_rate_limits",
+          label: "Codex limits available",
+          detail: null,
+          checkedAt: "2026-04-28T10:00:00.000Z",
+          planType: "plus",
+          limits: {
+            fiveHour: {
+              label: "5h",
+              usedPercent: 30,
+              windowMinutes: 300,
+              resetAt: "2026-04-28T15:00:00.000Z",
+            },
+            weekly: {
+              label: "Weekly",
+              usedPercent: 33,
+              windowMinutes: 10080,
+              resetAt: "2026-05-01T12:00:00.000Z",
+            },
+          },
+        }
+      },
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/credentials`, {
+      headers: AUTHORIZATION,
+    })
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    const codex = body.credentials.find((entry: CredentialRecord) => entry.id === "cred_codex_1")
+    const openai = body.credentials.find((entry: CredentialRecord) => entry.id === "cred_openai_1")
+    assert.equal(openai.upstreamStatus, undefined)
+    assert.equal(codex.upstreamStatus.limits.fiveHour.usedPercent, 30)
+    assert.equal(codex.upstreamStatus.limits.weekly.usedPercent, 33)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("admin sessions endpoint returns provider-scoped active leases", async () => {
   const expected = [
     createSessionRecord({ id: "lease_openai_1", provider: "openai", credentialId: "cred_openai_1" }),
@@ -365,6 +424,44 @@ test("admin usage endpoint includes every credential with recorded usage and Cod
         },
       },
     ])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("admin usage endpoint reuses decorated null Codex upstream status", async () => {
+  let statusProbeCount = 0
+  const app = createAdminApp({
+    credentials: [
+      createCredential("cred_codex_1", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+    ],
+    usage: createUsageResponse("credential"),
+    codexStatusProvider: {
+      async getStatus() {
+        statusProbeCount += 1
+        return null
+      },
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/usage?groupBy=credential`, {
+      headers: AUTHORIZATION,
+    })
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    const codex = body.credentialUsage.find((entry: AdminCredentialUsageRecord) => entry.id === "cred_codex_1")
+    assert.equal(codex.upstreamStatus, null)
+    assert.equal(statusProbeCount, 1)
   } finally {
     server.close()
     await once(server, "close")

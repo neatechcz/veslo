@@ -38,7 +38,7 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 - When no eligible Codex credential exists, user creation still succeeds and AI access remains unassigned until an eligible credential is available.
 - The DEN admin `Credentials` page is the place to connect/reconnect OpenAI and create/rotate shared Anthropic and Codex runtime credentials.
 - The hosted admin `Usage` page shows recorded usage for every credential, including credentials with zero recorded traffic.
-- Codex runtime credentials include best-effort upstream limits metadata with cached `5h` and `weekly` windows when a credential-scoped probe succeeds. If limits cannot be read, the Usage page still renders historical usage and marks Codex limits as unavailable.
+- The hosted admin `Usage` and `Credentials` pages show best-effort Codex upstream status for runtime credentials. When the Codex probe returns parseable 5h and weekly windows, both pages show those windows and reset times. When the probe succeeds but no windows are parsed, both pages show `Codex OK, limits unknown` without making the credential ineligible. Authentication failures such as `invalid_grant`, reused refresh tokens, or 401 responses remain visible as unavailable upstream status and require reconnecting or rotating the credential.
 
 ## Platform credential pools
 
