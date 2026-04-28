@@ -530,6 +530,18 @@ function mergeCredentialFilters(
   return Array.from(filters.entries()).map(([id, label]) => ({ id, label }));
 }
 
+function isCodexStatusEligibleForAssignment(status: CodexUsageStatus): boolean {
+  const statusText = [status.label, status.detail].filter(Boolean).join(" | ");
+  if (
+    /invalid_grant|access token could not be refreshed|refresh token|HTTP error:\s*401|401\s+Unauthorized|missing field `id_token`|ERROR:/i
+      .test(statusText)
+  ) {
+    return false;
+  }
+
+  return status.available || /\bcodex\s*\|\s*OK\b/i.test(statusText);
+}
+
 function toIsoString(value: Date | string | null) {
   if (value instanceof Date) {
     return value.toISOString();
@@ -795,7 +807,7 @@ export function createDefaultAdminService(
         credentialId: credential.id,
         credentialName: credential.name,
       });
-      if (!status.available) {
+      if (!isCodexStatusEligibleForAssignment(status)) {
         continue;
       }
       eligible.push({

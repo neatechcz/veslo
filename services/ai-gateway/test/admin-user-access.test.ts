@@ -315,10 +315,12 @@ test("GET /admin/api/users/:userId/ai-access only returns eligible codex credent
       codexStatusProvider: {
         async getStatus(input) {
           return {
-            available: input.credentialId === "cred_codex_ok",
-            source: input.credentialId === "cred_codex_ok" ? "codex_exec_rate_limits" : "unavailable",
-            label: input.credentialId === "cred_codex_ok" ? "Codex limits available" : "Codex limits unavailable",
-            detail: null,
+            available: false,
+            source: "unavailable",
+            label: "Codex limits unavailable",
+            detail: input.credentialId === "cred_codex_ok"
+              ? "codex | OK | tokens used | 7,367"
+              : "ERROR: Your access token could not be refreshed because your refresh token was already used.",
             checkedAt: "2026-04-27T12:00:00.000Z",
           };
         },
