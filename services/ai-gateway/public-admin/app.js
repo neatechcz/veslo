@@ -943,13 +943,10 @@ function renderCredentialCodexStatus(credential) {
 
 function formatCredentialLimitSummary(status) {
   const limits = status?.limits;
-  if (!limits) {
-    return "";
-  }
 
   const lines = [
-    formatLimitWindowSummary("5h", limits.fiveHour),
-    formatLimitWindowSummary("Weekly", limits.weekly),
+    formatLimitWindowSummary("5h", limits?.fiveHour),
+    formatLimitWindowSummary("Weekly", limits?.weekly),
   ];
 
   if (typeof status.planType === "string" && status.planType.trim()) {
