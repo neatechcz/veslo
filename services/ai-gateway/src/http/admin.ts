@@ -100,6 +100,12 @@ export type AdminCredentialOption = {
   name: string;
 };
 
+export type EligibleCodexCredential = {
+  credentialId: string;
+  name: string;
+  activeLeases: number;
+};
+
 export type UpdateUserAiAccessInput = {
   enabled: boolean;
   provider: AiAccessProvider | null;
@@ -153,12 +159,15 @@ export type CreateCredentialInput = {
   secret: string;
 };
 
+const DEFAULT_CODEX_AUTO_ASSIGN_MODEL = "gpt-5.4";
+
 export interface AdminService {
   startBrowserAuth(input: BrowserAuthStartInput): Promise<BrowserAuthStartPayload>;
   exchangeBrowserAuth(input: BrowserAuthExchangeInput): Promise<AuthPayload>;
   getSession(token: string): Promise<AdminSessionSnapshot>;
   listUsers(token: string): Promise<AdminUserRecord[]>;
   createUser(token: string, input: CreateUserInput): Promise<AdminUserRecord>;
+  getEligibleCodexCredentialForAutoAssign(): Promise<EligibleCodexCredential | null>;
   updateUser(token: string, userId: string, input: UpdateUserInput): Promise<AdminUserRecord>;
   getUserAiAccess(
     token: string,
@@ -776,14 +785,57 @@ export function createDefaultAdminService(
     });
   }
 
-  async function listAvailableCodexCredentials(): Promise<AdminCredentialOption[]> {
+  async function listEligibleCodexCredentials(): Promise<EligibleCodexCredential[]> {
     const credentials = await getCredentialReadRepository().listAdminCredentials();
-    return credentials
-      .filter((entry) => entry.provider === "codex_oauth")
-      .map((entry) => ({
-        id: entry.id,
-        name: entry.name,
-      }));
+    const candidates = credentials.filter((entry) => entry.provider === "codex_oauth" && entry.state === "healthy");
+    const eligible: EligibleCodexCredential[] = [];
+
+    for (const credential of candidates) {
+      const status = await codexStatusProvider.getStatus({
+        credentialId: credential.id,
+        credentialName: credential.name,
+      });
+      if (!status.available) {
+        continue;
+      }
+      eligible.push({
+        credentialId: credential.id,
+        name: credential.name,
+        activeLeases: credential.activeLeases,
+      });
+    }
+
+    return eligible.sort((left, right) => {
+      const leaseDelta = left.activeLeases - right.activeLeases;
+      if (leaseDelta !== 0) {
+        return leaseDelta;
+      }
+      const nameDelta = left.name.localeCompare(right.name);
+      if (nameDelta !== 0) {
+        return nameDelta;
+      }
+      return left.credentialId.localeCompare(right.credentialId);
+    });
+  }
+
+  async function getEligibleCodexCredentialForAutoAssign(): Promise<EligibleCodexCredential | null> {
+    const [selected] = await listEligibleCodexCredentials();
+    return selected ?? null;
+  }
+
+  async function assertEligibleCodexCredential(credentialId: string): Promise<void> {
+    const eligibleCredentials = await listEligibleCodexCredentials();
+    if (!eligibleCredentials.some((entry) => entry.credentialId === credentialId)) {
+      throw new HttpError("ineligible_ai_access_credential_id", 400);
+    }
+  }
+
+  async function listAvailableCodexCredentials(): Promise<AdminCredentialOption[]> {
+    const credentials = await listEligibleCodexCredentials();
+    return credentials.map((entry) => ({
+      id: entry.credentialId,
+      name: entry.name,
+    }));
   }
 
   async function getCredentialOrThrow(credentialId: string): Promise<CredentialRecord> {
@@ -885,8 +937,20 @@ export function createDefaultAdminService(
     listUsers(token) {
       return denClient.listUsers(token);
     },
+    getEligibleCodexCredentialForAutoAssign,
     async createUser(token, input) {
       const created = await denClient.createUser(token, input);
+      const credential = await getEligibleCodexCredentialForAutoAssign();
+      if (credential) {
+        await getAiAccessRepository().upsertUserAiAccess({
+          userId: created.id,
+          enabled: true,
+          provider: "codex_oauth",
+          credentialId: credential.credentialId,
+          defaultModel: DEFAULT_CODEX_AUTO_ASSIGN_MODEL,
+          allowedModels: [DEFAULT_CODEX_AUTO_ASSIGN_MODEL],
+        });
+      }
       await recordAuditEvent({
         actorUserId: "admin-ui",
         action: "user.create",
@@ -920,6 +984,9 @@ export function createDefaultAdminService(
         ...input,
         userId,
       });
+      if (validated.enabled && validated.provider === "codex_oauth" && validated.credentialId) {
+        await assertEligibleCodexCredential(validated.credentialId);
+      }
       const saved = await getAiAccessRepository().upsertUserAiAccess(validated);
       await recordAuditEvent({
         actorUserId: "admin-ui",

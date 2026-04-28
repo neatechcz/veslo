@@ -35,21 +35,60 @@ function createSession(): AdminSessionSnapshot {
   };
 }
 
-function createCredential(id: string, state: CredentialRecord["state"]): CredentialRecord {
+function createCredential(
+  id: string,
+  state: CredentialRecord["state"],
+  overrides: Partial<Pick<CredentialRecord, "provider" | "activeLeases">> = {},
+): CredentialRecord {
   return {
     id,
     name: `Credential ${id}`,
-    provider: "openai",
+    provider: overrides.provider ?? "openai",
     type: "oauth",
     state,
     scope: "user_admin",
-    activeLeases: 2,
+    activeLeases: overrides.activeLeases ?? 2,
     alertCount: 1,
     lastRefreshAt: "2026-04-03T10:00:00.000Z",
     lastFailureAt: null,
     totalTokens: 321,
     nextRotationAt: null,
     linkedAlertIds: ["alert_health_1"],
+  };
+}
+
+function createUnusedDenClient() {
+  return {
+    async startBrowserAuth() {
+      throw new Error("unused");
+    },
+    async exchangeBrowserAuth() {
+      throw new Error("unused");
+    },
+    async getSession() {
+      return createSession();
+    },
+    async listUsers() {
+      return [];
+    },
+    async createUser() {
+      throw new Error("unused");
+    },
+    async getEligibleCodexCredentialForAutoAssign() {
+      return null;
+    },
+    async updateUser() {
+      throw new Error("unused");
+    },
+    async disableUser() {
+      throw new Error("unused");
+    },
+    async enableUser() {
+      throw new Error("unused");
+    },
+    async deleteUser() {
+      return;
+    },
   };
 }
 
@@ -379,6 +418,11 @@ test("createDefaultAdminService keeps user creation successful when audit persis
           throw new Error("audit_unavailable");
         },
       },
+      credentialReadRepository: {
+        async listAdminCredentials() {
+          return [];
+        },
+      },
     });
 
     const result = await service.createUser("admin-token", {
@@ -405,6 +449,269 @@ test("createDefaultAdminService keeps user creation successful when audit persis
   } finally {
     console.error = originalConsoleError;
   }
+});
+
+test("default admin service selects the least-loaded healthy codex credential with OK upstream status", async () => {
+  const statusChecks: string[] = [];
+  const service = createDefaultAdminService("http://den.example.test", {
+    denClient: createUnusedDenClient(),
+    credentialReadRepository: {
+      async listAdminCredentials() {
+        return [
+          createCredential("cred_openai_1", "healthy", {
+            provider: "openai",
+            activeLeases: 0,
+          }),
+          createCredential("cred_codex_revoked", "revoked", {
+            provider: "codex_oauth",
+            activeLeases: 0,
+          }),
+          createCredential("cred_codex_unavailable", "healthy", {
+            provider: "codex_oauth",
+            activeLeases: 0,
+          }),
+          createCredential("cred_codex_3", "healthy", {
+            provider: "codex_oauth",
+            activeLeases: 1,
+          }),
+          createCredential("cred_codex_2", "healthy", {
+            provider: "codex_oauth",
+            activeLeases: 1,
+          }),
+          createCredential("cred_codex_1", "healthy", {
+            provider: "codex_oauth",
+            activeLeases: 4,
+          }),
+        ];
+      },
+    },
+    codexStatusProvider: {
+      async getStatus(input) {
+        statusChecks.push(input.credentialId);
+        return {
+          available: input.credentialId !== "cred_codex_unavailable",
+          source: "codex_exec_rate_limits",
+          label: "Codex limits available",
+          detail: null,
+          checkedAt: "2026-04-27T12:00:00.000Z",
+        };
+      },
+    },
+  });
+
+  const selected = await service.getEligibleCodexCredentialForAutoAssign();
+
+  assert.equal(selected?.credentialId, "cred_codex_2");
+  assert.deepEqual(statusChecks, [
+    "cred_codex_unavailable",
+    "cred_codex_3",
+    "cred_codex_2",
+    "cred_codex_1",
+  ]);
+});
+
+test("default admin service returns null when no eligible codex credential exists", async () => {
+  const statusChecks: string[] = [];
+  const service = createDefaultAdminService("http://den.example.test", {
+    denClient: createUnusedDenClient(),
+    credentialReadRepository: {
+      async listAdminCredentials() {
+        return [
+          createCredential("cred_openai_1", "healthy", {
+            provider: "openai",
+            activeLeases: 0,
+          }),
+          createCredential("cred_codex_revoked", "revoked", {
+            provider: "codex_oauth",
+            activeLeases: 0,
+          }),
+          createCredential("cred_codex_draining", "draining", {
+            provider: "codex_oauth",
+            activeLeases: 0,
+          }),
+          createCredential("cred_codex_unavailable", "healthy", {
+            provider: "codex_oauth",
+            activeLeases: 0,
+          }),
+        ];
+      },
+    },
+    codexStatusProvider: {
+      async getStatus(input) {
+        statusChecks.push(input.credentialId);
+        return {
+          available: false,
+          source: "unavailable",
+          label: "Codex limits unavailable",
+          detail: null,
+          checkedAt: "2026-04-27T12:00:00.000Z",
+        };
+      },
+    },
+  });
+
+  const selected = await service.getEligibleCodexCredentialForAutoAssign();
+
+  assert.equal(selected, null);
+  assert.deepEqual(statusChecks, ["cred_codex_unavailable"]);
+});
+
+test("createDefaultAdminService auto-assigns codex ai access when an eligible credential exists", async () => {
+  const createdUser: AdminUserRecord = {
+    id: "user_created",
+    name: "Created User",
+    email: "created@example.test",
+    emailVerified: false,
+    platformAdmin: false,
+    disabled: false,
+    memberships: [],
+  };
+  const upsertCalls: unknown[] = [];
+  const service = createDefaultAdminService("http://den.example.test", {
+    denClient: {
+      ...createUnusedDenClient(),
+      async createUser() {
+        return createdUser;
+      },
+    },
+    credentialReadRepository: {
+      async listAdminCredentials() {
+        return [
+          createCredential("cred_codex_1", "healthy", {
+            provider: "codex_oauth",
+            activeLeases: 4,
+          }),
+          createCredential("cred_codex_2", "healthy", {
+            provider: "codex_oauth",
+            activeLeases: 1,
+          }),
+        ];
+      },
+    },
+    codexStatusProvider: {
+      async getStatus() {
+        return {
+          available: true,
+          source: "codex_exec_rate_limits",
+          label: "Codex limits available",
+          detail: null,
+          checkedAt: "2026-04-27T12:00:00.000Z",
+        };
+      },
+    },
+    aiAccessRepository: {
+      async getUserAiAccess() {
+        return null;
+      },
+      async upsertUserAiAccess(input) {
+        upsertCalls.push(input);
+        return {
+          id: "ai_access_user_created",
+          ...input,
+          createdAt: new Date("2026-04-27T12:00:00.000Z"),
+          updatedAt: new Date("2026-04-27T12:00:00.000Z"),
+        };
+      },
+    },
+    auditRepository: {
+      async recordEvent() {
+        return;
+      },
+      async listEvents() {
+        return [];
+      },
+    },
+  });
+
+  const result = await service.createUser("admin-token", {
+    email: createdUser.email,
+    name: createdUser.name,
+    platformAdmin: createdUser.platformAdmin,
+    orgId: null,
+    orgRole: "member",
+  });
+
+  assert.deepEqual(result, createdUser);
+  assert.deepEqual(upsertCalls, [
+    {
+      userId: "user_created",
+      enabled: true,
+      provider: "codex_oauth",
+      credentialId: "cred_codex_2",
+      defaultModel: "gpt-5.4",
+      allowedModels: ["gpt-5.4"],
+    },
+  ]);
+});
+
+test("createDefaultAdminService skips ai access when no eligible codex credential exists", async () => {
+  const createdUser: AdminUserRecord = {
+    id: "user_created",
+    name: "Created User",
+    email: "created@example.test",
+    emailVerified: false,
+    platformAdmin: false,
+    disabled: false,
+    memberships: [],
+  };
+  const upsertCalls: unknown[] = [];
+  const service = createDefaultAdminService("http://den.example.test", {
+    denClient: {
+      ...createUnusedDenClient(),
+      async createUser() {
+        return createdUser;
+      },
+    },
+    credentialReadRepository: {
+      async listAdminCredentials() {
+        return [
+          createCredential("cred_codex_unavailable", "healthy", {
+            provider: "codex_oauth",
+            activeLeases: 0,
+          }),
+        ];
+      },
+    },
+    codexStatusProvider: {
+      async getStatus() {
+        return {
+          available: false,
+          source: "unavailable",
+          label: "Codex limits unavailable",
+          detail: null,
+          checkedAt: "2026-04-27T12:00:00.000Z",
+        };
+      },
+    },
+    aiAccessRepository: {
+      async getUserAiAccess() {
+        return null;
+      },
+      async upsertUserAiAccess(input) {
+        upsertCalls.push(input);
+        throw new Error("unexpected_ai_access_upsert");
+      },
+    },
+    auditRepository: {
+      async recordEvent() {
+        return;
+      },
+      async listEvents() {
+        return [];
+      },
+    },
+  });
+
+  const result = await service.createUser("admin-token", {
+    email: createdUser.email,
+    name: createdUser.name,
+    platformAdmin: createdUser.platformAdmin,
+    orgId: null,
+    orgRole: "member",
+  });
+
+  assert.deepEqual(result, createdUser);
+  assert.deepEqual(upsertCalls, []);
 });
 
 test("default admin service rejects enabled codex_oauth access without credentialId", async () => {

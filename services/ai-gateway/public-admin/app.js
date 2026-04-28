@@ -1038,8 +1038,13 @@ function currentAlert() {
 
 function renderAiAccessCredentialOptions(user, aiAccess) {
   const availableCredentials = user?.id ? currentUserAiAccessAvailableCredentials(user.id) : [];
+  const selectedProvider = els.userAiAccessProvider.value || aiAccess.provider || "";
+  const emptyLabel =
+    selectedProvider === "codex_oauth" && availableCredentials.length === 0
+      ? "No eligible Codex credential"
+      : "Select assigned credential";
   const options = [
-    `<option value="">Select assigned credential</option>`,
+    `<option value="">${escapeHtml(emptyLabel)}</option>`,
     ...availableCredentials.map(
       (credential) =>
         `<option value="${escapeHtml(credential.id)}">${escapeHtml(credential.name)}</option>`,
@@ -1069,7 +1074,7 @@ function updateAiAccessStatusText(user, aiAccess) {
   const selectedProvider = els.userAiAccessProvider.value || "";
   const availableCredentials = user?.id ? currentUserAiAccessAvailableCredentials(user.id) : [];
   if (selectedProvider === "codex_oauth" && availableCredentials.length === 0) {
-    els.userAiAccessStatus.textContent = "Create a shared Codex runtime credential first, then assign it here.";
+    els.userAiAccessStatus.textContent = "No healthy Codex credentials with OK upstream status are available for assignment.";
     return;
   }
 
@@ -1394,7 +1399,9 @@ async function saveUser() {
     await loadUsers();
     const selectedUser = currentUser();
     if (selectedUser?.id) {
-      await saveUserAiAccess(selectedUser.id, aiAccessInput);
+      if (!wasCreating && selectedUser?.id) {
+        await saveUserAiAccess(selectedUser.id, aiAccessInput);
+      }
       await loadUserAiAccess(selectedUser.id);
       populateUserEditor(selectedUser);
     }
