@@ -1,7 +1,6 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 
 import type { ScheduledJob } from "../types";
-import { usePlatform } from "../context/platform";
 import { formatRelativeTime, isTauriRuntime } from "../utils";
 import { currentLocale, t } from "../../i18n";
 import { createAsyncAction } from "../hooks/create-async-action";
@@ -476,7 +475,6 @@ const AutomationJobCard = (props: {
 };
 
 export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
-  const platform = usePlatform();
   const locale = () => currentLocale();
   const tr = (key: string, replacements?: Record<string, string>) => {
     let value = t(key, locale());
@@ -579,10 +577,6 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   );
 
   const canCreateAutomation = createMemo(() => !!createPromptValue());
-
-  const openSchedulerDocs = () => {
-    platform.openLink("https://github.com/different-ai/opencode-scheduler");
-  };
 
   const handleInstallScheduler = async () => {
     if (installingScheduler() || !props.canEditPlugins) return;
@@ -816,13 +810,6 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                 )}
               </For>
             </div>
-            <button
-              type="button"
-              onClick={openSchedulerDocs}
-              class="mx-auto block text-xs text-gray-9 transition-colors hover:text-gray-12"
-            >
-              {tr("scheduled.explore_more")}
-            </button>
           </div>
         }
       >
