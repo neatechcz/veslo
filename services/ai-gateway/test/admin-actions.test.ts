@@ -589,12 +589,14 @@ test("createDefaultAdminService auto-assigns codex ai access when an eligible cr
       },
     },
     codexStatusProvider: {
-      async getStatus() {
+      async getStatus(input) {
         return {
-          available: true,
-          source: "codex_exec_rate_limits",
-          label: "Codex limits available",
-          detail: null,
+          available: false,
+          source: "unavailable",
+          label: "Codex limits unavailable",
+          detail: input.credentialId === "cred_codex_2"
+            ? "codex | OK | tokens used | 7,367"
+            : "ERROR: Your access token could not be refreshed because your refresh token was already used.",
           checkedAt: "2026-04-27T12:00:00.000Z",
         };
       },
