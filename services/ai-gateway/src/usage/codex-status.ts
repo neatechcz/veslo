@@ -206,7 +206,7 @@ export function parseRateLimitsFromSessionLog(text: string): CodexRateLimitsSnap
         }
       }
 
-      const fallback = findRateLimitsSnapshot(parsed);
+      const fallback = findRateLimitsSnapshot(parsed, 0, false);
       if (fallback) {
         return fallback;
       }
@@ -231,7 +231,7 @@ function readRateLimitsSnapshot(value: unknown): CodexRateLimitsSnapshot | null 
   };
 }
 
-function findRateLimitsSnapshot(value: unknown, depth = 0): CodexRateLimitsSnapshot | null {
+function findRateLimitsSnapshot(value: unknown, depth = 0, allowDirect = true): CodexRateLimitsSnapshot | null {
   if (depth > 6) {
     return null;
   }
@@ -241,9 +241,11 @@ function findRateLimitsSnapshot(value: unknown, depth = 0): CodexRateLimitsSnaps
     return null;
   }
 
-  const direct = readRateLimitsSnapshot(record.rate_limits);
-  if (direct) {
-    return direct;
+  if (allowDirect) {
+    const direct = readRateLimitsSnapshot(record.rate_limits);
+    if (direct) {
+      return direct;
+    }
   }
 
   for (const key of ["payload", "info", "message", "data", "event", "metadata"]) {

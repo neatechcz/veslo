@@ -97,6 +97,48 @@ test("parseRateLimitsFromSessionLog finds nested Codex rate limits with string n
   });
 });
 
+test("parseRateLimitsFromSessionLog ignores top-level rate limits during fallback search", () => {
+  const sessionLog = [
+    JSON.stringify({
+      timestamp: "2026-04-28T10:00:00.000Z",
+      type: "event_msg",
+      rate_limits: {
+        primary: {
+          used_percent: 99,
+          window_minutes: 300,
+          resets_at: 1777370400,
+        },
+        plan_type: "top-level",
+      },
+      payload: {
+        type: "agent_message",
+        message: {
+          metadata: {
+            rate_limits: {
+              primary: {
+                used_percent: "72.5",
+                window_minutes: "300",
+                resets_at: "1777370400",
+              },
+              plan_type: "team",
+            },
+          },
+        },
+      },
+    }),
+  ].join("\n");
+
+  assert.deepEqual(parseRateLimitsFromSessionLog(sessionLog), {
+    primary: {
+      used_percent: 72.5,
+      window_minutes: 300,
+      resets_at: 1777370400,
+    },
+    secondary: null,
+    plan_type: "team",
+  });
+});
+
 test("codexUsageStatusFromRateLimits exposes 5h and weekly windows", () => {
   const status = codexUsageStatusFromRateLimits(
     {
