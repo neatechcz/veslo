@@ -26,6 +26,7 @@ import {
 } from "../../utils";
 import {
   buildRowHierarchyLookup,
+  filterVisibleProjectGroups,
   buildProjectGroups,
   buildRecentRows,
   displayTimestamp,
@@ -251,12 +252,7 @@ export default function WorkspaceSessionList(props: Props) {
     buildProjectGroups(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
   );
   const visibleProjectGroups = createMemo<ProjectSessionGroup[]>(() =>
-    projectGroups()
-      .map((group) => ({
-        ...group,
-        sessions: group.sessions.filter((row) => shouldShowSessionRow(row)),
-      }))
-      .filter((group) => group.sessions.length > 0),
+    filterVisibleProjectGroups(projectGroups(), shouldShowSessionRow),
   );
   const orderedProjectGroups = createMemo(() => applyProjectOrder(visibleProjectGroups(), projectOrder()));
   const [frozenProjectGroups, setFrozenProjectGroups] = createSignal<ProjectSessionGroup[]>([]);
