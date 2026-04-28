@@ -445,6 +445,12 @@ export function startServer(config: ServerConfig) {
         url.pathname = mount.restPath;
       }
 
+      // AI gateway routes are also host-level APIs, but OpenCode provider config can
+      // be generated from a workspace-mounted base URL.
+      if (mount && (mount.restPath === "/ai-gateway" || mount.restPath.startsWith("/ai-gateway/"))) {
+        url.pathname = mount.restPath;
+      }
+
       if (url.pathname === "/opencode" || url.pathname.startsWith("/opencode/")) {
         authMode = "client";
         proxyBaseUrl = config.workspaces[0]?.baseUrl?.trim() || undefined;

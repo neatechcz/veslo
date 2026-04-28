@@ -289,6 +289,108 @@ describe("ai gateway proxy routes", () => {
     }
   });
 
+  test("server proxies mounted ai-gateway provider routes", async () => {
+    const requests: Array<{
+      method: string;
+      pathname: string;
+      authorization: string | null;
+      gatewayToken: string | null;
+      sessionId: string | null;
+      body: unknown;
+    }> = [];
+
+    const upstream = createServer(async (req, res) => {
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const rawBody = Buffer.concat(chunks).toString("utf8");
+      requests.push({
+        method: req.method ?? "GET",
+        pathname: req.url ?? "/",
+        authorization: req.headers.authorization ?? null,
+        gatewayToken: typeof req.headers["x-veslo-gateway-token"] === "string" ? req.headers["x-veslo-gateway-token"] : null,
+        sessionId: typeof req.headers["x-veslo-session-id"] === "string" ? req.headers["x-veslo-session-id"] : null,
+        body: rawBody ? JSON.parse(rawBody) : null,
+      });
+
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({
+        id: "chatcmpl_mounted_123",
+        object: "chat.completion",
+        model: "gpt-5.4",
+      }));
+    });
+    const upstreamPort = await listenTestServer(upstream);
+
+    try {
+      await withManagedAiEnv(
+        {
+          managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}`,
+        },
+        async () => {
+          const server = startServer({
+            ...createTestConfig(),
+            workspaces: [
+              {
+                id: "ws_1",
+                name: "Workspace",
+                path: "/tmp/veslo-mounted-ai-gateway",
+                workspaceType: "local" as const,
+              },
+            ],
+          });
+
+          try {
+            const response = await fetch(
+              `http://127.0.0.1:${server.port}/w/ws_1/ai-gateway/providers/codex_oauth/v1/chat/completions`,
+              {
+                method: "POST",
+                headers: {
+                  authorization: "Bearer client-token",
+                  "content-type": "application/json",
+                  "x-veslo-gateway-token": "gateway-access-token",
+                  "x-veslo-session-id": "session_codex_mounted_123",
+                },
+                body: JSON.stringify({
+                  model: "gpt-5.4",
+                  messages: [{ role: "user", content: "Hello" }],
+                }),
+              },
+            );
+
+            expect(response.status).toBe(200);
+            expect(await response.json()).toEqual({
+              id: "chatcmpl_mounted_123",
+              object: "chat.completion",
+              model: "gpt-5.4",
+            });
+
+            expect(requests).toEqual([
+              {
+                method: "POST",
+                pathname: "/providers/codex_oauth/v1/chat/completions",
+                authorization: "Bearer gateway-access-token",
+                gatewayToken: null,
+                sessionId: "session_codex_mounted_123",
+                body: {
+                  model: "gpt-5.4",
+                  messages: [{ role: "user", content: "Hello" }],
+                },
+              },
+            ]);
+          } finally {
+            stopTestServer(server);
+          }
+        },
+      );
+    } finally {
+      upstream.close();
+      await once(upstream, "close");
+    }
+  });
+
   test("server proxies ai-gateway user ai access routes to the managed ai base url with caller auth", async () => {
     const requests: Array<{
       method: string;

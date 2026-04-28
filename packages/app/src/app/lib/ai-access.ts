@@ -104,11 +104,17 @@ function hasManagedGatewayHeaders(value: unknown): boolean {
 function hasManagedGatewayProviderRouting(
   providerId: string,
   providerConfig: Record<string, unknown>,
+  gatewayBaseUrl?: string | null,
 ): boolean {
   const options = readConfigObject(providerConfig.options);
-  const baseUrl = typeof options.baseURL === "string" ? options.baseURL.trim() : "";
+  const baseUrl = normalizeHttpUrl(typeof options.baseURL === "string" ? options.baseURL : "");
   const expectedRoute = `/ai-gateway/providers/${providerId}/v1`;
   if (!baseUrl.endsWith(expectedRoute)) {
+    return false;
+  }
+
+  const normalizedGatewayBaseUrl = normalizeHttpUrl(gatewayBaseUrl);
+  if (normalizedGatewayBaseUrl && baseUrl !== `${normalizedGatewayBaseUrl}${expectedRoute}`) {
     return false;
   }
 
@@ -119,6 +125,7 @@ function hasManagedGatewayProviderRouting(
 function hasManagedAiGatewayRoutingConfig(
   content: string | null | undefined,
   providerId?: string | null,
+  gatewayBaseUrl?: string | null,
 ): boolean {
   const parsed = parseConfigObject(content);
   const providers = readConfigObject(parsed.provider);
@@ -132,7 +139,7 @@ function hasManagedAiGatewayRoutingConfig(
     if (targetProviderId && normalizedId !== targetProviderId) {
       return false;
     }
-    return hasManagedGatewayProviderRouting(normalizedId, readConfigObject(rawConfig));
+    return hasManagedGatewayProviderRouting(normalizedId, readConfigObject(rawConfig), gatewayBaseUrl);
   });
 }
 
@@ -172,6 +179,7 @@ export function shouldPreserveManagedAiConfig(input: {
     !hasManagedAiGatewayRoutingConfig(
       input.content,
       input.managedProfile?.providerId ?? null,
+      input.gatewayBaseUrl,
     )
   ) {
     return false;

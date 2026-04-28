@@ -412,6 +412,50 @@ test("shouldPreserveManagedAiConfig keeps existing gateway routing when the mana
   );
 });
 
+test("shouldPreserveManagedAiConfig rejects stale remote gateway routing when a local gateway is expected", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: managedCodexProfile,
+    serverBaseUrl: "https://den-worker-dev-dev-cloud-worker-2.onrender.com",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "gateway-access-token",
+  });
+
+  assert.equal(
+    shouldPreserveManagedAiConfig({
+      content,
+      managedProfile: null,
+      gatewayBaseUrl: "http://127.0.0.1:62740",
+      serverClientToken: "",
+      gatewayAccessToken: "",
+      accessBusy: false,
+      accessError: AI_ACCESS_NOT_CONFIGURED_MESSAGE,
+    }),
+    false,
+  );
+});
+
+test("shouldPreserveManagedAiConfig keeps matching local gateway routing during transient access gaps", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: managedCodexProfile,
+    serverBaseUrl: "http://127.0.0.1:62740",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "gateway-access-token",
+  });
+
+  assert.equal(
+    shouldPreserveManagedAiConfig({
+      content,
+      managedProfile: null,
+      gatewayBaseUrl: "http://127.0.0.1:62740",
+      serverClientToken: "",
+      gatewayAccessToken: "",
+      accessBusy: false,
+      accessError: AI_ACCESS_NOT_CONFIGURED_MESSAGE,
+    }),
+    true,
+  );
+});
+
 test("shouldPreserveManagedAiConfig allows model-only fallback when the config is not already gateway-managed", () => {
   assert.equal(
     shouldPreserveManagedAiConfig({
