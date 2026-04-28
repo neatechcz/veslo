@@ -5,7 +5,12 @@ import path from "node:path";
 
 import { materializeCodexAuthJson } from "../providers/codex-cli-worker-transport.js";
 
-export type CodexUsageStatusSource = "codex_exec_rate_limits" | "codex_status" | "codex_login_status" | "unavailable";
+export type CodexUsageStatusSource =
+  | "codex_exec_rate_limits"
+  | "codex_exec_no_rate_limits"
+  | "codex_status"
+  | "codex_login_status"
+  | "unavailable";
 
 export type CodexUsageLimitWindow = {
   label: string;
@@ -56,6 +61,7 @@ type CachedStatusEntry = {
 type ProbeResult = {
   checkedAt: string;
   rateLimits: CodexRateLimitsSnapshot | null;
+  ok?: boolean;
   detail?: string | null;
 };
 
@@ -126,7 +132,9 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
         });
         status = result.rateLimits
           ? codexUsageStatusFromRateLimits(result.rateLimits, result.checkedAt, result.detail)
-          : unavailableStatus(result.detail || "Codex probe did not return rate limits.", result.checkedAt);
+          : result.ok === true
+            ? codexUsageStatusUnknownLimits(result.checkedAt, result.detail)
+            : unavailableStatus(result.detail || "Codex probe did not return rate limits.", result.checkedAt);
       }
     } catch (error) {
       status = unavailableStatus(
@@ -184,6 +192,20 @@ export function codexUsageStatusFromRateLimits(
     limits: {
       fiveHour,
       weekly,
+    },
+  };
+}
+
+function codexUsageStatusUnknownLimits(checkedAt: string, detail?: string | null): CodexUsageStatus {
+  return {
+    available: true,
+    source: "codex_exec_no_rate_limits",
+    label: "Codex OK, limits unknown",
+    detail: detail ?? null,
+    checkedAt,
+    limits: {
+      fiveHour: null,
+      weekly: null,
     },
   };
 }
@@ -348,6 +370,7 @@ async function runCodexExecRateLimitProbe(input: {
       return {
         checkedAt,
         rateLimits,
+        ok: result.exitCode === 0 && !result.timedOut,
         detail: summarizeProbeDetail(result),
       };
     }
@@ -355,6 +378,7 @@ async function runCodexExecRateLimitProbe(input: {
     return {
       checkedAt,
       rateLimits: null,
+      ok: result.exitCode === 0 && !result.timedOut,
       detail: summarizeProbeFailure(result, "Codex rate limit snapshot was not found."),
     };
   } finally {

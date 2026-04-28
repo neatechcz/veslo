@@ -287,3 +287,29 @@ test("CachedCodexCredentialStatusProvider reuses recent probe results", async ()
 
   assert.equal(probeCalls, 2);
 });
+
+test("CachedCodexCredentialStatusProvider reports healthy probes with unknown limits", async () => {
+  const provider = new CachedCodexCredentialStatusProvider({
+    ttlMs: 5 * 60 * 1000,
+    now: () => new Date("2026-04-28T10:00:00.000Z"),
+    loadCredentialAuthJson: async () => JSON.stringify({ auth_mode: "chatgpt", tokens: { refresh_token: "rt", account_id: "acct" } }),
+    probe: async () => ({
+      checkedAt: "2026-04-28T10:00:00.000Z",
+      rateLimits: null,
+      ok: true,
+      detail: "codex | OK | tokens used | 1,499",
+    }),
+  });
+
+  const status = await provider.getStatus({
+    credentialId: "cred_codex_1",
+    credentialName: "Credential cred_codex_1",
+  });
+
+  assert.equal(status.available, true);
+  assert.equal(status.source, "codex_exec_no_rate_limits");
+  assert.equal(status.label, "Codex OK, limits unknown");
+  assert.equal(status.detail, "codex | OK | tokens used | 1,499");
+  assert.equal(status.limits?.fiveHour, null);
+  assert.equal(status.limits?.weekly, null);
+});
