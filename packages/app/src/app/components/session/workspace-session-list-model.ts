@@ -33,6 +33,7 @@ export type ProjectSessionGroup = {
   projectLabel: string;
   projectTitle: string;
   isPrivateProject: boolean;
+  isWorkspaceOnlyProject: boolean;
 };
 
 export const PRIVATE_PROJECT_GROUP_KEY = "project:veslo-private";
@@ -465,6 +466,43 @@ const projectGroupKeyForRow = (row: FlatSessionRow) =>
     ? PRIVATE_PROJECT_GROUP_KEY
     : row.projectRoot || `workspace:${row.workspace.id}`;
 
+const buildWorkspaceOnlyProjectGroup = (
+  group: WorkspaceSessionGroup,
+  isPrivateWorkspacePath: (folder: string | null | undefined) => boolean,
+): ProjectSessionGroup | null => {
+  if (group.workspace.workspaceType !== "local") return null;
+
+  const projectRoot = rootForWorkspace(group.workspace);
+  if (!projectRoot || isPrivateProjectRoot(group.workspace, projectRoot, isPrivateWorkspacePath)) {
+    return null;
+  }
+
+  return {
+    key: projectRoot,
+    workspace: group.workspace,
+    sessions: [],
+    status: group.status,
+    error: group.error ?? null,
+    activityAt: 0,
+    projectRoot,
+    projectLabel: basenameFromRoot(projectRoot) || workspaceLabel(group.workspace),
+    projectTitle: projectRoot || workspaceLabel(group.workspace),
+    isPrivateProject: false,
+    isWorkspaceOnlyProject: true,
+  };
+};
+
+export const filterVisibleProjectGroups = (
+  projectGroups: ProjectSessionGroup[],
+  shouldShowSessionRow: (row: FlatSessionRow) => boolean,
+): ProjectSessionGroup[] =>
+  projectGroups
+    .map((group) => ({
+      ...group,
+      sessions: group.sessions.filter((row) => shouldShowSessionRow(row)),
+    }))
+    .filter((group) => group.sessions.length > 0 || group.isWorkspaceOnlyProject);
+
 export const buildRecentRows = (
   workspaceSessionGroups: WorkspaceSessionGroup[],
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean = defaultPrivateWorkspacePath,
@@ -492,7 +530,7 @@ export const buildProjectGroups = (
     }
   }
 
-  return Array.from(groupedRows.entries())
+  const sessionBackedGroups = Array.from(groupedRows.entries())
     .map(([key, sessions]) => {
       const isPrivateProject = key === PRIVATE_PROJECT_GROUP_KEY;
       const leadSession = sessions.find((row) => row.nestingLevel === 0) ?? sessions[0];
@@ -508,7 +546,16 @@ export const buildProjectGroups = (
         projectLabel: isPrivateProject ? "" : leadSession.projectLabel,
         projectTitle: isPrivateProject ? "" : leadSession.projectTitle,
         isPrivateProject,
+        isWorkspaceOnlyProject: false,
       };
-    })
-    .sort(compareProjectGroups);
+    });
+
+  const sessionBackedKeys = new Set(sessionBackedGroups.map((group) => group.key));
+  const workspaceOnlyGroups = workspaceSessionGroups
+    .filter((group) => group.sessions.length === 0)
+    .map((group) => buildWorkspaceOnlyProjectGroup(group, isPrivateWorkspacePath))
+    .filter((group): group is ProjectSessionGroup => Boolean(group))
+    .filter((group) => !sessionBackedKeys.has(group.key));
+
+  return [...sessionBackedGroups, ...workspaceOnlyGroups].sort(compareProjectGroups);
 };

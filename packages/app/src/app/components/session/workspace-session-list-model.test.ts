@@ -6,6 +6,7 @@ import {
   buildRecentRows,
   buildRowHierarchyLookup,
   displayTimestamp,
+  filterVisibleProjectGroups,
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
   isProjectCollapsed,
@@ -548,6 +549,74 @@ test("buildProjectGroups orders directory groups by latest activity", () => {
     groups.map((group) => group.workspace.id),
     ["workspace-b", "workspace-a"],
   );
+});
+
+test("buildProjectGroups includes a local workspace without sessions", () => {
+  const groups = buildProjectGroups([
+    {
+      workspace: {
+        id: "company-searcher",
+        name: "Company searcher",
+        path: "/Users/test/ai discussion projects/Company searcher",
+        preset: "starter",
+        workspaceType: "local" as const,
+      },
+      sessions: [],
+      status: "ready",
+    },
+  ]);
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].key, "/Users/test/ai discussion projects/Company searcher");
+  assert.equal(groups[0].projectLabel, "Company searcher");
+  assert.equal(groups[0].projectTitle, "/Users/test/ai discussion projects/Company searcher");
+  assert.equal(groups[0].sessions.length, 0);
+});
+
+test("filterVisibleProjectGroups keeps empty workspace-only projects visible", () => {
+  const groups = buildProjectGroups([
+    {
+      workspace: {
+        id: "company-searcher",
+        name: "Company searcher",
+        path: "/Users/test/ai discussion projects/Company searcher",
+        preset: "starter",
+        workspaceType: "local" as const,
+      },
+      sessions: [],
+      status: "ready",
+    },
+  ]);
+
+  const visibleGroups = filterVisibleProjectGroups(groups, () => true);
+
+  assert.equal(visibleGroups.length, 1);
+  assert.equal(visibleGroups[0].projectLabel, "Company searcher");
+});
+
+test("buildProjectGroups keeps empty private workspaces hidden", () => {
+  const privateRoot = "/Users/test/.veslo/workspaces/private";
+  const isPrivateWorkspacePath = (folder: string | null | undefined) =>
+    typeof folder === "string" && (folder === privateRoot || folder.startsWith(`${privateRoot}/`));
+
+  const groups = buildProjectGroups(
+    [
+      {
+        workspace: {
+          id: "scratch",
+          name: "Scratch",
+          path: `${privateRoot}/scratch`,
+          preset: "starter",
+          workspaceType: "local" as const,
+        },
+        sessions: [],
+        status: "ready",
+      },
+    ],
+    isPrivateWorkspacePath,
+  );
+
+  assert.deepEqual(groups, []);
 });
 
 test("formatSessionRelativeAge uses compact d/h/m/s labels", () => {
