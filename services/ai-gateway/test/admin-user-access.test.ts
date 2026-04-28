@@ -3,6 +3,7 @@ import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 
+import { createDefaultAdminService, type CredentialRecord } from "../src/http/admin.js";
 import { createApp } from "../src/index.js";
 
 const ADMIN_AUTHORIZATION = { authorization: "Bearer admin-token" };
@@ -23,6 +24,27 @@ const AVAILABLE_CREDENTIALS = [
   { id: "cred_codex_123", name: "Shared Codex A" },
   { id: "cred_codex_456", name: "Shared Codex B" },
 ];
+
+function createCredential(
+  id: string,
+  overrides: Partial<Pick<CredentialRecord, "provider" | "state" | "activeLeases">> = {},
+): CredentialRecord {
+  return {
+    id,
+    name: `Credential ${id}`,
+    provider: overrides.provider ?? "codex_oauth",
+    type: "oauth",
+    state: overrides.state ?? "healthy",
+    scope: "platform",
+    activeLeases: overrides.activeLeases ?? 0,
+    alertCount: 0,
+    lastRefreshAt: "2026-04-27T12:00:00.000Z",
+    lastFailureAt: null,
+    totalTokens: 0,
+    nextRotationAt: null,
+    linkedAlertIds: [],
+  };
+}
 
 function createAdminUserAccessApp() {
   let currentAiAccess = {
@@ -198,6 +220,237 @@ test("GET /admin/api/users/:userId/ai-access returns the stored ai access policy
       aiAccess: AI_ACCESS_PAYLOAD,
       availableCredentials: AVAILABLE_CREDENTIALS,
     });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("GET /admin/api/users/:userId/ai-access only returns eligible codex credentials", async () => {
+  const app = createApp({
+    admin: createDefaultAdminService("http://den.example.test", {
+      denClient: {
+        async startBrowserAuth() {
+          throw new Error("unused");
+        },
+        async exchangeBrowserAuth() {
+          throw new Error("unused");
+        },
+        async getSession() {
+          return {
+            user: {
+              id: "user_admin",
+              email: "admin@example.test",
+              emailVerified: true,
+              name: "Admin",
+            },
+            platformAdmin: true,
+            activeOrgId: null,
+            organizations: [],
+          };
+        },
+        async listUsers() {
+          return [];
+        },
+        async createUser() {
+          throw new Error("unused");
+        },
+        async updateUser() {
+          throw new Error("unused");
+        },
+        async disableUser() {
+          throw new Error("unused");
+        },
+        async enableUser() {
+          throw new Error("unused");
+        },
+        async deleteUser() {
+          return;
+        },
+      },
+      aiAccessRepository: {
+        async getUserAiAccess(userId: string) {
+          return {
+            id: "ai_access_user_123",
+            userId,
+            enabled: true,
+            provider: "codex_oauth",
+            credentialId: "cred_codex_ok",
+            defaultModel: "gpt-5.4",
+            allowedModels: ["gpt-5.4"],
+            createdAt: new Date("2026-04-27T12:00:00.000Z"),
+            updatedAt: new Date("2026-04-27T12:00:00.000Z"),
+          };
+        },
+        async upsertUserAiAccess() {
+          throw new Error("unused");
+        },
+      },
+      credentialReadRepository: {
+        async listAdminCredentials() {
+          return [
+            createCredential("cred_openai_healthy", {
+              provider: "openai",
+              state: "healthy",
+              activeLeases: 0,
+            }),
+            createCredential("cred_codex_revoked", {
+              provider: "codex_oauth",
+              state: "revoked",
+              activeLeases: 0,
+            }),
+            createCredential("cred_codex_unavailable", {
+              provider: "codex_oauth",
+              state: "healthy",
+              activeLeases: 0,
+            }),
+            createCredential("cred_codex_ok", {
+              provider: "codex_oauth",
+              state: "healthy",
+              activeLeases: 1,
+            }),
+          ];
+        },
+      },
+      codexStatusProvider: {
+        async getStatus(input) {
+          return {
+            available: input.credentialId === "cred_codex_ok",
+            source: input.credentialId === "cred_codex_ok" ? "codex_exec_rate_limits" : "unavailable",
+            label: input.credentialId === "cred_codex_ok" ? "Codex limits available" : "Codex limits unavailable",
+            detail: null,
+            checkedAt: "2026-04-27T12:00:00.000Z",
+          };
+        },
+      },
+    }),
+  });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+      headers: ADMIN_AUTHORIZATION,
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.deepEqual(body.availableCredentials, [
+      { id: "cred_codex_ok", name: "Credential cred_codex_ok" },
+    ]);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("PUT /admin/api/users/:userId/ai-access rejects ineligible codex credentials", async () => {
+  let upsertCalled = false;
+  const app = createApp({
+    admin: createDefaultAdminService("http://den.example.test", {
+      denClient: {
+        async startBrowserAuth() {
+          throw new Error("unused");
+        },
+        async exchangeBrowserAuth() {
+          throw new Error("unused");
+        },
+        async getSession() {
+          return {
+            user: {
+              id: "user_admin",
+              email: "admin@example.test",
+              emailVerified: true,
+              name: "Admin",
+            },
+            platformAdmin: true,
+            activeOrgId: null,
+            organizations: [],
+          };
+        },
+        async listUsers() {
+          return [];
+        },
+        async createUser() {
+          throw new Error("unused");
+        },
+        async updateUser() {
+          throw new Error("unused");
+        },
+        async disableUser() {
+          throw new Error("unused");
+        },
+        async enableUser() {
+          throw new Error("unused");
+        },
+        async deleteUser() {
+          return;
+        },
+      },
+      aiAccessRepository: {
+        async getUserAiAccess() {
+          return null;
+        },
+        async upsertUserAiAccess() {
+          upsertCalled = true;
+          throw new Error("unexpected_ai_access_upsert");
+        },
+      },
+      credentialReadRepository: {
+        async listAdminCredentials() {
+          return [
+            createCredential("cred_codex_revoked", {
+              provider: "codex_oauth",
+              state: "revoked",
+              activeLeases: 0,
+            }),
+            createCredential("cred_codex_unavailable", {
+              provider: "codex_oauth",
+              state: "healthy",
+              activeLeases: 0,
+            }),
+          ];
+        },
+      },
+      codexStatusProvider: {
+        async getStatus() {
+          return {
+            available: false,
+            source: "unavailable",
+            label: "Codex limits unavailable",
+            detail: null,
+            checkedAt: "2026-04-27T12:00:00.000Z",
+          };
+        },
+      },
+    }),
+  });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        ...ADMIN_AUTHORIZATION,
+      },
+      body: JSON.stringify({
+        enabled: true,
+        provider: "codex_oauth",
+        credentialId: "cred_codex_unavailable",
+        defaultModel: "gpt-5.4",
+        allowedModels: ["gpt-5.4"],
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      error: "ineligible_ai_access_credential_id",
+    });
+    assert.equal(upsertCalled, false);
   } finally {
     server.close();
     await once(server, "close");

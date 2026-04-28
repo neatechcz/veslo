@@ -225,6 +225,8 @@ test("GET /admin/app.js loads and saves per-user ai access assignments", async (
     assert.match(script, /user-ai-access-allowed-models/)
     assert.match(script, /availableCredentials/)
     assert.match(script, /Select assigned credential/)
+    assert.match(script, /No eligible Codex credential/)
+    assert.match(script, /No healthy Codex credentials with OK upstream status are available for assignment\./)
     assert.match(script, /credentialId:\s*typeof payload\.credentialId === "string" \? payload\.credentialId : null/)
     assert.match(script, /credentialId:\s*readAiAccessCredentialValue\(\)/)
     assert.match(
@@ -234,6 +236,10 @@ test("GET /admin/app.js loads and saves per-user ai access assignments", async (
     assert.match(
       script,
       /async function saveUser\(\) \{[\s\S]*const aiAccessInput = \{\s*\.\.\.readAiAccessFormValue\(\),\s*credentialId: readAiAccessCredentialValue\(\),\s*}\s*;[\s\S]*await loadUsers\(\);[\s\S]*await saveUserAiAccess\(selectedUser\.id,\s*aiAccessInput\)/,
+    )
+    assert.match(
+      script,
+      /if \(!wasCreating && selectedUser\?\.id\) \{[\s\S]*await saveUserAiAccess\(selectedUser\.id,\s*aiAccessInput\)/,
     )
   } finally {
     server.close()
