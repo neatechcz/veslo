@@ -114,6 +114,45 @@ test("includes worker stderr tail when the Codex CLI exits unsuccessfully", asyn
   )
 })
 
+test("returns an actionable runtime incompatibility error when gpt-5.5 is unsupported", async () => {
+  const transport = new CodexCliWorkerTransport({
+    spawnCodex: async () => ({
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      finalMessage: "",
+      stdout: "",
+      stderr: "Error: unknown model gpt-5.5\n",
+    }),
+  })
+
+  await assert.rejects(
+    () =>
+      transport.chatCompletions({
+        body: {
+          model: "gpt-5.5",
+          messages: [{ role: "user", content: "Say ok" }],
+        },
+      }),
+    (error) => {
+      assert(error instanceof ProviderTransportError)
+      assert.equal(error.message, "codex_runtime_incompatible")
+      assert.equal(error.statusCode, 502)
+      const body = error.body as {
+        error?: {
+          code?: string
+          type?: string
+          message?: string
+        }
+      }
+      assert.equal(body.error?.code, "codex_runtime_incompatible")
+      assert.equal(body.error?.type, "runtime_incompatible")
+      assert.match(body.error?.message ?? "", /gpt-5\.5/)
+      return true
+    },
+  )
+})
+
 test("materializes Codex auth JSON into the worker CODEX_HOME without logging secrets", async () => {
   const codexHome = await mkdtemp(path.join(tmpdir(), "veslo-codex-home-test-"))
   const authJson = JSON.stringify({

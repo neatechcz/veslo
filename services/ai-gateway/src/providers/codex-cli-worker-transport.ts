@@ -79,6 +79,19 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
     const result = await this.spawnCodex({ prompt, model, authJson })
     if (result.exitCode !== 0 || result.timedOut || !result.finalMessage.trim()) {
       const stderrTail = summarizeWorkerStderr(result.stderr)
+      if (isGpt55RuntimeIncompatibility({ model, stderrTail })) {
+        throw new ProviderTransportError("codex_runtime_incompatible", {
+          statusCode: 502,
+          code: "codex_runtime_incompatible",
+          body: buildCodexRuntimeIncompatibleBody({
+            model,
+            timedOut: result.timedOut,
+            exitCode: result.exitCode,
+            stderrTail,
+          }),
+        })
+      }
+
       throw new ProviderTransportError("codex_worker_failed", {
         statusCode: 502,
         code: result.timedOut ? "codex_worker_timeout" : "codex_worker_failed",
@@ -211,6 +224,31 @@ function summarizeWorkerStderr(stderr: string): string | null {
   }
 
   return lines.slice(-10).join("\n").slice(-1000)
+}
+
+function isGpt55RuntimeIncompatibility(input: { model: string; stderrTail: string | null }): boolean {
+  if (input.model.trim().toLowerCase() !== "gpt-5.5") return false
+  const stderr = input.stderrTail?.toLowerCase() ?? ""
+  if (!stderr || !stderr.includes("gpt-5.5")) return false
+  return /(unknown|unsupported|not supported|not found|invalid|unrecognized|unavailable)/.test(stderr)
+}
+
+function buildCodexRuntimeIncompatibleBody(input: {
+  model: string
+  timedOut: boolean
+  exitCode: number | null
+  stderrTail: string | null
+}) {
+  return {
+    error: {
+      code: "codex_runtime_incompatible",
+      type: "runtime_incompatible",
+      message: `The Codex runtime bundled with Veslo is too old for ${input.model}. Update Veslo to a build with the current veslo-code/Codex runtime, then retry.`,
+    },
+    timedOut: input.timedOut,
+    exitCode: input.exitCode,
+    ...(input.stderrTail ? { stderrTail: input.stderrTail } : {}),
+  }
 }
 
 function buildStreamingChatCompletionBody(input: {
