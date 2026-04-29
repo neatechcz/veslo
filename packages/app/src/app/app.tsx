@@ -7476,11 +7476,20 @@ export default function App() {
 
       try {
         const { getCurrent, onOpenUrl } = await import("@tauri-apps/plugin-deep-link");
+        const { listen } = await import("@tauri-apps/api/event");
+        // Dedupe URLs across both delivery channels (onOpenUrl + single-instance
+        // event). On macOS the same URL can arrive twice — once via Apple Events
+        // and once via argv of a relaunched second instance — and re-running
+        // queueAuthCompleteDeepLink invalidates the one-time auth code.
+        const seenUrls = new Set<string>();
         const consumeUrls = (urls: string[] | null | undefined) => {
           if (!Array.isArray(urls)) {
             return;
           }
           for (const url of urls) {
+            if (typeof url !== "string" || url.length === 0) continue;
+            if (seenUrls.has(url)) continue;
+            seenUrls.add(url);
             if (queueAuthCompleteDeepLink(url) || queueRemoteConnectDeepLink(url) || queueSharedBundleDeepLink(url)) {
               break;
             }
@@ -7491,8 +7500,16 @@ export default function App() {
         const unlisten = await onOpenUrl((urls) => {
           consumeUrls(urls);
         });
+        // Single-instance plugin emits this event when a second Veslo instance
+        // is launched with deep-link arguments (typical macOS browser handoff).
+        // The original instance focuses its window via the Rust side; we still
+        // need to deliver the URL payload to the auth/remote-connect handlers.
+        const unlistenSingleInstance = await listen<string[]>("deep-link://new-url", (event) => {
+          consumeUrls(event.payload);
+        });
         onCleanup(() => {
           unlisten();
+          unlistenSingleInstance();
         });
       } catch {
         // ignore
