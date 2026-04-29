@@ -2817,6 +2817,8 @@ export default function App() {
   };
   const logoutLocalDenAuth = async () => {
     clearDenAuth();
+    setOnboardingStep("auth");
+    setView("onboarding");
     await flushPendingDesktopSnapshotWrite();
     requestManagedAiAccessRefresh();
   };
