@@ -2,6 +2,7 @@ mod bun_env;
 mod commands;
 mod config;
 mod engine;
+mod env_guard;
 mod fs;
 mod opencode_router;
 mod opkg;

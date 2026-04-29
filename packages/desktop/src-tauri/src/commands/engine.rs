@@ -12,41 +12,13 @@ use crate::opencode_router::spawn::resolve_opencode_router_health_port;
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{self, OrchestratorSpawnOptions};
 use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
+use crate::env_guard::EnvVarGuard;
 use crate::utils::truncate_output;
 use crate::veslo_server::{manager::VesloServerManager, resolve_connect_url, start_veslo_server};
 use serde_json::json;
 use std::time::Duration;
 use tauri_plugin_shell::process::CommandEvent;
 use uuid::Uuid;
-
-struct EnvVarGuard {
-    key: &'static str,
-    original: Option<std::ffi::OsString>,
-}
-
-impl EnvVarGuard {
-    fn apply(key: &'static str, value: Option<&str>) -> Self {
-        let original = std::env::var_os(key);
-        match value {
-            Some(next) if !next.trim().is_empty() => {
-                std::env::set_var(key, next.trim());
-            }
-            _ => {
-                std::env::remove_var(key);
-            }
-        }
-        Self { key, original }
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        match &self.original {
-            Some(value) => std::env::set_var(self.key, value),
-            None => std::env::remove_var(self.key),
-        }
-    }
-}
 
 #[derive(Default)]
 struct OutputState {
