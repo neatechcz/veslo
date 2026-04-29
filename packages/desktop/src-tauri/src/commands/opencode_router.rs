@@ -9,6 +9,7 @@ use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::opencode_router::spawn::{
     resolve_opencode_router_health_port, spawn_opencode_router, DEFAULT_OPENCODE_ROUTER_HEALTH_PORT,
 };
+use crate::process_supervisor::spawn_output_collector;
 use crate::types::OpenCodeRouterInfo;
 use crate::utils::truncate_output;
 
@@ -269,60 +270,7 @@ pub fn opencodeRouter_start(
                 state.last_stdout = startup_stdout;
                 state.last_stderr = startup_stderr;
 
-                let state_handle = manager.inner.clone();
-
-                tauri::async_runtime::spawn(async move {
-                    while let Some(event) = rx.recv().await {
-                        match event {
-                            CommandEvent::Stdout(line_bytes) => {
-                                let line = String::from_utf8_lossy(&line_bytes).to_string();
-                                if let Ok(mut state) = state_handle.try_lock() {
-                                    let next = state
-                                        .last_stdout
-                                        .as_deref()
-                                        .unwrap_or_default()
-                                        .to_string()
-                                        + &line;
-                                    state.last_stdout = Some(truncate_output(&next, 8000));
-                                }
-                            }
-                            CommandEvent::Stderr(line_bytes) => {
-                                let line = String::from_utf8_lossy(&line_bytes).to_string();
-                                if let Ok(mut state) = state_handle.try_lock() {
-                                    let next = state
-                                        .last_stderr
-                                        .as_deref()
-                                        .unwrap_or_default()
-                                        .to_string()
-                                        + &line;
-                                    state.last_stderr = Some(truncate_output(&next, 8000));
-                                }
-                            }
-                            CommandEvent::Terminated(payload) => {
-                                if let Ok(mut state) = state_handle.try_lock() {
-                                    state.child_exited = true;
-                                    if let Some(code) = payload.code {
-                                        let next = format!("OpenCodeRouter exited (code {code}).");
-                                        state.last_stderr = Some(truncate_output(&next, 8000));
-                                    }
-                                }
-                            }
-                            CommandEvent::Error(message) => {
-                                if let Ok(mut state) = state_handle.try_lock() {
-                                    state.child_exited = true;
-                                    let next = state
-                                        .last_stderr
-                                        .as_deref()
-                                        .unwrap_or_default()
-                                        .to_string()
-                                        + &message;
-                                    state.last_stderr = Some(truncate_output(&next, 8000));
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                });
+                spawn_output_collector(rx, manager.inner.clone(), "OpenCodeRouter");
 
                 return Ok(OpenCodeRouterManager::snapshot_locked(&mut state));
             }

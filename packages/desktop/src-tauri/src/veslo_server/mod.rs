@@ -6,11 +6,10 @@ use local_ip_address::local_ip;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri::Manager;
-use tauri_plugin_shell::process::CommandEvent;
 use uuid::Uuid;
 
+use crate::process_supervisor::spawn_output_collector;
 use crate::types::VesloServerInfo;
-use crate::utils::truncate_output;
 
 pub mod manager;
 pub mod spawn;
@@ -190,7 +189,7 @@ pub fn start_veslo_server(
         .map(|path| path.as_str())
         .unwrap_or("");
 
-    let (mut rx, child) = spawn_veslo_server(
+    let (rx, child) = spawn_veslo_server(
         app,
         &host,
         port,
@@ -222,48 +221,7 @@ pub fn start_veslo_server(
     state.last_stdout = None;
     state.last_stderr = None;
 
-    let state_handle = manager.inner.clone();
-
-    tauri::async_runtime::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            match event {
-                CommandEvent::Stdout(line_bytes) => {
-                    let line = String::from_utf8_lossy(&line_bytes).to_string();
-                    if let Ok(mut state) = state_handle.try_lock() {
-                        let next =
-                            state.last_stdout.as_deref().unwrap_or_default().to_string() + &line;
-                        state.last_stdout = Some(truncate_output(&next, 8000));
-                    }
-                }
-                CommandEvent::Stderr(line_bytes) => {
-                    let line = String::from_utf8_lossy(&line_bytes).to_string();
-                    if let Ok(mut state) = state_handle.try_lock() {
-                        let next =
-                            state.last_stderr.as_deref().unwrap_or_default().to_string() + &line;
-                        state.last_stderr = Some(truncate_output(&next, 8000));
-                    }
-                }
-                CommandEvent::Terminated(payload) => {
-                    if let Ok(mut state) = state_handle.try_lock() {
-                        state.child_exited = true;
-                        if let Some(code) = payload.code {
-                            let next = format!("Veslo server exited (code {code}).");
-                            state.last_stderr = Some(truncate_output(&next, 8000));
-                        }
-                    }
-                }
-                CommandEvent::Error(message) => {
-                    if let Ok(mut state) = state_handle.try_lock() {
-                        state.child_exited = true;
-                        let next =
-                            state.last_stderr.as_deref().unwrap_or_default().to_string() + &message;
-                        state.last_stderr = Some(truncate_output(&next, 8000));
-                    }
-                }
-                _ => {}
-            }
-        }
-    });
+    spawn_output_collector(rx, manager.inner.clone(), "Veslo server");
 
     let info = VesloServerManager::snapshot_locked(&mut state);
     drop(state);

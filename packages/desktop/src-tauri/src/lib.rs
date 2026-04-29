@@ -9,6 +9,7 @@ mod opkg;
 mod orchestrator;
 mod paths;
 mod platform;
+mod process_supervisor;
 mod types;
 mod updater;
 mod utils;

@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri_plugin_shell::process::CommandChild;
 
+use crate::process_supervisor::{kill_running_child, resolve_running_pid, SupervisedChild};
 use crate::types::OpenCodeRouterInfo;
 
 #[derive(Default)]
@@ -21,16 +22,36 @@ pub struct OpenCodeRouterState {
     pub last_stderr: Option<String>,
 }
 
+impl SupervisedChild for OpenCodeRouterState {
+    fn child(&self) -> &Option<CommandChild> {
+        &self.child
+    }
+    fn take_child(&mut self) -> Option<CommandChild> {
+        self.child.take()
+    }
+    fn child_exited(&self) -> bool {
+        self.child_exited
+    }
+    fn set_child_exited(&mut self, value: bool) {
+        self.child_exited = value;
+    }
+    fn last_stdout(&self) -> Option<&str> {
+        self.last_stdout.as_deref()
+    }
+    fn set_last_stdout(&mut self, value: Option<String>) {
+        self.last_stdout = value;
+    }
+    fn last_stderr(&self) -> Option<&str> {
+        self.last_stderr.as_deref()
+    }
+    fn set_last_stderr(&mut self, value: Option<String>) {
+        self.last_stderr = value;
+    }
+}
+
 impl OpenCodeRouterManager {
     pub fn snapshot_locked(state: &mut OpenCodeRouterState) -> OpenCodeRouterInfo {
-        let (running, pid) = match state.child.as_ref() {
-            None => (false, None),
-            Some(_child) if state.child_exited => {
-                state.child = None;
-                (false, None)
-            }
-            Some(child) => (true, Some(child.pid())),
-        };
+        let (running, pid) = resolve_running_pid(state);
 
         OpenCodeRouterInfo {
             running,
@@ -45,15 +66,10 @@ impl OpenCodeRouterManager {
     }
 
     pub fn stop_locked(state: &mut OpenCodeRouterState) {
-        if let Some(child) = state.child.take() {
-            let _ = child.kill();
-        }
-        state.child_exited = true;
+        kill_running_child(state);
         state.version = None;
         state.workspace_path = None;
         state.opencode_url = None;
         state.health_port = None;
-        state.last_stdout = None;
-        state.last_stderr = None;
     }
 }

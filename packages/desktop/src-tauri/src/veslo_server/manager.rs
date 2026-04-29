@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri_plugin_shell::process::CommandChild;
 
+use crate::process_supervisor::{kill_running_child, resolve_running_pid, SupervisedChild};
 use crate::types::VesloServerInfo;
 
 #[derive(Default)]
@@ -25,16 +26,36 @@ pub struct VesloServerState {
     pub last_stderr: Option<String>,
 }
 
+impl SupervisedChild for VesloServerState {
+    fn child(&self) -> &Option<CommandChild> {
+        &self.child
+    }
+    fn take_child(&mut self) -> Option<CommandChild> {
+        self.child.take()
+    }
+    fn child_exited(&self) -> bool {
+        self.child_exited
+    }
+    fn set_child_exited(&mut self, value: bool) {
+        self.child_exited = value;
+    }
+    fn last_stdout(&self) -> Option<&str> {
+        self.last_stdout.as_deref()
+    }
+    fn set_last_stdout(&mut self, value: Option<String>) {
+        self.last_stdout = value;
+    }
+    fn last_stderr(&self) -> Option<&str> {
+        self.last_stderr.as_deref()
+    }
+    fn set_last_stderr(&mut self, value: Option<String>) {
+        self.last_stderr = value;
+    }
+}
+
 impl VesloServerManager {
     pub fn snapshot_locked(state: &mut VesloServerState) -> VesloServerInfo {
-        let (running, pid) = match state.child.as_ref() {
-            None => (false, None),
-            Some(_child) if state.child_exited => {
-                state.child = None;
-                (false, None)
-            }
-            Some(child) => (true, Some(child.pid())),
-        };
+        let (running, pid) = resolve_running_pid(state);
 
         VesloServerInfo {
             running,
@@ -53,10 +74,7 @@ impl VesloServerManager {
     }
 
     pub fn stop_locked(state: &mut VesloServerState) {
-        if let Some(child) = state.child.take() {
-            let _ = child.kill();
-        }
-        state.child_exited = true;
+        kill_running_child(state);
         state.host = None;
         state.port = None;
         state.base_url = None;
@@ -65,7 +83,5 @@ impl VesloServerManager {
         state.lan_url = None;
         state.client_token = None;
         state.host_token = None;
-        state.last_stdout = None;
-        state.last_stderr = None;
     }
 }
