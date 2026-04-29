@@ -1,3 +1,5 @@
+import { getBasename } from "../../utils/workspace-path";
+
 export type ComposerWorkspaceLabelInput = {
   isRemoteWorkspace: boolean;
   localWorkspacePath: string | null | undefined;
@@ -8,14 +10,6 @@ export type ComposerWorkspaceLabelInput = {
 export type ComposerWorkspaceLabel = {
   label: string;
   usePathStyle: boolean;
-};
-
-const resolveLastPathSegment = (value: string): string => {
-  const normalized = value.trim().replace(/[\\/]+$/g, "");
-  if (!normalized) return "";
-
-  const segments = normalized.split(/[/\\]+/).filter(Boolean);
-  return segments.at(-1)?.trim() || normalized;
 };
 
 export const resolveComposerWorkspaceLabel = (
@@ -30,7 +24,7 @@ export const resolveComposerWorkspaceLabel = (
 
   const localPath = input.localWorkspacePath?.trim() ?? "";
   if (localPath) {
-    const leafName = resolveLastPathSegment(localPath);
+    const leafName = getBasename(localPath.replace(/[\\/]+$/g, ""));
     return {
       label: leafName || localPath,
       usePathStyle: true,

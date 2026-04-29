@@ -1,5 +1,13 @@
 export const splitPathSegments = (value: string) => value.split(/[/\\]/).filter(Boolean);
 
+export const normalizePath = (value: string) => value.trim().replace(/[\\/]+/g, "/");
+
+export const normalizeForComparison = (value: string) =>
+  normalizePath(value).replace(/\/+$/, "");
+
+export const normalizeRelative = (value: string) =>
+  normalizePath(value).replace(/^\/+/, "").replace(/\/+$/, "");
+
 export const toWorkspaceRelative = (file: string, root?: string) => {
   const normalizedRoot = (root ?? "").trim().replace(/[\\/]+/g, "/").replace(/\/+$/, "");
   if (!normalizedRoot) return file;

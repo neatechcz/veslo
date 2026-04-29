@@ -1,5 +1,10 @@
 import type { VesloSessionArtifactItem } from "../../lib/veslo-server";
 import type { ArtifactItem } from "../../types";
+import {
+  getBasename as basename,
+  normalizePath,
+  normalizeForComparison as normalizeComparablePath,
+} from "../../utils/workspace-path";
 
 export type ArtifactFamilyId = "files" | "skills" | "mcp" | "soul";
 
@@ -54,22 +59,8 @@ const SOUL_KIND_RANK: Record<string, number> = {
   heartbeat_used: 1,
 };
 
-function normalizePath(value: string): string {
-  return value.trim().replace(/[\\/]+/g, "/");
-}
-
-function basename(value: string): string {
-  const normalized = normalizePath(value);
-  const parts = normalized.split("/").filter(Boolean);
-  return parts[parts.length - 1] ?? normalized;
-}
-
 function isAbsolutePath(path: string): boolean {
   return path.startsWith("/") || path.startsWith("//") || /^[A-Za-z]:\//.test(path);
-}
-
-function normalizeComparablePath(value: string): string {
-  return normalizePath(value).replace(/\/+$/, "");
 }
 
 function isPathWithinWorkspace(path: string, workspaceRoot: string): boolean {

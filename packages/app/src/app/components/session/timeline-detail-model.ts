@@ -1,4 +1,5 @@
 import type { Part } from "@opencode-ai/sdk/v2/client";
+import { getBasename as basename } from "../../utils/workspace-path";
 
 export type TimelineSectionKind = "plan" | "explore" | "action" | "verify" | "issues";
 
@@ -73,12 +74,6 @@ const SECTION_TITLES: Record<TimelineSectionKind, string> = {
 function normalizeText(value: unknown): string {
   if (typeof value !== "string") return "";
   return value.replace(/\s+/g, " ").trim();
-}
-
-function basename(value: string): string {
-  const normalized = value.trim().replace(/\\/g, "/");
-  const parts = normalized.split("/").filter(Boolean);
-  return parts[parts.length - 1] ?? normalized;
 }
 
 function getToolName(part: Part): string {

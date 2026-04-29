@@ -4,7 +4,7 @@ import type { JSX } from "solid-js";
 
 import type { ArtifactFamily, ArtifactFamilyId, ArtifactFamilyItem } from "./artifact-family-model";
 import { t as tr } from "../../../i18n";
-import { splitPathSegments, toWorkspaceRelative, getBasename, getDirname } from "../../utils/workspace-path";
+import { splitPathSegments, toWorkspaceRelative, getBasename, getDirname, normalizePath } from "../../utils/workspace-path";
 
 export type ArtifactsPanelProps = {
   families: ArtifactFamily[];
@@ -14,8 +14,6 @@ export type ArtifactsPanelProps = {
   obsidianAvailable?: boolean;
   id?: string;
 };
-
-const normalizePath = (value: string) => value.trim().replace(/[\\/]+/g, "/");
 
 const isMarkdown = (value: string) => /\.(md|mdx|markdown)$/i.test(value);
 

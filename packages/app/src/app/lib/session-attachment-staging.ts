@@ -1,17 +1,7 @@
-const PATH_SEPARATOR_RE = /[\\/]+/g;
-
-function normalizePathLike(input: string): string {
-  return String(input ?? "")
-    .trim()
-    .replace(PATH_SEPARATOR_RE, "/")
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "");
-}
+import { normalizeRelative as normalizePathLike, splitPathSegments as splitWorkspaceSegments } from "../utils/workspace-path";
 
 function splitPathSegments(input: string): string[] {
-  const normalized = normalizePathLike(input);
-  if (!normalized) return [];
-  return normalized.split("/").filter(Boolean);
+  return splitWorkspaceSegments(String(input ?? ""));
 }
 
 function normalizeLeafName(input: string): string {
