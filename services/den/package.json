@@ -13,7 +13,7 @@
     "auth:generate": "npx @better-auth/cli@latest generate --config src/auth.ts --output src/db/better-auth.schema.ts --yes"
   },
   "dependencies": {
-    "@openai/codex": "0.120.0",
+    "@openai/codex": "0.125.0",
     "better-auth": "^1.4.18",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
