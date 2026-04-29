@@ -7701,15 +7701,6 @@ export default function App() {
       managedProfile && gatewayClient && gatewayClientToken && gatewayAccessToken ? beginManagedAiBootstrap() : null;
 
     const writeConfig = async () => {
-      console.log("[perf] writeConfig start", {
-        root,
-        canUseVesloServer,
-        hasManagedProfile: !!managedProfile,
-        hasGatewayClient: !!gatewayClient,
-        hasGatewayClientToken: !!gatewayClientToken,
-        hasGatewayAccessToken: !!gatewayAccessToken,
-        vesloServerStatus: vesloServerStatus(),
-      });
       try {
         if (canUseVesloServer) {
           const config = await vesloClient.getConfig(vesloWorkspaceId);
@@ -7727,28 +7718,12 @@ export default function App() {
             );
             const desiredSnapshot = getConfigSnapshot(content);
             if (lastKnownConfigSnapshot() === desiredSnapshot) {
-              const knownBaseURL = (lastKnownConfigSnapshot().match(/"baseURL":"([^"]+)"/) ?? [])[1];
-              const desiredBaseURL = (content.match(/"baseURL"\s*:\s*"([^"]+)"/) ?? [])[1];
-              const currentBaseURL = (currentOpencodeContent.match(/"baseURL"\s*:\s*"([^"]+)"/) ?? [])[1];
-              console.log("[perf] writeConfig SKIP (snapshot unchanged)", {
-                root,
-                knownBaseURL,
-                desiredBaseURL,
-                currentBaseURL,
-                snapshotMatch: knownBaseURL === desiredBaseURL,
-              });
               return;
             }
             if (managedConfigContentsMatchForServerPatch(currentOpencodeContent, content)) {
-              console.log("[perf] writeConfig SKIP (managed match)", {
-                root,
-                currentBaseURL: (currentOpencodeContent.match(/"baseURL"\s*:\s*"([^"]+)"/) ?? [])[1],
-                desiredBaseURL: (content.match(/"baseURL"\s*:\s*"([^"]+)"/) ?? [])[1],
-              });
               setLastKnownConfigSnapshot(desiredSnapshot);
               return;
             }
-            console.log("[perf] writeConfig PATCHING", { root });
             await vesloClient.patchConfig(vesloWorkspaceId, {
               opencode: JSON.parse(content) as Record<string, unknown>,
             });
