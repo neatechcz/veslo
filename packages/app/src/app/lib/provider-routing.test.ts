@@ -141,6 +141,53 @@ test("codex_oauth provider config points at ai-gateway codex route", () => {
   });
 });
 
+test("codex_oauth provider config includes assigned gpt-5.5 without changing the default model", () => {
+  const updated = applyGatewayProviderRouting(
+    JSON.stringify({
+      model: "codex_oauth/gpt-5.4",
+      provider: {
+        codex_oauth: {
+          options: {
+            apiKey: "sk-provider-secret",
+          },
+        },
+      },
+    }),
+    {
+      providerId: "codex_oauth",
+      serverBaseUrl: "http://127.0.0.1:4318/",
+      serverClientToken: "veslo-client-token",
+      gatewayAccessToken: "gateway-access-token",
+      models: ["gpt-5.4", "gpt-5.5"],
+    },
+  );
+
+  const parsed = JSON.parse(updated) as {
+    model?: string;
+    provider?: {
+      codex_oauth?: {
+        models?: Record<string, {
+          name?: string;
+          tool_call?: boolean;
+          reasoning?: boolean;
+          headers?: Record<string, string>;
+        }>;
+      };
+    };
+  };
+
+  assert.equal(parsed.model, "codex_oauth/gpt-5.4");
+  for (const modelId of ["gpt-5.4", "gpt-5.5"]) {
+    assert.equal(parsed.provider?.codex_oauth?.models?.[modelId]?.name, modelId);
+    assert.equal(parsed.provider?.codex_oauth?.models?.[modelId]?.tool_call, true);
+    assert.equal(parsed.provider?.codex_oauth?.models?.[modelId]?.reasoning, true);
+    assert.deepEqual(parsed.provider?.codex_oauth?.models?.[modelId]?.headers, {
+      "x-veslo-gateway-token": "gateway-access-token",
+      "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
+    });
+  }
+});
+
 test("gateway access token is stored as a gateway credential, not a raw provider secret", () => {
   const updated = applyGatewayProviderRouting(
     JSON.stringify({

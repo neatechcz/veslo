@@ -368,6 +368,44 @@ test("formatManagedAiAccessConfig routes codex_oauth through the gateway", () =>
   });
 });
 
+test("formatManagedAiAccessConfig supports assigned gpt-5.5 without making it the default", () => {
+  const content = formatManagedAiAccessConfig(
+    "{}",
+    {
+      profile: {
+        ...managedCodexProfile,
+        allowedModels: ["gpt-5.4", "gpt-5.5"],
+      },
+      serverBaseUrl: "https://veslo.example.test",
+      serverClientToken: "veslo-client-token",
+      gatewayAccessToken: "den_token_123",
+    },
+  );
+
+  const parsed = JSON.parse(content) as {
+    model?: string;
+    provider?: {
+      codex_oauth?: {
+        models?: Record<string, {
+          name?: string;
+          tool_call?: boolean;
+          reasoning?: boolean;
+          headers?: Record<string, string>;
+        }>;
+      };
+    };
+  };
+
+  assert.equal(parsed.model, "codex_oauth/gpt-5.4");
+  assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.name, "gpt-5.5");
+  assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.tool_call, true);
+  assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.reasoning, true);
+  assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.headers, {
+    "x-veslo-gateway-token": "den_token_123",
+    "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
+  });
+});
+
 test("shouldPreserveManagedAiConfig keeps existing gateway routing while managed access is still loading", () => {
   const content = formatManagedAiAccessConfig("{}", {
     profile: managedCodexProfile,
