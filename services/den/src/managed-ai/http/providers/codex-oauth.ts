@@ -71,9 +71,16 @@ export function createCodexOAuthProxyRouter(
       const upstreamResponse = await executeRequest(scope, policyResult.body, assignedAuthJson)
       applyUpstreamResponse(res, upstreamResponse)
     } catch (error) {
-      if (error instanceof ProviderTransportError && error.statusCode && error.statusCode < 500) {
-        res.status(error.statusCode).json({ error: error.message })
-        return
+      if (error instanceof ProviderTransportError) {
+        if (error.body && typeof error.body === "object") {
+          res.status(error.statusCode ?? 502).json(error.body as Record<string, unknown>)
+          return
+        }
+
+        if (error.statusCode) {
+          res.status(error.statusCode).json({ error: error.message })
+          return
+        }
       }
 
       console.error("proxy_request_failed", error)

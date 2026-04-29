@@ -31,6 +31,7 @@ Object.assign(process.env, {
 
 const { getPlatformCredentialOwnerUserId } = await import("../src/managed-ai/credentials/platform-owner.js")
 const { createProxyRouter } = await import("../src/managed-ai/http/proxy.js")
+const { ProviderTransportError } = await import("../src/managed-ai/providers/transport.js")
 
 class TestCredentialRepository implements CredentialRepository {
   public readonly listEligibleBindingsCalls: ListEligibleBindingsInput[] = []
@@ -443,6 +444,159 @@ test("codex_oauth proxy fails when the assigned credential is unavailable", asyn
     assert.equal(response.status, 503)
     assert.deepEqual(await response.json(), {
       error: "assigned_credential_unavailable",
+    })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("codex_oauth proxy preserves structured runtime incompatibility failures", async () => {
+  const secretAuthJson = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      refresh_token: "proxy-refresh-token",
+      account_id: "acct_proxy",
+    },
+  })
+  const credentials = new TestCredentialRepository(
+    new Map([
+      [
+        "binding_codex_assigned",
+        createCredentialRecord({
+          id: "cred_codex_assigned",
+        }),
+      ],
+    ]),
+    new Map([
+      [
+        "cred_codex_assigned",
+        {
+          id: "binding_codex_assigned",
+          ownerUserId: getPlatformCredentialOwnerUserId("codex_oauth"),
+          provider: "codex_oauth",
+          credentialRecordId: "cred_codex_assigned",
+          createdAt: new Date("2026-04-10T00:00:00.000Z"),
+          updatedAt: new Date("2026-04-10T00:00:00.000Z"),
+        },
+      ],
+    ]),
+  )
+
+  const app = express()
+  app.use(express.json())
+  app.use(
+    createProxyRouter({
+      gatewaySessions: {
+        async resolveSession(token: string) {
+          assert.equal(token, "gateway-access-token")
+          return {
+            token,
+            user: {
+              id: "user_gateway",
+              email: "gateway@example.test",
+            },
+          }
+        },
+      },
+      aiAccess: {
+        async getUserAiAccess(userId: string) {
+          assert.equal(userId, "user_gateway")
+          return {
+            ...createAiAccess(),
+            allowedModels: ["gpt-5.4", "gpt-5.5"],
+          }
+        },
+      },
+      credentials,
+      secrets: {
+        async get(secretRef: string) {
+          assert.equal(secretRef, "secret_codex_1")
+          return {
+            kind: "codex_auth_json",
+            authJson: secretAuthJson,
+          }
+        },
+      },
+      usageRepository: {
+        async recordUsage() {
+          assert.fail("usage should not be recorded when the worker transport fails")
+        },
+      },
+      leaseBroker: {
+        async getOrCreateActiveLease(scope: ResolveLeaseInput) {
+          return {
+            id: "lease_codex_1",
+            ownerUserId: scope.ownerUserId,
+            provider: scope.provider,
+            sessionId: scope.sessionId,
+            activeBindingId: "binding_codex_assigned",
+          }
+        },
+        async handleUpstreamFailure() {
+          assert.fail("failure handler should not run for codex worker route")
+        },
+      } as never,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          assert.fail("token broker should not run for codex worker route")
+        },
+      },
+      openAiTransport: {
+        async chatCompletions() {
+          assert.fail("openai transport should not be reached in codex proxy test")
+        },
+      },
+      anthropicTransport: {
+        async messages() {
+          assert.fail("anthropic transport should not be reached in codex proxy test")
+        },
+      },
+      codexOAuthTransport: {
+        async chatCompletions() {
+          throw new ProviderTransportError("codex_runtime_incompatible", {
+            statusCode: 502,
+            code: "codex_runtime_incompatible",
+            body: {
+              error: {
+                code: "codex_runtime_incompatible",
+                type: "runtime_incompatible",
+                message:
+                  "The Codex runtime bundled with Veslo is too old for gpt-5.5. Update Veslo to a build with the current veslo-code/Codex runtime, then retry.",
+              },
+            },
+          })
+        },
+      },
+    } as never),
+  )
+
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/providers/codex_oauth/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer gateway-access-token",
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_codex_1",
+      },
+      body: JSON.stringify({
+        model: "gpt-5.5",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    })
+
+    assert.equal(response.status, 502)
+    assert.deepEqual(await response.json(), {
+      error: {
+        code: "codex_runtime_incompatible",
+        type: "runtime_incompatible",
+        message:
+          "The Codex runtime bundled with Veslo is too old for gpt-5.5. Update Veslo to a build with the current veslo-code/Codex runtime, then retry.",
+      },
     })
   } finally {
     server.close()

@@ -392,7 +392,7 @@ test("codex_oauth proxy rewrites unresolved opencode session placeholders to a u
   }
 })
 
-test("codex_oauth proxy returns structured worker failures for authenticated callers", async () => {
+test("codex_oauth proxy returns structured runtime incompatibility failures for authenticated callers", async () => {
   const app = createApp({
     proxy: {
       gatewaySessions: {
@@ -410,7 +410,10 @@ test("codex_oauth proxy returns structured worker failures for authenticated cal
       aiAccess: {
         async getUserAiAccess(userId: string) {
           assert.equal(userId, "user_gateway")
-          return createAiAccess()
+          return {
+            ...createAiAccess(),
+            allowedModels: ["gpt-5.4", "gpt-5.5"],
+          }
         },
         async upsertUserAiAccess() {
           throw new Error("unused")
@@ -486,14 +489,16 @@ test("codex_oauth proxy returns structured worker failures for authenticated cal
       },
       codexOAuthTransport: {
         async chatCompletions() {
-          throw new ProviderTransportError("codex_worker_failed", {
+          throw new ProviderTransportError("codex_runtime_incompatible", {
             statusCode: 502,
-            code: "codex_worker_failed",
+            code: "codex_runtime_incompatible",
             body: {
-              error: "codex_worker_failed",
-              timedOut: false,
-              exitCode: 1,
-              stderrTail: "Error: Please run `codex login`.\nAuthentication required.",
+              error: {
+                code: "codex_runtime_incompatible",
+                type: "runtime_incompatible",
+                message:
+                  "The Codex runtime bundled with Veslo is too old for gpt-5.5. Update Veslo to a build with the current veslo-code/Codex runtime, then retry.",
+              },
             },
           })
         },
@@ -514,17 +519,19 @@ test("codex_oauth proxy returns structured worker failures for authenticated cal
         "x-veslo-session-id": "session_codex_1",
       },
       body: JSON.stringify({
-        model: "gpt-5.4",
+        model: "gpt-5.5",
         messages: [{ role: "user", content: "hello" }],
       }),
     })
 
     assert.equal(response.status, 502)
     assert.deepEqual(await response.json(), {
-      error: "codex_worker_failed",
-      timedOut: false,
-      exitCode: 1,
-      stderrTail: "Error: Please run `codex login`.\nAuthentication required.",
+      error: {
+        code: "codex_runtime_incompatible",
+        type: "runtime_incompatible",
+        message:
+          "The Codex runtime bundled with Veslo is too old for gpt-5.5. Update Veslo to a build with the current veslo-code/Codex runtime, then retry.",
+      },
     })
   } finally {
     server.close()
