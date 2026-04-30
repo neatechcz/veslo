@@ -3,10 +3,35 @@ import { once } from "node:events"
 import type { AddressInfo } from "node:net"
 import test from "node:test"
 import express from "express"
+import { MySqlDialect } from "drizzle-orm/mysql-core"
 
 import { createAdminRouter } from "../src/http/admin.js"
 import { createManagedAiAdminRouteDeps } from "../src/managed-ai/http/admin.js"
 import { MySqlUsageRepository } from "../src/managed-ai/usage/mysql-repository.js"
+
+function createUsageDb(rows: unknown[]) {
+  let whereClause: unknown
+
+  return {
+    db: {
+      select() {
+        return {
+          from() {
+            return {
+              async where(clause: unknown) {
+                whereClause = clause
+                return rows
+              },
+            }
+          },
+        }
+      },
+    },
+    whereClause() {
+      return whereClause
+    },
+  }
+}
 
 function createSession() {
   return {
@@ -80,6 +105,7 @@ function createUsageResponse() {
     topCredentials: [{ id: "cred_openai_1", label: "Credential cred_openai_1", totalTokens: 900 }],
     topUsers: [{ id: "user_admin", label: "Admin", totalTokens: 900 }],
     topOrgs: [],
+    credentialUsage: [],
   }
 }
 
@@ -232,31 +258,18 @@ test("GET /admin/api/usage aggregates usage by user", async () => {
 })
 
 test("MySqlUsageRepository aggregates stored totals by org", async () => {
-  let whereCalled = false
-  const repository = new MySqlUsageRepository({
-    select() {
-      return {
-        from() {
-          return {
-            async where() {
-              whereCalled = true
-              return [
-                {
-                  credential_record_id: "cred_openai_1",
-                  owner_user_id: "user_admin",
-                  org_id: "org_admin",
-                  input_tokens: 1,
-                  output_tokens: 2,
-                  cached_tokens: 4,
-                  total_tokens: 99,
-                },
-              ]
-            },
-          }
-        },
-      }
+  const fakeDb = createUsageDb([
+    {
+      credential_record_id: "cred_openai_1",
+      owner_user_id: "user_admin",
+      org_id: "org_admin",
+      input_tokens: 1,
+      output_tokens: 2,
+      cached_tokens: 4,
+      total_tokens: 99,
     },
-  } as any)
+  ])
+  const repository = new MySqlUsageRepository(fakeDb.db as any)
 
   const response = await repository.aggregateUsage({
     groupBy: "org",
@@ -265,7 +278,6 @@ test("MySqlUsageRepository aggregates stored totals by org", async () => {
     orgId: null,
   })
 
-  assert.equal(whereCalled, true)
   assert.deepEqual(response, {
     summary: {
       totalTokens: 99,
@@ -288,6 +300,33 @@ test("MySqlUsageRepository aggregates stored totals by org", async () => {
     topCredentials: [{ id: "cred_openai_1", label: "cred_openai_1", totalTokens: 99 }],
     topUsers: [{ id: "user_admin", label: "user_admin", totalTokens: 99 }],
     topOrgs: [{ id: "org_admin", label: "org_admin", totalTokens: 99 }],
+    credentialUsage: [
+      {
+        id: "cred_openai_1",
+        label: "cred_openai_1",
+        cachedTokens: 4,
+        totalTokens: 99,
+        totalRequests: 1,
+      },
+    ],
+  })
+})
+
+test("MySqlUsageRepository filters unknown org usage with org_id IS NULL", async () => {
+  const fakeDb = createUsageDb([])
+  const repository = new MySqlUsageRepository(fakeDb.db as any)
+
+  await repository.aggregateUsage({
+    groupBy: "org",
+    credentialId: null,
+    userId: null,
+    orgId: "unknown-org",
+  })
+
+  const dialect = new MySqlDialect()
+  assert.deepEqual(dialect.sqlToQuery(fakeDb.whereClause() as never), {
+    sql: "`credential_usage_event`.`org_id` is null",
+    params: [],
   })
 })
 

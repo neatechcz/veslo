@@ -39,6 +39,12 @@ export type UsageAggregateSeries = {
   totalRequests: number
 }
 
+export type UsageCredentialAggregate = UsageAggregateLabel & {
+  cachedTokens: number
+  totalTokens: number
+  totalRequests: number
+}
+
 export type UsageAggregateResponse = {
   summary: UsageAggregateSummary
   groupBy: UsageGroupBy
@@ -51,6 +57,7 @@ export type UsageAggregateResponse = {
   topCredentials: Array<UsageAggregateLabel & { totalTokens: number }>
   topUsers: Array<UsageAggregateLabel & { totalTokens: number }>
   topOrgs: Array<UsageAggregateLabel & { totalTokens: number }>
+  credentialUsage: UsageCredentialAggregate[]
 }
 
 export interface UsageRepository {

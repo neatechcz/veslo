@@ -71,6 +71,13 @@
       "when": 1776297600000,
       "tag": "0009_feedback_reports",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1777507200000,
+      "tag": "0010_managed_ai_usage_accounting",
+      "breakpoints": true
     }
   ]
 }

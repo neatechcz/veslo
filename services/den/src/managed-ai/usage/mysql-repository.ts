@@ -4,6 +4,7 @@ import { credentialUsageEventTable } from "../schema.js"
 import type {
   AggregateUsageInput,
   RecordUsageInput,
+  UsageCredentialAggregate,
   UsageAggregateLabel,
   UsageAggregateResponse,
   UsageAggregateSeries,
@@ -14,6 +15,7 @@ type UsageEventRow = {
   credentialId: string
   userId: string
   orgId: string | null
+  cachedTokens: number
   totalTokens: number
   totalRequests: number
 }
@@ -56,6 +58,7 @@ export class MySqlUsageRepository implements UsageRepository {
       credentialId: row.credential_record_id,
       userId: row.owner_user_id,
       orgId: row.org_id,
+      cachedTokens: row.cached_tokens ?? 0,
       totalTokens: row.total_tokens ?? row.input_tokens + row.output_tokens,
       totalRequests: 1,
     }))
@@ -82,6 +85,7 @@ export class MySqlUsageRepository implements UsageRepository {
       topCredentials: aggregateTop(events, (event: UsageEventRow) => ({ id: event.credentialId, label: event.credentialId })),
       topUsers: aggregateTop(events, (event: UsageEventRow) => ({ id: event.userId, label: event.userId })),
       topOrgs: aggregateTop(events, orgLabel),
+      credentialUsage: aggregateCredentialUsage(events),
     }
   }
 }
@@ -161,6 +165,26 @@ function uniqueLabels(entries: UsageAggregateLabel[]) {
     }
   }
   return Array.from(seen.entries()).map(([id, label]) => ({ id, label }))
+}
+
+function aggregateCredentialUsage(events: UsageEventRow[]): UsageCredentialAggregate[] {
+  const buckets = new Map<string, UsageCredentialAggregate>()
+
+  for (const event of events) {
+    const existing = buckets.get(event.credentialId) ?? {
+      id: event.credentialId,
+      label: event.credentialId,
+      cachedTokens: 0,
+      totalTokens: 0,
+      totalRequests: 0,
+    }
+    existing.cachedTokens += event.cachedTokens
+    existing.totalTokens += event.totalTokens
+    existing.totalRequests += event.totalRequests
+    buckets.set(event.credentialId, existing)
+  }
+
+  return Array.from(buckets.values()).sort((left, right) => right.totalTokens - left.totalTokens)
 }
 
 function aggregateTop(

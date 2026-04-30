@@ -344,6 +344,7 @@ test("codex_oauth proxy forwards through the worker transport with a sticky leas
       {
         requestId: "codex_req_usage_1",
         ownerUserId: "user_gateway",
+        orgId: null,
         provider: "codex_oauth",
         sessionId: "session_codex_1",
         credentialId: "cred_codex_assigned",
@@ -351,6 +352,8 @@ test("codex_oauth proxy forwards through the worker transport with a sticky leas
         model: "gpt-5.4",
         inputTokens: undefined,
         outputTokens: undefined,
+        cachedTokens: 0,
+        totalTokens: undefined,
       },
     ])
     assert.deepEqual(credentials.listEligibleBindingsCalls, [])

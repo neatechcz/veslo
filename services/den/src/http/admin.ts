@@ -114,6 +114,7 @@ export type AdminUsageResponse = {
   topCredentials: Array<AdminUsageLabel & { totalTokens: number }>
   topUsers: Array<AdminUsageLabel & { totalTokens: number }>
   topOrgs: Array<AdminUsageLabel & { totalTokens: number }>
+  credentialUsage?: Array<AdminUsageLabel & { cachedTokens: number; totalTokens: number; totalRequests: number }>
 }
 
 export type AdminAlertRecord = {
