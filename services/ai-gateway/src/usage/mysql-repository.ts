@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm"
+import { and, eq, isNull } from "drizzle-orm"
 
 import type { AiGatewayDb } from "../db/index.js"
 import { credentialUsageEventTable } from "../db/schema.js"
@@ -103,7 +103,11 @@ function buildUsageFilters(input: AggregateUsageInput) {
   }
 
   if (input.orgId) {
-    filters.push(eq(credentialUsageEventTable.org_id, input.orgId))
+    filters.push(
+      input.orgId === "unknown-org"
+        ? isNull(credentialUsageEventTable.org_id)
+        : eq(credentialUsageEventTable.org_id, input.orgId),
+    )
   }
 
   if (filters.length === 0) {

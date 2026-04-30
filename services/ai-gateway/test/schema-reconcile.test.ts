@@ -54,6 +54,39 @@ test("ensureAiGatewaySchema creates credential tables before repairing columns",
   );
 });
 
+test("ensureAiGatewaySchema repairs usage accounting columns, indexes, and totals", async () => {
+  const statements: string[] = [];
+  const db = {
+    async query(statement: string) {
+      statements.push(statement);
+      return [[], []];
+    },
+  };
+
+  await ensureAiGatewaySchema(db);
+
+  const sql = statements.join("\n");
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS `credential_usage_event`/);
+  assert.match(sql, /`org_id` varchar\(64\),/);
+  assert.match(sql, /`cached_tokens` int NOT NULL DEFAULT 0,/);
+  assert.match(sql, /`total_tokens` int NOT NULL DEFAULT 0,/);
+  assert.match(sql, /ALTER TABLE `credential_usage_event` ADD COLUMN `org_id` varchar\(64\)/);
+  assert.match(sql, /ALTER TABLE `credential_usage_event` ADD COLUMN `cached_tokens` int NOT NULL DEFAULT 0/);
+  assert.match(sql, /ALTER TABLE `credential_usage_event` ADD COLUMN `total_tokens` int NOT NULL DEFAULT 0/);
+  assert.match(
+    sql,
+    /UPDATE `credential_usage_event`\s+SET `total_tokens` = `input_tokens` \+ `output_tokens`\s+WHERE `total_tokens` = 0/,
+  );
+  assert.match(
+    sql,
+    /CREATE INDEX `credential_usage_event_org_provider` ON `credential_usage_event` \(`org_id`, `provider`\)/,
+  );
+  assert.match(
+    sql,
+    /CREATE INDEX `credential_usage_event_credential_created` ON `credential_usage_event` \(`credential_record_id`, `created_at`\)/,
+  );
+});
+
 test("ensureAiGatewaySchema treats mysql2 [rows, fields] metadata as existing rows", async () => {
   const statements: string[] = [];
   const db = {

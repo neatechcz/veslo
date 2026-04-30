@@ -254,7 +254,7 @@ type AdminReadModelDependencies = {
   now?: () => Date;
 };
 
-class MySqlAdminCredentialReadRepository implements AdminCredentialReadRepository {
+export class MySqlAdminCredentialReadRepository implements AdminCredentialReadRepository {
   constructor(private readonly db: AiGatewayDb) {}
 
   async listAdminCredentials(): Promise<CredentialRecord[]> {
@@ -271,7 +271,7 @@ class MySqlAdminCredentialReadRepository implements AdminCredentialReadRepositor
       this.db
         .select({
           credentialRecordId: credentialUsageEventTable.credential_record_id,
-          totalTokens: sql<number>`coalesce(sum(${credentialUsageEventTable.input_tokens} + ${credentialUsageEventTable.output_tokens}), 0)`,
+          totalTokens: sql<number>`coalesce(sum(${credentialUsageEventTable.total_tokens}), 0)`,
         })
         .from(credentialUsageEventTable)
         .groupBy(credentialUsageEventTable.credential_record_id),

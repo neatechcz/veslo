@@ -158,6 +158,7 @@ export async function ensureAiGatewaySchema(db: SchemaReconcileDb) {
     CREATE TABLE IF NOT EXISTS \`credential_usage_event\` (
       \`id\` varchar(64) NOT NULL PRIMARY KEY,
       \`owner_user_id\` varchar(64) NOT NULL,
+      \`org_id\` varchar(64),
       \`provider\` varchar(64) NOT NULL,
       \`credential_record_id\` varchar(64) NOT NULL,
       \`credential_binding_id\` varchar(64) NOT NULL,
@@ -166,6 +167,8 @@ export async function ensureAiGatewaySchema(db: SchemaReconcileDb) {
       \`model\` varchar(128) NOT NULL,
       \`input_tokens\` int NOT NULL DEFAULT 0,
       \`output_tokens\` int NOT NULL DEFAULT 0,
+      \`cached_tokens\` int NOT NULL DEFAULT 0,
+      \`total_tokens\` int NOT NULL DEFAULT 0,
       \`created_at\` timestamp(3) NOT NULL,
       UNIQUE KEY \`credential_usage_event_request_id\` (\`request_id\`)
     )
@@ -189,6 +192,19 @@ export async function ensureAiGatewaySchema(db: SchemaReconcileDb) {
   await ensureIndex(db, "credential_health_event", "credential_health_event_credential_record_id", [
     "credential_record_id",
   ]);
+  await ensureColumn(db, "credential_usage_event", "org_id", "varchar(64)");
+  await ensureColumn(db, "credential_usage_event", "cached_tokens", "int NOT NULL DEFAULT 0");
+  await ensureColumn(db, "credential_usage_event", "total_tokens", "int NOT NULL DEFAULT 0");
+  await db.query(`
+    UPDATE \`credential_usage_event\`
+    SET \`total_tokens\` = \`input_tokens\` + \`output_tokens\`
+    WHERE \`total_tokens\` = 0
+  `);
   await ensureIndex(db, "credential_usage_event", "credential_usage_event_owner_provider", ["owner_user_id", "provider"]);
   await ensureIndex(db, "credential_usage_event", "credential_usage_event_binding_id", ["credential_binding_id"]);
+  await ensureIndex(db, "credential_usage_event", "credential_usage_event_org_provider", ["org_id", "provider"]);
+  await ensureIndex(db, "credential_usage_event", "credential_usage_event_credential_created", [
+    "credential_record_id",
+    "created_at",
+  ]);
 }
