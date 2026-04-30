@@ -203,6 +203,7 @@ test("successful proxy requests record usage against the resolved gateway user",
       {
         requestId: "openai_req_usage_1",
         ownerUserId: "user_gateway",
+        orgId: null,
         provider: "openai",
         sessionId: "session_usage_1",
         credentialId: "cred_openai_1",
@@ -210,6 +211,8 @@ test("successful proxy requests record usage against the resolved gateway user",
         model: "gpt-4o-mini",
         inputTokens: 11,
         outputTokens: 7,
+        cachedTokens: 0,
+        totalTokens: 18,
       },
     ])
   } finally {

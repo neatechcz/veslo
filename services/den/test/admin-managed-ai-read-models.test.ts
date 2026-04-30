@@ -6,6 +6,7 @@ import express from "express"
 
 import { createAdminRouter } from "../src/http/admin.js"
 import { createManagedAiAdminRouteDeps } from "../src/managed-ai/http/admin.js"
+import { MySqlUsageRepository } from "../src/managed-ai/usage/mysql-repository.js"
 
 function createSession() {
   return {
@@ -228,6 +229,66 @@ test("GET /admin/api/usage aggregates usage by user", async () => {
     server.close()
     await once(server, "close")
   }
+})
+
+test("MySqlUsageRepository aggregates stored totals by org", async () => {
+  let whereCalled = false
+  const repository = new MySqlUsageRepository({
+    select() {
+      return {
+        from() {
+          return {
+            async where() {
+              whereCalled = true
+              return [
+                {
+                  credential_record_id: "cred_openai_1",
+                  owner_user_id: "user_admin",
+                  org_id: "org_admin",
+                  input_tokens: 1,
+                  output_tokens: 2,
+                  cached_tokens: 4,
+                  total_tokens: 99,
+                },
+              ]
+            },
+          }
+        },
+      }
+    },
+  } as any)
+
+  const response = await repository.aggregateUsage({
+    groupBy: "org",
+    credentialId: null,
+    userId: null,
+    orgId: null,
+  })
+
+  assert.equal(whereCalled, true)
+  assert.deepEqual(response, {
+    summary: {
+      totalTokens: 99,
+      totalRequests: 1,
+    },
+    groupBy: "org",
+    filters: {
+      credentials: [{ id: "cred_openai_1", label: "cred_openai_1" }],
+      users: [{ id: "user_admin", label: "user_admin" }],
+      orgs: [{ id: "org_admin", label: "org_admin" }],
+    },
+    series: [
+      {
+        key: "org_admin",
+        label: "org_admin",
+        totalTokens: 99,
+        totalRequests: 1,
+      },
+    ],
+    topCredentials: [{ id: "cred_openai_1", label: "cred_openai_1", totalTokens: 99 }],
+    topUsers: [{ id: "user_admin", label: "user_admin", totalTokens: 99 }],
+    topOrgs: [{ id: "org_admin", label: "org_admin", totalTokens: 99 }],
+  })
 })
 
 test("GET /admin/api/alerts and /admin/api/audit return managed ai read models", async () => {

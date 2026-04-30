@@ -132,6 +132,7 @@ export function createOpenAiProxyRouter(
       await deps.usageRepository.recordUsage({
         requestId,
         ownerUserId: input.ownerUserId,
+        orgId: null,
         provider: "openai",
         sessionId: input.sessionId,
         credentialId: credential.id,
@@ -139,6 +140,8 @@ export function createOpenAiProxyRouter(
         model,
         inputTokens: usage?.inputTokens,
         outputTokens: usage?.outputTokens,
+        cachedTokens: usage?.cachedTokens ?? 0,
+        totalTokens: usage?.totalTokens,
       })
     } catch (error) {
       console.error("proxy_usage_record_failed", error)
@@ -184,16 +187,26 @@ function getOpenAiRequestId(upstreamResponse: ProviderTransportResponse) {
   )
 }
 
-function getOpenAiUsage(body: unknown): { inputTokens?: number; outputTokens?: number } | null {
+function getOpenAiUsage(body: unknown): { inputTokens: number; outputTokens: number; cachedTokens: number; totalTokens: number } | null {
   const usage = getRecord(body)?.usage
   const usageRecord = getRecord(usage)
   if (!usageRecord) {
     return null
   }
 
+  const inputTokens = getNumber(usageRecord, "prompt_tokens") ?? getNumber(usageRecord, "input_tokens") ?? 0
+  const outputTokens = getNumber(usageRecord, "completion_tokens") ?? getNumber(usageRecord, "output_tokens") ?? 0
+  const cachedTokens =
+    getNumber(getRecord(usageRecord.prompt_tokens_details), "cached_tokens") ??
+    getNumber(getRecord(usageRecord.input_tokens_details), "cached_tokens") ??
+    0
+  const totalTokens = getNumber(usageRecord, "total_tokens") ?? inputTokens + outputTokens
+
   return {
-    inputTokens: getNumber(usageRecord, "prompt_tokens"),
-    outputTokens: getNumber(usageRecord, "completion_tokens"),
+    inputTokens,
+    outputTokens,
+    cachedTokens,
+    totalTokens,
   }
 }
 

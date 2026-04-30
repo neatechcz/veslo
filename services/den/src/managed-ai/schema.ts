@@ -103,6 +103,7 @@ export const credentialUsageEventTable = mysqlTable(
   {
     id: idColumn().primaryKey(),
     owner_user_id: varchar("owner_user_id", { length: 64 }).notNull(),
+    org_id: varchar("org_id", { length: 64 }),
     provider: varchar("provider", { length: 64 }).notNull(),
     credential_record_id: varchar("credential_record_id", { length: 64 }).notNull(),
     credential_binding_id: varchar("credential_binding_id", { length: 64 }).notNull(),
@@ -111,12 +112,16 @@ export const credentialUsageEventTable = mysqlTable(
     model: varchar("model", { length: 128 }).notNull(),
     input_tokens: int("input_tokens").notNull().default(0),
     output_tokens: int("output_tokens").notNull().default(0),
+    cached_tokens: int("cached_tokens").notNull().default(0),
+    total_tokens: int("total_tokens").notNull().default(0),
     created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [
     uniqueIndex("credential_usage_event_request_id").on(table.request_id),
     index("credential_usage_event_owner_provider").on(table.owner_user_id, table.provider),
+    index("credential_usage_event_org_provider").on(table.org_id, table.provider),
     index("credential_usage_event_binding_id").on(table.credential_binding_id),
+    index("credential_usage_event_credential_created").on(table.credential_record_id, table.created_at),
   ],
 )
 

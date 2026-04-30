@@ -1,6 +1,7 @@
 export type RecordUsageInput = {
   requestId: string
   ownerUserId: string
+  orgId?: string | null
   provider: string
   sessionId: string
   credentialId: string
@@ -8,6 +9,8 @@ export type RecordUsageInput = {
   model: string
   inputTokens?: number
   outputTokens?: number
+  cachedTokens?: number
+  totalTokens?: number
 }
 
 export type UsageGroupBy = "total" | "credential" | "user" | "org"

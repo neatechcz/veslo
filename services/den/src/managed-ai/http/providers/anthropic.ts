@@ -132,6 +132,7 @@ export function createAnthropicProxyRouter(
       await deps.usageRepository.recordUsage({
         requestId,
         ownerUserId: input.ownerUserId,
+        orgId: null,
         provider: "anthropic",
         sessionId: input.sessionId,
         credentialId: credential.id,
@@ -139,6 +140,8 @@ export function createAnthropicProxyRouter(
         model,
         inputTokens: usage?.inputTokens,
         outputTokens: usage?.outputTokens,
+        cachedTokens: usage?.cachedTokens,
+        totalTokens: usage?.totalTokens,
       })
     } catch (error) {
       console.error("proxy_usage_record_failed", error)
@@ -185,16 +188,21 @@ function getAnthropicRequestId(upstreamResponse: ProviderTransportResponse) {
   )
 }
 
-function getAnthropicUsage(body: unknown): { inputTokens?: number; outputTokens?: number } | null {
+function getAnthropicUsage(body: unknown): { inputTokens: number; outputTokens: number; cachedTokens: number; totalTokens: number } | null {
   const usage = getRecord(body)?.usage
   const usageRecord = getRecord(usage)
   if (!usageRecord) {
     return null
   }
 
+  const inputTokens = getNumber(usageRecord, "input_tokens") ?? 0
+  const outputTokens = getNumber(usageRecord, "output_tokens") ?? 0
+
   return {
-    inputTokens: getNumber(usageRecord, "input_tokens"),
-    outputTokens: getNumber(usageRecord, "output_tokens"),
+    inputTokens,
+    outputTokens,
+    cachedTokens: 0,
+    totalTokens: inputTokens + outputTokens,
   }
 }
 
