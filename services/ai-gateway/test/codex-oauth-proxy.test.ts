@@ -50,6 +50,16 @@ function createCredentialBinding(): CredentialBinding {
   }
 }
 
+async function withMutedConsoleError<T>(fn: () => Promise<T>): Promise<T> {
+  const originalConsoleError = console.error
+  console.error = () => {}
+  try {
+    return await fn()
+  } finally {
+    console.error = originalConsoleError
+  }
+}
+
 test("codex_oauth proxy forwards through the worker transport with a sticky lease", async () => {
   const recordUsageCalls: RecordUsageInput[] = []
   const leaseScopes: Array<{
@@ -541,6 +551,227 @@ test("codex_oauth proxy returns structured runtime incompatibility failures for 
         message:
           "The Codex runtime bundled with Veslo is too old for gpt-5.5. Update Veslo to a build with the current veslo-code/Codex runtime, then retry.",
       },
+    })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("codex_oauth proxy returns no eligible credential when the assigned credential is exhausted", async () => {
+  const app = createApp({
+    proxy: {
+      gatewaySessions: {
+        async resolveSession(token: string) {
+          assert.equal(token, "gateway-access-token")
+          return {
+            token,
+            user: {
+              id: "user_gateway",
+              email: "gateway@example.test",
+            },
+          }
+        },
+      },
+      aiAccess: {
+        async getUserAiAccess(userId: string) {
+          assert.equal(userId, "user_gateway")
+          return createAiAccess()
+        },
+        async upsertUserAiAccess() {
+          throw new Error("unused")
+        },
+      },
+      credentials: {
+        async getCredentialRecordById() {
+          return null
+        },
+        async listHealthyCredentialRecordIds() {
+          return []
+        },
+        async getCredentialRecordByBindingId(bindingId: string) {
+          assert.equal(bindingId, "binding_codex_primary")
+          return createCredentialRecord()
+        },
+        async getBindingByCredentialId(credentialId: string) {
+          assert.equal(credentialId, "cred_codex_1")
+          return createCredentialBinding()
+        },
+        async markCredentialState() {},
+      },
+      secrets: {
+        async get(secretRef: string) {
+          assert.equal(secretRef, "secret_codex_1")
+          return {
+            kind: "codex_auth_json",
+            authJson: "{}",
+          }
+        },
+      },
+      usageRepository: {
+        async recordUsage() {
+          assert.fail("usage should not be recorded when no Codex credential is eligible")
+        },
+      },
+      leaseBroker: {
+        async getOrCreateActiveLease() {
+          throw new Error("no_eligible_codex_credentials:assigned_credential_exhausted")
+        },
+        async handleUpstreamFailure() {
+          assert.fail("failure handler should not be reached in codex proxy test")
+        },
+      } as never,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          assert.fail("token broker should not run for codex worker route")
+        },
+      },
+      openAiTransport: {
+        async chatCompletions() {
+          assert.fail("openai transport should not be reached in codex proxy test")
+        },
+      },
+      anthropicTransport: {
+        async messages() {
+          assert.fail("anthropic transport should not be reached in codex proxy test")
+        },
+      },
+      codexOAuthTransport: {
+        async chatCompletions() {
+          assert.fail("codex transport should not run when no Codex credential is eligible")
+        },
+      },
+    } as never,
+  })
+
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await withMutedConsoleError(async () =>
+      fetch(`http://127.0.0.1:${port}/providers/codex_oauth/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer gateway-access-token",
+          "content-type": "application/json",
+          "x-veslo-session-id": "session_codex_exhausted_1",
+        },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          messages: [{ role: "user", content: "hello" }],
+        }),
+      }),
+    )
+
+    assert.equal(response.status, 503)
+    assert.deepEqual(await response.json(), {
+      error: "no_eligible_codex_credentials",
+      reason: "no_eligible_binding",
+      provider: "codex_oauth",
+    })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("codex_oauth proxy returns all credentials exhausted when auto-selectable credentials are exhausted", async () => {
+  const app = createApp({
+    proxy: {
+      gatewaySessions: {
+        async resolveSession(token: string) {
+          assert.equal(token, "gateway-access-token")
+          return {
+            token,
+            user: {
+              id: "user_gateway",
+              email: "gateway@example.test",
+            },
+          }
+        },
+      },
+      credentials: {
+        async getCredentialRecordById() {
+          return null
+        },
+        async listHealthyCredentialRecordIds() {
+          return []
+        },
+        async getCredentialRecordByBindingId() {
+          assert.fail("assigned credential lookup should not run for auto-selection")
+        },
+        async getBindingByCredentialId() {
+          assert.fail("assigned binding lookup should not run for auto-selection")
+        },
+        async markCredentialState() {},
+      },
+      secrets: {
+        async get() {
+          assert.fail("secret store should not run when auto-selection fails")
+        },
+      },
+      usageRepository: {
+        async recordUsage() {
+          assert.fail("usage should not be recorded when all Codex credentials are exhausted")
+        },
+      },
+      leaseBroker: {
+        async getOrCreateActiveLease() {
+          throw new Error("no_eligible_codex_credentials:all_codex_credentials_exhausted")
+        },
+        async handleUpstreamFailure() {
+          assert.fail("failure handler should not be reached in codex proxy test")
+        },
+      } as never,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          assert.fail("token broker should not run for codex worker route")
+        },
+      },
+      openAiTransport: {
+        async chatCompletions() {
+          assert.fail("openai transport should not be reached in codex proxy test")
+        },
+      },
+      anthropicTransport: {
+        async messages() {
+          assert.fail("anthropic transport should not be reached in codex proxy test")
+        },
+      },
+      codexOAuthTransport: {
+        async chatCompletions() {
+          assert.fail("codex transport should not run when all Codex credentials are exhausted")
+        },
+      },
+    } as never,
+  })
+
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await withMutedConsoleError(async () =>
+      fetch(`http://127.0.0.1:${port}/providers/codex_oauth/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer gateway-access-token",
+          "content-type": "application/json",
+          "x-veslo-session-id": "session_codex_exhausted_2",
+        },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          messages: [{ role: "user", content: "hello" }],
+        }),
+      }),
+    )
+
+    assert.equal(response.status, 503)
+    assert.deepEqual(await response.json(), {
+      error: "no_eligible_codex_credentials",
+      reason: "all_codex_credentials_exhausted",
+      provider: "codex_oauth",
     })
   } finally {
     server.close()
