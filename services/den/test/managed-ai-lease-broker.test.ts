@@ -241,6 +241,14 @@ class TestCredentialRepository implements CredentialRepository {
     return this.activeLeases.filter((entry) => credentialIds.includes(entry.credentialId))
   }
 
+  async getCredentialRecordByBindingId(bindingId: string): Promise<CredentialRecord | null> {
+    const binding = this.bindings.find((entry) => entry.id === bindingId)
+    if (!binding) {
+      return null
+    }
+    return this.getCredentialRecordById(binding.credentialRecordId)
+  }
+
   async markCredentialState(): Promise<void> {}
 }
 
@@ -483,7 +491,7 @@ test("codex_oauth selector probes candidate status concurrently", async () => {
     async getStatus() {
       inFlight += 1
       maxInFlight = Math.max(maxInFlight, inFlight)
-      if (inFlight > 1) {
+      if (inFlight === 4) {
         releaseStatuses?.()
       }
 
@@ -498,11 +506,17 @@ test("codex_oauth selector probes candidate status concurrently", async () => {
         codexBinding("binding_a", "cred_a"),
         codexBinding("binding_b", "cred_b"),
         codexBinding("binding_c", "cred_c"),
+        codexBinding("binding_d", "cred_d"),
+        codexBinding("binding_e", "cred_e"),
+        codexBinding("binding_f", "cred_f"),
       ],
       [
         codexRecord("cred_a", "a"),
         codexRecord("cred_b", "b"),
         codexRecord("cred_c", "c"),
+        codexRecord("cred_d", "d"),
+        codexRecord("cred_e", "e"),
+        codexRecord("cred_f", "f"),
       ],
     ),
     codexStatusProvider: statusProvider,
@@ -521,6 +535,7 @@ test("codex_oauth selector probes candidate status concurrently", async () => {
 
   assert.equal(bindingId, "binding_a")
   assert.ok(maxInFlight > 1)
+  assert.ok(maxInFlight <= 4)
 })
 
 test("codex_oauth selector sorts by active leases, recent tokens, creation time, then id", async () => {
@@ -573,31 +588,163 @@ test("codex_oauth selector sorts by active leases, recent tokens, creation time,
   )
 })
 
-test("codex_oauth required binding bypasses utilization filtering", async () => {
+test("codex_oauth required binding remains selectable when assigned status is unknown or provider errors", async () => {
   const repository = new TestCredentialRepository(
-    [codexBinding("binding_fallback", "cred_fallback")],
-    [codexRecord("cred_fallback", "fallback")],
+    [
+      codexBinding("binding_required_unknown", "cred_required_unknown"),
+      codexBinding("binding_required_error", "cred_required_error"),
+      codexBinding("binding_fallback", "cred_fallback"),
+    ],
+    [
+      codexRecord("cred_required_unknown", "required unknown"),
+      codexRecord("cred_required_error", "required error"),
+      codexRecord("cred_fallback", "fallback"),
+    ],
   )
   const statusProvider = new TestCodexStatusProvider(new Map([
-    ["cred_required", codexStatus({ fiveHourUsedPercent: 100 })],
+    ["cred_required_unknown", codexStatus()],
+    ["cred_required_error", new Error("probe failed")],
+    ["cred_fallback", codexStatus({ fiveHourUsedPercent: 20 })],
   ]))
   const selector = new DefaultBindingSelector({
     credentials: repository,
     codexStatusProvider: statusProvider,
   })
 
-  const bindingId = await selector.selectInitialBinding({
+  const unknown = await selector.selectInitialBinding({
     ownerUserId: "user_codex",
     bindingOwnerUserId: "platform:codex_oauth",
-    requiredBindingId: "binding_required",
+    requiredBindingId: "binding_required_unknown",
     provider: "codex_oauth",
     sessionId: "session_codex_required",
   })
+  const providerError = await selector.selectInitialBinding({
+    ownerUserId: "user_codex",
+    bindingOwnerUserId: "platform:codex_oauth",
+    requiredBindingId: "binding_required_error",
+    provider: "codex_oauth",
+    sessionId: "session_codex_required_error",
+  })
 
-  assert.equal(bindingId, "binding_required")
+  assert.equal(unknown, "binding_required_unknown")
+  assert.equal(providerError, "binding_required_error")
   assert.deepEqual(repository.listEligibleBindingsCalls, [])
   assert.deepEqual(repository.listRecentCredentialUsageCalls, [])
-  assert.deepEqual(statusProvider.calls, [])
+  assert.deepEqual(statusProvider.calls, [
+    { credentialId: "cred_required_unknown", credentialName: "required unknown" },
+    { credentialId: "cred_required_error", credentialName: "required error" },
+  ])
+})
+
+test("codex_oauth required binding fails explicitly when assigned credential is exhausted", async () => {
+  const repository = new InMemoryLeaseRepository()
+  const broker = new LeaseBroker(
+    repository,
+    new DefaultBindingSelector({
+      credentials: new TestCredentialRepository(
+        [
+          codexBinding("binding_required", "cred_required"),
+          codexBinding("binding_fallback", "cred_fallback"),
+        ],
+        [
+          codexRecord("cred_required", "required"),
+          codexRecord("cred_fallback", "fallback"),
+        ],
+      ),
+      codexStatusProvider: new TestCodexStatusProvider(new Map([
+        ["cred_required", codexStatus({ fiveHourUsedPercent: 100 })],
+        ["cred_fallback", codexStatus({ fiveHourUsedPercent: 20 })],
+      ])),
+      now: () => new Date("2026-04-30T10:00:00.000Z"),
+    }),
+  )
+
+  await assert.rejects(
+    broker.getOrCreateActiveLease({
+      ownerUserId: "user_codex",
+      bindingOwnerUserId: "platform:codex_oauth",
+      requiredBindingId: "binding_required",
+      provider: "codex_oauth",
+      sessionId: "session_required_exhausted",
+    }),
+    /no_eligible_codex_credentials:assigned_credential_exhausted/,
+  )
+  assert.equal(repository.createCalls, 0)
+})
+
+test("codex_oauth existing lease on required binding is rejected when assigned credential becomes exhausted", async () => {
+  const repository = new InMemoryLeaseRepository()
+  await repository.createLeaseIfMissing({
+    ownerUserId: "user_codex",
+    provider: "codex_oauth",
+    sessionId: "session_existing_required",
+    activeBindingId: "binding_required",
+  })
+  const broker = new LeaseBroker(
+    repository,
+    new DefaultBindingSelector({
+      credentials: new TestCredentialRepository(
+        [codexBinding("binding_required", "cred_required")],
+        [codexRecord("cred_required", "required")],
+      ),
+      codexStatusProvider: new TestCodexStatusProvider(new Map([
+        ["cred_required", codexStatus({ weeklyUsedPercent: 100 })],
+      ])),
+      now: () => new Date("2026-04-30T10:00:00.000Z"),
+    }),
+  )
+
+  await assert.rejects(
+    broker.getOrCreateActiveLease({
+      ownerUserId: "user_codex",
+      bindingOwnerUserId: "platform:codex_oauth",
+      requiredBindingId: "binding_required",
+      provider: "codex_oauth",
+      sessionId: "session_existing_required",
+    }),
+    /no_eligible_codex_credentials:assigned_credential_exhausted/,
+  )
+})
+
+test("codex_oauth existing lease is not rebound to an exhausted required binding", async () => {
+  const repository = new InMemoryLeaseRepository()
+  await repository.createLeaseIfMissing({
+    ownerUserId: "user_codex",
+    provider: "codex_oauth",
+    sessionId: "session_existing_other",
+    activeBindingId: "binding_other",
+  })
+  const broker = new LeaseBroker(
+    repository,
+    new DefaultBindingSelector({
+      credentials: new TestCredentialRepository(
+        [
+          codexBinding("binding_other", "cred_other"),
+          codexBinding("binding_required", "cred_required"),
+        ],
+        [
+          codexRecord("cred_other", "other"),
+          codexRecord("cred_required", "required"),
+        ],
+      ),
+      codexStatusProvider: new TestCodexStatusProvider(new Map([
+        ["cred_required", codexStatus({ fiveHourUsedPercent: 100 })],
+      ])),
+      now: () => new Date("2026-04-30T10:00:00.000Z"),
+    }),
+  )
+
+  await assert.rejects(
+    broker.getOrCreateActiveLease({
+      ownerUserId: "user_codex",
+      bindingOwnerUserId: "platform:codex_oauth",
+      requiredBindingId: "binding_required",
+      provider: "codex_oauth",
+      sessionId: "session_existing_other",
+    }),
+    /no_eligible_codex_credentials:assigned_credential_exhausted/,
+  )
+  assert.equal(repository.rebindCalls, 0)
 })
 
 test("rebinds after a permanent credential failure", async () => {
