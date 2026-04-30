@@ -16,11 +16,13 @@ class TestCredentialRepository implements CredentialRepository {
     credentialIds: string[];
     since: Date;
   }> = [];
+  public readonly listActiveLeasesByCredentialCalls: string[][] = [];
 
   constructor(
     private readonly bindings: CredentialBinding[],
     private readonly records: CredentialRecord[] = [],
     private readonly usage: Array<{ credentialId: string; totalTokens: number; requestCount: number }> = [],
+    private readonly activeLeases: Array<{ credentialId: string; activeLeases: number }> = [],
   ) {}
 
   async getCredentialRecordById(credentialRecordId: string): Promise<CredentialRecord | null> {
@@ -46,6 +48,11 @@ class TestCredentialRepository implements CredentialRepository {
   }): Promise<Array<{ credentialId: string; totalTokens: number; requestCount: number }>> {
     this.listRecentCredentialUsageCalls.push(input);
     return this.usage.filter((entry) => input.credentialIds.includes(entry.credentialId));
+  }
+
+  async listActiveLeasesByCredential(credentialIds: string[]): Promise<Array<{ credentialId: string; activeLeases: number }>> {
+    this.listActiveLeasesByCredentialCalls.push(credentialIds);
+    return this.activeLeases.filter((entry) => credentialIds.includes(entry.credentialId));
   }
 
   async markCredentialState(): Promise<void> {}
@@ -128,11 +135,15 @@ function status(input: {
 class TestCodexStatusProvider implements CodexCredentialStatusProvider {
   public readonly calls: Array<{ credentialId: string; credentialName: string }> = [];
 
-  constructor(private readonly statuses: Map<string, CodexUsageStatus>) {}
+  constructor(private readonly statuses: Map<string, CodexUsageStatus | Error>) {}
 
   async getStatus(input: { credentialId: string; credentialName: string }): Promise<CodexUsageStatus> {
     this.calls.push(input);
-    return this.statuses.get(input.credentialId) ?? status();
+    const result = this.statuses.get(input.credentialId);
+    if (result instanceof Error) {
+      throw result;
+    }
+    return result ?? status();
   }
 }
 
@@ -322,4 +333,99 @@ test("codex_oauth required binding returns without fallback or utilization filte
   assert.deepEqual(repository.listEligibleBindingsCalls, []);
   assert.deepEqual(repository.listRecentCredentialUsageCalls, []);
   assert.deepEqual(statusProvider.calls, []);
+});
+
+test("codex_oauth sorts eligible candidates by active leases from the focused repository API", async () => {
+  const repository = new TestCredentialRepository(
+    [
+      codexBinding("binding_busy", "cred_busy", "2026-04-01T00:00:00.000Z"),
+      codexBinding("binding_idle", "cred_idle", "2026-04-02T00:00:00.000Z"),
+    ],
+    [
+      codexRecord("cred_busy", "busy"),
+      codexRecord("cred_idle", "idle"),
+    ],
+    [],
+    [
+      { credentialId: "cred_busy", activeLeases: 2 },
+      { credentialId: "cred_idle", activeLeases: 0 },
+    ],
+  );
+  const selector = new DefaultBindingSelector({
+    credentials: repository,
+    codexStatusProvider: new TestCodexStatusProvider(new Map()),
+    now: () => new Date("2026-04-30T10:00:00.000Z"),
+  });
+
+  const bindingId = await selector.selectInitialBinding({
+    ownerUserId: "user_1",
+    bindingOwnerUserId: "platform:codex_oauth",
+    provider: "codex_oauth",
+    sessionId: "session_codex_leases",
+  });
+
+  assert.equal(bindingId, "binding_idle");
+  assert.deepEqual(repository.listActiveLeasesByCredentialCalls, [["cred_busy", "cred_idle"]]);
+});
+
+test("codex_oauth keeps a candidate selectable when status probing throws", async () => {
+  const repository = new TestCredentialRepository(
+    [
+      codexBinding("binding_probe_error", "cred_probe_error", "2026-04-01T00:00:00.000Z"),
+      codexBinding("binding_busy", "cred_busy", "2026-04-02T00:00:00.000Z"),
+    ],
+    [
+      codexRecord("cred_probe_error", "probe error"),
+      codexRecord("cred_busy", "busy"),
+    ],
+    [],
+    [
+      { credentialId: "cred_probe_error", activeLeases: 0 },
+      { credentialId: "cred_busy", activeLeases: 1 },
+    ],
+  );
+  const selector = new DefaultBindingSelector({
+    credentials: repository,
+    codexStatusProvider: new TestCodexStatusProvider(new Map([
+      ["cred_probe_error", new Error("probe failed")],
+      ["cred_busy", status({ fiveHourUsedPercent: 20 })],
+    ])),
+    now: () => new Date("2026-04-30T10:00:00.000Z"),
+  });
+
+  const bindingId = await selector.selectInitialBinding({
+    ownerUserId: "user_1",
+    bindingOwnerUserId: "platform:codex_oauth",
+    provider: "codex_oauth",
+    sessionId: "session_codex_probe_error",
+  });
+
+  assert.equal(bindingId, "binding_probe_error");
+});
+
+test("codex_oauth uses binding id as deterministic final tie-breaker", async () => {
+  const repository = new TestCredentialRepository(
+    [
+      codexBinding("binding_zulu", "cred_zulu", "2026-04-01T00:00:00.000Z"),
+      codexBinding("binding_alpha", "cred_alpha", "2026-04-01T00:00:00.000Z"),
+    ],
+    [
+      codexRecord("cred_zulu", "zulu"),
+      codexRecord("cred_alpha", "alpha"),
+    ],
+  );
+  const selector = new DefaultBindingSelector({
+    credentials: repository,
+    codexStatusProvider: new TestCodexStatusProvider(new Map()),
+    now: () => new Date("2026-04-30T10:00:00.000Z"),
+  });
+
+  const bindingId = await selector.selectInitialBinding({
+    ownerUserId: "user_1",
+    bindingOwnerUserId: "platform:codex_oauth",
+    provider: "codex_oauth",
+    sessionId: "session_codex_tie",
+  });
+
+  assert.equal(bindingId, "binding_alpha");
 });

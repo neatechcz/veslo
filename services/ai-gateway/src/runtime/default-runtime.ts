@@ -18,6 +18,7 @@ import { MySqlLeaseRepository } from "../leases/mysql-repository.js";
 import type { LeaseRepository } from "../leases/repository.js";
 import { AnthropicTransport } from "../providers/anthropic-transport.js";
 import { CodexCliWorkerTransport } from "../providers/codex-cli-worker-transport.js";
+import { CachedCodexCredentialStatusProvider } from "../usage/codex-status.js";
 import { OpenAiTransport } from "../providers/openai-transport.js";
 import { MySqlUsageRepository } from "../usage/mysql-repository.js";
 import type { UsageRepository } from "../usage/repository.js";
@@ -57,6 +58,18 @@ export function createDefaultProxyDependencies(
   } = {},
 ): ProxyDependencies {
   const openAiOAuth = overrides.openAiOAuth ?? createDefaultOpenAiOAuthClient();
+  const codexStatusProvider = new CachedCodexCredentialStatusProvider({
+    loadCredentialAuthJson: async (credentialId) => {
+      const record = await runtime.credentials.getCredentialRecordById(credentialId);
+      if (!record) {
+        return null;
+      }
+
+      const secret = await runtime.secrets.get(record.secretRef);
+      return secret.kind === "codex_auth_json" ? secret.authJson : null;
+    },
+    now: overrides.now,
+  });
 
   return {
     aiAccess: runtime.aiAccess,
@@ -66,7 +79,11 @@ export function createDefaultProxyDependencies(
     usageRepository: runtime.usage,
     leaseBroker: new LeaseBroker(
       runtime.leases,
-      new DefaultBindingSelector(runtime.credentials),
+      new DefaultBindingSelector({
+        credentials: runtime.credentials,
+        codexStatusProvider,
+        now: overrides.now,
+      }),
     ),
     tokenBroker: new DefaultTokenBroker({
       credentials: runtime.credentials,

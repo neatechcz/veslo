@@ -80,6 +80,10 @@ class PersistentCredentialRepository implements CredentialRepository {
     });
   }
 
+  async listActiveLeasesByCredential(_credentialIds: string[]): Promise<Array<{ credentialId: string; activeLeases: number }>> {
+    return [];
+  }
+
   async getCredentialRecordByBindingId(bindingId: string): Promise<CredentialRecord | null> {
     const binding = this.bindings.get(bindingId);
     return binding ? this.records.get(binding.credentialRecordId) ?? null : null;
@@ -352,6 +356,38 @@ test("default proxy dependencies wire hosted provider transports to global fetch
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("default proxy dependencies inject Codex status provider into binding selection", async () => {
+  const runtime = createPersistentRuntime();
+  const storedSecret = await runtime.secrets.put({
+    kind: "api_key",
+    apiKey: "not-codex-auth-json",
+  });
+  await runtime.credentials.createUserCredential?.({
+    ownerUserId: getPlatformCredentialOwnerUserId("codex_oauth"),
+    provider: "codex_oauth",
+    credentialType: "oauth",
+    secretRef: storedSecret.secretRef,
+  });
+  const proxy = createDefaultProxyDependencies(runtime, {
+    gatewaySessions: {
+      async resolveSession() {
+        throw new Error("gateway_session_not_used");
+      },
+    },
+    now: () => new Date("2026-04-30T10:00:00.000Z"),
+  });
+
+  await assert.rejects(
+    proxy.leaseBroker.getOrCreateActiveLease({
+      ownerUserId: "user_runtime",
+      bindingOwnerUserId: getPlatformCredentialOwnerUserId("codex_oauth"),
+      provider: "codex_oauth",
+      sessionId: "session_codex_runtime_status",
+    }),
+    /no_eligible_codex_credentials:all_codex_credentials_exhausted/,
+  );
 });
 
 test("runtime-backed dependencies keep platform credentials and leases across app re-instantiation", async () => {

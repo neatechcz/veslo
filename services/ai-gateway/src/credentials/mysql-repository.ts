@@ -7,8 +7,10 @@ import {
   credentialHealthEventTable,
   credentialRecordTable,
   credentialUsageEventTable,
+  sessionLeaseTable,
 } from "../db/schema.js";
 import type {
+  ActiveCredentialLeaseRecord,
   CreatePlatformCredentialInput,
   CreateUserCredentialInput,
   CredentialBinding,
@@ -71,6 +73,27 @@ export class MySqlCredentialRepository implements CredentialRepository {
       .orderBy(credentialBindingTable.created_at);
 
     return rows.map(mapCredentialBinding);
+  }
+
+  async listActiveLeasesByCredential(credentialIds: string[]): Promise<ActiveCredentialLeaseRecord[]> {
+    if (credentialIds.length === 0) {
+      return [];
+    }
+
+    const rows = await this.db
+      .select({
+        credentialId: credentialBindingTable.credential_record_id,
+        activeLeases: sql<number>`count(*)`,
+      })
+      .from(sessionLeaseTable)
+      .innerJoin(credentialBindingTable, eq(sessionLeaseTable.active_binding_id, credentialBindingTable.id))
+      .where(inArray(credentialBindingTable.credential_record_id, credentialIds))
+      .groupBy(credentialBindingTable.credential_record_id);
+
+    return rows.map((row) => ({
+      credentialId: row.credentialId,
+      activeLeases: Number(row.activeLeases ?? 0),
+    }));
   }
 
   async listRecentCredentialUsage(input: ListRecentCredentialUsageInput): Promise<RecentCredentialUsageRecord[]> {

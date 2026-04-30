@@ -120,13 +120,18 @@ export class DefaultBindingSelector implements BindingSelector {
       const credentialName = credential?.name?.trim() || binding.credentialRecordId;
 
       if (this.codexStatusProvider) {
-        const status = await this.codexStatusProvider.getStatus({
-          credentialId: binding.credentialRecordId,
-          credentialName,
-        });
-        const eligibility = evaluateCodexCredentialEligibility(status, this.now());
-        if (!eligibility.eligible) {
-          continue;
+        try {
+          const status = await this.codexStatusProvider.getStatus({
+            credentialId: binding.credentialRecordId,
+            credentialName,
+          });
+          const eligibility = evaluateCodexCredentialEligibility(status, this.now());
+          if (!eligibility.eligible) {
+            continue;
+          }
+        } catch {
+          // Probe execution failures are treated like unknown limits so a
+          // transient status check issue does not exhaust the whole pool.
         }
       }
 
@@ -141,17 +146,12 @@ export class DefaultBindingSelector implements BindingSelector {
   }
 
   private async listActiveLeasesByCredentialId(credentialIds: string[]): Promise<Map<string, number>> {
-    if (!this.credentials.listAdminCredentials || credentialIds.length === 0) {
+    if (!this.credentials.listActiveLeasesByCredential || credentialIds.length === 0) {
       return new Map();
     }
 
-    const requested = new Set(credentialIds);
-    const credentials = await this.credentials.listAdminCredentials();
-    return new Map(
-      credentials
-        .filter((credential) => requested.has(credential.id))
-        .map((credential) => [credential.id, credential.activeLeases]),
-    );
+    const activeLeases = await this.credentials.listActiveLeasesByCredential(credentialIds);
+    return new Map(activeLeases.map((entry) => [entry.credentialId, entry.activeLeases]));
   }
 
   private async listRecentTokensByCredentialId(credentialIds: string[]): Promise<Map<string, number>> {
@@ -196,7 +196,12 @@ function compareCodexCandidates(left: CodexCandidate, right: CodexCandidate): nu
     return tokenDelta;
   }
 
-  return left.binding.createdAt.getTime() - right.binding.createdAt.getTime();
+  const createdAtDelta = left.binding.createdAt.getTime() - right.binding.createdAt.getTime();
+  if (createdAtDelta !== 0) {
+    return createdAtDelta;
+  }
+
+  return left.binding.id.localeCompare(right.binding.id);
 }
 
 function isDefaultBindingSelectorDeps(

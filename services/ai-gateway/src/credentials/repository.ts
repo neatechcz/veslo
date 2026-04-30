@@ -55,6 +55,11 @@ export type RecentCredentialUsageRecord = {
   requestCount: number;
 };
 
+export type ActiveCredentialLeaseRecord = {
+  credentialId: string;
+  activeLeases: number;
+};
+
 export type MarkCredentialStateInput = {
   credentialRecordId: string;
   state: CredentialState;
@@ -96,6 +101,7 @@ export interface CredentialRepository {
 
   // Provider-scoped BYOK API for the gateway rollout.
   listEligibleBindings?(input: ListEligibleBindingsInput): Promise<CredentialBinding[]>;
+  listActiveLeasesByCredential?(credentialIds: string[]): Promise<ActiveCredentialLeaseRecord[]>;
   listRecentCredentialUsage?(input: ListRecentCredentialUsageInput): Promise<RecentCredentialUsageRecord[]>;
   getBindingByCredentialId?(credentialId: string): Promise<CredentialBinding | null>;
   getCredentialRecordByBindingId?(bindingId: string): Promise<CredentialRecord | null>;
