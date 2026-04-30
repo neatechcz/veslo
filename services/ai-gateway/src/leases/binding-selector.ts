@@ -15,6 +15,8 @@ export type DefaultBindingSelectorDeps = {
   now?: () => Date;
 };
 
+const CODEX_STATUS_PROBE_CONCURRENCY = 4;
+
 export class DefaultBindingSelector implements BindingSelector {
   private readonly nextInitialIndexByPool = new Map<string, number>();
   private readonly credentials: CredentialRepository;
@@ -32,6 +34,10 @@ export class DefaultBindingSelector implements BindingSelector {
   }
 
   async selectInitialBinding(input: ResolveLeaseInput): Promise<string> {
+    if (input.provider === CODEX_OAUTH_PROVIDER && input.requiredBindingId) {
+      return this.selectRequiredCodexBinding(input.requiredBindingId);
+    }
+
     if (input.requiredBindingId) {
       return input.requiredBindingId;
     }
@@ -58,6 +64,10 @@ export class DefaultBindingSelector implements BindingSelector {
   async selectReplacementBinding(
     input: ResolveLeaseInput & { previousBindingId: string },
   ): Promise<string> {
+    if (input.provider === CODEX_OAUTH_PROVIDER && input.requiredBindingId) {
+      return this.selectRequiredCodexBinding(input.requiredBindingId);
+    }
+
     if (input.requiredBindingId) {
       return input.requiredBindingId;
     }
@@ -105,44 +115,79 @@ export class DefaultBindingSelector implements BindingSelector {
     return candidates[0]!.binding.id;
   }
 
+  private async selectRequiredCodexBinding(requiredBindingId: string): Promise<string> {
+    if (!this.codexStatusProvider || !this.credentials.getCredentialRecordByBindingId) {
+      return requiredBindingId;
+    }
+
+    const credential = await this.credentials.getCredentialRecordByBindingId(requiredBindingId);
+    if (!credential) {
+      return requiredBindingId;
+    }
+
+    const eligible = await this.isCodexCredentialEligible({
+      credentialId: credential.id,
+      credentialName: credential.name?.trim() || credential.id,
+    });
+    if (!eligible) {
+      throw new Error("no_eligible_codex_credentials:assigned_credential_exhausted");
+    }
+
+    return requiredBindingId;
+  }
+
   private async filterEligibleCodexCandidates(bindings: CredentialBinding[]): Promise<CodexCandidate[]> {
     const credentialIds = bindings.map((binding) => binding.credentialRecordId);
     const [activeLeasesByCredentialId, recentTokensByCredentialId] = await Promise.all([
       this.listActiveLeasesByCredentialId(credentialIds),
       this.listRecentTokensByCredentialId(credentialIds),
     ]);
-    const candidates: CodexCandidate[] = [];
+    const candidates = await mapWithConcurrency(
+      bindings,
+      CODEX_STATUS_PROBE_CONCURRENCY,
+      async (binding): Promise<CodexCandidate | null> => {
+        const credential = this.credentials.getCredentialRecordById
+          ? await this.credentials.getCredentialRecordById(binding.credentialRecordId)
+          : null;
+        const credentialName = credential?.name?.trim() || binding.credentialRecordId;
 
-    for (const binding of bindings) {
-      const credential = this.credentials.getCredentialRecordById
-        ? await this.credentials.getCredentialRecordById(binding.credentialRecordId)
-        : null;
-      const credentialName = credential?.name?.trim() || binding.credentialRecordId;
-
-      if (this.codexStatusProvider) {
-        try {
-          const status = await this.codexStatusProvider.getStatus({
-            credentialId: binding.credentialRecordId,
-            credentialName,
-          });
-          const eligibility = evaluateCodexCredentialEligibility(status, this.now());
-          if (!eligibility.eligible) {
-            continue;
-          }
-        } catch {
-          // Probe execution failures are treated like unknown limits so a
-          // transient status check issue does not exhaust the whole pool.
+        const eligible = await this.isCodexCredentialEligible({
+          credentialId: binding.credentialRecordId,
+          credentialName,
+        });
+        if (!eligible) {
+          return null;
         }
-      }
 
-      candidates.push({
-        binding,
-        activeLeases: activeLeasesByCredentialId.get(binding.credentialRecordId) ?? 0,
-        recentTotalTokens: recentTokensByCredentialId.get(binding.credentialRecordId) ?? 0,
-      });
+        return {
+          binding,
+          activeLeases: activeLeasesByCredentialId.get(binding.credentialRecordId) ?? 0,
+          recentTotalTokens: recentTokensByCredentialId.get(binding.credentialRecordId) ?? 0,
+        };
+      },
+    );
+
+    return candidates
+      .filter((candidate): candidate is CodexCandidate => candidate !== null)
+      .sort(compareCodexCandidates);
+  }
+
+  private async isCodexCredentialEligible(input: {
+    credentialId: string;
+    credentialName: string;
+  }): Promise<boolean> {
+    if (!this.codexStatusProvider) {
+      return true;
     }
 
-    return candidates.sort(compareCodexCandidates);
+    try {
+      const status = await this.codexStatusProvider.getStatus(input);
+      return evaluateCodexCredentialEligibility(status, this.now()).eligible;
+    } catch {
+      // Probe execution failures are treated like unknown limits so a
+      // transient status check issue does not exhaust the credential.
+      return true;
+    }
   }
 
   private async listActiveLeasesByCredentialId(credentialIds: string[]): Promise<Map<string, number>> {
@@ -208,4 +253,26 @@ function isDefaultBindingSelectorDeps(
   deps: CredentialRepository | DefaultBindingSelectorDeps,
 ): deps is DefaultBindingSelectorDeps {
   return "credentials" in deps;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await mapper(items[currentIndex]!);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => worker()),
+  );
+  return results;
 }

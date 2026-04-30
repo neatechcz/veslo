@@ -19,6 +19,9 @@ export class LeaseBroker {
   async getOrCreateActiveLease(input: ResolveLeaseInput): Promise<SessionLease> {
     const existing = await this.leases.getActiveLease(input);
     if (existing) {
+      if (input.requiredBindingId) {
+        await this.selector.selectInitialBinding(input);
+      }
       if (input.requiredBindingId && existing.activeBindingId !== input.requiredBindingId) {
         return this.rebindLease(input, existing.activeBindingId, input.requiredBindingId);
       }
