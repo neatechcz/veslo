@@ -25,6 +25,7 @@ import { env } from "../../env.js"
 import { AnthropicTransport } from "../providers/anthropic-transport.js"
 import { CodexCliWorkerTransport } from "../providers/codex-cli-worker-transport.js"
 import { OpenAiTransport } from "../providers/openai-transport.js"
+import { CachedCodexCredentialStatusProvider, type CodexCredentialStatusProvider } from "../usage/codex-status.js"
 import { MySqlUsageRepository } from "../usage/mysql-repository.js"
 import type { UsageRepository } from "../usage/repository.js"
 
@@ -36,6 +37,7 @@ export type RuntimeState = {
   secrets: SecretStore
   leases: LeaseRepository
   usage: UsageRepository
+  codexStatusProvider: CodexCredentialStatusProvider
 }
 
 export type DefaultRuntimeOptions = {
@@ -58,14 +60,28 @@ export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): 
     throw new Error("managed_ai_secret_key_not_configured")
   }
 
+  const credentials = new MySqlCredentialRepository(db)
+  const secrets = new MySqlSecretStore(db, secretKey)
+
   return {
     aiAccess: new MySqlAiAccessRepository(db),
     alerts: new MySqlAlertRepository(db),
     audit: new MySqlAuditRepository(db),
-    credentials: new MySqlCredentialRepository(db),
-    secrets: new MySqlSecretStore(db, secretKey),
+    credentials,
+    secrets,
     leases: new MySqlLeaseRepository(db),
     usage: new MySqlUsageRepository(db),
+    codexStatusProvider: new CachedCodexCredentialStatusProvider({
+      loadCredentialAuthJson: async (credentialId) => {
+        const credential = await credentials.getCredentialRecordById(credentialId)
+        if (!credential) {
+          return null
+        }
+
+        const secret = await secrets.get(credential.secretRef).catch(() => null)
+        return secret?.kind === "codex_auth_json" ? secret.authJson : null
+      },
+    }),
   }
 }
 

@@ -27,6 +27,11 @@ import {
   formatManagedAiProviderLabel,
   isManagedAiProvider,
 } from "../providers/ids.js"
+import { evaluateCodexCredentialEligibility } from "../usage/codex-eligibility.js"
+import {
+  CachedCodexCredentialStatusProvider,
+  type CodexCredentialStatusProvider,
+} from "../usage/codex-status.js"
 import type { UsageRepository } from "../usage/repository.js"
 
 class HttpError extends Error {
@@ -61,6 +66,8 @@ type ManagedAiAdminRouteOptions = {
   leases: LeaseRepository
   secrets: SecretStore
   usage: UsageRepository
+  codexStatusProvider?: CodexCredentialStatusProvider | null
+  now?: () => Date
 }
 
 type ManagedAiAdminUiOptions = {
@@ -90,6 +97,12 @@ export function createManagedAiAdminRouteDeps(
   | "resolveAlert"
   | "listAudit"
 > {
+  const now = deps.now ?? (() => new Date())
+  const codexStatusProvider =
+    deps.codexStatusProvider === null
+      ? null
+      : deps.codexStatusProvider ?? createDefaultCodexStatusProvider(deps.credentials, deps.secrets)
+
   async function recordAuditEvent(input: {
     actorUserId?: string | null
     entityType: string
@@ -149,19 +162,48 @@ export function createManagedAiAdminRouteDeps(
     })
   }
 
-  async function listAvailableCodexCredentials(): Promise<AdminCredentialOption[] | undefined> {
+  async function listEligibleCodexCredentials(): Promise<AdminCredentialOption[] | undefined> {
     const listAdminCredentials = deps.credentials.listAdminCredentials
     if (!listAdminCredentials) {
       return undefined
     }
 
     const credentials = await listAdminCredentials.call(deps.credentials)
-    return credentials
-      .filter((entry) => entry.provider === "codex_oauth")
-      .map((entry) => ({
+    const candidates = credentials.filter((entry) => entry.provider === "codex_oauth" && entry.state === "healthy")
+    if (!codexStatusProvider) {
+      return candidates.map((entry) => ({
         id: entry.id,
         name: entry.name,
       }))
+    }
+
+    const eligible: AdminCredentialOption[] = []
+    for (const credential of candidates) {
+      const status = await codexStatusProvider.getStatus({
+        credentialId: credential.id,
+        credentialName: credential.name,
+      })
+      if (!evaluateCodexCredentialEligibility(status, now()).eligible) {
+        continue
+      }
+      eligible.push({
+        id: credential.id,
+        name: credential.name,
+      })
+    }
+
+    return eligible
+  }
+
+  async function listAvailableCodexCredentials(): Promise<AdminCredentialOption[] | undefined> {
+    return listEligibleCodexCredentials()
+  }
+
+  async function assertEligibleCodexCredential(credentialId: string): Promise<void> {
+    const credentials = await listEligibleCodexCredentials()
+    if (credentials && !credentials.some((entry) => entry.id === credentialId)) {
+      throw new HttpError("ineligible_ai_access_credential_id", 400)
+    }
   }
 
   async function getCredentialOrThrow(credentialId: string) {
@@ -212,12 +254,15 @@ export function createManagedAiAdminRouteDeps(
       }
 
       try {
-        const saved = await deps.aiAccess.upsertUserAiAccess(
-          validateUserAiAccessInput({
-            ...(req.body ?? {}),
-            userId,
-          }),
-        )
+        const validated = validateUserAiAccessInput({
+          ...(req.body ?? {}),
+          userId,
+        })
+        if (validated.enabled && validated.provider === "codex_oauth" && validated.credentialId) {
+          await assertEligibleCodexCredential(validated.credentialId)
+        }
+
+        const saved = await deps.aiAccess.upsertUserAiAccess(validated)
         await recordAuditEvent({
           actorUserId: getAdminActorUserId(session),
           action: "user.ai_access.update",
@@ -650,6 +695,28 @@ export function createManagedAiAdminUiRouter(deps: ManagedAiAdminUiOptions) {
   })
 
   return router
+}
+
+function createDefaultCodexStatusProvider(
+  credentials: CredentialRepository,
+  secrets: SecretStore,
+): CodexCredentialStatusProvider | null {
+  const getCredentialRecordById = (credentials as { getCredentialRecordById?: unknown }).getCredentialRecordById
+  if (typeof getCredentialRecordById !== "function") {
+    return null
+  }
+
+  return new CachedCodexCredentialStatusProvider({
+    loadCredentialAuthJson: async (credentialId) => {
+      const credential = await getCredentialRecordById.call(credentials, credentialId) as CredentialRecord | null
+      if (!credential) {
+        return null
+      }
+
+      const secret = await secrets.get(credential.secretRef).catch(() => null)
+      return secret?.kind === "codex_auth_json" ? secret.authJson : null
+    },
+  })
 }
 
 function handleRouteError<T>(res: express.Response, error: unknown, fallback: string): T | null {
