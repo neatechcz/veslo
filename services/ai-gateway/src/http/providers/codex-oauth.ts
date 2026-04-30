@@ -75,18 +75,6 @@ export function createCodexOAuthProxyRouter(
       const upstreamResponse = await executeRequest(scope, policyResult.body, assignedAuthJson)
       applyUpstreamResponse(res, upstreamResponse)
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (message.startsWith("no_eligible_codex_credentials")) {
-        res.status(503).json({
-          error: "no_eligible_codex_credentials",
-          reason: message.includes("all_codex_credentials_exhausted")
-            ? "all_codex_credentials_exhausted"
-            : "no_eligible_binding",
-          provider: "codex_oauth",
-        })
-        return
-      }
-
       if (error instanceof ProviderTransportError) {
         if (error.body && typeof error.body === "object") {
           res.status(error.statusCode ?? 502).json(error.body as Record<string, unknown>)
@@ -97,6 +85,18 @@ export function createCodexOAuthProxyRouter(
           res.status(error.statusCode).json({ error: error.message })
           return
         }
+      }
+
+      const message = error instanceof Error ? error.message : String(error)
+      if (message.startsWith("no_eligible_codex_credentials")) {
+        res.status(503).json({
+          error: "no_eligible_codex_credentials",
+          reason: message.includes("all_codex_credentials_exhausted")
+            ? "all_codex_credentials_exhausted"
+            : "no_eligible_binding",
+          provider: "codex_oauth",
+        })
+        return
       }
 
       console.error("proxy_request_failed", error)
