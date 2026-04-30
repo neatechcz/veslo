@@ -181,6 +181,7 @@ function createCodexAiAccess(credentialId = "cred_codex_assigned"): {
 }
 
 function createCodexCredentialRepository() {
+  const listEligibleBindingsCalls: Array<{ ownerUserId: string; provider: string; excludeBindingId?: string }> = [];
   const assignedBinding = {
     id: "binding_codex_assigned",
     ownerUserId: "platform:codex_oauth",
@@ -218,9 +219,13 @@ function createCodexCredentialRepository() {
       return Object.values(recordByBindingId).map((record) => record.id);
     },
     async listEligibleBindings(input: { ownerUserId: string; provider: string; excludeBindingId?: string }) {
+      listEligibleBindingsCalls.push(input);
       assert.equal(input.ownerUserId, "platform:codex_oauth");
       assert.equal(input.provider, "codex_oauth");
       return [fallbackBinding, assignedBinding].filter((binding) => binding.id !== input.excludeBindingId);
+    },
+    async listRecentCredentialUsage() {
+      return [];
     },
     async getCredentialRecordByBindingId(bindingId: string) {
       return recordByBindingId[bindingId] ?? null;
@@ -229,6 +234,7 @@ function createCodexCredentialRepository() {
       return bindingByCredentialId.get(credentialId) ?? null;
     },
     async markCredentialState() {},
+    listEligibleBindingsCalls,
   };
 }
 
@@ -657,7 +663,8 @@ test("transient upstream failures do not rebind", async () => {
 
 test("POST /providers/codex_oauth/v1/chat/completions routes through the assigned shared credential", async () => {
   const leases = new InMemoryLeaseRepository();
-  const leaseBroker = new LeaseBroker(leases, new DefaultBindingSelector(createCodexCredentialRepository() as never));
+  const credentials = createCodexCredentialRepository();
+  const leaseBroker = new LeaseBroker(leases, new DefaultBindingSelector(credentials as never));
   const recordUsageCalls: Array<Record<string, unknown>> = [];
   const transportBodies: unknown[] = [];
   const transportAuthJson: Array<string | null | undefined> = [];
@@ -673,7 +680,7 @@ test("POST /providers/codex_oauth/v1/chat/completions routes through the assigne
     proxy: {
       aiAccess: createCodexAiAccess(),
       gatewaySessions: createGatewaySessions(),
-      credentials: createCodexCredentialRepository() as never,
+      credentials: credentials as never,
       secrets: createCodexSecrets(secretAuthJson) as never,
       usageRepository: {
         async recordUsage(input: Record<string, unknown>) {
@@ -762,8 +769,11 @@ test("POST /providers/codex_oauth/v1/chat/completions routes through the assigne
         model: "gpt-5.4",
         inputTokens: undefined,
         outputTokens: undefined,
+        cachedTokens: 0,
+        totalTokens: undefined,
       },
     ]);
+    assert.deepEqual(credentials.listEligibleBindingsCalls, []);
   } finally {
     server.close();
     await once(server, "close");

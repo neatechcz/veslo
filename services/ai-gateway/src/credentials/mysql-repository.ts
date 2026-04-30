@@ -1,4 +1,4 @@
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 import type { AiGatewayDb } from "../db/index.js";
@@ -6,6 +6,7 @@ import {
   credentialBindingTable,
   credentialHealthEventTable,
   credentialRecordTable,
+  credentialUsageEventTable,
 } from "../db/schema.js";
 import type {
   CreatePlatformCredentialInput,
@@ -14,8 +15,10 @@ import type {
   CredentialRecord,
   CredentialRepository,
   ListEligibleBindingsInput,
+  ListRecentCredentialUsageInput,
   ListUserCredentialsInput,
   MarkCredentialStateInput,
+  RecentCredentialUsageRecord,
   RevokeUserCredentialInput,
 } from "./repository.js";
 
@@ -68,6 +71,33 @@ export class MySqlCredentialRepository implements CredentialRepository {
       .orderBy(credentialBindingTable.created_at);
 
     return rows.map(mapCredentialBinding);
+  }
+
+  async listRecentCredentialUsage(input: ListRecentCredentialUsageInput): Promise<RecentCredentialUsageRecord[]> {
+    if (input.credentialIds.length === 0) {
+      return [];
+    }
+
+    const rows = await this.db
+      .select({
+        credentialId: credentialUsageEventTable.credential_record_id,
+        totalTokens: sql<number>`coalesce(sum(${credentialUsageEventTable.total_tokens}), 0)`,
+        requestCount: sql<number>`count(*)`,
+      })
+      .from(credentialUsageEventTable)
+      .where(
+        and(
+          inArray(credentialUsageEventTable.credential_record_id, input.credentialIds),
+          gte(credentialUsageEventTable.created_at, input.since),
+        ),
+      )
+      .groupBy(credentialUsageEventTable.credential_record_id);
+
+    return rows.map((row) => ({
+      credentialId: row.credentialId,
+      totalTokens: Number(row.totalTokens ?? 0),
+      requestCount: Number(row.requestCount ?? 0),
+    }));
   }
 
   async getCredentialRecordByBindingId(bindingId: string): Promise<CredentialRecord | null> {
