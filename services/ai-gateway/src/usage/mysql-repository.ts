@@ -15,6 +15,7 @@ import type {
 type UsageEventRow = {
   credentialId: string
   userId: string
+  orgId: string | null
   totalTokens: number
   totalRequests: number
   createdAt: string | null
@@ -25,17 +26,25 @@ export class MySqlUsageRepository implements UsageRepository {
 
   async recordUsage(input: RecordUsageInput): Promise<void> {
     const createdAt = new Date()
+    const inputTokens = input.inputTokens ?? 0
+    const outputTokens = input.outputTokens ?? 0
+    const cachedTokens = input.cachedTokens ?? 0
+    const totalTokens = input.totalTokens ?? inputTokens + outputTokens
+
     await this.db.insert(credentialUsageEventTable).values({
       id: input.requestId,
       owner_user_id: input.ownerUserId,
+      org_id: input.orgId ?? null,
       provider: input.provider,
       credential_record_id: input.credentialId,
       credential_binding_id: input.bindingId,
       session_id: input.sessionId,
       request_id: input.requestId,
       model: input.model,
-      input_tokens: input.inputTokens ?? 0,
-      output_tokens: input.outputTokens ?? 0,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      cached_tokens: cachedTokens,
+      total_tokens: totalTokens,
       created_at: createdAt,
     })
   }
@@ -49,7 +58,8 @@ export class MySqlUsageRepository implements UsageRepository {
     const events = rows.map((row) => ({
       credentialId: row.credential_record_id,
       userId: row.owner_user_id,
-      totalTokens: row.input_tokens + row.output_tokens,
+      orgId: row.org_id,
+      totalTokens: row.total_tokens ?? row.input_tokens + row.output_tokens,
       totalRequests: 1,
       createdAt: formatDate(row.created_at),
     }))
@@ -70,12 +80,12 @@ export class MySqlUsageRepository implements UsageRepository {
       filters: {
         credentials: uniqueLabels(events.map((event) => ({ id: event.credentialId, label: event.credentialId }))),
         users: uniqueLabels(events.map((event) => ({ id: event.userId, label: event.userId }))),
-        orgs: [],
+        orgs: uniqueLabels(events.map((event) => orgLabel(event))),
       },
       series,
       topCredentials: aggregateTop(events, (event) => ({ id: event.credentialId, label: event.credentialId })),
       topUsers: aggregateTop(events, (event) => ({ id: event.userId, label: event.userId })),
-      topOrgs: [],
+      topOrgs: aggregateTop(events, orgLabel),
       credentialUsage: aggregateCredentialUsage(events),
     }
   }
@@ -93,7 +103,7 @@ function buildUsageFilters(input: AggregateUsageInput) {
   }
 
   if (input.orgId) {
-    return and(...filters, eq(credentialUsageEventTable.owner_user_id, "__missing_org__"))
+    filters.push(eq(credentialUsageEventTable.org_id, input.orgId))
   }
 
   if (filters.length === 0) {
@@ -132,10 +142,16 @@ function groupForEvent(event: UsageEventRow, groupBy: AggregateUsageInput["group
   }
 
   if (groupBy === "org") {
-    return { key: "unknown-org", label: "Unknown org" }
+    const org = orgLabel(event)
+    return { key: org.id, label: org.label }
   }
 
   return { key: "total", label: "Total usage" }
+}
+
+function orgLabel(event: UsageEventRow): UsageAggregateLabel {
+  const id = event.orgId ?? "unknown-org"
+  return { id, label: event.orgId ?? "Unknown org" }
 }
 
 function uniqueLabels(entries: UsageAggregateLabel[]) {
