@@ -22,6 +22,7 @@ import { credentialBindingTable, credentialHealthEventTable, credentialRecordTab
 import { env } from "../env.js";
 import type { AdminSessionRecord, LeaseProvider } from "../leases/repository.js";
 import { isAiGatewayProvider } from "../providers/ids.js";
+import { evaluateCodexCredentialEligibility } from "../usage/codex-eligibility.js";
 import { MySqlUsageRepository } from "../usage/mysql-repository.js";
 import { CachedCodexCredentialStatusProvider, UnavailableCodexCredentialStatusProvider, type CodexCredentialStatusProvider, type CodexUsageStatus } from "../usage/codex-status.js";
 import type { AggregateUsageInput, UsageAggregateResponse, UsageCredentialAggregate, UsageGroupBy as RepositoryUsageGroupBy, UsageRepository } from "../usage/repository.js";
@@ -532,18 +533,6 @@ function mergeCredentialFilters(
   return Array.from(filters.entries()).map(([id, label]) => ({ id, label }));
 }
 
-function isCodexStatusEligibleForAssignment(status: CodexUsageStatus): boolean {
-  const statusText = [status.label, status.detail].filter(Boolean).join(" | ");
-  if (
-    /invalid_grant|access token could not be refreshed|refresh token|HTTP error:\s*401|401\s+Unauthorized|missing field `id_token`|ERROR:/i
-      .test(statusText)
-  ) {
-    return false;
-  }
-
-  return status.available || /\bcodex\s*\|\s*OK\b/i.test(statusText);
-}
-
 function toIsoString(value: Date | string | null) {
   if (value instanceof Date) {
     return value.toISOString();
@@ -830,7 +819,7 @@ export function createDefaultAdminService(
         credentialId: credential.id,
         credentialName: credential.name,
       });
-      if (!isCodexStatusEligibleForAssignment(status)) {
+      if (!evaluateCodexCredentialEligibility(status).eligible) {
         continue;
       }
       eligible.push({
