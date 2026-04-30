@@ -58,7 +58,7 @@ function isHealthyProbeStatus(statusText: string): boolean {
 }
 
 function isGenericProbeFailure(statusText: string): boolean {
-  return /Codex status probe (?:failed|timed out|exited with code)|Codex probe did not return rate limits|Codex rate limit snapshot was not found/i
+  return /Codex status probe (?:failed|timed out|exited with code)|Codex probe failed|Codex probe did not return rate limits|Codex rate limit snapshot was not found/i
     .test(statusText);
 }
 

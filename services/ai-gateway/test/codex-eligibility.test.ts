@@ -144,3 +144,16 @@ test("unavailable status with generic probe failure is eligible", () => {
     reason: null,
   });
 });
+
+test("unavailable status with codex probe failed fallback is eligible", () => {
+  const eligibility = evaluateCodexCredentialEligibility(
+    unavailableStatus("Codex probe failed."),
+    NOW,
+  );
+
+  assert.deepEqual(eligibility, {
+    eligible: true,
+    state: "eligible",
+    reason: null,
+  });
+});
