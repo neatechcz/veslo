@@ -624,6 +624,7 @@ export function createAdminRuntimeRouter(options: CreateAdminRuntimeRouterOption
         leases: options.managedAi.leases,
         secrets: options.managedAi.secrets,
         usage: options.managedAi.usage,
+        codexStatusProvider: options.managedAi.codexStatusProvider,
       }),
     )
   }

@@ -171,10 +171,7 @@ export function createManagedAiAdminRouteDeps(
     const credentials = await listAdminCredentials.call(deps.credentials)
     const candidates = credentials.filter((entry) => entry.provider === "codex_oauth" && entry.state === "healthy")
     if (!codexStatusProvider) {
-      return candidates.map((entry) => ({
-        id: entry.id,
-        name: entry.name,
-      }))
+      return []
     }
 
     const eligible: AdminCredentialOption[] = []

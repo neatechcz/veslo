@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { readFile } from "node:fs/promises"
 import test from "node:test"
 
 Object.assign(process.env, {
@@ -14,4 +15,10 @@ test("bootstrap platform admin allowlist recognizes michal.sara@neatech.cz", () 
   assert.equal(adminRuntime.isBootstrapPlatformAdminEmail("michal.sara@neatech.cz"), true)
   assert.equal(adminRuntime.isBootstrapPlatformAdminEmail("MICHAL.SARA@NEATECH.CZ"), true)
   assert.equal(adminRuntime.isBootstrapPlatformAdminEmail("someone@example.com"), false)
+})
+
+test("admin runtime forwards managed AI Codex status provider into route deps", async () => {
+  const source = await readFile(new URL("../src/http/admin-runtime.ts", import.meta.url), "utf8")
+
+  assert.match(source, /codexStatusProvider:\s*options\.managedAi\.codexStatusProvider/)
 })
