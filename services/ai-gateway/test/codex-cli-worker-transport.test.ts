@@ -42,6 +42,51 @@ test("converts chat completion messages into a codex prompt and wraps the final 
   assert.equal((response.body as { choices: Array<{ message: { content: string } }> }).choices[0]?.message.content, "ok")
 })
 
+test("maps Codex token_count worker output to OpenAI-compatible usage", async () => {
+  const tokenCountLine = JSON.stringify({
+    payload: {
+      type: "token_count",
+      info: {
+        input_tokens: 30,
+        output_tokens: 9,
+        total_tokens: 39,
+        cached_tokens: 21,
+      },
+    },
+  })
+  const transport = new CodexCliWorkerTransport({
+    spawnCodex: async () => {
+      return {
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        finalMessage: "ok",
+        stdout: `ignored\n${tokenCountLine}\n`,
+        stderr: "",
+      }
+    },
+    now: () => new Date("2026-04-13T10:00:00.000Z"),
+    randomId: () => "codex-usage-test-id",
+  })
+
+  const response = await transport.chatCompletions({
+    body: {
+      model: "gpt-5.4",
+      messages: [{ role: "user", content: "Say ok." }],
+    },
+  })
+
+  assert.equal(response.status, 200)
+  assert.deepEqual((response.body as { usage: unknown }).usage, {
+    prompt_tokens: 30,
+    completion_tokens: 9,
+    total_tokens: 39,
+    prompt_tokens_details: {
+      cached_tokens: 21,
+    },
+  })
+})
+
 test("returns OpenAI-compatible SSE chunks when Codex chat completion requests streaming", async () => {
   const transport = new CodexCliWorkerTransport({
     spawnCodex: async ({ prompt, model }) => {

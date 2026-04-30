@@ -9,6 +9,7 @@ import { getPlatformCredentialOwnerUserId } from "../../credentials/platform-own
 import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js"
 import type { ProviderTransportResponse } from "../../providers/transport.js"
 import { ProviderTransportError } from "../../providers/transport.js"
+import { readOpenAiCompatibleUsage } from "../../usage/token-accounting.js"
 import { applyAiAccessPolicy } from "./access-policy.js"
 import { normalizeGatewaySessionId } from "./session-id.js"
 import type { ProxyDependencies } from "../proxy.js"
@@ -134,6 +135,7 @@ export function createCodexOAuthProxyRouter(
       }
 
       const requestId = getCodexRequestId(input.upstreamResponse)
+      const usage = readOpenAiCompatibleUsage(input.upstreamResponse.body)
       const model = getModel(input.upstreamResponse.body) ?? getModel(input.requestBody) ?? "unknown"
 
       await deps.usageRepository.recordUsage({
@@ -144,8 +146,10 @@ export function createCodexOAuthProxyRouter(
         credentialId: credential.id,
         bindingId: input.bindingId,
         model,
-        inputTokens: undefined,
-        outputTokens: undefined,
+        inputTokens: usage?.inputTokens,
+        outputTokens: usage?.outputTokens,
+        cachedTokens: usage?.cachedTokens ?? 0,
+        totalTokens: usage?.totalTokens,
       })
     } catch (error) {
       console.error("proxy_usage_record_failed", error)

@@ -170,7 +170,14 @@ test("codex_oauth proxy forwards through the worker transport with a sticky leas
                   finish_reason: "stop",
                 },
               ],
-              usage: null,
+              usage: {
+                prompt_tokens: 30,
+                completion_tokens: 9,
+                total_tokens: 39,
+                prompt_tokens_details: {
+                  cached_tokens: 21,
+                },
+              },
             },
           }
         },
@@ -223,8 +230,10 @@ test("codex_oauth proxy forwards through the worker transport with a sticky leas
         credentialId: "cred_codex_1",
         bindingId: "binding_codex_primary",
         model: "gpt-5.4",
-        inputTokens: undefined,
-        outputTokens: undefined,
+        inputTokens: 30,
+        outputTokens: 9,
+        cachedTokens: 21,
+        totalTokens: 39,
       },
     ])
   } finally {
