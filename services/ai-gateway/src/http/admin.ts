@@ -554,11 +554,6 @@ function readCachedTokens(entry: UsageCredentialAggregate | CredentialRecord | n
   return typeof cachedTokens === "number" && Number.isFinite(cachedTokens) ? cachedTokens : 0;
 }
 
-function hasCachedTokens(entry: UsageCredentialAggregate | CredentialRecord | null | undefined): boolean {
-  const cachedTokens = (entry as { cachedTokens?: unknown } | null | undefined)?.cachedTokens;
-  return typeof cachedTokens === "number" && Number.isFinite(cachedTokens);
-}
-
 function normalizeCodexEligibilityReason(reason: string | null): string | null {
   if (!reason) {
     return null;
@@ -973,9 +968,7 @@ export function createDefaultAdminService(
                 provider: credential.provider,
                 state: credential.state,
                 activeLeases: credential.activeLeases,
-                cachedTokens: historical && hasCachedTokens(historical)
-                  ? readCachedTokens(historical)
-                  : readCachedTokens(credential),
+                cachedTokens: historical ? historical.cachedTokens : 0,
                 totalTokens: historical?.totalTokens ?? 0,
                 totalRequests: historical?.totalRequests ?? 0,
                 lastUsedAt: historical?.lastUsedAt ?? null,

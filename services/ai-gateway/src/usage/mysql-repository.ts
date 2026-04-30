@@ -16,6 +16,7 @@ type UsageEventRow = {
   credentialId: string
   userId: string
   orgId: string | null
+  cachedTokens: number
   totalTokens: number
   totalRequests: number
   createdAt: string | null
@@ -59,6 +60,7 @@ export class MySqlUsageRepository implements UsageRepository {
       credentialId: row.credential_record_id,
       userId: row.owner_user_id,
       orgId: row.org_id,
+      cachedTokens: row.cached_tokens ?? 0,
       totalTokens: row.total_tokens ?? row.input_tokens + row.output_tokens,
       totalRequests: 1,
       createdAt: formatDate(row.created_at),
@@ -175,10 +177,12 @@ function aggregateCredentialUsage(events: UsageEventRow[]): UsageCredentialAggre
     const existing = buckets.get(event.credentialId) ?? {
       id: event.credentialId,
       label: event.credentialId,
+      cachedTokens: 0,
       totalTokens: 0,
       totalRequests: 0,
       lastUsedAt: null,
     }
+    existing.cachedTokens += event.cachedTokens
     existing.totalTokens += event.totalTokens
     existing.totalRequests += event.totalRequests
     existing.lastUsedAt = latestDate(existing.lastUsedAt, event.createdAt)

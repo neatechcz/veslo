@@ -412,7 +412,7 @@ test("admin usage endpoint includes every credential with recorded usage and Cod
         provider: "codex_oauth",
         state: "healthy",
         activeLeases: 0,
-        cachedTokens: 50,
+        cachedTokens: 0,
         totalTokens: 0,
         totalRequests: 0,
         lastUsedAt: null,

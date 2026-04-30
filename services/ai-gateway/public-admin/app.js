@@ -955,13 +955,14 @@ function renderCredentialEligibility(credential) {
 
   const eligibility = credential.eligibility || {
     state: "unavailable",
-    reason: "all_codex_credentials_exhausted status unavailable",
+    reason: "Eligibility status unavailable",
     resetAt: null,
   };
   const tone = credentialEligibilityTone(eligibility.state);
-  const reason = eligibility.reason
-    ? ` ${eligibility.reason}${eligibility.state === "exhausted" ? ` (${CODEX_EXHAUSTED_REASON})` : ""}`
-    : "";
+  const reasonText = eligibility.reason === CODEX_EXHAUSTED_REASON
+    ? "Codex credential pool exhausted."
+    : eligibility.reason;
+  const reason = reasonText ? ` ${reasonText}` : "";
   const reset = eligibility.resetAt ? ` Resets ${formatDate(eligibility.resetAt)}` : "";
   return `<span class="status-chip ${escapeHtml(tone)}">${escapeHtml(eligibility.state)}</span><span>${escapeHtml(`${reason}${reset}`.trim())}</span>`;
 }

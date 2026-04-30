@@ -40,8 +40,19 @@ test("aggregateUsage uses stored total token values from usage rows", async () =
       org_id: null,
       input_tokens: 11,
       output_tokens: 7,
+      cached_tokens: 5,
       total_tokens: 42,
       created_at: new Date("2026-04-30T10:00:00.000Z"),
+    },
+    {
+      credential_record_id: "cred_openai_1",
+      owner_user_id: "user_gateway",
+      org_id: null,
+      input_tokens: 4,
+      output_tokens: 3,
+      cached_tokens: 2,
+      total_tokens: 9,
+      created_at: new Date("2026-04-30T10:05:00.000Z"),
     },
   ]);
   const repository = new MySqlUsageRepository(fakeDb.db as AiGatewayDb);
@@ -53,9 +64,11 @@ test("aggregateUsage uses stored total token values from usage rows", async () =
     orgId: null,
   });
 
-  assert.equal(usage.summary.totalTokens, 42);
-  assert.equal(usage.series[0]?.totalTokens, 42);
-  assert.equal(usage.topCredentials[0]?.totalTokens, 42);
+  assert.equal(usage.summary.totalTokens, 51);
+  assert.equal(usage.series[0]?.totalTokens, 51);
+  assert.equal(usage.topCredentials[0]?.totalTokens, 51);
+  assert.equal(usage.credentialUsage[0]?.cachedTokens, 7);
+  assert.equal(usage.credentialUsage[0]?.totalTokens, 51);
 });
 
 test("aggregateUsage filters unknown org usage with an org_id IS NULL predicate", async () => {

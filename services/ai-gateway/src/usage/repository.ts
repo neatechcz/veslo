@@ -40,6 +40,7 @@ export type UsageAggregateSeries = {
 };
 
 export type UsageCredentialAggregate = UsageAggregateLabel & {
+  cachedTokens: number;
   totalTokens: number;
   totalRequests: number;
   lastUsedAt: string | null;
