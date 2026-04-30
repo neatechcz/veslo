@@ -118,7 +118,11 @@ export function createDefaultProxyDependencies(
     usageRepository: runtime.usage,
     leaseBroker: new LeaseBroker(
       runtime.leases,
-      new DefaultBindingSelector(runtime.credentials),
+      new DefaultBindingSelector({
+        credentials: runtime.credentials,
+        codexStatusProvider: runtime.codexStatusProvider,
+        now: overrides.now,
+      }),
     ),
     tokenBroker: new DefaultTokenBroker({
       credentials: runtime.credentials,

@@ -84,6 +84,16 @@ export function createCodexOAuthProxyRouter(
         }
       }
 
+      const noEligibleCodexReason = getNoEligibleCodexReason(error)
+      if (noEligibleCodexReason) {
+        res.status(503).json({
+          error: "no_eligible_codex_credentials",
+          reason: noEligibleCodexReason,
+          provider: "codex_oauth",
+        })
+        return
+      }
+
       console.error("proxy_request_failed", error)
       res.status(502).json({ error: "proxy_request_failed" })
     }
@@ -239,4 +249,20 @@ function getRecord(value: unknown): Record<string, unknown> | null {
 function getString(record: Record<string, unknown> | null, key: string): string | null {
   const value = record?.[key]
   return typeof value === "string" && value.length > 0 ? value : null
+}
+
+function getNoEligibleCodexReason(error: unknown): "all_codex_credentials_exhausted" | "no_eligible_binding" | null {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : ""
+  if (message === "no_eligible_codex_credentials:all_codex_credentials_exhausted") {
+    return "all_codex_credentials_exhausted"
+  }
+
+  if (
+    message === "no_eligible_codex_credentials:assigned_credential_exhausted" ||
+    message.startsWith("no_eligible_bindings:")
+  ) {
+    return "no_eligible_binding"
+  }
+
+  return null
 }

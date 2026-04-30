@@ -44,6 +44,22 @@ export type ListEligibleBindingsInput = {
   excludeBindingId?: string
 }
 
+export type ListRecentCredentialUsageInput = {
+  credentialIds: string[]
+  since: Date
+}
+
+export type RecentCredentialUsageRecord = {
+  credentialId: string
+  totalTokens: number
+  requestCount: number
+}
+
+export type ActiveCredentialLeaseRecord = {
+  credentialId: string
+  activeLeases: number
+}
+
 export type MarkCredentialStateInput = {
   credentialRecordId: string
   state: CredentialState
@@ -81,6 +97,8 @@ export interface CredentialRepository {
   getCredentialRecordById(credentialRecordId: string): Promise<CredentialRecord | null>
   listHealthyCredentialRecordIds(): Promise<string[]>
   listEligibleBindings?(input: ListEligibleBindingsInput): Promise<CredentialBinding[]>
+  listActiveLeasesByCredential?(credentialIds: string[]): Promise<ActiveCredentialLeaseRecord[]>
+  listRecentCredentialUsage?(input: ListRecentCredentialUsageInput): Promise<RecentCredentialUsageRecord[]>
   getBindingByCredentialId?(credentialId: string): Promise<CredentialBinding | null>
   getCredentialRecordByBindingId?(bindingId: string): Promise<CredentialRecord | null>
   listAdminCredentials?(): Promise<AdminCredentialRecord[]>
