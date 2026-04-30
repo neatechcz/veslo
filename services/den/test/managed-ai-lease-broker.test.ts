@@ -339,6 +339,11 @@ async function triggerFailure(
   })
 }
 
+async function rejectAfter(ms: number, message: string): Promise<never> {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+  throw new Error(message)
+}
+
 test("creates sticky provider-scoped leases", async () => {
   const repository = new InMemoryLeaseRepository()
   const { selector, calls } = createSelector()
@@ -465,6 +470,57 @@ test("codex_oauth selector keeps unknown limits and provider errors selectable",
     "cred_unknown",
     "cred_busy",
   ]])
+})
+
+test("codex_oauth selector probes candidate status concurrently", async () => {
+  let inFlight = 0
+  let maxInFlight = 0
+  let releaseStatuses: (() => void) | null = null
+  const multipleProbesStarted = new Promise<void>((resolve) => {
+    releaseStatuses = resolve
+  })
+  const statusProvider: CodexCredentialStatusProvider = {
+    async getStatus() {
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      if (inFlight > 1) {
+        releaseStatuses?.()
+      }
+
+      await multipleProbesStarted
+      inFlight -= 1
+      return codexStatus({ fiveHourUsedPercent: 20 })
+    },
+  }
+  const selector = new DefaultBindingSelector({
+    credentials: new TestCredentialRepository(
+      [
+        codexBinding("binding_a", "cred_a"),
+        codexBinding("binding_b", "cred_b"),
+        codexBinding("binding_c", "cred_c"),
+      ],
+      [
+        codexRecord("cred_a", "a"),
+        codexRecord("cred_b", "b"),
+        codexRecord("cred_c", "c"),
+      ],
+    ),
+    codexStatusProvider: statusProvider,
+    now: () => new Date("2026-04-30T10:00:00.000Z"),
+  })
+
+  const bindingId = await Promise.race([
+    selector.selectInitialBinding({
+      ownerUserId: "user_codex",
+      bindingOwnerUserId: "platform:codex_oauth",
+      provider: "codex_oauth",
+      sessionId: "session_codex_concurrent",
+    }),
+    rejectAfter(50, "codex_status_probes_started_serially"),
+  ])
+
+  assert.equal(bindingId, "binding_a")
+  assert.ok(maxInFlight > 1)
 })
 
 test("codex_oauth selector sorts by active leases, recent tokens, creation time, then id", async () => {

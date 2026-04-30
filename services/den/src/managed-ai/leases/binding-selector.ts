@@ -111,9 +111,7 @@ export class DefaultBindingSelector implements BindingSelector {
       this.listActiveLeasesByCredentialId(credentialIds),
       this.listRecentTokensByCredentialId(credentialIds),
     ])
-    const candidates: CodexCandidate[] = []
-
-    for (const binding of bindings) {
+    const candidates = await Promise.all(bindings.map(async (binding): Promise<CodexCandidate | null> => {
       const credential = this.credentials.getCredentialRecordById
         ? await this.credentials.getCredentialRecordById(binding.credentialRecordId)
         : null
@@ -127,7 +125,7 @@ export class DefaultBindingSelector implements BindingSelector {
           })
           const eligibility = evaluateCodexCredentialEligibility(status, this.now())
           if (!eligibility.eligible) {
-            continue
+            return null
           }
         } catch {
           // Probe execution failures are treated like unknown limits so a
@@ -135,14 +133,16 @@ export class DefaultBindingSelector implements BindingSelector {
         }
       }
 
-      candidates.push({
+      return {
         binding,
         activeLeases: activeLeasesByCredentialId.get(binding.credentialRecordId) ?? 0,
         recentTotalTokens: recentTokensByCredentialId.get(binding.credentialRecordId) ?? 0,
-      })
-    }
+      }
+    }))
 
-    return candidates.sort(compareCodexCandidates)
+    return candidates
+      .filter((candidate): candidate is CodexCandidate => candidate !== null)
+      .sort(compareCodexCandidates)
   }
 
   private async listActiveLeasesByCredentialId(credentialIds: string[]): Promise<Map<string, number>> {
