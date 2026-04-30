@@ -249,6 +249,8 @@ test("successful anthropic proxy requests record usage with body-derived request
         model: "claude-3-7-sonnet",
         inputTokens: 5,
         outputTokens: 13,
+        cachedTokens: 0,
+        totalTokens: 18,
       },
     ]);
   } finally {
