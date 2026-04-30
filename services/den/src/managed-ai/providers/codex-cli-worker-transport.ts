@@ -10,6 +10,7 @@ import {
   type CodexOAuthProviderTransport,
   type ProviderTransportResponse,
 } from "./transport.js"
+import type { TokenUsageAccounting } from "../usage/token-accounting.js"
 
 export type CodexCliWorkerRunInput = {
   prompt: string
@@ -112,6 +113,7 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
     }
 
     const created = Math.floor(this.now().getTime() / 1000)
+    const usage = readCodexTokenUsageFromText(result.stdout) ?? readCodexTokenUsageFromText(result.stderr)
     return {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -130,7 +132,14 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
             finish_reason: "stop",
           },
         ],
-        usage: null,
+        usage: usage
+          ? {
+              prompt_tokens: usage.inputTokens,
+              completion_tokens: usage.outputTokens,
+              total_tokens: usage.totalTokens,
+              prompt_tokens_details: { cached_tokens: usage.cachedTokens },
+            }
+          : null,
       },
     }
   }
@@ -212,6 +221,66 @@ function summarizeWorkerStderr(stderr: string): string | null {
   }
 
   return lines.slice(-10).join("\n").slice(-1000)
+}
+
+function readCodexTokenUsageFromText(text: string): TokenUsageAccounting | null {
+  const lines = text
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const parsed = parseJsonRecord(lines[index])
+    const payload = getRecord(parsed?.payload)
+    if (!payload || getString(payload, "type") !== "token_count") {
+      continue
+    }
+
+    const usage = readCodexTokenUsageFromPayload(payload)
+    if (usage) {
+      return usage
+    }
+  }
+
+  return null
+}
+
+function readCodexTokenUsageFromPayload(payload: Record<string, unknown>): TokenUsageAccounting | null {
+  const info = getRecord(payload.info)
+  const candidates = [getRecord(info?.total_token_usage), info, payload].filter(
+    (candidate): candidate is Record<string, unknown> => candidate !== null,
+  )
+
+  for (const candidate of candidates) {
+    const inputTokens = readFiniteNumber(candidate.input_tokens)
+    const outputTokens = readFiniteNumber(candidate.output_tokens)
+    const cachedTokens = readFiniteNumber(candidate.cached_tokens)
+    const totalTokens = readFiniteNumber(candidate.total_tokens)
+
+    if (inputTokens === null && outputTokens === null && cachedTokens === null && totalTokens === null) {
+      continue
+    }
+
+    const normalizedInputTokens = inputTokens ?? 0
+    const normalizedOutputTokens = outputTokens ?? 0
+
+    return {
+      inputTokens: normalizedInputTokens,
+      outputTokens: normalizedOutputTokens,
+      cachedTokens: cachedTokens ?? 0,
+      totalTokens: totalTokens ?? normalizedInputTokens + normalizedOutputTokens,
+    }
+  }
+
+  return null
+}
+
+function parseJsonRecord(text: string): Record<string, unknown> | null {
+  try {
+    return getRecord(JSON.parse(text))
+  } catch {
+    return null
+  }
 }
 
 function isGpt55RuntimeIncompatibility(input: { model: string; stderrTail: string | null }): boolean {
@@ -434,4 +503,8 @@ function getRecord(value: unknown): Record<string, unknown> | null {
 function getString(record: Record<string, unknown>, key: string): string | null {
   const value = record[key]
   return typeof value === "string" && value.trim().length > 0 ? value : null
+}
+
+function readFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null
 }

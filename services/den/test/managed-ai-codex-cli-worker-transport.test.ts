@@ -38,6 +38,182 @@ test("converts chat completion messages into a codex prompt and wraps the final 
   assert.equal(body.usage, null)
 })
 
+test("maps Codex token_count worker output to OpenAI-compatible usage", async () => {
+  const tokenCountLine = JSON.stringify({
+    payload: {
+      type: "token_count",
+      info: {
+        input_tokens: 30,
+        output_tokens: 9,
+        total_tokens: 39,
+        cached_tokens: 21,
+      },
+    },
+  })
+  const transport = new CodexCliWorkerTransport({
+    spawnCodex: async () => ({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      finalMessage: "ok",
+      stdout: `ignored\n${tokenCountLine}\n`,
+      stderr: "",
+    }),
+  })
+
+  const response = await transport.chatCompletions({
+    body: {
+      model: "gpt-5.4",
+      messages: [{ role: "user", content: "Say ok" }],
+    },
+  })
+
+  assert.equal(response.status, 200)
+  assert.deepEqual((response.body as { usage: unknown }).usage, {
+    prompt_tokens: 30,
+    completion_tokens: 9,
+    total_tokens: 39,
+    prompt_tokens_details: {
+      cached_tokens: 21,
+    },
+  })
+})
+
+test("maps Codex total_token_usage worker output to OpenAI-compatible usage", async () => {
+  const tokenCountLine = JSON.stringify({
+    payload: {
+      type: "token_count",
+      info: {
+        total_token_usage: {
+          input_tokens: 40,
+          output_tokens: 11,
+          total_tokens: 51,
+          cached_tokens: 22,
+        },
+      },
+    },
+  })
+  const transport = new CodexCliWorkerTransport({
+    spawnCodex: async () => ({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      finalMessage: "ok",
+      stdout: `${tokenCountLine}\n`,
+      stderr: "",
+    }),
+  })
+
+  const response = await transport.chatCompletions({
+    body: {
+      model: "gpt-5.4",
+      messages: [{ role: "user", content: "Say ok" }],
+    },
+  })
+
+  assert.equal(response.status, 200)
+  assert.deepEqual((response.body as { usage: unknown }).usage, {
+    prompt_tokens: 40,
+    completion_tokens: 11,
+    total_tokens: 51,
+    prompt_tokens_details: {
+      cached_tokens: 22,
+    },
+  })
+})
+
+test("skips malformed newer Codex token_count output and uses older valid usage", async () => {
+  const validTokenCountLine = JSON.stringify({
+    payload: {
+      type: "token_count",
+      info: {
+        total_token_usage: {
+          input_tokens: 12,
+          output_tokens: 4,
+          total_tokens: 16,
+          cached_tokens: 8,
+        },
+      },
+    },
+  })
+  const malformedTokenCountLine = JSON.stringify({
+    payload: {
+      type: "token_count",
+      info: {
+        total_token_usage: {
+          input_tokens: "unknown",
+          output_tokens: null,
+        },
+      },
+    },
+  })
+  const transport = new CodexCliWorkerTransport({
+    spawnCodex: async () => ({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      finalMessage: "ok",
+      stdout: `${validTokenCountLine}\n${malformedTokenCountLine}\n`,
+      stderr: "",
+    }),
+  })
+
+  const response = await transport.chatCompletions({
+    body: {
+      model: "gpt-5.4",
+      messages: [{ role: "user", content: "Say ok" }],
+    },
+  })
+
+  assert.equal(response.status, 200)
+  assert.deepEqual((response.body as { usage: unknown }).usage, {
+    prompt_tokens: 12,
+    completion_tokens: 4,
+    total_tokens: 16,
+    prompt_tokens_details: {
+      cached_tokens: 8,
+    },
+  })
+})
+
+test("maps Codex direct token_count fields and falls back to input plus output total", async () => {
+  const tokenCountLine = JSON.stringify({
+    payload: {
+      type: "token_count",
+      input_tokens: 13,
+      output_tokens: 5,
+      cached_tokens: 7,
+    },
+  })
+  const transport = new CodexCliWorkerTransport({
+    spawnCodex: async () => ({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      finalMessage: "ok",
+      stdout: `${tokenCountLine}\n`,
+      stderr: "",
+    }),
+  })
+
+  const response = await transport.chatCompletions({
+    body: {
+      model: "gpt-5.4",
+      messages: [{ role: "user", content: "Say ok" }],
+    },
+  })
+
+  assert.equal(response.status, 200)
+  assert.deepEqual((response.body as { usage: unknown }).usage, {
+    prompt_tokens: 13,
+    completion_tokens: 5,
+    total_tokens: 18,
+    prompt_tokens_details: {
+      cached_tokens: 7,
+    },
+  })
+})
+
 test("rejects streaming requests until streaming is implemented", async () => {
   const transport = new CodexCliWorkerTransport({ spawnCodex: async () => unreachable() })
 

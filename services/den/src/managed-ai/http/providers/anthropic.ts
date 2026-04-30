@@ -8,6 +8,7 @@ import { getPlatformCredentialOwnerUserId } from "../../credentials/platform-own
 import { classifyUpstreamFailure, getUpstreamFailureInput } from "../../leases/error-classifier.js"
 import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js"
 import type { ProviderTransportResponse } from "../../providers/transport.js"
+import { readAnthropicUsage } from "../../usage/token-accounting.js"
 import { applyAiAccessPolicy } from "./access-policy.js"
 import type { ProxyDependencies } from "../proxy.js"
 
@@ -126,7 +127,7 @@ export function createAnthropicProxyRouter(
       }
 
       const requestId = getAnthropicRequestId(input.upstreamResponse)
-      const usage = getAnthropicUsage(input.upstreamResponse.body)
+      const usage = readAnthropicUsage(input.upstreamResponse.body)
       const model = getModel(input.upstreamResponse.body) ?? getModel(input.requestBody) ?? "unknown"
 
       await deps.usageRepository.recordUsage({
@@ -188,24 +189,6 @@ function getAnthropicRequestId(upstreamResponse: ProviderTransportResponse) {
   )
 }
 
-function getAnthropicUsage(body: unknown): { inputTokens: number; outputTokens: number; cachedTokens: number; totalTokens: number } | null {
-  const usage = getRecord(body)?.usage
-  const usageRecord = getRecord(usage)
-  if (!usageRecord) {
-    return null
-  }
-
-  const inputTokens = getNumber(usageRecord, "input_tokens") ?? 0
-  const outputTokens = getNumber(usageRecord, "output_tokens") ?? 0
-
-  return {
-    inputTokens,
-    outputTokens,
-    cachedTokens: 0,
-    totalTokens: inputTokens + outputTokens,
-  }
-}
-
 function getModel(body: unknown): string | null {
   return getString(getRecord(body), "model")
 }
@@ -221,9 +204,4 @@ function getRecord(value: unknown): Record<string, unknown> | null {
 function getString(record: Record<string, unknown> | null, key: string): string | null {
   const value = record?.[key]
   return typeof value === "string" && value.length > 0 ? value : null
-}
-
-function getNumber(record: Record<string, unknown> | null, key: string): number | undefined {
-  const value = record?.[key]
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }

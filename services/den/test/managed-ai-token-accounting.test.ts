@@ -1,0 +1,84 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+
+import { readAnthropicUsage, readOpenAiCompatibleUsage } from "../src/managed-ai/usage/token-accounting.js"
+
+test("reads OpenAI compatible prompt, completion, cached, and total tokens", () => {
+  assert.deepEqual(
+    readOpenAiCompatibleUsage({
+      usage: {
+        prompt_tokens: 20,
+        completion_tokens: 5,
+        total_tokens: 25,
+        prompt_tokens_details: { cached_tokens: 12 },
+      },
+    }),
+    {
+      inputTokens: 20,
+      outputTokens: 5,
+      cachedTokens: 12,
+      totalTokens: 25,
+    },
+  )
+})
+
+test("reads OpenAI compatible input and output token fields", () => {
+  assert.deepEqual(
+    readOpenAiCompatibleUsage({
+      usage: {
+        input_tokens: 8,
+        output_tokens: 3,
+      },
+    }),
+    {
+      inputTokens: 8,
+      outputTokens: 3,
+      cachedTokens: 0,
+      totalTokens: 11,
+    },
+  )
+})
+
+test("returns null when usage is missing", () => {
+  assert.equal(readOpenAiCompatibleUsage({ id: "response_1" }), null)
+  assert.equal(readAnthropicUsage({ id: "msg_1" }), null)
+})
+
+test("reads Anthropic input and output token fields", () => {
+  assert.deepEqual(
+    readAnthropicUsage({
+      usage: {
+        input_tokens: 14,
+        output_tokens: 9,
+      },
+    }),
+    {
+      inputTokens: 14,
+      outputTokens: 9,
+      cachedTokens: 0,
+      totalTokens: 23,
+    },
+  )
+})
+
+test("ignores non-finite and non-numeric usage fields", () => {
+  assert.deepEqual(
+    readOpenAiCompatibleUsage({
+      usage: {
+        prompt_tokens: Number.NaN,
+        input_tokens: 8,
+        completion_tokens: Number.POSITIVE_INFINITY,
+        output_tokens: 3,
+        total_tokens: "11",
+        prompt_tokens_details: { cached_tokens: "not-a-number" },
+        input_tokens_details: { cached_tokens: 5 },
+      },
+    }),
+    {
+      inputTokens: 8,
+      outputTokens: 3,
+      cachedTokens: 5,
+      totalTokens: 11,
+    },
+  )
+})
