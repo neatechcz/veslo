@@ -3,6 +3,7 @@ const BROWSER_AUTH_STORAGE_KEY = "veslo.ai-gateway.admin.browser-auth";
 const DEFAULT_PAGES = ["credentials", "sessions", "usage", "alerts", "users", "audit"];
 const AUTH_STATE_BYTES = 32;
 const AUTH_CODE_VERIFIER_BYTES = 32;
+const CODEX_EXHAUSTED_REASON = "all_codex_credentials_exhausted";
 
 const state = {
   token: localStorage.getItem(STORAGE_KEY) || "",
@@ -785,11 +786,13 @@ function renderCredentials() {
       <td><a href="/admin/alerts" data-open-alerts="${escapeHtml(credential.id)}">${escapeHtml(String(credential.alertCount))} active alerts</a></td>
       <td>${escapeHtml(String(credential.activeLeases))}</td>
       <td>${escapeHtml(formatDate(credential.lastRefreshAt))}</td>
+      <td>${escapeHtml(formatNumber(credential.cachedTokens))}</td>
+      <td>${renderCredentialEligibility(credential)}</td>
       <td>${renderCredentialCodexStatus(credential)}</td>
     </tr>`;
   }).join("");
 
-  els.credentialsTableBody.innerHTML = rows || `<tr><td colspan="7">No credentials found.</td></tr>`;
+  els.credentialsTableBody.innerHTML = rows || `<tr><td colspan="9">No credentials found.</td></tr>`;
 
   const selected = currentCredential();
   if (selected) {
@@ -802,8 +805,10 @@ function renderCredentials() {
         <div class="detail-line"><span>Linked alerts</span><strong>${escapeHtml(String(selected.alertCount))}</strong></div>
         <div class="detail-line"><span>Last failure</span><strong>${escapeHtml(formatDate(selected.lastFailureAt))}</strong></div>
         <div class="detail-line"><span>Rotation</span><strong>${escapeHtml(formatDate(selected.nextRotationAt))}</strong></div>
+        <div class="detail-line"><span>Cached tokens</span><strong>${escapeHtml(formatNumber(selected.cachedTokens))}</strong></div>
         <div class="detail-line"><span>Total tokens</span><strong>${escapeHtml(formatNumber(selected.totalTokens))}</strong></div>
         ${selected.provider === "codex_oauth" ? `
+          <div class="detail-line"><span>Eligibility</span><strong>${escapeHtml(selected.eligibility?.state || "unknown")}</strong></div>
           <div class="detail-line"><span>Codex upstream</span><strong>${escapeHtml(selectedUpstreamStatus.label)}</strong></div>
           <div class="detail-line"><span>Codex limits</span><strong>${escapeHtml(selectedUpstreamStatus.limitSummary || "5h: unknown | Weekly: unknown")}</strong></div>
         ` : ""}
@@ -886,12 +891,14 @@ function renderUsage() {
       <td>${escapeHtml(formatProviderName(credential.provider))}</td>
       <td><span class="status-chip">${escapeHtml(credential.state || "unknown")}</span></td>
       <td>${escapeHtml(formatNumber(credential.totalRequests))}</td>
+      <td>${escapeHtml(formatNumber(credential.cachedTokens))}</td>
       <td>${escapeHtml(formatNumber(credential.totalTokens))}</td>
       <td>${escapeHtml(formatNumber(credential.activeLeases))}</td>
       <td>${escapeHtml(formatDate(credential.lastUsedAt))}</td>
+      <td>${renderCredentialEligibility(credential)}</td>
       <td><span class="status-chip ${escapeHtml(upstreamStatus.tone)}">${escapeHtml(upstreamStatus.label)}</span><span>${escapeHtml(upstreamStatus.detail)}</span><span>${escapeHtml(upstreamStatus.limitSummary)}</span></td>
     </tr>`;
-  }).join("") || `<tr><td colspan="8">No credential usage matched the selected filters.</td></tr>`;
+  }).join("") || `<tr><td colspan="10">No credential usage matched the selected filters.</td></tr>`;
 }
 
 function formatProviderName(provider) {
@@ -939,6 +946,31 @@ function renderCredentialCodexStatus(credential) {
 
   const upstreamStatus = formatCredentialUpstreamStatus(credential);
   return `<span class="status-chip ${escapeHtml(upstreamStatus.tone)}">${escapeHtml(upstreamStatus.label)}</span><span>${escapeHtml(upstreamStatus.limitSummary)}</span><span>${escapeHtml(upstreamStatus.detail)}</span>`;
+}
+
+function renderCredentialEligibility(credential) {
+  if (credential.provider !== "codex_oauth") {
+    return `<span class="muted">N/A</span>`;
+  }
+
+  const eligibility = credential.eligibility || {
+    state: "unavailable",
+    reason: "all_codex_credentials_exhausted status unavailable",
+    resetAt: null,
+  };
+  const tone = credentialEligibilityTone(eligibility.state);
+  const reason = eligibility.reason
+    ? ` ${eligibility.reason}${eligibility.state === "exhausted" ? ` (${CODEX_EXHAUSTED_REASON})` : ""}`
+    : "";
+  const reset = eligibility.resetAt ? ` Resets ${formatDate(eligibility.resetAt)}` : "";
+  return `<span class="status-chip ${escapeHtml(tone)}">${escapeHtml(eligibility.state)}</span><span>${escapeHtml(`${reason}${reset}`.trim())}</span>`;
+}
+
+function credentialEligibilityTone(state) {
+  if (state === "eligible") return "success";
+  if (state === "exhausted" || state === "draining") return "warning";
+  if (state === "revoked" || state === "unhealthy") return "danger";
+  return "info";
 }
 
 function formatCredentialLimitSummary(status) {

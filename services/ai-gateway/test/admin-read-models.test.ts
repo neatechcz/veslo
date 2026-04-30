@@ -65,7 +65,9 @@ function createDenClient(session = createSession()) {
 
 function createCredential(
   id: string,
-  overrides: Partial<Pick<CredentialRecord, "provider" | "type" | "state" | "activeLeases" | "totalTokens">> = {},
+  overrides: Partial<Pick<CredentialRecord, "provider" | "type" | "state" | "activeLeases" | "totalTokens">> & {
+    cachedTokens?: number
+  } = {},
 ): CredentialRecord {
   return {
     id,
@@ -78,6 +80,7 @@ function createCredential(
     alertCount: 0,
     lastRefreshAt: "2026-04-02T10:00:00.000Z",
     lastFailureAt: null,
+    cachedTokens: overrides.cachedTokens ?? 0,
     totalTokens: overrides.totalTokens ?? 144,
     nextRotationAt: null,
     linkedAlertIds: [],
@@ -136,6 +139,7 @@ function createUsageResponse(groupBy: UsageResponse["groupBy"]): UsageResponse {
         provider: null,
         state: null,
         activeLeases: 0,
+        cachedTokens: 0,
         totalTokens: 900,
         totalRequests: 9,
         lastUsedAt: null,
@@ -201,6 +205,7 @@ function createAdminApp(overrides: {
       },
     },
     codexStatusProvider: overrides.codexStatusProvider,
+    now: () => new Date("2026-04-30T12:00:00.000Z"),
   })
 
   return createApp({ admin: service })
@@ -233,6 +238,7 @@ test("admin credentials endpoint includes Codex upstream limit status", async ()
       createCredential("cred_codex_1", {
         provider: "codex_oauth",
         activeLeases: 0,
+        cachedTokens: 50,
         totalTokens: 0,
       }),
     ],
@@ -248,9 +254,9 @@ test("admin credentials endpoint includes Codex upstream limit status", async ()
           limits: {
             fiveHour: {
               label: "5h",
-              usedPercent: 30,
+              usedPercent: 100,
               windowMinutes: 300,
-              resetAt: "2026-04-28T15:00:00.000Z",
+              resetAt: "2026-04-30T18:00:00.000Z",
             },
             weekly: {
               label: "Weekly",
@@ -277,8 +283,15 @@ test("admin credentials endpoint includes Codex upstream limit status", async ()
     const codex = body.credentials.find((entry: CredentialRecord) => entry.id === "cred_codex_1")
     const openai = body.credentials.find((entry: CredentialRecord) => entry.id === "cred_openai_1")
     assert.equal(openai.upstreamStatus, undefined)
-    assert.equal(codex.upstreamStatus.limits.fiveHour.usedPercent, 30)
+    assert.equal(codex.upstreamStatus.limits.fiveHour.usedPercent, 100)
     assert.equal(codex.upstreamStatus.limits.weekly.usedPercent, 33)
+    assert.equal(codex.cachedTokens, 50)
+    assert.equal(codex.totalTokens, 0)
+    assert.deepEqual(codex.eligibility, {
+      state: "exhausted",
+      reason: "5h limit exhausted",
+      resetAt: "2026-04-30T18:00:00.000Z",
+    })
   } finally {
     server.close()
     await once(server, "close")
@@ -335,6 +348,7 @@ test("admin usage endpoint includes every credential with recorded usage and Cod
       createCredential("cred_codex_1", {
         provider: "codex_oauth",
         activeLeases: 0,
+        cachedTokens: 50,
         totalTokens: 0,
       }),
     ],
@@ -351,9 +365,9 @@ test("admin usage endpoint includes every credential with recorded usage and Cod
           limits: {
             fiveHour: {
               label: "5h",
-              usedPercent: 30,
+              usedPercent: 100,
               windowMinutes: 300,
-              resetAt: "2026-04-26T15:00:00.000Z",
+              resetAt: "2026-04-30T18:00:00.000Z",
             },
             weekly: {
               label: "Weekly",
@@ -385,6 +399,7 @@ test("admin usage endpoint includes every credential with recorded usage and Cod
         provider: "openai",
         state: "healthy",
         activeLeases: 2,
+        cachedTokens: 0,
         totalTokens: 900,
         totalRequests: 9,
         lastUsedAt: null,
@@ -397,6 +412,7 @@ test("admin usage endpoint includes every credential with recorded usage and Cod
         provider: "codex_oauth",
         state: "healthy",
         activeLeases: 0,
+        cachedTokens: 50,
         totalTokens: 0,
         totalRequests: 0,
         lastUsedAt: null,
@@ -410,9 +426,9 @@ test("admin usage endpoint includes every credential with recorded usage and Cod
           limits: {
             fiveHour: {
               label: "5h",
-              usedPercent: 30,
+              usedPercent: 100,
               windowMinutes: 300,
-              resetAt: "2026-04-26T15:00:00.000Z",
+              resetAt: "2026-04-30T18:00:00.000Z",
             },
             weekly: {
               label: "Weekly",
@@ -421,6 +437,11 @@ test("admin usage endpoint includes every credential with recorded usage and Cod
               resetAt: "2026-05-01T12:00:00.000Z",
             },
           },
+        },
+        eligibility: {
+          state: "exhausted",
+          reason: "5h limit exhausted",
+          resetAt: "2026-04-30T18:00:00.000Z",
         },
       },
     ])

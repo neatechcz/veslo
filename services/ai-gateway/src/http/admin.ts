@@ -66,7 +66,9 @@ export type AdminUserRecord = {
 };
 
 export type CredentialRecord = AdminCredentialRecord & {
+  cachedTokens?: number;
   upstreamStatus?: CodexUsageStatus | null;
+  eligibility?: AdminCredentialEligibility;
 };
 
 export type SessionRecord = AdminSessionRecord;
@@ -80,11 +82,19 @@ export type AdminCredentialUsageRecord = UsageCredentialAggregate & {
   provider: string | null;
   state: CredentialState | null;
   activeLeases: number;
+  cachedTokens: number;
   upstreamStatus: CodexUsageStatus | null;
+  eligibility?: AdminCredentialEligibility;
 };
 
 export type UsageResponse = Omit<UsageAggregateResponse, "credentialUsage"> & {
   credentialUsage: AdminCredentialUsageRecord[];
+};
+
+export type AdminCredentialEligibility = {
+  state: "eligible" | "exhausted" | "unavailable" | "unhealthy" | "draining" | "revoked";
+  reason: string | null;
+  resetAt: string | null;
 };
 
 export type AdminUserAiAccessRecord = {
@@ -272,6 +282,7 @@ export class MySqlAdminCredentialReadRepository implements AdminCredentialReadRe
       this.db
         .select({
           credentialRecordId: credentialUsageEventTable.credential_record_id,
+          cachedTokens: sql<number>`coalesce(sum(${credentialUsageEventTable.cached_tokens}), 0)`,
           totalTokens: sql<number>`coalesce(sum(${credentialUsageEventTable.total_tokens}), 0)`,
         })
         .from(credentialUsageEventTable)
@@ -283,6 +294,9 @@ export class MySqlAdminCredentialReadRepository implements AdminCredentialReadRe
     );
     const totalTokensByCredential = new Map(
       usageRows.map((row) => [row.credentialRecordId, Number(row.totalTokens ?? 0)]),
+    );
+    const cachedTokensByCredential = new Map(
+      usageRows.map((row) => [row.credentialRecordId, Number(row.cachedTokens ?? 0)]),
     );
 
     return credentialRows.map((row) => ({
@@ -296,6 +310,7 @@ export class MySqlAdminCredentialReadRepository implements AdminCredentialReadRe
       alertCount: 0,
       lastRefreshAt: toIsoString(row.updated_at),
       lastFailureAt: row.state === "healthy" ? null : toIsoString(row.updated_at),
+      cachedTokens: cachedTokensByCredential.get(row.id) ?? 0,
       totalTokens: totalTokensByCredential.get(row.id) ?? 0,
       nextRotationAt: null,
       linkedAlertIds: [],
@@ -511,6 +526,7 @@ function readCredentialUsage(usage: UsageAggregateResponse): UsageCredentialAggr
   return usage.topCredentials.map((entry) => ({
     id: entry.id,
     label: entry.label,
+    cachedTokens: 0,
     totalTokens: entry.totalTokens,
     totalRequests: requestsByCredentialId.get(entry.id) ?? 0,
     lastUsedAt: null,
@@ -531,6 +547,67 @@ function mergeCredentialFilters(
     }
   }
   return Array.from(filters.entries()).map(([id, label]) => ({ id, label }));
+}
+
+function readCachedTokens(entry: UsageCredentialAggregate | CredentialRecord | null | undefined): number {
+  const cachedTokens = (entry as { cachedTokens?: unknown } | null | undefined)?.cachedTokens;
+  return typeof cachedTokens === "number" && Number.isFinite(cachedTokens) ? cachedTokens : 0;
+}
+
+function hasCachedTokens(entry: UsageCredentialAggregate | CredentialRecord | null | undefined): boolean {
+  const cachedTokens = (entry as { cachedTokens?: unknown } | null | undefined)?.cachedTokens;
+  return typeof cachedTokens === "number" && Number.isFinite(cachedTokens);
+}
+
+function normalizeCodexEligibilityReason(reason: string | null): string | null {
+  if (!reason) {
+    return null;
+  }
+
+  const match = reason.match(/^(.+?)\s+Codex limit is exhausted\.$/);
+  if (match?.[1]) {
+    return `${match[1]} limit exhausted`;
+  }
+
+  return reason;
+}
+
+function credentialStateEligibility(credential: CredentialRecord): AdminCredentialEligibility | null {
+  if (credential.state === "draining") {
+    return { state: "draining", reason: "Credential is draining.", resetAt: null };
+  }
+
+  if (credential.state === "revoked") {
+    return { state: "revoked", reason: "Credential is revoked.", resetAt: null };
+  }
+
+  if (credential.state === "unhealthy" || credential.state === "degraded") {
+    return { state: "unhealthy", reason: "Credential is not healthy.", resetAt: null };
+  }
+
+  return null;
+}
+
+function readCodexCredentialEligibility(
+  credential: CredentialRecord,
+  upstreamStatus: CodexUsageStatus | null,
+  now: Date,
+): AdminCredentialEligibility {
+  const stateEligibility = credentialStateEligibility(credential);
+  if (stateEligibility) {
+    return stateEligibility;
+  }
+
+  if (!upstreamStatus) {
+    return { state: "unavailable", reason: "No upstream status.", resetAt: null };
+  }
+
+  const eligibility = evaluateCodexCredentialEligibility(upstreamStatus, now);
+  return {
+    state: eligibility.state,
+    reason: normalizeCodexEligibilityReason(eligibility.reason),
+    resetAt: "resetAt" in eligibility ? eligibility.resetAt : null,
+  };
 }
 
 function toIsoString(value: Date | string | null) {
@@ -718,6 +795,7 @@ export function createDefaultAdminService(
     deps.auditRepository ?? getDefaultRepositories().auditRepository;
   const getSecretStore = () =>
     deps.secretStore ?? getDefaultRepositories().secretStore;
+  const now = deps.now ?? (() => new Date());
   const codexStatusProvider =
     deps.codexStatusProvider ??
     (getCredentialSecretLookupRepository()
@@ -798,12 +876,16 @@ export function createDefaultAdminService(
           return credential;
         }
 
+        const upstreamStatus = await statusProvider.getStatus({
+          credentialId: credential.id,
+          credentialName: credential.name,
+        });
+
         return {
           ...credential,
-          upstreamStatus: await statusProvider.getStatus({
-            credentialId: credential.id,
-            credentialName: credential.name,
-          }),
+          cachedTokens: readCachedTokens(credential),
+          upstreamStatus,
+          eligibility: readCodexCredentialEligibility(credential, upstreamStatus, now()),
         };
       }),
     );
@@ -891,6 +973,9 @@ export function createDefaultAdminService(
                 provider: credential.provider,
                 state: credential.state,
                 activeLeases: credential.activeLeases,
+                cachedTokens: historical && hasCachedTokens(historical)
+                  ? readCachedTokens(historical)
+                  : readCachedTokens(credential),
                 totalTokens: historical?.totalTokens ?? 0,
                 totalRequests: historical?.totalRequests ?? 0,
                 lastUsedAt: historical?.lastUsedAt ?? null,
@@ -903,6 +988,9 @@ export function createDefaultAdminService(
                           credentialName: credential.name,
                         })
                     : null,
+                eligibility: credential.provider === "codex_oauth" && credential.eligibility
+                  ? credential.eligibility
+                  : undefined,
               };
             }),
           )
@@ -913,6 +1001,7 @@ export function createDefaultAdminService(
             provider: null,
             state: null,
             activeLeases: 0,
+            cachedTokens: readCachedTokens(entry),
             totalTokens: entry.totalTokens,
             totalRequests: entry.totalRequests,
             lastUsedAt: entry.lastUsedAt,
@@ -1326,6 +1415,7 @@ function toAdminCredentialRecord(record: GatewayCredentialRecord): CredentialRec
     lastRefreshAt: record.updatedAt.toISOString(),
     lastFailureAt: record.lastFailureAt instanceof Date ? record.lastFailureAt.toISOString() : null,
     totalTokens: 0,
+    cachedTokens: 0,
     nextRotationAt: null,
     linkedAlertIds: [],
   };
