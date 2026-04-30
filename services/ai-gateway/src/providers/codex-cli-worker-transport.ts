@@ -244,21 +244,43 @@ function readCodexTokenUsageFromText(text: string): TokenUsageAccounting | null 
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const parsed = parseJsonRecord(lines[index])
     const payload = getRecord(parsed?.payload)
-    if (getString(payload, "type") !== "token_count") {
+    if (!payload || getString(payload, "type") !== "token_count") {
       continue
     }
 
-    const info = getRecord(payload.info) ?? payload
-    const inputTokens = readFiniteNumber(info.input_tokens) ?? 0
-    const outputTokens = readFiniteNumber(info.output_tokens) ?? 0
-    const cachedTokens = readFiniteNumber(info.cached_tokens) ?? 0
-    const totalTokens = readFiniteNumber(info.total_tokens) ?? inputTokens + outputTokens
+    const usage = readCodexTokenUsageFromPayload(payload)
+    if (usage) {
+      return usage
+    }
+  }
+
+  return null
+}
+
+function readCodexTokenUsageFromPayload(payload: Record<string, unknown>): TokenUsageAccounting | null {
+  const info = getRecord(payload.info)
+  const candidates = [getRecord(info?.total_token_usage), info, payload].filter(
+    (candidate): candidate is Record<string, unknown> => candidate !== null,
+  )
+
+  for (const candidate of candidates) {
+    const inputTokens = readFiniteNumber(candidate.input_tokens)
+    const outputTokens = readFiniteNumber(candidate.output_tokens)
+    const cachedTokens = readFiniteNumber(candidate.cached_tokens)
+    const totalTokens = readFiniteNumber(candidate.total_tokens)
+
+    if (inputTokens === null && outputTokens === null && cachedTokens === null && totalTokens === null) {
+      continue
+    }
+
+    const normalizedInputTokens = inputTokens ?? 0
+    const normalizedOutputTokens = outputTokens ?? 0
 
     return {
-      inputTokens,
-      outputTokens,
-      cachedTokens,
-      totalTokens,
+      inputTokens: normalizedInputTokens,
+      outputTokens: normalizedOutputTokens,
+      cachedTokens: cachedTokens ?? 0,
+      totalTokens: totalTokens ?? normalizedInputTokens + normalizedOutputTokens,
     }
   }
 
