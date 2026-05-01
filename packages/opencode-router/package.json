@@ -1,6 +1,6 @@
 {
   "name": "veslo-code-router",
-  "version": "2026.4.0",
+  "version": "2026.5.0",
   "description": "veslo-code-router: Slack + Telegram bridge + directory routing for a running opencode server",
   "private": false,
   "type": "module",
