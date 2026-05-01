@@ -7,6 +7,7 @@ import express from "express"
 import type {
   AdminAlertRecord,
   AdminAuditRecord,
+  AdminCredentialEligibility,
   AdminCredentialOption,
   AdminCredentialRecord,
   AdminRouteDeps,
@@ -80,30 +81,16 @@ type ManagedAiAdminUiOptions = {
   secrets: SecretStore
 }
 
-type AdminCredentialEligibility = {
-  state: "eligible" | "exhausted" | "unavailable" | "unhealthy" | "draining" | "revoked"
-  reason: string | null
-  resetAt: string | null
-}
-
 type DecoratedAdminCredentialRecord = AdminCredentialRecord & {
   cachedTokens?: number
   upstreamStatus?: CodexUsageStatus | null
   eligibility?: AdminCredentialEligibility
 }
 
-type DecoratedAdminUsageResponse = Omit<UsageAggregateResponse, "credentialUsage"> & {
-  credentialUsage: Array<
-    UsageCredentialAggregate & {
-      name: string
-      provider: string | null
-      state: string | null
-      activeLeases: number
-      lastUsedAt: string | null
-      upstreamStatus: CodexUsageStatus | null
-      eligibility?: AdminCredentialEligibility
-    }
-  >
+type AdminUsageFilters = {
+  credentialId: string | null
+  userId: string | null
+  orgId: string | null
 }
 
 export function createManagedAiAdminRouteDeps(
@@ -217,14 +204,15 @@ export function createManagedAiAdminRouteDeps(
     )
   }
 
-  async function withCredentialUsage(usage: UsageAggregateResponse): Promise<DecoratedAdminUsageResponse> {
+  async function withCredentialUsage(usage: UsageAggregateResponse, filters: AdminUsageFilters): Promise<AdminUsageResponse> {
     const credentials = await listCredentialsWithAlerts()
     const historicalUsage = readCredentialUsage(usage)
     const historicalByCredentialId = new Map(historicalUsage.map((entry) => [entry.id, entry]))
     const credentialLabels = new Map(credentials.map((credential) => [credential.id, credential.name]))
+    const usageCredentials = selectCredentialUsageCredentials(credentials, historicalByCredentialId, filters)
     const credentialUsage =
-      credentials.length > 0
-        ? credentials.map((credential) => {
+      usageCredentials.length > 0
+        ? usageCredentials.map((credential) => {
             const historical = historicalByCredentialId.get(credential.id)
             return {
               id: credential.id,
@@ -241,7 +229,7 @@ export function createManagedAiAdminRouteDeps(
               eligibility: credential.provider === "codex_oauth" ? credential.eligibility : undefined,
             }
           })
-        : historicalUsage.map((entry) => ({
+        : credentials.length === 0 ? historicalUsage.map((entry) => ({
             id: entry.id,
             label: entry.label,
             name: entry.label,
@@ -253,7 +241,7 @@ export function createManagedAiAdminRouteDeps(
             totalRequests: entry.totalRequests,
             lastUsedAt: readLastUsedAt(entry),
             upstreamStatus: null,
-          }))
+          })) : []
 
     return {
       ...usage,
@@ -591,13 +579,16 @@ export function createManagedAiAdminRouteDeps(
           throw new HttpError("usage_read_model_unavailable", 503)
         }
 
-        const usage = await aggregateUsage.call(deps.usage, {
-          groupBy: normalizeGroupBy(req.query.groupBy),
+        const filters = {
           credentialId: readQueryString(req.query.credentialId),
           userId: readQueryString(req.query.userId),
           orgId: readQueryString(req.query.orgId),
+        }
+        const usage = await aggregateUsage.call(deps.usage, {
+          groupBy: normalizeGroupBy(req.query.groupBy),
+          ...filters,
         })
-        return (await withCredentialUsage(usage)) as AdminUsageResponse
+        return withCredentialUsage(usage, filters)
       } catch (error) {
         return handleRouteError(res, error, "usage_lookup_failed")
       }
@@ -865,6 +856,22 @@ function mergeCredentialFilters(
     }
   }
   return Array.from(filters.entries()).map(([id, label]) => ({ id, label }))
+}
+
+function selectCredentialUsageCredentials(
+  credentials: DecoratedAdminCredentialRecord[],
+  historicalByCredentialId: Map<string, UsageCredentialAggregate>,
+  filters: AdminUsageFilters,
+): DecoratedAdminCredentialRecord[] {
+  if (filters.credentialId) {
+    return credentials.filter((credential) => credential.id === filters.credentialId)
+  }
+
+  if (filters.userId || filters.orgId) {
+    return credentials.filter((credential) => historicalByCredentialId.has(credential.id))
+  }
+
+  return credentials
 }
 
 function readCachedTokens(entry: unknown): number {

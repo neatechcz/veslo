@@ -1,6 +1,7 @@
 import express from "express"
 import { OrgRole } from "../db/schema.js"
 import type { ManagedAiProvider } from "../managed-ai/providers/ids.js"
+import type { CodexUsageStatus } from "../managed-ai/usage/codex-status.js"
 
 export type AdminSessionOrganization = {
   id: string
@@ -100,6 +101,25 @@ export type AdminUsageSeries = {
   totalRequests: number
 }
 
+export type AdminCredentialEligibility = {
+  state: "eligible" | "exhausted" | "unavailable" | "unhealthy" | "draining" | "revoked"
+  reason: string | null
+  resetAt: string | null
+}
+
+export type AdminCredentialUsageRecord = AdminUsageLabel & {
+  name: string
+  provider: string | null
+  state: AdminCredentialRecord["state"] | null
+  activeLeases: number
+  cachedTokens: number
+  totalTokens: number
+  totalRequests: number
+  lastUsedAt: string | null
+  upstreamStatus: CodexUsageStatus | null
+  eligibility?: AdminCredentialEligibility
+}
+
 export type AdminUsageResponse = {
   summary: {
     totalTokens: number
@@ -115,7 +135,7 @@ export type AdminUsageResponse = {
   topCredentials: Array<AdminUsageLabel & { totalTokens: number }>
   topUsers: Array<AdminUsageLabel & { totalTokens: number }>
   topOrgs: Array<AdminUsageLabel & { totalTokens: number }>
-  credentialUsage?: Array<AdminUsageLabel & { cachedTokens: number; totalTokens: number; totalRequests: number }>
+  credentialUsage: AdminCredentialUsageRecord[]
 }
 
 export type AdminAlertRecord = {

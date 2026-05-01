@@ -170,6 +170,12 @@ function createReadModelApp(options: {
   credentials?: ReturnType<typeof createCredential>[]
   usage?: ReturnType<typeof createUsageResponse>
   codexStatusProvider?: { getStatus(input: { credentialId: string; credentialName: string }): Promise<unknown> }
+  onAggregateUsageInput?: (input: {
+    groupBy: string
+    credentialId: string | null
+    userId: string | null
+    orgId: string | null
+  }) => void
 } = {}) {
   const session = createSession()
   const credentials = options.credentials ?? [createCredential("cred_openai_1")]
@@ -216,6 +222,7 @@ function createReadModelApp(options: {
         usage: {
           async aggregateUsage(input) {
             assert.equal(input.groupBy, options.usage?.groupBy ?? "user")
+            options.onAggregateUsageInput?.(input)
             return options.usage ?? createUsageResponse()
           },
         } as any,
@@ -432,6 +439,126 @@ test("GET /admin/api/usage includes rich credential usage with cached tokens and
         },
       },
     ])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/api/usage filtered by credential only returns the selected credential row", async () => {
+  const usage = {
+    ...createUsageResponse(),
+    groupBy: "credential" as const,
+    series: [
+      {
+        key: "cred_codex_1",
+        label: "cred_codex_1",
+        totalTokens: 120,
+        totalRequests: 3,
+      },
+    ],
+    topCredentials: [{ id: "cred_codex_1", label: "cred_codex_1", totalTokens: 120 }],
+    credentialUsage: [
+      {
+        id: "cred_codex_1",
+        label: "cred_codex_1",
+        cachedTokens: 12,
+        totalTokens: 120,
+        totalRequests: 3,
+      },
+    ],
+  }
+  const app = createReadModelApp({
+    credentials: [
+      createCredential("cred_openai_1"),
+      createCredential("cred_codex_1", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+    ],
+    usage,
+    codexStatusProvider: {
+      async getStatus() {
+        return createCodexStatus()
+      },
+    },
+    onAggregateUsageInput(input) {
+      assert.equal(input.credentialId, "cred_codex_1")
+      assert.equal(input.userId, null)
+      assert.equal(input.orgId, null)
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/usage?groupBy=credential&credentialId=cred_codex_1`)
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.credentialUsage.map((entry: { id: string }) => entry.id), ["cred_codex_1"])
+    assert.equal(body.credentialUsage[0].cachedTokens, 12)
+    assert.equal(body.credentialUsage[0].totalTokens, 120)
+    assert.equal(body.credentialUsage[0].eligibility.state, "exhausted")
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/api/usage filtered by user only returns credentials in the filtered aggregate", async () => {
+  const usage = {
+    ...createUsageResponse(),
+    groupBy: "user" as const,
+    credentialUsage: [
+      {
+        id: "cred_codex_1",
+        label: "cred_codex_1",
+        cachedTokens: 9,
+        totalTokens: 90,
+        totalRequests: 2,
+      },
+    ],
+    topCredentials: [{ id: "cred_codex_1", label: "cred_codex_1", totalTokens: 90 }],
+  }
+  const app = createReadModelApp({
+    credentials: [
+      createCredential("cred_openai_1"),
+      createCredential("cred_codex_1", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+      createCredential("cred_anthropic_1", {
+        provider: "anthropic",
+      }),
+    ],
+    usage,
+    codexStatusProvider: {
+      async getStatus() {
+        return createCodexStatus()
+      },
+    },
+    onAggregateUsageInput(input) {
+      assert.equal(input.credentialId, null)
+      assert.equal(input.userId, "user_admin")
+      assert.equal(input.orgId, null)
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/usage?groupBy=user&userId=user_admin`)
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.credentialUsage.map((entry: { id: string }) => entry.id), ["cred_codex_1"])
+    assert.equal(body.credentialUsage[0].cachedTokens, 9)
+    assert.equal(body.credentialUsage[0].totalTokens, 90)
   } finally {
     server.close()
     await once(server, "close")
