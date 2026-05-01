@@ -6,9 +6,9 @@ Veslo is local-first. Cloud services are data, sync, auth, and provisioning infr
 
 ## Managed-AI routing and admin visibility
 
-DEN is the source of signed-in identity and managed-AI assignment. The inference base URL is separate: desktop and orchestrator development defaults can still route managed-AI requests to the standalone AI Gateway, including `https://veslo-ai-gateway-dev.onrender.com`.
+Signed-in app identity and desktop handoff can come from DEN, but managed-AI assignment and admin truth follow the service that receives the routed managed-AI request. The inference base URL is separate from DEN auth: desktop and orchestrator development defaults can still route managed-AI requests to the standalone AI Gateway, including `https://veslo-ai-gateway-dev.onrender.com`.
 
-Admin visibility follows the service that receives the managed-AI request. For the dev gateway, standalone AI Gateway admin shows routed usage, rotated credentials, exhausted Codex credentials, cached tokens, and credential eligibility. DEN admin mirrors the signed-in user's managed-AI assignment and eligibility view so operators can confirm what the user is allowed to use before the request is routed.
+For the dev gateway, standalone AI Gateway admin is where operators inspect routed usage, rotated credentials, exhausted Codex credentials, cached tokens, and credential eligibility. DEN admin and standalone AI Gateway admin show the same assignment and credential state only when they share the same managed-AI backing database and config.
 
 ## Den control plane on Render
 

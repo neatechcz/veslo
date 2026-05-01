@@ -56,11 +56,11 @@ Important behaviors:
 
 ## Managed AI Runtime
 
-When managed AI is enabled, signed-in identity and provider/model/Codex assignment come from DEN. The inference request may still be routed to the configured managed-AI base URL rather than DEN itself; in development that can be the standalone AI Gateway at `https://veslo-ai-gateway-dev.onrender.com`.
+When managed AI is enabled, signed-in app identity and desktop handoff can come from DEN. Provider/model/Codex assignment is resolved by the service that receives the routed managed-AI request. If the configured managed-AI base URL points at standalone AI Gateway, including the development gateway at `https://veslo-ai-gateway-dev.onrender.com`, standalone AI Gateway's AI-access repository and admin UI are the runtime authority. DEN and standalone AI Gateway show the same assignment and credential state only when they share the same managed-AI backing database and config.
 
 Managed-AI usage is attributed by request, user, org, session, and credential. Accounting stores input tokens, output tokens, cached tokens, and total tokens from the routed provider response or Codex transport result.
 
-Codex limit exhaustion is temporary ineligibility, not a credential health failure. When every automatically selectable Codex credential is exhausted, the request fails explicitly with `all_codex_credentials_exhausted`. Permanent auth failures remain credential health failures.
+Codex limit exhaustion is temporary ineligibility, not a credential health failure. When every automatically selectable Codex credential is exhausted, the request fails explicitly with `all_codex_credentials_exhausted`. Permanent OAuth, token refresh, or auth-material failures are credential health failures when the credential lifecycle marks them that way; provider/runtime auth failures during selection or routing can also make a credential ineligible or rebindable without implying that every upstream invalid-auth response changes credential health.
 
 An assigned Codex credential is a hard constraint. If the assigned credential is exhausted or unavailable, the request fails explicitly instead of silently rotating to another credential. Automatic credential selection can rotate to another eligible credential.
 
