@@ -100,6 +100,16 @@ These control which Veslo server URL the app connects to and which bearer token 
 
 Invite-link and bundle-link parsing also lives in `veslo-server.ts`. Incoming query parameters can override the stored connection state for a launch flow.
 
+## Managed-AI Routing and Accounting
+
+Managed-AI identity and assignment are DEN-backed: the signed-in DEN user determines provider/model access and any assigned Codex credential. The managed-AI inference base URL is configured separately from that identity. Desktop and orchestrator development defaults use the standalone AI Gateway at `https://veslo-ai-gateway-dev.onrender.com`; `VESLO_MANAGED_AI_BASE_URL` overrides it, with `VESLO_AI_GATEWAY_BASE_URL` retained as the legacy fallback.
+
+Usage events are attributed by request id, DEN user id, org id, session id, and credential record. Token accounting persists input, output, cached tokens, and total tokens so admin views can group usage by user, org, session, or credential without recomputing totals.
+
+Codex limit exhaustion is modeled as temporary ineligibility. If no automatically selectable Codex credential is eligible, the surfaced reason is `all_codex_credentials_exhausted`; this does not by itself mark a credential unhealthy. Permanent upstream auth failures, such as invalid or revoked auth, are credential health failures.
+
+When DEN assigns a specific Codex credential, that assignment is binding for the session request. Exhausted or unavailable assigned credentials fail explicitly; only automatic selection may rotate among other eligible credentials.
+
 ## Workspace-Scoped Config
 
 Workspace config lives in:

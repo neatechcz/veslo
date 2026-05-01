@@ -54,6 +54,16 @@ Important behaviors:
 - model variant controls reasoning effort or variant selection
 - auto-compaction is a separate preference
 
+## Managed AI Runtime
+
+When managed AI is enabled, signed-in identity and provider/model/Codex assignment come from DEN. The inference request may still be routed to the configured managed-AI base URL rather than DEN itself; in development that can be the standalone AI Gateway at `https://veslo-ai-gateway-dev.onrender.com`.
+
+Managed-AI usage is attributed by request, user, org, session, and credential. Accounting stores input tokens, output tokens, cached tokens, and total tokens from the routed provider response or Codex transport result.
+
+Codex limit exhaustion is temporary ineligibility, not a credential health failure. When every automatically selectable Codex credential is exhausted, the request fails explicitly with `all_codex_credentials_exhausted`. Permanent auth failures remain credential health failures.
+
+An assigned Codex credential is a hard constraint. If the assigned credential is exhausted or unavailable, the request fails explicitly instead of silently rotating to another credential. Automatic credential selection can rotate to another eligible credential.
+
 ## Permissions
 
 Permission prompts are surfaced as first-class runtime events. The session UI is responsible for keeping approval flows visible and understandable rather than hiding them in logs.
