@@ -890,13 +890,15 @@ function renderCredentials() {
       <td>${escapeHtml(formatDate(credential.lastRefreshAt))}</td>
       <td>${escapeHtml(formatNumber(credential.cachedTokens))}</td>
       <td>${renderCredentialEligibility(credential)}</td>
+      <td>${renderCredentialCodexStatus(credential)}</td>
     </tr>`;
   }).join("");
 
-  els.credentialsTableBody.innerHTML = rows || `<tr><td colspan="8">No credentials found.</td></tr>`;
+  els.credentialsTableBody.innerHTML = rows || `<tr><td colspan="9">No credentials found.</td></tr>`;
 
   const selected = currentCredential();
   if (selected) {
+    const selectedUpstreamStatus = formatCredentialUpstreamStatus(selected);
     els.credentialDetail.innerHTML = `
       <p class="eyebrow">Selected credential</p>
       <h3>${escapeHtml(selected.name)}</h3>
@@ -909,6 +911,8 @@ function renderCredentials() {
         <div class="detail-line"><span>Total tokens</span><strong>${escapeHtml(formatNumber(selected.totalTokens))}</strong></div>
         ${selected.provider === "codex_oauth" ? `
           <div class="detail-line"><span>Eligibility</span><strong>${escapeHtml(selected.eligibility?.state || "unknown")}</strong></div>
+          <div class="detail-line"><span>Codex upstream</span><strong>${escapeHtml(selectedUpstreamStatus.label)}</strong></div>
+          <div class="detail-line"><span>Codex limits</span><strong>${escapeHtml(selectedUpstreamStatus.limitSummary || "5h: unknown | Weekly: unknown")}</strong></div>
         ` : ""}
       </div>
       <div class="button-row">
@@ -982,8 +986,9 @@ function renderUsage() {
     </article>
   `).join("") || `<article class="list-card active"><div><strong>No usage</strong><p>No usage matched the selected filters.</p></div></article>`;
 
-  els.usageCredentialTableBody.innerHTML = credentialUsage.map((credential) => `
-    <tr>
+  els.usageCredentialTableBody.innerHTML = credentialUsage.map((credential) => {
+    const upstreamStatus = formatCredentialUpstreamStatus(credential);
+    return `<tr>
       <td><strong>${escapeHtml(credential.name || credential.label || credential.id)}</strong><span>${escapeHtml(credential.id)}</span></td>
       <td>${escapeHtml(formatProviderName(credential.provider))}</td>
       <td><span class="status-chip">${escapeHtml(credential.state || "unknown")}</span></td>
@@ -993,8 +998,9 @@ function renderUsage() {
       <td>${escapeHtml(formatNumber(credential.activeLeases))}</td>
       <td>${escapeHtml(formatDate(credential.lastUsedAt))}</td>
       <td>${renderCredentialEligibility(credential)}</td>
-    </tr>
-  `).join("") || `<tr><td colspan="9">No credential usage matched the selected filters.</td></tr>`;
+      <td><span class="status-chip ${escapeHtml(upstreamStatus.tone)}">${escapeHtml(upstreamStatus.label)}</span><span>${escapeHtml(upstreamStatus.detail)}</span><span>${escapeHtml(upstreamStatus.limitSummary)}</span></td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="10">No credential usage matched the selected filters.</td></tr>`;
 }
 
 function formatProviderName(provider) {
@@ -1004,9 +1010,50 @@ function formatProviderName(provider) {
   return provider || "Unknown";
 }
 
+function formatCredentialUpstreamStatus(credential) {
+  const status = credential?.upstreamStatus;
+  if (!status) {
+    return {
+      label: "No upstream status",
+      detail: "Historical usage only.",
+      limitSummary: "",
+      tone: "info",
+    };
+  }
+
+  if (status.available) {
+    const limitSummary = formatCredentialLimitSummary(status);
+    const hasLimits = Boolean(status.limits?.fiveHour || status.limits?.weekly);
+    return {
+      label: status.label || (hasLimits ? "Codex limits available" : "Codex OK, limits unknown"),
+      detail: [status.detail, status.checkedAt ? `Checked ${formatDate(status.checkedAt)}` : ""]
+        .filter(Boolean)
+        .join(" "),
+      limitSummary,
+      tone: hasLimits ? "success" : "info",
+    };
+  }
+
+  return {
+    label: status.label || "Codex limits unavailable",
+    detail: status.detail || "Status probe did not return limits.",
+    limitSummary: "",
+    tone: "warning",
+  };
+}
+
+function renderCredentialCodexStatus(credential) {
+  if (credential.provider !== "codex_oauth") {
+    return `<span class="muted">N/A</span>`;
+  }
+
+  const upstreamStatus = formatCredentialUpstreamStatus(credential);
+  return `<span class="status-chip ${escapeHtml(upstreamStatus.tone)}">${escapeHtml(upstreamStatus.label)}</span><span>${escapeHtml(upstreamStatus.limitSummary)}</span><span>${escapeHtml(upstreamStatus.detail)}</span>`;
+}
+
 function renderCredentialEligibility(credential) {
   if (credential.provider !== "codex_oauth") {
-    return `<span class="status-chip info">N/A</span>`;
+    return `<span class="muted">N/A</span>`;
   }
 
   const eligibility = credential.eligibility || {
@@ -1028,6 +1075,30 @@ function credentialEligibilityTone(state) {
   if (state === "exhausted" || state === "draining") return "warning";
   if (state === "revoked" || state === "unhealthy") return "danger";
   return "info";
+}
+
+function formatCredentialLimitSummary(status) {
+  const limits = status?.limits;
+
+  const lines = [
+    formatLimitWindowSummary("5h", limits?.fiveHour),
+    formatLimitWindowSummary("Weekly", limits?.weekly),
+  ];
+
+  if (typeof status.planType === "string" && status.planType.trim()) {
+    lines.unshift(`Plan ${status.planType}`);
+  }
+
+  return lines.join(" | ");
+}
+
+function formatLimitWindowSummary(label, entry) {
+  if (!entry) {
+    return `${label}: unknown`;
+  }
+  const used = typeof entry.usedPercent === "number" ? `${Math.round(entry.usedPercent)}% used` : "usage unknown";
+  const reset = entry.resetAt ? `resets ${formatDate(entry.resetAt)}` : "reset unknown";
+  return `${entry.label || label}: ${used}, ${reset}`;
 }
 
 function renderAlerts() {
