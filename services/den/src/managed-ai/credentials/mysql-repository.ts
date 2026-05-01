@@ -176,6 +176,7 @@ export class MySqlCredentialRepository implements CredentialRepository {
       this.db
         .select({
           credentialRecordId: credentialUsageEventTable.credential_record_id,
+          cachedTokens: sql<number>`coalesce(sum(${credentialUsageEventTable.cached_tokens}), 0)`,
           totalTokens: sql<number>`coalesce(sum(${credentialUsageEventTable.total_tokens}), 0)`,
         })
         .from(credentialUsageEventTable)
@@ -194,6 +195,12 @@ export class MySqlCredentialRepository implements CredentialRepository {
         Number(row.totalTokens ?? 0),
       ]),
     )
+    const cachedTokensByCredential = new Map(
+      usageRows.map((row: { credentialRecordId: string; cachedTokens: number }) => [
+        row.credentialRecordId,
+        Number(row.cachedTokens ?? 0),
+      ]),
+    )
 
     return credentialRows.map((row: typeof credentialRecordTable.$inferSelect) => ({
       id: row.id,
@@ -206,6 +213,7 @@ export class MySqlCredentialRepository implements CredentialRepository {
       alertCount: 0,
       lastRefreshAt: asDate(row.updated_at).toISOString(),
       lastFailureAt: row.state === "healthy" ? null : asDate(row.updated_at).toISOString(),
+      cachedTokens: cachedTokensByCredential.get(row.id) ?? 0,
       totalTokens: totalTokensByCredential.get(row.id) ?? 0,
       nextRotationAt: null,
       linkedAlertIds: [],

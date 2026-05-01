@@ -67,6 +67,7 @@ export type AdminCredentialRecord = {
   alertCount: number
   lastRefreshAt: string
   lastFailureAt: string | null
+  cachedTokens: number
   totalTokens: number
   nextRotationAt: string | null
   linkedAlertIds: string[]

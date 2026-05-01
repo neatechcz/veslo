@@ -31,8 +31,9 @@ import { evaluateCodexCredentialEligibility } from "../usage/codex-eligibility.j
 import {
   CachedCodexCredentialStatusProvider,
   type CodexCredentialStatusProvider,
+  type CodexUsageStatus,
 } from "../usage/codex-status.js"
-import type { UsageRepository } from "../usage/repository.js"
+import type { UsageAggregateResponse, UsageCredentialAggregate, UsageRepository } from "../usage/repository.js"
 
 class HttpError extends Error {
   constructor(
@@ -77,6 +78,32 @@ type ManagedAiAdminUiOptions = {
   audit: AuditRepository
   credentials: CredentialRepository
   secrets: SecretStore
+}
+
+type AdminCredentialEligibility = {
+  state: "eligible" | "exhausted" | "unavailable" | "unhealthy" | "draining" | "revoked"
+  reason: string | null
+  resetAt: string | null
+}
+
+type DecoratedAdminCredentialRecord = AdminCredentialRecord & {
+  cachedTokens?: number
+  upstreamStatus?: CodexUsageStatus | null
+  eligibility?: AdminCredentialEligibility
+}
+
+type DecoratedAdminUsageResponse = Omit<UsageAggregateResponse, "credentialUsage"> & {
+  credentialUsage: Array<
+    UsageCredentialAggregate & {
+      name: string
+      provider: string | null
+      state: string | null
+      activeLeases: number
+      lastUsedAt: string | null
+      upstreamStatus: CodexUsageStatus | null
+      eligibility?: AdminCredentialEligibility
+    }
+  >
 }
 
 export function createManagedAiAdminRouteDeps(
@@ -130,7 +157,7 @@ export function createManagedAiAdminRouteDeps(
     }
   }
 
-  async function listCredentialsWithAlerts(): Promise<AdminCredentialRecord[]> {
+  async function listCredentialsWithAlerts(): Promise<DecoratedAdminCredentialRecord[]> {
     const listAdminCredentials = deps.credentials.listAdminCredentials
     if (!listAdminCredentials) {
       throw new HttpError("credential_read_model_unavailable", 503)
@@ -152,7 +179,7 @@ export function createManagedAiAdminRouteDeps(
       unresolvedAlertsByCredentialId.set(alert.credentialId, existing)
     }
 
-    return credentials.map((credential) => {
+    const withAlerts = credentials.map((credential) => {
       const linkedAlerts = unresolvedAlertsByCredentialId.get(credential.id) ?? []
       return {
         ...credential,
@@ -160,6 +187,93 @@ export function createManagedAiAdminRouteDeps(
         linkedAlertIds: linkedAlerts.map((alert) => alert.id),
       }
     })
+
+    return withCodexUpstreamStatus(withAlerts)
+  }
+
+  async function withCodexUpstreamStatus(
+    credentials: AdminCredentialRecord[],
+  ): Promise<DecoratedAdminCredentialRecord[]> {
+    return Promise.all(
+      credentials.map(async (credential) => {
+        if (credential.provider !== "codex_oauth") {
+          return credential
+        }
+
+        const upstreamStatus = codexStatusProvider
+          ? await codexStatusProvider.getStatus({
+              credentialId: credential.id,
+              credentialName: credential.name,
+            })
+          : null
+
+        return {
+          ...credential,
+          cachedTokens: readCachedTokens(credential),
+          upstreamStatus,
+          eligibility: readCodexCredentialEligibility(credential, upstreamStatus, now()),
+        }
+      }),
+    )
+  }
+
+  async function withCredentialUsage(usage: UsageAggregateResponse): Promise<DecoratedAdminUsageResponse> {
+    const credentials = await listCredentialsWithAlerts()
+    const historicalUsage = readCredentialUsage(usage)
+    const historicalByCredentialId = new Map(historicalUsage.map((entry) => [entry.id, entry]))
+    const credentialLabels = new Map(credentials.map((credential) => [credential.id, credential.name]))
+    const credentialUsage =
+      credentials.length > 0
+        ? credentials.map((credential) => {
+            const historical = historicalByCredentialId.get(credential.id)
+            return {
+              id: credential.id,
+              label: credential.name,
+              name: credential.name,
+              provider: credential.provider,
+              state: credential.state,
+              activeLeases: credential.activeLeases,
+              cachedTokens: historical ? readCachedTokens(historical) : 0,
+              totalTokens: historical?.totalTokens ?? 0,
+              totalRequests: historical?.totalRequests ?? 0,
+              lastUsedAt: readLastUsedAt(historical),
+              upstreamStatus: credential.provider === "codex_oauth" ? credential.upstreamStatus ?? null : null,
+              eligibility: credential.provider === "codex_oauth" ? credential.eligibility : undefined,
+            }
+          })
+        : historicalUsage.map((entry) => ({
+            id: entry.id,
+            label: entry.label,
+            name: entry.label,
+            provider: null,
+            state: null,
+            activeLeases: 0,
+            cachedTokens: readCachedTokens(entry),
+            totalTokens: entry.totalTokens,
+            totalRequests: entry.totalRequests,
+            lastUsedAt: readLastUsedAt(entry),
+            upstreamStatus: null,
+          }))
+
+    return {
+      ...usage,
+      filters: {
+        ...usage.filters,
+        credentials: mergeCredentialFilters(credentials, usage.filters.credentials),
+      },
+      series:
+        usage.groupBy === "credential"
+          ? usage.series.map((entry) => ({
+              ...entry,
+              label: credentialLabels.get(entry.key) ?? entry.label,
+            }))
+          : usage.series,
+      topCredentials: usage.topCredentials.map((entry) => ({
+        ...entry,
+        label: credentialLabels.get(entry.id) ?? entry.label,
+      })),
+      credentialUsage,
+    }
   }
 
   async function listEligibleCodexCredentials(): Promise<AdminCredentialOption[] | undefined> {
@@ -477,12 +591,13 @@ export function createManagedAiAdminRouteDeps(
           throw new HttpError("usage_read_model_unavailable", 503)
         }
 
-        return aggregateUsage.call(deps.usage, {
+        const usage = await aggregateUsage.call(deps.usage, {
           groupBy: normalizeGroupBy(req.query.groupBy),
           credentialId: readQueryString(req.query.credentialId),
           userId: readQueryString(req.query.userId),
           orgId: readQueryString(req.query.orgId),
-        }) as Promise<AdminUsageResponse>
+        })
+        return (await withCredentialUsage(usage)) as AdminUsageResponse
       } catch (error) {
         return handleRouteError(res, error, "usage_lookup_failed")
       }
@@ -714,6 +829,103 @@ function createDefaultCodexStatusProvider(
       return secret?.kind === "codex_auth_json" ? secret.authJson : null
     },
   })
+}
+
+function readCredentialUsage(usage: UsageAggregateResponse): UsageCredentialAggregate[] {
+  if (Array.isArray(usage.credentialUsage) && usage.credentialUsage.length > 0) {
+    return usage.credentialUsage
+  }
+
+  const requestsByCredentialId = new Map(
+    usage.groupBy === "credential"
+      ? usage.series.map((entry) => [entry.key, entry.totalRequests] as const)
+      : [],
+  )
+
+  return usage.topCredentials.map((entry) => ({
+    id: entry.id,
+    label: entry.label,
+    cachedTokens: 0,
+    totalTokens: entry.totalTokens,
+    totalRequests: requestsByCredentialId.get(entry.id) ?? 0,
+  }))
+}
+
+function mergeCredentialFilters(
+  credentials: DecoratedAdminCredentialRecord[],
+  existingFilters: UsageAggregateResponse["filters"]["credentials"],
+) {
+  const filters = new Map<string, string>()
+  for (const credential of credentials) {
+    filters.set(credential.id, credential.name)
+  }
+  for (const filter of existingFilters) {
+    if (!filters.has(filter.id)) {
+      filters.set(filter.id, filter.label)
+    }
+  }
+  return Array.from(filters.entries()).map(([id, label]) => ({ id, label }))
+}
+
+function readCachedTokens(entry: unknown): number {
+  const cachedTokens = (entry as { cachedTokens?: unknown } | null | undefined)?.cachedTokens
+  return typeof cachedTokens === "number" && Number.isFinite(cachedTokens) ? cachedTokens : 0
+}
+
+function readLastUsedAt(entry: unknown): string | null {
+  const lastUsedAt = (entry as { lastUsedAt?: unknown } | null | undefined)?.lastUsedAt
+  return typeof lastUsedAt === "string" ? lastUsedAt : null
+}
+
+function normalizeCodexEligibilityReason(reason: string | null): string | null {
+  if (!reason) {
+    return null
+  }
+
+  const match = reason.match(/^(.+?)\s+Codex limit is exhausted\.$/)
+  if (match?.[1]) {
+    return `${match[1]} limit exhausted`
+  }
+
+  return reason
+}
+
+function credentialStateEligibility(credential: AdminCredentialRecord): AdminCredentialEligibility | null {
+  if (credential.state === "draining") {
+    return { state: "draining", reason: "Credential is draining.", resetAt: null }
+  }
+
+  if (credential.state === "revoked") {
+    return { state: "revoked", reason: "Credential is revoked.", resetAt: null }
+  }
+
+  if (credential.state === "unhealthy" || credential.state === "degraded") {
+    return { state: "unhealthy", reason: "Credential is not healthy.", resetAt: null }
+  }
+
+  return null
+}
+
+function readCodexCredentialEligibility(
+  credential: AdminCredentialRecord,
+  upstreamStatus: CodexUsageStatus | null,
+  now: Date,
+): AdminCredentialEligibility {
+  const stateEligibility = credentialStateEligibility(credential)
+  if (stateEligibility) {
+    return stateEligibility
+  }
+
+  if (!upstreamStatus) {
+    return { state: "unavailable", reason: "No upstream status.", resetAt: null }
+  }
+
+  const eligibility = evaluateCodexCredentialEligibility(upstreamStatus, now)
+  return {
+    state: eligibility.state,
+    reason: normalizeCodexEligibilityReason(eligibility.reason),
+    resetAt: "resetAt" in eligibility ? eligibility.resetAt : null,
+  }
 }
 
 function handleRouteError<T>(res: express.Response, error: unknown, fallback: string): T | null {
@@ -1038,6 +1250,7 @@ function _toAdminCredentialRecord(record: CredentialRecord): AdminCredentialReco
     alertCount: 0,
     lastRefreshAt: record.updatedAt.toISOString(),
     lastFailureAt: record.lastFailureAt instanceof Date ? record.lastFailureAt.toISOString() : null,
+    cachedTokens: 0,
     totalTokens: 0,
     nextRotationAt: null,
     linkedAlertIds: [],

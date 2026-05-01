@@ -47,7 +47,7 @@ function createSession() {
   }
 }
 
-function createCredential(id: string) {
+function createCredential(id: string, overrides: Record<string, unknown> = {}) {
   return {
     id,
     name: `Credential ${id}`,
@@ -59,9 +59,11 @@ function createCredential(id: string) {
     alertCount: 0,
     lastRefreshAt: "2026-04-02T10:00:00.000Z",
     lastFailureAt: null,
+    cachedTokens: 0,
     totalTokens: 144,
     nextRotationAt: null,
     linkedAlertIds: [],
+    ...overrides,
   }
 }
 
@@ -109,6 +111,31 @@ function createUsageResponse() {
   }
 }
 
+function createCodexStatus() {
+  return {
+    available: true,
+    source: "codex_exec_rate_limits",
+    label: "Codex limits available",
+    detail: null,
+    checkedAt: "2026-04-28T10:00:00.000Z",
+    planType: "plus",
+    limits: {
+      fiveHour: {
+        label: "5h",
+        usedPercent: 100,
+        windowMinutes: 300,
+        resetAt: "2026-04-30T18:00:00.000Z",
+      },
+      weekly: {
+        label: "Weekly",
+        usedPercent: 33,
+        windowMinutes: 10080,
+        resetAt: "2026-05-01T12:00:00.000Z",
+      },
+    },
+  }
+}
+
 function createAlert(id: string) {
   return {
     id,
@@ -139,8 +166,13 @@ function createAuditEvent(id: string) {
   }
 }
 
-function createReadModelApp() {
+function createReadModelApp(options: {
+  credentials?: ReturnType<typeof createCredential>[]
+  usage?: ReturnType<typeof createUsageResponse>
+  codexStatusProvider?: { getStatus(input: { credentialId: string; credentialName: string }): Promise<unknown> }
+} = {}) {
   const session = createSession()
+  const credentials = options.credentials ?? [createCredential("cred_openai_1")]
   const app = express()
   app.use(express.json())
   app.use(
@@ -169,7 +201,7 @@ function createReadModelApp() {
         },
         credentials: {
           async listAdminCredentials() {
-            return [createCredential("cred_openai_1")]
+            return credentials
           },
         } as any,
         leases: {
@@ -183,10 +215,12 @@ function createReadModelApp() {
         secrets: {} as any,
         usage: {
           async aggregateUsage(input) {
-            assert.equal(input.groupBy, "user")
-            return createUsageResponse()
+            assert.equal(input.groupBy, options.usage?.groupBy ?? "user")
+            return options.usage ?? createUsageResponse()
           },
         } as any,
+        codexStatusProvider: options.codexStatusProvider as any,
+        now: () => new Date("2026-04-30T12:00:00.000Z"),
       }),
     }),
   )
@@ -211,6 +245,49 @@ test("GET /admin/api/credentials returns repository-backed credentials", async (
           linkedAlertIds: ["alert_health_1"],
         },
       ],
+    })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/api/credentials includes Codex token totals and eligibility", async () => {
+  const app = createReadModelApp({
+    credentials: [
+      createCredential("cred_openai_1"),
+      createCredential("cred_codex_1", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        cachedTokens: 50,
+        totalTokens: 0,
+      }),
+    ],
+    codexStatusProvider: {
+      async getStatus() {
+        return createCodexStatus()
+      },
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/credentials`)
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    const codex = body.credentials.find((entry: { id: string }) => entry.id === "cred_codex_1")
+    const openai = body.credentials.find((entry: { id: string }) => entry.id === "cred_openai_1")
+    assert.equal(openai.upstreamStatus, undefined)
+    assert.equal(codex.cachedTokens, 50)
+    assert.equal(codex.totalTokens, 0)
+    assert.equal(codex.upstreamStatus.limits.fiveHour.usedPercent, 100)
+    assert.deepEqual(codex.eligibility, {
+      state: "exhausted",
+      reason: "5h limit exhausted",
+      resetAt: "2026-04-30T18:00:00.000Z",
     })
   } finally {
     server.close()
@@ -250,7 +327,111 @@ test("GET /admin/api/usage aggregates usage by user", async () => {
     const response = await fetch(`http://127.0.0.1:${port}/admin/api/usage?groupBy=user`)
 
     assert.equal(response.status, 200)
-    assert.deepEqual(await response.json(), createUsageResponse())
+    assert.deepEqual(await response.json(), {
+      ...createUsageResponse(),
+      credentialUsage: [
+        {
+          id: "cred_openai_1",
+          label: "Credential cred_openai_1",
+          name: "Credential cred_openai_1",
+          provider: "openai",
+          state: "healthy",
+          activeLeases: 2,
+          cachedTokens: 0,
+          totalTokens: 900,
+          totalRequests: 0,
+          lastUsedAt: null,
+          upstreamStatus: null,
+        },
+      ],
+    })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/api/usage includes rich credential usage with cached tokens and Codex eligibility", async () => {
+  const usage = {
+    ...createUsageResponse(),
+    groupBy: "credential" as const,
+    series: [
+      {
+        key: "cred_openai_1",
+        label: "cred_openai_1",
+        totalTokens: 900,
+        totalRequests: 9,
+      },
+    ],
+    credentialUsage: [
+      {
+        id: "cred_openai_1",
+        label: "cred_openai_1",
+        cachedTokens: 4,
+        totalTokens: 900,
+        totalRequests: 9,
+      },
+    ],
+  }
+  const app = createReadModelApp({
+    credentials: [
+      createCredential("cred_openai_1"),
+      createCredential("cred_codex_1", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        cachedTokens: 50,
+        totalTokens: 0,
+      }),
+    ],
+    usage,
+    codexStatusProvider: {
+      async getStatus() {
+        return createCodexStatus()
+      },
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/usage?groupBy=credential`)
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.credentialUsage, [
+      {
+        id: "cred_openai_1",
+        label: "Credential cred_openai_1",
+        name: "Credential cred_openai_1",
+        provider: "openai",
+        state: "healthy",
+        activeLeases: 2,
+        cachedTokens: 4,
+        totalTokens: 900,
+        totalRequests: 9,
+        lastUsedAt: null,
+        upstreamStatus: null,
+      },
+      {
+        id: "cred_codex_1",
+        label: "Credential cred_codex_1",
+        name: "Credential cred_codex_1",
+        provider: "codex_oauth",
+        state: "healthy",
+        activeLeases: 0,
+        cachedTokens: 0,
+        totalTokens: 0,
+        totalRequests: 0,
+        lastUsedAt: null,
+        upstreamStatus: createCodexStatus(),
+        eligibility: {
+          state: "exhausted",
+          reason: "5h limit exhausted",
+          resetAt: "2026-04-30T18:00:00.000Z",
+        },
+      },
+    ])
   } finally {
     server.close()
     await once(server, "close")

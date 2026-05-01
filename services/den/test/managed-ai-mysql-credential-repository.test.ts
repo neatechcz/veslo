@@ -84,6 +84,55 @@ function createRecentUsageDb(rows: unknown[]) {
   }
 }
 
+function createAdminCredentialsDb(input: {
+  credentials: unknown[]
+  activeLeases: unknown[]
+  usage: unknown[]
+}) {
+  const selections: unknown[] = []
+
+  return {
+    db: {
+      select(selection?: unknown) {
+        const index = selections.length
+        selections.push(selection)
+        return {
+          from() {
+            if (index === 0) {
+              return {
+                async orderBy() {
+                  return input.credentials
+                },
+              }
+            }
+
+            if (index === 1) {
+              return {
+                innerJoin() {
+                  return {
+                    async groupBy() {
+                      return input.activeLeases
+                    },
+                  }
+                },
+              }
+            }
+
+            return {
+              async groupBy() {
+                return input.usage
+              },
+            }
+          },
+        }
+      },
+    },
+    selections() {
+      return selections
+    },
+  }
+}
+
 test("listActiveLeasesByCredential counts active leases by credential id", async () => {
   const fakeDb = createActiveLeaseDb([
     {
@@ -176,4 +225,58 @@ test("listRecentCredentialUsage skips the database for an empty credential set",
     }),
     [],
   )
+})
+
+test("listAdminCredentials exposes cached and total token totals", async () => {
+  const fakeDb = createAdminCredentialsDb({
+    credentials: [
+      {
+        id: "cred_codex_1",
+        name: "Shared Codex",
+        provider: "codex_oauth",
+        credential_type: "oauth",
+        state: "healthy",
+        owner_user_id: "platform:codex",
+        updated_at: new Date("2026-04-29T10:00:00.000Z"),
+      },
+    ],
+    activeLeases: [
+      {
+        credentialRecordId: "cred_codex_1",
+        activeLeases: 3,
+      },
+    ],
+    usage: [
+      {
+        credentialRecordId: "cred_codex_1",
+        cachedTokens: 11,
+        totalTokens: 42,
+      },
+    ],
+  })
+  const repository = new MySqlCredentialRepository(fakeDb.db)
+
+  const credentials = await repository.listAdminCredentials()
+
+  assert.deepEqual(credentials, [
+    {
+      id: "cred_codex_1",
+      name: "Shared Codex",
+      provider: "codex_oauth",
+      type: "oauth",
+      state: "healthy",
+      scope: "platform:codex",
+      activeLeases: 3,
+      alertCount: 0,
+      lastRefreshAt: "2026-04-29T10:00:00.000Z",
+      lastFailureAt: null,
+      cachedTokens: 11,
+      totalTokens: 42,
+      nextRotationAt: null,
+      linkedAlertIds: [],
+    },
+  ])
+  assert.ok((fakeDb.selections()[2] as Record<string, unknown>).cachedTokens)
+  assert.ok((fakeDb.selections()[2] as Record<string, unknown>).totalTokens)
+  assert.equal((fakeDb.selections()[2] as Record<string, unknown>).credentialRecordId, credentialUsageEventTable.credential_record_id)
 })

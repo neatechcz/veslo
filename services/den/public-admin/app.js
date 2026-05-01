@@ -1,6 +1,7 @@
 const STORAGE_KEY = "veslo.den.admin.token";
 const BROWSER_AUTH_STORAGE_KEY = "veslo.den.admin.browser-auth";
 const OPENAI_OAUTH_STORAGE_KEY = "veslo.den.admin.openai-oauth";
+const CODEX_EXHAUSTED_REASON = "all_codex_credentials_exhausted";
 const DEFAULT_PAGES = ["credentials", "sessions", "usage", "alerts", "users", "audit"];
 const AUTH_STATE_BYTES = 32;
 const AUTH_CODE_VERIFIER_BYTES = 32;
@@ -72,6 +73,7 @@ const els = {
   usageTotalRequests: document.getElementById("usage-total-requests"),
   usageTopCredential: document.getElementById("usage-top-credential"),
   usageSeries: document.getElementById("usage-series"),
+  usageCredentialTableBody: document.getElementById("usage-credential-table-body"),
   alertList: document.getElementById("alert-list"),
   alertDetail: document.getElementById("alert-detail"),
   userSearch: document.getElementById("user-search"),
@@ -886,10 +888,12 @@ function renderCredentials() {
       <td><a href="/admin/alerts" data-open-alerts="${escapeHtml(credential.id)}">${escapeHtml(String(credential.alertCount))} active alerts</a></td>
       <td>${escapeHtml(String(credential.activeLeases))}</td>
       <td>${escapeHtml(formatDate(credential.lastRefreshAt))}</td>
+      <td>${escapeHtml(formatNumber(credential.cachedTokens))}</td>
+      <td>${renderCredentialEligibility(credential)}</td>
     </tr>`;
   }).join("");
 
-  els.credentialsTableBody.innerHTML = rows || `<tr><td colspan="6">No credentials found.</td></tr>`;
+  els.credentialsTableBody.innerHTML = rows || `<tr><td colspan="8">No credentials found.</td></tr>`;
 
   const selected = currentCredential();
   if (selected) {
@@ -901,7 +905,11 @@ function renderCredentials() {
         <div class="detail-line"><span>Linked alerts</span><strong>${escapeHtml(String(selected.alertCount))}</strong></div>
         <div class="detail-line"><span>Last failure</span><strong>${escapeHtml(formatDate(selected.lastFailureAt))}</strong></div>
         <div class="detail-line"><span>Rotation</span><strong>${escapeHtml(formatDate(selected.nextRotationAt))}</strong></div>
+        <div class="detail-line"><span>Cached tokens</span><strong>${escapeHtml(formatNumber(selected.cachedTokens))}</strong></div>
         <div class="detail-line"><span>Total tokens</span><strong>${escapeHtml(formatNumber(selected.totalTokens))}</strong></div>
+        ${selected.provider === "codex_oauth" ? `
+          <div class="detail-line"><span>Eligibility</span><strong>${escapeHtml(selected.eligibility?.state || "unknown")}</strong></div>
+        ` : ""}
       </div>
       <div class="button-row">
         <button class="button button-secondary" type="button" data-credential-action="drain">Drain</button>
@@ -949,7 +957,7 @@ function renderUsage() {
     return;
   }
 
-  const { filters, series, summary, topCredentials } = state.usage;
+  const { credentialUsage = [], filters, series, summary, topCredentials } = state.usage;
   els.usageGroupBy.value = state.usageFilters.groupBy;
   els.usageCredentialFilter.innerHTML = `<option value="">All credentials</option>${filters.credentials.map((entry) => `<option value="${escapeHtml(entry.id)}"${entry.id === state.usageFilters.credentialId ? " selected" : ""}>${escapeHtml(entry.label)}</option>`).join("")}`;
   els.usageUserFilter.innerHTML = `<option value="">All users</option>${filters.users.map((entry) => `<option value="${escapeHtml(entry.id)}"${entry.id === state.usageFilters.userId ? " selected" : ""}>${escapeHtml(entry.label)}</option>`).join("")}`;
@@ -973,6 +981,53 @@ function renderUsage() {
       <span class="status-chip">${escapeHtml(formatNumber(entry.totalTokens))} tokens</span>
     </article>
   `).join("") || `<article class="list-card active"><div><strong>No usage</strong><p>No usage matched the selected filters.</p></div></article>`;
+
+  els.usageCredentialTableBody.innerHTML = credentialUsage.map((credential) => `
+    <tr>
+      <td><strong>${escapeHtml(credential.name || credential.label || credential.id)}</strong><span>${escapeHtml(credential.id)}</span></td>
+      <td>${escapeHtml(formatProviderName(credential.provider))}</td>
+      <td><span class="status-chip">${escapeHtml(credential.state || "unknown")}</span></td>
+      <td>${escapeHtml(formatNumber(credential.totalRequests))}</td>
+      <td>${escapeHtml(formatNumber(credential.cachedTokens))}</td>
+      <td>${escapeHtml(formatNumber(credential.totalTokens))}</td>
+      <td>${escapeHtml(formatNumber(credential.activeLeases))}</td>
+      <td>${escapeHtml(formatDate(credential.lastUsedAt))}</td>
+      <td>${renderCredentialEligibility(credential)}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="9">No credential usage matched the selected filters.</td></tr>`;
+}
+
+function formatProviderName(provider) {
+  if (provider === "openai") return "OpenAI";
+  if (provider === "anthropic") return "Anthropic";
+  if (provider === "codex_oauth") return "Codex / ChatGPT";
+  return provider || "Unknown";
+}
+
+function renderCredentialEligibility(credential) {
+  if (credential.provider !== "codex_oauth") {
+    return `<span class="status-chip info">N/A</span>`;
+  }
+
+  const eligibility = credential.eligibility || {
+    state: "unavailable",
+    reason: "Eligibility status unavailable",
+    resetAt: null,
+  };
+  const tone = credentialEligibilityTone(eligibility.state);
+  const reasonText = eligibility.reason === CODEX_EXHAUSTED_REASON
+    ? "Codex credential pool exhausted."
+    : eligibility.reason;
+  const reason = reasonText ? ` ${reasonText}` : "";
+  const reset = eligibility.resetAt ? ` Resets ${formatDate(eligibility.resetAt)}` : "";
+  return `<span class="status-chip ${escapeHtml(tone)}">${escapeHtml(eligibility.state)}</span><span>${escapeHtml(`${reason}${reset}`.trim())}</span>`;
+}
+
+function credentialEligibilityTone(state) {
+  if (state === "eligible") return "success";
+  if (state === "exhausted" || state === "draining") return "warning";
+  if (state === "revoked" || state === "unhealthy") return "danger";
+  return "info";
 }
 
 function renderAlerts() {
