@@ -252,6 +252,153 @@ test("codex_oauth proxy forwards through the worker transport with a sticky leas
   }
 })
 
+test("codex_oauth proxy records usage metadata from streaming worker responses", async () => {
+  const recordUsageCalls: RecordUsageInput[] = []
+
+  const app = createApp({
+    proxy: {
+      gatewaySessions: {
+        async resolveSession(token: string) {
+          assert.equal(token, "gateway-access-token")
+          return {
+            token,
+            user: {
+              id: "user_gateway",
+              email: "gateway@example.test",
+            },
+          }
+        },
+      },
+      aiAccess: {
+        async getUserAiAccess(userId: string) {
+          assert.equal(userId, "user_gateway")
+          return createAiAccess()
+        },
+        async upsertUserAiAccess() {
+          throw new Error("unused")
+        },
+      },
+      credentials: {
+        async getCredentialRecordById() {
+          return null
+        },
+        async listHealthyCredentialRecordIds() {
+          return []
+        },
+        async getCredentialRecordByBindingId(bindingId: string) {
+          assert.equal(bindingId, "binding_codex_primary")
+          return createCredentialRecord()
+        },
+        async getBindingByCredentialId() {
+          return createCredentialBinding()
+        },
+        async markCredentialState() {},
+      },
+      secrets: {
+        async get() {
+          return {
+            kind: "codex_auth_json",
+            authJson: "{}",
+          }
+        },
+      },
+      usageRepository: {
+        async recordUsage(input: RecordUsageInput) {
+          recordUsageCalls.push(input)
+        },
+      },
+      leaseBroker: {
+        async getOrCreateActiveLease(scope) {
+          return {
+            id: "lease_codex_1",
+            ownerUserId: scope.ownerUserId,
+            provider: scope.provider,
+            sessionId: scope.sessionId,
+            activeBindingId: "binding_codex_primary",
+          }
+        },
+        async handleUpstreamFailure() {
+          assert.fail("failure handler should not be reached in streaming usage test")
+        },
+      } as never,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          assert.fail("token broker should not run for codex worker route")
+        },
+      },
+      openAiTransport: {
+        async chatCompletions() {
+          assert.fail("openai transport should not be reached in codex proxy test")
+        },
+      },
+      anthropicTransport: {
+        async messages() {
+          assert.fail("anthropic transport should not be reached in codex proxy test")
+        },
+      },
+      codexOAuthTransport: {
+        async chatCompletions() {
+          return {
+            status: 200,
+            headers: {
+              "content-type": "text/event-stream",
+              "x-request-id": "codex_req_stream_usage_1",
+            },
+            body: 'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
+            usage: {
+              inputTokens: 17,
+              outputTokens: 6,
+              cachedTokens: 11,
+              totalTokens: 23,
+            },
+          }
+        },
+      },
+    } as never,
+  })
+
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/providers/codex_oauth/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer gateway-access-token",
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_codex_stream_1",
+      },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        stream: true,
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    })
+
+    assert.equal(response.status, 200)
+    assert.equal(await response.text(), 'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n')
+    assert.deepEqual(recordUsageCalls, [
+      {
+        requestId: "codex_req_stream_usage_1",
+        ownerUserId: "user_gateway",
+        provider: "codex_oauth",
+        sessionId: "session_codex_stream_1",
+        credentialId: "cred_codex_1",
+        bindingId: "binding_codex_primary",
+        model: "gpt-5.4",
+        inputTokens: 17,
+        outputTokens: 6,
+        cachedTokens: 11,
+        totalTokens: 23,
+      },
+    ])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("codex_oauth proxy rewrites unresolved opencode session placeholders to a user-scoped lease id", async () => {
   const leaseScopes: Array<{
     ownerUserId: string

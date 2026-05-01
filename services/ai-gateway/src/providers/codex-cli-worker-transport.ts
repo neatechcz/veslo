@@ -116,6 +116,7 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
           "content-type": "text/event-stream",
           "cache-control": "no-cache",
           connection: "keep-alive",
+          "x-request-id": id,
         },
         body: buildStreamingChatCompletionBody({
           id,
@@ -123,6 +124,7 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
           model,
           content: result.finalMessage,
         }),
+        ...(usage ? { usage } : {}),
       }
     }
 

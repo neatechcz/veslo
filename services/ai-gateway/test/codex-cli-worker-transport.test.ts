@@ -229,6 +229,17 @@ test("maps Codex direct token_count fields and falls back to input plus output t
 })
 
 test("returns OpenAI-compatible SSE chunks when Codex chat completion requests streaming", async () => {
+  const tokenCountLine = JSON.stringify({
+    payload: {
+      type: "token_count",
+      info: {
+        input_tokens: 17,
+        output_tokens: 6,
+        total_tokens: 23,
+        cached_tokens: 11,
+      },
+    },
+  })
   const transport = new CodexCliWorkerTransport({
     spawnCodex: async ({ prompt, model }) => {
       assert.equal(model, "gpt-5.4")
@@ -238,7 +249,7 @@ test("returns OpenAI-compatible SSE chunks when Codex chat completion requests s
         signal: null,
         timedOut: false,
         finalMessage: "stream ok",
-        stdout: "",
+        stdout: tokenCountLine,
         stderr: "",
       }
     },
@@ -256,6 +267,12 @@ test("returns OpenAI-compatible SSE chunks when Codex chat completion requests s
 
   assert.equal(response.status, 200)
   assert.equal(response.headers?.["content-type"], "text/event-stream")
+  assert.deepEqual((response as { usage?: unknown }).usage, {
+    inputTokens: 17,
+    outputTokens: 6,
+    cachedTokens: 11,
+    totalTokens: 23,
+  })
   assert.match(String(response.body), /"object":"chat\.completion\.chunk"/)
   assert.match(String(response.body), /"content":"stream ok"/)
   assert.match(String(response.body), /data: \[DONE\]/)

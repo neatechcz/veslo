@@ -1,4 +1,5 @@
 import type { UpstreamAuth } from "../credentials/token-broker.js";
+import type { TokenUsageAccounting } from "../usage/token-accounting.js";
 
 export type ChatCompletionsTransportInput = {
   upstreamAuth: UpstreamAuth;
@@ -19,6 +20,7 @@ export type ProviderTransportResponse = {
   status: number;
   body: unknown;
   headers?: Record<string, string>;
+  usage?: TokenUsageAccounting;
 };
 
 export type ProviderTransportErrorOptions = {

@@ -49,7 +49,7 @@ export function evaluateCodexCredentialEligibility(
 }
 
 function isPermanentUnavailableStatus(statusText: string): boolean {
-  return /invalid_grant|invalid token|revoked auth|access token could not be refreshed|refresh token|HTTP error:\s*401|401\s+Unauthorized|missing field `id_token`|missing Codex auth\.json/i
+  return /invalid_grant|invalid token|revoked auth|access token could not be refreshed|refresh token|HTTP error:\s*401|401\s+Unauthorized|missing field `id_token`|missing Codex auth\.json|please run `?codex login`?|authentication required/i
     .test(statusText);
 }
 

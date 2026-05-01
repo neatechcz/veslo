@@ -143,6 +143,17 @@ test("unavailable status with invalid token is permanently ineligible", () => {
   assert.equal(eligibility.resetAt, null)
 })
 
+test("unavailable status with codex login required is permanently ineligible", () => {
+  const eligibility = evaluateCodexCredentialEligibility(
+    unavailableStatus("Error: Please run `codex login`.\nAuthentication required."),
+    NOW,
+  )
+
+  assert.equal(eligibility.eligible, false)
+  assert.equal(eligibility.state, "unavailable")
+  assert.equal(eligibility.resetAt, null)
+})
+
 test("unavailable status with transient ERROR stderr is eligible", () => {
   const eligibility = evaluateCodexCredentialEligibility(
     unavailableStatus("ERROR: network timeout while contacting api.openai.com"),
