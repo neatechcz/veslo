@@ -132,6 +132,30 @@ test("unavailable status with invalid_grant is permanently ineligible", () => {
   assert.equal(eligibility.resetAt, null);
 });
 
+test("unavailable status with invalid token is permanently ineligible", () => {
+  const eligibility = evaluateCodexCredentialEligibility(
+    unavailableStatus("ERROR: invalid token"),
+    NOW,
+  );
+
+  assert.equal(eligibility.eligible, false);
+  assert.equal(eligibility.state, "unavailable");
+  assert.equal(eligibility.resetAt, null);
+});
+
+test("unavailable status with transient ERROR stderr is eligible", () => {
+  const eligibility = evaluateCodexCredentialEligibility(
+    unavailableStatus("ERROR: network timeout while contacting api.openai.com"),
+    NOW,
+  );
+
+  assert.deepEqual(eligibility, {
+    eligible: true,
+    state: "eligible",
+    reason: null,
+  });
+});
+
 test("unavailable status with generic probe failure is eligible", () => {
   const eligibility = evaluateCodexCredentialEligibility(
     unavailableStatus("Codex status probe timed out."),

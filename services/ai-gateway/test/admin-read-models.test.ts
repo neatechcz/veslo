@@ -14,6 +14,7 @@ import {
 } from "../src/http/admin.js"
 import type { AlertRecord } from "../src/alerts/repository.js"
 import { createApp } from "../src/index.js"
+import type { AggregateUsageInput } from "../src/usage/repository.js"
 
 const AUTHORIZATION = { authorization: "Bearer admin-token" }
 
@@ -170,6 +171,7 @@ function createAdminApp(overrides: {
   alerts?: AlertRecord[]
   audit?: AuditRecord[]
   codexStatusProvider?: { getStatus(input: { credentialId: string; credentialName: string }): Promise<AdminCredentialUsageRecord["upstreamStatus"]> }
+  onAggregateUsageInput?: (input: AggregateUsageInput) => void
 }) {
   const service = createDefaultAdminService("http://den.example.test", {
     denClient: createDenClient(),
@@ -187,7 +189,8 @@ function createAdminApp(overrides: {
       async recordUsage() {
         return
       },
-      async aggregateUsage() {
+      async aggregateUsage(input) {
+        overrides.onAggregateUsageInput?.(input)
         return overrides.usage ?? createUsageResponse("total")
       },
     },
@@ -445,6 +448,177 @@ test("admin usage endpoint includes every credential with recorded usage and Cod
         },
       },
     ])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("admin usage endpoint filtered by credential only returns the selected credential row", async () => {
+  const usage: UsageResponse = {
+    ...createUsageResponse("credential"),
+    groupBy: "credential",
+    series: [
+      {
+        key: "cred_anthropic_1",
+        label: "cred_anthropic_1",
+        totalTokens: 120,
+        totalRequests: 3,
+      },
+    ],
+    topCredentials: [{ id: "cred_anthropic_1", label: "cred_anthropic_1", totalTokens: 120 }],
+    credentialUsage: [
+      {
+        id: "cred_anthropic_1",
+        label: "cred_anthropic_1",
+        cachedTokens: 12,
+        totalTokens: 120,
+        totalRequests: 3,
+        lastUsedAt: null,
+      },
+    ],
+  }
+  const app = createAdminApp({
+    credentials: [
+      createCredential("cred_openai_1"),
+      createCredential("cred_anthropic_1", { provider: "anthropic" }),
+    ],
+    usage,
+    onAggregateUsageInput(input) {
+      assert.equal(input.credentialId, "cred_anthropic_1")
+      assert.equal(input.userId, null)
+      assert.equal(input.orgId, null)
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/usage?groupBy=credential&credentialId=cred_anthropic_1`, {
+      headers: AUTHORIZATION,
+    })
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.credentialUsage.map((entry: { id: string }) => entry.id), ["cred_anthropic_1"])
+    assert.equal(body.credentialUsage[0].cachedTokens, 12)
+    assert.equal(body.credentialUsage[0].totalTokens, 120)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("admin usage endpoint filtered by user only returns credentials in the filtered aggregate", async () => {
+  const usage: UsageResponse = {
+    ...createUsageResponse("user"),
+    groupBy: "user",
+    topCredentials: [{ id: "cred_codex_1", label: "cred_codex_1", totalTokens: 90 }],
+    credentialUsage: [
+      {
+        id: "cred_codex_1",
+        label: "cred_codex_1",
+        cachedTokens: 9,
+        totalTokens: 90,
+        totalRequests: 2,
+        lastUsedAt: null,
+      },
+    ],
+  }
+  const app = createAdminApp({
+    credentials: [
+      createCredential("cred_openai_1"),
+      createCredential("cred_codex_1", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+      createCredential("cred_anthropic_1", { provider: "anthropic" }),
+    ],
+    usage,
+    codexStatusProvider: {
+      async getStatus() {
+        return null
+      },
+    },
+    onAggregateUsageInput(input) {
+      assert.equal(input.credentialId, null)
+      assert.equal(input.userId, "user_admin")
+      assert.equal(input.orgId, null)
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/usage?groupBy=user&userId=user_admin`, {
+      headers: AUTHORIZATION,
+    })
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.credentialUsage.map((entry: { id: string }) => entry.id), ["cred_codex_1"])
+    assert.equal(body.credentialUsage[0].cachedTokens, 9)
+    assert.equal(body.credentialUsage[0].totalTokens, 90)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("admin usage endpoint filtered by org only returns credentials in the filtered aggregate", async () => {
+  const usage: UsageResponse = {
+    ...createUsageResponse("org"),
+    groupBy: "org",
+    topCredentials: [{ id: "cred_anthropic_1", label: "cred_anthropic_1", totalTokens: 70 }],
+    credentialUsage: [
+      {
+        id: "cred_anthropic_1",
+        label: "cred_anthropic_1",
+        cachedTokens: 7,
+        totalTokens: 70,
+        totalRequests: 2,
+        lastUsedAt: "2026-04-29T12:30:00.000Z",
+      },
+    ],
+  }
+  const app = createAdminApp({
+    credentials: [
+      createCredential("cred_openai_1"),
+      createCredential("cred_codex_1", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+      createCredential("cred_anthropic_1", { provider: "anthropic" }),
+    ],
+    usage,
+    codexStatusProvider: {
+      async getStatus() {
+        return null
+      },
+    },
+    onAggregateUsageInput(input) {
+      assert.equal(input.credentialId, null)
+      assert.equal(input.userId, null)
+      assert.equal(input.orgId, "org_admin")
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/usage?groupBy=org&orgId=org_admin`, {
+      headers: AUTHORIZATION,
+    })
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.credentialUsage.map((entry: { id: string }) => entry.id), ["cred_anthropic_1"])
+    assert.equal(body.credentialUsage[0].lastUsedAt, "2026-04-29T12:30:00.000Z")
   } finally {
     server.close()
     await once(server, "close")

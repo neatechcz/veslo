@@ -60,3 +60,41 @@ test("reads Anthropic input and output token fields", () => {
     },
   );
 });
+
+test("reads Anthropic cache fields as cached tokens and adds them to total because input_tokens is uncached-only", () => {
+  assert.deepEqual(
+    readAnthropicUsage({
+      usage: {
+        input_tokens: 14,
+        cache_creation_input_tokens: 100,
+        cache_read_input_tokens: 25,
+        output_tokens: 9,
+      },
+    }),
+    {
+      inputTokens: 14,
+      outputTokens: 9,
+      cachedTokens: 125,
+      totalTokens: 148,
+    },
+  );
+});
+
+test("ignores non-finite and non-numeric Anthropic cache token fields", () => {
+  assert.deepEqual(
+    readAnthropicUsage({
+      usage: {
+        input_tokens: 14,
+        cache_creation_input_tokens: "100",
+        cache_read_input_tokens: Number.POSITIVE_INFINITY,
+        output_tokens: 9,
+      },
+    }),
+    {
+      inputTokens: 14,
+      outputTokens: 9,
+      cachedTokens: 0,
+      totalTokens: 23,
+    },
+  );
+});

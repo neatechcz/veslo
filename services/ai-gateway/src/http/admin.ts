@@ -549,6 +549,22 @@ function mergeCredentialFilters(
   return Array.from(filters.entries()).map(([id, label]) => ({ id, label }));
 }
 
+function selectCredentialUsageCredentials(
+  credentials: CredentialRecord[],
+  historicalByCredentialId: Map<string, UsageCredentialAggregate>,
+  filters: AggregateUsageInput,
+): CredentialRecord[] {
+  if (filters.credentialId) {
+    return credentials.filter((credential) => credential.id === filters.credentialId);
+  }
+
+  if (filters.userId || filters.orgId) {
+    return credentials.filter((credential) => historicalByCredentialId.has(credential.id));
+  }
+
+  return credentials;
+}
+
 function readCachedTokens(entry: UsageCredentialAggregate | CredentialRecord | null | undefined): number {
   const cachedTokens = (entry as { cachedTokens?: unknown } | null | undefined)?.cachedTokens;
   return typeof cachedTokens === "number" && Number.isFinite(cachedTokens) ? cachedTokens : 0;
@@ -952,54 +968,60 @@ export function createDefaultAdminService(
     usage: UsageAggregateResponse,
     credentials: CredentialRecord[],
     statusProvider: CodexCredentialStatusProvider,
+    filters: AggregateUsageInput,
   ): Promise<UsageResponse> {
     const historicalUsage = readCredentialUsage(usage);
     const historicalByCredentialId = new Map(historicalUsage.map((entry) => [entry.id, entry]));
     const credentialLabels = new Map(credentials.map((credential) => [credential.id, credential.name]));
-    const credentialUsage =
-      credentials.length > 0
-        ? await Promise.all(
-            credentials.map(async (credential) => {
-              const historical = historicalByCredentialId.get(credential.id);
-              return {
-                id: credential.id,
-                label: credential.name,
-                name: credential.name,
-                provider: credential.provider,
-                state: credential.state,
-                activeLeases: credential.activeLeases,
-                cachedTokens: historical ? historical.cachedTokens : 0,
-                totalTokens: historical?.totalTokens ?? 0,
-                totalRequests: historical?.totalRequests ?? 0,
-                lastUsedAt: historical?.lastUsedAt ?? null,
-                upstreamStatus:
-                  credential.provider === "codex_oauth"
-                    ? Object.hasOwn(credential, "upstreamStatus")
-                      ? credential.upstreamStatus ?? null
-                      : await statusProvider.getStatus({
-                          credentialId: credential.id,
-                          credentialName: credential.name,
-                        })
-                    : null,
-                eligibility: credential.provider === "codex_oauth" && credential.eligibility
-                  ? credential.eligibility
-                  : undefined,
-              };
-            }),
-          )
-        : historicalUsage.map((entry) => ({
-            id: entry.id,
-            label: entry.label,
-            name: entry.label,
-            provider: null,
-            state: null,
-            activeLeases: 0,
-            cachedTokens: readCachedTokens(entry),
-            totalTokens: entry.totalTokens,
-            totalRequests: entry.totalRequests,
-            lastUsedAt: entry.lastUsedAt,
-            upstreamStatus: null,
-          }));
+    const usageCredentials = selectCredentialUsageCredentials(credentials, historicalByCredentialId, filters);
+    let credentialUsage: AdminCredentialUsageRecord[];
+    if (usageCredentials.length > 0) {
+      credentialUsage = await Promise.all(
+        usageCredentials.map(async (credential) => {
+          const historical = historicalByCredentialId.get(credential.id);
+          return {
+            id: credential.id,
+            label: credential.name,
+            name: credential.name,
+            provider: credential.provider,
+            state: credential.state,
+            activeLeases: credential.activeLeases,
+            cachedTokens: historical ? historical.cachedTokens : 0,
+            totalTokens: historical?.totalTokens ?? 0,
+            totalRequests: historical?.totalRequests ?? 0,
+            lastUsedAt: historical?.lastUsedAt ?? null,
+            upstreamStatus:
+              credential.provider === "codex_oauth"
+                ? Object.hasOwn(credential, "upstreamStatus")
+                  ? credential.upstreamStatus ?? null
+                  : await statusProvider.getStatus({
+                      credentialId: credential.id,
+                      credentialName: credential.name,
+                    })
+                : null,
+            eligibility: credential.provider === "codex_oauth" && credential.eligibility
+              ? credential.eligibility
+              : undefined,
+          };
+        }),
+      );
+    } else if (credentials.length === 0) {
+      credentialUsage = historicalUsage.map((entry) => ({
+        id: entry.id,
+        label: entry.label,
+        name: entry.label,
+        provider: null,
+        state: null,
+        activeLeases: 0,
+        cachedTokens: readCachedTokens(entry),
+        totalTokens: entry.totalTokens,
+        totalRequests: entry.totalRequests,
+        lastUsedAt: entry.lastUsedAt,
+        upstreamStatus: null,
+      }));
+    } else {
+      credentialUsage = [];
+    }
 
     return {
       ...usage,
@@ -1230,6 +1252,7 @@ export function createDefaultAdminService(
         usage,
         await withCodexUpstreamStatus(credentials, codexStatusProvider),
         codexStatusProvider,
+        input,
       );
     },
     async listAlerts() {

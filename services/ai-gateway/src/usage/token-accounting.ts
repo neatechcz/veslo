@@ -35,12 +35,15 @@ export function readAnthropicUsage(body: unknown): TokenUsageAccounting | null {
 
   const inputTokens = readFiniteNumber(usage.input_tokens) ?? 0;
   const outputTokens = readFiniteNumber(usage.output_tokens) ?? 0;
+  const cachedTokens =
+    (readFiniteNumber(usage.cache_creation_input_tokens) ?? 0) +
+    (readFiniteNumber(usage.cache_read_input_tokens) ?? 0);
 
   return {
     inputTokens,
     outputTokens,
-    cachedTokens: 0,
-    totalTokens: inputTokens + outputTokens,
+    cachedTokens,
+    totalTokens: inputTokens + outputTokens + cachedTokens,
   };
 }
 

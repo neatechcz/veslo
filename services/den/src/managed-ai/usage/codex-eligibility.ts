@@ -49,7 +49,7 @@ export function evaluateCodexCredentialEligibility(
 }
 
 function isPermanentUnavailableStatus(statusText: string): boolean {
-  return /invalid_grant|access token could not be refreshed|refresh token|HTTP error:\s*401|401\s+Unauthorized|missing field `id_token`|missing Codex auth\.json|ERROR:/i
+  return /invalid_grant|invalid token|revoked auth|access token could not be refreshed|refresh token|HTTP error:\s*401|401\s+Unauthorized|missing field `id_token`|missing Codex auth\.json/i
     .test(statusText);
 }
 
@@ -58,7 +58,7 @@ function isHealthyProbeStatus(statusText: string): boolean {
 }
 
 function isGenericProbeFailure(statusText: string): boolean {
-  return /Codex status probe (?:failed|timed out|exited with code)|Codex probe failed|Codex probe did not return rate limits|Codex rate limit snapshot was not found/i
+  return /Codex status probe (?:failed|timed out|exited with code)|Codex probe failed|Codex probe did not return rate limits|Codex rate limit snapshot was not found|ERROR:/i
     .test(statusText);
 }
 
