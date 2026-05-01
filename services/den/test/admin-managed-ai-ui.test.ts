@@ -133,6 +133,7 @@ test("GET /admin/app.js uses DEN desktop auth and OpenAI OAuth credential routes
     assert.match(script, /cachedTokens/)
     assert.match(script, /totalTokens/)
     assert.match(script, /renderCredentialEligibility/)
+    // The static admin script binds DOM nodes at module load, so this test keeps helper coverage source-based.
     assert.match(script, /reasonText = eligibility\.reason === CODEX_EXHAUSTED_REASON/)
     assert.match(script, /credential\.provider !== "codex_oauth"[\s\S]*<span class="status-chip info">N\/A<\/span>/)
     assert.match(script, /<span class="status-chip \$\{escapeHtml\(tone\)\}">\$\{escapeHtml\(eligibility\.state\)\}<\/span>/)

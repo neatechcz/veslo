@@ -565,6 +565,63 @@ test("GET /admin/api/usage filtered by user only returns credentials in the filt
   }
 })
 
+test("GET /admin/api/usage filtered by org only returns credentials in the filtered aggregate", async () => {
+  const usage = {
+    ...createUsageResponse(),
+    groupBy: "org" as const,
+    credentialUsage: [
+      {
+        id: "cred_anthropic_1",
+        label: "cred_anthropic_1",
+        cachedTokens: 7,
+        totalTokens: 70,
+        totalRequests: 2,
+        lastUsedAt: "2026-04-29T12:30:00.000Z",
+      },
+    ],
+    topCredentials: [{ id: "cred_anthropic_1", label: "cred_anthropic_1", totalTokens: 70 }],
+  }
+  const app = createReadModelApp({
+    credentials: [
+      createCredential("cred_openai_1"),
+      createCredential("cred_codex_1", {
+        provider: "codex_oauth",
+        activeLeases: 0,
+        totalTokens: 0,
+      }),
+      createCredential("cred_anthropic_1", {
+        provider: "anthropic",
+      }),
+    ],
+    usage,
+    codexStatusProvider: {
+      async getStatus() {
+        return createCodexStatus()
+      },
+    },
+    onAggregateUsageInput(input) {
+      assert.equal(input.credentialId, null)
+      assert.equal(input.userId, null)
+      assert.equal(input.orgId, "org_admin")
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/usage?groupBy=org&orgId=org_admin`)
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.credentialUsage.map((entry: { id: string }) => entry.id), ["cred_anthropic_1"])
+    assert.equal(body.credentialUsage[0].lastUsedAt, "2026-04-29T12:30:00.000Z")
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("MySqlUsageRepository aggregates stored totals by org", async () => {
   const fakeDb = createUsageDb([
     {
@@ -575,6 +632,17 @@ test("MySqlUsageRepository aggregates stored totals by org", async () => {
       output_tokens: 2,
       cached_tokens: 4,
       total_tokens: 99,
+      created_at: new Date("2026-04-29T10:00:00.000Z"),
+    },
+    {
+      credential_record_id: "cred_openai_1",
+      owner_user_id: "user_admin",
+      org_id: "org_admin",
+      input_tokens: 3,
+      output_tokens: 4,
+      cached_tokens: 5,
+      total_tokens: 101,
+      created_at: new Date("2026-04-29T11:00:00.000Z"),
     },
   ])
   const repository = new MySqlUsageRepository(fakeDb.db as any)
@@ -588,8 +656,8 @@ test("MySqlUsageRepository aggregates stored totals by org", async () => {
 
   assert.deepEqual(response, {
     summary: {
-      totalTokens: 99,
-      totalRequests: 1,
+      totalTokens: 200,
+      totalRequests: 2,
     },
     groupBy: "org",
     filters: {
@@ -601,20 +669,21 @@ test("MySqlUsageRepository aggregates stored totals by org", async () => {
       {
         key: "org_admin",
         label: "org_admin",
-        totalTokens: 99,
-        totalRequests: 1,
+        totalTokens: 200,
+        totalRequests: 2,
       },
     ],
-    topCredentials: [{ id: "cred_openai_1", label: "cred_openai_1", totalTokens: 99 }],
-    topUsers: [{ id: "user_admin", label: "user_admin", totalTokens: 99 }],
-    topOrgs: [{ id: "org_admin", label: "org_admin", totalTokens: 99 }],
+    topCredentials: [{ id: "cred_openai_1", label: "cred_openai_1", totalTokens: 200 }],
+    topUsers: [{ id: "user_admin", label: "user_admin", totalTokens: 200 }],
+    topOrgs: [{ id: "org_admin", label: "org_admin", totalTokens: 200 }],
     credentialUsage: [
       {
         id: "cred_openai_1",
         label: "cred_openai_1",
-        cachedTokens: 4,
-        totalTokens: 99,
-        totalRequests: 1,
+        cachedTokens: 9,
+        totalTokens: 200,
+        totalRequests: 2,
+        lastUsedAt: "2026-04-29T11:00:00.000Z",
       },
     ],
   })

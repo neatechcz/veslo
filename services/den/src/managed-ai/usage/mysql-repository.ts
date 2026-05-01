@@ -18,6 +18,7 @@ type UsageEventRow = {
   cachedTokens: number
   totalTokens: number
   totalRequests: number
+  createdAt: Date | string
 }
 
 export class MySqlUsageRepository implements UsageRepository {
@@ -61,6 +62,7 @@ export class MySqlUsageRepository implements UsageRepository {
       cachedTokens: row.cached_tokens ?? 0,
       totalTokens: row.total_tokens ?? row.input_tokens + row.output_tokens,
       totalRequests: 1,
+      createdAt: row.created_at,
     }))
 
     const summary = events.reduce(
@@ -177,10 +179,12 @@ function aggregateCredentialUsage(events: UsageEventRow[]): UsageCredentialAggre
       cachedTokens: 0,
       totalTokens: 0,
       totalRequests: 0,
+      lastUsedAt: null,
     }
     existing.cachedTokens += event.cachedTokens
     existing.totalTokens += event.totalTokens
     existing.totalRequests += event.totalRequests
+    existing.lastUsedAt = latestIsoTimestamp(existing.lastUsedAt, event.createdAt)
     buckets.set(event.credentialId, existing)
   }
 
@@ -203,4 +207,13 @@ function aggregateTop(
   return Array.from(buckets.entries())
     .map(([id, value]) => ({ id, label: value.label, totalTokens: value.totalTokens }))
     .sort((left, right) => right.totalTokens - left.totalTokens)
+}
+
+function latestIsoTimestamp(existing: string | null, next: Date | string): string {
+  const nextDate = next instanceof Date ? next : new Date(next)
+  if (!existing) {
+    return nextDate.toISOString()
+  }
+
+  return nextDate.getTime() > new Date(existing).getTime() ? nextDate.toISOString() : existing
 }

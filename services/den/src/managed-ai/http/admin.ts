@@ -839,6 +839,7 @@ function readCredentialUsage(usage: UsageAggregateResponse): UsageCredentialAggr
     cachedTokens: 0,
     totalTokens: entry.totalTokens,
     totalRequests: requestsByCredentialId.get(entry.id) ?? 0,
+    lastUsedAt: null,
   }))
 }
 
