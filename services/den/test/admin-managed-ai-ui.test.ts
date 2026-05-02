@@ -99,6 +99,7 @@ test("GET /admin/credentials serves the DEN admin shell with Codex runtime contr
     assert.match(html, /id="user-ai-access-provider"/)
     assert.match(html, /id="user-ai-access-credential"/)
     assert.match(html, /<option value="codex_oauth">Codex \/ ChatGPT runtime<\/option>/)
+    assert.match(html, /<option value="openai_compatible">OpenAI-compatible provider<\/option>/)
     assert.match(html, /Cached tokens/i)
     assert.match(html, /Eligibility/i)
     assert.match(html, /<th>Last refresh<\/th>\s*<th>Cached tokens<\/th>\s*<th>Eligibility<\/th>\s*<th>Codex limits<\/th>/)
