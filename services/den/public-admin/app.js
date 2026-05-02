@@ -1015,6 +1015,7 @@ function formatProviderName(provider) {
   if (provider === "openai") return "OpenAI";
   if (provider === "anthropic") return "Anthropic";
   if (provider === "codex_oauth") return "Codex / ChatGPT";
+  if (provider === "openai_compatible") return "OpenAI-compatible provider";
   return provider || "Unknown";
 }
 

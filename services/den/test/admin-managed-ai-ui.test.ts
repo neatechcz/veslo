@@ -86,6 +86,10 @@ test("GET /admin/credentials serves the DEN admin shell with Codex runtime contr
     assert.match(html, /Server-side Codex worker profile/i)
     assert.match(html, /Legacy OpenAI fallback/i)
     assert.match(html, /Legacy Anthropic fallback/i)
+    assert.match(
+      html,
+      /<option>All providers<\/option>\s*<option>Codex \/ ChatGPT<\/option>\s*<option>OpenAI-compatible provider<\/option>\s*<option>OpenAI<\/option>/,
+    )
     assert.match(html, /id="credential-openai-connect"/)
     assert.match(html, /id="credential-openai-status"/)
     assert.match(html, /id="credential-codex-name"/)
@@ -145,6 +149,7 @@ test("GET /admin/app.js uses DEN desktop auth and OpenAI OAuth credential routes
     assert.match(script, /Anthropic legacy fallback/)
     assert.match(script, /cachedTokens/)
     assert.match(script, /totalTokens/)
+    assert.match(script, /if \(provider === "openai_compatible"\) return "OpenAI-compatible provider"/)
     assert.match(script, /formatCredentialUpstreamStatus/)
     assert.match(script, /formatCredentialLimitSummary/)
     assert.match(script, /formatLimitWindowSummary/)
