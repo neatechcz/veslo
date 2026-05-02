@@ -339,6 +339,33 @@ for (const { name, body } of [
       baseUrl: "http://api.example.test/v1",
     },
   },
+  {
+    name: "baseUrl with query string",
+    body: {
+      provider: "openai_compatible",
+      name: "Compatible key",
+      secret: "sk-compatible",
+      baseUrl: "https://api.example.test/v1?x=1",
+    },
+  },
+  {
+    name: "baseUrl with fragment",
+    body: {
+      provider: "openai_compatible",
+      name: "Compatible key",
+      secret: "sk-compatible",
+      baseUrl: "https://api.example.test/v1#frag",
+    },
+  },
+  {
+    name: "baseUrl with userinfo",
+    body: {
+      provider: "openai_compatible",
+      name: "Compatible key",
+      secret: "sk-compatible",
+      baseUrl: "https://user:pass@api.example.test/v1",
+    },
+  },
 ]) {
   test(`POST /admin/api/credentials rejects openai-compatible credentials with ${name}`, async () => {
     const session = createSession()
@@ -513,6 +540,115 @@ test("POST /admin/api/credentials accepts local HTTP openai-compatible baseUrl",
         kind: "openai_compatible_api_key",
         apiKey: "sk-compatible",
         baseUrl: "http://127.0.0.1:1234/v1",
+      },
+    ])
+    assert.deepEqual(calls.credentials, [
+      {
+        ownerUserId: "platform:openai_compatible",
+        provider: "openai_compatible",
+        credentialType: "api_key",
+        secretRef: "secret_compatible_1",
+        name: "Compatible key",
+      },
+    ])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("POST /admin/api/credentials accepts IPv6 loopback HTTP openai-compatible baseUrl", async () => {
+  const session = createSession()
+  const calls = {
+    secrets: [] as Array<{ kind: string; apiKey?: string; authJson?: string; baseUrl?: string }>,
+    credentials: [] as Array<{
+      ownerUserId: string
+      provider: string
+      credentialType: "api_key" | "oauth"
+      secretRef: string
+      name: string
+    }>,
+  }
+  const app = express()
+  app.use(express.json())
+  app.use(
+    "/admin/api",
+    createAdminRouter({
+      async getSessionSnapshot() {
+        return session
+      },
+      ...createManagedAiAdminRouteDeps({
+        async getAdminSession() {
+          return session
+        },
+        aiAccess: {} as any,
+        alerts: {
+          async listAlerts() {
+            return []
+          },
+        },
+        audit: {
+          async recordEvent() {},
+          async listEvents() {
+            return []
+          },
+        },
+        credentials: {
+          async listAdminCredentials() {
+            return [createOpenAiCompatibleCredential()]
+          },
+          async createPlatformCredential(input) {
+            calls.credentials.push(input)
+            return {
+              id: "cred_platform_openai_compatible_1",
+              ownerUserId: input.ownerUserId,
+              provider: input.provider,
+              credentialType: input.credentialType,
+              state: "healthy",
+              secretRef: input.secretRef,
+              name: input.name,
+              createdAt: new Date("2026-04-10T14:00:00.000Z"),
+              updatedAt: new Date("2026-04-10T14:00:00.000Z"),
+              lastFailureAt: null,
+            }
+          },
+        } as any,
+        leases: {} as any,
+        secrets: {
+          async put(secret) {
+            calls.secrets.push(secret)
+            return { secretRef: "secret_compatible_1" }
+          },
+        } as any,
+        usage: {} as any,
+      }),
+    }),
+  )
+
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/credentials`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        provider: "openai_compatible",
+        name: "Compatible key",
+        secret: "sk-compatible",
+        baseUrl: "http://[::1]:1234/v1/",
+      }),
+    })
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(calls.secrets, [
+      {
+        kind: "openai_compatible_api_key",
+        apiKey: "sk-compatible",
+        baseUrl: "http://[::1]:1234/v1",
       },
     ])
     assert.deepEqual(calls.credentials, [

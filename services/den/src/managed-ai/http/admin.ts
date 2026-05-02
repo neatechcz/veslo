@@ -1028,8 +1028,13 @@ function normalizeOpenAiCompatibleBaseUrl(input: unknown): string {
     throw new HttpError("invalid_credential_base_url", 400)
   }
 
+  if (parsed.search || parsed.hash || parsed.username || parsed.password) {
+    throw new HttpError("invalid_credential_base_url", 400)
+  }
+
   const hostname = parsed.hostname.toLowerCase()
-  const isLoopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
+  const isLoopback =
+    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]"
   if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isLoopback)) {
     throw new HttpError("invalid_credential_base_url", 400)
   }
