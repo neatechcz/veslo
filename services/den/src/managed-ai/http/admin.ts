@@ -1028,7 +1028,7 @@ function normalizeOpenAiCompatibleBaseUrl(input: unknown): string {
     throw new HttpError("invalid_credential_base_url", 400)
   }
 
-  if (parsed.search || parsed.hash || parsed.username || parsed.password) {
+  if (parsed.search || parsed.hash || parsed.username || parsed.password || raw.includes("?") || raw.includes("#")) {
     throw new HttpError("invalid_credential_base_url", 400)
   }
 

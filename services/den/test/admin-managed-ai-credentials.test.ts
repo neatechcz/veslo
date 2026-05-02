@@ -349,12 +349,30 @@ for (const { name, body } of [
     },
   },
   {
+    name: "baseUrl with empty query delimiter",
+    body: {
+      provider: "openai_compatible",
+      name: "Compatible key",
+      secret: "sk-compatible",
+      baseUrl: "https://api.example.test/v1?",
+    },
+  },
+  {
     name: "baseUrl with fragment",
     body: {
       provider: "openai_compatible",
       name: "Compatible key",
       secret: "sk-compatible",
       baseUrl: "https://api.example.test/v1#frag",
+    },
+  },
+  {
+    name: "baseUrl with empty fragment delimiter",
+    body: {
+      provider: "openai_compatible",
+      name: "Compatible key",
+      secret: "sk-compatible",
+      baseUrl: "https://api.example.test/v1#",
     },
   },
   {
