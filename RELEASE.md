@@ -26,6 +26,7 @@ Veslo releases should be deterministic, easy to reproduce, and fully verifiable 
    - `pnpm bump:calver`
 2. Build sidecar assets and manifest:
    - `pnpm --filter veslo-orchestrator build:sidecars`
+   - Release sidecars are built for macOS and Windows only.
 3. Create the GitHub release for sidecars:
    - `gh release create veslo-orchestrator-vYYYY.M.P packages/orchestrator/dist/sidecars/* --repo neatechcz/veslo`
 4. Publish the package:
@@ -43,15 +44,6 @@ Veslo releases should be deterministic, easy to reproduce, and fully verifiable 
 - `gh release view vYYYY.M.P --repo neatechcz/veslo`
 
 Use `pnpm release:review --json` when automating these checks in scripts or agents.
-
-## AUR
-
-`Release App` publishes the Arch AUR package automatically after the Linux `.deb` asset is uploaded.
-
-Required repo config:
-
-- GitHub Actions secret: `AUR_SSH_PRIVATE_KEY` (SSH key with push access to the AUR package repo)
-- Optional repo variable: `AUR_REPO` (defaults to `veslo`)
 
 ## npm publishing
 

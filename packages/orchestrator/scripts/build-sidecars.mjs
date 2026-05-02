@@ -48,8 +48,6 @@ run("pnpm", ["--filter", "veslo-code-router", "build:bin:all"], repoRoot);
 const targets = [
   { id: "darwin-arm64", bun: "bun-darwin-arm64" },
   { id: "darwin-x64", bun: "bun-darwin-x64" },
-  { id: "linux-x64", bun: "bun-linux-x64" },
-  { id: "linux-arm64", bun: "bun-linux-arm64" },
   { id: "windows-x64", bun: "bun-windows-x64" },
 ];
 

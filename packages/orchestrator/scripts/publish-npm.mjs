@@ -24,8 +24,6 @@ const dry = String(process.env.DRY_RUN || "").trim() === "1"
 const targets = [
   { id: "darwin-arm64", bun: "bun-darwin-arm64", os: "darwin", cpu: "arm64" },
   { id: "darwin-x64", bun: "bun-darwin-x64", os: "darwin", cpu: "x64" },
-  { id: "linux-x64", bun: "bun-linux-x64", os: "linux", cpu: "x64" },
-  { id: "linux-arm64", bun: "bun-linux-arm64", os: "linux", cpu: "arm64" },
   { id: "windows-x64", bun: "bun-windows-x64", os: "win32", cpu: "x64" },
 ]
 
