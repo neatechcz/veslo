@@ -162,6 +162,10 @@ test("GET /admin/app.js uses DEN desktop auth and OpenAI OAuth credential routes
     assert.match(script, /availableCredentials/)
     assert.match(script, /user-ai-access-credential/)
     assert.match(script, /Select assigned credential/)
+    assert.match(script, /provider:\s*typeof entry\.provider === "string" \? entry\.provider\.trim\(\) : ""/)
+    assert.match(script, /function currentUserAiAccessAvailableCredentials\(userId,\s*provider = ""\)[\s\S]*entry\.provider === provider/)
+    assert.match(script, /selectedProvider === "codex_oauth" \|\| selectedProvider === "openai_compatible"/)
+    assert.match(script, /Create a healthy OpenAI-compatible credential first, then assign it here\./)
     assert.match(script, /credentialId:\s*typeof payload\.credentialId === "string" \? payload\.credentialId : null/)
     assert.match(script, /credentialId:\s*readAiAccessCredentialValue\(\)/)
     assert.match(

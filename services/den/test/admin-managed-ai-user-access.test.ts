@@ -36,9 +36,28 @@ function createAiAccess() {
 
 function createAvailableCredentials() {
   return [
-    { id: "cred_codex_123", name: "Shared Codex A" },
-    { id: "cred_codex_456", name: "Shared Codex B" },
+    { id: "cred_codex_123", name: "Shared Codex A", provider: "codex_oauth" },
+    { id: "cred_codex_456", name: "Shared Codex B", provider: "codex_oauth" },
   ]
+}
+
+function createAdminCredential(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "cred_codex_123",
+    name: "Shared Codex A",
+    provider: "codex_oauth",
+    type: "oauth",
+    state: "healthy",
+    scope: "platform:codex_oauth",
+    activeLeases: 0,
+    alertCount: 0,
+    lastRefreshAt: "2026-04-10T10:00:00.000Z",
+    lastFailureAt: null,
+    totalTokens: 0,
+    nextRotationAt: null,
+    linkedAlertIds: [],
+    ...overrides,
+  }
 }
 
 test("GET /admin/api/users/:userId/ai-access returns the stored ai access policy", async () => {
@@ -274,7 +293,7 @@ test("PUT /admin/api/users/:userId/ai-access returns available codex credentials
         defaultModel: "gpt-5.4",
         allowedModels: ["gpt-5.4"],
       },
-      availableCredentials: [{ id: "cred_codex_123", name: "Shared Codex A" }],
+      availableCredentials: [{ id: "cred_codex_123", name: "Shared Codex A", provider: "codex_oauth" }],
     })
   } finally {
     server.close()
@@ -396,7 +415,7 @@ test("GET /admin/api/users/:userId/ai-access hides exhausted Codex credentials",
 
     assert.equal(response.status, 200)
     assert.deepEqual((await response.json()).availableCredentials, [
-      { id: "cred_codex_available", name: "Shared Codex Available" },
+      { id: "cred_codex_available", name: "Shared Codex Available", provider: "codex_oauth" },
     ])
   } finally {
     server.close()
@@ -655,10 +674,29 @@ test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", asyn
             return []
           },
         },
-        credentials: {} as any,
+        credentials: {
+          async listAdminCredentials() {
+            return [createAdminCredential()]
+          },
+        } as any,
         leases: {} as any,
         secrets: {} as any,
         usage: {} as any,
+        codexStatusProvider: {
+          async getStatus() {
+            return {
+              available: true,
+              source: "codex_exec_no_rate_limits",
+              label: "Codex OK, limits unknown",
+              detail: null,
+              checkedAt: "2026-04-28T10:00:00.000Z",
+              limits: {
+                fiveHour: null,
+                weekly: null,
+              },
+            }
+          },
+        },
       }),
     }),
   )
@@ -692,6 +730,7 @@ test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", asyn
         defaultModel: "gpt-5.4",
         allowedModels: ["gpt-5.4"],
       },
+      availableCredentials: [{ id: "cred_codex_123", name: "Shared Codex A", provider: "codex_oauth" }],
     })
   } finally {
     server.close()
@@ -699,7 +738,7 @@ test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", asyn
   }
 })
 
-test("PUT /admin/api/users/:userId/ai-access rejects openai-compatible provider until assignment support exists", async () => {
+test("PUT /admin/api/users/:userId/ai-access requires an OpenAI-compatible credential", async () => {
   const session = createSession()
   const app = express()
   app.use(express.json())
@@ -734,7 +773,11 @@ test("PUT /admin/api/users/:userId/ai-access rejects openai-compatible provider 
             return []
           },
         },
-        credentials: {} as any,
+        credentials: {
+          async listAdminCredentials() {
+            return []
+          },
+        } as any,
         leases: {} as any,
         secrets: {} as any,
         usage: {} as any,
@@ -755,14 +798,290 @@ test("PUT /admin/api/users/:userId/ai-access rejects openai-compatible provider 
       body: JSON.stringify({
         enabled: true,
         provider: "openai_compatible",
-        defaultModel: "gpt-compatible",
-        allowedModels: ["gpt-compatible"],
+        credentialId: null,
+        defaultModel: "qwen/qwen3",
+        allowedModels: ["qwen/qwen3"],
       }),
     })
 
     assert.equal(response.status, 400)
     assert.deepEqual(await response.json(), {
-      error: "invalid_ai_access_provider",
+      error: "invalid_ai_access_credential_id",
+    })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("PUT /admin/api/users/:userId/ai-access accepts a healthy OpenAI-compatible credential", async () => {
+  const session = createSession()
+  const app = express()
+  app.use(express.json())
+  app.use(
+    "/admin/api",
+    createAdminRouter({
+      async getSessionSnapshot() {
+        return session
+      },
+      ...createManagedAiAdminRouteDeps({
+        async getAdminSession() {
+          return session
+        },
+        aiAccess: {
+          async getUserAiAccess() {
+            throw new Error("unused")
+          },
+          async upsertUserAiAccess(input) {
+            return {
+              id: "ai_access_user_123",
+              userId: input.userId,
+              enabled: input.enabled,
+              provider: input.provider,
+              credentialId: input.credentialId,
+              defaultModel: input.defaultModel,
+              allowedModels: input.allowedModels,
+              createdAt: new Date("2026-04-10T10:00:00.000Z"),
+              updatedAt: new Date("2026-04-10T10:05:00.000Z"),
+            }
+          },
+        },
+        alerts: {
+          async listAlerts() {
+            return []
+          },
+        },
+        audit: {
+          async recordEvent() {
+            return
+          },
+          async listEvents() {
+            return []
+          },
+        },
+        credentials: {
+          async listAdminCredentials() {
+            return [
+              createAdminCredential({
+                id: "cred_custom_1",
+                name: "Custom OpenAI-Compatible",
+                provider: "openai_compatible",
+                type: "api_key",
+                scope: "platform:openai_compatible",
+              }),
+            ]
+          },
+        } as any,
+        leases: {} as any,
+        secrets: {} as any,
+        usage: {} as any,
+      }),
+    }),
+  )
+
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        enabled: true,
+        provider: "openai_compatible",
+        credentialId: "cred_custom_1",
+        defaultModel: "qwen/qwen3",
+        allowedModels: ["qwen/qwen3"],
+      }),
+    })
+
+    assert.equal(response.status, 200)
+    assert.deepEqual((await response.json()).aiAccess, {
+      ...createAiAccess(),
+      userId: "user_123",
+      provider: "openai_compatible",
+      credentialId: "cred_custom_1",
+      defaultModel: "qwen/qwen3",
+      allowedModels: ["qwen/qwen3"],
+    })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("PUT /admin/api/users/:userId/ai-access rejects credentials from the wrong provider", async () => {
+  const session = createSession()
+  const app = express()
+  app.use(express.json())
+  app.use(
+    "/admin/api",
+    createAdminRouter({
+      async getSessionSnapshot() {
+        return session
+      },
+      ...createManagedAiAdminRouteDeps({
+        async getAdminSession() {
+          return session
+        },
+        aiAccess: {
+          async getUserAiAccess() {
+            throw new Error("unused")
+          },
+          async upsertUserAiAccess() {
+            throw new Error("unused")
+          },
+        },
+        alerts: {
+          async listAlerts() {
+            return []
+          },
+        },
+        audit: {
+          async recordEvent() {
+            return
+          },
+          async listEvents() {
+            return []
+          },
+        },
+        credentials: {
+          async listAdminCredentials() {
+            return [createAdminCredential({ id: "cred_codex_healthy", name: "Shared Codex Healthy" })]
+          },
+        } as any,
+        leases: {} as any,
+        secrets: {} as any,
+        usage: {} as any,
+        codexStatusProvider: {
+          async getStatus() {
+            return {
+              available: true,
+              source: "codex_exec_no_rate_limits",
+              label: "Codex OK, limits unknown",
+              detail: null,
+              checkedAt: "2026-04-28T10:00:00.000Z",
+              limits: {
+                fiveHour: null,
+                weekly: null,
+              },
+            }
+          },
+        },
+      }),
+    }),
+  )
+
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        enabled: true,
+        provider: "openai_compatible",
+        credentialId: "cred_codex_healthy",
+        defaultModel: "qwen/qwen3",
+        allowedModels: ["qwen/qwen3"],
+      }),
+    })
+
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), {
+      error: "invalid_ai_access_credential_id",
+    })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("PUT /admin/api/users/:userId/ai-access rejects unhealthy OpenAI-compatible credentials", async () => {
+  const session = createSession()
+  const app = express()
+  app.use(express.json())
+  app.use(
+    "/admin/api",
+    createAdminRouter({
+      async getSessionSnapshot() {
+        return session
+      },
+      ...createManagedAiAdminRouteDeps({
+        async getAdminSession() {
+          return session
+        },
+        aiAccess: {
+          async getUserAiAccess() {
+            throw new Error("unused")
+          },
+          async upsertUserAiAccess() {
+            throw new Error("unused")
+          },
+        },
+        alerts: {
+          async listAlerts() {
+            return []
+          },
+        },
+        audit: {
+          async recordEvent() {
+            return
+          },
+          async listEvents() {
+            return []
+          },
+        },
+        credentials: {
+          async listAdminCredentials() {
+            return [
+              createAdminCredential({
+                id: "cred_custom_unhealthy",
+                name: "Unhealthy OpenAI-Compatible",
+                provider: "openai_compatible",
+                type: "api_key",
+                state: "unhealthy",
+                scope: "platform:openai_compatible",
+              }),
+            ]
+          },
+        } as any,
+        leases: {} as any,
+        secrets: {} as any,
+        usage: {} as any,
+      }),
+    }),
+  )
+
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        enabled: true,
+        provider: "openai_compatible",
+        credentialId: "cred_custom_unhealthy",
+        defaultModel: "qwen/qwen3",
+        allowedModels: ["qwen/qwen3"],
+      }),
+    })
+
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), {
+      error: "invalid_ai_access_credential_id",
     })
   } finally {
     server.close()

@@ -351,16 +351,19 @@ function normalizeAvailableCredentials(payload) {
     .map((entry) => ({
       id: typeof entry.id === "string" ? entry.id.trim() : "",
       name: typeof entry.name === "string" ? entry.name.trim() : "",
+      provider: typeof entry.provider === "string" ? entry.provider.trim() : "",
     }))
     .filter((entry) => entry.id)
     .map((entry) => ({
       id: entry.id,
       name: entry.name || entry.id,
+      provider: entry.provider,
     }));
 }
 
-function currentUserAiAccessAvailableCredentials(userId) {
-  return normalizeAvailableCredentials(state.userAiAccessAvailableCredentialsByUserId[userId] || []);
+function currentUserAiAccessAvailableCredentials(userId, provider = "") {
+  return normalizeAvailableCredentials(state.userAiAccessAvailableCredentialsByUserId[userId] || [])
+    .filter((entry) => !provider || entry.provider === provider);
 }
 
 function formatAllowedModels(models) {
@@ -385,7 +388,7 @@ function readAiAccessFormValue() {
 
 function readAiAccessCredentialValue() {
   const selectedProvider = els.userAiAccessProvider.value || "";
-  if (selectedProvider === "codex_oauth") {
+  if (selectedProvider === "codex_oauth" || selectedProvider === "openai_compatible") {
     const selectedCredentialId = els.userAiAccessCredential.value.trim();
     return selectedCredentialId || null;
   }
@@ -1192,7 +1195,8 @@ function currentAlert() {
 }
 
 function renderAiAccessCredentialOptions(user, aiAccess) {
-  const availableCredentials = user?.id ? currentUserAiAccessAvailableCredentials(user.id) : [];
+  const selectedProvider = els.userAiAccessProvider.value || "";
+  const availableCredentials = user?.id ? currentUserAiAccessAvailableCredentials(user.id, selectedProvider) : [];
   const options = [
     `<option value="">Select assigned credential</option>`,
     ...availableCredentials.map(
@@ -1203,7 +1207,8 @@ function renderAiAccessCredentialOptions(user, aiAccess) {
 
   els.userAiAccessCredential.innerHTML = options.join("");
   const selectedCredentialId =
-    aiAccess.provider === "codex_oauth" &&
+    (aiAccess.provider === "codex_oauth" || aiAccess.provider === "openai_compatible") &&
+    aiAccess.provider === selectedProvider &&
     availableCredentials.some((entry) => entry.id === aiAccess.credentialId)
       ? aiAccess.credentialId
       : "";
@@ -1211,7 +1216,7 @@ function renderAiAccessCredentialOptions(user, aiAccess) {
   els.userAiAccessCredential.disabled =
     state.userMode === "create" ||
     !user ||
-    els.userAiAccessProvider.value !== "codex_oauth" ||
+    (selectedProvider !== "codex_oauth" && selectedProvider !== "openai_compatible") ||
     availableCredentials.length === 0;
 }
 
@@ -1222,9 +1227,13 @@ function updateAiAccessStatusText(user, aiAccess) {
   }
 
   const selectedProvider = els.userAiAccessProvider.value || "";
-  const availableCredentials = user?.id ? currentUserAiAccessAvailableCredentials(user.id) : [];
+  const availableCredentials = user?.id ? currentUserAiAccessAvailableCredentials(user.id, selectedProvider) : [];
   if (selectedProvider === "codex_oauth" && availableCredentials.length === 0) {
     els.userAiAccessStatus.textContent = "Create a shared Codex runtime credential first, then assign it here.";
+    return;
+  }
+  if (selectedProvider === "openai_compatible" && availableCredentials.length === 0) {
+    els.userAiAccessStatus.textContent = "Create a healthy OpenAI-compatible credential first, then assign it here.";
     return;
   }
 
