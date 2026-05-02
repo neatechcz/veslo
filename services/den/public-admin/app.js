@@ -56,6 +56,11 @@ const els = {
   credentialCodexSecret: document.getElementById("credential-codex-secret"),
   credentialCodexSubmit: document.getElementById("credential-codex-submit"),
   credentialCodexStatus: document.getElementById("credential-codex-status"),
+  credentialOpenAiCompatibleName: document.getElementById("credential-openai-compatible-name"),
+  credentialOpenAiCompatibleBaseUrl: document.getElementById("credential-openai-compatible-base-url"),
+  credentialOpenAiCompatibleSecret: document.getElementById("credential-openai-compatible-secret"),
+  credentialOpenAiCompatibleSubmit: document.getElementById("credential-openai-compatible-submit"),
+  credentialOpenAiCompatibleStatus: document.getElementById("credential-openai-compatible-status"),
   credentialAnthropicName: document.getElementById("credential-anthropic-name"),
   credentialAnthropicSecret: document.getElementById("credential-anthropic-secret"),
   credentialAnthropicSubmit: document.getElementById("credential-anthropic-submit"),
@@ -1402,6 +1407,15 @@ function setCodexCredentialStatus(message, tone = "neutral") {
   els.credentialCodexStatus.dataset.tone = tone;
 }
 
+function setOpenAiCompatibleCredentialStatus(message, tone = "neutral") {
+  els.credentialOpenAiCompatibleStatus.textContent = message;
+  if (tone === "neutral") {
+    delete els.credentialOpenAiCompatibleStatus.dataset.tone;
+    return;
+  }
+  els.credentialOpenAiCompatibleStatus.dataset.tone = tone;
+}
+
 function setUserSaveStatus(message, tone = "neutral") {
   els.userSaveStatus.textContent = message;
   if (tone === "neutral") {
@@ -1419,6 +1433,12 @@ function resetAnthropicCredentialForm() {
 function resetCodexCredentialForm() {
   els.credentialCodexName.value = "";
   els.credentialCodexSecret.value = "";
+}
+
+function resetOpenAiCompatibleCredentialForm() {
+  els.credentialOpenAiCompatibleName.value = "";
+  els.credentialOpenAiCompatibleBaseUrl.value = "";
+  els.credentialOpenAiCompatibleSecret.value = "";
 }
 
 async function createCodexCredential() {
@@ -1455,6 +1475,44 @@ async function createCodexCredential() {
     );
   } finally {
     els.credentialCodexSubmit.disabled = false;
+  }
+}
+
+async function createOpenAiCompatibleCredential() {
+  const name = els.credentialOpenAiCompatibleName.value.trim();
+  const baseUrl = els.credentialOpenAiCompatibleBaseUrl.value.trim();
+  const secret = els.credentialOpenAiCompatibleSecret.value.trim();
+
+  if (!baseUrl || !secret) {
+    setOpenAiCompatibleCredentialStatus("OpenAI-compatible base URL and API key are required.", "error");
+    return;
+  }
+
+  els.credentialOpenAiCompatibleSubmit.disabled = true;
+  setOpenAiCompatibleCredentialStatus("Saving OpenAI-compatible provider credential", "pending");
+
+  try {
+    const requestBody = { provider: "openai_compatible", baseUrl, secret };
+    if (name) {
+      requestBody.name = name;
+    }
+
+    const payload = await fetchJson("/credentials", {
+      method: "POST",
+      body: JSON.stringify(requestBody),
+    });
+    state.selectedCredentialId = payload?.credential?.id || state.selectedCredentialId;
+    resetOpenAiCompatibleCredentialForm();
+    setOpenAiCompatibleCredentialStatus("OpenAI-compatible provider credential saved to the platform pool.", "success");
+    await refreshCredentialOperations();
+    await refreshSelectedUserAiAccessOptions();
+  } catch (error) {
+    setOpenAiCompatibleCredentialStatus(
+      `Unable to save OpenAI-compatible provider credential: ${error instanceof Error ? error.message : "unknown_error"}`,
+      "error",
+    );
+  } finally {
+    els.credentialOpenAiCompatibleSubmit.disabled = false;
   }
 }
 
@@ -1779,6 +1837,7 @@ function bindActions() {
   els.createUserButtonInline.addEventListener("click", enterCreateMode);
   els.credentialOpenAiConnect.addEventListener("click", () => void connectOpenAiCredential());
   els.credentialCodexSubmit.addEventListener("click", () => void createCodexCredential());
+  els.credentialOpenAiCompatibleSubmit.addEventListener("click", () => void createOpenAiCompatibleCredential());
   els.credentialAnthropicSubmit.addEventListener("click", () => void createAnthropicCredential());
   els.userSaveButton.addEventListener("click", () => void saveUser());
   els.userDisableButton.addEventListener("click", () => void toggleUserDisabled());

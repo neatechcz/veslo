@@ -153,6 +153,28 @@
                   </div>
                 </div>
                 <div class="detail-card">
+                  <p class="eyebrow">OpenAI-compatible provider</p>
+                  <h4>Provider API-key profile</h4>
+                  <div class="credential-create-grid">
+                    <label>
+                      <span>Display name</span>
+                      <input class="input" id="credential-openai-compatible-name" type="text" placeholder="Shared OpenAI-compatible provider" />
+                    </label>
+                    <label>
+                      <span>Base URL</span>
+                      <input class="input" id="credential-openai-compatible-base-url" type="url" placeholder="https://provider.example.com/v1" />
+                    </label>
+                  </div>
+                  <label class="credential-create-secret-field">
+                    <span>API key</span>
+                    <textarea class="input ai-access-textarea" id="credential-openai-compatible-secret" placeholder="Paste the provider API key."></textarea>
+                  </label>
+                  <div class="button-row">
+                    <button class="button button-primary" id="credential-openai-compatible-submit" type="button">Save OpenAI-compatible provider</button>
+                    <p class="editor-note credential-create-status" id="credential-openai-compatible-status">Admin-managed OpenAI-compatible provider credential for DEN AI Gateway routing.</p>
+                  </div>
+                </div>
+                <div class="detail-card">
                   <p class="eyebrow">Legacy OpenAI fallback</p>
                   <h4>Provider OAuth fallback</h4>
                   <p class="editor-note" id="credential-openai-status">Fallback only: connect platform OpenAI OAuth if Codex worker routing is disabled.</p>
