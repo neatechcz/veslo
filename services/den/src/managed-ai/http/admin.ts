@@ -1019,6 +1019,10 @@ function validateUserAiAccessInput(input: UpdateUserAiAccessInput & { userId: st
     throw new HttpError("invalid_ai_access_provider", 400)
   }
 
+  if (enabled && provider === "openai_compatible") {
+    throw new HttpError("invalid_ai_access_provider", 400)
+  }
+
   if (enabled && provider === "codex_oauth" && !credentialId) {
     throw new HttpError("invalid_ai_access_credential_id", 400)
   }
