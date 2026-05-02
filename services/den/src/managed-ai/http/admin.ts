@@ -49,6 +49,7 @@ type CreateCredentialInput = {
   provider: LeaseProvider | null
   name?: string | null
   secret: string
+  baseUrl?: string | null
 }
 
 type UpdateUserAiAccessInput = {
@@ -981,12 +982,21 @@ function validateCreateCredentialInput(input: CreateCredentialInput): {
     throw new HttpError("invalid_provider", 400)
   }
 
-  if (provider === "openai_compatible") {
-    throw new HttpError("invalid_provider", 400)
-  }
-
   if (!secret) {
     throw new HttpError("invalid_credential_secret", 400)
+  }
+
+  if (provider === "openai_compatible") {
+    return {
+      provider,
+      name: name || `${formatProviderLabel(provider)} credential`,
+      credentialType: "api_key",
+      storedSecret: {
+        kind: "openai_compatible_api_key",
+        apiKey: secret,
+        baseUrl: normalizeOpenAiCompatibleBaseUrl(input.baseUrl),
+      },
+    }
   }
 
   return {
@@ -1003,6 +1013,29 @@ function validateCreateCredentialInput(input: CreateCredentialInput): {
           apiKey: secret,
         },
   }
+}
+
+function normalizeOpenAiCompatibleBaseUrl(input: unknown): string {
+  const raw = typeof input === "string" ? input.trim() : ""
+  if (!raw) {
+    throw new HttpError("invalid_credential_base_url", 400)
+  }
+
+  let parsed: URL
+  try {
+    parsed = new URL(raw)
+  } catch {
+    throw new HttpError("invalid_credential_base_url", 400)
+  }
+
+  const hostname = parsed.hostname.toLowerCase()
+  const isLoopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isLoopback)) {
+    throw new HttpError("invalid_credential_base_url", 400)
+  }
+
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "")
+  return parsed.toString().replace(/\/+$/, "")
 }
 
 function validateUserAiAccessInput(input: UpdateUserAiAccessInput & { userId: string }): UpsertUserAiAccessPolicyInput {
