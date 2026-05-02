@@ -981,6 +981,10 @@ function validateCreateCredentialInput(input: CreateCredentialInput): {
     throw new HttpError("invalid_provider", 400)
   }
 
+  if (provider === "openai_compatible") {
+    throw new HttpError("invalid_provider", 400)
+  }
+
   if (!secret) {
     throw new HttpError("invalid_credential_secret", 400)
   }

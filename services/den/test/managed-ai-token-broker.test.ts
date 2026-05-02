@@ -93,6 +93,40 @@ test("returns api key auth for anthropic bindings", async () => {
   })
 })
 
+test("rejects openai-compatible secrets instead of treating them as oauth", async () => {
+  const secretStore = new EncryptedSecretStore("test_secret_key_32_bytes_minimum____", {
+    secret_1: {
+      kind: "openai_compatible_api_key",
+      apiKey: "sk-compatible-test",
+      baseUrl: "https://compatible.example.test/v1",
+    },
+  })
+  const credentials = new InMemoryCredentialRepository(
+    new Map([
+      [
+        "binding_openai_compatible",
+        createCredentialRecord({
+          provider: "openai_compatible",
+          credentialType: "api_key",
+        }),
+      ],
+    ]),
+  )
+
+  const broker = new DefaultTokenBroker({
+    credentials,
+    secrets: secretStore,
+    now: () => new Date("2026-04-01T12:00:00.000Z"),
+  })
+
+  await assert.rejects(
+    () => broker.getUpstreamAuth({ bindingId: "binding_openai_compatible" }),
+    {
+      message: "unsupported_secret_kind:openai_compatible_api_key",
+    },
+  )
+})
+
 test("refreshes expired openai oauth tokens before proxying", async () => {
   const secretStore = new EncryptedSecretStore("test_secret_key_32_bytes_minimum____", {
     secret_1: {
