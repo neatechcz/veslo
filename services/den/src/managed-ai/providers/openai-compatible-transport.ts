@@ -1,7 +1,6 @@
 import {
   headersToRecord,
   ProviderTransportError,
-  readProviderResponseBody,
   type OpenAiCompatibleProviderTransport,
   type OpenAiCompatibleTransportInput,
   type ProviderTransportResponse,
@@ -21,7 +20,7 @@ export class OpenAiCompatibleTransport implements OpenAiCompatibleProviderTransp
       body: JSON.stringify(input.body),
     })
 
-    const body = await readProviderResponseBody(response)
+    const body = await readOpenAiCompatibleResponseBody(response)
     const headers = headersToRecord(response.headers)
     if (!response.ok) {
       throw new ProviderTransportError(`openai_compatible_upstream_${response.status}`, {
@@ -33,4 +32,18 @@ export class OpenAiCompatibleTransport implements OpenAiCompatibleProviderTransp
 
     return { status: response.status, body, headers }
   }
+}
+
+async function readOpenAiCompatibleResponseBody(response: Response): Promise<unknown> {
+  const contentType = response.headers.get("content-type") ?? ""
+  const text = await response.text()
+  if (contentType.includes("application/json")) {
+    try {
+      return JSON.parse(text)
+    } catch {
+      return text
+    }
+  }
+
+  return text
 }

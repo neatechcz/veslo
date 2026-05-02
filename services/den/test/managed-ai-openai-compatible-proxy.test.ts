@@ -454,3 +454,35 @@ test("openai-compatible transport throws provider transport error with upstream 
     },
   )
 })
+
+test("openai-compatible transport preserves non-OK status when JSON body is malformed", async () => {
+  const transport = new OpenAiCompatibleTransport(async () => new Response(
+    "{not-json",
+    {
+      status: 503,
+      headers: {
+        "content-type": "application/json",
+        "x-request-id": "transport_req_malformed_1",
+      },
+    },
+  ))
+
+  await assert.rejects(
+    () => transport.chatCompletions({
+      apiKey: "sk-custom",
+      baseUrl: "https://custom.example.test/v1",
+      body: { model: "custom-model" },
+    }),
+    (error: unknown) => {
+      assert.equal(error instanceof ProviderTransportError, true)
+      assert.equal((error as ProviderTransportError).message, "openai_compatible_upstream_503")
+      assert.equal((error as ProviderTransportError).statusCode, 503)
+      assert.equal((error as ProviderTransportError).body, "{not-json")
+      assert.deepEqual((error as ProviderTransportError).headers, {
+        "content-type": "application/json",
+        "x-request-id": "transport_req_malformed_1",
+      })
+      return true
+    },
+  )
+})
