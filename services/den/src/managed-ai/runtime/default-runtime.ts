@@ -140,7 +140,7 @@ export function createDefaultProxyDependencies(
     openAiTransport: overrides.openAiTransport ?? new OpenAiTransport({ fetchImpl: notConfiguredFetch }),
     anthropicTransport: overrides.anthropicTransport ?? new AnthropicTransport({ fetchImpl: notConfiguredFetch }),
     codexOAuthTransport: overrides.codexOAuthTransport ?? new CodexCliWorkerTransport(),
-    openAiCompatibleTransport: overrides.openAiCompatibleTransport ?? new OpenAiCompatibleTransport(notConfiguredFetch),
+    openAiCompatibleTransport: overrides.openAiCompatibleTransport ?? new OpenAiCompatibleTransport(),
   }
 }
 

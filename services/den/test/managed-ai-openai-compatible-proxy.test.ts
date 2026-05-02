@@ -351,6 +351,34 @@ test("openai-compatible proxy rejects stored secrets with the wrong kind", async
   assert.deepEqual(await response.json(), { error: "invalid_custom_provider_config" })
 })
 
+test("openai-compatible proxy sanitizes upstream error bodies that may echo secrets", async () => {
+  const response = await requestChatCompletions(
+    createProxyApp({
+      transport: {
+        async chatCompletions() {
+          throw new ProviderTransportError("upstream rejected request", {
+            statusCode: 401,
+            body: {
+              error: {
+                message: "request failed with Authorization: Bearer sk-custom",
+                headers: {
+                  authorization: "Bearer sk-custom",
+                },
+              },
+            },
+          })
+        },
+      },
+    }),
+  )
+
+  const responseText = await response.text()
+  assert.equal(response.status, 401)
+  assert.deepEqual(JSON.parse(responseText), { error: "openai_compatible_upstream_error" })
+  assert.equal(responseText.includes("sk-custom"), false)
+  assert.equal(responseText.includes("Authorization"), false)
+})
+
 test("openai-compatible transport appends chat completions path and sends bearer auth", async () => {
   const calls: Array<{ url: string; init: RequestInit }> = []
   const transport = new OpenAiCompatibleTransport(async (url, init) => {
