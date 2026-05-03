@@ -60,9 +60,11 @@ When managed AI is enabled, signed-in app identity and desktop handoff can come 
 
 Managed-AI usage is attributed by request, user, org, session, and credential. Accounting stores input tokens, output tokens, cached tokens, and total tokens from the routed provider response or Codex transport result.
 
+OpenAI-compatible custom providers are admin-managed. The desktop app receives provider `openai_compatible` and a model id in the read-only AI access policy, writes local OpenCode routing for `@ai-sdk/openai-compatible`, and sends prompts through the local Veslo server route `/ai-gateway/providers/openai_compatible/v1/chat/completions`. DEN resolves the assigned platform credential, reads the encrypted base URL and API key, forwards to `${baseUrl}/chat/completions`, and records usage against provider `openai_compatible`.
+
 Codex limit exhaustion is temporary ineligibility, not a credential health failure. When every automatically selectable Codex credential is exhausted, the request fails explicitly with `all_codex_credentials_exhausted`. Permanent OAuth, token refresh, or auth-material failures are credential health failures when the credential lifecycle marks them that way; provider/runtime auth failures during selection or routing can also make a credential ineligible or rebindable without implying that every upstream invalid-auth response changes credential health.
 
-An assigned Codex credential is a hard constraint. If the assigned credential is exhausted or unavailable, the request fails explicitly instead of silently rotating to another credential. Automatic credential selection can rotate to another eligible credential.
+An assigned Codex or OpenAI-compatible credential is a hard constraint. If the assigned credential is exhausted, unavailable, missing, or invalid for the assigned provider, the request fails explicitly instead of silently rotating to another credential. Automatic credential selection can rotate to another eligible credential only for providers that support unassigned platform-pool selection.
 
 ## Permissions
 

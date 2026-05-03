@@ -9,6 +9,7 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 - The policy controls:
   - `enabled`
   - `provider`
+  - `credentialId` for providers that require a specific assigned credential
   - `defaultModel`
   - `allowedModels`
 
@@ -36,7 +37,9 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 - New users created from the admin flow are auto-assigned to Codex / ChatGPT runtime with `gpt-5.4` when at least one eligible Codex runtime credential exists. When multiple credentials are eligible, DEN selects the one with the fewest active leases and uses deterministic tie-breaking.
 - Codex credential assignment options only include credentials whose provider is `codex_oauth`, whose stored state is `healthy`, and whose latest upstream status probe reports OK. A successful `codex | OK` probe is eligible even when rate-limit windows cannot be parsed; revoked, draining, unhealthy, invalid-grant, or probe-failing credentials are hidden from assignment.
 - When no eligible Codex credential exists, user creation still succeeds and AI access remains unassigned until an eligible credential is available.
-- The DEN admin `Credentials` page is the place to connect/reconnect OpenAI and create/rotate shared Anthropic and Codex runtime credentials.
+- The DEN admin `Credentials` page is the place to connect/reconnect OpenAI and create/rotate shared Anthropic, Codex runtime, and OpenAI-compatible credentials.
+- OpenAI-compatible credentials require a display name, custom HTTP(S) `/v1` base URL, and bearer API key. Local `http://localhost`, `http://127.0.0.1`, and `http://[::1]` URLs are allowed for development; hosted/non-loopback URLs must use HTTPS.
+- OpenAI-compatible user access requires assigning a healthy `openai_compatible` credential. DEN does not automatically pick from a mixed custom-provider pool because the assigned credential determines the upstream base URL.
 - The hosted admin `Usage` page shows recorded usage for every credential, including credentials with zero recorded traffic.
 - The hosted admin `Usage` and `Credentials` pages show best-effort Codex upstream status for runtime credentials. When the Codex probe returns parseable 5h and weekly windows, both pages show those windows and reset times. When the probe succeeds but no windows are parsed, both pages show `Codex OK, limits unknown` without making the credential ineligible. Authentication failures such as `invalid_grant`, reused refresh tokens, or 401 responses remain visible as unavailable upstream status and require reconnecting or rotating the credential.
 
@@ -47,7 +50,10 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
   - `platform:openai`
   - `platform:anthropic`
   - `platform:codex_oauth`
+  - `platform:openai_compatible`
 - Session ownership and usage attribution still stay tied to the real signed-in user.
+
+OpenAI-compatible credentials store their upstream base URL and API key in the encrypted managed-AI secret store as platform-owned connection material. End users only receive the read-only provider/model assignment and never receive the upstream API key or base URL.
 
 ## Manual setup
 
@@ -89,6 +95,13 @@ Use these commands when verifying the admin-managed flow locally or against the 
   VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER=anthropic VESLO_E2E_EXPECTED_MANAGED_AI_MODEL=claude-3-7-sonnet-latest pnpm test --spec ./specs/den-managed-openai-anthropic.spec.ts
   ```
 
+- Assign a live user to an OpenAI-compatible credential before a live custom-provider desktop roundtrip:
+
+  ```bash
+  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --provider openai_compatible --credential-id <credential-id> --default-model <custom-model> --allowed-model <custom-model>
+  VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER=openai_compatible VESLO_E2E_EXPECTED_MANAGED_AI_MODEL=<custom-model> pnpm test --spec ./specs/den-managed-openai-anthropic.spec.ts
+  ```
+
 ## CI paths
 
 - Windows MSI builds are produced by the GitHub Actions workflow `Build Windows MSI` in [`.github/workflows/build-windows-msi.yml`](../.github/workflows/build-windows-msi.yml).
@@ -106,3 +119,10 @@ Use these commands when verifying the admin-managed flow locally or against the 
   - `GET /ai-gateway/me/ai-access`
   - `POST /ai-gateway/providers/openai/v1/chat/completions`
   - `POST /ai-gateway/providers/anthropic/v1/messages`
+  - `POST /ai-gateway/providers/codex_oauth/v1/chat/completions`
+  - `POST /ai-gateway/providers/openai_compatible/v1/chat/completions`
+- DEN hosted provider routes:
+  - `POST /providers/openai/v1/chat/completions`
+  - `POST /providers/anthropic/v1/messages`
+  - `POST /providers/codex_oauth/v1/chat/completions`
+  - `POST /providers/openai_compatible/v1/chat/completions`

@@ -311,13 +311,14 @@ export function applyGatewayProviderRouting(
   const existingOptions = sanitizeGatewayProviderOptions(existingProvider.options);
   const existingHeaders = sanitizeGatewayProviderHeaders(existingOptions.headers);
   const existingModels = readConfigObject(existingProvider.models);
+  const isOpenAiCompatibleGatewayProvider = providerId === "codex_oauth" || providerId === "openai_compatible";
   const assignedModels = Array.from(
     new Set((input.models ?? []).map((value) => value.trim()).filter(Boolean)),
   );
   const routedModels = assignedModels.reduce<Record<string, unknown>>((models, modelId) => {
     const existingModel = sanitizeGatewayProviderModel(existingModels[modelId]);
     models[modelId] = {
-      ...(providerId === "codex_oauth"
+      ...(isOpenAiCompatibleGatewayProvider
         ? {
             name: modelId,
             tool_call: true,
@@ -327,7 +328,7 @@ export function applyGatewayProviderRouting(
       ...existingModel.config,
       headers: {
         ...existingModel.headers,
-        ...(providerId === "codex_oauth" ? {} : { Authorization: `Bearer ${serverClientToken}` }),
+        ...(isOpenAiCompatibleGatewayProvider ? {} : { Authorization: `Bearer ${serverClientToken}` }),
         "x-veslo-gateway-token": gatewayAccessToken,
         "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
       },
@@ -337,11 +338,13 @@ export function applyGatewayProviderRouting(
 
   const nextProvider: Record<string, unknown> = {
     ...existingProvider,
-    ...(providerId === "codex_oauth"
+    ...(isOpenAiCompatibleGatewayProvider
       ? {
           name: typeof existingProvider.name === "string" && existingProvider.name.trim()
             ? existingProvider.name
-            : "Veslo Codex OAuth",
+            : providerId === "codex_oauth"
+              ? "Veslo Codex OAuth"
+              : "OpenAI-compatible",
           npm: typeof existingProvider.npm === "string" && existingProvider.npm.trim()
             ? existingProvider.npm
             : "@ai-sdk/openai-compatible",
@@ -350,7 +353,7 @@ export function applyGatewayProviderRouting(
       : {}),
     options: {
       ...existingOptions,
-      ...(providerId === "codex_oauth" ? { apiKey: serverClientToken } : {}),
+      ...(isOpenAiCompatibleGatewayProvider ? { apiKey: serverClientToken } : {}),
       baseURL: `${serverBaseUrl}/ai-gateway/providers/${providerId}/v1`,
       ...(Object.keys(existingHeaders).length > 0 ? { headers: existingHeaders } : {}),
     },

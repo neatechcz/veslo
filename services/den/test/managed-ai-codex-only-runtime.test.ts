@@ -29,3 +29,48 @@ test("default managed ai proxy dependencies allow codex-only runtime without Ope
 
   assert.equal(typeof deps.codexOAuthTransport.chatCompletions, "function")
 })
+
+test("default openai-compatible transport uses fetch because credentials provide base URLs", async () => {
+  const originalFetch = globalThis.fetch
+  const fetchCalls: Array<{ url: string; init: RequestInit }> = []
+  globalThis.fetch = (async (url, init) => {
+    fetchCalls.push({ url: String(url), init: init ?? {} })
+    return new Response(JSON.stringify({ id: "chatcmpl_runtime_1" }), {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+      },
+    })
+  }) as typeof fetch
+
+  try {
+    const runtime = createDefaultRuntimeState({
+      db: {},
+      secretKey: "abcdefghijklmnopqrstuvwxyz123456",
+    })
+    const deps = createDefaultProxyDependencies(runtime)
+
+    const response = await deps.openAiCompatibleTransport.chatCompletions({
+      apiKey: "sk-runtime",
+      baseUrl: "https://runtime.example.test/v1",
+      body: { model: "custom-model" },
+    })
+
+    assert.deepEqual(response.body, { id: "chatcmpl_runtime_1" })
+    assert.deepEqual(fetchCalls, [
+      {
+        url: "https://runtime.example.test/v1/chat/completions",
+        init: {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer sk-runtime",
+          },
+          body: JSON.stringify({ model: "custom-model" }),
+        },
+      },
+    ])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

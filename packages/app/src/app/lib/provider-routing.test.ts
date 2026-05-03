@@ -141,6 +141,57 @@ test("codex_oauth provider config points at ai-gateway codex route", () => {
   });
 });
 
+test("openai_compatible provider config points at ai-gateway custom route", () => {
+  const updated = applyGatewayProviderRouting(
+    JSON.stringify({ provider: {} }),
+    {
+      providerId: "openai_compatible",
+      serverBaseUrl: "http://127.0.0.1:4318",
+      serverClientToken: "veslo-client-token",
+      gatewayAccessToken: "gateway-access-token",
+      models: ["custom-model"],
+    },
+  );
+
+  const parsed = JSON.parse(updated) as {
+    provider?: {
+      openai_compatible?: {
+        name?: string;
+        npm?: string;
+        env?: string[];
+        models?: Record<string, {
+          name?: string;
+          tool_call?: boolean;
+          reasoning?: boolean;
+          headers?: Record<string, string>;
+        }>;
+        options?: {
+          apiKey?: string;
+          baseURL?: string;
+          headers?: Record<string, string>;
+        };
+      };
+    };
+  };
+
+  assert.equal(parsed.provider?.openai_compatible?.name, "OpenAI-compatible");
+  assert.equal(parsed.provider?.openai_compatible?.npm, "@ai-sdk/openai-compatible");
+  assert.deepEqual(parsed.provider?.openai_compatible?.env, []);
+  assert.equal(
+    parsed.provider?.openai_compatible?.options?.baseURL,
+    "http://127.0.0.1:4318/ai-gateway/providers/openai_compatible/v1",
+  );
+  assert.equal(parsed.provider?.openai_compatible?.options?.apiKey, "veslo-client-token");
+  assert.equal(parsed.provider?.openai_compatible?.options?.headers, undefined);
+  assert.equal(parsed.provider?.openai_compatible?.models?.["custom-model"]?.name, "custom-model");
+  assert.equal(parsed.provider?.openai_compatible?.models?.["custom-model"]?.tool_call, true);
+  assert.equal(parsed.provider?.openai_compatible?.models?.["custom-model"]?.reasoning, true);
+  assert.deepEqual(parsed.provider?.openai_compatible?.models?.["custom-model"]?.headers, {
+    "x-veslo-gateway-token": "gateway-access-token",
+    "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
+  });
+});
+
 test("codex_oauth provider config includes assigned gpt-5.5 without changing the default model", () => {
   const updated = applyGatewayProviderRouting(
     JSON.stringify({

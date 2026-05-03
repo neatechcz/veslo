@@ -7,10 +7,16 @@ import type { CredentialRepository } from "../credentials/repository.js"
 import type { SecretStore } from "../credentials/secret-store.js"
 import type { TokenBroker } from "../credentials/token-broker.js"
 import type { LeaseBroker } from "../leases/lease-broker.js"
-import type { AnthropicProviderTransport, CodexOAuthProviderTransport, OpenAiProviderTransport } from "../providers/transport.js"
+import type {
+  AnthropicProviderTransport,
+  CodexOAuthProviderTransport,
+  OpenAiCompatibleProviderTransport,
+  OpenAiProviderTransport,
+} from "../providers/transport.js"
 import type { UsageRepository } from "../usage/repository.js"
 import { createAnthropicProxyRouter } from "./providers/anthropic.js"
 import { createCodexOAuthProxyRouter } from "./providers/codex-oauth.js"
+import { createOpenAiCompatibleProxyRouter } from "./providers/openai-compatible.js"
 import { createOpenAiProxyRouter } from "./providers/openai.js"
 
 export type ProxyDependencies = {
@@ -24,6 +30,7 @@ export type ProxyDependencies = {
   openAiTransport: OpenAiProviderTransport
   anthropicTransport: AnthropicProviderTransport
   codexOAuthTransport: CodexOAuthProviderTransport
+  openAiCompatibleTransport: OpenAiCompatibleProviderTransport
 }
 
 export function createProxyRouter(deps: ProxyDependencies) {
@@ -57,6 +64,7 @@ export function createProxyRouter(deps: ProxyDependencies) {
   router.use("/providers/openai", createOpenAiProxyRouter(deps))
   router.use("/providers/anthropic", createAnthropicProxyRouter(deps))
   router.use("/providers/codex_oauth", createCodexOAuthProxyRouter(deps))
+  router.use("/providers/openai_compatible", createOpenAiCompatibleProxyRouter(deps))
 
   return router
 }

@@ -55,6 +55,7 @@ export type AdminUserAiAccessRecord = {
 export type AdminCredentialOption = {
   id: string
   name: string
+  provider: ManagedAiProvider
 }
 
 export type AdminCredentialRecord = {

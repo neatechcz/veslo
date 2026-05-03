@@ -54,6 +54,10 @@ export class DefaultTokenBroker implements TokenBroker {
       throw new Error("codex_auth_json_not_supported_by_token_broker")
     }
 
+    if (secret.kind !== "openai_oauth") {
+      throw new Error(`unsupported_secret_kind:${secret.kind}`)
+    }
+
     if (!isExpired(secret.expiresAt, this.now())) {
       return {
         kind: "oauth",

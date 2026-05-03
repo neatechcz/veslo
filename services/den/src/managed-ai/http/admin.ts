@@ -49,6 +49,7 @@ type CreateCredentialInput = {
   provider: LeaseProvider | null
   name?: string | null
   secret: string
+  baseUrl?: string | null
 }
 
 type UpdateUserAiAccessInput = {
@@ -264,20 +265,29 @@ export function createManagedAiAdminRouteDeps(
     }
   }
 
-  async function listEligibleCodexCredentials(): Promise<AdminCredentialOption[] | undefined> {
+  async function listAvailableAssignmentCredentials(): Promise<AdminCredentialOption[] | undefined> {
     const listAdminCredentials = deps.credentials.listAdminCredentials
     if (!listAdminCredentials) {
       return undefined
     }
 
     const credentials = await listAdminCredentials.call(deps.credentials)
-    const candidates = credentials.filter((entry) => entry.provider === "codex_oauth" && entry.state === "healthy")
-    if (!codexStatusProvider) {
-      return []
-    }
-
-    const eligible: AdminCredentialOption[] = []
-    for (const credential of candidates) {
+    const options: AdminCredentialOption[] = []
+    for (const credential of credentials) {
+      if (credential.state !== "healthy") {
+        continue
+      }
+      if (credential.provider === "openai_compatible") {
+        options.push({
+          id: credential.id,
+          name: credential.name,
+          provider: "openai_compatible",
+        })
+        continue
+      }
+      if (credential.provider !== "codex_oauth" || !codexStatusProvider) {
+        continue
+      }
       const status = await codexStatusProvider.getStatus({
         credentialId: credential.id,
         credentialName: credential.name,
@@ -285,23 +295,34 @@ export function createManagedAiAdminRouteDeps(
       if (!evaluateCodexCredentialEligibility(status, now()).eligible) {
         continue
       }
-      eligible.push({
+      options.push({
         id: credential.id,
         name: credential.name,
+        provider: "codex_oauth",
       })
     }
 
-    return eligible
+    return options
   }
 
-  async function listAvailableCodexCredentials(): Promise<AdminCredentialOption[] | undefined> {
-    return listEligibleCodexCredentials()
-  }
+  async function assertAssignableCredential(provider: AiAccessProvider | null, credentialId: string | null): Promise<void> {
+    if (provider !== "codex_oauth" && provider !== "openai_compatible") {
+      return
+    }
+    if (!credentialId) {
+      throw new HttpError("invalid_ai_access_credential_id", 400)
+    }
 
-  async function assertEligibleCodexCredential(credentialId: string): Promise<void> {
-    const credentials = await listEligibleCodexCredentials()
-    if (credentials && !credentials.some((entry) => entry.id === credentialId)) {
+    const credentials = await listAvailableAssignmentCredentials()
+    if (!credentials) {
+      throw new HttpError("invalid_ai_access_credential_id", 400)
+    }
+    const assignable = credentials.some((entry) => entry.id === credentialId && entry.provider === provider)
+    if (!assignable && provider === "codex_oauth") {
       throw new HttpError("ineligible_ai_access_credential_id", 400)
+    }
+    if (!assignable) {
+      throw new HttpError("invalid_ai_access_credential_id", 400)
     }
   }
 
@@ -333,7 +354,7 @@ export function createManagedAiAdminRouteDeps(
       try {
         return {
           aiAccess: toAdminUserAiAccessRecord(await deps.aiAccess.getUserAiAccess(userId)),
-          availableCredentials: await listAvailableCodexCredentials(),
+          availableCredentials: await listAvailableAssignmentCredentials(),
         }
       } catch (error) {
         return handleRouteError(res, error, "ai_access_lookup_failed")
@@ -357,8 +378,8 @@ export function createManagedAiAdminRouteDeps(
           ...(req.body ?? {}),
           userId,
         })
-        if (validated.enabled && validated.provider === "codex_oauth" && validated.credentialId) {
-          await assertEligibleCodexCredential(validated.credentialId)
+        if (validated.enabled) {
+          await assertAssignableCredential(validated.provider, validated.credentialId)
         }
 
         const saved = await deps.aiAccess.upsertUserAiAccess(validated)
@@ -372,7 +393,7 @@ export function createManagedAiAdminRouteDeps(
         })
         return {
           aiAccess: toAdminUserAiAccessRecord(saved)!,
-          availableCredentials: await listAvailableCodexCredentials(),
+          availableCredentials: await listAvailableAssignmentCredentials(),
         }
       } catch (error) {
         return handleRouteError(res, error, "ai_access_update_failed")
@@ -985,6 +1006,19 @@ function validateCreateCredentialInput(input: CreateCredentialInput): {
     throw new HttpError("invalid_credential_secret", 400)
   }
 
+  if (provider === "openai_compatible") {
+    return {
+      provider,
+      name: name || `${formatProviderLabel(provider)} credential`,
+      credentialType: "api_key",
+      storedSecret: {
+        kind: "openai_compatible_api_key",
+        apiKey: secret,
+        baseUrl: normalizeOpenAiCompatibleBaseUrl(input.baseUrl),
+      },
+    }
+  }
+
   return {
     provider,
     name: name || `${formatProviderLabel(provider)} credential`,
@@ -1001,6 +1035,34 @@ function validateCreateCredentialInput(input: CreateCredentialInput): {
   }
 }
 
+function normalizeOpenAiCompatibleBaseUrl(input: unknown): string {
+  const raw = typeof input === "string" ? input.trim() : ""
+  if (!raw) {
+    throw new HttpError("invalid_credential_base_url", 400)
+  }
+
+  let parsed: URL
+  try {
+    parsed = new URL(raw)
+  } catch {
+    throw new HttpError("invalid_credential_base_url", 400)
+  }
+
+  if (parsed.search || parsed.hash || parsed.username || parsed.password || raw.includes("?") || raw.includes("#")) {
+    throw new HttpError("invalid_credential_base_url", 400)
+  }
+
+  const hostname = parsed.hostname.toLowerCase()
+  const isLoopback =
+    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]"
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isLoopback)) {
+    throw new HttpError("invalid_credential_base_url", 400)
+  }
+
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "")
+  return parsed.toString().replace(/\/+$/, "")
+}
+
 function validateUserAiAccessInput(input: UpdateUserAiAccessInput & { userId: string }): UpsertUserAiAccessPolicyInput {
   const enabled = input.enabled === true
   const provider = parseAiAccessProvider(input.provider)
@@ -1015,7 +1077,7 @@ function validateUserAiAccessInput(input: UpdateUserAiAccessInput & { userId: st
     throw new HttpError("invalid_ai_access_provider", 400)
   }
 
-  if (enabled && provider === "codex_oauth" && !credentialId) {
+  if (enabled && (provider === "codex_oauth" || provider === "openai_compatible") && !credentialId) {
     throw new HttpError("invalid_ai_access_credential_id", 400)
   }
 
