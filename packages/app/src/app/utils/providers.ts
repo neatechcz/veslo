@@ -9,7 +9,7 @@ export const LM_STUDIO_PROVIDER_ID = "lmstudio";
 export const LM_STUDIO_PROVIDER_NAME = "LM Studio (local)";
 export const LM_STUDIO_PROVIDER_NPM = "@ai-sdk/openai-compatible";
 export const LM_STUDIO_DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1";
-export const GATEWAY_OWNED_PROVIDER_IDS = ["openai", "anthropic", "codex_oauth"] as const;
+export const GATEWAY_OWNED_PROVIDER_IDS = ["openai", "anthropic", "codex_oauth", "openai_compatible"] as const;
 
 export type GatewayOwnedProviderId = (typeof GATEWAY_OWNED_PROVIDER_IDS)[number];
 

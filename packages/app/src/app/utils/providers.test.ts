@@ -88,6 +88,7 @@ test("identifies gateway-owned providers", () => {
   assert.equal(isGatewayOwnedProvider("openai"), true);
   assert.equal(isGatewayOwnedProvider("anthropic"), true);
   assert.equal(isGatewayOwnedProvider("codex_oauth"), true);
+  assert.equal(isGatewayOwnedProvider("openai_compatible"), true);
   assert.equal(isGatewayOwnedProvider("lmstudio"), false);
 });
 

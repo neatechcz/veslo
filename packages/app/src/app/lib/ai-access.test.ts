@@ -368,6 +368,67 @@ test("formatManagedAiAccessConfig routes codex_oauth through the gateway", () =>
   });
 });
 
+test("formatManagedAiAccessConfig routes openai_compatible through the gateway", () => {
+  const content = formatManagedAiAccessConfig(
+    "{}",
+    {
+      profile: {
+        userId: "user_123",
+        providerId: "openai_compatible",
+        defaultModel: {
+          providerID: "openai_compatible",
+          modelID: "custom-model",
+        },
+        allowedModels: ["custom-model"],
+        updatedAt: null,
+      },
+      serverBaseUrl: "https://veslo.example.test",
+      serverClientToken: "veslo-client-token",
+      gatewayAccessToken: "den_token_123",
+    },
+  );
+
+  const parsed = JSON.parse(content) as {
+    model?: string;
+    provider?: {
+      openai_compatible?: {
+        name?: string;
+        npm?: string;
+        env?: string[];
+        models?: Record<string, {
+          name?: string;
+          tool_call?: boolean;
+          reasoning?: boolean;
+          headers?: Record<string, string>;
+        }>;
+        options?: {
+          apiKey?: string;
+          baseURL?: string;
+          headers?: Record<string, string>;
+        };
+      };
+    };
+  };
+
+  assert.equal(parsed.model, "openai_compatible/custom-model");
+  assert.equal(parsed.provider?.openai_compatible?.name, "OpenAI-compatible");
+  assert.equal(parsed.provider?.openai_compatible?.npm, "@ai-sdk/openai-compatible");
+  assert.deepEqual(parsed.provider?.openai_compatible?.env, []);
+  assert.equal(parsed.provider?.openai_compatible?.models?.["custom-model"]?.name, "custom-model");
+  assert.equal(parsed.provider?.openai_compatible?.models?.["custom-model"]?.tool_call, true);
+  assert.equal(parsed.provider?.openai_compatible?.models?.["custom-model"]?.reasoning, true);
+  assert.equal(
+    parsed.provider?.openai_compatible?.options?.baseURL,
+    "https://veslo.example.test/ai-gateway/providers/openai_compatible/v1",
+  );
+  assert.equal(parsed.provider?.openai_compatible?.options?.apiKey, "veslo-client-token");
+  assert.equal(parsed.provider?.openai_compatible?.options?.headers, undefined);
+  assert.deepEqual(parsed.provider?.openai_compatible?.models?.["custom-model"]?.headers, {
+    "x-veslo-gateway-token": "den_token_123",
+    "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
+  });
+});
+
 test("formatManagedAiAccessConfig supports assigned gpt-5.5 without making it the default", () => {
   const content = formatManagedAiAccessConfig(
     "{}",
