@@ -49,14 +49,21 @@ function readIssueResult(candidate: unknown): CreateIssueResult | null {
 
   const issueId = readString(candidate.issueId) ?? readString(candidate.id)
   const issueUrl = readString(candidate.issueUrl) ?? readString(candidate.url)
-  if (!issueId || !issueUrl) {
-    return null
+  if (issueId && issueUrl) {
+    return {
+      issueId,
+      issueUrl,
+    }
   }
 
-  return {
-    issueId,
-    issueUrl,
+  for (const key of ["createdIssue", "issue"]) {
+    const nested = readIssueResult(candidate[key])
+    if (nested) {
+      return nested
+    }
   }
+
+  return null
 }
 
 function readIssueSearchResult(candidate: unknown): SearchIssueResult | null {

@@ -188,3 +188,59 @@ test("YouTrack MCP issue client can create issues through the remote HTTP MCP en
     },
   })
 })
+
+test("YouTrack MCP issue client reads nested createdIssue payloads returned as text content", async () => {
+  process.env.DATABASE_URL ??= "mysql://root:root@localhost:3306/veslo_test"
+  process.env.BETTER_AUTH_SECRET ??= "0123456789abcdef0123456789abcdef"
+  process.env.BETTER_AUTH_URL ??= "http://localhost:8788"
+  const { createYouTrackMcpIssueClient } = await import("../src/integrations/youtrack-mcp.js")
+  let searchCalls = 0
+  const client = createYouTrackMcpIssueClient({
+    command: null,
+    remoteUrl: "https://youtrack.example.test/mcp",
+    remoteToken: "service-token",
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as {
+        params?: {
+          name?: string
+        }
+      }
+      if (body.params?.name === "search_issues") {
+        searchCalls += 1
+      }
+
+      return new Response(JSON.stringify({
+        jsonrpc: "2.0",
+        id: "remote-1",
+        result: {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              createdIssue: {
+                id: "VSLO-988",
+                url: "https://youtrack.example.test/issue/VSLO-988",
+              },
+            }),
+          }],
+        },
+      }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      })
+    },
+  })
+
+  const issue = await client.createIssue({
+    project: "VSLO",
+    summary: "[Bug] Nested createdIssue",
+    description: "Locator\nFeedback ID: fb_nested",
+  })
+
+  assert.deepEqual(issue, {
+    issueId: "VSLO-988",
+    issueUrl: "https://youtrack.example.test/issue/VSLO-988",
+  })
+  assert.equal(searchCalls, 0)
+})
