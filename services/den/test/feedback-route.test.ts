@@ -111,6 +111,9 @@ async function startServer(options: {
     }
   }
   generateId?: () => string
+  projector?: {
+    projectFeedback: (feedbackId: string) => Promise<{ issueId: string; issueUrl: string } | null>
+  }
 }) {
   const { createFeedbackRouter, errorMiddleware } = await loadFeedbackModules()
   const app = express()
@@ -321,6 +324,57 @@ test("feedback route persists a pending feedback record without any youtrack sid
     assert.equal(insertCalls[0]?.value.last_projector_error, null)
     assert.equal(insertCalls[0]?.value.next_projector_attempt_at, null)
     assert.ok(insertCalls[0]?.value.submitted_at instanceof Date)
+  } finally {
+    await server.close()
+  }
+})
+
+test("feedback route waits for YouTrack projection and returns the created task number", async () => {
+  const insertCalls: InsertCall[] = []
+  const projectorCalls: string[] = []
+  const server = await startServer({
+    authorize: async () => buildAuthorizationContext(),
+    db: {
+      insert(table) {
+        return {
+          values(value) {
+            insertCalls.push({ table, value })
+            return Promise.resolve({ insertId: "fb_sync_123" })
+          },
+        }
+      },
+    },
+    generateId: () => "fb_sync_123",
+    projector: {
+      async projectFeedback(feedbackId: string) {
+        projectorCalls.push(feedbackId)
+        return {
+          issueId: "VSLO-4321",
+          issueUrl: "https://youtrack.example/issue/VSLO-4321",
+        }
+      },
+    },
+  })
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/feedback`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-veslo-org-id": "org_123",
+      },
+      body: JSON.stringify(buildFeedbackPayload()),
+    })
+
+    assert.equal(response.status, 201)
+    assert.deepEqual(await response.json(), {
+      feedbackId: "fb_sync_123",
+      status: "projected",
+      youtrackIssueId: "VSLO-4321",
+      youtrackIssueUrl: "https://youtrack.example/issue/VSLO-4321",
+    })
+    assert.equal(insertCalls.length, 1)
+    assert.deepEqual(projectorCalls, ["fb_sync_123"])
   } finally {
     await server.close()
   }

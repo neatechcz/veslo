@@ -485,16 +485,19 @@ export default function App() {
   const [denKeepSignedIn, setDenKeepSignedIn] = createSignal(readDenKeepSignedIn());
   const [feedbackModalOpen, setFeedbackModalOpen] = createSignal(false);
   const [feedbackSubmitError, setFeedbackSubmitError] = createSignal<string | null>(null);
+  const [feedbackSubmitSuccessIssueId, setFeedbackSubmitSuccessIssueId] = createSignal<string | null>(null);
   const [feedbackSubmitting, setFeedbackSubmitting] = createSignal(false);
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
 
   function openFeedbackModal() {
     setFeedbackSubmitError(null);
+    setFeedbackSubmitSuccessIssueId(null);
     setFeedbackModalOpen(true);
   }
 
   function closeFeedbackModal() {
     setFeedbackSubmitError(null);
+    setFeedbackSubmitSuccessIssueId(null);
     setFeedbackModalOpen(false);
   }
 
@@ -8861,15 +8864,16 @@ export default function App() {
   async function persistFeedback(values: FeedbackFormValues) {
     if (feedbackSubmitting()) return;
     setFeedbackSubmitError(null);
+    setFeedbackSubmitSuccessIssueId(null);
     setFeedbackSubmitting(true);
     try {
-      await submitFeedbackReport({
+      const result = await submitFeedbackReport({
         title: values.title,
         description: values.description,
         context: buildFeedbackRuntimeContext(),
       });
 
-      closeFeedbackModal();
+      setFeedbackSubmitSuccessIssueId(result.youtrackIssueId);
     } finally {
       setFeedbackSubmitting(false);
     }
@@ -9054,6 +9058,7 @@ export default function App() {
       <FeedbackModal
         open={feedbackModalOpen()}
         error={feedbackSubmitError()}
+        successIssueId={feedbackSubmitSuccessIssueId()}
         submitting={feedbackSubmitting()}
         onClose={closeFeedbackModal}
         onSubmit={submitFeedback}

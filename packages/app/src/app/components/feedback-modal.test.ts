@@ -46,3 +46,9 @@ test("feedback modal renders inline submit errors from the app shell", () => {
   assert.match(source, /<ModalError error=\{props\.error\} \/>/, "feedback modal should render submit errors inline when present");
   assert.match(modalErrorSource, /role="alert"/, "modal error surface should announce failures accessibly");
 });
+
+test("feedback modal renders the YouTrack task number after a successful submit", () => {
+  assert.match(source, /successIssueId: string \| null;/, "feedback modal props should accept the submitted YouTrack issue id");
+  assert.match(source, /feedback\.success_message/, "feedback modal should render localized success copy");
+  assert.match(source, /props\.successIssueId/, "feedback modal should include the task number returned by the app shell");
+});

@@ -15,7 +15,7 @@ function waitForRoute(hashFragment: string, timeout = 10_000): Promise<void> {
   return browser.waitUntil(async () => (await browser.getUrl()).includes(hashFragment), {
     timeout,
     timeoutMsg: `Route did not change to ${hashFragment} within ${timeout}ms`,
-  });
+  }).then(() => undefined);
 }
 
 function createFeedbackStubServer() {
@@ -44,8 +44,14 @@ function createFeedbackStubServer() {
         return;
       }
 
+      const requestNumber = requests.length;
       res.writeHead(201, { "content-type": "application/json" });
-      res.end(JSON.stringify({ feedbackId: `fb_${requests.length}` }));
+      res.end(JSON.stringify({
+        feedbackId: `fb_${requestNumber}`,
+        status: "projected",
+        youtrackIssueId: `VSLO-${1000 + requestNumber}`,
+        youtrackIssueUrl: `https://youtrack.example/issue/VSLO-${1000 + requestNumber}`,
+      }));
     });
   });
 
@@ -131,6 +137,12 @@ async function submitFeedback(title: string, description: string) {
   await submitButton.waitForEnabled({ timeout: 10_000 });
   await submitButton.click();
 
+  const success = await dialog.$('[role="status"]');
+  await success.waitForDisplayed({ timeout: 10_000 });
+  await expect(success).toHaveText(expect.stringContaining("VSLO-"));
+
+  const closeButton = await dialog.$('//button[normalize-space()="Zavřít" or normalize-space()="Close"]');
+  await closeButton.click();
   await dialog.waitForDisplayed({ timeout: 10_000, reverse: true });
 }
 

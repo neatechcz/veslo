@@ -100,6 +100,18 @@ export default {
   "workspace.rename_label": "工作区名称",
   "workspace.rename_placeholder": "设计团队工作区",
 
+  // ==================== Feedback ====================
+  "feedback.button": "反馈",
+  "feedback.modal_title": "报告错误",
+  "feedback.modal_description": "描述问题，Veslo 会自动附加当前屏幕。",
+  "feedback.title_label": "标题",
+  "feedback.title_placeholder": "哪里出错了？",
+  "feedback.description_label": "描述",
+  "feedback.description_placeholder": "发生了什么、你期望什么、如何复现？",
+  "feedback.technical_note": "Veslo 会自动附加当前屏幕和技术细节。",
+  "feedback.success_message": "错误报告已发送。YouTrack 任务：{issueId}。",
+  "feedback.submit": "发送错误报告",
+
   // ==================== Session ====================
   "session.no_selected": "未选择会话",
   "session.back_to_dashboard": "返回仪表盘",

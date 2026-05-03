@@ -597,8 +597,8 @@ test("app shell guards feedback submission while persistence is in flight", () =
     "persistFeedback should submit feedback inside the protected try block",
   );
   assert.ok(
-    blockContainsCallee(persistTry!.tryBlock, "closeFeedbackModal"),
-    "persistFeedback should close the modal only after successful feedback persistence",
+    blockContainsCallee(persistTry!.tryBlock, "setFeedbackSubmitSuccessIssueId"),
+    "persistFeedback should surface the returned YouTrack task number after successful feedback persistence",
   );
   assert.ok(persistTry!.finallyBlock, "persistFeedback should always clear the in-flight flag in finally");
   assert.ok(
@@ -654,6 +654,34 @@ test("app shell keeps feedback submit failures scoped to the modal", () => {
     submitFeedbackBody!.getText(appSourceFile),
     /setFeedbackSubmitError\(error instanceof Error \? error\.message : safeStringify\(error\)\)/,
     "submitFeedback should surface persistence failures inside the modal",
+  );
+});
+
+test("app shell surfaces the YouTrack task number after successful feedback submit", () => {
+  assert.match(
+    appSourceText,
+    /const \[feedbackSubmitSuccessIssueId, setFeedbackSubmitSuccessIssueId\] = createSignal<string \| null>\(null\);/,
+    "App should track the returned YouTrack issue id in feedback-specific state",
+  );
+  assert.match(
+    appSourceText,
+    /setFeedbackSubmitSuccessIssueId\(null\);[\s\S]*setFeedbackModalOpen\(true\);/,
+    "opening the feedback modal should clear stale success state",
+  );
+  assert.match(
+    appSourceText,
+    /const result = await submitFeedbackReport\(/,
+    "feedback persistence should keep the submit result from Den",
+  );
+  assert.match(
+    appSourceText,
+    /setFeedbackSubmitSuccessIssueId\(result\.youtrackIssueId\);/,
+    "successful feedback persistence should store the returned YouTrack issue id",
+  );
+  assert.match(
+    appSourceText,
+    /successIssueId=\{feedbackSubmitSuccessIssueId\(\)\}/,
+    "FeedbackModal should receive the returned YouTrack issue id",
   );
 });
 

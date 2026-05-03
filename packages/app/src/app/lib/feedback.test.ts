@@ -107,7 +107,7 @@ test("submitFeedbackReport posts authenticated feedback payload with captured sc
   installAuthenticatedDenState();
 
   try {
-    await submitFeedbackReport({
+    const result = await submitFeedbackReport({
       title: "Sidebar stopped responding",
       description: "The left sidebar stopped reacting after switching sessions.",
       context: TEST_CONTEXT,
@@ -124,7 +124,12 @@ test("submitFeedbackReport posts authenticated feedback payload with captured sc
           body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
         });
 
-        return new Response(JSON.stringify({ feedbackId: "fb_123" }), {
+        return new Response(JSON.stringify({
+          feedbackId: "fb_123",
+          status: "projected",
+          youtrackIssueId: "VSLO-4321",
+          youtrackIssueUrl: "https://youtrack.example/issue/VSLO-4321",
+        }), {
           status: 201,
           headers: { "Content-Type": "application/json" },
         });
@@ -148,6 +153,12 @@ test("submitFeedbackReport posts authenticated feedback payload with captured sc
       screenshotStatus: "captured",
       screenshotDataUrl: "data:image/jpeg;base64,abc123",
       screenshotMimeType: "image/jpeg",
+    });
+    assert.deepEqual(result, {
+      feedbackId: "fb_123",
+      status: "projected",
+      youtrackIssueId: "VSLO-4321",
+      youtrackIssueUrl: "https://youtrack.example/issue/VSLO-4321",
     });
   } finally {
     clearDenAuth();
@@ -174,7 +185,12 @@ test("submitFeedbackReport falls back to screenshotStatus=failed when surface ca
           body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
         });
 
-        return new Response(JSON.stringify({ feedbackId: "fb_456" }), {
+        return new Response(JSON.stringify({
+          feedbackId: "fb_456",
+          status: "projected",
+          youtrackIssueId: "VSLO-456",
+          youtrackIssueUrl: "https://youtrack.example/issue/VSLO-456",
+        }), {
           status: 201,
           headers: { "Content-Type": "application/json" },
         });

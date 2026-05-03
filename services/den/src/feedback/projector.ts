@@ -59,22 +59,21 @@ export type FeedbackProjectorStore = {
   }) => Promise<void>
 }
 
+export type FeedbackProjectionResult = {
+  issueId: string
+  issueUrl: string
+}
+
 export type FeedbackIssueClient = {
   createIssue: (input: {
     project: string
     summary: string
     description: string
-  }) => Promise<{
-    issueId: string
-    issueUrl: string
-  }>
+  }) => Promise<FeedbackProjectionResult>
   findIssueByFeedbackId?: (input: {
     project: string
     feedbackId: string
-  }) => Promise<{
-    issueId: string
-    issueUrl: string
-  } | null>
+  }) => Promise<FeedbackProjectionResult | null>
 }
 
 type TimerApi = Pick<typeof globalThis, "setTimeout" | "clearTimeout">
@@ -260,7 +259,7 @@ export function createFeedbackProjector(options: FeedbackProjectorOptions) {
   const timerApi = options.timerApi ?? globalThis
   const now = options.now ?? (() => new Date())
   const logger = options.logger ?? console
-  const inFlight = new Map<string, Promise<void>>()
+  const inFlight = new Map<string, Promise<FeedbackProjectionResult | null>>()
   const scheduledRetries = new Map<string, ReturnType<TimerApi["setTimeout"]>>()
 
   function clearScheduledRetry(feedbackId: string) {
@@ -282,11 +281,19 @@ export function createFeedbackProjector(options: FeedbackProjectorOptions) {
     scheduledRetries.set(feedbackId, handle)
   }
 
-  async function runProjection(feedbackId: string) {
+  async function runProjection(feedbackId: string): Promise<FeedbackProjectionResult | null> {
     const feedback = await store.getFeedback(feedbackId)
-    if (!feedback || feedback.youtrackIssueId) {
+    if (!feedback) {
       clearScheduledRetry(feedbackId)
-      return
+      return null
+    }
+
+    if (feedback.youtrackIssueId) {
+      clearScheduledRetry(feedbackId)
+      return {
+        issueId: feedback.youtrackIssueId,
+        issueUrl: feedback.youtrackIssueUrl ?? "",
+      }
     }
 
     const attemptNo = (await store.getLatestAttemptNumber(feedbackId)) + 1
@@ -318,7 +325,7 @@ export function createFeedbackProjector(options: FeedbackProjectorOptions) {
         status: "succeeded",
         errorMessage: null,
       })
-      return
+      return issue
     } catch (error) {
       const errorMessage = toErrorMessage(error)
       await store.insertAttempt({
@@ -337,7 +344,7 @@ export function createFeedbackProjector(options: FeedbackProjectorOptions) {
           nextProjectorAttemptAt,
         })
         scheduleRetry(feedbackId, nextDelayMs)
-        return
+        return null
       }
 
       clearScheduledRetry(feedbackId)
@@ -345,6 +352,7 @@ export function createFeedbackProjector(options: FeedbackProjectorOptions) {
         feedbackId,
         errorMessage,
       })
+      return null
     }
   }
 

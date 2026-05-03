@@ -9,6 +9,7 @@ export const FEEDBACK_CAPTURE_SELECTOR = "[data-feedback-capture-root]";
 
 const FEEDBACK_IMAGE_MIME_TYPE = "image/jpeg";
 const FEEDBACK_IMAGE_QUALITY = 0.82;
+const FEEDBACK_SUBMIT_TIMEOUT_MS = 45_000;
 
 type FetchLike = typeof globalThis.fetch;
 
@@ -54,6 +55,13 @@ type SubmitFeedbackReportArgs = {
   fetchImpl?: FetchLike;
 };
 
+export type SubmitFeedbackReportResult = {
+  feedbackId: string;
+  status: "projected";
+  youtrackIssueId: string;
+  youtrackIssueUrl: string | null;
+};
+
 type FeedbackRequestBody = {
   title: string;
   description: string;
@@ -67,6 +75,13 @@ type FeedbackRequestBody = {
   screenshotMimeType: string | null;
 };
 
+type FeedbackSubmitResponse = {
+  feedbackId?: unknown;
+  status?: unknown;
+  youtrackIssueId?: unknown;
+  youtrackIssueUrl?: unknown;
+};
+
 const resolveFetch = (): FetchLike =>
   (isTauriRuntime() ? (tauriFetch as unknown as FetchLike) : globalThis.fetch);
 
@@ -74,6 +89,8 @@ const normalizeOptional = (value?: string | null) => {
   const trimmed = value?.trim() ?? "";
   return trimmed ? trimmed : null;
 };
+
+const readResponseString = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
 
 function normalizeFeedbackSubmitError(error: unknown, denApiBase: string): Error {
   const message = error instanceof Error ? error.message : String(error);
@@ -136,7 +153,24 @@ function buildFeedbackRequestBody(args: {
   };
 }
 
-export async function submitFeedbackReport(args: SubmitFeedbackReportArgs): Promise<void> {
+function normalizeFeedbackSubmitResult(response: FeedbackSubmitResponse): SubmitFeedbackReportResult {
+  const feedbackId = readResponseString(response.feedbackId);
+  const youtrackIssueId = readResponseString(response.youtrackIssueId);
+  const youtrackIssueUrl = readResponseString(response.youtrackIssueUrl);
+
+  if (!feedbackId || !youtrackIssueId) {
+    throw new Error("Feedback was saved, but Den did not return a YouTrack task number.");
+  }
+
+  return {
+    feedbackId,
+    status: "projected",
+    youtrackIssueId,
+    youtrackIssueUrl,
+  };
+}
+
+export async function submitFeedbackReport(args: SubmitFeedbackReportArgs): Promise<SubmitFeedbackReportResult> {
   const auth = readDenAuth();
   if (!auth?.token || !auth.denApiBase) {
     throw new Error("Sign in to Den before sending feedback.");
@@ -166,15 +200,17 @@ export async function submitFeedbackReport(args: SubmitFeedbackReportArgs): Prom
 
   const url = `${auth.denApiBase.replace(/\/+$/, "")}/v1/feedback`;
   try {
-    await fetchJson<unknown>(url, {
+    const result = await fetchJson<FeedbackSubmitResponse>(url, {
       method: "POST",
       body: requestBody,
       headers: {
         Authorization: `Bearer ${auth.token}`,
         "x-veslo-org-id": auth.orgId,
       },
+      timeoutMs: FEEDBACK_SUBMIT_TIMEOUT_MS,
       fetchImpl: args.fetchImpl ?? resolveFetch(),
     });
+    return normalizeFeedbackSubmitResult(result);
   } catch (error) {
     throw normalizeFeedbackSubmitError(error, auth.denApiBase.replace(/\/+$/, ""));
   }

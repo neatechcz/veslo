@@ -18,6 +18,7 @@ export type FeedbackFormValues = {
 export type FeedbackModalProps = {
   open: boolean;
   error: string | null;
+  successIssueId: string | null;
   submitting: boolean;
   onClose: () => void;
   onSubmit: (values: FeedbackFormValues) => void;
@@ -30,10 +31,11 @@ export default function FeedbackModal(props: FeedbackModalProps) {
   const [title, setTitle] = createSignal("");
   const [description, setDescription] = createSignal("");
   const translate = useTranslate();
-  const canSubmit = () => title().trim().length > 0 && description().trim().length > 0;
+  const canSubmit = () => !props.successIssueId && title().trim().length > 0 && description().trim().length > 0;
   const titleId = createUniqueId();
   const descriptionId = createUniqueId();
   const noteId = createUniqueId();
+  const successId = createUniqueId();
 
   useFocusTrap(() => props.open, () => dialogRef, {
     onClose: props.onClose,
@@ -60,7 +62,7 @@ export default function FeedbackModal(props: FeedbackModalProps) {
       backdrop="medium"
       size="lg"
       ariaLabelledBy={titleId}
-      ariaDescribedBy={`${descriptionId} ${noteId}`}
+      ariaDescribedBy={`${descriptionId} ${noteId} ${successId}`}
     >
       <div ref={dialogRef} class="p-6" tabIndex={-1}>
         <ModalHeader
@@ -98,12 +100,20 @@ export default function FeedbackModal(props: FeedbackModalProps) {
             {translate("feedback.technical_note")}
           </p>
 
+          <Show when={props.successIssueId}>
+            {(issueId) => (
+              <p id={successId} role="status" class="rounded-xl border border-dls-border bg-gray-3 px-3 py-2 text-sm text-dls-text">
+                {translate("feedback.success_message", { issueId: issueId() })}
+              </p>
+            )}
+          </Show>
+
           <ModalError error={props.error} />
         </div>
 
         <ModalFooter>
           <Button variant="outline" onClick={props.onClose}>
-            {translate("common.cancel")}
+            {translate(props.successIssueId ? "common.close" : "common.cancel")}
           </Button>
           <Button onClick={submit} disabled={props.submitting || !canSubmit()}>
             {translate("feedback.submit")}

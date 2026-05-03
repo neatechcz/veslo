@@ -102,6 +102,8 @@ Current behavior:
 - captures the current visible app surface
 - includes technical details
 - submits to Den-backed feedback API
+- waits for Den to create or reuse the YouTrack task
+- shows the returned YouTrack task number, for example `VSLO-1234`, in the feedback modal after a successful submit
 
 Main sources:
 

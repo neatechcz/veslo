@@ -210,7 +210,7 @@ test("feedback projector creates one immediate YouTrack issue and records succes
     now: () => new Date("2026-04-16T20:00:00.000Z"),
   })
 
-  await projector.projectFeedback("fb_123")
+  const result = await projector.projectFeedback("fb_123")
 
   assert.equal(createIssueCalls.length, 1)
   assert.equal(createIssueCalls[0]?.project, "VESLO")
@@ -237,6 +237,10 @@ test("feedback projector creates one immediate YouTrack issue and records succes
     youtrackIssueUrl: "https://youtrack.example/issue/VESLO-123",
     lastProjectorError: null,
     nextProjectorAttemptAt: null,
+  })
+  assert.deepEqual(result, {
+    issueId: "VESLO-123",
+    issueUrl: "https://youtrack.example/issue/VESLO-123",
   })
 })
 
@@ -338,7 +342,7 @@ test("feedback projector reuses an existing YouTrack issue found by feedback id 
   }])
 })
 
-test("feedback route triggers projector work asynchronously after persistence instead of waiting on the projection promise", async () => {
+test("feedback route waits for projector success before returning the YouTrack task number", async () => {
   setupEnv()
   const [{ createFeedbackRouter }, { errorMiddleware }] = await Promise.all([
     import("../src/http/feedback.js"),
@@ -346,6 +350,14 @@ test("feedback route triggers projector work asynchronously after persistence in
   ])
 
   const projectorCalls: string[] = []
+  let releaseProjection!: (result: { issueId: string; issueUrl: string }) => void
+  let projectionStarted!: () => void
+  const started = new Promise<void>((resolve) => {
+    projectionStarted = resolve
+  })
+  const projectionResult = new Promise<{ issueId: string; issueUrl: string }>((resolve) => {
+    releaseProjection = resolve
+  })
   const app = express()
   app.use("/v1", createFeedbackRouter({
     authorize: async () => ({
@@ -380,7 +392,8 @@ test("feedback route triggers projector work asynchronously after persistence in
     projector: {
       async projectFeedback(feedbackId: string) {
         projectorCalls.push(feedbackId)
-        await new Promise(() => {})
+        projectionStarted()
+        return projectionResult
       },
     },
   }))
@@ -391,20 +404,33 @@ test("feedback route triggers projector work asynchronously after persistence in
 
   try {
     const { port } = server.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${port}/v1/feedback`, {
+    const responsePromise = fetch(`http://127.0.0.1:${port}/v1/feedback`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "x-veslo-org-id": "org_123",
       },
       body: JSON.stringify(buildFeedbackPayload()),
-      signal: AbortSignal.timeout(2_000),
     })
+    await started
+    let responded = false
+    void responsePromise.then(() => {
+      responded = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.equal(responded, false)
 
+    releaseProjection({
+      issueId: "VSLO-4321",
+      issueUrl: "https://youtrack.example/issue/VSLO-4321",
+    })
+    const response = await responsePromise
     assert.equal(response.status, 201)
     assert.deepEqual(await response.json(), {
       feedbackId: "fb_async_123",
-      status: "pending",
+      status: "projected",
+      youtrackIssueId: "VSLO-4321",
+      youtrackIssueUrl: "https://youtrack.example/issue/VSLO-4321",
     })
     assert.deepEqual(projectorCalls, ["fb_async_123"])
   } finally {

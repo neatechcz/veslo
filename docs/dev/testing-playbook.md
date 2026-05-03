@@ -99,7 +99,7 @@ The second command is required proof that the refreshed baselines pass in normal
 
 Use this only when a real feedback report and a real YouTrack issue are acceptable. This is not a CI gate.
 
-The live smoke uses the desktop WebdriverIO harness to click the feedback UI, submit a unique report, and then poll YouTrack through the locally configured MCP transport until the projected issue appears.
+The live smoke uses the desktop WebdriverIO harness to click the feedback UI, submit a unique report, confirm that the UI shows the returned YouTrack task number, and then poll YouTrack through the locally configured MCP transport until the projected issue appears.
 
 Requirements:
 

@@ -222,14 +222,22 @@ export function createFeedbackRouter(options: FeedbackRouterOptions = {}) {
       last_projector_error: null,
       next_projector_attempt_at: null,
     })
-    if (projector) {
-      void projector.projectFeedback(feedbackId).catch((error) => {
-        const message = error instanceof Error ? error.message : String(error)
-        console.error(`[feedback] failed to start projector for ${feedbackId}: ${message}`)
+    const projection = projector ? await projector.projectFeedback(feedbackId) : null
+    if (projector && !projection?.issueId) {
+      res.status(502).json({
+        error: "feedback_youtrack_projection_failed",
+        feedbackId,
+        status: "pending",
       })
+      return
     }
 
-    res.status(201).json({
+    res.status(201).json(projection ? {
+      feedbackId,
+      status: "projected",
+      youtrackIssueId: projection.issueId,
+      youtrackIssueUrl: projection.issueUrl,
+    } : {
       feedbackId,
       status: "pending",
     })

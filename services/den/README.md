@@ -129,8 +129,9 @@ pnpm db:migrate
   - Authenticated and org-scoped through `x-veslo-org-id`.
   - Accepts `{ title, description, userId?, userEmail?, orgId?, orgName?, context, screenshotStatus, screenshotDataUrl, screenshotMimeType }`.
   - Persists a canonical `feedback_report` row with `status=pending`; user/org identity is derived from the authenticated session and selected organization.
-  - Returns `201` with `{ feedbackId, status: "pending" }` after persisting the report.
-  - Starts the first YouTrack projection attempt asynchronously after persistence; request completion does not wait for MCP/YouTrack.
+  - With the production projector configured, waits for the first YouTrack projection attempt before returning.
+  - Returns `201` with `{ feedbackId, status: "projected", youtrackIssueId, youtrackIssueUrl }` after a YouTrack task is created or reused.
+  - Returns `502 feedback_youtrack_projection_failed` if the report was persisted but the synchronous YouTrack projection did not produce a task number.
   - Successful projection stores `youtrackIssueId` + `youtrackIssueUrl` on the feedback row; failures write attempt history and schedule in-process retries.
   - Screenshot data is stored directly on the feedback row for v1 as base64 payload + mime type + byte size.
   - Rejects invalid payloads with `400 invalid_feedback_payload` and oversized screenshots with `413 feedback_screenshot_too_large`.

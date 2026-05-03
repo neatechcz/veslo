@@ -14,10 +14,11 @@ type FeedbackServer = {
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
+    const chunks: string[] = [];
 
-    req.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.setEncoding("utf8");
+    req.on("data", (chunk: string) => chunks.push(chunk));
+    req.on("end", () => resolve(chunks.join("")));
     req.on("error", reject);
   });
 }
@@ -58,7 +59,12 @@ export async function startFeedbackServer(): Promise<FeedbackServer> {
 
     res.statusCode = 201;
     res.setHeader("content-type", "application/json");
-    res.end(JSON.stringify({ feedbackId: `feedback-${requests.length}`, status: "pending" }));
+    res.end(JSON.stringify({
+      feedbackId: `feedback-${requests.length}`,
+      status: "projected",
+      youtrackIssueId: `VSLO-${1000 + requests.length}`,
+      youtrackIssueUrl: `https://youtrack.example/issue/VSLO-${1000 + requests.length}`,
+    }));
   });
 
   await new Promise<void>((resolve) => {

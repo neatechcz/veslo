@@ -153,11 +153,12 @@ async function submitFeedbackFromUi(title: string, description: string) {
   await browser.waitUntil(async () => {
     const inlineError = await readInlineError(dialog);
     if (inlineError) return true;
-    return !(await dialog.isDisplayed().catch(() => false));
+    const success = await dialog.$('[role="status"]');
+    return (await success.isExisting().catch(() => false)) && (await success.isDisplayed().catch(() => false));
   }, {
     timeout: 30_000,
     interval: 250,
-    timeoutMsg: "Feedback modal neither closed nor showed an inline submit error.",
+    timeoutMsg: "Feedback modal neither showed a YouTrack task number nor an inline submit error.",
   });
 
   const inlineError = await readInlineError(dialog);
@@ -165,6 +166,11 @@ async function submitFeedbackFromUi(title: string, description: string) {
     throw new Error(`Feedback submit failed in the UI: ${inlineError}`);
   }
 
+  const success = await dialog.$('[role="status"]');
+  const successText = await success.getText();
+  expect(successText).toContain("VSLO-");
+  const closeButton = await dialog.$('//button[normalize-space()="Zavřít" or normalize-space()="Close"]');
+  await closeButton.click();
   await dialog.waitForDisplayed({ timeout: 10_000, reverse: true });
 }
 
