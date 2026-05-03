@@ -10,6 +10,7 @@ import {
   resolveManagedAiAccess,
   resolveManagedAiAccessBundleState,
   resolveManagedAiGatewayBaseUrl,
+  resolveManagedAiProviderRoutingTarget,
   shouldPreserveManagedAiConfig,
   shouldEnsureManagedAiLocalGateway,
   shouldDeferManagedAiAccessRefresh,
@@ -254,6 +255,71 @@ test("resolveManagedAiGatewayBaseUrl still uses remote URLs outside desktop loca
       isDesktopRuntime: false,
     }),
     "https://veslo-ai-gateway-dev.onrender.com",
+  );
+});
+
+test("resolveManagedAiProviderRoutingTarget keeps desktop local provider routing on the local Veslo server", () => {
+  assert.deepEqual(
+    resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      activeBaseUrl: "http://127.0.0.1:55021",
+      activeToken: "local-client-token",
+      gatewayBaseUrl: "https://den-worker-dev-dev-cloud-worker-2.onrender.com",
+      gatewayToken: "remote-client-token",
+    }),
+    {
+      baseUrl: "http://127.0.0.1:55021",
+      serverClientToken: "local-client-token",
+    },
+  );
+});
+
+test("resolveManagedAiProviderRoutingTarget does not fall back to remote routing while desktop local token is missing", () => {
+  assert.deepEqual(
+    resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      activeBaseUrl: "http://127.0.0.1:55021",
+      activeToken: "",
+      gatewayBaseUrl: "https://den-worker-dev-dev-cloud-worker-2.onrender.com",
+      gatewayToken: "remote-client-token",
+    }),
+    {
+      baseUrl: "http://127.0.0.1:55021",
+      serverClientToken: "",
+    },
+  );
+});
+
+test("resolveManagedAiProviderRoutingTarget refuses remote active URLs for desktop local workspaces", () => {
+  assert.equal(
+    resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: true,
+      workspaceType: "local",
+      activeBaseUrl: "https://den-worker-dev-dev-cloud-worker-2.onrender.com",
+      activeToken: "remote-settings-token",
+      gatewayBaseUrl: "https://veslo-ai-gateway-dev.onrender.com",
+      gatewayToken: "gateway-token",
+    }),
+    null,
+  );
+});
+
+test("resolveManagedAiProviderRoutingTarget keeps remote routing outside desktop local workspaces", () => {
+  assert.deepEqual(
+    resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: true,
+      workspaceType: "remote",
+      activeBaseUrl: "http://127.0.0.1:55021",
+      activeToken: "local-client-token",
+      gatewayBaseUrl: "https://veslo.example.test",
+      gatewayToken: "remote-client-token",
+    }),
+    {
+      baseUrl: "https://veslo.example.test",
+      serverClientToken: "remote-client-token",
+    },
   );
 });
 

@@ -76,6 +76,37 @@ export function resolveManagedAiGatewayBaseUrl(input: {
     : "";
 }
 
+export function resolveManagedAiProviderRoutingTarget(input: {
+  isDesktopRuntime: boolean;
+  workspaceType: "local" | "remote" | null | undefined;
+  activeBaseUrl: string | null | undefined;
+  activeToken: string | null | undefined;
+  gatewayBaseUrl: string | null | undefined;
+  gatewayToken: string | null | undefined;
+}): { baseUrl: string; serverClientToken: string } | null {
+  const activeBaseUrl = normalizeHttpUrl(input.activeBaseUrl);
+  const activeToken = input.activeToken?.trim() ?? "";
+  if (
+    input.isDesktopRuntime &&
+    input.workspaceType === "local" &&
+    isLoopbackHttpUrl(activeBaseUrl)
+  ) {
+    return { baseUrl: activeBaseUrl, serverClientToken: activeToken };
+  }
+
+  if (input.isDesktopRuntime && input.workspaceType === "local") {
+    return null;
+  }
+
+  const gatewayBaseUrl = normalizeHttpUrl(input.gatewayBaseUrl);
+  const gatewayToken = input.gatewayToken?.trim() ?? "";
+  if (!gatewayBaseUrl || !gatewayToken) {
+    return null;
+  }
+
+  return { baseUrl: gatewayBaseUrl, serverClientToken: gatewayToken };
+}
+
 function readConfigObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};

@@ -333,6 +333,7 @@ import {
   formatManagedAiAccessConfig,
   resolveManagedAiAccessBundleState,
   resolveManagedAiGatewayBaseUrl,
+  resolveManagedAiProviderRoutingTarget,
   shouldPreserveManagedAiConfig,
   shouldEnsureManagedAiLocalGateway,
   shouldDeferManagedAiAccessRefresh,
@@ -7708,7 +7709,17 @@ export default function App() {
     const managedAccessBusy = managedAiAccessBusy();
     const managedAccessError = managedAiAccessError();
     const gatewayClient = gatewayVesloServerClient();
-    const gatewayClientToken = gatewayClient?.token?.trim() ?? "";
+    const providerRoutingLocalHost = activeVesloServerHostInfo();
+    const providerRoutingLocalBaseUrl =
+      providerRoutingLocalHost?.baseUrl ?? deriveLocalVesloServerUrlFromOpencodeBaseUrl(baseUrl()) ?? "";
+    const providerRoutingTarget = resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: isTauriRuntime(),
+      workspaceType: workspace.workspaceType,
+      activeBaseUrl: providerRoutingLocalBaseUrl,
+      activeToken: providerRoutingLocalHost?.clientToken ?? "",
+      gatewayBaseUrl: gatewayClient?.baseUrl ?? "",
+      gatewayToken: gatewayClient?.token ?? "",
+    });
     const gatewayAccessToken = managedAiGatewayAccessToken() || denGatewayAccessToken();
     const vesloClient = vesloServerClient();
     const vesloWorkspaceId = vesloServerWorkspaceId();
@@ -7718,23 +7729,28 @@ export default function App() {
       vesloClient &&
       vesloWorkspaceId &&
       vesloCapabilities?.config?.write;
+    const providerRoutingReady = Boolean(providerRoutingTarget?.serverClientToken && gatewayAccessToken);
     let cancelled = false;
     const releaseManagedAiBootstrap =
-      managedProfile && gatewayClient && gatewayClientToken && gatewayAccessToken ? beginManagedAiBootstrap() : null;
+      managedProfile && providerRoutingReady ? beginManagedAiBootstrap() : null;
 
     const writeConfig = async () => {
       try {
+        if (managedProfile && !providerRoutingReady) {
+          return;
+        }
+
         if (canUseVesloServer) {
           const config = await vesloClient.getConfig(vesloWorkspaceId);
           const currentOpencodeContent = JSON.stringify(config.opencode ?? {}, null, 2);
 
-          if (managedProfile && gatewayClient && gatewayClientToken && gatewayAccessToken) {
+          if (managedProfile && providerRoutingTarget && gatewayAccessToken) {
             const content = formatManagedAiAccessConfig(
               currentOpencodeContent,
               {
                 profile: managedProfile,
-                serverBaseUrl: gatewayClient.baseUrl,
-                serverClientToken: gatewayClientToken,
+                serverBaseUrl: providerRoutingTarget.baseUrl,
+                serverClientToken: providerRoutingTarget.serverClientToken,
                 gatewayAccessToken,
               },
             );
@@ -7766,11 +7782,11 @@ export default function App() {
                 hasActiveRuns: anyActiveRuns(),
                 canReloadWorkspace: canReloadWorkspace(),
               }) &&
-              lastReloadedForServerToken() !== gatewayClientToken
+              lastReloadedForServerToken() !== providerRoutingTarget.serverClientToken
             ) {
               const managedAiReloaded = await reloadWorkspaceEngine();
               if (managedAiReloaded) {
-                setLastReloadedForServerToken(gatewayClientToken);
+                setLastReloadedForServerToken(providerRoutingTarget.serverClientToken);
               }
             }
             return;
@@ -7780,8 +7796,8 @@ export default function App() {
             shouldPreserveManagedAiConfig({
               content: currentOpencodeContent,
               managedProfile,
-              gatewayBaseUrl: gatewayClient?.baseUrl ?? "",
-              serverClientToken: gatewayClientToken,
+              gatewayBaseUrl: providerRoutingTarget?.baseUrl ?? "",
+              serverClientToken: providerRoutingTarget?.serverClientToken ?? "",
               gatewayAccessToken,
               accessBusy: managedAccessBusy,
               accessError: managedAccessError,
@@ -7801,11 +7817,11 @@ export default function App() {
         }
 
         const configFile = await readOpencodeConfig("project", root);
-        if (managedProfile && gatewayClient && gatewayClientToken && gatewayAccessToken) {
+        if (managedProfile && providerRoutingTarget && gatewayAccessToken) {
           const content = formatManagedAiAccessConfig(configFile.content, {
             profile: managedProfile,
-            serverBaseUrl: gatewayClient.baseUrl,
-            serverClientToken: gatewayClientToken,
+            serverBaseUrl: providerRoutingTarget.baseUrl,
+            serverClientToken: providerRoutingTarget.serverClientToken,
             gatewayAccessToken,
           });
           if ((configFile.content ?? "").trim() === content.trim()) return;
@@ -7824,25 +7840,25 @@ export default function App() {
               hasActiveRuns: anyActiveRuns(),
               canReloadWorkspace: canReloadWorkspace(),
             }) &&
-            lastReloadedForServerToken() !== gatewayClientToken
+            lastReloadedForServerToken() !== providerRoutingTarget.serverClientToken
           ) {
             const managedAiReloaded = await reloadWorkspaceEngine();
             if (managedAiReloaded) {
-              setLastReloadedForServerToken(gatewayClientToken);
+              setLastReloadedForServerToken(providerRoutingTarget.serverClientToken);
             }
           }
           return;
         }
 
         if (
-            shouldPreserveManagedAiConfig({
-              content: configFile.content,
-              managedProfile,
-              gatewayBaseUrl: gatewayClient?.baseUrl ?? "",
-              serverClientToken: gatewayClientToken,
-              gatewayAccessToken,
-              accessBusy: managedAccessBusy,
-              accessError: managedAccessError,
+          shouldPreserveManagedAiConfig({
+            content: configFile.content,
+            managedProfile,
+            gatewayBaseUrl: providerRoutingTarget?.baseUrl ?? "",
+            serverClientToken: providerRoutingTarget?.serverClientToken ?? "",
+            gatewayAccessToken,
+            accessBusy: managedAccessBusy,
+            accessError: managedAccessError,
           })
         ) {
           return;

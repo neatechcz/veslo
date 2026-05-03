@@ -23,8 +23,21 @@ test("createSessionAndOpen waits for managed bootstrap readiness before reading 
 test("managed AI bootstrap writes config with the managed gateway token when present and otherwise falls back to the DEN auth token", () => {
   assert.match(
     source,
-    /const managedProfile = managedAiAccess\(\);[\s\S]*?const gatewayClient = gatewayVesloServerClient\(\);\s*const gatewayClientToken = gatewayClient\?\.token\?\.trim\(\) \?\? "";\s*const gatewayAccessToken = managedAiGatewayAccessToken\(\) \|\| denGatewayAccessToken\(\);/s,
+    /const managedProfile = managedAiAccess\(\);[\s\S]*?const gatewayClient = gatewayVesloServerClient\(\);[\s\S]*?const providerRoutingTarget = resolveManagedAiProviderRoutingTarget\(\{[\s\S]*?\}\);\s*const gatewayAccessToken = managedAiGatewayAccessToken\(\) \|\| denGatewayAccessToken\(\);/s,
     "managed AI config writes should prefer the managed gateway token and fall back to the DEN auth token when no separate token is provided",
+  );
+});
+
+test("managed AI bootstrap routes desktop local providers through the local Veslo server target", () => {
+  assert.match(
+    source,
+    /const providerRoutingLocalHost = activeVesloServerHostInfo\(\);[\s\S]*?const providerRoutingLocalBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.baseUrl \?\? deriveLocalVesloServerUrlFromOpencodeBaseUrl\(baseUrl\(\)\) \?\? "";[\s\S]*?resolveManagedAiProviderRoutingTarget\(\{[\s\S]*?workspaceType: workspace\.workspaceType,[\s\S]*?activeBaseUrl: providerRoutingLocalBaseUrl,[\s\S]*?activeToken: providerRoutingLocalHost\?\.clientToken \?\? "",[\s\S]*?gatewayBaseUrl: gatewayClient\?\.baseUrl \?\? "",[\s\S]*?\}\)/s,
+    "managed AI config writes should resolve provider routing from the local host snapshot instead of the remote access gateway client",
+  );
+  assert.match(
+    source,
+    /serverBaseUrl: providerRoutingTarget\.baseUrl,[\s\S]*?serverClientToken: providerRoutingTarget\.serverClientToken/s,
+    "managed AI provider config should use the resolved routing target base URL and local server token",
   );
 });
 
@@ -47,14 +60,14 @@ test("managed AI access refresh keeps the proxied gateway access token when usin
 test("managed AI bootstrap skips veslo-server config patches when the computed managed config is unchanged", () => {
   assert.match(
     source,
-    /const currentOpencodeContent = JSON\.stringify\(config\.opencode \?\? \{\}, null, 2\);[\s\S]*?const content = formatManagedAiAccessConfig\([\s\S]*?const desiredSnapshot = getConfigSnapshot\(content\);[\s\S]*?if \(lastKnownConfigSnapshot\(\) === desiredSnapshot\) return;[\s\S]*?if \(managedConfigContentsMatchForServerPatch\(currentOpencodeContent, content\)\) \{\s*setLastKnownConfigSnapshot\(desiredSnapshot\);\s*return;\s*\}[\s\S]*?await vesloClient\.patchConfig/s,
+    /const currentOpencodeContent = JSON\.stringify\(config\.opencode \?\? \{\}, null, 2\);[\s\S]*?const content = formatManagedAiAccessConfig\([\s\S]*?const desiredSnapshot = getConfigSnapshot\(content\);[\s\S]*?if \(lastKnownConfigSnapshot\(\) === desiredSnapshot\) \{\s*return;\s*\}[\s\S]*?if \(managedConfigContentsMatchForServerPatch\(currentOpencodeContent, content\)\) \{\s*setLastKnownConfigSnapshot\(desiredSnapshot\);\s*return;\s*\}[\s\S]*?await vesloClient\.patchConfig/s,
     "managed AI config writes through veslo-server should no-op when the generated config only differs by server-redacted secrets, while still tracking the real secret-bearing snapshot",
   );
 });
 
 test("managed AI reload coalescing records the server token only after a successful reload", () => {
   const reloadBlocks = source.match(
-    /if \(\s*shouldAutoReloadManagedAiConfig\(\{[\s\S]*?\}\) &&\s*lastReloadedForServerToken\(\) !== gatewayClientToken\s*\) \{\s*const managedAiReloaded = await reloadWorkspaceEngine\(\);\s*if \(managedAiReloaded\) \{\s*setLastReloadedForServerToken\(gatewayClientToken\);\s*\}\s*\}/g,
+    /if \(\s*shouldAutoReloadManagedAiConfig\(\{[\s\S]*?\}\) &&\s*lastReloadedForServerToken\(\) !== providerRoutingTarget\.serverClientToken\s*\) \{\s*const managedAiReloaded = await reloadWorkspaceEngine\(\);\s*if \(managedAiReloaded\) \{\s*setLastReloadedForServerToken\(providerRoutingTarget\.serverClientToken\);\s*\}\s*\}/g,
   );
 
   assert.equal(
