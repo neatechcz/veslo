@@ -182,7 +182,7 @@ The current public mirror script only mirrors:
 - Windows desktop artifacts
 - their `.sig` files
 
-That means the public updater feed currently covers macOS and Windows. Linux packages may still be built elsewhere in release automation, but they are not currently part of the public self-update feed.
+That means the public updater feed currently covers macOS and Windows. Release automation does not build Linux desktop artifacts.
 
 ### Why `latest.json` is generated separately
 
@@ -194,11 +194,11 @@ This is intentional. Veslo generates `latest.json` after the public assets have 
 
 ### CI note
 
-The `build-desktop` CI workflow intentionally disables updater artifact generation by creating a temporary `tauri.conf.ci.json` with:
+The manual `build-desktop` Windows workflow intentionally disables updater artifact generation by creating a temporary `tauri.conf.ci.json` with:
 
 - `bundle.createUpdaterArtifacts = false`
 
-That CI build is useful for build validation, but it is not a real updater release test.
+That build is useful for build validation, but it is not a real updater release test.
 
 ## How To Test The Updater
 
@@ -355,12 +355,6 @@ Check:
 - updater signing secrets are set
 - Apple signing secrets are set for signed/notarized runs
 - if this is an internal test-only build, use `allow_unsigned_macos=true`
-
-### Linux build exists but the app still cannot self-update
-
-Current limitation:
-
-- Linux artifacts are not mirrored into the public updater repo, so the public `latest.json` feed does not currently advertise Linux targets
 
 ## Current Gaps
 

@@ -26,15 +26,14 @@ test("release ship pushes main to origin", () => {
   assert.match(script, /Pushed main/);
 });
 
-test("release workflow updates AUR packaging from main", () => {
+test("release workflow does not publish Linux AUR packages", () => {
   const workflowPath = resolve(import.meta.dirname, "../../.github/workflows/release-macos-aarch64.yml");
   const workflow = readFileSync(workflowPath, "utf8");
 
-  assert.match(workflow, /name: Checkout main/);
-  assert.match(workflow, /ref: main/);
-  assert.match(workflow, /name: Commit packaging update to main/);
-  assert.match(workflow, /AUR packaging already up to date in main\./);
-  assert.match(workflow, /git push origin HEAD:main/);
+  assert.doesNotMatch(workflow, /aur-publish:/);
+  assert.doesNotMatch(workflow, /Publish AUR/);
+  assert.doesNotMatch(workflow, /scripts\/aur\/update-aur\.sh/);
+  assert.doesNotMatch(workflow, /scripts\/aur\/publish-aur\.sh/);
 });
 
 test("release checklist documents main as the default release branch", () => {
