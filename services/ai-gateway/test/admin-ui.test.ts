@@ -23,10 +23,12 @@ test("GET /admin/credentials serves the admin shell with an admin-only platform 
     assert.doesNotMatch(html, /<form[^>]+id="login-form"/i)
     assert.match(html, /id="credential-create-provider"/)
     assert.match(html, /id="credential-create-name"/)
+    assert.match(html, /id="credential-create-base-url"/)
     assert.match(html, /id="credential-create-secret"/)
     assert.match(html, /id="credential-create-submit"/)
     assert.match(html, /Codex \/ ChatGPT runtime profile/)
     assert.match(html, /<option value="codex_oauth">Codex \/ ChatGPT runtime<\/option>/)
+    assert.match(html, /<option value="openai_compatible">OpenAI-compatible provider<\/option>/)
     assert.match(html, /Paste the provider API key or the full Codex auth\.json\./)
     assert.match(html, /<th>Last refresh<\/th>\s*<th>Cached tokens<\/th>\s*<th>Eligibility<\/th>\s*<th>Codex limits<\/th>/)
     assert.match(html, /Cached tokens/)
@@ -159,6 +161,7 @@ test("GET /admin/users includes admin-managed ai access controls in the user edi
     assert.match(html, /id="user-ai-access-allowed-models"/)
     assert.match(html, /id="user-save-status"/)
     assert.match(html, /<option value="codex_oauth">Codex \/ ChatGPT runtime<\/option>/)
+    assert.match(html, /<option value="openai_compatible">OpenAI-compatible provider<\/option>/)
   } finally {
     server.close()
     await once(server, "close")
@@ -276,9 +279,11 @@ test("GET /admin/app.js creates platform credentials from the Credentials page",
     const script = await response.text()
     assert.match(script, /credential-create-provider/)
     assert.match(script, /credential-create-name/)
+    assert.match(script, /credential-create-base-url/)
     assert.match(script, /credential-create-secret/)
     assert.match(script, /credential-create-submit/)
     assert.match(script, /await fetchJson\("\/credentials", \{\s*method: "POST"/)
+    assert.match(script, /provider === "openai_compatible"[\s\S]*requestBody\.baseUrl = baseUrl/)
     assert.match(script, /Credential created and attached to the platform pool\./)
     assert.match(
       script,

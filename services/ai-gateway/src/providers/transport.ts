@@ -16,6 +16,12 @@ export type CodexChatCompletionsTransportInput = {
   authJson?: string | null;
 };
 
+export type OpenAiCompatibleTransportInput = {
+  apiKey: string;
+  baseUrl: string;
+  body: unknown;
+};
+
 export type ProviderTransportResponse = {
   status: number;
   body: unknown;
@@ -56,6 +62,10 @@ export interface AnthropicProviderTransport {
 
 export interface CodexOAuthProviderTransport {
   chatCompletions(input: CodexChatCompletionsTransportInput): Promise<ProviderTransportResponse>;
+}
+
+export interface OpenAiCompatibleProviderTransport {
+  chatCompletions(input: OpenAiCompatibleTransportInput): Promise<ProviderTransportResponse>;
 }
 
 export function headersToRecord(headers: Headers): Record<string, string> {

@@ -120,6 +120,7 @@
                 <option>OpenAI</option>
                 <option>Anthropic</option>
                 <option>Codex / ChatGPT</option>
+                <option>OpenAI-compatible provider</option>
                 <option>Google</option>
               </select>
               <select class="input">
@@ -139,11 +140,16 @@
                     <option value="openai">OpenAI</option>
                     <option value="anthropic">Anthropic</option>
                     <option value="codex_oauth">Codex / ChatGPT runtime</option>
+                    <option value="openai_compatible">OpenAI-compatible provider</option>
                   </select>
                 </label>
                 <label>
                   <span>Display name</span>
                   <input class="input" id="credential-create-name" type="text" placeholder="Production OpenAI key" />
+                </label>
+                <label>
+                  <span>Base URL</span>
+                  <input class="input" id="credential-create-base-url" type="url" placeholder="https://provider.example.com/v1" />
                 </label>
               </div>
               <label class="credential-create-secret-field">
@@ -539,6 +545,7 @@
                         <option value="openai">OpenAI</option>
                         <option value="anthropic">Anthropic</option>
                         <option value="codex_oauth">Codex / ChatGPT runtime</option>
+                        <option value="openai_compatible">OpenAI-compatible provider</option>
                       </select>
                     </label>
                     <label>

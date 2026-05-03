@@ -339,7 +339,7 @@ test("GET /admin/api/users/:userId/ai-access only returns eligible codex credent
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.deepEqual(body.availableCredentials, [
-      { id: "cred_codex_ok", name: "Credential cred_codex_ok" },
+      { id: "cred_codex_ok", name: "Credential cred_codex_ok", provider: "codex_oauth" },
     ]);
   } finally {
     server.close();

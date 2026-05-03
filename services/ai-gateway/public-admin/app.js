@@ -51,6 +51,7 @@ const els = {
   pages: Array.from(document.querySelectorAll("[data-page]")),
   credentialCreateProvider: document.getElementById("credential-create-provider"),
   credentialCreateName: document.getElementById("credential-create-name"),
+  credentialCreateBaseUrl: document.getElementById("credential-create-base-url"),
   credentialCreateSecret: document.getElementById("credential-create-secret"),
   credentialCreateSubmit: document.getElementById("credential-create-submit"),
   credentialCreateStatus: document.getElementById("credential-create-status"),
@@ -285,16 +286,19 @@ function normalizeAvailableCredentials(payload) {
     .map((entry) => ({
       id: typeof entry.id === "string" ? entry.id.trim() : "",
       name: typeof entry.name === "string" ? entry.name.trim() : "",
+      provider: typeof entry.provider === "string" ? entry.provider.trim() : "",
     }))
     .filter((entry) => entry.id)
     .map((entry) => ({
       id: entry.id,
       name: entry.name || entry.id,
+      provider: entry.provider,
     }));
 }
 
-function currentUserAiAccessAvailableCredentials(userId) {
-  return normalizeAvailableCredentials(state.userAiAccessAvailableCredentialsByUserId[userId] || []);
+function currentUserAiAccessAvailableCredentials(userId, provider = "") {
+  return normalizeAvailableCredentials(state.userAiAccessAvailableCredentialsByUserId[userId] || [])
+    .filter((entry) => !provider || entry.provider === provider);
 }
 
 function formatAllowedModels(models) {
@@ -319,7 +323,7 @@ function readAiAccessFormValue() {
 
 function readAiAccessCredentialValue() {
   const selectedProvider = els.userAiAccessProvider.value || "";
-  if (selectedProvider === "codex_oauth") {
+  if (selectedProvider === "codex_oauth" || selectedProvider === "openai_compatible") {
     const selectedCredentialId = els.userAiAccessCredential.value.trim();
     return selectedCredentialId || null;
   }
@@ -905,6 +909,7 @@ function formatProviderName(provider) {
   if (provider === "openai") return "OpenAI";
   if (provider === "anthropic") return "Anthropic";
   if (provider === "codex_oauth") return "Codex / ChatGPT";
+  if (provider === "openai_compatible") return "OpenAI-compatible provider";
   return provider || "Unknown";
 }
 
@@ -1089,11 +1094,13 @@ function currentAlert() {
 }
 
 function renderAiAccessCredentialOptions(user, aiAccess) {
-  const availableCredentials = user?.id ? currentUserAiAccessAvailableCredentials(user.id) : [];
   const selectedProvider = els.userAiAccessProvider.value || aiAccess.provider || "";
+  const availableCredentials = user?.id ? currentUserAiAccessAvailableCredentials(user.id, selectedProvider) : [];
   const emptyLabel =
     selectedProvider === "codex_oauth" && availableCredentials.length === 0
       ? "No eligible Codex credential"
+      : selectedProvider === "openai_compatible" && availableCredentials.length === 0
+        ? "No OpenAI-compatible credential"
       : "Select assigned credential";
   const options = [
     `<option value="">${escapeHtml(emptyLabel)}</option>`,
@@ -1105,7 +1112,7 @@ function renderAiAccessCredentialOptions(user, aiAccess) {
 
   els.userAiAccessCredential.innerHTML = options.join("");
   const selectedCredentialId =
-    aiAccess.provider === "codex_oauth" &&
+    (aiAccess.provider === "codex_oauth" || aiAccess.provider === "openai_compatible") &&
     availableCredentials.some((entry) => entry.id === aiAccess.credentialId)
       ? aiAccess.credentialId
       : "";
@@ -1113,7 +1120,7 @@ function renderAiAccessCredentialOptions(user, aiAccess) {
   els.userAiAccessCredential.disabled =
     state.userMode === "create" ||
     !user ||
-    els.userAiAccessProvider.value !== "codex_oauth" ||
+    (els.userAiAccessProvider.value !== "codex_oauth" && els.userAiAccessProvider.value !== "openai_compatible") ||
     availableCredentials.length === 0;
 }
 
@@ -1124,9 +1131,13 @@ function updateAiAccessStatusText(user, aiAccess) {
   }
 
   const selectedProvider = els.userAiAccessProvider.value || "";
-  const availableCredentials = user?.id ? currentUserAiAccessAvailableCredentials(user.id) : [];
+  const availableCredentials = user?.id ? currentUserAiAccessAvailableCredentials(user.id, selectedProvider) : [];
   if (selectedProvider === "codex_oauth" && availableCredentials.length === 0) {
     els.userAiAccessStatus.textContent = "No healthy Codex credentials with OK upstream status are available for assignment.";
+    return;
+  }
+  if (selectedProvider === "openai_compatible" && availableCredentials.length === 0) {
+    els.userAiAccessStatus.textContent = "Create a healthy OpenAI-compatible credential first, then assign it here.";
     return;
   }
 
@@ -1288,16 +1299,32 @@ function setUserSaveStatus(message, tone = "neutral") {
 
 function resetCredentialCreateForm() {
   els.credentialCreateName.value = "";
+  els.credentialCreateBaseUrl.value = "";
   els.credentialCreateSecret.value = "";
+  updateCredentialCreateFields();
+}
+
+function updateCredentialCreateFields() {
+  const provider = els.credentialCreateProvider.value.trim();
+  const isOpenAiCompatible = provider === "openai_compatible";
+  els.credentialCreateBaseUrl.disabled = !isOpenAiCompatible;
+  els.credentialCreateSecret.placeholder = isOpenAiCompatible
+    ? "Paste the provider API key."
+    : "Paste the provider API key or the full Codex auth.json.";
 }
 
 async function createCredential() {
   const provider = els.credentialCreateProvider.value.trim();
   const name = els.credentialCreateName.value.trim();
+  const baseUrl = els.credentialCreateBaseUrl.value.trim();
   const secret = els.credentialCreateSecret.value.trim();
 
   if (!provider || !secret) {
     setCredentialCreateStatus("Provider and secret are required.", "error");
+    return;
+  }
+  if (provider === "openai_compatible" && !baseUrl) {
+    setCredentialCreateStatus("OpenAI-compatible base URL and API key are required.", "error");
     return;
   }
 
@@ -1308,6 +1335,9 @@ async function createCredential() {
     const requestBody = { provider, secret };
     if (name) {
       requestBody.name = name;
+    }
+    if (provider === "openai_compatible") {
+      requestBody.baseUrl = baseUrl;
     }
 
     const payload = await fetchJson("/credentials", {
@@ -1544,6 +1574,7 @@ function bindActions() {
   els.refreshButton.addEventListener("click", () => void bootstrapSession());
   els.createUserButton.addEventListener("click", enterCreateMode);
   els.createUserButtonInline.addEventListener("click", enterCreateMode);
+  els.credentialCreateProvider.addEventListener("change", updateCredentialCreateFields);
   els.credentialCreateSubmit.addEventListener("click", () => void createCredential());
   els.userSaveButton.addEventListener("click", () => void saveUser());
   els.userDisableButton.addEventListener("click", () => void toggleUserDisabled());
@@ -1666,5 +1697,6 @@ function handleRoute() {
 
 bindNavigation();
 bindActions();
+updateCredentialCreateFields();
 handleRoute();
 void initializeAuth();

@@ -21,7 +21,7 @@ import { createDb } from "../db/index.js";
 import { credentialBindingTable, credentialHealthEventTable, credentialRecordTable, credentialUsageEventTable, sessionLeaseTable, type CredentialState } from "../db/schema.js";
 import { env } from "../env.js";
 import type { AdminSessionRecord, LeaseProvider } from "../leases/repository.js";
-import { isAiGatewayProvider } from "../providers/ids.js";
+import { formatAiGatewayProviderLabel, isAiGatewayProvider } from "../providers/ids.js";
 import { evaluateCodexCredentialEligibility } from "../usage/codex-eligibility.js";
 import { MySqlUsageRepository } from "../usage/mysql-repository.js";
 import { CachedCodexCredentialStatusProvider, UnavailableCodexCredentialStatusProvider, type CodexCredentialStatusProvider, type CodexUsageStatus } from "../usage/codex-status.js";
@@ -111,6 +111,7 @@ export type AdminUserAiAccessRecord = {
 export type AdminCredentialOption = {
   id: string;
   name: string;
+  provider: AiAccessProvider;
 };
 
 export type EligibleCodexCredential = {
@@ -170,6 +171,7 @@ export type CreateCredentialInput = {
   provider: LeaseProvider | null;
   name?: string | null;
   secret: string;
+  baseUrl?: string | null;
 };
 
 const DEFAULT_CODEX_AUTO_ASSIGN_MODEL = "gpt-5.4";
@@ -497,19 +499,7 @@ function createDefaultAdminReadRepositories() {
 }
 
 function formatProviderLabel(provider: string) {
-  if (provider === "openai") {
-    return "OpenAI";
-  }
-
-  if (provider === "anthropic") {
-    return "Anthropic";
-  }
-
-  if (provider === "codex_oauth") {
-    return "Codex OAuth";
-  }
-
-  return provider;
+  return formatAiGatewayProviderLabel(provider);
 }
 
 function readCredentialUsage(usage: UsageAggregateResponse): UsageCredentialAggregate[] {
@@ -940,19 +930,63 @@ export function createDefaultAdminService(
     return selected ?? null;
   }
 
-  async function assertEligibleCodexCredential(credentialId: string): Promise<void> {
-    const eligibleCredentials = await listEligibleCodexCredentials();
-    if (!eligibleCredentials.some((entry) => entry.credentialId === credentialId)) {
-      throw new HttpError("ineligible_ai_access_credential_id", 400);
+  async function listAvailableAssignmentCredentials(): Promise<AdminCredentialOption[]> {
+    const credentials = await getCredentialReadRepository().listAdminCredentials();
+    const options: AdminCredentialOption[] = [];
+
+    for (const credential of credentials) {
+      if (credential.state !== "healthy") {
+        continue;
+      }
+
+      if (credential.provider === "openai_compatible") {
+        options.push({
+          id: credential.id,
+          name: credential.name,
+          provider: "openai_compatible",
+        });
+        continue;
+      }
+
+      if (credential.provider !== "codex_oauth") {
+        continue;
+      }
+
+      const status = await codexStatusProvider.getStatus({
+        credentialId: credential.id,
+        credentialName: credential.name,
+      });
+      if (!evaluateCodexCredentialEligibility(status, now()).eligible) {
+        continue;
+      }
+
+      options.push({
+        id: credential.id,
+        name: credential.name,
+        provider: "codex_oauth",
+      });
     }
+
+    return options;
   }
 
-  async function listAvailableCodexCredentials(): Promise<AdminCredentialOption[]> {
-    const credentials = await listEligibleCodexCredentials();
-    return credentials.map((entry) => ({
-      id: entry.credentialId,
-      name: entry.name,
-    }));
+  async function assertAssignableCredential(provider: AiAccessProvider | null, credentialId: string | null): Promise<void> {
+    if (provider !== "codex_oauth" && provider !== "openai_compatible") {
+      return;
+    }
+
+    if (!credentialId) {
+      throw new HttpError("invalid_ai_access_credential_id", 400);
+    }
+
+    const assignable = (await listAvailableAssignmentCredentials())
+      .some((entry) => entry.id === credentialId && entry.provider === provider);
+    if (!assignable && provider === "codex_oauth") {
+      throw new HttpError("ineligible_ai_access_credential_id", 400);
+    }
+    if (!assignable) {
+      throw new HttpError("invalid_ai_access_credential_id", 400);
+    }
   }
 
   async function getCredentialOrThrow(credentialId: string): Promise<CredentialRecord> {
@@ -1106,7 +1140,7 @@ export function createDefaultAdminService(
     async getUserAiAccess(_token, userId) {
       return {
         aiAccess: toAdminUserAiAccessRecord(await getAiAccessRepository().getUserAiAccess(userId)),
-        availableCredentials: await listAvailableCodexCredentials(),
+        availableCredentials: await listAvailableAssignmentCredentials(),
       };
     },
     async upsertUserAiAccess(_token, userId, input) {
@@ -1114,8 +1148,8 @@ export function createDefaultAdminService(
         ...input,
         userId,
       });
-      if (validated.enabled && validated.provider === "codex_oauth" && validated.credentialId) {
-        await assertEligibleCodexCredential(validated.credentialId);
+      if (validated.enabled) {
+        await assertAssignableCredential(validated.provider, validated.credentialId);
       }
       const saved = await getAiAccessRepository().upsertUserAiAccess(validated);
       await recordAuditEvent({
@@ -1128,7 +1162,7 @@ export function createDefaultAdminService(
       });
       return {
         aiAccess: toAdminUserAiAccessRecord(saved)!,
-        availableCredentials: await listAvailableCodexCredentials(),
+        availableCredentials: await listAvailableAssignmentCredentials(),
       };
     },
     async disableUser(token, userId) {
@@ -1312,6 +1346,19 @@ function validateCreateCredentialInput(input: CreateCredentialInput): {
     throw new HttpError("invalid_credential_secret", 400);
   }
 
+  if (provider === "openai_compatible") {
+    return {
+      provider,
+      name: name || `${formatProviderLabel(provider)} credential`,
+      credentialType: "api_key",
+      storedSecret: {
+        kind: "openai_compatible_api_key",
+        apiKey: secret,
+        baseUrl: normalizeOpenAiCompatibleBaseUrl(input.baseUrl),
+      },
+    };
+  }
+
   return {
     provider,
     name: name || `${formatProviderLabel(provider)} credential`,
@@ -1326,6 +1373,34 @@ function validateCreateCredentialInput(input: CreateCredentialInput): {
           apiKey: secret,
         },
   };
+}
+
+function normalizeOpenAiCompatibleBaseUrl(input: unknown): string {
+  const raw = typeof input === "string" ? input.trim() : "";
+  if (!raw) {
+    throw new HttpError("invalid_credential_base_url", 400);
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new HttpError("invalid_credential_base_url", 400);
+  }
+
+  if (parsed.search || parsed.hash || parsed.username || parsed.password || raw.includes("?") || raw.includes("#")) {
+    throw new HttpError("invalid_credential_base_url", 400);
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const isLoopback =
+    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isLoopback)) {
+    throw new HttpError("invalid_credential_base_url", 400);
+  }
+
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+  return parsed.toString().replace(/\/+$/, "");
 }
 
 function validateUserAiAccessInput(
@@ -1344,7 +1419,7 @@ function validateUserAiAccessInput(
     throw new HttpError("invalid_ai_access_provider", 400);
   }
 
-  if (enabled && provider === "codex_oauth" && !credentialId) {
+  if (enabled && (provider === "codex_oauth" || provider === "openai_compatible") && !credentialId) {
     throw new HttpError("invalid_ai_access_credential_id", 400);
   }
 
@@ -1626,6 +1701,7 @@ export function createAdminRouter(adminService: AdminService) {
           provider: parseCredentialProvider(req.body?.provider),
           name: typeof req.body?.name === "string" ? req.body.name.trim() : "",
           secret: typeof req.body?.secret === "string" ? req.body.secret.trim() : "",
+          baseUrl: typeof req.body?.baseUrl === "string" ? req.body.baseUrl.trim() : null,
         },
         getAdminActorUserId(res),
       );

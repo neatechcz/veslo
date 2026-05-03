@@ -1,6 +1,6 @@
-import type { AiGatewayProvider } from "../providers/ids.js";
+import { AI_GATEWAY_PROVIDERS, type AiGatewayProvider } from "../providers/ids.js";
 
-export const AiAccessProviders = ["openai", "anthropic", "codex_oauth"] as const;
+export const AiAccessProviders = AI_GATEWAY_PROVIDERS;
 
 export type AiAccessProvider = AiGatewayProvider;
 
