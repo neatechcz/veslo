@@ -73,8 +73,8 @@ cp .env.development .env
 - `YOUTRACK_MCP_ARGS` optional JSON string array of extra MCP command arguments
 - `YOUTRACK_MCP_TIMEOUT_MS` timeout for one MCP tool call (default `20000`)
 - `YOUTRACK_MCP_WIRE_PROTOCOL` stdio framing for the MCP command: `content-length` by default, or `line` for the local wrapper used by the live desktop smoke
-- `YOUTRACK_MCP_URL` optional remote MCP URL forwarded to child MCP wrappers that read it from the environment
-- `YOUTRACK_MCP_TOKEN` optional remote MCP token forwarded to child MCP wrappers that read it from the environment
+- `YOUTRACK_MCP_URL` optional remote MCP URL used directly when no stdio MCP command is configured; also forwarded to child MCP wrappers through the process environment
+- `YOUTRACK_MCP_TOKEN` optional remote MCP token used directly when no stdio MCP command is configured; also forwarded to child MCP wrappers through the process environment
 
 ## Auth setup (Better Auth)
 

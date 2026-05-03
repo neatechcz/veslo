@@ -48,6 +48,8 @@ const schema = z.object({
   YOUTRACK_MCP_ARGS: z.string().optional(),
   YOUTRACK_MCP_TIMEOUT_MS: z.string().optional(),
   YOUTRACK_MCP_WIRE_PROTOCOL: z.enum(["content-length", "line"]).optional(),
+  YOUTRACK_MCP_URL: z.string().optional(),
+  YOUTRACK_MCP_TOKEN: z.string().optional(),
   MANAGED_AI_DATABASE_URL: z.string().optional(),
   MANAGED_AI_SECRET_KEY: z.string().optional(),
   MANAGED_AI_OPENAI_CLIENT_ID: z.string().optional(),
@@ -161,6 +163,8 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
       mcpArgs: parseJsonStringArray(parsed.YOUTRACK_MCP_ARGS, "YOUTRACK_MCP_ARGS"),
       mcpTimeoutMs: parsePositiveNumber(parsed.YOUTRACK_MCP_TIMEOUT_MS, 20_000, "YOUTRACK_MCP_TIMEOUT_MS"),
       mcpWireProtocol: parsed.YOUTRACK_MCP_WIRE_PROTOCOL ?? "content-length",
+      mcpUrl: parsed.YOUTRACK_MCP_URL?.trim() || null,
+      mcpToken: parsed.YOUTRACK_MCP_TOKEN?.trim() || null,
     },
     managedAi: parseManagedAiEnv(parsed),
   }

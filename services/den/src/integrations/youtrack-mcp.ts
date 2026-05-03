@@ -29,6 +29,9 @@ export type YouTrackMcpConfig = {
   args?: string[]
   timeoutMs?: number
   wireProtocol?: "content-length" | "line"
+  remoteUrl?: string | null
+  remoteToken?: string | null
+  fetchImpl?: typeof fetch
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -156,7 +159,11 @@ function readFeedbackIdFromIssueDescription(description: string) {
 }
 
 export function createYouTrackMcpIssueClient(config: YouTrackMcpConfig) {
-  if (!config.command || config.command.trim().length === 0) {
+  const command = config.command?.trim() ?? ""
+  const remoteUrl = config.remoteUrl?.trim() ?? ""
+  const remoteToken = config.remoteToken?.trim() ?? ""
+
+  if (!command && (!remoteUrl || !remoteToken)) {
     return {
       async createIssue(_input: CreateIssueInput): Promise<CreateIssueResult> {
         throw new Error("YouTrack MCP transport is not configured.")
@@ -167,12 +174,18 @@ export function createYouTrackMcpIssueClient(config: YouTrackMcpConfig) {
     }
   }
 
-  const mcpClient = createMcpStdioClient({
-    command: config.command,
-    args: config.args ?? [],
-    timeoutMs: config.timeoutMs,
-    wireProtocol: config.wireProtocol,
-  })
+  const mcpClient = command
+    ? createMcpStdioClient({
+      command,
+      args: config.args ?? [],
+      timeoutMs: config.timeoutMs,
+      wireProtocol: config.wireProtocol,
+    })
+    : createRemoteMcpClient({
+      remoteUrl,
+      remoteToken,
+      fetchImpl: config.fetchImpl,
+    })
 
   async function findIssueByFeedbackId(input: { project: string; feedbackId: string }): Promise<CreateIssueResult | null> {
     const searchResult = await mcpClient.callTool("search_issues", {
@@ -230,6 +243,50 @@ export function createYouTrackMcpIssueClient(config: YouTrackMcpConfig) {
 
     async findIssueByFeedbackId(input: { project: string; feedbackId: string }): Promise<CreateIssueResult | null> {
       return findIssueByFeedbackId(input)
+    },
+  }
+}
+
+function createRemoteMcpClient(config: {
+  remoteUrl: string
+  remoteToken: string
+  fetchImpl?: typeof fetch
+}) {
+  const fetchImpl = config.fetchImpl ?? fetch
+  let nextRequestId = 1
+
+  return {
+    async callTool(name: string, args: Record<string, unknown>) {
+      const response = await fetchImpl(config.remoteUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.remoteToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: `remote-${nextRequestId}`,
+          method: "tools/call",
+          params: {
+            name,
+            arguments: args,
+          },
+        }),
+      })
+      nextRequestId += 1
+
+      const text = await response.text()
+      const message = text ? JSON.parse(text) : null
+      if (!response.ok) {
+        throw new Error(`Remote YouTrack MCP tools/call failed with HTTP ${response.status}: ${text.slice(0, 500)}`)
+      }
+      if (isObject(message) && isObject(message.error)) {
+        const code = typeof message.error.code === "number" ? message.error.code : -32000
+        const errorMessage = readString(message.error.message) ?? "Remote MCP error"
+        throw new Error(`MCP ${code}: ${errorMessage}`)
+      }
+
+      return isObject(message) ? message.result : undefined
     },
   }
 }

@@ -46,6 +46,8 @@ const feedbackProjector = createFeedbackProjector({
     args: env.youtrack.mcpArgs,
     timeoutMs: env.youtrack.mcpTimeoutMs,
     wireProtocol: env.youtrack.mcpWireProtocol,
+    remoteUrl: env.youtrack.mcpUrl,
+    remoteToken: env.youtrack.mcpToken,
   }),
 })
 const feedbackRouter = createFeedbackRouter({

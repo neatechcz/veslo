@@ -119,3 +119,72 @@ test("YouTrack MCP issue client falls back to searching by feedback id when crea
     server.cleanup()
   }
 })
+
+test("YouTrack MCP issue client can create issues through the remote HTTP MCP endpoint", async () => {
+  process.env.DATABASE_URL ??= "mysql://root:root@localhost:3306/veslo_test"
+  process.env.BETTER_AUTH_SECRET ??= "0123456789abcdef0123456789abcdef"
+  process.env.BETTER_AUTH_URL ??= "http://localhost:8788"
+  const { createYouTrackMcpIssueClient } = await import("../src/integrations/youtrack-mcp.js")
+  const requests: Array<{
+    url: string
+    authorization: string | null
+    body: unknown
+  }> = []
+
+  const client = createYouTrackMcpIssueClient({
+    command: null,
+    remoteUrl: "https://youtrack.example.test/mcp",
+    remoteToken: "service-token",
+    fetchImpl: async (url, init) => {
+      requests.push({
+        url: String(url),
+        authorization: init?.headers instanceof Headers
+          ? init.headers.get("Authorization")
+          : (init?.headers as Record<string, string> | undefined)?.Authorization ?? null,
+        body: JSON.parse(String(init?.body)),
+      })
+      return new Response(JSON.stringify({
+        jsonrpc: "2.0",
+        id: "remote-1",
+        result: {
+          structuredContent: {
+            issueId: "VSLO-987",
+            issueUrl: "https://youtrack.example.test/issue/VSLO-987",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      })
+    },
+  })
+
+  const issue = await client.createIssue({
+    project: "VSLO",
+    summary: "[Bug] Remote MCP issue",
+    description: "Locator\nFeedback ID: fb_remote",
+  })
+
+  assert.deepEqual(issue, {
+    issueId: "VSLO-987",
+    issueUrl: "https://youtrack.example.test/issue/VSLO-987",
+  })
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0]?.url, "https://youtrack.example.test/mcp")
+  assert.equal(requests[0]?.authorization, "Bearer service-token")
+  assert.deepEqual(requests[0]?.body, {
+    jsonrpc: "2.0",
+    id: "remote-1",
+    method: "tools/call",
+    params: {
+      name: "create_issue",
+      arguments: {
+        project: "VSLO",
+        summary: "[Bug] Remote MCP issue",
+        description: "Locator\nFeedback ID: fb_remote",
+      },
+    },
+  })
+})
