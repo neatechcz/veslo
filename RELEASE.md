@@ -20,6 +20,15 @@ Veslo releases should be deterministic, easy to reproduce, and fully verifiable 
    - `git tag vYYYY.M.P`
    - `git push origin vYYYY.M.P`
 
+## Windows signing
+
+Windows desktop builds are signed in GitHub Actions through Azure Artifact Signing. The `release-signing` GitHub environment must provide:
+
+- Secrets: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
+- Variables: `AZURE_ARTIFACT_SIGNING_ENDPOINT`, `AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME`, `AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME`
+
+The Azure principal behind `AZURE_CLIENT_ID` must have `Artifact Signing Certificate Profile Signer` on the certificate profile. Windows workflows install the Artifact Signing dlib package, call the Tauri Windows `signCommand`, then verify Authenticode signatures on the app executable and MSI before upload. The bundled `versions.json` sidecar manifest is intentionally skipped by the sign command because Tauri packages it through `externalBin` even though it is not an executable.
+
 ## veslo-orchestrator (npm + sidecars)
 
 1. Bump versions (includes `packages/orchestrator/package.json`):

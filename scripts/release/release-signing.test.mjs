@@ -147,6 +147,96 @@ test("workflow routes signing through the release signing resolver", () => {
   assert.match(workflow, /shouldBuildUnsignedMacos/);
   assert.match(workflow, /publish-tauri-windows:/);
   assert.match(workflow, /azure\/login@/);
-  assert.match(workflow, /Artifact Signing Client Tools/);
+  assert.match(workflow, /Artifact Signing dlib package/);
   assert.match(workflow, /tauri\.windows\.release\.conf\.json/);
+});
+
+test("all Windows desktop workflows route bundles through Azure Artifact Signing", () => {
+  const workflowPaths = [
+    "../../.github/workflows/build-desktop.yml",
+    "../../.github/workflows/build-windows-msi.yml",
+    "../../.github/workflows/prerelease.yml",
+    "../../.github/workflows/release-macos-aarch64.yml",
+  ];
+
+  for (const workflowPath of workflowPaths) {
+    const workflow = readFileSync(resolve(import.meta.dirname, workflowPath), "utf8");
+
+    assert.match(workflow, /id-token:\s*write/);
+    assert.match(workflow, /environment:\s*release-signing/);
+    assert.match(workflow, /release-signing\.mjs/);
+    assert.match(workflow, /azure\/login@/);
+    assert.match(workflow, /Artifact Signing dlib package/);
+    assert.match(workflow, /veslo-artifact-signing-metadata\.json/);
+    assert.match(workflow, /tauri\.windows\.release\.conf\.json/);
+    assert.match(workflow, /Verify Windows signatures/);
+    assert.match(workflow, /Get-AuthenticodeSignature/);
+  }
+});
+
+test("Windows Tauri sign command uses explicit arguments for the signing script", () => {
+  const configPath = resolve(
+    import.meta.dirname,
+    "../../packages/desktop/src-tauri/tauri.windows.release.conf.json",
+  );
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  const signCommand = config.bundle.windows.signCommand;
+
+  assert.equal(signCommand.cmd, "pwsh");
+  assert.deepEqual(signCommand.args, [
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    "../../../scripts/release/windows-sign.ps1",
+    "%1",
+  ]);
+});
+
+test("Windows signing PowerShell script declares parameters before executable statements", () => {
+  const scriptPath = resolve(import.meta.dirname, "../../scripts/release/windows-sign.ps1");
+  const script = readFileSync(scriptPath, "utf8");
+  const statements = script
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"));
+
+  assert.match(statements[0], /^param\(/);
+  assert.match(statements.join("\n"), /Set-StrictMode -Version Latest/);
+});
+
+test("Windows signing PowerShell script skips the bundled versions manifest", () => {
+  const scriptPath = resolve(import.meta.dirname, "../../scripts/release/windows-sign.ps1");
+  const script = readFileSync(scriptPath, "utf8");
+
+  assert.match(script, /versions\.json\*/);
+  assert.match(script, /Skipping signing for non-executable sidecar manifest/);
+  assert.match(script, /exit 0/);
+});
+
+test("Windows workflows use the shared Artifact Signing dlib package installer", () => {
+  const installerPath = resolve(
+    import.meta.dirname,
+    "../../scripts/release/install-artifact-signing-client-tools.ps1",
+  );
+  const installer = readFileSync(installerPath, "utf8");
+  const workflowPaths = [
+    "../../.github/workflows/build-desktop.yml",
+    "../../.github/workflows/build-windows-msi.yml",
+    "../../.github/workflows/prerelease.yml",
+    "../../.github/workflows/release-macos-aarch64.yml",
+  ];
+
+  assert.match(installer, /nuget\.exe/);
+  assert.match(installer, /Microsoft\.ArtifactSigning\.Client/);
+  assert.match(installer, /Azure\.CodeSigning\.Dlib\.dll/);
+  assert.match(installer, /VESLO_ARTIFACT_SIGNING_DLIB_PATH/);
+
+  for (const workflowPath of workflowPaths) {
+    const workflow = readFileSync(resolve(import.meta.dirname, workflowPath), "utf8");
+
+    assert.match(workflow, /timeout-minutes:\s*10/);
+    assert.match(workflow, /install-artifact-signing-client-tools\.ps1/);
+  }
 });

@@ -828,14 +828,10 @@ jobs:
         shell: pwsh
         run: az account show
 
-      - name: Install Artifact Signing Client Tools
+      - name: Install Artifact Signing dlib package
         shell: pwsh
-        run: |
-          $ProgressPreference = 'SilentlyContinue'
-          $installerPath = Join-Path $env:RUNNER_TEMP 'ArtifactSigningClientTools.msi'
-          Invoke-WebRequest -Uri 'https://download.microsoft.com/download/70ad2c3b-761f-4aa9-a9de-e7405aa2b4c1/ArtifactSigningClientTools.msi' -OutFile $installerPath
-          Start-Process msiexec.exe -Wait -ArgumentList "/I `"$installerPath`" /quiet /qn /norestart"
-          Remove-Item $installerPath -Force
+        timeout-minutes: 10
+        run: ./scripts/release/install-artifact-signing-client-tools.ps1
 
       - name: Write Artifact Signing metadata
         shell: pwsh

@@ -1,10 +1,10 @@
-Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
-
 param(
   [Parameter(Mandatory = $true)]
   [string]$TargetFile
 )
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
 
 function Resolve-SignToolPath {
   $command = Get-Command signtool.exe -ErrorAction SilentlyContinue
@@ -64,6 +64,12 @@ function Resolve-DlibPath {
 $targetPath = [System.IO.Path]::GetFullPath($TargetFile)
 if (-not (Test-Path $targetPath)) {
   throw "Target file does not exist: $targetPath"
+}
+
+$targetName = [System.IO.Path]::GetFileName($targetPath)
+if ($targetName -like "versions.json*") {
+  Write-Host "Skipping signing for non-executable sidecar manifest: $targetPath"
+  exit 0
 }
 
 $metadataPath = $env:VESLO_WINDOWS_SIGNING_METADATA_PATH

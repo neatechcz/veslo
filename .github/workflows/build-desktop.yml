@@ -5,15 +5,20 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   build-windows-msi:
     name: Build MSI (Windows)
     runs-on: windows-2022
     timeout-minutes: 180
+    environment: release-signing
     env:
       OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
       OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
+      TARGET_TRIPLE: x86_64-pc-windows-msvc
+      TAURI_WINDOWS_RELEASE_CONFIG: src-tauri/tauri.windows.release.conf.json
+      VESLO_WINDOWS_SIGNING_DESCRIPTION: Veslo by Neatech
 
     steps:
       - name: Enable git long paths
@@ -56,12 +61,98 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
+      - name: Resolve Windows signing
+        id: signing
+        shell: bash
+        env:
+          OS_TYPE: windows
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME }}
+        run: node scripts/release/release-signing.mjs
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Artifact Signing dlib package
+        shell: pwsh
+        timeout-minutes: 10
+        run: ./scripts/release/install-artifact-signing-client-tools.ps1
+
+      - name: Write Artifact Signing metadata
+        shell: pwsh
+        env:
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME }}
+        run: |
+          $metadataPath = Join-Path $env:RUNNER_TEMP 'veslo-artifact-signing-metadata.json'
+          $metadata = @{
+            Endpoint = $env:AZURE_ARTIFACT_SIGNING_ENDPOINT
+            CodeSigningAccountName = $env:AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME
+            CertificateProfileName = $env:AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME
+            CorrelationId = "${{ github.run_id }}-${{ github.job }}"
+          } | ConvertTo-Json -Depth 4
+
+          Set-Content -Path $metadataPath -Value $metadata -Encoding utf8NoBOM
+          "VESLO_WINDOWS_SIGNING_METADATA_PATH=$metadataPath" >> $env:GITHUB_ENV
+
       - name: Build Windows MSI
-        run: pnpm --filter @neatech/veslo exec tauri build --config src-tauri/tauri.conf.ci.json --target x86_64-pc-windows-msvc --bundles msi
+        shell: pwsh
+        run: pnpm --filter @neatech/veslo exec tauri build --config src-tauri/tauri.conf.ci.json --config $env:TAURI_WINDOWS_RELEASE_CONFIG --target $env:TARGET_TRIPLE --bundles msi
+
+      - name: Resolve Windows bundle paths
+        shell: pwsh
+        run: |
+          $bundleDir = Join-Path $env:GITHUB_WORKSPACE "packages\desktop\src-tauri\target\$env:TARGET_TRIPLE\release\bundle\msi"
+          if (-not (Test-Path $bundleDir)) {
+            throw "Windows bundle directory not found: $bundleDir"
+          }
+
+          $msi = Get-ChildItem -Path $bundleDir -Filter '*.msi' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $appExe = Join-Path $env:GITHUB_WORKSPACE "packages\desktop\src-tauri\target\$env:TARGET_TRIPLE\release\veslo.exe"
+
+          if (-not $msi) {
+            throw "No MSI bundle found in $bundleDir"
+          }
+          if (-not (Test-Path $appExe)) {
+            throw "Signed Windows app executable not found at $appExe"
+          }
+
+          "VESLO_WINDOWS_MSI_PATH=$($msi.FullName)" >> $env:GITHUB_ENV
+          "VESLO_WINDOWS_APP_EXE_PATH=$appExe" >> $env:GITHUB_ENV
+
+      - name: Verify Windows signatures
+        shell: pwsh
+        run: |
+          $files = @(
+            $env:VESLO_WINDOWS_APP_EXE_PATH,
+            $env:VESLO_WINDOWS_MSI_PATH
+          )
+
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature -FilePath $file
+            if ($signature.Status -ne 'Valid') {
+              $signature | Format-List * | Out-String | Write-Host
+              throw "Authenticode signature is not valid for $file"
+            }
+
+            Write-Host "Valid signature for $file"
+            Write-Host "Signer: $($signature.SignerCertificate.Subject)"
+          }
 
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
         with:
           name: veslo-windows-msi-x86_64-pc-windows-msvc
-          path: packages/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*
+          path: ${{ env.VESLO_WINDOWS_MSI_PATH }}
           if-no-files-found: error
