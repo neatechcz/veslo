@@ -524,6 +524,13 @@ export function createSessionStore(options: {
     });
   };
 
+  const setCommandDisplay = (messageID: string, name: string, args: string) => {
+    const trimmedMessageID = messageID.trim();
+    const display = formatSlashCommandDisplay(name, args);
+    if (!trimmedMessageID || !display) return;
+    setStore("commandDisplayByMessageID", trimmedMessageID, display);
+  };
+
   const withTimeout = async <T,>(promise: Promise<T>, ms: number, label: string) => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -1273,10 +1280,7 @@ export function createSessionStore(options: {
         const messageID = typeof record.messageID === "string" ? record.messageID.trim() : "";
         const name = typeof record.name === "string" ? record.name : "";
         const args = typeof record.arguments === "string" ? record.arguments : "";
-        const display = formatSlashCommandDisplay(name, args);
-        if (messageID && display) {
-          setStore("commandDisplayByMessageID", messageID, display);
-        }
+        setCommandDisplay(messageID, name, args);
       }
     }
 
@@ -1723,6 +1727,7 @@ export function createSessionStore(options: {
     respondQuestion,
     rejectQuestion,
     appendSessionErrorTurn,
+    setCommandDisplay,
     setSessions,
     setSessionStatusById,
     setMessages,

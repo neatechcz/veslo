@@ -41,3 +41,15 @@ test("pending draft cleanup failures are handled separately from prompt handoff 
     "pending-draft cleanup should report delete errors without converting a successful prompt handoff into a send failure",
   );
 });
+
+test("slash command sends preassign the message id used for optimistic display", () => {
+  const commandBranchStart = appSource.indexOf("// Slash command: route through session.command() API");
+  const commandBranchEnd = appSource.indexOf("      } else {", commandBranchStart);
+  assert.notEqual(commandBranchStart, -1, "sendPrompt should have a slash command branch");
+  assert.notEqual(commandBranchEnd, -1, "slash command branch should end before promptAsync branch");
+
+  const commandBranch = appSource.slice(commandBranchStart, commandBranchEnd);
+  assert.match(commandBranch, /const commandMessageID = createClientMessageID\(\);/);
+  assert.match(commandBranch, /sessionStore\.setCommandDisplay\(commandMessageID,\s*command\.name,\s*command\.arguments\);/);
+  assert.match(commandBranch, /messageID:\s*commandMessageID/);
+});

@@ -1847,6 +1847,14 @@ export default function App() {
     return parts;
   };
 
+  const createClientMessageID = () => {
+    const suffix =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`;
+    return `msg_${suffix.replace(/[^a-zA-Z0-9]/g, "")}`;
+  };
+
   async function maybeResolveSkillCommand(draft: ComposerDraft): Promise<ComposerDraft> {
     if (draft.mode !== "prompt" || draft.command) return draft;
 
@@ -2082,6 +2090,8 @@ export default function App() {
         }
 
         // Slash command: route through session.command() API
+        const commandMessageID = createClientMessageID();
+        sessionStore.setCommandDisplay(commandMessageID, command.name, command.arguments);
         const modelString = `${model.providerID}/${model.modelID}`;
         const files = buildCommandFileParts(resolvedDraft);
 
@@ -2089,6 +2099,7 @@ export default function App() {
         unwrap(
           await c.session.command({
             sessionID,
+            messageID: commandMessageID,
             command: command.name,
             arguments: command.arguments,
             agent: agent ?? undefined,
