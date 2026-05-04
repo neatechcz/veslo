@@ -142,7 +142,7 @@ export function createCodexOAuthProxyRouter(
       }
 
       const requestId = getCodexRequestId(input.upstreamResponse)
-      const usage = readOpenAiCompatibleUsage(input.upstreamResponse.body)
+      const usage = input.upstreamResponse.usage ?? readOpenAiCompatibleUsage(input.upstreamResponse.body)
       const model = getModel(input.upstreamResponse.body) ?? getModel(input.requestBody) ?? "unknown"
 
       await deps.usageRepository.recordUsage({

@@ -43,6 +43,18 @@ Current behavior:
 - project `+` actions reopen the pending draft for that project directory when one already exists
 - a real OpenCode session is materialized only when the pending draft is sent successfully
 
+## Titlebar Context
+
+The centered chat titlebar shows session context before and after a run starts.
+
+Current behavior:
+
+- unsent new chats show a distinct `New session` state label
+- unsent new chats for a concrete directory show `New session` plus the directory label
+- unsent private drafts hide generated private workspace paths so the state label is not mistaken for a directory
+- existing chats with messages show the directory or remote workspace context without the `New session` prefix
+- long local paths can be abbreviated in the titlebar, but the full path remains available as the location tooltip
+
 ## Global Model and Thinking Behavior
 
 Session UI can expose model-related controls, but future runs still follow the product's global model policy.
@@ -60,7 +72,7 @@ When managed AI is enabled, signed-in app identity and desktop handoff can come 
 
 In desktop local workspaces, the app can read managed-AI access policy from DEN or standalone AI Gateway, but generated OpenCode provider config must still route through the active local Veslo server. Remote DEN/Veslo URLs are not valid provider `baseURL` targets for local-first desktop execution.
 
-For `codex_oauth`, local OpenCode remains the agent runtime. OpenCode sends tool-capable model requests through the local Veslo server to the managed gateway; the gateway resolves the server-side Codex OAuth credential and proxies the inference response back without running `codex exec` for local desktop sessions. Codex OAuth secrets stay server-side, while local config contains only Veslo-scoped proxy tokens.
+For `codex_oauth`, local OpenCode remains the agent runtime. OpenCode sends tool-capable OpenAI-compatible chat-completions requests through the local Veslo server to the managed gateway; the gateway resolves the server-side Codex OAuth credential, calls the ChatGPT Codex Responses endpoint, translates the Responses stream back to OpenAI-compatible JSON/SSE, and returns it without running `codex exec` for local desktop sessions. Codex OAuth secrets stay server-side, while local config contains only Veslo-scoped proxy tokens.
 
 Managed-AI usage is attributed by request, user, org, session, and credential. Accounting stores input tokens, output tokens, cached tokens, and total tokens from the routed provider response.
 

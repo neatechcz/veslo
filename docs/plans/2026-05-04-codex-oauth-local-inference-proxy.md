@@ -4,7 +4,7 @@
 
 **Goal:** Keep Codex OAuth credentials server-side while making local Veslo/OpenCode the only agent runtime for desktop local workspaces.
 
-**Architecture:** `codex_oauth` becomes a tool-preserving inference proxy instead of a server-side `codex exec` worker for normal desktop sessions. Local OpenCode owns tool execution and calls the local Veslo server; the local server forwards model requests to the managed gateway, which selects the Codex OAuth credential, calls the upstream model endpoint, returns the model response unchanged, and records usage.
+**Architecture:** `codex_oauth` becomes a tool-preserving inference proxy instead of a server-side `codex exec` worker for normal desktop sessions. Local OpenCode owns tool execution and calls the local Veslo server; the local server forwards model requests to the managed gateway, which selects the Codex OAuth credential, translates OpenAI-compatible chat-completions requests to the ChatGPT Codex Responses endpoint, translates the Responses stream back to OpenAI-compatible JSON/SSE, and records usage.
 
 **Tech Stack:** TypeScript, Express, Node test runner, Solid app config helpers, Veslo server gateway proxy, managed AI gateway and DEN managed-AI runtime.
 
@@ -26,9 +26,9 @@
 - Modify: `services/ai-gateway/src/runtime/default-runtime.ts`
 
 **Steps:**
-1. Write a failing transport test proving `tools` and other OpenAI-compatible request fields are forwarded unchanged.
+1. Write a failing transport test proving `tools` and other OpenAI-compatible request fields are translated into Codex Responses requests and converted back to OpenAI-compatible responses.
 2. Verify the test fails because the transport does not exist.
-3. Implement a transport that extracts the Codex OAuth access token from server-side `auth.json`, calls the configured upstream inference endpoint, and returns the upstream response unchanged.
+3. Implement a transport that extracts the Codex OAuth access token from server-side `auth.json`, calls the configured Codex Responses endpoint, and returns OpenAI-compatible JSON/SSE to OpenCode.
 4. Switch the default `codex_oauth` transport from the CLI worker to the inference proxy.
 5. Run the focused transport and proxy tests.
 
