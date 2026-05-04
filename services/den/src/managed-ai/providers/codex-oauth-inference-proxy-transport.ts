@@ -137,11 +137,6 @@ function toCodexResponsesRequest(body: unknown): Record<string, unknown> {
     responsesRequest.tool_choice = toolChoice
   }
 
-  const maxOutputTokens = readFiniteNumber(request.max_completion_tokens) ?? readFiniteNumber(request.max_tokens)
-  if (maxOutputTokens !== null) {
-    responsesRequest.max_output_tokens = maxOutputTokens
-  }
-
   const temperature = readFiniteNumber(request.temperature)
   if (temperature !== null) {
     responsesRequest.temperature = temperature

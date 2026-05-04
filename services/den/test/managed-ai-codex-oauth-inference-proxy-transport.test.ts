@@ -8,6 +8,7 @@ test("managed ai codex oauth inference proxy forwards tool-capable requests with
   const body = {
     model: "gpt-5.5",
     stream: false,
+    max_completion_tokens: 4096,
     messages: [{ role: "user", content: "Read a file." }],
     tools: [
       {
@@ -147,6 +148,7 @@ test("managed ai codex oauth inference proxy forwards tool-capable requests with
     stream: true,
     store: false,
   })
+  assert.equal("max_output_tokens" in JSON.parse(String(fetchCalls[0]?.init.body)), false)
   assert.equal(response.headers?.["x-request-id"], "codex_proxy_req_1")
   assert.equal(response.headers?.["content-type"], "application/json")
   assert.deepEqual(
