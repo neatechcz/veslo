@@ -316,7 +316,6 @@ export type DashboardViewProps = {
   engineRuntime: "direct" | "veslo-orchestrator";
   setEngineRuntime: (value: "direct" | "veslo-orchestrator") => void;
   isWindows: boolean;
-  toggleDeveloperMode: () => void;
   developerMode: boolean;
   stopHost: () => void;
   restartLocalServer: () => Promise<boolean>;
@@ -1588,7 +1587,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   opencodeRouterInfo={props.opencodeRouterInfo}
                   engineDoctorVersion={props.engineDoctorVersion}
                   developerMode={props.developerMode}
-                  toggleDeveloperMode={props.toggleDeveloperMode}
                   stopHost={props.stopHost}
                   restartLocalServer={props.restartLocalServer}
                   engineSource={props.engineSource}

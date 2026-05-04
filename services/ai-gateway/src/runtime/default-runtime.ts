@@ -17,7 +17,7 @@ import { LeaseBroker } from "../leases/lease-broker.js";
 import { MySqlLeaseRepository } from "../leases/mysql-repository.js";
 import type { LeaseRepository } from "../leases/repository.js";
 import { AnthropicTransport } from "../providers/anthropic-transport.js";
-import { CodexCliWorkerTransport } from "../providers/codex-cli-worker-transport.js";
+import { CodexOAuthInferenceProxyTransport } from "../providers/codex-oauth-inference-proxy-transport.js";
 import { CachedCodexCredentialStatusProvider } from "../usage/codex-status.js";
 import { OpenAiTransport } from "../providers/openai-transport.js";
 import { OpenAiCompatibleTransport } from "../providers/openai-compatible-transport.js";
@@ -99,7 +99,7 @@ export function createDefaultProxyDependencies(
     }),
     openAiTransport: overrides.openAiTransport ?? new OpenAiTransport(),
     anthropicTransport: overrides.anthropicTransport ?? new AnthropicTransport(),
-    codexOAuthTransport: overrides.codexOAuthTransport ?? new CodexCliWorkerTransport(),
+    codexOAuthTransport: overrides.codexOAuthTransport ?? new CodexOAuthInferenceProxyTransport(),
     openAiCompatibleTransport: overrides.openAiCompatibleTransport ?? new OpenAiCompatibleTransport(),
   };
 }

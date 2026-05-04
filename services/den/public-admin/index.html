@@ -133,11 +133,11 @@
             <div class="credential-create-card detail-card">
               <p class="eyebrow">Primary runtime profile</p>
               <h3>Codex / ChatGPT runtime profile</h3>
-              <p class="editor-note">Server-side Codex worker profile routes Veslo prompts through DEN. Provision the worker with <code>MANAGED_AI_CODEX_HOME</code> and validate it with the Codex probe.</p>
+              <p class="editor-note">Server-side Codex OAuth credential routes Veslo model requests through DEN while local Veslo/OpenCode keeps tool execution on the user's machine.</p>
               <div class="stack">
                 <div class="detail-card">
-                  <p class="eyebrow">Shared Codex runtime credential</p>
-                  <h4>Server-side Codex worker profile</h4>
+                  <p class="eyebrow">Shared Codex OAuth credential</p>
+                  <h4>Server-side Codex inference credential</h4>
                   <div class="credential-create-grid">
                     <label>
                       <span>Display name</span>
@@ -149,8 +149,8 @@
                     <textarea class="input ai-access-textarea" id="credential-codex-secret" placeholder="Paste the full Codex auth.json copied from the runtime host."></textarea>
                   </label>
                   <div class="button-row">
-                    <button class="button button-primary" id="credential-codex-submit" type="button">Save Codex runtime credential</button>
-                    <p class="editor-note credential-create-status" id="credential-codex-status">Primary routing credential for the server-side Codex worker. Require the full Codex <code>auth.json</code> with <code>id_token</code>, <code>access_token</code>, <code>refresh_token</code>, and <code>account_id</code>.</p>
+                    <button class="button button-primary" id="credential-codex-submit" type="button">Save Codex inference credential</button>
+                    <p class="editor-note credential-create-status" id="credential-codex-status">Primary routing credential for Codex OAuth inference proxying. Require the full Codex <code>auth.json</code> with <code>id_token</code>, <code>access_token</code>, <code>refresh_token</code>, and <code>account_id</code>.</p>
                   </div>
                 </div>
                 <div class="detail-card">
@@ -178,7 +178,7 @@
                 <div class="detail-card">
                   <p class="eyebrow">Legacy OpenAI fallback</p>
                   <h4>Provider OAuth fallback</h4>
-                  <p class="editor-note" id="credential-openai-status">Fallback only: connect platform OpenAI OAuth if Codex worker routing is disabled.</p>
+                  <p class="editor-note" id="credential-openai-status">Fallback only: connect platform OpenAI OAuth if Codex OAuth inference proxying is disabled.</p>
                   <div class="button-row">
                     <button class="button button-primary" id="credential-openai-connect" type="button">Connect OpenAI fallback</button>
                   </div>
@@ -593,7 +593,7 @@
                       <span>Allowed models</span>
                       <textarea id="user-ai-access-allowed-models" class="input ai-access-textarea" placeholder="One model per line or comma-separated"></textarea>
                     </label>
-                    <p id="user-ai-access-status" class="editor-note muted">Assignments are enforced by DEN and route codex_oauth prompts through the server-side worker.</p>
+                    <p id="user-ai-access-status" class="editor-note muted">Assignments are enforced by DEN and route codex_oauth model requests through the inference proxy.</p>
                   </section>
                 </form>
                 <div class="button-row">

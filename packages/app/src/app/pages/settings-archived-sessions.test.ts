@@ -22,9 +22,9 @@ test("settings renders archived sessions inside the archived tab only", () => {
   assert.doesNotMatch(generalMatch[0], /settings\.archived_sessions_label/);
 });
 
-test("settings tab list starts with general and archived before developer-only tabs", () => {
+test("settings tab list exposes only general and archived", () => {
   assert.match(source, /const tabs: SettingsTab\[] = \["general", "archived"\]/);
-  assert.match(source, /if \(props\.developerMode\) tabs\.push\("advanced", "debug"\);/);
+  assert.doesNotMatch(source, /if \(props\.developerMode\) tabs\.push\("advanced", "debug"\);/);
 });
 
 test("settings keeps appearance and admin-managed ai access in general", () => {

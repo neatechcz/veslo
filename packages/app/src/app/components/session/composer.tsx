@@ -1738,10 +1738,14 @@ export default function Composer(props: ComposerProps) {
                               : "border-gray-6/80 bg-gray-2 text-gray-10 hover:text-gray-11"
                           }`}
                           onClick={() => props.onSelectAgent(isReadonly() ? "veslo" : "plan")}
-                          title={isReadonly() ? "Read-only mode active — click to allow file editing" : "Click to enter read-only mode"}
+                          title={
+                            isReadonly()
+                              ? translate("session.readonly_mode_active_title")
+                              : translate("session.readonly_mode_inactive_title")
+                          }
                         >
                           <span class={`inline-block w-1.5 h-1.5 rounded-full ${isReadonly() ? "bg-blue-9" : "bg-gray-8"}`} />
-                          {isReadonly() ? "Jen se ptám" : "Jen se ptám"}
+                          {translate("session.readonly_mode_toggle")}
                         </button>
 
                         <Show when={props.canChooseSessionFolder}>

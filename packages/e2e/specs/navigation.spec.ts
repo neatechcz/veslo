@@ -18,31 +18,24 @@ async function waitForBodyText(expected: string, timeout = 10000): Promise<void>
   );
 }
 
-async function setDeveloperMode(enabled: boolean): Promise<void> {
+async function expectNoDeveloperModeEntry(): Promise<void> {
   await navigateToHash('/dashboard/settings');
   await waitForRoute('#/dashboard/settings', 10000);
-  await waitForBodyText('Developer mode');
+  await waitForBodyText('AI access');
 
-  const result = await browser.execute((nextEnabled: boolean) => {
+  const result = await browser.execute(() => {
+    const text = document.body.innerText;
     const buttons = Array.from(document.querySelectorAll('button'));
-    const enableButton = buttons.find((button) => button.textContent?.includes('Enable Developer Mode'));
-    const disableButton = buttons.find((button) => button.textContent?.includes('Disable Developer Mode'));
+    return {
+      hasCard: text.includes('Developer mode'),
+      hasEnableButton: buttons.some((button) => button.textContent?.includes('Enable Developer Mode')),
+      hasDisableButton: buttons.some((button) => button.textContent?.includes('Disable Developer Mode')),
+    };
+  });
 
-    if (nextEnabled && enableButton instanceof HTMLButtonElement) {
-      enableButton.click();
-      return 'changed';
-    }
-    if (!nextEnabled && disableButton instanceof HTMLButtonElement) {
-      disableButton.click();
-      return 'changed';
-    }
-    if (nextEnabled && disableButton) return 'already-set';
-    if (!nextEnabled && enableButton) return 'already-set';
-    return 'missing-toggle';
-  }, enabled);
-
-  expect(result).not.toBe('missing-toggle');
-  await waitForBodyText(enabled ? 'Developer panel enabled.' : 'Enable this to access the Developer panel.');
+  expect(result.hasCard).toBe(false);
+  expect(result.hasEnableButton).toBe(false);
+  expect(result.hasDisableButton).toBe(false);
 }
 
 describe('Navigation', () => {
@@ -72,16 +65,12 @@ describe('Navigation', () => {
     expect(url).toContain('#/dashboard/skills');
   });
 
-  it('should navigate to config dashboard', async () => {
-    try {
-      await setDeveloperMode(true);
-      await navigateToHash('/dashboard/config');
-      await waitForRoute('#/dashboard/config', 10000);
-      const url = await browser.getUrl();
-      expect(url).toContain('#/dashboard/config');
-    } finally {
-      await setDeveloperMode(false);
-    }
+  it('should not expose developer mode or stay on the developer config dashboard', async () => {
+    await expectNoDeveloperModeEntry();
+    await navigateToHash('/dashboard/config');
+    await waitForRoute('#/dashboard/scheduled', 10000);
+    const url = await browser.getUrl();
+    expect(url).not.toContain('#/dashboard/config');
   });
 
   it('should handle browser back navigation', async () => {

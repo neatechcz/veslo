@@ -35,3 +35,11 @@ test('live managed AI spec treats auth-error assistant output as a failed roundt
     'the live roundtrip must fail when the assistant output is an auth error instead of a real model response',
   );
 });
+
+test('live managed AI spec can click localized send buttons', () => {
+  assert.match(
+    source,
+    /button\[title="Send"\], button\[title="Odeslat"\]/,
+    'live managed AI roundtrip should work with English and Czech desktop profiles',
+  );
+});

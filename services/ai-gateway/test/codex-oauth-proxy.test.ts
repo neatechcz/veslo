@@ -60,7 +60,7 @@ async function withMutedConsoleError<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-test("codex_oauth proxy forwards through the worker transport with a sticky lease", async () => {
+test("codex_oauth proxy forwards through the configured transport with a sticky lease", async () => {
   const recordUsageCalls: RecordUsageInput[] = []
   const leaseScopes: Array<{
     ownerUserId: string
@@ -252,7 +252,7 @@ test("codex_oauth proxy forwards through the worker transport with a sticky leas
   }
 })
 
-test("codex_oauth proxy records usage metadata from streaming worker responses", async () => {
+test("codex_oauth proxy records usage metadata from streaming transport responses", async () => {
   const recordUsageCalls: RecordUsageInput[] = []
 
   const app = createApp({
