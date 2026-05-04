@@ -35,7 +35,9 @@ import { workersRouter } from "./http/workers.js"
 import { createYouTrackMcpIssueClient } from "./integrations/youtrack-mcp.js"
 
 const app = express()
+const MANAGED_AI_PROXY_JSON_LIMIT = "10mb"
 const managedAiRuntime = env.managedAi.enabled ? createDefaultRuntimeState() : null
+const managedAiProxyJsonParser = express.json({ limit: MANAGED_AI_PROXY_JSON_LIMIT })
 const currentFile = fileURLToPath(import.meta.url)
 const publicDir = path.resolve(path.dirname(currentFile), "../public")
 const feedbackProjector = createFeedbackProjector({
@@ -73,6 +75,9 @@ if (corsOrigins.length > 0) {
 // so the body stream isn't consumed by Express's JSON parser first
 app.all("/api/auth/*", toNodeHandler(auth))
 app.use("/v1", feedbackRouter)
+if (managedAiRuntime) {
+  app.use("/providers", managedAiProxyJsonParser)
+}
 app.use(express.json())
 app.use(express.static(publicDir))
 

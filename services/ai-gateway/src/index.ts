@@ -21,9 +21,14 @@ export type AppDependencies = {
   runtime?: RuntimeState;
 };
 
+const MANAGED_AI_PROXY_JSON_LIMIT = "10mb";
+
 export function createApp(deps: AppDependencies = {}) {
   const app = express();
   const runtime = deps.runtime ?? createDefaultRuntimeState();
+  const managedAiProxyJsonParser = express.json({ limit: MANAGED_AI_PROXY_JSON_LIMIT });
+  app.use("/providers", managedAiProxyJsonParser);
+  app.use("/ai-gateway/providers", managedAiProxyJsonParser);
   app.use(express.json());
 
   app.get("/health", (_req, res) => {

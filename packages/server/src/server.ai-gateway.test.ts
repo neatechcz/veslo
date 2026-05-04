@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { createServer as createNetServer, type AddressInfo } from "node:net";
+import { brotliCompressSync } from "node:zlib";
 
 import { REDACTED_SECRET_VALUE, startServer } from "./server.js";
 
@@ -278,6 +279,66 @@ describe("ai gateway proxy routes", () => {
                 },
               },
             ]);
+          } finally {
+            stopTestServer(server);
+          }
+        },
+      );
+    } finally {
+      upstream.close();
+      await once(upstream, "close");
+    }
+  });
+
+  test("server strips compression headers from streamed ai-gateway responses", async () => {
+    const requests: Array<{
+      acceptEncoding: string | null;
+    }> = [];
+    const eventStream = 'data: {"id":"chatcmpl_stream_123"}\n\n';
+    const compressedEventStream = brotliCompressSync(Buffer.from(eventStream, "utf8"));
+
+    const upstream = createServer(async (req, res) => {
+      requests.push({
+        acceptEncoding: typeof req.headers["accept-encoding"] === "string" ? req.headers["accept-encoding"] : null,
+      });
+
+      res.statusCode = 200;
+      res.setHeader("content-type", "text/event-stream");
+      res.setHeader("content-encoding", "br");
+      res.setHeader("content-length", String(compressedEventStream.byteLength));
+      res.end(compressedEventStream);
+    });
+    const upstreamPort = await listenTestServer(upstream);
+
+    try {
+      await withManagedAiEnv(
+        {
+          managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}`,
+        },
+        async () => {
+          const server = startServer(createTestConfig());
+
+          try {
+            const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
+              method: "POST",
+              headers: {
+                "accept-encoding": "br",
+                authorization: "Bearer client-token",
+                "content-type": "application/json",
+                "x-veslo-gateway-token": "gateway-access-token",
+                "x-veslo-session-id": "session_stream_123",
+              },
+              body: JSON.stringify({
+                model: "gpt-5.5",
+                messages: [{ role: "user", content: "Hello" }],
+                stream: true,
+              }),
+            });
+
+            expect(response.status).toBe(200);
+            expect(response.headers.get("content-encoding")).toBeNull();
+            expect(await response.text()).toBe(eventStream);
+            expect(requests).toEqual([{ acceptEncoding: "identity" }]);
           } finally {
             stopTestServer(server);
           }

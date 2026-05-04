@@ -80,6 +80,82 @@ test("provider proxy rejects requests without gateway bearer auth", async () => 
   }
 });
 
+test("provider proxy accepts large model request bodies before gateway auth", async () => {
+  const app = createApp({
+    proxy: {
+      gatewaySessions: {
+        async resolveSession() {
+          throw new Error("resolver should not be called without authorization");
+        },
+      },
+      credentials: {
+        async getCredentialRecordById() {
+          return null;
+        },
+        async listHealthyCredentialRecordIds() {
+          return [];
+        },
+        async getCredentialRecordByBindingId() {
+          return null;
+        },
+        async markCredentialState() {},
+      },
+      usageRepository: {
+        async recordUsage() {},
+      },
+      leaseBroker: {
+        async getOrCreateActiveLease() {
+          assert.fail("lease broker should not be reached without gateway auth");
+        },
+        async handleUpstreamFailure() {
+          assert.fail("failure handler should not be reached without gateway auth");
+        },
+      } as never,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          assert.fail("token broker should not be reached without gateway auth");
+        },
+      },
+      openAiTransport: {
+        async chatCompletions() {
+          assert.fail("transport should not be reached without gateway auth");
+        },
+      },
+      anthropicTransport: {
+        async messages() {
+          assert.fail("transport should not be reached without gateway auth");
+        },
+      },
+    } as never,
+  });
+
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const largeContext = "x".repeat(256 * 1024);
+    const response = await fetch(`http://127.0.0.1:${port}/providers/codex_oauth/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_large_context_1",
+      },
+      body: JSON.stringify({
+        model: "gpt-5.5",
+        stream: true,
+        messages: [{ role: "user", content: largeContext }],
+      }),
+    });
+
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { error: "unauthorized" });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
 test("provider proxy uses resolved gateway user identity instead of trusting x-veslo-owner-user-id", async () => {
   const resolvedSessions: string[] = [];
   const leaseScopes: Array<{ ownerUserId: string; provider: string; sessionId: string }> = [];

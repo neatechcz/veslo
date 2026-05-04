@@ -385,6 +385,8 @@ test("den index mounts feedback router and raises the JSON body size limit", () 
   const routeSource = readFileSync(new URL("../src/http/feedback.ts", import.meta.url), "utf8")
 
   assert.match(indexSource, /app\.use\("\/v1",\s*feedbackRouter\)/)
+  assert.match(indexSource, /const managedAiProxyJsonParser = express\.json\(\{\s*limit: MANAGED_AI_PROXY_JSON_LIMIT\s*\}\)/)
+  assert.match(indexSource, /app\.use\("\/providers",\s*managedAiProxyJsonParser\)/)
   assert.match(indexSource, /app\.use\(express\.json\(\)\)/)
   assert.doesNotMatch(indexSource, /express\.json\(\{\s*limit:\s*"10mb"\s*\}\)/)
   assert.match(routeSource, /express\.json\(\{\s*limit:\s*"10mb"\s*\}\)/)

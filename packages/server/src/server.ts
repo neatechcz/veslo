@@ -783,6 +783,7 @@ async function proxyAiGatewayRequest(input: {
   headers.delete("host");
   headers.delete("origin");
   headers.delete("content-length");
+  headers.set("accept-encoding", "identity");
 
   const method = input.request.method.toUpperCase();
   const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
@@ -804,7 +805,11 @@ async function proxyAiGatewayRequest(input: {
 
   const contentType = response.headers.get("content-type") ?? "";
   if (!contentType.toLowerCase().includes("application/json")) {
-    return response;
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: sanitizeDecodedProxyResponseHeaders(response.headers),
+    });
   }
 
   const text = await response.text();
@@ -819,6 +824,13 @@ async function proxyAiGatewayRequest(input: {
   }
 
   return jsonResponse(redactSensitiveConfig(json), response.status);
+}
+
+function sanitizeDecodedProxyResponseHeaders(headers: Headers): Headers {
+  const sanitized = new Headers(headers);
+  sanitized.delete("content-encoding");
+  sanitized.delete("content-length");
+  return sanitized;
 }
 
 function jsonResponse(data: unknown, status = 200) {
