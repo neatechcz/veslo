@@ -191,6 +191,7 @@ export function createYouTrackMcpIssueClient(config: YouTrackMcpConfig) {
     : createRemoteMcpClient({
       remoteUrl,
       remoteToken,
+      timeoutMs: config.timeoutMs,
       fetchImpl: config.fetchImpl,
     })
 
@@ -257,29 +258,44 @@ export function createYouTrackMcpIssueClient(config: YouTrackMcpConfig) {
 function createRemoteMcpClient(config: {
   remoteUrl: string
   remoteToken: string
+  timeoutMs?: number
   fetchImpl?: typeof fetch
 }) {
   const fetchImpl = config.fetchImpl ?? fetch
+  const timeoutMs = config.timeoutMs ?? 20_000
   let nextRequestId = 1
 
   return {
     async callTool(name: string, args: Record<string, unknown>) {
-      const response = await fetchImpl(config.remoteUrl, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${config.remoteToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: `remote-${nextRequestId}`,
-          method: "tools/call",
-          params: {
-            name,
-            arguments: args,
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), timeoutMs)
+      let response: Response
+      try {
+        response = await fetchImpl(config.remoteUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${config.remoteToken}`,
+            "Content-Type": "application/json",
           },
-        }),
-      })
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: `remote-${nextRequestId}`,
+            method: "tools/call",
+            params: {
+              name,
+              arguments: args,
+            },
+          }),
+          signal: controller.signal,
+        })
+      } catch (error) {
+        if (controller.signal.aborted) {
+          throw new Error(`Remote YouTrack MCP tools/call timed out after ${timeoutMs}ms.`)
+        }
+        throw error
+      } finally {
+        clearTimeout(timer)
+      }
       nextRequestId += 1
 
       const text = await response.text()

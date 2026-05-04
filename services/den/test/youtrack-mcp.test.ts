@@ -244,3 +244,43 @@ test("YouTrack MCP issue client reads nested createdIssue payloads returned as t
   })
   assert.equal(searchCalls, 0)
 })
+
+test("YouTrack MCP issue client applies timeoutMs to remote HTTP MCP calls", async () => {
+  process.env.DATABASE_URL ??= "mysql://root:root@localhost:3306/veslo_test"
+  process.env.BETTER_AUTH_SECRET ??= "0123456789abcdef0123456789abcdef"
+  process.env.BETTER_AUTH_URL ??= "http://localhost:8788"
+  const { createYouTrackMcpIssueClient } = await import("../src/integrations/youtrack-mcp.js")
+  let sawAbortSignal = false
+
+  const client = createYouTrackMcpIssueClient({
+    command: null,
+    remoteUrl: "https://youtrack.example.test/mcp",
+    remoteToken: "service-token",
+    timeoutMs: 10,
+    fetchImpl: async (_url, init) => {
+      const signal = init?.signal
+      if (!signal) {
+        throw new Error("Missing AbortSignal for remote MCP request.")
+      }
+
+      sawAbortSignal = true
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          const abortError = new Error("aborted")
+          Object.assign(abortError, { name: "AbortError" })
+          reject(abortError)
+        })
+      })
+    },
+  })
+
+  await assert.rejects(
+    client.createIssue({
+      project: "VSLO",
+      summary: "[Bug] timeout",
+      description: "Locator\nFeedback ID: fb_timeout",
+    }),
+    /timed out after 10ms/i,
+  )
+  assert.equal(sawAbortSignal, true)
+})
