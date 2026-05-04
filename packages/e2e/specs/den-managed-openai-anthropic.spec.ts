@@ -274,25 +274,6 @@ async function waitForExpectedManagedAiAssignment(timeout = 120000): Promise<voi
   }
 }
 
-async function enableDeveloperModeIfVisible(timeout = 15000): Promise<void> {
-  const toggled = await clickButtonWithText(['Enable Developer Mode']);
-  if (!toggled) {
-    return;
-  }
-
-  await browser.waitUntil(
-    async () => {
-      const text = await readRootText();
-      return text.includes('Disable Developer Mode');
-    },
-    {
-      timeout,
-      interval: 250,
-      timeoutMsg: 'Developer mode toggle did not switch to enabled state.',
-    },
-  );
-}
-
 async function waitForComposer(timeout = 20000) {
   let textbox = await $('[role="textbox"]');
   try {
@@ -625,7 +606,17 @@ async function setComposerText(text: string): Promise<void> {
 async function clickSend(): Promise<void> {
   const textbox = await waitForComposer();
   await textbox.click();
-  const sendButton = await $('button[title="Send"]');
+  const sendButtons = await $$('button[title="Send"], button[title="Odeslat"]');
+  let sendButton: WebdriverIO.Element | null = null;
+  for (const candidate of sendButtons) {
+    if (await candidate.isDisplayed().catch(() => false)) {
+      sendButton = candidate;
+      break;
+    }
+  }
+  if (!sendButton) {
+    throw new Error('Send button was not visible in the composer.');
+  }
 
   const before = await browser.execute((editor: HTMLElement) => ({
     activeElementIsEditor: document.activeElement === editor,
@@ -666,11 +657,6 @@ describe('DEN-managed AI roundtrip', () => {
     await waitForComposer();
     await ensureLocalVesloServerReady();
     await waitForExpectedManagedAiAssignment();
-    await enableDeveloperModeIfVisible();
-    await navigateToHash('/dashboard/settings');
-    await waitForAppShellReady(15000);
-    await browser.pause(1000);
-    await enableDeveloperModeIfVisible().catch(() => {});
     await navigateToHash('/session');
     await waitForComposer();
     await waitForComposer();
@@ -737,7 +723,6 @@ describe('DEN-managed AI roundtrip', () => {
           hash: window.location.hash,
           baseUrl: storage.getItem('veslo.baseUrl'),
           startupPreference: storage.getItem('veslo.startupPreference'),
-          developerMode: storage.getItem('veslo.developerMode'),
           defaultModel: storage.getItem('veslo.defaultModel'),
           onboardingComplete: storage.getItem('veslo.onboardingComplete'),
         };

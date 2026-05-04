@@ -3,7 +3,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onMou
 import { formatBytes, formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
 
 import Button from "../components/button";
-import { CircleAlert, Copy, Download, FolderOpen, Loader2, PlugZap, RefreshCcw, Smartphone, X, Zap } from "lucide-solid";
+import { CircleAlert, Copy, Download, FolderOpen, Loader2, PlugZap, RefreshCcw, Smartphone, X } from "lucide-solid";
 import type { OpencodeConnectStatus, SessionArchiveItem, SettingsTab, StartupPreference } from "../types";
 import type {
   VesloAuditEntry,
@@ -64,7 +64,6 @@ export type SettingsViewProps = {
   orchestratorStatus: OrchestratorStatus | null;
   opencodeRouterInfo: OpenCodeRouterInfo | null;
   developerMode: boolean;
-  toggleDeveloperMode: () => void;
   stopHost: () => void;
   restartLocalServer: () => Promise<boolean>;
   engineSource: "path" | "sidecar" | "custom";
@@ -543,7 +542,6 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
     const tabs: SettingsTab[] = ["general", "archived"];
-    if (props.developerMode) tabs.push("advanced", "debug");
     return tabs;
   });
 
@@ -1070,30 +1068,6 @@ export default function SettingsView(props: SettingsViewProps) {
                       </Button>
                     )}
                   </For>
-                </div>
-              </div>
-            </div>
-
-            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-3">
-              <div class="text-sm font-medium text-gray-12">Developer mode</div>
-              <div class="text-xs text-gray-9">
-                Enables debug tools, diagnostics, and the Developer tab.
-              </div>
-              <div class="pt-1 flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  class={`${compactOutlineActionClass} ${
-                    props.developerMode
-                      ? "border-blue-7/35 bg-blue-3/20 text-blue-11 hover:bg-blue-3/35 hover:text-blue-11"
-                      : ""
-                  }`}
-                  onClick={props.toggleDeveloperMode}
-                >
-                  <Zap size={14} class={props.developerMode ? "text-blue-10" : "text-dls-secondary"} />
-                  {props.developerMode ? "Disable Developer Mode" : "Enable Developer Mode"}
-                </button>
-                <div class="text-xs text-gray-10">
-                  {props.developerMode ? "Developer panel enabled." : "Enable this to access the Developer panel."}
                 </div>
               </div>
             </div>
@@ -2232,4 +2206,3 @@ export default function SettingsView(props: SettingsViewProps) {
     </section>
   );
 }
-

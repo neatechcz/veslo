@@ -3,13 +3,14 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./settings.tsx", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const enLocaleSource = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
 const csLocaleSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
 const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
 
-test("settings exposes archived and developer tabs when developer mode is enabled", () => {
+test("settings exposes archived tab and keeps developer tabs unavailable", () => {
   assert.match(source, /const tabs: SettingsTab\[\] = \["general", "archived"\]/);
-  assert.match(source, /if \(props\.developerMode\) tabs\.push\("advanced", "debug"\);/);
+  assert.doesNotMatch(source, /if \(props\.developerMode\) tabs\.push\("advanced", "debug"\);/);
   assert.match(source, /<Match when=\{activeTab\(\) === "archived"\}>/);
   assert.doesNotMatch(source, /<Match when=\{activeTab\(\) === "model"\}>/);
   assert.match(source, /<Match when=\{activeTab\(\) === "advanced"\}>/);
@@ -32,10 +33,12 @@ test("settings exposes archived and developer tabs when developer mode is enable
   assert.doesNotMatch(generalSection, /settings\.archived_sessions_label/);
 });
 
-test("settings keeps the developer mode toggle reachable from the general tab", () => {
-  assert.match(generalSection, /props\.toggleDeveloperMode/);
-  assert.match(generalSection, /Enable Developer Mode|Disable Developer Mode/);
-  assert.match(generalSection, /Developer panel enabled\.|Enable this to access the Developer panel\./);
+test("settings no longer offers a developer mode entry point", () => {
+  assert.doesNotMatch(source, /toggleDeveloperMode/);
+  assert.doesNotMatch(generalSection, /Developer mode|Enable Developer Mode|Disable Developer Mode/);
+  assert.doesNotMatch(generalSection, /Developer panel enabled\.|Enable this to access the Developer panel\./);
+  assert.doesNotMatch(appSource, /setDeveloperMode/);
+  assert.doesNotMatch(appSource, /veslo\.developerMode/);
 });
 
 test("settings keeps compact update controls in general instead of a floating toolbar layout", () => {

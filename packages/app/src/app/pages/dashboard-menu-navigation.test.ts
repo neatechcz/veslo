@@ -376,17 +376,16 @@ test("dashboard clears the native window title while centered titlebar context i
   );
 });
 
-test("settings tab labels include archived and keep debug gated", () => {
+test("settings tab labels include archived and keep developer tabs unavailable", () => {
   assert.equal(resolveVisibleSettingsTab("archived", false), "archived");
   assert.equal(resolveVisibleSettingsTab("archived", true), "archived");
   assert.equal(resolveVisibleSettingsTab("advanced", false), "general");
-  assert.equal(resolveVisibleSettingsTab("advanced", true), "advanced");
+  assert.equal(resolveVisibleSettingsTab("advanced", true), "general");
   assert.equal(resolveVisibleSettingsTab("debug", false), "general");
-  assert.equal(resolveVisibleSettingsTab("debug", true), "debug");
+  assert.equal(resolveVisibleSettingsTab("debug", true), "general");
 
   assert.match(settingsTabLabelSource, /archived:\s*"settings\.archived"/);
   assert.doesNotMatch(settingsTabLabelSource, /model:\s*"settings\.model"/);
-  assert.match(settingsTabLabelSource, /advanced:\s*"settings\.advanced"/);
   assert.match(
     settingsTabLabelSource,
     /const visibleSettingsTabs: SettingsTab\[] = \["general", "archived"\]/,
@@ -403,13 +402,11 @@ test("settings tab labels include archived and keep debug gated", () => {
 
 test("settings tab labels are localized through a shared helper", () => {
   assert.equal(resolveVisibleSettingsTab("advanced", false), "general");
-  assert.equal(resolveVisibleSettingsTab("advanced", true), "advanced");
+  assert.equal(resolveVisibleSettingsTab("advanced", true), "general");
   assert.equal(resolveVisibleSettingsTab("debug", false), "general");
-  assert.equal(resolveVisibleSettingsTab("debug", true), "debug");
+  assert.equal(resolveVisibleSettingsTab("debug", true), "general");
   assert.match(settingsTabLabelSource, /settings\.general/);
   assert.doesNotMatch(settingsTabLabelSource, /settings\.model/);
-  assert.match(settingsTabLabelSource, /settings\.advanced/);
-  assert.match(settingsTabLabelSource, /settings\.debug/);
   assert.match(settingsTabLabelSource, /return\s+t\(key,\s*currentLocale\(\)\)/);
   assert.doesNotMatch(settingsTabLabelSource, /"General"|"Advanced"|"Debug"/);
 });

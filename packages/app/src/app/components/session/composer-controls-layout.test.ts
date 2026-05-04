@@ -25,6 +25,27 @@ test("composer uses a compact control rail below the editor", () => {
 
   assert.match(
     composerSource,
+    /translate\("session\.readonly_mode_toggle"\)/,
+    "readonly mode switch should use a localized visible label",
+  );
+  assert.match(
+    composerSource,
+    /translate\("session\.readonly_mode_active_title"\)/,
+    "active readonly mode title should be localized",
+  );
+  assert.match(
+    composerSource,
+    /translate\("session\.readonly_mode_inactive_title"\)/,
+    "inactive readonly mode title should be localized",
+  );
+  assert.doesNotMatch(
+    composerSource,
+    /Jen se ptám|Read-only mode active|Click to enter read-only mode/,
+    "readonly mode switch should not hardcode localized UI copy in composer source",
+  );
+
+  assert.match(
+    composerSource,
     /onClick=\{\(\) => props\.onSelectAgent\(isReadonly\(\) \? "veslo" : "plan"\)\}/,
     '"Jen se ptám" control should toggle readonly mode directly',
   );

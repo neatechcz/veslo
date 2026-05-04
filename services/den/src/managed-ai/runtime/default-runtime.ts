@@ -23,9 +23,10 @@ import type { SecretStore } from "../credentials/secret-store.js"
 import { createManagedAiDb, managedAiDb, resolveManagedAiDb } from "../db.js"
 import { env } from "../../env.js"
 import { AnthropicTransport } from "../providers/anthropic-transport.js"
-import { CodexCliWorkerTransport } from "../providers/codex-cli-worker-transport.js"
+import { CodexOAuthInferenceProxyTransport } from "../providers/codex-oauth-inference-proxy-transport.js"
 import { OpenAiCompatibleTransport } from "../providers/openai-compatible-transport.js"
 import { OpenAiTransport } from "../providers/openai-transport.js"
+import type { CodexOAuthProviderTransport } from "../providers/transport.js"
 import { CachedCodexCredentialStatusProvider, type CodexCredentialStatusProvider } from "../usage/codex-status.js"
 import { MySqlUsageRepository } from "../usage/mysql-repository.js"
 import type { UsageRepository } from "../usage/repository.js"
@@ -96,7 +97,7 @@ export type ProxyDependencies = {
   tokenBroker: DefaultTokenBroker
   openAiTransport: OpenAiTransport
   anthropicTransport: AnthropicTransport
-  codexOAuthTransport: CodexCliWorkerTransport
+  codexOAuthTransport: CodexOAuthProviderTransport
   openAiCompatibleTransport: OpenAiCompatibleTransport
 }
 
@@ -139,7 +140,7 @@ export function createDefaultProxyDependencies(
     }),
     openAiTransport: overrides.openAiTransport ?? new OpenAiTransport({ fetchImpl: notConfiguredFetch }),
     anthropicTransport: overrides.anthropicTransport ?? new AnthropicTransport({ fetchImpl: notConfiguredFetch }),
-    codexOAuthTransport: overrides.codexOAuthTransport ?? new CodexCliWorkerTransport(),
+    codexOAuthTransport: overrides.codexOAuthTransport ?? new CodexOAuthInferenceProxyTransport(),
     openAiCompatibleTransport: overrides.openAiCompatibleTransport ?? new OpenAiCompatibleTransport(),
   }
 }

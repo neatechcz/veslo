@@ -1,14 +1,15 @@
 import { For, Show, createEffect, createSignal } from "solid-js";
 
 import { CheckCircle2, FolderPlus, Loader2 } from "lucide-solid";
-
-import Button from "./button";
+import { useTranslate } from "../../i18n";
 
 export default function OnboardingWorkspaceSelector(props: {
   defaultPath: string;
   onConfirm: (preset: "starter" | "automation" | "minimal", folder: string | null) => void;
   onPickFolder: () => Promise<string | null>;
 }) {
+  const translate = useTranslate();
+
   const [preset, setPreset] = createSignal<"starter" | "automation" | "minimal">("starter");
   const [selectedFolder, setSelectedFolder] = createSignal(props.defaultPath);
   const [pickingFolder, setPickingFolder] = createSignal(false);
@@ -16,13 +17,13 @@ export default function OnboardingWorkspaceSelector(props: {
   const options = () => [
     {
       id: "starter" as const,
-      name: "Starter worker",
-      desc: "Preconfigured to show you how to use plugins, commands, and skills.",
+      name: translate("dashboard.starter_workspace"),
+      desc: translate("dashboard.starter_workspace_desc"),
     },
     {
       id: "minimal" as const,
-      name: "Empty worker",
-      desc: "Start with a blank folder and add what you need.",
+      name: translate("dashboard.empty_workspace"),
+      desc: translate("dashboard.empty_workspace_desc"),
     },
   ];
 
@@ -54,7 +55,7 @@ export default function OnboardingWorkspaceSelector(props: {
         <div class="space-y-4">
           <div class="flex items-center gap-3 text-sm font-medium text-gray-12">
             <div class="w-6 h-6 rounded-full bg-gray-4 flex items-center justify-center text-xs">1</div>
-            Select Folder
+            {translate("dashboard.select_folder")}
           </div>
           <div class="ml-9">
             <div
@@ -78,11 +79,11 @@ export default function OnboardingWorkspaceSelector(props: {
                 >
                   <Show
                     when={pickingFolder()}
-                    fallback={<span>Choose</span>}
+                    fallback={<span>{translate("common.choose")}</span>}
                   >
                     <span class="inline-flex items-center gap-2">
                       <Loader2 size={12} class="animate-spin" />
-                      Opening...
+                      {translate("dashboard.opening")}
                     </span>
                   </Show>
                 </button>
@@ -94,7 +95,7 @@ export default function OnboardingWorkspaceSelector(props: {
         <div class="space-y-4">
           <div class="flex items-center gap-3 text-sm font-medium text-gray-12">
             <div class="w-6 h-6 rounded-full bg-gray-4 flex items-center justify-center text-xs">2</div>
-            Choose Preset
+            {translate("dashboard.choose_preset")}
           </div>
           <div class={`ml-9 grid gap-3 ${!canContinue() ? "opacity-50" : ""}`.trim()}>
             <For each={options()}>

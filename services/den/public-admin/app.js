@@ -873,7 +873,7 @@ function renderCredentials() {
       tone,
     );
   } else {
-    setCodexCredentialStatus("Primary routing credential for the server-side Codex worker.");
+    setCodexCredentialStatus("Primary routing credential for Codex OAuth inference proxying.");
   }
 
   const openAiCredential = state.credentials.find((entry) => entry.provider === "openai" && entry.type === "oauth");
@@ -884,7 +884,7 @@ function renderCredentials() {
       tone,
     );
   } else {
-    setOpenAiCredentialStatus("Fallback only: connect platform OpenAI OAuth if Codex worker routing is disabled.");
+    setOpenAiCredentialStatus("Fallback only: connect platform OpenAI OAuth if Codex OAuth inference proxying is disabled.");
   }
 
   const rows = state.credentials.map((credential) => {
@@ -1235,7 +1235,7 @@ function updateAiAccessStatusText(user, aiAccess) {
   const selectedProvider = els.userAiAccessProvider.value || "";
   const availableCredentials = user?.id ? currentUserAiAccessAvailableCredentials(user.id, selectedProvider) : [];
   if (selectedProvider === "codex_oauth" && availableCredentials.length === 0) {
-    els.userAiAccessStatus.textContent = "Create a shared Codex runtime credential first, then assign it here.";
+    els.userAiAccessStatus.textContent = "Create a shared Codex inference credential first, then assign it here.";
     return;
   }
   if (selectedProvider === "openai_compatible" && availableCredentials.length === 0) {
@@ -1245,7 +1245,7 @@ function updateAiAccessStatusText(user, aiAccess) {
 
   els.userAiAccessStatus.textContent = aiAccess.updatedAt
     ? `Assignments updated ${formatDate(aiAccess.updatedAt)}.`
-    : "Assignments are enforced by DEN and route codex_oauth prompts through the server-side worker.";
+    : "Assignments are enforced by DEN and route codex_oauth model requests through the inference proxy.";
 }
 
 function populateUserEditor(user) {
@@ -1452,7 +1452,7 @@ async function createCodexCredential() {
   }
 
   els.credentialCodexSubmit.disabled = true;
-  setCodexCredentialStatus("Saving Codex runtime credential", "pending");
+  setCodexCredentialStatus("Saving Codex inference credential", "pending");
 
   try {
     const requestBody = { provider: "codex_oauth", secret };
@@ -1466,12 +1466,12 @@ async function createCodexCredential() {
     });
     state.selectedCredentialId = payload?.credential?.id || state.selectedCredentialId;
     resetCodexCredentialForm();
-    setCodexCredentialStatus("Codex runtime credential saved to the platform pool.", "success");
+    setCodexCredentialStatus("Codex inference credential saved to the platform pool.", "success");
     await refreshCredentialOperations();
     await refreshSelectedUserAiAccessOptions();
   } catch (error) {
     setCodexCredentialStatus(
-      `Unable to save Codex runtime credential: ${error instanceof Error ? error.message : "unknown_error"}`,
+      `Unable to save Codex inference credential: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
   } finally {

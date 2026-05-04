@@ -67,7 +67,7 @@ function createUiApp() {
   return app
 }
 
-test("GET /admin/credentials serves the DEN admin shell with Codex runtime controls and fallback provider credentials", async () => {
+test("GET /admin/credentials serves the DEN admin shell with Codex inference controls and fallback provider credentials", async () => {
   const app = createUiApp()
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -83,7 +83,7 @@ test("GET /admin/credentials serves the DEN admin shell with Codex runtime contr
     assert.match(html, /Users/i)
     assert.match(html, /Sign in with Browser/i)
     assert.match(html, /Codex \/ ChatGPT runtime profile/i)
-    assert.match(html, /Server-side Codex worker profile/i)
+    assert.match(html, /Server-side Codex inference credential/i)
     assert.match(html, /Legacy OpenAI fallback/i)
     assert.match(html, /Legacy Anthropic fallback/i)
     assert.match(
@@ -96,7 +96,7 @@ test("GET /admin/credentials serves the DEN admin shell with Codex runtime contr
     assert.match(html, /id="credential-codex-secret"/)
     assert.match(html, /id="credential-codex-submit"/)
     assert.match(html, /id="credential-codex-status"/)
-    assert.match(html, /Shared Codex runtime credential/i)
+    assert.match(html, /Shared Codex OAuth credential/i)
     assert.match(html, /id="credential-openai-compatible-name"/)
     assert.match(html, /id="credential-openai-compatible-base-url"/)
     assert.match(html, /id="credential-openai-compatible-secret"/)
@@ -138,7 +138,7 @@ test("GET /admin/app.js uses DEN desktop auth and OpenAI OAuth credential routes
     assert.match(script, /credential-openai-connect/)
     assert.match(script, /credential-codex-submit/)
     assert.match(script, /credential-codex-secret/)
-    assert.match(script, /Primary routing credential for the server-side Codex worker/)
+    assert.match(script, /Primary routing credential for Codex OAuth inference proxying/)
     assert.match(script, /credential-openai-compatible-base-url/)
     assert.match(script, /credential-openai-compatible-submit/)
     assert.match(script, /async function createOpenAiCompatibleCredential\(\)/)

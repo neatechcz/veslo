@@ -1085,7 +1085,7 @@ export default function App() {
   // is enough — subsequent patches just update the file on disk and the
   // engine picks up the new token on its next read.
   const [lastReloadedForServerToken, setLastReloadedForServerToken] = createSignal("");
-  const [developerMode, setDeveloperMode] = createSignal(false);
+  const developerMode = () => false;
   const [documentVisible, setDocumentVisible] = createSignal(true);
 
   createEffect(() => {
@@ -5417,8 +5417,6 @@ export default function App() {
       setUpdateAutoCheck(true);
       setUpdateAutoDownload(false);
       setUpdateStatus({ state: "idle", lastCheckedAt: null });
-      setDeveloperMode(false);
-
       clearStartupPreference();
       setStartupPreference(null);
       setRememberStartupChoice(false);
@@ -8599,7 +8597,6 @@ export default function App() {
       engineRuntime: engineRuntime(),
       setEngineRuntime,
       isWindows: isWindowsPlatform(),
-      toggleDeveloperMode: () => setDeveloperMode((v) => !v),
       developerMode: developerMode(),
       stopHost,
       restartLocalServer,
