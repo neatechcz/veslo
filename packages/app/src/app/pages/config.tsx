@@ -12,6 +12,7 @@ import { RefreshCcw } from "lucide-solid";
 import { buildVesloWorkspaceBaseUrl, parseVesloWorkspaceIdFromUrl } from "../lib/veslo-server";
 import type { VesloServerSettings, VesloServerStatus } from "../lib/veslo-server";
 import type { VesloServerInfo } from "../lib/tauri";
+import { currentLocale, t } from "../../i18n";
 
 export type ConfigViewProps = {
   busy: boolean;
@@ -43,6 +44,7 @@ export type ConfigViewProps = {
 };
 
 export default function ConfigView(props: ConfigViewProps) {
+  const tr = (key: string) => t(key, currentLocale());
   const [vesloUrl, setVesloUrl] = createSignal("");
   const [vesloToken, setVesloToken] = createSignal("");
   const [vesloTokenVisible, setVesloTokenVisible] = createSignal(false);
@@ -86,14 +88,16 @@ export default function ConfigView(props: ConfigViewProps) {
   });
 
   const reloadAvailabilityReason = createMemo(() => {
-    if (!props.clientConnected) return "Connect to this worker to reload.";
+    if (!props.clientConnected) return tr("reload.toast_blocked_connect");
     if (!props.canReloadWorkspace) {
-      return "Reloading is only available for local workers or connected Veslo servers.";
+      return tr("reload.toast_blocked_workspace");
     }
     return null;
   });
 
-  const reloadButtonLabel = createMemo(() => (props.reloadBusy ? "Reloading..." : "Reload engine"));
+  const reloadButtonLabel = createMemo(() =>
+    props.reloadBusy ? tr("reload.toast_reloading") : tr("reload.engine_button")
+  );
   const reloadButtonTone = createMemo(() => (props.anyActiveRuns ? "danger" : "secondary"));
   const reloadButtonDisabled = createMemo(() => props.reloadBusy || Boolean(reloadAvailabilityReason()));
 

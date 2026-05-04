@@ -7,6 +7,12 @@ const source = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
 test("session routes the current directory into the centered shared titlebar slot", () => {
   assert.match(
     source,
+    /resolveSessionTitlebarContext/,
+    "session should derive titlebar state and directory through the shared titlebar context model",
+  );
+
+  assert.match(
+    source,
     /<TitlebarMenuToggles[\s\S]*centerContent=\{sessionTitlebarContext\(\)\}/,
     "session should pass the current directory into the centered titlebar slot",
   );
@@ -46,11 +52,23 @@ test("session titlebar directory uses the shared app font instead of monospace",
   );
 });
 
-test("session hides the centered directory context when the chat is empty", () => {
-  assert.match(
+test("session keeps centered titlebar context visible for new empty chats", () => {
+  assert.doesNotMatch(
     source,
     /const sessionTitlebarContext = createMemo\(\(\) => \{\s*if \(props\.messages\.length === 0\) return null;/,
-    "session should avoid showing duplicate directory context above the composer in empty chats",
+    "session should show New session context before the first message exists",
+  );
+
+  assert.match(
+    source,
+    /stateLabel[\s\S]*session\.new_session_label/,
+    "session should render a distinct New session state label in the titlebar",
+  );
+
+  assert.match(
+    source,
+    /stateLabel[\s\S]*locationLabel[\s\S]*[·•]/,
+    "session should render a separator between the New session state and directory label",
   );
 });
 

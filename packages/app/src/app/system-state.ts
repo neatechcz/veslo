@@ -15,6 +15,7 @@ import type {
   ResetVesloMode,
   UpdateHandle,
 } from "./types";
+import { currentLocale, t } from "../i18n";
 import { addOpencodeCacheHint, isTauriRuntime, safeStringify } from "./utils";
 import { mapConfigProvidersToList } from "./utils/providers";
 import { createUpdaterState } from "./context/updater";
@@ -209,60 +210,40 @@ export function createSystemState(options: {
   }
 
   const reloadCopy = createMemo(() => {
+    const copy = (bodyKey: string) => ({
+      title: t("settings.reload_required", currentLocale()),
+      body: t(bodyKey, currentLocale()),
+    });
     const reasons = reloadReasons();
     if (!reasons.length) {
-      return {
-        title: "Reload required",
-        body: "Veslo detected changes that require reloading the OpenCode instance.",
-      };
+      return copy("reload.banner_default_description");
     }
 
     if (reasons.length === 1 && reasons[0] === "plugins") {
-      return {
-        title: "Reload required",
-        body: "OpenCode loads npm plugins at startup. Reload the engine to apply opencode.json changes.",
-      };
+      return copy("reload.banner_plugins_description");
     }
 
     if (reasons.length === 1 && reasons[0] === "skills") {
-      return {
-        title: "Reload required",
-        body: "OpenCode can cache skill discovery/state. Reload the engine to make newly installed skills available.",
-      };
+      return copy("reload.banner_skills_description");
     }
 
     if (reasons.length === 1 && reasons[0] === "agents") {
-      return {
-        title: "Reload required",
-        body: "OpenCode loads agents at startup. Reload the engine to make updated agents available.",
-      };
+      return copy("reload.banner_agents_description");
     }
 
     if (reasons.length === 1 && reasons[0] === "commands") {
-      return {
-        title: "Reload required",
-        body: "OpenCode loads commands at startup. Reload the engine to make updated commands available.",
-      };
+      return copy("reload.banner_commands_description");
     }
 
     if (reasons.length === 1 && reasons[0] === "config") {
-      return {
-        title: "Reload required",
-        body: "OpenCode reads opencode.json at startup. Reload the engine to apply configuration changes.",
-      };
+      return copy("reload.banner_config_description");
     }
 
     if (reasons.length === 1 && reasons[0] === "mcp") {
-      return {
-        title: "Reload required",
-        body: "OpenCode loads MCP servers at startup. Reload the engine to activate the new connection.",
-      };
+      return copy("reload.banner_mcp_description");
     }
 
-    return {
-      title: "Reload required",
-      body: "Veslo detected OpenCode configuration changes. Reload the engine to apply them.",
-    };
+    return copy("reload.banner_config_description");
   });
 
   const canReloadEngine = createMemo(() => {

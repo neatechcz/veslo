@@ -99,7 +99,6 @@ import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
 
 import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
-import { resolveComposerWorkspaceLabel } from "../components/session/composer-workspace-label";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import { shouldShowSessionLoadingState } from "../components/session/session-loading-state-model";
 import type { SidebarSectionState } from "../components/session/sidebar";
@@ -122,6 +121,7 @@ import ArtifactsPanel from "../components/session/artifacts-panel";
 import type { ArtifactFamily } from "../components/session/artifact-family-model";
 import { openSessionWithWorkspaceActivation } from "./session-navigation";
 import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "./session-layout-width";
+import { resolveSessionTitlebarContext } from "./session-titlebar-context";
 
 function recordSendTrace(event: string, payload?: Record<string, unknown>) {
   if (typeof window === "undefined") return;
@@ -449,34 +449,56 @@ export default function SessionView(props: SessionViewProps) {
   const [sidebarLayoutState, setSidebarLayoutState] = createSignal<SidebarLayoutState>(
     createInitialSidebarLayoutState(readSidebarDockedVisibility()),
   );
-  const sessionTitlebarLabel = createMemo(() => {
+  const sessionTitlebarContextModel = createMemo(() => {
     const rootPath = props.activeWorkspaceRoot.trim();
-    if (!rootPath && props.activeWorkspaceDisplay.workspaceType !== "remote") {
-      return null;
-    }
-
-    const label = resolveComposerWorkspaceLabel({
-      isRemoteWorkspace: props.activeWorkspaceDisplay.workspaceType === "remote",
-      localWorkspacePath: rootPath,
-      localLabel: tr("session.local_workspace_label"),
-      remoteLabel: tr("session.remote_workspace_label"),
+    return resolveSessionTitlebarContext({
+      selectedSessionId: props.selectedSessionId,
+      messageCount: props.messages.length,
+      workspaceType: props.activeWorkspaceDisplay.workspaceType,
+      activeWorkspaceRoot: rootPath,
+      localWorkspaceLabel: tr("session.local_workspace_label"),
+      remoteWorkspaceLabel: tr("session.remote_workspace_label"),
+      newSessionLabel: tr("session.new_session_label"),
+      isPrivateWorkspacePath: props.isPrivateWorkspacePath(rootPath),
     });
-
-    return label.label.trim() ? label : null;
   });
 
   const sessionTitlebarContext = createMemo(() => {
-    if (props.messages.length === 0) return null;
-    const label = sessionTitlebarLabel();
-    if (!label) return null;
+    const context = sessionTitlebarContextModel();
+    if (!context) return null;
+    const stateLabel = context.stateLabel;
+    const locationLabel = context.locationLabel;
     return (
-      <span
-        class={label.usePathStyle
-          ? "truncate text-[12px] leading-6 text-gray-10"
-          : "truncate text-[10px] font-bold uppercase leading-6 tracking-widest text-gray-10"}
-        title={label.label}
-      >
-        {label.label}
+      <span class="flex min-w-0 items-center gap-1.5 leading-6">
+        <Show when={stateLabel}>
+          {(label) => (
+            <span
+              class="inline-flex shrink-0 items-center rounded-md border border-gray-6/70 bg-gray-2 px-1.5 text-[11px] font-medium leading-5 text-gray-11"
+              title={label()}
+            >
+              {label()}
+            </span>
+          )}
+        </Show>
+        <Show when={stateLabel && locationLabel}>
+          <span class="shrink-0 text-[11px] leading-6 text-gray-8" aria-hidden="true">
+            ·
+          </span>
+        </Show>
+        <Show when={locationLabel}>
+          {(label) => (
+            <span
+              class={
+                context.locationUsePathStyle
+                  ? "truncate text-[12px] leading-6 text-gray-10"
+                  : "truncate text-[10px] font-bold uppercase leading-6 text-gray-10"
+              }
+              title={context.locationTitle ?? label()}
+            >
+              {label()}
+            </span>
+          )}
+        </Show>
       </span>
     );
   });
@@ -3928,7 +3950,8 @@ export default function SessionView(props: SessionViewProps) {
                   {props.reloadBannerBody}
                   <Show when={props.reloadBannerBlocked}>
                     <span>
-                      {` Reloading stops ${props.reloadBannerActiveCount} active conversation${props.reloadBannerActiveCount === 1 ? "" : "s"}.`}
+                      {" "}
+                      {formatTr("reload.toast_warning_active", { count: props.reloadBannerActiveCount })}
                     </span>
                   </Show>
                 </div>
@@ -3949,17 +3972,17 @@ export default function SessionView(props: SessionViewProps) {
                   }
                 >
                   {props.reloadBusy
-                    ? "Reloading..."
+                    ? tr("reload.toast_reloading")
                     : props.reloadBannerBlocked
-                      ? "Reload & Stop Tasks"
-                      : "Reload"}
+                      ? tr("reload.toast_reload_stopped")
+                      : tr("reload.toast_reload")}
                 </button>
                 <button
                   type="button"
                   class="rounded-xl border border-amber-6/70 bg-transparent px-3 py-2 text-xs font-medium text-amber-11 transition-colors hover:bg-amber-3"
                   onClick={props.dismissReloadBanner}
                 >
-                  Later
+                  {tr("reload.toast_dismiss")}
                 </button>
               </div>
             </div>
