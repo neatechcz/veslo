@@ -35,3 +35,11 @@ test("composer history navigation is direction-aware and does not hijack modifie
     "ArrowDown history navigation should be gated through the direction-aware guard",
   );
 });
+
+test("composer history navigation does not replace a live typed draft", () => {
+  assert.match(
+    composerSource,
+    /if \(historyIndex\(\)\[mode\(\)\] === -1 && hasDraftContent\(\)\) return false;/,
+    "history navigation should not consume ArrowUp while the current non-history draft has text",
+  );
+});

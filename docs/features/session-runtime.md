@@ -31,6 +31,11 @@ The composer supports:
 - pasted content placeholders
 - attachments
 
+Current keyboard behavior:
+
+- unmodified arrow keys can navigate composer history only from an empty live draft or after history navigation is already active
+- typed text or attachments in the live draft keep native cursor movement and must not be replaced by history entries
+
 Main source of truth:
 
 - `packages/app/src/app/components/session/composer.tsx`

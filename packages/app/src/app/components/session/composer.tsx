@@ -910,6 +910,7 @@ export default function Composer(props: ComposerProps) {
   const canNavigateHistory = (direction: "up" | "down", event: KeyboardEvent) => {
     if (!editorRef) return false;
     if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return false;
+    if (historyIndex()[mode()] === -1 && hasDraftContent()) return false;
     const offsets = getSelectionOffsets(editorRef);
     if (!offsets || offsets.start !== offsets.end) return false;
     const total = readEditorText(editorRef).length;
