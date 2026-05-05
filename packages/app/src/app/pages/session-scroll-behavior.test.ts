@@ -27,6 +27,26 @@ test("message growth keeps bottom pin active when user is already near the lates
   );
 });
 
+test("throttled auto-scroll keeps a trailing bottom anchor while pinned", () => {
+  assert.match(
+    source,
+    /let trailingAutoScrollTimer: number \| undefined;/,
+    "session should track a deferred auto-scroll retry",
+  );
+
+  assert.match(
+    source,
+    /const remainingMs = STREAM_SCROLL_MIN_INTERVAL_MS - \(now - lastAutoScrollAt\);\s*if \(nextBehavior === "auto" && remainingMs > 0\) \{\s*if \(trailingAutoScrollTimer === undefined\) \{\s*trailingAutoScrollTimer = window\.setTimeout\(\(\) => \{\s*trailingAutoScrollTimer = undefined;\s*if \(!stickToBottom\(\)\) return;\s*scheduleScrollToLatest\("auto"\);\s*\}, remainingMs\);\s*\}\s*return;\s*\}/s,
+    "throttled auto-scroll should schedule one trailing scroll while bottom pinning is still active",
+  );
+
+  assert.match(
+    source,
+    /if \(trailingAutoScrollTimer !== undefined\) \{\s*window\.clearTimeout\(trailingAutoScrollTimer\);\s*trailingAutoScrollTimer = undefined;\s*\}/s,
+    "session cleanup should cancel deferred auto-scroll retries",
+  );
+});
+
 test("near-bottom detection follows message sentinel visibility instead of raw scroll height", () => {
   assert.match(
     source,

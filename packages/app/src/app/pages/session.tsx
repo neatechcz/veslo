@@ -407,6 +407,7 @@ export default function SessionView(props: SessionViewProps) {
   let searchInputEl: HTMLInputElement | undefined;
   let sidebarLayoutResizeFrame: number | undefined;
   let scrollFrame: number | undefined;
+  let trailingAutoScrollTimer: number | undefined;
   let pendingScrollBehavior: ScrollBehavior = "auto";
   let lastAutoScrollAt = 0;
   let streamRenderBatchTimer: number | undefined;
@@ -1793,8 +1794,20 @@ export default function SessionView(props: SessionViewProps) {
       const nextBehavior = pendingScrollBehavior;
       pendingScrollBehavior = "auto";
       const now = Date.now();
-      if (nextBehavior === "auto" && now - lastAutoScrollAt < STREAM_SCROLL_MIN_INTERVAL_MS) {
+      const remainingMs = STREAM_SCROLL_MIN_INTERVAL_MS - (now - lastAutoScrollAt);
+      if (nextBehavior === "auto" && remainingMs > 0) {
+        if (trailingAutoScrollTimer === undefined) {
+          trailingAutoScrollTimer = window.setTimeout(() => {
+            trailingAutoScrollTimer = undefined;
+            if (!stickToBottom()) return;
+            scheduleScrollToLatest("auto");
+          }, remainingMs);
+        }
         return;
+      }
+      if (trailingAutoScrollTimer !== undefined) {
+        window.clearTimeout(trailingAutoScrollTimer);
+        trailingAutoScrollTimer = undefined;
       }
       lastAutoScrollAt = now;
       scrollToLatest(nextBehavior);
@@ -1841,6 +1854,10 @@ export default function SessionView(props: SessionViewProps) {
     if (scrollFrame !== undefined) {
       window.cancelAnimationFrame(scrollFrame);
       scrollFrame = undefined;
+    }
+    if (trailingAutoScrollTimer !== undefined) {
+      window.clearTimeout(trailingAutoScrollTimer);
+      trailingAutoScrollTimer = undefined;
     }
     if (streamRenderBatchTimer !== undefined) {
       window.clearTimeout(streamRenderBatchTimer);

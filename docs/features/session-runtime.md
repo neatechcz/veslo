@@ -40,6 +40,10 @@ Main source of truth:
 
 - `packages/app/src/app/components/session/composer.tsx`
 
+## Message Scroll Anchoring
+
+When the user is already at the latest message, new user posts and streamed assistant output keep the message list pinned to the bottom. Auto-scroll may be throttled for render performance, but the final pending scroll must still run while the bottom pin intent remains active. If the user scrolls away from the latest message, Veslo stops auto-pinning and shows the jump-to-latest control instead of forcing the viewport downward.
+
 ## Pending Drafts
 
 Unstarted sessions are modeled as pending drafts.
