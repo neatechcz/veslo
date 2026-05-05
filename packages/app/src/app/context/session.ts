@@ -531,6 +531,17 @@ export function createSessionStore(options: {
     setStore("commandDisplayByMessageID", trimmedMessageID, display);
   };
 
+  const clearCommandDisplay = (messageID: string) => {
+    const trimmedMessageID = messageID.trim();
+    if (!trimmedMessageID) return;
+    setStore(
+      "commandDisplayByMessageID",
+      produce((draft: Record<string, string>) => {
+        delete draft[trimmedMessageID];
+      }),
+    );
+  };
+
   const withTimeout = async <T,>(promise: Promise<T>, ms: number, label: string) => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -1728,6 +1739,7 @@ export function createSessionStore(options: {
     rejectQuestion,
     appendSessionErrorTurn,
     setCommandDisplay,
+    clearCommandDisplay,
     setSessions,
     setSessionStatusById,
     setMessages,

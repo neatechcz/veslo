@@ -49,7 +49,24 @@ test("slash command sends preassign the message id used for optimistic display",
   assert.notEqual(commandBranchEnd, -1, "slash command branch should end before promptAsync branch");
 
   const commandBranch = appSource.slice(commandBranchStart, commandBranchEnd);
-  assert.match(commandBranch, /const commandMessageID = createClientMessageID\(\);/);
-  assert.match(commandBranch, /sessionStore\.setCommandDisplay\(commandMessageID,\s*command\.name,\s*command\.arguments\);/);
-  assert.match(commandBranch, /messageID:\s*commandMessageID/);
+  assert.match(commandBranch, /commandMessageIDToClear = createClientMessageID\(\);/);
+  assert.match(
+    commandBranch,
+    /sessionStore\.setCommandDisplay\(commandMessageIDToClear,\s*command\.name,\s*command\.arguments\);/,
+  );
+  assert.match(commandBranch, /messageID:\s*commandMessageIDToClear/);
+});
+
+test("failed slash command sends clear the preassigned command display alias", () => {
+  const catchStart = appSource.indexOf("    } catch (e) {");
+  const catchEnd = appSource.indexOf("    } finally {", catchStart);
+  assert.notEqual(catchStart, -1, "send failure path should exist");
+  assert.notEqual(catchEnd, -1, "send failure path should end before finally");
+  const catchWindow = appSource.slice(catchStart, catchEnd);
+
+  assert.match(
+    catchWindow,
+    /sessionStore\.clearCommandDisplay\(/,
+    "failed slash-command sends should clear optimistic command display aliases",
+  );
 });

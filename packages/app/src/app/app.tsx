@@ -2038,6 +2038,7 @@ export default function App() {
     const startedAt = perfNow();
     const visible = messages();
     const visibleParts = visible.reduce((total, message) => total + message.parts.length, 0);
+    let commandMessageIDToClear: string | null = null;
     recordPerfLog(perfEnabled, "session.prompt", "start", {
       sessionID,
       mode: resolvedDraft.mode,
@@ -2090,8 +2091,8 @@ export default function App() {
         }
 
         // Slash command: route through session.command() API
-        const commandMessageID = createClientMessageID();
-        sessionStore.setCommandDisplay(commandMessageID, command.name, command.arguments);
+        commandMessageIDToClear = createClientMessageID();
+        sessionStore.setCommandDisplay(commandMessageIDToClear, command.name, command.arguments);
         const modelString = `${model.providerID}/${model.modelID}`;
         const files = buildCommandFileParts(resolvedDraft);
 
@@ -2099,7 +2100,7 @@ export default function App() {
         unwrap(
           await c.session.command({
             sessionID,
-            messageID: commandMessageID,
+            messageID: commandMessageIDToClear,
             command: command.name,
             arguments: command.arguments,
             agent: agent ?? undefined,
@@ -2110,6 +2111,7 @@ export default function App() {
             directory: sessionDirOverride,
           }),
         );
+        commandMessageIDToClear = null;
 
       } else {
         const result = await c.session.promptAsync({
@@ -2157,6 +2159,9 @@ export default function App() {
       return true;
     } catch (e) {
       restorePendingDraftAfterSendFailure();
+      if (commandMessageIDToClear) {
+        sessionStore.clearCommandDisplay(commandMessageIDToClear);
+      }
       finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
         sessionID,
         mode: resolvedDraft.mode,

@@ -15,5 +15,14 @@ test("session store exposes command display aliasing for preassigned command mes
     /const alias = store\.commandDisplayByMessageID\[info\.id\];[\s\S]*parts: \[aliasPart,\s*\.\.\.nonTextParts\]/s,
     "user-message rendering should replace the first text part with the command display alias",
   );
-  assert.match(sessionSource, /\bsetCommandDisplay,\s*\n\s*setSessions,/, "setCommandDisplay should be exposed to sendPrompt");
+  assert.match(
+    sessionSource,
+    /const clearCommandDisplay = \(messageID: string\) => \{[\s\S]*delete draft\[trimmedMessageID\];[\s\S]*\};/s,
+    "session store should provide command display cleanup by message id",
+  );
+  assert.match(
+    sessionSource,
+    /\bsetCommandDisplay,\s*\n\s*clearCommandDisplay,\s*\n\s*setSessions,/,
+    "command display aliases should expose both set and clear helpers to sendPrompt",
+  );
 });
