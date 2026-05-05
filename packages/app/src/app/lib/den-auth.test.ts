@@ -795,6 +795,63 @@ test("hydrateDenAuthFromDesktopSnapshot preserves browser auth when snapshot mat
   }
 });
 
+test("hydrateDenAuthFromDesktopSnapshot preserves an existing browser language preference", async () => {
+  const currentAuth = {
+    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    token: "token_current_browser",
+    orgId: "org_current",
+    user: { id: "user_same", email: "same@example.com" },
+    org: { id: "org_current" },
+  };
+  const snapshotAuth = {
+    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    token: "token_snapshot_older",
+    orgId: "org_snapshot",
+    user: { id: "user_same", email: "same@example.com" },
+    org: { id: "org_snapshot" },
+  };
+  const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  const storage = installDomStorage({
+    tauriInvoke: async (command, args) => {
+      calls.push({ command, args });
+      if (command === "den_auth_snapshot_read") {
+        return {
+          authJson: JSON.stringify(snapshotAuth),
+          keepSignedIn: true,
+          language: "en",
+          onboardingComplete: true,
+          source: "desktop-runtime",
+        };
+      }
+      if (command === "den_auth_snapshot_write") {
+        return null;
+      }
+      throw new Error(`Unexpected invoke command: ${command}`);
+    },
+  });
+
+  try {
+    storage.localStorage.setItem("veslo.language", "cs");
+    storage.localStorage.setItem("veslo.onboardingComplete", "1");
+    writeDenAuth(currentAuth);
+    await flushPendingDesktopSnapshotWrite();
+    calls.length = 0;
+
+    const imported = await hydrateDenAuthFromDesktopSnapshot();
+    await flushPendingDesktopSnapshotWrite();
+
+    assert.equal(imported, false);
+    assert.equal(storage.localStorage.getItem("veslo.language"), "cs");
+    assert.equal(storage.localStorage.getItem("veslo.onboardingComplete"), "1");
+    const snapshotWrite = calls.filter((entry) => entry.command === "den_auth_snapshot_write").at(-1);
+    assert.ok(snapshotWrite);
+    assert.equal(snapshotWrite.args?.language, "cs");
+    assert.equal(snapshotWrite.args?.onboardingComplete, true);
+  } finally {
+    storage.restore();
+  }
+});
+
 test("hydrateDenAuthFromDesktopSnapshot replaces stale browser auth with a session-only snapshot sign-in", async () => {
   const staleAuth = {
     denApiBase: "https://den-control-plane-veslo.onrender.com",

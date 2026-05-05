@@ -345,6 +345,14 @@ function writePersistedBoolean(store: Storage | null, key: string, value: boolea
   }
 }
 
+function normalizePersistedLanguage(value: unknown): string | null {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (normalized === "en" || normalized === "zh" || normalized === "cs") {
+    return normalized;
+  }
+  return null;
+}
+
 async function invokeDesktopCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const runtimeInvoke = (typeof window !== "undefined"
     ? (window as unknown as { __TAURI_INTERNALS__?: { invoke?: TauriInvoke } }).__TAURI_INTERNALS__
@@ -455,16 +463,22 @@ function restoreDesktopSnapshotUiState(
   localStore: Storage | null,
   snapshot: DenDesktopSnapshot | null,
 ): void {
-  writePersistedText(
-    localStore,
-    LANGUAGE_PREF_KEY,
-    typeof snapshot?.language === "string" ? snapshot.language.trim() || null : null,
-  );
-  writePersistedBoolean(
-    localStore,
-    ONBOARDING_COMPLETE_STORAGE_KEY,
-    typeof snapshot?.onboardingComplete === "boolean" ? snapshot.onboardingComplete : null,
-  );
+  const currentLanguage = normalizePersistedLanguage(readPersistedText(localStore, LANGUAGE_PREF_KEY));
+  if (!currentLanguage) {
+    writePersistedText(
+      localStore,
+      LANGUAGE_PREF_KEY,
+      normalizePersistedLanguage(snapshot?.language),
+    );
+  }
+
+  if (readPersistedBoolean(localStore, ONBOARDING_COMPLETE_STORAGE_KEY) == null) {
+    writePersistedBoolean(
+      localStore,
+      ONBOARDING_COMPLETE_STORAGE_KEY,
+      typeof snapshot?.onboardingComplete === "boolean" ? snapshot.onboardingComplete : null,
+    );
+  }
 }
 
 function applySignedOutDesktopSnapshot(localStore: Storage | null, sessionStore: Storage | null): void {
