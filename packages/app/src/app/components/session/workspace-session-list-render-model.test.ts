@@ -21,6 +21,29 @@ test("keeps previous project group order while rendering is suspended", () => {
   );
 });
 
+test("uses latest project group contents while rendering is suspended", () => {
+  type GroupWithSessions = { key: string; sessions: string[] };
+  const previous: GroupWithSessions[] = [
+    { key: "alpha", sessions: ["archived-session"] },
+    { key: "beta", sessions: ["beta-old"] },
+  ];
+  const next: GroupWithSessions[] = [
+    { key: "beta", sessions: ["beta-current"] },
+    { key: "alpha", sessions: [] },
+  ];
+
+  const resolved = resolveRenderableProjectGroups<GroupWithSessions>({
+    suspended: true,
+    previousGroups: previous,
+    nextGroups: next,
+  });
+
+  assert.deepEqual(resolved, [
+    { key: "alpha", sessions: [] },
+    { key: "beta", sessions: ["beta-current"] },
+  ]);
+});
+
 test("uses next project order when rendering is not suspended", () => {
   const previous: Group[] = [{ key: "alpha" }, { key: "beta" }, { key: "gamma" }];
   const next: Group[] = [{ key: "beta" }, { key: "gamma" }, { key: "alpha" }];
