@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   DEFAULT_PUBLIC_RELEASE_REPO,
   isPublicDesktopReleaseAsset,
+  publicDesktopReleaseAssetName,
   publicUpdaterEndpoint,
 } from "./public-release-assets.mjs";
 
@@ -26,6 +27,32 @@ test("includes only macOS and Windows desktop release artifacts", () => {
   assert.equal(isPublicDesktopReleaseAsset("veslo-desktop-linux-x86_64.rpm"), false);
   assert.equal(isPublicDesktopReleaseAsset("veslo-desktop-linux-x86_64.AppImage"), false);
   assert.equal(isPublicDesktopReleaseAsset("veslo-orchestrator-sidecars.json"), false);
+});
+
+test("uses stable public labels when source release asset names are installer-native", () => {
+  assert.equal(
+    publicDesktopReleaseAssetName({
+      name: "Veslo.by.Neatech_2026.5.3_x64_en-US.msi",
+      label: "veslo-desktop-windows-x64.msi",
+    }),
+    "veslo-desktop-windows-x64.msi",
+  );
+
+  assert.equal(
+    publicDesktopReleaseAssetName({
+      name: "veslo-desktop-darwin-aarch64.app.tar.gz",
+      label: "veslo-desktop-darwin-aarch64.app.tar.gz",
+    }),
+    "veslo-desktop-darwin-aarch64.app.tar.gz",
+  );
+
+  assert.equal(
+    publicDesktopReleaseAssetName({
+      name: "veslo-orchestrator-sidecars.json",
+      label: "veslo-orchestrator-sidecars.json",
+    }),
+    "",
+  );
 });
 
 test("builds the updater endpoint from the public release repo", () => {

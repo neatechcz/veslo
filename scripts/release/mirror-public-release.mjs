@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { isPublicDesktopReleaseAsset } from "./public-release-assets.mjs";
+import { publicDesktopReleaseAssetName } from "./public-release-assets.mjs";
 
 function parseBool(value) {
   if (typeof value === "boolean") return value;
@@ -95,6 +95,12 @@ function releaseExists(repo, tag, token) {
   }
 }
 
+function sourceReleaseAssets(repo, tag, token) {
+  const raw = runGh(["release", "view", tag, "--repo", repo, "--json", "assets"], token);
+  const parsed = JSON.parse(raw);
+  return Array.isArray(parsed.assets) ? parsed.assets : [];
+}
+
 function main() {
   const {
     sourceRepo,
@@ -117,26 +123,37 @@ function main() {
   const tempDir = mkdtempSync(join(tmpdir(), "veslo-public-release-"));
 
   try {
-    runGh(
-      [
-        "release",
-        "download",
-        tag,
-        "--repo",
-        sourceRepo,
-        "--dir",
-        tempDir,
-        "--pattern",
-        "veslo-desktop-darwin-*",
-        "--pattern",
-        "veslo-desktop-windows-*",
-      ],
-      sourceToken,
-    );
+    const publicAssets = sourceReleaseAssets(sourceRepo, tag, sourceToken)
+      .map((asset) => ({
+        sourceName: asset.name || "",
+        publicName: publicDesktopReleaseAssetName(asset),
+      }))
+      .filter((asset) => asset.sourceName && asset.publicName);
 
-    const files = readdirSync(tempDir)
-      .filter((name) => isPublicDesktopReleaseAsset(name))
-      .map((name) => join(tempDir, name))
+    for (const { sourceName, publicName } of publicAssets) {
+      runGh(
+        [
+          "release",
+          "download",
+          tag,
+          "--repo",
+          sourceRepo,
+          "--dir",
+          tempDir,
+          "--pattern",
+          sourceName,
+          "--clobber",
+        ],
+        sourceToken,
+      );
+
+      if (publicName !== sourceName) {
+        renameSync(join(tempDir, sourceName), join(tempDir, publicName));
+      }
+    }
+
+    const files = publicAssets
+      .map(({ publicName }) => join(tempDir, publicName))
       .sort();
 
     if (!files.length) {

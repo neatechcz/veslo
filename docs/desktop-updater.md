@@ -182,6 +182,8 @@ The current public mirror script only mirrors:
 - Windows desktop artifacts
 - their `.sig` files
 
+Windows installers may keep the installer-native MSI filename in the source release and expose the updater-stable `veslo-desktop-windows-*` name as the GitHub asset label. The mirror treats either the asset name or that label as the public artifact name before generating `latest.json`.
+
 That means the public updater feed currently covers macOS and Windows. Release automation does not build Linux desktop artifacts.
 
 ### Why `latest.json` is generated separately
