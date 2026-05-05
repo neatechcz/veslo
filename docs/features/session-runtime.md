@@ -126,6 +126,7 @@ Current behavior:
 - submits to Den-backed feedback API
 - waits for Den to create or reuse the YouTrack task
 - shows the returned YouTrack task number, for example `VSLO-1234`, in the feedback modal after a successful submit
+- keeps failed YouTrack projections in Den storage for retry; Den retries pending due rows after process restarts
 
 Main sources:
 

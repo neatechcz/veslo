@@ -414,6 +414,7 @@ jobs:
           )
           youtrack_mcp_url = configured_or_existing("DEN_YOUTRACK_MCP_URL", "YOUTRACK_MCP_URL")
           youtrack_mcp_token = configured_or_existing("DEN_YOUTRACK_MCP_TOKEN", "YOUTRACK_MCP_TOKEN")
+          has_youtrack_transport = bool(youtrack_mcp_command) or (bool(youtrack_mcp_url) and bool(youtrack_mcp_token))
 
           if youtrack_mcp_args:
               parsed_args = json.loads(youtrack_mcp_args)
@@ -423,11 +424,17 @@ jobs:
           if youtrack_mcp_wire_protocol not in {"content-length", "line"}:
               raise RuntimeError("DEN_YOUTRACK_MCP_WIRE_PROTOCOL must be content-length or line")
 
+          if not has_youtrack_transport:
+              raise RuntimeError(
+                  "Missing YouTrack projector transport: set DEN_YOUTRACK_MCP_URL and DEN_YOUTRACK_MCP_TOKEN, or DEN_YOUTRACK_MCP_COMMAND."
+              )
+
           print(
               "YouTrack projector config:",
               json.dumps(
                   {
                       "projectKey": youtrack_project_key,
+                      "hasTransport": has_youtrack_transport,
                       "hasCommand": bool(youtrack_mcp_command),
                       "hasRemoteUrl": bool(youtrack_mcp_url),
                       "hasRemoteToken": bool(youtrack_mcp_token),

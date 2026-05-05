@@ -76,8 +76,11 @@ function buildFeedback(overrides: Partial<ProjectableFeedback> = {}): Projectabl
   }
 }
 
-function createMemoryStore(initialFeedback: ProjectableFeedback) {
-  const feedbacks = new Map<string, ProjectableFeedback>([[initialFeedback.id, { ...initialFeedback }]])
+function createMemoryStore(initialFeedback: ProjectableFeedback | ProjectableFeedback[]) {
+  const initialFeedbacks = Array.isArray(initialFeedback) ? initialFeedback : [initialFeedback]
+  const feedbacks = new Map<string, ProjectableFeedback>(
+    initialFeedbacks.map((feedback) => [feedback.id, { ...feedback }]),
+  )
   const attempts: AttemptRecord[] = []
 
   return {
@@ -90,6 +93,17 @@ function createMemoryStore(initialFeedback: ProjectableFeedback) {
       async getLatestAttemptNumber(feedbackId: string) {
         const matching = attempts.filter((attempt) => attempt.feedbackId === feedbackId)
         return matching.at(-1)?.attemptNo ?? 0
+      },
+      async listDueRetries(args: { now: Date; limit: number }) {
+        return Array.from(feedbacks.values())
+          .filter((feedback) =>
+            feedback.status === "pending"
+            && !feedback.youtrackIssueId
+            && feedback.nextProjectorAttemptAt !== null
+            && feedback.nextProjectorAttemptAt.getTime() <= args.now.getTime()
+          )
+          .slice(0, args.limit)
+          .map((feedback) => feedback.id)
       },
       async insertAttempt(attempt: AttemptRecord) {
         attempts.push(attempt)
@@ -274,6 +288,51 @@ test("feedback projector records failure, schedules retry, and keeps the row pen
   assert.deepEqual(memory.feedbacks.get("fb_123")?.nextProjectorAttemptAt, new Date("2026-04-16T20:00:30.000Z"))
   assert.equal(timer.scheduled.length, 1)
   assert.equal(timer.scheduled[0]?.delayMs, FEEDBACK_PROJECTOR_RETRY_DELAYS_MS[0])
+})
+
+test("feedback projector processes due pending feedback after restart", async () => {
+  setupEnv()
+  const { createFeedbackProjector } = await import("../src/feedback/projector.js")
+  const memory = createMemoryStore([
+    buildFeedback({
+      id: "fb_due",
+      nextProjectorAttemptAt: new Date("2026-04-16T19:59:00.000Z"),
+    }),
+    buildFeedback({
+      id: "fb_future",
+      nextProjectorAttemptAt: new Date("2026-04-16T20:05:00.000Z"),
+    }),
+  ])
+  const createIssueCalls: string[] = []
+  const projector = createFeedbackProjector({
+    projectKey: "VESLO",
+    store: memory.store,
+    issueClient: {
+      async createIssue(input) {
+        createIssueCalls.push(input.description)
+        return {
+          issueId: "VESLO-124",
+          issueUrl: "https://youtrack.example/issue/VESLO-124",
+        }
+      },
+    },
+  })
+
+  const result = await projector.processDueRetries({
+    now: new Date("2026-04-16T20:00:00.000Z"),
+    limit: 10,
+  })
+
+  assert.deepEqual(result, {
+    attempted: 1,
+    projected: 1,
+  })
+  assert.equal(createIssueCalls.length, 1)
+  assert.match(createIssueCalls[0] ?? "", /Feedback ID: fb_due/)
+  assert.equal(memory.feedbacks.get("fb_due")?.status, "projected")
+  assert.equal(memory.feedbacks.get("fb_due")?.youtrackIssueId, "VESLO-124")
+  assert.equal(memory.feedbacks.get("fb_future")?.status, "pending")
+  assert.equal(memory.feedbacks.get("fb_future")?.youtrackIssueId, null)
 })
 
 test("feedback projector suppresses duplicate issue creation when the feedback row already has a YouTrack issue id", async () => {

@@ -36,6 +36,7 @@ import { createYouTrackMcpIssueClient } from "./integrations/youtrack-mcp.js"
 
 const app = express()
 const MANAGED_AI_PROXY_JSON_LIMIT = "10mb"
+const FEEDBACK_PROJECTOR_DUE_RETRY_INTERVAL_MS = 60_000
 const managedAiRuntime = env.managedAi.enabled ? createDefaultRuntimeState() : null
 const managedAiProxyJsonParser = express.json({ limit: MANAGED_AI_PROXY_JSON_LIMIT })
 const currentFile = fileURLToPath(import.meta.url)
@@ -138,6 +139,29 @@ function createOpenAiOAuthClient() {
     clientSecret: config.clientSecret,
     redirectBase: config.redirectBase,
   })
+}
+
+function unrefTimer(handle: unknown) {
+  if (!handle || typeof handle !== "object") {
+    return
+  }
+  const unref = (handle as { unref?: unknown }).unref
+  if (typeof unref === "function") {
+    unref.call(handle)
+  }
+}
+
+function startFeedbackProjectorDueRetryLoop(projector: Pick<ReturnType<typeof createFeedbackProjector>, "processDueRetries">) {
+  const runDueRetries = () => {
+    void projector.processDueRetries().catch((error) => {
+      const message = error instanceof Error ? error.stack ?? error.message : String(error)
+      console.error(`[den] feedback projector due retry sweep failed: ${message}`)
+    })
+  }
+
+  runDueRetries()
+  const interval = setInterval(runDueRetries, FEEDBACK_PROJECTOR_DUE_RETRY_INTERVAL_MS)
+  unrefTimer(interval)
 }
 
 const identifierPattern = /^[a-zA-Z0-9_]+$/
@@ -648,6 +672,7 @@ async function ensureTables() {
 
 async function bootstrap() {
   await ensureTables()
+  startFeedbackProjectorDueRetryLoop(feedbackProjector)
   if (env.managedAi.enabled) {
     console.log("[den] managed-ai runtime enabled")
   }

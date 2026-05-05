@@ -1,9 +1,10 @@
 import crypto from "node:crypto"
-import { desc, eq } from "drizzle-orm"
+import { and, asc, desc, eq, isNull, lte } from "drizzle-orm"
 import { db } from "../db/index.js"
 import { FeedbackProjectorAttemptTable, FeedbackReportTable } from "../db/schema.js"
 
 export const FEEDBACK_PROJECTOR_RETRY_DELAYS_MS = [30_000, 5 * 60_000, 30 * 60_000] as const
+export const FEEDBACK_PROJECTOR_DUE_RETRY_LIMIT = 20
 
 export type FeedbackProjectionRecord = {
   id: string
@@ -37,6 +38,10 @@ export type FeedbackProjectionRecord = {
 export type FeedbackProjectorStore = {
   getFeedback: (feedbackId: string) => Promise<FeedbackProjectionRecord | null>
   getLatestAttemptNumber: (feedbackId: string) => Promise<number>
+  listDueRetries: (input: {
+    now: Date
+    limit: number
+  }) => Promise<string[]>
   insertAttempt: (attempt: {
     feedbackId: string
     attemptNo: number
@@ -62,6 +67,16 @@ export type FeedbackProjectorStore = {
 export type FeedbackProjectionResult = {
   issueId: string
   issueUrl: string
+}
+
+export type FeedbackProjectorDueRetryOptions = {
+  now?: Date
+  limit?: number
+}
+
+export type FeedbackProjectorDueRetryResult = {
+  attempted: number
+  projected: number
 }
 
 export type FeedbackIssueClient = {
@@ -204,6 +219,23 @@ export function createDbFeedbackProjectorStore(database = db): FeedbackProjector
         .limit(1)
 
       return rows[0]?.attemptNo ?? 0
+    },
+
+    async listDueRetries(input) {
+      const rows = await database
+        .select({
+          id: FeedbackReportTable.id,
+        })
+        .from(FeedbackReportTable)
+        .where(and(
+          eq(FeedbackReportTable.status, "pending"),
+          isNull(FeedbackReportTable.youtrack_issue_id),
+          lte(FeedbackReportTable.next_projector_attempt_at, input.now),
+        ))
+        .orderBy(asc(FeedbackReportTable.next_projector_attempt_at))
+        .limit(input.limit)
+
+      return rows.map((row) => row.id)
     },
 
     async insertAttempt(attempt) {
@@ -369,8 +401,42 @@ export function createFeedbackProjector(options: FeedbackProjectorOptions) {
     return run
   }
 
+  async function processDueRetries(options: FeedbackProjectorDueRetryOptions = {}): Promise<FeedbackProjectorDueRetryResult> {
+    const limitCandidate = options.limit ?? FEEDBACK_PROJECTOR_DUE_RETRY_LIMIT
+    const limit = Number.isFinite(limitCandidate) ? Math.max(0, Math.floor(limitCandidate)) : FEEDBACK_PROJECTOR_DUE_RETRY_LIMIT
+    if (limit === 0) {
+      return {
+        attempted: 0,
+        projected: 0,
+      }
+    }
+
+    const feedbackIds = await store.listDueRetries({
+      now: options.now ?? now(),
+      limit,
+    })
+    let projected = 0
+
+    for (const feedbackId of feedbackIds) {
+      try {
+        const result = await projectFeedback(feedbackId)
+        if (result?.issueId) {
+          projected += 1
+        }
+      } catch (error) {
+        logger.error(`[feedback-projector] due retry failed for ${feedbackId}: ${toErrorMessage(error)}`)
+      }
+    }
+
+    return {
+      attempted: feedbackIds.length,
+      projected,
+    }
+  }
+
   return {
     projectFeedback,
+    processDueRetries,
     dispose() {
       for (const handle of scheduledRetries.values()) {
         timerApi.clearTimeout(handle)

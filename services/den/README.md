@@ -132,7 +132,7 @@ pnpm db:migrate
   - With the production projector configured, waits for the first YouTrack projection attempt before returning.
   - Returns `201` with `{ feedbackId, status: "projected", youtrackIssueId, youtrackIssueUrl }` after a YouTrack task is created or reused.
   - Returns `502 feedback_youtrack_projection_failed` if the report was persisted but the synchronous YouTrack projection did not produce a task number.
-  - Successful projection stores `youtrackIssueId` + `youtrackIssueUrl` on the feedback row; failures write attempt history and schedule in-process retries.
+  - Successful projection stores `youtrackIssueId` + `youtrackIssueUrl` on the feedback row; failures write attempt history, schedule in-process retries, and remain eligible for the durable retry sweep after a Den restart.
   - Screenshot data is stored directly on the feedback row for v1 as base64 payload + mime type + byte size.
   - Rejects invalid payloads with `400 invalid_feedback_payload` and oversized screenshots with `413 feedback_screenshot_too_large`.
   - The feedback route uses a larger JSON body limit to support screenshot-bearing payloads without widening limits for unrelated endpoints.
@@ -153,7 +153,7 @@ The workflow `.github/workflows/deploy-den.yml` updates Render env vars and depl
 
 The workflow also patches the configured Render control-plane service with `autoDeploy: no` on every manual run. Keep native Render Auto-Deploy off for this service.
 
-The deployment workflow preserves existing Render YouTrack projector variables when matching GitHub secrets/vars are not provided, then writes them back during the env sync. This prevents a manual Den deploy from silently disabling feedback projection.
+The deployment workflow preserves existing Render YouTrack projector variables when matching GitHub secrets/vars are not provided, then writes them back during the env sync. It fails before deploying when the final config has no MCP command transport and no remote URL plus token transport, which prevents a manual Den deploy from silently disabling feedback projection.
 
 See `docs/dev/cloud-deployments.md` for the canonical operator procedure.
 
