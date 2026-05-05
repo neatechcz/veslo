@@ -35,13 +35,16 @@ test("deploy den workflow preserves hosted auth email env when repo inputs are b
 
 test("workflow dispatch prefers the selected branch for hosted den deploys", () => {
   assert.match(workflow, /configured_control_plane_branch/);
+  assert.match(
+    workflow,
+    /DEN_RENDER_CONTROL_PLANE_BRANCH: \$\{\{ github\.event\.inputs\.branch \|\| vars\.DEN_RENDER_CONTROL_PLANE_BRANCH \}\}/,
+  );
   assert.match(workflow, /selected_branch = os\.environ\.get\("GITHUB_REF_NAME"\) or "dev"/);
-  assert.match(workflow, /if os\.environ\.get\("GITHUB_EVENT_NAME"\) == "workflow_dispatch":/);
-  assert.match(workflow, /control_plane_branch = selected_branch/);
+  assert.match(workflow, /control_plane_branch = configured_control_plane_branch or selected_branch/);
 });
 
 test("den readme documents hosted auth email testing requirements", () => {
-  assert.match(readme, /workflow_dispatch/);
+  assert.match(readme, /manually from GitHub Actions/);
   assert.match(readme, /DEN_LETTR_API_KEY/);
   assert.match(readme, /DEN_AUTH_EMAIL_ADDRESS/);
   assert.match(readme, /DEN_AUTH_EMAIL_FROM_NAME/);

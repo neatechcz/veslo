@@ -29,6 +29,8 @@ Windows desktop builds are signed in GitHub Actions through Azure Artifact Signi
 
 The Azure principal behind `AZURE_CLIENT_ID` must have `Artifact Signing Certificate Profile Signer` on the certificate profile. Windows workflows install the Artifact Signing dlib package, call the Tauri Windows `signCommand`, then verify Authenticode signatures on the app executable and MSI before upload. The bundled `versions.json` sidecar manifest is intentionally skipped by the sign command because Tauri packages it through `externalBin` even though it is not an executable.
 
+Each Windows `signtool` invocation is bounded by `VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS` (default `300`) and retried up to `VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS` times (default `3`) so a stalled Azure Artifact Signing request fails or recovers without hanging the whole release indefinitely.
+
 ## veslo-orchestrator (npm + sidecars)
 
 1. Bump versions (includes `packages/orchestrator/package.json`):

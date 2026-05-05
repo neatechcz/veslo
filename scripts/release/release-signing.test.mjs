@@ -215,6 +215,29 @@ test("Windows signing PowerShell script skips the bundled versions manifest", ()
   assert.match(script, /exit 0/);
 });
 
+test("Windows signing PowerShell script bounds Azure signing hangs and retries", () => {
+  const scriptPath = resolve(import.meta.dirname, "../../scripts/release/windows-sign.ps1");
+  const script = readFileSync(scriptPath, "utf8");
+
+  assert.match(script, /VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS/);
+  assert.match(script, /VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS/);
+  assert.match(script, /System\.Diagnostics\.ProcessStartInfo/);
+  assert.match(script, /ArgumentList\.Add/);
+  assert.match(script, /WaitForExit\(\$timeoutMs\)/);
+  assert.match(script, /Stop-Process/);
+  assert.match(script, /timed out after \$timeoutSeconds seconds/);
+  assert.match(script, /retrying/);
+});
+
+test("release checklist documents Windows signing timeout controls", () => {
+  const checklistPath = resolve(import.meta.dirname, "../../RELEASE.md");
+  const checklist = readFileSync(checklistPath, "utf8");
+
+  assert.match(checklist, /VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS/);
+  assert.match(checklist, /VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS/);
+  assert.match(checklist, /Azure Artifact Signing request/);
+});
+
 test("Windows workflows use the shared Artifact Signing dlib package installer", () => {
   const installerPath = resolve(
     import.meta.dirname,
