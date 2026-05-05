@@ -100,6 +100,7 @@ export function createManagedAiSignupAssignmentService(
           credentialId: credential.credentialId,
           defaultModel: DEFAULT_CODEX_AUTO_ASSIGN_MODEL,
           allowedModels: [DEFAULT_CODEX_AUTO_ASSIGN_MODEL],
+          assignmentOrigin: "auto_assigned",
         })
         return true
       } catch (error) {

@@ -150,7 +150,10 @@ function createNoopUsageRepository() {
   };
 }
 
-function createCodexAiAccess(credentialId = "cred_codex_assigned"): {
+function createCodexAiAccess(
+  credentialId = "cred_codex_assigned",
+  assignmentOrigin: "auto_assigned" | "admin_assigned" = "admin_assigned",
+): {
   getUserAiAccess(userId: string): Promise<{
     id: string;
     userId: string;
@@ -159,6 +162,7 @@ function createCodexAiAccess(credentialId = "cred_codex_assigned"): {
     credentialId: string;
     defaultModel: string;
     allowedModels: string[];
+    assignmentOrigin: "auto_assigned" | "admin_assigned";
     createdAt: Date;
     updatedAt: Date;
   }>;
@@ -173,6 +177,7 @@ function createCodexAiAccess(credentialId = "cred_codex_assigned"): {
         credentialId,
         defaultModel: "gpt-5.4",
         allowedModels: ["gpt-5.4"],
+        assignmentOrigin,
         createdAt: new Date("2026-04-10T10:00:00.000Z"),
         updatedAt: new Date("2026-04-10T10:00:00.000Z"),
       };
@@ -774,6 +779,120 @@ test("POST /providers/codex_oauth/v1/chat/completions routes through the assigne
       },
     ]);
     assert.deepEqual(credentials.listEligibleBindingsCalls, []);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("POST /providers/codex_oauth/v1/chat/completions repairs auto-assigned access before resolving the binding", async () => {
+  const leases = new InMemoryLeaseRepository();
+  const credentials = createCodexCredentialRepository();
+  const leaseBroker = new LeaseBroker(leases, new DefaultBindingSelector(credentials as never));
+  const repairCalls: Array<{ credentialId: string | null }> = [];
+  const recordUsageCalls: Array<Record<string, unknown>> = [];
+  const transportAuthJson: Array<string | null | undefined> = [];
+
+  const app = createApp({
+    proxy: {
+      aiAccess: createCodexAiAccess("cred_codex_assigned", "auto_assigned"),
+      autoAssignedCodexCredentialRotation: {
+        async repairCodexAccess(input: { aiAccess: { credentialId: string | null } }) {
+          repairCalls.push(input.aiAccess);
+          return {
+            ...(await createCodexAiAccess("cred_codex_fallback", "auto_assigned").getUserAiAccess("user_gateway")),
+          };
+        },
+      },
+      gatewaySessions: createGatewaySessions(),
+      credentials: credentials as never,
+      secrets: {
+        async get(secretRef: string) {
+          return {
+            kind: "codex_auth_json",
+            authJson: secretRef === "secret_binding_codex_fallback" ? "fallback-auth-json" : "assigned-auth-json",
+          };
+        },
+      } as never,
+      usageRepository: {
+        async recordUsage(input: Record<string, unknown>) {
+          recordUsageCalls.push(input);
+        },
+      },
+      leaseBroker,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          assert.fail("token broker should not run for codex worker routes");
+        },
+      },
+      openAiTransport: {
+        async chatCompletions() {
+          assert.fail("openai transport should not be used for codex routes");
+        },
+      },
+      anthropicTransport: {
+        async messages() {
+          assert.fail("anthropic transport should not be used for codex routes");
+        },
+      },
+      codexOAuthTransport: {
+        async chatCompletions(input: { body: unknown; authJson?: string | null }) {
+          transportAuthJson.push(input.authJson);
+          return {
+            status: 200,
+            headers: {
+              "x-request-id": "codex_req_repaired_1",
+            },
+            body: {
+              id: "chatcmpl_codex_repaired_1",
+              object: "chat.completion",
+              model: "gpt-5.4",
+              choices: [],
+              usage: null,
+            },
+          };
+        },
+      },
+    } as NonNullable<AppDependencies["proxy"]>,
+  });
+
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/providers/codex_oauth/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        ...GATEWAY_AUTH_HEADER,
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_codex_repaired_1",
+      },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(repairCalls.length, 1);
+    assert.equal(repairCalls[0]?.credentialId, "cred_codex_assigned");
+    assert.deepEqual(transportAuthJson, ["fallback-auth-json"]);
+    assert.deepEqual(recordUsageCalls, [
+      {
+        requestId: "codex_req_repaired_1",
+        ownerUserId: "user_gateway",
+        provider: "codex_oauth",
+        sessionId: "session_codex_repaired_1",
+        credentialId: "cred_codex_fallback",
+        bindingId: "binding_codex_fallback",
+        model: "gpt-5.4",
+        inputTokens: undefined,
+        outputTokens: undefined,
+        cachedTokens: 0,
+        totalTokens: undefined,
+      },
+    ]);
   } finally {
     server.close();
     await once(server, "close");

@@ -1,5 +1,6 @@
 import { Router, type Request } from "express";
 
+import type { AutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js";
 import type { AiAccessRepository } from "../access/repository.js";
 import { readBearerToken } from "../auth/user-session.js";
 import type { GatewaySessionResolver } from "../auth/gateway-session.js";
@@ -21,6 +22,7 @@ import { createOpenAiProxyRouter } from "./providers/openai.js";
 
 export type ProxyDependencies = {
   aiAccess?: AiAccessRepository;
+  autoAssignedCodexCredentialRotation?: AutoAssignedCodexCredentialRotationService;
   gatewaySessions: GatewaySessionResolver;
   credentials: CredentialRepository;
   secrets: SecretStore;

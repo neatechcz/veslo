@@ -5,6 +5,7 @@ import type { AiGatewayDb } from "../db/index.js";
 import { userAiAccessPolicyTable } from "../db/schema.js";
 import { isAiGatewayProvider } from "../providers/ids.js";
 import type {
+  AiAccessAssignmentOrigin,
   AiAccessProvider,
   AiAccessRepository,
   UpsertUserAiAccessPolicyInput,
@@ -29,6 +30,7 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
     const existing = await this.getUserAiAccess(input.userId);
     const now = new Date();
     const allowedModelsJson = JSON.stringify(normalizeAllowedModels(input.allowedModels));
+    const assignmentOrigin = parseAssignmentOrigin(input.assignmentOrigin);
 
     if (existing) {
       await this.db
@@ -39,6 +41,7 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
           credential_id: input.credentialId,
           default_model: input.defaultModel,
           allowed_models_json: allowedModelsJson,
+          assignment_origin: assignmentOrigin,
           updated_at: now,
         })
         .where(eq(userAiAccessPolicyTable.user_id, input.userId));
@@ -50,6 +53,7 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
         credentialId: input.credentialId,
         defaultModel: input.defaultModel,
         allowedModels: normalizeAllowedModels(input.allowedModels),
+        assignmentOrigin,
         updatedAt: now,
       };
     }
@@ -63,6 +67,7 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
       credential_id: input.credentialId,
       default_model: input.defaultModel,
       allowed_models_json: allowedModelsJson,
+      assignment_origin: assignmentOrigin,
       created_at: now,
       updated_at: now,
     });
@@ -75,6 +80,7 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
       credentialId: input.credentialId,
       defaultModel: input.defaultModel,
       allowedModels: normalizeAllowedModels(input.allowedModels),
+      assignmentOrigin,
       createdAt: now,
       updatedAt: now,
     };
@@ -90,6 +96,7 @@ function mapUserAiAccessPolicy(row: typeof userAiAccessPolicyTable.$inferSelect)
     credentialId: row.credential_id,
     defaultModel: typeof row.default_model === "string" && row.default_model.trim() ? row.default_model : null,
     allowedModels: parseAllowedModelsJson(row.allowed_models_json),
+    assignmentOrigin: parseAssignmentOrigin(row.assignment_origin),
     createdAt: asDate(row.created_at),
     updatedAt: asDate(row.updated_at),
   };
@@ -97,6 +104,10 @@ function mapUserAiAccessPolicy(row: typeof userAiAccessPolicyTable.$inferSelect)
 
 function parseProvider(value: string | null): AiAccessProvider | null {
   return isAiGatewayProvider(value) ? value : null;
+}
+
+function parseAssignmentOrigin(value: string | null | undefined): AiAccessAssignmentOrigin {
+  return value === "auto_assigned" ? "auto_assigned" : "admin_assigned";
 }
 
 function parseAllowedModelsJson(value: string): string[] {

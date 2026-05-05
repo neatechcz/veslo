@@ -1425,6 +1425,7 @@ function validateUserAiAccessInput(
     credentialId,
     defaultModel: defaultModel || null,
     allowedModels,
+    assignmentOrigin: "admin_assigned",
   };
 }
 

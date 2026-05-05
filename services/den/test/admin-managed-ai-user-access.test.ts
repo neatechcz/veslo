@@ -540,6 +540,7 @@ test("PUT /admin/api/users/:userId/ai-access persists the admin managed policy",
               credentialId: "cred_anthropic_123",
               defaultModel: "claude-3-7-sonnet",
               allowedModels: ["claude-3-7-sonnet", "claude-3-5-sonnet"],
+              assignmentOrigin: "admin_assigned",
             })
             return {
               id: "ai_access_user_123",
@@ -647,6 +648,7 @@ test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", asyn
               credentialId: "cred_codex_123",
               defaultModel: "gpt-5.4",
               allowedModels: ["gpt-5.4"],
+              assignmentOrigin: "admin_assigned",
             })
             return {
               id: "ai_access_user_123",

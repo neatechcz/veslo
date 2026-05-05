@@ -1096,6 +1096,7 @@ function validateUserAiAccessInput(input: UpdateUserAiAccessInput & { userId: st
     credentialId,
     defaultModel: defaultModel || null,
     allowedModels,
+    assignmentOrigin: "admin_assigned",
   }
 }
 

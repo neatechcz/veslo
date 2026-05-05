@@ -2,6 +2,10 @@ import { DefaultBindingSelector } from "../leases/binding-selector.js"
 import { LeaseBroker } from "../leases/lease-broker.js"
 import { MySqlLeaseRepository } from "../leases/mysql-repository.js"
 import type { LeaseRepository } from "../leases/repository.js"
+import {
+  createAutoAssignedCodexCredentialRotationService,
+  type AutoAssignedCodexCredentialRotationService,
+} from "../access/auto-assignment-rotation.js"
 import { MySqlAiAccessRepository } from "../access/mysql-repository.js"
 import type { AiAccessRepository } from "../access/repository.js"
 import { MySqlAlertRepository } from "../alerts/mysql-repository.js"
@@ -89,6 +93,7 @@ export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): 
 
 export type ProxyDependencies = {
   aiAccess: AiAccessRepository
+  autoAssignedCodexCredentialRotation: AutoAssignedCodexCredentialRotationService
   gatewaySessions: DenGatewaySessionResolver
   credentials: CredentialRepository
   secrets: SecretStore
@@ -115,6 +120,13 @@ export function createDefaultProxyDependencies(
 
   return {
     aiAccess: runtime.aiAccess,
+    autoAssignedCodexCredentialRotation: createAutoAssignedCodexCredentialRotationService({
+      aiAccess: runtime.aiAccess,
+      credentials: runtime.credentials,
+      codexStatusProvider: runtime.codexStatusProvider,
+      audit: runtime.audit,
+      now: overrides.now,
+    }),
     gatewaySessions: overrides.gatewaySessions ?? new DenGatewaySessionResolver(),
     credentials: runtime.credentials,
     secrets: runtime.secrets,

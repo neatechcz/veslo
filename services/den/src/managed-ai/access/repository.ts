@@ -3,6 +3,8 @@ import { MANAGED_AI_PROVIDERS, type ManagedAiProvider } from "../providers/ids.j
 export const AiAccessProviders = MANAGED_AI_PROVIDERS
 
 export type AiAccessProvider = ManagedAiProvider
+export const AiAccessAssignmentOrigins = ["auto_assigned", "admin_assigned"] as const
+export type AiAccessAssignmentOrigin = (typeof AiAccessAssignmentOrigins)[number]
 
 export type UserAiAccessPolicyRecord = {
   id: string
@@ -12,6 +14,7 @@ export type UserAiAccessPolicyRecord = {
   credentialId: string | null
   defaultModel: string | null
   allowedModels: string[]
+  assignmentOrigin: AiAccessAssignmentOrigin
   createdAt: Date
   updatedAt: Date
 }
@@ -23,6 +26,7 @@ export type UpsertUserAiAccessPolicyInput = {
   credentialId: string | null
   defaultModel: string | null
   allowedModels: string[]
+  assignmentOrigin: AiAccessAssignmentOrigin
 }
 
 export interface AiAccessRepository {

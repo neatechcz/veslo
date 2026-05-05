@@ -88,6 +88,7 @@ test("new user gets the least-loaded healthy eligible Codex credential", async (
       credentialId: "cred_codex_2",
       defaultModel: DEFAULT_CODEX_AUTO_ASSIGN_MODEL,
       allowedModels: [DEFAULT_CODEX_AUTO_ASSIGN_MODEL],
+      assignmentOrigin: "auto_assigned",
     },
   ])
 })

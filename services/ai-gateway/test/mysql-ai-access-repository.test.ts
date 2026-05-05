@@ -58,6 +58,7 @@ function createWritableAiAccessDb() {
               credential_id: values.credential_id,
               default_model: values.default_model,
               allowed_models_json: values.allowed_models_json,
+              assignment_origin: values.assignment_origin,
               created_at: values.created_at,
               updated_at: values.updated_at,
             }
@@ -75,6 +76,7 @@ function createWritableAiAccessDb() {
               credential_id: values.credential_id,
               default_model: values.default_model,
               allowed_models_json: values.allowed_models_json,
+              assignment_origin: values.assignment_origin,
               updated_at: values.updated_at,
             }
             return {
@@ -108,6 +110,7 @@ test("reads codex_oauth ai access policies from mysql rows", async () => {
 
   assert.equal(policy?.provider, "codex_oauth")
   assert.equal(policy?.credentialId, "cred_codex_1")
+  assert.equal(policy?.assignmentOrigin, "admin_assigned")
 })
 
 test("upserts ai access policies with credential ids", async () => {
@@ -134,6 +137,7 @@ test("upserts ai access policies with credential ids", async () => {
       credential_id: "cred_codex_1",
       default_model: "gpt-5.4",
       allowed_models_json: JSON.stringify(["gpt-5.4"]),
+      assignment_origin: "admin_assigned",
       created_at: created.createdAt,
       updated_at: created.updatedAt,
     },
@@ -157,6 +161,7 @@ test("upserts ai access policies with credential ids", async () => {
       credential_id: null,
       default_model: null,
       allowed_models_json: JSON.stringify([]),
+      assignment_origin: "admin_assigned",
       updated_at: updated.updatedAt,
     },
   })

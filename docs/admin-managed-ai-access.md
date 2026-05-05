@@ -34,7 +34,9 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 
 - The DEN admin `Users` screen includes an `AI access` editor.
 - Platform admins can enable/disable access, pick the assigned provider, set the default model, and optionally restrict allowed models.
-- New DEN sign-ups are auto-assigned to Codex / ChatGPT inference with `gpt-5.5` when at least one eligible Codex OAuth inference credential exists. When multiple credentials are eligible, DEN selects the one with the fewest active leases and uses deterministic tie-breaking.
+- New DEN sign-ups are auto-assigned to Codex / ChatGPT inference with `gpt-5.5` when at least one eligible Codex OAuth inference credential exists. These rows are marked `auto_assigned`. When multiple credentials are eligible, DEN selects the one with the fewest active leases and uses deterministic tie-breaking.
+- Admin edits are marked `admin_assigned`. Veslo preserves these explicit choices and does not auto-overwrite them when credential health changes.
+- Auto-assigned Codex access is lazily repaired on the next Codex request. If the assigned credential is missing, no longer healthy, revoked, permanently unavailable, or currently exhausted, DEN selects another healthy eligible Codex credential and updates the user's policy before routing the request. If no replacement exists, the request fails explicitly and the existing assignment is kept.
 - Codex credential assignment options only include credentials whose provider is `codex_oauth`, whose stored state is `healthy`, and whose latest upstream status probe reports OK. A successful `codex | OK` probe is eligible even when rate-limit windows cannot be parsed; revoked, draining, unhealthy, invalid-grant, or probe-failing credentials are hidden from assignment.
 - When no eligible Codex credential exists, user creation still succeeds and AI access remains unassigned until an eligible credential is available.
 - The DEN admin `Credentials` page is the place to connect/reconnect OpenAI and create/rotate shared Anthropic, Codex OAuth inference, and OpenAI-compatible credentials.

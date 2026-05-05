@@ -15,7 +15,15 @@ import { normalizeGatewaySessionId } from "./session-id.js"
 import type { ProxyDependencies } from "../proxy.js"
 
 export function createCodexOAuthProxyRouter(
-  deps: Pick<ProxyDependencies, "credentials" | "secrets" | "usageRepository" | "leaseBroker" | "codexOAuthTransport">,
+  deps: Pick<
+    ProxyDependencies,
+    | "credentials"
+    | "secrets"
+    | "usageRepository"
+    | "leaseBroker"
+    | "codexOAuthTransport"
+    | "autoAssignedCodexCredentialRotation"
+  >,
 ) {
   const router = Router()
 
@@ -34,7 +42,19 @@ export function createCodexOAuthProxyRouter(
 
     const sessionId = normalizeGatewaySessionId(rawSessionId, gatewaySession.user.id, "codex_oauth")
 
-    const gatewayAiAccess = res.locals.gatewayAiAccess as UserAiAccessPolicyRecord | undefined
+    let gatewayAiAccess = res.locals.gatewayAiAccess as UserAiAccessPolicyRecord | undefined
+    if (gatewayAiAccess && deps.autoAssignedCodexCredentialRotation) {
+      try {
+        gatewayAiAccess = await deps.autoAssignedCodexCredentialRotation.repairCodexAccess({
+          aiAccess: gatewayAiAccess,
+          reason: "codex_proxy_request",
+        })
+        res.locals.gatewayAiAccess = gatewayAiAccess
+      } catch (error) {
+        console.error("codex_auto_assignment_repair_failed", error)
+      }
+    }
+
     const policyResult = gatewayAiAccess
       ? applyAiAccessPolicy({
           routeProvider: "codex_oauth",
