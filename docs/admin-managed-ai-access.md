@@ -34,7 +34,7 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 
 - The DEN admin `Users` screen includes an `AI access` editor.
 - Platform admins can enable/disable access, pick the assigned provider, set the default model, and optionally restrict allowed models.
-- New users created from the admin flow are auto-assigned to Codex / ChatGPT inference with `gpt-5.4` when at least one eligible Codex OAuth inference credential exists. When multiple credentials are eligible, DEN selects the one with the fewest active leases and uses deterministic tie-breaking.
+- New DEN sign-ups are auto-assigned to Codex / ChatGPT inference with `gpt-5.5` when at least one eligible Codex OAuth inference credential exists. When multiple credentials are eligible, DEN selects the one with the fewest active leases and uses deterministic tie-breaking.
 - Codex credential assignment options only include credentials whose provider is `codex_oauth`, whose stored state is `healthy`, and whose latest upstream status probe reports OK. A successful `codex | OK` probe is eligible even when rate-limit windows cannot be parsed; revoked, draining, unhealthy, invalid-grant, or probe-failing credentials are hidden from assignment.
 - When no eligible Codex credential exists, user creation still succeeds and AI access remains unassigned until an eligible credential is available.
 - The DEN admin `Credentials` page is the place to connect/reconnect OpenAI and create/rotate shared Anthropic, Codex OAuth inference, and OpenAI-compatible credentials.

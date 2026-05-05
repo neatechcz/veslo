@@ -29,7 +29,7 @@ type DenAuthState = {
 };
 
 const DEFAULT_GATEWAY_BASE = 'https://veslo-ai-gateway-dev.onrender.com';
-const DEFAULT_MODEL = 'gpt-5.4';
+const DEFAULT_MODEL = 'gpt-5.5';
 
 function readLiveAdminAuth(): { authJson: string; auth: DenAuthState; source: string | null } {
   const snapshotPath = process.env.VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE?.trim();
@@ -296,7 +296,7 @@ async function waitForExpectedManagedAiAssignment(timeout = 120000): Promise<voi
     {
       timeout,
       interval: 500,
-      timeoutMsg: `Settings did not show expected codex_oauth/gpt-5.4 assignment within ${timeout}ms`,
+      timeoutMsg: `Settings did not show expected codex_oauth/gpt-5.5 assignment within ${timeout}ms`,
     },
   );
 }

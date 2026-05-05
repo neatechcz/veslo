@@ -556,7 +556,7 @@ test("default admin service returns null when no eligible codex credential exist
   assert.deepEqual(statusChecks, ["cred_codex_unavailable"]);
 });
 
-test("createDefaultAdminService auto-assigns codex ai access when an eligible credential exists", async () => {
+test("createDefaultAdminService does not auto-assign codex ai access on user creation", async () => {
   const createdUser: AdminUserRecord = {
     id: "user_created",
     name: "Created User",
@@ -634,16 +634,7 @@ test("createDefaultAdminService auto-assigns codex ai access when an eligible cr
   });
 
   assert.deepEqual(result, createdUser);
-  assert.deepEqual(upsertCalls, [
-    {
-      userId: "user_created",
-      enabled: true,
-      provider: "codex_oauth",
-      credentialId: "cred_codex_2",
-      defaultModel: "gpt-5.4",
-      allowedModels: ["gpt-5.4"],
-    },
-  ]);
+  assert.deepEqual(upsertCalls, []);
 });
 
 test("createDefaultAdminService skips ai access when no eligible codex credential exists", async () => {

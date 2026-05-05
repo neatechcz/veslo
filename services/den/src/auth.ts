@@ -2,6 +2,7 @@ import { betterAuth } from "better-auth"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
 import { bearer } from "better-auth/plugins/bearer"
 import { db } from "./db/index.js"
+import { maybeAssignDefaultManagedAiAccessForNewUser } from "./managed-ai/signup-assignment.js"
 import * as schema from "./db/schema.js"
 import { fireAndForgetAuthEmail, sendResetPasswordAuthEmail, sendVerificationAuthEmail } from "./email/auth-mailer.js"
 import { env, isAuthEmailConfigured } from "./env.js"
@@ -56,6 +57,7 @@ export const auth = betterAuth({
         after: async (user) => {
           const name = user.name ?? user.email ?? "Personal"
           await ensureDefaultOrg(user.id, name)
+          await maybeAssignDefaultManagedAiAccessForNewUser(user.id)
         },
       },
     },

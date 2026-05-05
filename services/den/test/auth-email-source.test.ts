@@ -17,6 +17,7 @@ test("auth config wires Better Auth verification and reset callbacks", () => {
   assert.equal(source.includes("sendOnSignUp: true"), true)
   assert.equal(source.includes("sendResetPassword:"), true)
   assert.equal(source.includes("requireEmailVerification: false"), true)
+  assert.equal(source.includes("maybeAssignDefaultManagedAiAccessForNewUser"), true)
 })
 
 test("den env exposes auth email provider configuration", () => {

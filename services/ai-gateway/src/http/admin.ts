@@ -174,8 +174,6 @@ export type CreateCredentialInput = {
   baseUrl?: string | null;
 };
 
-const DEFAULT_CODEX_AUTO_ASSIGN_MODEL = "gpt-5.4";
-
 export interface AdminService {
   startBrowserAuth(input: BrowserAuthStartInput): Promise<BrowserAuthStartPayload>;
   exchangeBrowserAuth(input: BrowserAuthExchangeInput): Promise<AuthPayload>;
@@ -1104,17 +1102,6 @@ export function createDefaultAdminService(
     getEligibleCodexCredentialForAutoAssign,
     async createUser(token, input) {
       const created = await denClient.createUser(token, input);
-      const credential = await getEligibleCodexCredentialForAutoAssign();
-      if (credential) {
-        await getAiAccessRepository().upsertUserAiAccess({
-          userId: created.id,
-          enabled: true,
-          provider: "codex_oauth",
-          credentialId: credential.credentialId,
-          defaultModel: DEFAULT_CODEX_AUTO_ASSIGN_MODEL,
-          allowedModels: [DEFAULT_CODEX_AUTO_ASSIGN_MODEL],
-        });
-      }
       await recordAuditEvent({
         actorUserId: "admin-ui",
         action: "user.create",
