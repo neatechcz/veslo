@@ -23,6 +23,7 @@ type DashboardEscapeShortcutInput = {
 type ResolveLeftMenuActionInput = {
   tab: DashboardTab;
   selectedSessionId: string | null | undefined;
+  lastWorkspaceSessionId?: string | null | undefined;
 };
 
 type ResolveDashboardTabSelectionActionInput = {
@@ -48,7 +49,7 @@ export function resolveLeftMenuAction(input: ResolveLeftMenuActionInput): LeftMe
     return { kind: "toggle-left-sidebar" };
   }
 
-  const sessionId = input.selectedSessionId?.trim() ?? "";
+  const sessionId = input.selectedSessionId?.trim() || input.lastWorkspaceSessionId?.trim() || "";
   if (!sessionId) {
     return { kind: "toggle-left-sidebar" };
   }

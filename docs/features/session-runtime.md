@@ -15,6 +15,10 @@ Key sub-surfaces:
 - context and document side panels
 - share modal
 
+## Menu Return Behavior
+
+Dashboard and menu-style surfaces preserve a return path to session work. When the user opens a dashboard/menu tab from a session and clicks the left menu button again, Veslo returns to the active session. If the live selection is currently empty, the app falls back to the active workspace's persisted last selected session. When neither id is available, the left menu button keeps its normal sidebar toggle behavior.
+
 ## Composer
 
 The composer supports:

@@ -4065,6 +4065,15 @@ export default function App() {
     writeSessionByWorkspace(map);
   });
 
+  const activeWorkspaceLastSessionId = createMemo(() => {
+    const workspaceId = workspaceStore.activeWorkspaceId().trim();
+    const selected = selectedSessionId()?.trim() ?? "";
+    if (!workspaceId) return selected || null;
+    if (selected) return selected;
+    const stored = readSessionByWorkspace()[workspaceId]?.trim() ?? "";
+    return stored || null;
+  });
+
   createEffect(() => {
     // Only auto-select on bare /session. If the URL already includes /session/:id,
     // let the route-driven selector own the fetch to avoid duplicate selection runs.
@@ -8512,6 +8521,7 @@ export default function App() {
       loadMoreWorkspaceSidebarSessions,
       isPrivateWorkspacePath: workspaceStore.isPrivateWorkspacePath,
       selectedSessionId: activeSessionId(),
+      lastWorkspaceSessionId: activeWorkspaceLastSessionId(),
       openRenameWorkspace,
       editWorkspaceConnection: openWorkspaceConnectionSettings,
       forgetWorkspace: workspaceStore.forgetWorkspace,

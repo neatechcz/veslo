@@ -5,6 +5,7 @@ import test from "node:test";
 import * as dashboardMenuNavigation from "./dashboard-menu-navigation.js";
 import { resolveVisibleSettingsTab } from "../lib/settings-tab-label.js";
 
+const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const { resolveLeftMenuAction } = dashboardMenuNavigation;
 const resolveDashboardTabSelectionAction = (
   dashboardMenuNavigation as {
@@ -91,6 +92,16 @@ test("falls back to sidebar toggle when no session is selected", () => {
   });
 
   assert.deepEqual(result, { kind: "toggle-left-sidebar" });
+});
+
+test("returns to the active workspace's last session when no session is currently selected", () => {
+  const result = resolveLeftMenuAction({
+    tab: "scheduled",
+    selectedSessionId: null,
+    lastWorkspaceSessionId: "sess-last",
+  });
+
+  assert.deepEqual(result, { kind: "return-to-session", sessionId: "sess-last" });
 });
 
 test("returns to selected session when re-selecting an active dashboard tab", () => {
@@ -219,6 +230,32 @@ test("dashboard routes the left titlebar button through the helper", () => {
   assert.match(dashboardSource, /leftLabel=\{leftMenuLabel\(\)\}/);
   assert.doesNotMatch(dashboardSource, /onToggleLeft\s*=\s*\{\s*\(\)\s*=>\s*toggleSidebarMenu\s*\(\s*["']left["']\s*\)\s*\}/);
   assert.doesNotMatch(leftMenuHandlerSource, /matchMedia\s*\(\s*["']\(max-width:\s*767px\)["']\s*\)/);
+});
+
+test("dashboard passes the active workspace last session fallback into the left menu helper", () => {
+  assert.match(
+    dashboardSource,
+    /lastWorkspaceSessionId: string \| null;/,
+    "DashboardViewProps should receive the active workspace last session fallback",
+  );
+  assert.match(
+    leftMenuHandlerSource,
+    /lastWorkspaceSessionId\s*:\s*props\.lastWorkspaceSessionId/,
+    "left menu action should receive the fallback last session id",
+  );
+});
+
+test("app derives the active workspace last session and passes it into DashboardView props", () => {
+  assert.match(
+    appSource,
+    /const\s+activeWorkspaceLastSessionId\s*=\s*createMemo\(\(\)\s*=>\s*\{[\s\S]*readSessionByWorkspace\(\)\[workspaceId\]/,
+    "app should derive the fallback from the active workspace's persisted last-session map",
+  );
+  assert.match(
+    appSource,
+    /lastWorkspaceSessionId:\s*activeWorkspaceLastSessionId\(\)/,
+    "dashboard props should include the active workspace last session fallback",
+  );
 });
 
 test("helper source avoids viewport-specific left-menu logic when it exists", () => {

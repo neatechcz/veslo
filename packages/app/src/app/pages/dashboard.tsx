@@ -173,6 +173,7 @@ export type DashboardViewProps = {
   unarchiveSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
   loadMoreWorkspaceSidebarSessions: (workspaceId: string) => Promise<void> | void;
   selectedSessionId: string | null;
+  lastWorkspaceSessionId: string | null;
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean;
   openRenameWorkspace: (workspaceId: string) => void;
   editWorkspaceConnection: (workspaceId: string) => void;
@@ -1196,6 +1197,7 @@ export default function DashboardView(props: DashboardViewProps) {
     resolveLeftMenuAction({
       tab: props.tab,
       selectedSessionId: props.selectedSessionId,
+      lastWorkspaceSessionId: props.lastWorkspaceSessionId,
     }),
   );
   const leftMenuLabel = createMemo(() =>
