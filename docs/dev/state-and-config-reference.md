@@ -46,6 +46,7 @@ Session/sidebar convenience state also lives in local storage, for example:
 - left sidebar width
 - dashboard nav collapsed state
 - project grouping and collapse state
+- parent session branch expansion state
 
 Treat these as UI state, not product contract, unless a feature depends on them explicitly.
 

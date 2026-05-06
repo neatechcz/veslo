@@ -10,6 +10,7 @@ export type SidebarViewMode = "by-project" | "recent";
 export const SIDEBAR_VIEW_MODE_KEY = "veslo.sidebar-session-view.v1";
 export const SIDEBAR_COLLAPSED_PROJECTS_KEY = "veslo.sidebar-collapsed-projects.v1";
 export const SIDEBAR_PROJECT_ORDER_KEY = "veslo.sidebar-project-order.v1";
+export const SIDEBAR_EXPANDED_PARENT_SESSIONS_KEY = "veslo.sidebar-expanded-parent-sessions.v1";
 export const DEFAULT_SIDEBAR_VIEW_MODE: SidebarViewMode = "by-project";
 
 const resolveStorage = (storage?: SidebarPrefsStorage | null): SidebarPrefsStorage | null => {
@@ -37,6 +38,18 @@ const normalizeProjectOrder = (value: unknown): string[] => {
     const key = raw.trim();
     if (!key || normalized.includes(key)) continue;
     normalized.push(key);
+  }
+  return normalized;
+};
+
+const normalizeStringList = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  const normalized: string[] = [];
+  for (const raw of value) {
+    if (typeof raw !== "string") continue;
+    const id = raw.trim();
+    if (!id || normalized.includes(id)) continue;
+    normalized.push(id);
   }
   return normalized;
 };
@@ -125,6 +138,38 @@ export const writeProjectOrder = (
     resolvedStorage.setItem(
       SIDEBAR_PROJECT_ORDER_KEY,
       JSON.stringify(normalizeProjectOrder(order)),
+    );
+  } catch {
+    // ignore storage failures
+  }
+};
+
+export const readExpandedParentSessionIds = (
+  storage?: SidebarPrefsStorage | null,
+): Set<string> => {
+  const resolvedStorage = resolveStorage(storage);
+  if (!resolvedStorage) return new Set();
+
+  try {
+    const raw = resolvedStorage.getItem(SIDEBAR_EXPANDED_PARENT_SESSIONS_KEY);
+    if (!raw) return new Set();
+    return new Set(normalizeStringList(JSON.parse(raw)));
+  } catch {
+    return new Set();
+  }
+};
+
+export const writeExpandedParentSessionIds = (
+  ids: ReadonlySet<string>,
+  storage?: SidebarPrefsStorage | null,
+): void => {
+  const resolvedStorage = resolveStorage(storage);
+  if (!resolvedStorage) return;
+
+  try {
+    resolvedStorage.setItem(
+      SIDEBAR_EXPANDED_PARENT_SESSIONS_KEY,
+      JSON.stringify(normalizeStringList(Array.from(ids))),
     );
   } catch {
     // ignore storage failures

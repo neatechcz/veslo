@@ -243,6 +243,35 @@ test("workspace-session-list.tsx no longer derives branch expansion from selecte
   );
 });
 
+test("expanded parent session persistence reads at startup and writes only from row toggles", () => {
+  assert.match(
+    source,
+    /readExpandedParentSessionIds,\s*readProjectOrder,/,
+    "session branch expansion state should be initialized from sidebar preferences",
+  );
+
+  assert.match(
+    source,
+    /const \[expandedParentSessionIds, setExpandedParentSessionIds\] = createSignal<Set<string>>\(\s*readExpandedParentSessionIds\(\),\s*\);/s,
+    "expanded parent sessions should survive app restart",
+  );
+
+  assert.match(
+    source,
+    /const toggleExpandedParentSession = \(sessionId: string\) =>\s*setExpandedParentSessionIds\(\(current\) => \{[\s\S]*writeExpandedParentSessionIds\(next\);[\s\S]*return next;\s*\}\);/s,
+    "expanded parent session state should persist when a user toggles a session branch",
+  );
+
+  const effectBlocks = Array.from(source.matchAll(/createEffect\(\(\) => \{[\s\S]*?\n  \}\);/g)).map(
+    (match) => match[0],
+  );
+  assert.equal(
+    effectBlocks.some((block) => /writeExpandedParentSessionIds\(/.test(block)),
+    false,
+    "startup/effect paths must not overwrite persisted session branch preferences",
+  );
+});
+
 test("session label span exposes full title tooltip and renders colored subagent prefix with session description", () => {
   assert.match(
     source,

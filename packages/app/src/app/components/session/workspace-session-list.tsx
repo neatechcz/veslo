@@ -63,9 +63,11 @@ import {
 import { resolveRenderableProjectGroups } from "./workspace-session-list-render-model";
 import {
   readCollapsedProjectMap,
+  readExpandedParentSessionIds,
   readProjectOrder,
   readSidebarViewMode,
   writeCollapsedProjectMap,
+  writeExpandedParentSessionIds,
   writeProjectOrder,
   writeSidebarViewMode,
   type SidebarViewMode,
@@ -182,7 +184,9 @@ export default function WorkspaceSessionList(props: Props) {
   const [projectVisibleByKey, setProjectVisibleByKey] = createSignal<Record<string, number>>({});
   const [recentVisibleCount, setRecentVisibleCount] = createSignal(3);
   const [recentLoadMoreBusy, setRecentLoadMoreBusy] = createSignal(false);
-  const [expandedParentSessionIds, setExpandedParentSessionIds] = createSignal<Set<string>>(new Set());
+  const [expandedParentSessionIds, setExpandedParentSessionIds] = createSignal<Set<string>>(
+    readExpandedParentSessionIds(),
+  );
   const [draggingProjectKey, setDraggingProjectKey] = createSignal<string | null>(null);
   const [dragOverProjectKey, setDragOverProjectKey] = createSignal<string | null>(null);
   const [projectDropIndicator, setProjectDropIndicator] = createSignal<ProjectDropIndicator | null>(null);
@@ -577,6 +581,7 @@ export default function WorkspaceSessionList(props: Props) {
         next.add(sessionId);
         ensureExpandedSessionChildrenVisible(sessionId, next);
       }
+      writeExpandedParentSessionIds(next);
       return next;
     });
 

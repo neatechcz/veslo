@@ -4,9 +4,11 @@ import test from "node:test";
 
 import {
   DEFAULT_SIDEBAR_VIEW_MODE,
+  readExpandedParentSessionIds,
   readProjectOrder,
   readCollapsedProjectMap,
   readSidebarViewMode,
+  writeExpandedParentSessionIds,
   writeProjectOrder,
   writeCollapsedProjectMap,
   writeSidebarViewMode,
@@ -101,6 +103,21 @@ test("writeProjectOrder persists normalized string array", () => {
   assert.equal(
     storage.snapshot()["veslo.sidebar-project-order.v1"],
     JSON.stringify(["project:a", "project:b"]),
+  );
+});
+
+test("expanded parent session ids read and write normalized ids", () => {
+  const storage = createMemoryStorage({
+    "veslo.sidebar-expanded-parent-sessions.v1": JSON.stringify([" session-a ", 123, "", "session-a", "session-b"]),
+  });
+
+  assert.deepEqual(Array.from(readExpandedParentSessionIds(storage)), ["session-a", "session-b"]);
+
+  writeExpandedParentSessionIds(new Set([" session-c ", "", "session-b", "session-c"]), storage);
+
+  assert.equal(
+    storage.snapshot()["veslo.sidebar-expanded-parent-sessions.v1"],
+    JSON.stringify(["session-c", "session-b"]),
   );
 });
 
