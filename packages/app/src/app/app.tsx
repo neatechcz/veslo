@@ -8788,6 +8788,7 @@ export default function App() {
     updateStatus: updateStatus(),
     updateEnv: updateEnv(),
     anyActiveRuns: anyActiveRuns(),
+    downloadUpdate: () => downloadUpdate(),
     installUpdateAndRestart,
     activePlugins: sidebarPluginList(),
     activePluginStatus: sidebarPluginStatus(),

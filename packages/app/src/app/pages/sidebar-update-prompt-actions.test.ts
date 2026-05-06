@@ -1,0 +1,49 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
+const sessionSource = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
+const enLocale = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
+const csLocale = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
+const zhLocale = readFileSync(new URL("../../i18n/locales/zh.ts", import.meta.url), "utf8");
+
+const dashboardLeftSidebarStart = dashboardSource.indexOf("<Show when={leftSidebarVisible()}>");
+const dashboardMainStart = dashboardSource.indexOf('<main class="flex-1 flex flex-col overflow-hidden bg-dls-surface">');
+const dashboardLeftSidebar =
+  dashboardLeftSidebarStart >= 0 && dashboardMainStart >= 0
+    ? dashboardSource.slice(dashboardLeftSidebarStart, dashboardMainStart)
+    : "";
+
+const sessionLeftSidebarStart = sessionSource.indexOf("const leftSidebarContent = () => (");
+const sessionRightSidebarStart = sessionSource.indexOf("const rightSidebarContent = () => (");
+const sessionLeftSidebar =
+  sessionLeftSidebarStart >= 0 && sessionRightSidebarStart >= 0
+    ? sessionSource.slice(sessionLeftSidebarStart, sessionRightSidebarStart)
+    : "";
+
+test("left-menu update prompts expose direct download and update actions", () => {
+  assert.match(dashboardSource, /settings\.sidebar_download_update/);
+  assert.match(dashboardSource, /settings\.sidebar_install_update/);
+  assert.match(dashboardLeftSidebar, /role="status"/);
+  assert.match(dashboardLeftSidebar, /updatePillActionLabel\(\)/);
+  assert.match(dashboardLeftSidebar, /props\.downloadUpdate\(\)/);
+  assert.match(dashboardLeftSidebar, /props\.installUpdateAndRestart\(\)/);
+
+  assert.match(sessionSource, /downloadUpdate: \(\) => void;/);
+  assert.match(sessionSource, /settings\.sidebar_download_update/);
+  assert.match(sessionSource, /settings\.sidebar_install_update/);
+  assert.match(sessionLeftSidebar, /role="status"/);
+  assert.match(sessionLeftSidebar, /updatePillActionLabel\(\)/);
+  assert.match(sessionLeftSidebar, /props\.downloadUpdate\(\)/);
+  assert.match(sessionLeftSidebar, /props\.installUpdateAndRestart\(\)/);
+});
+
+test("left-menu update action copy is localized", () => {
+  for (const source of [enLocale, csLocale, zhLocale]) {
+    assert.match(source, /"settings\.sidebar_download_update"/);
+    assert.match(source, /"settings\.sidebar_install_update"/);
+    assert.match(source, /"settings\.sidebar_update_available"/);
+    assert.match(source, /"settings\.sidebar_update_ready"/);
+  }
+});

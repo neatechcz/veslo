@@ -90,7 +90,7 @@ If Tauri reports an available update, Veslo stores the returned update handle an
 
 Downloads are triggered either:
 
-- manually from the Settings page, or
+- manually from the Settings page or the left-menu update pill, or
 - automatically when `veslo.updateAutoDownload=1`
 
 The app listens to Tauri download events and converts them into progress state for the UI.
@@ -112,10 +112,10 @@ This prevents the app from restarting in the middle of a task run.
 Updater state is exposed in three places:
 
 - Settings update card
-- dashboard update pill
-- session view update pill
+- dashboard left-menu update pill
+- session view left-menu update pill
 
-The Settings view is the primary surface for manual testing because it exposes check, download, and install actions directly.
+The Settings view remains the primary surface for manual testing because it exposes check controls and detailed updater state. The left-menu update pills also expose direct `Download` and `Update` actions so users do not need to open Settings after an update has been detected.
 
 ## Release And Feed Pipeline
 

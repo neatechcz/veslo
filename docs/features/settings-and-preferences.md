@@ -34,6 +34,7 @@ Examples:
 - update check and auto-download behavior
 
 These are app-level preferences, mostly stored in browser storage.
+When a desktop update has already been detected, the dashboard/session left menu also surfaces the update prompt with direct download and install actions. Settings remains the detailed configuration and diagnostic surface for update checks.
 
 ## Archived Sessions
 

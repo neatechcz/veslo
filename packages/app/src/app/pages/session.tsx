@@ -202,6 +202,7 @@ export type SessionViewProps = {
   } | null;
   updateEnv: { supported?: boolean; reason?: string | null } | null;
   anyActiveRuns: boolean;
+  downloadUpdate: () => void;
   installUpdateAndRestart: () => void;
   createSessionAndOpen: () => Promise<string | undefined>;
   sendPromptAsync: (draft: ComposerDraft) => Promise<boolean>;
@@ -3633,13 +3634,33 @@ export default function SessionView(props: SessionViewProps) {
   const updatePillLabel = createMemo(() => {
     const state = props.updateStatus?.state;
     if (state === "ready") {
-      return props.anyActiveRuns ? "Update ready" : "Install update";
+      return t("settings.sidebar_update_ready", currentLocale());
     }
     if (state === "downloading") {
       const percent = updateDownloadPercent();
-      return percent == null ? "Downloading" : `Downloading ${percent}%`;
+      const label = t("settings.update_downloading", currentLocale());
+      return percent == null ? label : `${label} ${percent}%`;
     }
-    return "Update available";
+    return t("settings.sidebar_update_available", currentLocale());
+  });
+
+  const updatePillActionLabel = createMemo(() => {
+    const state = props.updateStatus?.state;
+    if (state === "available") return t("settings.sidebar_download_update", currentLocale());
+    if (state === "ready") return t("settings.sidebar_install_update", currentLocale());
+    return null;
+  });
+
+  const updatePillActionDisabled = createMemo(() => props.updateStatus?.state === "ready" && props.anyActiveRuns);
+
+  const updatePillActionTitle = createMemo(() => {
+    if (props.updateStatus?.state === "ready" && props.anyActiveRuns) {
+      return t("settings.stop_runs_to_update", currentLocale());
+    }
+    const label = updatePillActionLabel();
+    if (!label) return "";
+    const version = props.updateStatus?.version ? `v${props.updateStatus.version}` : "";
+    return version ? `${label} ${version}` : label;
   });
 
   const updatePillButtonTone = createMemo(() => {
@@ -3689,25 +3710,16 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const updatePillTitle = createMemo(() => {
-    const version = props.updateStatus?.version ? `v${props.updateStatus.version}` : "";
+    const version = props.updateStatus?.version ? ` v${props.updateStatus.version}` : "";
     const state = props.updateStatus?.state;
     if (state === "ready") {
       return props.anyActiveRuns
-        ? `Update ready ${version}. Stop active runs to restart.`
-        : `Restart to apply update ${version}`;
+        ? `${t("settings.sidebar_update_ready", currentLocale())}${version}. ${t("settings.stop_runs_to_update", currentLocale())}.`
+        : `${t("settings.sidebar_update_ready", currentLocale())}${version}`;
     }
-    if (state === "downloading") return `Downloading update ${version}`;
-    return `Update available ${version}`;
+    if (state === "downloading") return `${t("settings.update_downloading", currentLocale())}${version}`;
+    return `${t("settings.sidebar_update_available", currentLocale())}${version}`;
   });
-
-  const handleUpdatePillClick = () => {
-    const state = props.updateStatus?.state;
-    if (state === "ready" && !props.anyActiveRuns) {
-      props.installUpdateAndRestart();
-      return;
-    }
-    openSettings("advanced");
-  };
 
   const openSoul = (workspaceId?: string) => {
     const id = (workspaceId ?? props.activeWorkspaceId).trim();
@@ -3737,10 +3749,9 @@ export default function SessionView(props: SessionViewProps) {
     <>
       <div class="flex min-h-0 flex-1 flex-col">
         <Show when={showUpdatePill()}>
-          <button
-            type="button"
-            class={`group mb-3 w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)] ${updatePillButtonTone()}`}
-            onClick={handleUpdatePillClick}
+          <div
+            role="status"
+            class={`group mb-3 w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${updatePillButtonTone()}`}
             title={updatePillTitle()}
             aria-label={updatePillTitle()}
           >
@@ -3755,13 +3766,36 @@ export default function SessionView(props: SessionViewProps) {
             >
               <Loader2 size={13} class={`animate-spin shrink-0 ${updatePillDotTone()}`} />
             </Show>
-            <span class="flex-1 text-left">{updatePillLabel()}</span>
+            <span class="min-w-0 flex-1 truncate text-left">{updatePillLabel()}</span>
             <Show when={props.updateStatus?.version}>
               {(version) => (
-                <span class={`ml-auto font-mono text-[10px] ${updatePillVersionTone()}`}>v{version()}</span>
+                <span class={`shrink-0 font-mono text-[10px] ${updatePillVersionTone()}`}>v{version()}</span>
               )}
             </Show>
-          </button>
+            <Show when={updatePillActionLabel()}>
+              {(label) => (
+                <button
+                  type="button"
+                  class="shrink-0 rounded-md border border-dls-border bg-dls-surface/80 px-1.5 py-0.5 text-[11px] font-semibold text-dls-text transition-colors hover:bg-dls-surface-raised focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.24)] disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={updatePillActionDisabled()}
+                  title={updatePillActionTitle()}
+                  aria-label={updatePillActionTitle()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (props.updateStatus?.state === "available") {
+                      props.downloadUpdate();
+                      return;
+                    }
+                    if (props.updateStatus?.state === "ready" && !props.anyActiveRuns) {
+                      props.installUpdateAndRestart();
+                    }
+                  }}
+                >
+                  {label()}
+                </button>
+              )}
+            </Show>
+          </div>
         </Show>
         <div class="min-h-0 flex-1">
           <WorkspaceSessionList
