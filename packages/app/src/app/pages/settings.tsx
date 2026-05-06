@@ -868,43 +868,45 @@ export default function SettingsView(props: SettingsViewProps) {
       <Switch>
         <Match when={activeTab() === "general"}>
           <div class="space-y-6">
-            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <div class="flex items-center gap-2">
-                    <PlugZap size={16} class="text-gray-11" />
-                    <div class="text-sm font-medium text-gray-12">AI access</div>
+            <Show when={props.developerMode}>
+              <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <PlugZap size={16} class="text-gray-11" />
+                      <div class="text-sm font-medium text-gray-12">AI access</div>
+                    </div>
+                    <div class="text-xs text-gray-9 mt-1">Provider and model assignment is managed by the platform admin.</div>
                   </div>
-                  <div class="text-xs text-gray-9 mt-1">Provider and model assignment is managed by the platform admin.</div>
+                  <div class={`text-xs px-2 py-1 rounded-full border ${aiAccessStatusStyle()}`}>
+                    {aiAccessStatusLabel()}
+                  </div>
                 </div>
-                <div class={`text-xs px-2 py-1 rounded-full border ${aiAccessStatusStyle()}`}>
-                  {aiAccessStatusLabel()}
-                </div>
-              </div>
 
-              <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 px-4 py-3 space-y-3">
-                <div class="text-xs text-gray-10">{props.aiAccessMessage}</div>
-                <Show
-                  when={props.aiAccessConfigured}
-                  fallback={<div class="text-[11px] text-gray-8">Users can sign in, but prompts stay blocked until an admin assigns access.</div>}
-                >
-                  <div class="grid gap-3 md:grid-cols-3">
-                    <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
-                      <div class="text-[11px] uppercase tracking-wide text-gray-8">Provider</div>
-                      <div class="text-sm font-medium text-gray-12 mt-1">{props.aiAccessProviderLabel ?? "Not assigned"}</div>
+                <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 px-4 py-3 space-y-3">
+                  <div class="text-xs text-gray-10">{props.aiAccessMessage}</div>
+                  <Show
+                    when={props.aiAccessConfigured}
+                    fallback={<div class="text-[11px] text-gray-8">Users can sign in, but prompts stay blocked until an admin assigns access.</div>}
+                  >
+                    <div class="grid gap-3 md:grid-cols-3">
+                      <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
+                        <div class="text-[11px] uppercase tracking-wide text-gray-8">Provider</div>
+                        <div class="text-sm font-medium text-gray-12 mt-1">{props.aiAccessProviderLabel ?? "Not assigned"}</div>
+                      </div>
+                      <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
+                        <div class="text-[11px] uppercase tracking-wide text-gray-8">Default model</div>
+                        <div class="text-sm font-medium text-gray-12 mt-1">{props.aiAccessDefaultModelLabel ?? "Not assigned"}</div>
+                      </div>
+                      <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
+                        <div class="text-[11px] uppercase tracking-wide text-gray-8">Allowed models</div>
+                        <div class="text-sm font-medium text-gray-12 mt-1">{aiAccessAllowedModelsSummary()}</div>
+                      </div>
                     </div>
-                    <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
-                      <div class="text-[11px] uppercase tracking-wide text-gray-8">Default model</div>
-                      <div class="text-sm font-medium text-gray-12 mt-1">{props.aiAccessDefaultModelLabel ?? "Not assigned"}</div>
-                    </div>
-                    <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
-                      <div class="text-[11px] uppercase tracking-wide text-gray-8">Allowed models</div>
-                      <div class="text-sm font-medium text-gray-12 mt-1">{aiAccessAllowedModelsSummary()}</div>
-                    </div>
-                  </div>
-                </Show>
+                  </Show>
+                </div>
               </div>
-            </div>
+            </Show>
 
             <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
               <div>

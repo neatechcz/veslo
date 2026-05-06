@@ -28,8 +28,10 @@ test("settings exposes archived tab and keeps developer tabs unavailable", () =>
   assert.match(generalSection, /translate\("settings\.theme_light"\)/);
   assert.match(generalSection, /translate\("settings\.theme_dark"\)/);
   assert.doesNotMatch(generalSection, /System mode follows your OS preference automatically\./);
-  assert.match(generalSection, />AI access</);
-  assert.match(generalSection, /managed by the platform admin/i);
+  assert.match(
+    generalSection,
+    /<Show when=\{props\.developerMode\}>[\s\S]*>AI access<[\s\S]*managed by the platform admin/i,
+  );
   assert.doesNotMatch(generalSection, /settings\.archived_sessions_label/);
 });
 

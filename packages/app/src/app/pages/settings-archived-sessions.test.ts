@@ -27,11 +27,13 @@ test("settings tab list exposes only general and archived", () => {
   assert.doesNotMatch(source, /if \(props\.developerMode\) tabs\.push\("advanced", "debug"\);/);
 });
 
-test("settings keeps appearance and admin-managed ai access in general", () => {
+test("settings keeps appearance in general and developer-gates admin-managed ai access", () => {
   assert.match(generalSection, /translate\("settings\.appearance_title"\)/);
   assert.doesNotMatch(generalSection, /System mode follows your OS preference automatically\./);
-  assert.match(generalSection, />AI access</);
-  assert.match(generalSection, /managed by the platform admin/i);
+  assert.match(
+    generalSection,
+    /<Show when=\{props\.developerMode\}>[\s\S]*>AI access<[\s\S]*managed by the platform admin/i,
+  );
   assert.doesNotMatch(source, /<Match when=\{activeTab\(\) === "model"\}>/);
   assert.doesNotMatch(archivedSection, />AI access</);
 });
