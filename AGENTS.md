@@ -25,6 +25,7 @@ Veslo is a local-first, cloud-backed control surface for agentic work. Treat the
 - Prefer OpenCode and server surfaces over Tauri-only filesystem behavior. Any capability that mutates `.opencode/` should stay expressible via the Veslo server API when possible.
 - If you change `packages/server/src`, rebuild the server binary with `pnpm --filter openwork-server build:bin` before relying on orchestrator-backed flows.
 - When verified changes affect durable behavior, configuration, runtime flow, or developer workflow, update the canonical docs in `docs/dev/` or `docs/features/`. Use `docs/plans/` only as history.
+- For release requests, load the repo-local `veslo-release` skill before mutating release state. Use `.opencode/skills/veslo-release` for Codex/OpenAI-compatible surfaces and `.claude/skills/veslo-release` for Claude Code; `RELEASE.md` remains the canonical CLI checklist.
 - Keep the repo portable and do not commit secrets.
 
 ## Scoped Instructions
@@ -39,6 +40,6 @@ Veslo is a local-first, cloud-backed control surface for agentic work. Treat the
 
 - Feature verification and Docker-backed flow checks: `docs/dev/testing-playbook.md` and `packaging/docker/README.md`
 - Development startup and run procedure: `docs/dev/development-startup.md`
-- Release workflow: `RELEASE.md`
+- Release workflow: `RELEASE.md` and `docs/dev/release-skill.md`
 - Public behavior and runtime semantics: `docs/features/`
 - Product intent and architecture: `VISION.md`, `PRINCIPLES.md`, `PRODUCT.md`, `ARCHITECTURE.md`, `INFRASTRUCTURE.md`

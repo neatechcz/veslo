@@ -20,6 +20,8 @@ When documents disagree, use this order:
   Short repo-wide entry point for always-on agent guardrails and links to scoped instruction files.
 - `CLAUDE.md`
   Claude Code wrapper that imports the repo-wide `AGENTS.md`.
+- `RELEASE.md`
+  Release checklist and links to repo-local agent release skills.
 - `README.md`
   Entry point for the repo and map of the available documentation.
 - `VISION.md`
@@ -45,6 +47,10 @@ When documents disagree, use this order:
   Repository-wide GitHub Copilot instructions.
 - `.github/instructions/*.instructions.md`
   Path-specific GitHub Copilot instructions.
+- `.opencode/skills/veslo-release/SKILL.md`
+  Codex/OpenAI-compatible repo-local release skill for agent-assisted Veslo releases.
+- `.claude/skills/veslo-release/SKILL.md`
+  Claude Code repo-local release skill for the same release workflow.
 
 ## Durable Developer Docs
 
@@ -60,6 +66,7 @@ Use these for coding-agent work, implementation changes, and system maintenance.
 - `docs/dev/build-and-rebuild-matrix.md`
 - `docs/dev/development-startup.md`
 - `docs/dev/cloud-deployments.md`
+- `docs/dev/release-skill.md`
 - `docs/dev/documentation-promotion.md`
 
 ### `docs/features/`

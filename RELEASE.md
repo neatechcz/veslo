@@ -2,6 +2,12 @@
 
 Veslo releases should be deterministic, easy to reproduce, and fully verifiable with CLI tooling.
 
+## Agent-assisted releases
+
+Use the repo-local `veslo-release` skill before mutating release state from an agent. The Codex/OpenAI-compatible package lives under `.opencode/skills/veslo-release` with `agents/openai.yaml` metadata; the Claude Code copy lives under `.claude/skills/veslo-release`. Keep the two `SKILL.md` files functionally identical.
+
+The skill must resolve beta vs production, generate public-safe release notes from real git changes, and treat `neatechcz/veslo-updates` as the public updater target rather than a required local checkout.
+
 ## Preflight
 
 - Sync the default branch (currently `main`).

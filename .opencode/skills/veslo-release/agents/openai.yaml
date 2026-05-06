@@ -1,0 +1,7 @@
+interface:
+  display_name: "Veslo Release"
+  short_description: "Ship Veslo releases safely"
+  default_prompt: "Use $veslo-release to prepare a Veslo beta or production release with public-safe notes."
+
+policy:
+  allow_implicit_invocation: true

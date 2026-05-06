@@ -1,22 +1,23 @@
 ---
-description: Run the OpenWork release flow
+description: Run the Veslo release flow
 ---
 
-You are running the OpenWork release flow in this repo.
+You are running the Veslo release flow in this repo.
 
 Arguments: `$ARGUMENTS`
-- If empty, default to a patch release.
-- If set to `minor` or `major`, use that bump type.
+- If empty, resolve whether this is beta or production before mutating release state.
+- If set to `beta`, use the beta/prerelease path.
+- If set to `production`, `prod`, or `stable`, use the production path.
 
 Do the following, in order, and stop on any failure:
 
-1. Sync `dev` and ensure the working tree is clean.
-2. Bump app/desktop versions using `pnpm bump:$ARGUMENTS` (or `pnpm bump:patch` if empty).
-3. If any dependencies were pinned or changed, run `pnpm install --lockfile-only`.
-4. Run `pnpm release:review` and resolve any mismatches.
-5. Tag and push: `git tag vX.Y.Z` and `git push origin vX.Y.Z`, then `git push origin dev`.
-6. Watch the Release App GitHub Actions workflow to completion.
-7. If releasing openwork-orchestrator sidecars, build deterministically with `SOURCE_DATE_EPOCH`, upload assets to `openwork-orchestrator-vX.Y.Z`, and publish `openwork-orchestrator`.
-8. If `openwork-server` or `opencode-router` versions changed, publish those packages.
+1. Read `.opencode/skills/veslo-release/SKILL.md` and `RELEASE.md`.
+2. Check branch, remotes, tags, and dirty state without discarding user changes.
+3. Generate public-safe release notes from real git changes since the previous stable app tag.
+4. For production, run `pnpm release:review`, then `pnpm release:prepare`, then `pnpm release:ship`.
+5. For beta, use the repository prerelease path and keep the release marked prerelease unless the user explicitly asks otherwise.
+6. Watch or inspect the Release App GitHub Actions workflow.
+7. Verify the source release in `neatechcz/veslo`.
+8. Verify the public updater release in `neatechcz/veslo-updates`, including `latest.json` for production.
 
-Report what you changed, the tag created, and the GHA status.
+Report the release type, tag, public-safe notes status, source release status, public updater release status, and any skipped publishing jobs.
