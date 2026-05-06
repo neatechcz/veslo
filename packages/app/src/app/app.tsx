@@ -1772,7 +1772,7 @@ export default function App() {
       if (!trimmed) return "";
       if (trimmed.startsWith("/")) return trimmed;
       // Windows absolute path, e.g. C:\foo\bar
-      if (/^[a-zA-Z]:\\/.test(trimmed)) return trimmed;
+      if (/^[a-zA-Z]:[\\/]/.test(trimmed)) return trimmed;
       // Without a workspace root, we cannot safely resolve relative paths.
       // Returning "" avoids emitting invalid file:// URLs.
       if (!root) return "";
@@ -1821,7 +1821,7 @@ export default function App() {
       const trimmed = path.trim();
       if (!trimmed) return "";
       if (trimmed.startsWith("/")) return trimmed;
-      if (/^[a-zA-Z]:\\/.test(trimmed)) return trimmed;
+      if (/^[a-zA-Z]:[\\/]/.test(trimmed)) return trimmed;
       if (!root) return "";
       return (root + "/" + trimmed).replace("//", "/");
     };

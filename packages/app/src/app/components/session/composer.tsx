@@ -6,7 +6,7 @@ import { ArrowUp, File as FileIcon, Loader2, Paperclip, Square, Terminal, X, Zap
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import { useTranslate } from "../../../i18n";
-import { extractFilesFromDataTransfer, isFileDragTransfer } from "../../utils/data-transfer-files";
+import { extractFileReferencePathsFromDataTransfer, extractFilesFromDataTransfer, isFileDragTransfer } from "../../utils/data-transfer-files";
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
 
 
@@ -63,6 +63,12 @@ const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/web
 const PDF_SIGNATURE_SCAN_BYTES = 2048;
 
 const isImageMime = (mime: string) => ACCEPTED_IMAGE_TYPES.includes(mime);
+
+const formatFileSize = (bytes: number) => {
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 10 || Number.isInteger(mb)) return `${Math.round(mb)} MB`;
+  return `${Math.round(mb * 10) / 10} MB`;
+};
 
 function recordSendTrace(event: string, payload?: Record<string, unknown>) {
   if (typeof window === "undefined") return;
@@ -1019,18 +1025,84 @@ export default function Composer(props: ComposerProps) {
     setHistorySnapshot(null);
   };
 
-  const addAttachments = async (files: File[]) => {
+  const insertFileReferencesAtSelection = (references: Array<{ path: string }>) => {
+    if (!editorRef || !references.length) return false;
+    let selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || !editorRef.contains(selection.getRangeAt(0).commonAncestorContainer)) {
+      focusEditorEnd();
+      selection = window.getSelection();
+    }
+    if (!selection || selection.rangeCount === 0) return false;
+
+    const range = selection.getRangeAt(0);
+    range.deleteContents();
+    const fragment = document.createDocumentFragment();
+    let last: ChildNode | null = null;
+
+    for (const reference of references) {
+      const mentionNode = createMentionSpan({ type: "file", path: reference.path });
+      fragment.appendChild(mentionNode);
+      last = fragment.appendChild(document.createTextNode(" "));
+    }
+
+    range.insertNode(fragment);
+    if (last) {
+      const cursor = document.createRange();
+      cursor.setStartAfter(last);
+      cursor.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(cursor);
+    }
+
+    updateMentionQuery();
+    updateSlashQuery();
+    emitDraftChange();
+    return true;
+  };
+
+  const addAttachments = async (files: File[], transfer?: Parameters<typeof extractFileReferencePathsFromDataTransfer>[0]) => {
+    const fileReferencePaths = extractFileReferencePathsFromDataTransfer(transfer, files);
+    const largeFileReferences: Array<{ file: File; path: string; size: string; limit: string }> = [];
+    const filesToAttach: File[] = [];
+    for (const file of files) {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        const size = formatFileSize(file.size);
+        const limit = formatFileSize(MAX_ATTACHMENT_BYTES);
+        const referencePath = fileReferencePaths.get(file);
+        if (referencePath) {
+          largeFileReferences.push({ file, path: referencePath, size, limit });
+          continue;
+        }
+        props.onToast(translate("session.attachment_reference_unavailable_for_large_file", { name: file.name, size, limit }));
+        continue;
+      }
+      filesToAttach.push(file);
+    }
+    if (largeFileReferences.length) {
+      insertFileReferencesAtSelection(largeFileReferences.map((item) => ({ path: item.path })));
+      const first = largeFileReferences[0];
+      props.onToast(
+        largeFileReferences.length === 1
+          ? translate("session.attachment_reference_inserted_for_large_file", {
+              name: first.file.name,
+              size: first.size,
+              limit: first.limit,
+            })
+          : translate("session.attachment_references_inserted_for_large_files", {
+              count: String(largeFileReferences.length),
+              limit: first.limit,
+            }),
+      );
+    }
+    if (!filesToAttach.length) return;
+
     if (attachmentsDisabled()) {
       props.onToast(props.attachmentsDisabledReason ?? translate("session.attachments_unavailable"));
       return;
     }
 
     const next: ComposerAttachment[] = [];
-    for (const file of files) {
-      if (file.size > MAX_ATTACHMENT_BYTES) {
-        props.onToast(`${file.name} exceeds the 8MB limit.`);
-        continue;
-      }
+    for (const file of filesToAttach) {
       try {
         // Compress images before encoding to data URL
         const processed = isImageMime(file.type) ? await compressImageFile(file) : file;
@@ -1038,7 +1110,7 @@ export default function Composer(props: ComposerProps) {
         if (isPdfAttachment) {
           const prefix = new Uint8Array(await processed.slice(0, PDF_SIGNATURE_SCAN_BYTES).arrayBuffer());
           if (!looksLikePdfDocumentPrefix(prefix)) {
-            props.onToast(`${file.name} is not a valid PDF file.`);
+            props.onToast(translate("session.attachment_invalid_pdf", { name: file.name }));
             continue;
           }
         }
@@ -1046,7 +1118,7 @@ export default function Composer(props: ComposerProps) {
         // Pre-check: data URL will be embedded in JSON body; reject if too large
         const estimatedJsonBytes = dataUrl.length + 512; // data URL + JSON overhead
         if (estimatedJsonBytes > MAX_ATTACHMENT_BYTES) {
-          props.onToast(`${file.name} is too large after encoding. Try a smaller image.`);
+          props.onToast(translate("session.attachment_encoded_too_large", { name: file.name }));
           continue;
         }
         next.push({
@@ -1151,7 +1223,7 @@ export default function Composer(props: ComposerProps) {
     const allFiles = extractFilesFromDataTransfer(clipboard);
     if (allFiles.length) {
       event.preventDefault();
-      void addAttachments(allFiles);
+      void addAttachments(allFiles, clipboard);
       return;
     }
 
@@ -1211,7 +1283,7 @@ export default function Composer(props: ComposerProps) {
     event.preventDefault();
     clearFileDragState();
     const files = extractFilesFromDataTransfer(event.dataTransfer);
-    if (files.length) void addAttachments(files);
+    if (files.length) void addAttachments(files, event.dataTransfer);
   };
 
   const handleKeyDown = (event: KeyboardEvent) => {

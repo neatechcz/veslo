@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { extractFilesFromDataTransfer, isFileDragTransfer } from "./data-transfer-files.js";
+import {
+  extractFileReferencePathsFromDataTransfer,
+  extractFilesFromDataTransfer,
+  isFileDragTransfer,
+} from "./data-transfer-files.js";
 
 test("prefers dataTransfer.files when populated", () => {
   const fileA = { name: "a.png" } as File;
@@ -59,4 +63,32 @@ test("does not treat plain text drags as file transfers", () => {
   } as unknown as DataTransfer;
 
   assert.equal(isFileDragTransfer(transfer), false);
+});
+
+test("extracts file reference paths from URI list drop data", () => {
+  const files = [{ name: "large spec.pdf", size: 9 * 1024 * 1024 }] as File[];
+  const transfer = {
+    getData: (type: string) => {
+      if (type === "text/uri-list") return "file:///Users/example/Documents/large%20spec.pdf";
+      return "";
+    },
+  };
+
+  const result = extractFileReferencePathsFromDataTransfer(transfer, files);
+
+  assert.equal(result.get(files[0]), "/Users/example/Documents/large spec.pdf");
+});
+
+test("prefers non-standard File.path when the webview exposes it", () => {
+  const files = [
+    {
+      name: "archive.zip",
+      size: 12 * 1024 * 1024,
+      path: "/Users/example/Downloads/archive.zip",
+    },
+  ] as unknown as File[];
+
+  const result = extractFileReferencePathsFromDataTransfer(null, files);
+
+  assert.equal(result.get(files[0]), "/Users/example/Downloads/archive.zip");
 });
