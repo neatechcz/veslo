@@ -1,5 +1,5 @@
 import crypto from "node:crypto"
-import { and, asc, desc, eq, isNull, lte } from "drizzle-orm"
+import { and, asc, desc, eq, isNull, lte, or } from "drizzle-orm"
 import { db } from "../db/index.js"
 import { FeedbackProjectorAttemptTable, FeedbackReportTable } from "../db/schema.js"
 
@@ -230,7 +230,10 @@ export function createDbFeedbackProjectorStore(database = db): FeedbackProjector
         .where(and(
           eq(FeedbackReportTable.status, "pending"),
           isNull(FeedbackReportTable.youtrack_issue_id),
-          lte(FeedbackReportTable.next_projector_attempt_at, input.now),
+          or(
+            isNull(FeedbackReportTable.next_projector_attempt_at),
+            lte(FeedbackReportTable.next_projector_attempt_at, input.now),
+          ),
         ))
         .orderBy(asc(FeedbackReportTable.next_projector_attempt_at))
         .limit(input.limit)
