@@ -99,8 +99,10 @@ function createMemoryStore(initialFeedback: ProjectableFeedback | ProjectableFee
           .filter((feedback) =>
             feedback.status === "pending"
             && !feedback.youtrackIssueId
-            && feedback.nextProjectorAttemptAt !== null
-            && feedback.nextProjectorAttemptAt.getTime() <= args.now.getTime()
+            && (
+              feedback.nextProjectorAttemptAt === null
+              || feedback.nextProjectorAttemptAt.getTime() <= args.now.getTime()
+            )
           )
           .slice(0, args.limit)
           .map((feedback) => feedback.id)
@@ -333,6 +335,39 @@ test("feedback projector processes due pending feedback after restart", async ()
   assert.equal(memory.feedbacks.get("fb_due")?.youtrackIssueId, "VESLO-124")
   assert.equal(memory.feedbacks.get("fb_future")?.status, "pending")
   assert.equal(memory.feedbacks.get("fb_future")?.youtrackIssueId, null)
+})
+
+test("feedback projector processes pending feedback with no retry timestamp after restart", async () => {
+  setupEnv()
+  const { createFeedbackProjector } = await import("../src/feedback/projector.js")
+  const memory = createMemoryStore(buildFeedback({
+    id: "fb_missing_retry_timestamp",
+    nextProjectorAttemptAt: null,
+  }))
+  const projector = createFeedbackProjector({
+    projectKey: "VESLO",
+    store: memory.store,
+    issueClient: {
+      async createIssue() {
+        return {
+          issueId: "VESLO-125",
+          issueUrl: "https://youtrack.example/issue/VESLO-125",
+        }
+      },
+    },
+  })
+
+  const result = await projector.processDueRetries({
+    now: new Date("2026-04-16T20:00:00.000Z"),
+    limit: 10,
+  })
+
+  assert.deepEqual(result, {
+    attempted: 1,
+    projected: 1,
+  })
+  assert.equal(memory.feedbacks.get("fb_missing_retry_timestamp")?.status, "projected")
+  assert.equal(memory.feedbacks.get("fb_missing_retry_timestamp")?.youtrackIssueId, "VESLO-125")
 })
 
 test("feedback projector suppresses duplicate issue creation when the feedback row already has a YouTrack issue id", async () => {
