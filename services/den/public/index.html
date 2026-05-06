@@ -758,6 +758,77 @@
           renderView(false);
         }
 
+        function buildDesktopAuthCompleteRedirect(code) {
+          const params = new URLSearchParams();
+          params.set("code", String(code));
+          if (onboardingState) {
+            params.set("state", onboardingState);
+          }
+          if (onboardingTransactionId) {
+            params.set("transactionId", onboardingTransactionId);
+          }
+          return "veslo://auth-complete?" + params.toString();
+        }
+
+        function showDesktopHandoffSuccess(redirectUrl) {
+          busyCard.classList.add("hidden");
+          successCard.classList.remove("hidden");
+          clearDesktopAuthContext();
+          if (openAppLink) {
+            if (redirectUrl) {
+              openAppLink.href = redirectUrl;
+            } else {
+              openAppLink.href = "#";
+            }
+          }
+          if (openAppHint) {
+            if (redirectUrl) {
+              openAppHint.classList.remove("hidden");
+            } else {
+              openAppHint.classList.add("hidden");
+            }
+          }
+          if (redirectUrl) {
+            window.location.assign(redirectUrl);
+          }
+        }
+
+        async function recoverDesktopAuthTransaction() {
+          if (!onboardingTransactionId) {
+            return { ok: false, error: "Authorization redirect failed" };
+          }
+
+          const statusResponse = await fetch(
+            "/v2/desktop-auth/status?transactionId=" + encodeURIComponent(onboardingTransactionId),
+            {
+              method: "GET",
+              credentials: "include",
+              headers: {
+                ...createSessionHeaders(false),
+                Accept: "application/json",
+              },
+            },
+          );
+
+          const payload = await statusResponse.json().catch(() => null);
+          if (!statusResponse.ok) {
+            return { ok: false, error: payload?.error || `Status failed (${statusResponse.status})` };
+          }
+
+          const status = typeof payload?.status === "string" ? payload.status.trim().toLowerCase() : "";
+          if (status === "authorized" && typeof payload?.code === "string" && payload.code.trim()) {
+            return { ok: true, redirectUrl: buildDesktopAuthCompleteRedirect(payload.code.trim()) };
+          }
+          if (status === "exchanged") {
+            return { ok: true, redirectUrl: "" };
+          }
+          if (status === "expired" || status === "cancelled") {
+            return { ok: false, error: "This desktop sign-in expired. Start sign-in again from Veslo." };
+          }
+
+          return { ok: false, error: "Desktop sign-in is not ready yet. Return to Veslo and try again." };
+        }
+
         async function doHandoff(fallbackView = activeView) {
           hideAllCards();
           busyCard.classList.remove("hidden");
@@ -806,6 +877,16 @@
                     errorMessage = text.trim();
                   }
                 }
+
+                if (errorMessage === "transaction_not_ready") {
+                  const recovered = await recoverDesktopAuthTransaction();
+                  if (recovered.ok) {
+                    showDesktopHandoffSuccess(recovered.redirectUrl);
+                    return;
+                  }
+                  errorMessage = recovered.error || errorMessage;
+                }
+
                 busyCard.classList.add("hidden");
                 if (fallbackView === "verify-required") {
                   restoreAfterHandoffError(errorMessage, fallbackView);
@@ -817,16 +898,7 @@
                 return;
               }
 
-              busyCard.classList.add("hidden");
-              successCard.classList.remove("hidden");
-              clearDesktopAuthContext();
-              if (openAppLink) {
-                openAppLink.href = redirectUrl;
-              }
-              if (openAppHint) {
-                openAppHint.classList.remove("hidden");
-              }
-              window.location.assign(redirectUrl);
+              showDesktopHandoffSuccess(redirectUrl);
               return;
             }
 
@@ -848,9 +920,6 @@
               return;
             }
 
-            busyCard.classList.add("hidden");
-            successCard.classList.remove("hidden");
-            clearDesktopAuthContext();
             const fallbackParams = new URLSearchParams();
             fallbackParams.set("code", String(data.code));
             if (typeof data?.sessionId === "string" && data.sessionId) {
@@ -860,13 +929,7 @@
             const redirectUrl = typeof data?.redirectUrl === "string" && data.redirectUrl
               ? data.redirectUrl
               : fallbackRedirect;
-            if (openAppLink) {
-              openAppLink.href = redirectUrl;
-            }
-            if (openAppHint) {
-              openAppHint.classList.remove("hidden");
-            }
-            window.location.assign(redirectUrl);
+            showDesktopHandoffSuccess(redirectUrl);
           } catch (err) {
             restoreAfterHandoffError(err.message || "Network error during handoff", fallbackView);
           }

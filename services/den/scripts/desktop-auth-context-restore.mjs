@@ -37,5 +37,20 @@ assert.equal(
   true,
   "hosted desktop onboarding must clear restored desktop auth context after completion",
 );
+assert.equal(
+  source.includes("transaction_not_ready") && source.includes("recoverDesktopAuthTransaction"),
+  true,
+  "hosted desktop onboarding must recover already-used desktop auth transactions instead of showing transaction_not_ready",
+);
+assert.equal(
+  source.includes("/v2/desktop-auth/status?transactionId="),
+  true,
+  "hosted desktop onboarding must check desktop auth transaction status during recovery",
+);
+assert.equal(
+  source.includes('status === "authorized"') && source.includes('status === "exchanged"'),
+  true,
+  "hosted desktop onboarding must treat already-authorized/exchanged transactions as successful states",
+);
 
-console.log(JSON.stringify({ ok: true, checks: 6 }));
+console.log(JSON.stringify({ ok: true, checks: 9 }));
