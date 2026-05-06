@@ -13,6 +13,7 @@ const resolveDashboardTabSelectionAction = (
       currentTab: string;
       nextTab: string;
       selectedSessionId: string | null | undefined;
+      lastWorkspaceSessionId?: string | null | undefined;
     }) => unknown;
   }
 ).resolveDashboardTabSelectionAction;
@@ -85,13 +86,13 @@ test("returns to selected session for the remaining dashboard tabs", () => {
   }
 });
 
-test("falls back to sidebar toggle when no session is selected", () => {
+test("returns to empty session when no selected or last session is available", () => {
   const result = resolveLeftMenuAction({
     tab: "scheduled",
     selectedSessionId: null,
   });
 
-  assert.deepEqual(result, { kind: "toggle-left-sidebar" });
+  assert.deepEqual(result, { kind: "return-to-session" });
 });
 
 test("returns to the active workspace's last session when no session is currently selected", () => {
@@ -115,6 +116,34 @@ test("returns to selected session when re-selecting an active dashboard tab", ()
   });
 
   assert.deepEqual(result, { kind: "return-to-session", sessionId: "sess-123" });
+});
+
+test("returns to the active workspace's last session when re-selecting an active dashboard tab without selected session", () => {
+  assert.equal(typeof resolveDashboardTabSelectionAction, "function");
+  if (typeof resolveDashboardTabSelectionAction !== "function") return;
+
+  const result = resolveDashboardTabSelectionAction({
+    currentTab: "settings",
+    nextTab: "settings",
+    selectedSessionId: null,
+    lastWorkspaceSessionId: "sess-last",
+  });
+
+  assert.deepEqual(result, { kind: "return-to-session", sessionId: "sess-last" });
+});
+
+test("returns to empty session when re-selecting an active dashboard tab without any session", () => {
+  assert.equal(typeof resolveDashboardTabSelectionAction, "function");
+  if (typeof resolveDashboardTabSelectionAction !== "function") return;
+
+  const result = resolveDashboardTabSelectionAction({
+    currentTab: "settings",
+    nextTab: "settings",
+    selectedSessionId: null,
+    lastWorkspaceSessionId: null,
+  });
+
+  assert.deepEqual(result, { kind: "return-to-session" });
 });
 
 test("treats plugins and extensions as the same active destination when re-selected", () => {
@@ -281,7 +310,7 @@ test("dashboard routes active nav re-clicks through the session return helper", 
   );
   assert.match(
     dashboardSource,
-    /resolveDashboardTabSelectionAction\s*\(\s*\{\s*currentTab\s*:\s*props\.tab,\s*nextTab,\s*selectedSessionId\s*:\s*props\.selectedSessionId,?\s*\}\s*\)/s,
+    /resolveDashboardTabSelectionAction\s*\(\s*\{\s*currentTab\s*:\s*props\.tab,\s*nextTab,\s*selectedSessionId\s*:\s*props\.selectedSessionId,\s*lastWorkspaceSessionId\s*:\s*props\.lastWorkspaceSessionId,?\s*\}\s*\)/s,
   );
   assert.match(
     dashboardSource,
@@ -290,12 +319,13 @@ test("dashboard routes active nav re-clicks through the session return helper", 
   assert.match(dashboardSource, /props\.setTab\s*\(\s*nextTab\s*\)/);
   assert.match(
     dashboardSource,
-    /const\s+openSettings\s*=\s*\(\s*tab:\s*SettingsTab\s*=\s*["']general["']\s*\)\s*=>\s*\{\s*props\.setSettingsTab\s*\(\s*tab\s*\)\s*;\s*props\.setTab\s*\(\s*["']settings["']\s*\)\s*;\s*\}/s,
+    /const\s+handleSettingsButtonClick\s*=\s*\(\)\s*=>\s*\{\s*handleDashboardTabSelection\s*\(\s*["']settings["']\s*,\s*["']general["']\s*\)\s*;\s*\}/s,
   );
-  assert.doesNotMatch(
+  assert.match(
     dashboardSource,
-    /const\s+openSettings\s*=\s*\(\s*tab:\s*SettingsTab\s*=\s*["']general["']\s*\)\s*=>\s*\{\s*handleDashboardTabSelection\s*\(\s*["']settings["']\s*,\s*tab\s*\)\s*;\s*\}/s,
+    /onOpenSettings=\{handleSettingsButtonClick\}/,
   );
+  assert.match(headerSource, /onClick=\{handleSettingsButtonClick\}/);
   assert.match(
     dashboardSource,
     /<SidebarDashboardNav[\s\S]*currentTab=\{props\.tab\}[\s\S]*onSelect=\{handleDashboardTabSelection\}/,

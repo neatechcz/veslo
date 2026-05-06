@@ -657,6 +657,7 @@ export default function DashboardView(props: DashboardViewProps) {
       currentTab: props.tab,
       nextTab,
       selectedSessionId: props.selectedSessionId,
+      lastWorkspaceSessionId: props.lastWorkspaceSessionId,
     });
 
     if (action.kind === "return-to-session") {
@@ -674,6 +675,10 @@ export default function DashboardView(props: DashboardViewProps) {
   const openSettings = (tab: SettingsTab = "general") => {
     props.setSettingsTab(tab);
     props.setTab("settings");
+  };
+
+  const handleSettingsButtonClick = () => {
+    handleDashboardTabSelection("settings", "general");
   };
 
   const openSoulForWorkspace = (workspaceId?: string) => {
@@ -1405,7 +1410,7 @@ export default function DashboardView(props: DashboardViewProps) {
             vesloServerStatus={props.vesloServerStatus}
             runtimeAvailableWithoutClient={runtimeAvailableWithoutClient()}
             authenticatedUser={props.authenticatedUser}
-            onOpenSettings={() => openSettings("general")}
+            onOpenSettings={handleSettingsButtonClick}
             onLogout={props.onLogout}
             onSignIn={props.onSignIn}
           />
@@ -1481,7 +1486,7 @@ export default function DashboardView(props: DashboardViewProps) {
             <button
               type="button"
               class="font-product type-ui-xs inline-flex h-8 items-center gap-1.5 rounded-lg border border-dls-border bg-dls-surface px-2.5 font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)]"
-              onClick={() => openSettings("general")}
+              onClick={handleSettingsButtonClick}
               aria-label={headerSettingsLabel()}
               title={headerSettingsLabel()}
             >

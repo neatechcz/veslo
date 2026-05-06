@@ -2,11 +2,11 @@ import type { DashboardTab } from "../types";
 
 export type LeftMenuAction =
   | { kind: "toggle-left-sidebar" }
-  | { kind: "return-to-session"; sessionId: string };
+  | { kind: "return-to-session"; sessionId?: string };
 
 export type DashboardTabSelectionAction =
   | { kind: "open-dashboard-tab"; tab: DashboardTab }
-  | { kind: "return-to-session"; sessionId: string };
+  | { kind: "return-to-session"; sessionId?: string };
 
 type DashboardEscapeShortcutInput = {
   key: string;
@@ -30,6 +30,7 @@ type ResolveDashboardTabSelectionActionInput = {
   currentTab: DashboardTab;
   nextTab: DashboardTab;
   selectedSessionId: string | null | undefined;
+  lastWorkspaceSessionId?: string | null | undefined;
 };
 
 const SESSION_RETURN_TABS = new Set<DashboardTab>([
@@ -44,17 +45,20 @@ const SESSION_RETURN_TABS = new Set<DashboardTab>([
 
 const normalizeDashboardNavTab = (tab: DashboardTab): DashboardTab => (tab === "plugins" ? "mcp" : tab);
 
+const resolveReturnSessionAction = (
+  selectedSessionId: string | null | undefined,
+  lastWorkspaceSessionId?: string | null | undefined,
+): Extract<LeftMenuAction, { kind: "return-to-session" }> => {
+  const sessionId = selectedSessionId?.trim() || lastWorkspaceSessionId?.trim() || "";
+  return sessionId ? { kind: "return-to-session", sessionId } : { kind: "return-to-session" };
+};
+
 export function resolveLeftMenuAction(input: ResolveLeftMenuActionInput): LeftMenuAction {
   if (!SESSION_RETURN_TABS.has(input.tab)) {
     return { kind: "toggle-left-sidebar" };
   }
 
-  const sessionId = input.selectedSessionId?.trim() || input.lastWorkspaceSessionId?.trim() || "";
-  if (!sessionId) {
-    return { kind: "toggle-left-sidebar" };
-  }
-
-  return { kind: "return-to-session", sessionId };
+  return resolveReturnSessionAction(input.selectedSessionId, input.lastWorkspaceSessionId);
 }
 
 export function resolveDashboardTabSelectionAction(
@@ -64,8 +68,8 @@ export function resolveDashboardTabSelectionAction(
   const currentTab = normalizeDashboardNavTab(input.currentTab);
   const nextTab = normalizeDashboardNavTab(input.nextTab);
 
-  if (currentTab === nextTab && sessionId) {
-    return { kind: "return-to-session", sessionId };
+  if (currentTab === nextTab) {
+    return resolveReturnSessionAction(sessionId, input.lastWorkspaceSessionId);
   }
 
   return { kind: "open-dashboard-tab", tab: input.nextTab };
