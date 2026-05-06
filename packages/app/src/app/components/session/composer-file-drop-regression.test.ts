@@ -96,7 +96,7 @@ test("oversized pasted or dropped files become file references instead of attach
 
   assert.match(
     source,
-    /const fileReferencePaths = extractFileReferencePathsFromDataTransfer\(transfer, files\);/,
+    /const fileReferencePaths = extractFileReferencePathsFromDataTransfer\(transfer, files, nativeFilePaths\);/,
     "composer should resolve platform file paths before deciding whether to inline attachments",
   );
 
@@ -110,6 +110,20 @@ test("oversized pasted or dropped files become file references instead of attach
     source,
     /if \(file\.size > MAX_ATTACHMENT_BYTES\) \{\s*props\.onToast\(translate\("session\.attachment_exceeds_size_limit"/s,
     "oversized file handling should no longer stop at the generic limit toast when a path reference is available",
+  );
+});
+
+test("pasted files ask Tauri for native clipboard paths before large-file handling", () => {
+  assert.match(
+    source,
+    /import \{ readClipboardFilePaths \} from "\.\.\/\.\.\/lib\/tauri";/,
+    "composer should import the desktop clipboard file-path bridge",
+  );
+
+  assert.match(
+    source,
+    /const nativeFilePaths = await readClipboardFilePaths\(\);[\s\S]*await addAttachments\(allFiles, clipboard, nativeFilePaths\);/s,
+    "paste handling should resolve native clipboard file paths before it evaluates oversized files",
   );
 });
 

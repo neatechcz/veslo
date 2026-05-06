@@ -21,6 +21,7 @@ pub use types::*;
 use commands::command_files::{
     opencode_command_delete, opencode_command_list, opencode_command_write,
 };
+use commands::clipboard::clipboard_file_paths;
 use commands::config::{read_opencode_config, write_opencode_config};
 use commands::den_auth::{den_auth_snapshot_read, den_auth_snapshot_write};
 use commands::engine::{
@@ -202,6 +203,7 @@ pub fn run() {
             pending_session_drafts_get,
             pending_session_drafts_put,
             pending_session_drafts_delete,
+            clipboard_file_paths,
             set_window_decorations
         ])
         .build(tauri::generate_context!())

@@ -5,6 +5,7 @@ import { ArrowUp, File as FileIcon, Loader2, Paperclip, Square, Terminal, X, Zap
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
+import { readClipboardFilePaths } from "../../lib/tauri";
 import { useTranslate } from "../../../i18n";
 import { extractFileReferencePathsFromDataTransfer, extractFilesFromDataTransfer, isFileDragTransfer } from "../../utils/data-transfer-files";
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
@@ -1060,8 +1061,12 @@ export default function Composer(props: ComposerProps) {
     return true;
   };
 
-  const addAttachments = async (files: File[], transfer?: Parameters<typeof extractFileReferencePathsFromDataTransfer>[0]) => {
-    const fileReferencePaths = extractFileReferencePathsFromDataTransfer(transfer, files);
+  const addAttachments = async (
+    files: File[],
+    transfer?: Parameters<typeof extractFileReferencePathsFromDataTransfer>[0],
+    nativeFilePaths: string[] = [],
+  ) => {
+    const fileReferencePaths = extractFileReferencePathsFromDataTransfer(transfer, files, nativeFilePaths);
     const largeFileReferences: Array<{ file: File; path: string; size: string; limit: string }> = [];
     const filesToAttach: File[] = [];
     for (const file of files) {
@@ -1223,7 +1228,10 @@ export default function Composer(props: ComposerProps) {
     const allFiles = extractFilesFromDataTransfer(clipboard);
     if (allFiles.length) {
       event.preventDefault();
-      void addAttachments(allFiles, clipboard);
+      void (async () => {
+        const nativeFilePaths = await readClipboardFilePaths();
+        await addAttachments(allFiles, clipboard, nativeFilePaths);
+      })();
       return;
     }
 

@@ -89,12 +89,14 @@ const directFilePath = (file: File) => {
 export const extractFileReferencePathsFromDataTransfer = (
   transfer: TransferWithPathData,
   files: File[],
+  nativeFilePaths: string[] = [],
 ): Map<File, string> => {
   const result = new Map<File, string>();
   const candidates = [
     ...parseReferencePathsFromText(safeGetData(transfer, "text/uri-list")),
     ...parseReferencePathsFromText(safeGetData(transfer, "text/plain")),
     ...parseReferencePathsFromText(safeGetData(transfer, "text")),
+    ...parseReferencePathsFromText(nativeFilePaths.join("\n")),
   ];
 
   const seenCandidates = new Set<string>();
@@ -104,26 +106,32 @@ export const extractFileReferencePathsFromDataTransfer = (
     return true;
   });
 
-  files.forEach((file, index) => {
+  files.forEach((file) => {
     const direct = directFilePath(file);
     if (direct) {
       result.set(file, direct);
+    }
+  });
+
+  const usedCandidates = new Set<string>();
+  files.forEach((file) => {
+    if (result.has(file)) return;
+    const matchingCandidates = uniqueCandidates.filter((candidate) => basename(candidate) === file.name);
+    if (matchingCandidates.length !== 1) return;
+    result.set(file, matchingCandidates[0]);
+    usedCandidates.add(matchingCandidates[0]);
+  });
+
+  const unresolvedFiles = files.filter((file) => !result.has(file));
+  const unusedCandidates = uniqueCandidates.filter((candidate) => !usedCandidates.has(candidate));
+  unresolvedFiles.forEach((file, index) => {
+    if (unusedCandidates.length === unresolvedFiles.length) {
+      result.set(file, unusedCandidates[index]);
       return;
     }
 
-    if (uniqueCandidates.length === files.length) {
-      result.set(file, uniqueCandidates[index]);
-      return;
-    }
-
-    const matchingCandidate = uniqueCandidates.find((candidate) => basename(candidate) === file.name);
-    if (matchingCandidate) {
-      result.set(file, matchingCandidate);
-      return;
-    }
-
-    if (files.length === 1 && uniqueCandidates.length === 1) {
-      result.set(file, uniqueCandidates[0]);
+    if (unresolvedFiles.length === 1 && unusedCandidates.length === 1) {
+      result.set(file, unusedCandidates[0]);
     }
   });
 

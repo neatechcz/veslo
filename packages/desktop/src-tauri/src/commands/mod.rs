@@ -1,3 +1,4 @@
+pub mod clipboard;
 pub mod command_files;
 pub mod config;
 pub mod den_auth;

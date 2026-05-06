@@ -310,6 +310,16 @@ const deserializePendingSessionDraft = async (
   },
 });
 
+export async function readClipboardFilePaths(): Promise<string[]> {
+  if (!isTauriRuntime()) return [];
+  try {
+    const paths = await invoke<string[]>("clipboard_file_paths");
+    return paths.map((path) => path.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 export async function pendingSessionDraftsList(): Promise<PendingSessionDraftSummary[]> {
   return invoke<RawPendingSessionDraftSummary[]>("pending_session_drafts_list");
 }

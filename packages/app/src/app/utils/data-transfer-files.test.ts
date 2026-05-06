@@ -92,3 +92,21 @@ test("prefers non-standard File.path when the webview exposes it", () => {
 
   assert.equal(result.get(files[0]), "/Users/example/Downloads/archive.zip");
 });
+
+test("matches native clipboard file paths to pasted files when the webview omits local paths", () => {
+  const files = [
+    { name: "meeting.mov", size: 22 * 1024 * 1024 },
+    { name: "brief.pdf", size: 9 * 1024 * 1024 },
+  ] as File[];
+  const transfer = {
+    getData: () => "",
+  };
+
+  const result = extractFileReferencePathsFromDataTransfer(transfer, files, [
+    "/Users/example/Desktop/brief.pdf",
+    "/Users/example/Movies/meeting.mov",
+  ]);
+
+  assert.equal(result.get(files[0]), "/Users/example/Movies/meeting.mov");
+  assert.equal(result.get(files[1]), "/Users/example/Desktop/brief.pdf");
+});
