@@ -162,3 +162,17 @@ test("session reconnect notice maps to one-shot localized reconnect toasts", () 
     "session view should map reconnect notices to localized reconnecting/reconnected toast messages and clear the notice",
   );
 });
+
+test("session toast messages stay visible for at least four seconds", () => {
+  assert.match(
+    source,
+    /const SESSION_TOAST_DISMISS_DELAY_MS = 4_000;/,
+    "session toast dismiss delay should be defined as at least four seconds",
+  );
+  assert.match(
+    source,
+    /window\.setTimeout\(\(\) => setToastMessage\(null\), SESSION_TOAST_DISMISS_DELAY_MS\)/,
+    "session toasts should use the four-second dismiss delay",
+  );
+  assert.equal(source.includes("setToastMessage(null), 2400"), false);
+});

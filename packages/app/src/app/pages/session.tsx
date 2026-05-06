@@ -345,6 +345,7 @@ const INITIAL_MESSAGE_WINDOW = 140;
 const MESSAGE_WINDOW_LOAD_CHUNK = 120;
 const MAX_SEARCH_MESSAGE_CHARS = 4_000;
 const MAX_SEARCH_HITS = 2_000;
+const SESSION_TOAST_DISMISS_DELAY_MS = 4_000;
 const STREAM_SCROLL_MIN_INTERVAL_MS = 90;
 const STREAM_RENDER_BATCH_MS = 220;
 const MAIN_THREAD_LAG_INTERVAL_MS = 200;
@@ -2816,7 +2817,7 @@ export default function SessionView(props: SessionViewProps) {
 
   createEffect(() => {
     if (!toastMessage()) return;
-    const id = window.setTimeout(() => setToastMessage(null), 2400);
+    const id = window.setTimeout(() => setToastMessage(null), SESSION_TOAST_DISMISS_DELAY_MS);
     return () => window.clearTimeout(id);
   });
 

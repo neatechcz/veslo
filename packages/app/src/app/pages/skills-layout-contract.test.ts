@@ -28,3 +28,17 @@ test("skills page does not duplicate org catalog placeholder when hub status is 
     /fallback=\{\s*<Show when=\{!props\.hubSkillsStatus\}>[\s\S]*translate\("skills\.org_catalog_placeholder"\)/,
   );
 });
+
+test("skills toast messages stay visible for at least four seconds", () => {
+  assert.match(
+    source,
+    /const SKILLS_TOAST_DISMISS_DELAY_MS = 4_000;/,
+    "skills toast dismiss delay should be defined as at least four seconds",
+  );
+  assert.match(
+    source,
+    /window\.setTimeout\(\(\) => setToast\(null\), SKILLS_TOAST_DISMISS_DELAY_MS\)/,
+    "skills toasts should use the four-second dismiss delay",
+  );
+  assert.equal(source.includes("setToast(null), 2400"), false);
+});

@@ -23,6 +23,7 @@ const VESLO_DEFAULT_SKILL_NAMES = new Set([
   "agent-creator",
   "plugin-creator",
 ]);
+const SKILLS_TOAST_DISMISS_DELAY_MS = 4_000;
 
 export type SkillsViewProps = {
   workspaceName: string;
@@ -95,7 +96,7 @@ export default function SkillsView(props: SkillsViewProps) {
   createEffect(() => {
     const message = toast();
     if (!message) return;
-    const id = window.setTimeout(() => setToast(null), 2400);
+    const id = window.setTimeout(() => setToast(null), SKILLS_TOAST_DISMISS_DELAY_MS);
     onCleanup(() => window.clearTimeout(id));
   });
 
