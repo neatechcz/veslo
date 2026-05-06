@@ -36,6 +36,7 @@ import {
   resolveCompactionThreshold,
   shouldAutoCompact,
 } from "./lib/auto-compaction";
+import { shouldAutoCheckForUpdatesAt } from "./context/updater";
 import {
   parseStoredEngineSourceExplicitPreference,
   resolveStoredEngineSourcePreference,
@@ -5399,7 +5400,6 @@ export default function App() {
     void refreshMcpServers();
   };
 
-  const UPDATE_AUTO_CHECK_EVERY_MS = 12 * 60 * 60_000;
   const UPDATE_AUTO_CHECK_POLL_MS = 60_000;
 
   const resetAppConfigDefaults = async () => {
@@ -5445,18 +5445,6 @@ export default function App() {
       const message = error instanceof Error ? error.message : "Failed to reset app config defaults.";
       return { ok: false, message };
     }
-  };
-
-  const getUpdateLastCheckedAt = (state: ReturnType<typeof updateStatus>) => {
-    if (state.state === "checking") return null;
-    return state.lastCheckedAt ?? null;
-  };
-
-  const shouldAutoCheckForUpdates = () => {
-    const state = updateStatus();
-    const lastCheckedAt = getUpdateLastCheckedAt(state);
-    if (!lastCheckedAt) return true;
-    return Date.now() - lastCheckedAt >= UPDATE_AUTO_CHECK_EVERY_MS;
   };
 
   const workspaceAutoReloadAvailable = createMemo(() =>
@@ -8130,7 +8118,7 @@ export default function App() {
       if (!updateAutoCheck()) return;
       const state = updateStatus();
       if (state.state === "checking" || state.state === "downloading") return;
-      if (!shouldAutoCheckForUpdates()) return;
+      if (!shouldAutoCheckForUpdatesAt(state)) return;
       checkForUpdates({ quiet: true }).catch(e => reportError(e, "updates.check"));
     };
 

@@ -66,15 +66,13 @@ After that:
 
 - background checks run only when `veslo.updateAutoCheck=1`
 - the app polls once per minute to see whether it should re-check
-- it only performs a new quiet check when the last completed check is at least 12 hours old
+- it only performs a new quiet check when the last completed check is at least one hour old
 
 Relevant keys in local storage:
 
 - `veslo.updateAutoCheck`
 - `veslo.updateAutoDownload`
 - `veslo.updateLastCheckedAt`
-
-Note: the current implementation uses a 12-hour interval in code, even though the Settings copy says "once per day".
 
 ### 4. Manual checks
 
@@ -362,7 +360,6 @@ Check:
 
 - There is no dedicated updater E2E automation in `packages/e2e` today.
 - Real updater validation still depends on a manual two-release flow.
-- Settings copy says "once per day", but the current implementation checks on a 12-hour interval.
 
 ## Related Files
 

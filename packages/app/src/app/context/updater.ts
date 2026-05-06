@@ -20,6 +20,19 @@ export type UpdateStatus =
 
 export type PendingUpdate = { update: UpdateHandle; version: string; notes?: string } | null;
 
+export const UPDATE_AUTO_CHECK_EVERY_MS = 60 * 60_000;
+
+export function getUpdateLastCheckedAt(state: UpdateStatus) {
+  if (state.state === "checking") return null;
+  return state.lastCheckedAt ?? null;
+}
+
+export function shouldAutoCheckForUpdatesAt(state: UpdateStatus, now = Date.now()) {
+  const lastCheckedAt = getUpdateLastCheckedAt(state);
+  if (!lastCheckedAt) return true;
+  return now - lastCheckedAt >= UPDATE_AUTO_CHECK_EVERY_MS;
+}
+
 export function createUpdaterState() {
   const [updateAutoCheck, setUpdateAutoCheck] = createSignal(true);
   const [updateAutoDownload, setUpdateAutoDownload] = createSignal(false);
