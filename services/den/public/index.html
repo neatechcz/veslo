@@ -238,10 +238,6 @@
 
         <form id="reset-password-form">
           <div class="field">
-            <label for="reset-password-token">Reset token</label>
-            <input id="reset-password-token" class="mono" type="text" readonly />
-          </div>
-          <div class="field">
             <label for="reset-password-new-password">New password</label>
             <input id="reset-password-new-password" type="password" autocomplete="new-password" required />
           </div>
@@ -360,6 +356,7 @@
       function initOnboarding() {
         const search = new URLSearchParams(window.location.search);
         const DESKTOP_AUTH_CONTEXT_STORAGE_KEY = "veslo.desktopAuthContext";
+        const RESET_PASSWORD_EMAIL_STORAGE_KEY = "veslo.resetPasswordEmail";
         const DESKTOP_AUTH_CONTEXT_TTL_MS = 15 * 60 * 1000;
         const onboardingSessionId = (search.get("sid") || "").trim();
         let onboardingTransactionId = (search.get("tid") || "").trim();
@@ -399,7 +396,6 @@
         const forgotBack = document.getElementById("forgot-password-back");
         const resetCard = document.getElementById("reset-password-card");
         const resetForm = document.getElementById("reset-password-form");
-        const resetTokenInput = document.getElementById("reset-password-token");
         const resetPasswordInput = document.getElementById("reset-password-new-password");
         const resetSubmit = document.getElementById("reset-password-submit");
         const resetErrorEl = document.getElementById("reset-password-error");
@@ -467,6 +463,55 @@
           }
         }
 
+        function storeResetPasswordEmail(email) {
+          const trimmedEmail = (email || "").trim();
+          if (!trimmedEmail) return;
+          try {
+            window.localStorage.setItem(RESET_PASSWORD_EMAIL_STORAGE_KEY, JSON.stringify({
+              email: trimmedEmail,
+              expiresAt: Date.now() + DESKTOP_AUTH_CONTEXT_TTL_MS,
+            }));
+          } catch {
+            // Ignore storage failures; the reset flow can still fall back to sign-in.
+          }
+        }
+
+        function readStoredResetPasswordEmail() {
+          try {
+            const raw = window.localStorage.getItem(RESET_PASSWORD_EMAIL_STORAGE_KEY);
+            if (!raw) return "";
+            const parsed = JSON.parse(raw);
+            const expiresAt = typeof parsed?.expiresAt === "number" ? parsed.expiresAt : 0;
+            if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+              clearStoredResetPasswordEmail();
+              return "";
+            }
+            return typeof parsed?.email === "string" ? parsed.email.trim() : "";
+          } catch {
+            return "";
+          }
+        }
+
+        function clearStoredResetPasswordEmail() {
+          try {
+            window.localStorage.removeItem(RESET_PASSWORD_EMAIL_STORAGE_KEY);
+          } catch {
+            // Ignore storage failures.
+          }
+        }
+
+        function scrubResetPasswordTokenFromLocation() {
+          if (!resetToken) return;
+          try {
+            const url = new URL(window.location.href);
+            if (!url.searchParams.has("token")) return;
+            url.searchParams.delete("token");
+            window.history.replaceState({}, "", url.toString());
+          } catch {
+            // Ignore history failures; the token remains only in memory after this point.
+          }
+        }
+
         if (!onboardingTransactionId || !onboardingState) {
           const restoredContext = readDesktopAuthContext();
           if (restoredContext) {
@@ -483,6 +528,7 @@
         }
 
         persistDesktopAuthContext();
+        scrubResetPasswordTokenFromLocation();
 
         function buildDesktopOnboardingUrl(view, extras = {}) {
           const url = new URL(window.location.href);
@@ -516,7 +562,7 @@
 
         function buildViewExtras(view) {
           if (view === "reset-password") {
-            return { token: resetToken, error: viewError };
+            return { token: null, error: viewError };
           }
           if (view === "verify-email") {
             return { error: viewError };
@@ -572,7 +618,6 @@
         }
 
         function updateResetPasswordUI() {
-          resetTokenInput.value = resetToken;
           setInlineMessage(resetMessageEl, resetInfo);
           setInlineMessage(resetErrorEl, viewError);
           if (!resetToken) {
@@ -581,6 +626,61 @@
             return;
           }
           resetSubmit.disabled = false;
+        }
+
+        function showPasswordResetSignInFallback(message, email) {
+          mode = "sign-in";
+          if (email) {
+            emailInput.value = email;
+          }
+          passwordInput.value = "";
+          authError = message || "Your password has been updated. Sign in with the new password.";
+          clearStoredResetPasswordEmail();
+          setView("auth");
+        }
+
+        async function signInAfterPasswordReset(newPassword) {
+          const resetEmail = readStoredResetPasswordEmail();
+          if (!resetEmail) {
+            return {
+              ok: false,
+              email: "",
+              message: "Your password has been updated. Sign in with the new password.",
+            };
+          }
+
+          let response;
+          let data = null;
+          try {
+            response = await fetch("/api/auth/sign-in/email", {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                email: resetEmail,
+                password: newPassword,
+              }),
+            });
+            data = await response.json().catch(() => null);
+          } catch {
+            return {
+              ok: false,
+              email: resetEmail,
+              message: "Your password has been updated. Sign in with the new password.",
+            };
+          }
+
+          if (!response.ok) {
+            return {
+              ok: false,
+              email: resetEmail,
+              message: data?.message || data?.error || "Your password has been updated. Sign in with the new password.",
+            };
+          }
+
+          bearerToken = data?.token || "";
+          clearStoredResetPasswordEmail();
+          return { ok: true, email: resetEmail, message: "" };
         }
 
         function updateVerifyRequiredUI() {
@@ -658,6 +758,77 @@
           renderView(false);
         }
 
+        function buildDesktopAuthCompleteRedirect(code) {
+          const params = new URLSearchParams();
+          params.set("code", String(code));
+          if (onboardingState) {
+            params.set("state", onboardingState);
+          }
+          if (onboardingTransactionId) {
+            params.set("transactionId", onboardingTransactionId);
+          }
+          return "veslo://auth-complete?" + params.toString();
+        }
+
+        function showDesktopHandoffSuccess(redirectUrl) {
+          busyCard.classList.add("hidden");
+          successCard.classList.remove("hidden");
+          clearDesktopAuthContext();
+          if (openAppLink) {
+            if (redirectUrl) {
+              openAppLink.href = redirectUrl;
+            } else {
+              openAppLink.href = "#";
+            }
+          }
+          if (openAppHint) {
+            if (redirectUrl) {
+              openAppHint.classList.remove("hidden");
+            } else {
+              openAppHint.classList.add("hidden");
+            }
+          }
+          if (redirectUrl) {
+            window.location.assign(redirectUrl);
+          }
+        }
+
+        async function recoverDesktopAuthTransaction() {
+          if (!onboardingTransactionId) {
+            return { ok: false, error: "Authorization redirect failed" };
+          }
+
+          const statusResponse = await fetch(
+            "/v2/desktop-auth/status?transactionId=" + encodeURIComponent(onboardingTransactionId),
+            {
+              method: "GET",
+              credentials: "include",
+              headers: {
+                ...createSessionHeaders(false),
+                Accept: "application/json",
+              },
+            },
+          );
+
+          const payload = await statusResponse.json().catch(() => null);
+          if (!statusResponse.ok) {
+            return { ok: false, error: payload?.error || `Status failed (${statusResponse.status})` };
+          }
+
+          const status = typeof payload?.status === "string" ? payload.status.trim().toLowerCase() : "";
+          if (status === "authorized" && typeof payload?.code === "string" && payload.code.trim()) {
+            return { ok: true, redirectUrl: buildDesktopAuthCompleteRedirect(payload.code.trim()) };
+          }
+          if (status === "exchanged") {
+            return { ok: true, redirectUrl: "" };
+          }
+          if (status === "expired" || status === "cancelled") {
+            return { ok: false, error: "This desktop sign-in expired. Start sign-in again from Veslo." };
+          }
+
+          return { ok: false, error: "Desktop sign-in is not ready yet. Return to Veslo and try again." };
+        }
+
         async function doHandoff(fallbackView = activeView) {
           hideAllCards();
           busyCard.classList.remove("hidden");
@@ -706,6 +877,16 @@
                     errorMessage = text.trim();
                   }
                 }
+
+                if (errorMessage === "transaction_not_ready") {
+                  const recovered = await recoverDesktopAuthTransaction();
+                  if (recovered.ok) {
+                    showDesktopHandoffSuccess(recovered.redirectUrl);
+                    return;
+                  }
+                  errorMessage = recovered.error || errorMessage;
+                }
+
                 busyCard.classList.add("hidden");
                 if (fallbackView === "verify-required") {
                   restoreAfterHandoffError(errorMessage, fallbackView);
@@ -717,16 +898,7 @@
                 return;
               }
 
-              busyCard.classList.add("hidden");
-              successCard.classList.remove("hidden");
-              clearDesktopAuthContext();
-              if (openAppLink) {
-                openAppLink.href = redirectUrl;
-              }
-              if (openAppHint) {
-                openAppHint.classList.remove("hidden");
-              }
-              window.location.assign(redirectUrl);
+              showDesktopHandoffSuccess(redirectUrl);
               return;
             }
 
@@ -748,9 +920,6 @@
               return;
             }
 
-            busyCard.classList.add("hidden");
-            successCard.classList.remove("hidden");
-            clearDesktopAuthContext();
             const fallbackParams = new URLSearchParams();
             fallbackParams.set("code", String(data.code));
             if (typeof data?.sessionId === "string" && data.sessionId) {
@@ -760,13 +929,7 @@
             const redirectUrl = typeof data?.redirectUrl === "string" && data.redirectUrl
               ? data.redirectUrl
               : fallbackRedirect;
-            if (openAppLink) {
-              openAppLink.href = redirectUrl;
-            }
-            if (openAppHint) {
-              openAppHint.classList.remove("hidden");
-            }
-            window.location.assign(redirectUrl);
+            showDesktopHandoffSuccess(redirectUrl);
           } catch (err) {
             restoreAfterHandoffError(err.message || "Network error during handoff", fallbackView);
           }
@@ -878,6 +1041,7 @@
           forgotSubmit.disabled = true;
           forgotSubmit.textContent = "Sending...";
           try {
+            storeResetPasswordEmail(trimmedEmail);
             await fetch("/api/auth/request-password-reset", {
               method: "POST",
               credentials: "include",
@@ -925,10 +1089,15 @@
               return;
             }
 
-            resetInfo = "Your password has been updated. Return to sign in and use the new password.";
+            const signInResult = await signInAfterPasswordReset(resetPasswordInput.value);
             resetPasswordInput.value = "";
             viewError = "";
-            updateResetPasswordUI();
+            resetToken = "";
+            if (signInResult.ok) {
+              await doHandoff("reset-password");
+              return;
+            }
+            showPasswordResetSignInFallback(signInResult.message, signInResult.email);
           } catch (error) {
             viewError = error.message || "Unknown network error";
             updateResetPasswordUI();
