@@ -12,13 +12,14 @@ This document describes the main persistence and config surfaces used by Veslo.
 
 ## App-Global Browser Preferences
 
-Primary keys are defined in `packages/app/src/app/constants.ts` or persisted directly from `app.tsx`.
+Primary keys are defined in `packages/app/src/app/constants.ts`, related app helpers, or persisted directly from `app.tsx`.
 
 Common keys:
 
 - `veslo.defaultModel`
 - `veslo.showThinking`
 - `veslo.modelVariant`
+- `veslo.modelVariant.maxDefaultMigration`
 - `veslo.language`
 - `veslo.hideTitlebar`
 - `veslo.autoCompactContext`
@@ -33,6 +34,8 @@ Common keys:
 - `veslo.engineCustomBinPath`
 - `veslo.engineRuntime`
 - `veslo.onboardingComplete`
+
+`veslo.modelVariant` stores the app-global model variant / thinking effort. The built-in default is `xhigh` (Max). Existing stored values from before the Max-default migration are overwritten to `xhigh` once and marked by `veslo.modelVariant.maxDefaultMigration`; later user changes remain stored in `veslo.modelVariant`.
 
 Session/sidebar convenience state also lives in local storage, for example:
 

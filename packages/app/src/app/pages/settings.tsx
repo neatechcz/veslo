@@ -39,6 +39,7 @@ import {
 import { resolveSettingsTabLabel, resolveVisibleSettingsTab } from "../lib/settings-tab-label";
 import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
+import { MODEL_VARIANT_OPTIONS } from "../lib/model-variant";
 
 export type SettingsViewProps = {
   startupPreference: StartupPreference | null;
@@ -144,14 +145,6 @@ export type SettingsViewProps = {
   sessionArchives?: SessionArchiveItem[];
   onUnarchiveSession?: (sessionId: string) => Promise<void> | void;
 };
-
-const MODEL_VARIANT_OPTIONS = [
-  { value: "none", labelKey: "session.thinking_option_none" },
-  { value: "low", labelKey: "session.thinking_option_low" },
-  { value: "medium", labelKey: "session.thinking_option_medium" },
-  { value: "high", labelKey: "session.thinking_option_high" },
-  { value: "xhigh", labelKey: "session.thinking_option_xhigh" },
-];
 
 export default function SettingsView(props: SettingsViewProps) {
   const translate = (key: string) => t(key, currentLocale());

@@ -47,6 +47,14 @@ import {
   formatConfigWithDefaultModel,
   resolveWorkspaceDefaultModel,
 } from "./lib/model-persistence";
+import {
+  DEFAULT_MODEL_VARIANT,
+  MODEL_VARIANT_DEFAULT_MIGRATION_KEY,
+  MODEL_VARIANT_OPTIONS,
+  normalizeModelVariant,
+  resolveCodexReasoningEffort,
+  resolveStartupModelVariant,
+} from "./lib/model-variant";
 import { resolveGlobalRuntimeModel } from "./lib/global-model-runtime";
 import {
   emptySubagentDecorationsPersistence,
@@ -2888,32 +2896,9 @@ export default function App() {
   const [showThinking, setShowThinking] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
   const [autoCompactContext, setAutoCompactContext] = createSignal(true);
-  const [modelVariant, setModelVariant] = createSignal<string | null>(null);
+  const [modelVariant, setModelVariant] = createSignal<string | null>(DEFAULT_MODEL_VARIANT);
+  const [modelVariantPreferenceReady, setModelVariantPreferenceReady] = createSignal(false);
   const [autoCompactingSessionId, setAutoCompactingSessionId] = createSignal<string | null>(null);
-
-  const MODEL_VARIANT_OPTIONS = [
-    { value: "none", labelKey: "session.thinking_option_none" },
-    { value: "low", labelKey: "session.thinking_option_low" },
-    { value: "medium", labelKey: "session.thinking_option_medium" },
-    { value: "high", labelKey: "session.thinking_option_high" },
-    { value: "xhigh", labelKey: "session.thinking_option_xhigh" },
-  ];
-
-  const normalizeModelVariant = (value: string | null) => {
-    if (!value) return null;
-    const trimmed = value.trim().toLowerCase();
-    if (trimmed === "balance" || trimmed === "balanced") return "none";
-    const match = MODEL_VARIANT_OPTIONS.find((option) => option.value === trimmed);
-    return match ? match.value : null;
-  };
-
-  const resolveCodexReasoningEffort = (modelID: string, variant: string | null) => {
-    if (!modelID.trim().toLowerCase().includes("codex")) return undefined;
-    const normalized = normalizeModelVariant(variant);
-    if (!normalized || normalized === "none") return undefined;
-    if (normalized === "xhigh") return "high";
-    return normalized;
-  };
 
   const formatModelVariantLabel = (value: string | null) => {
     const normalized = normalizeModelVariant(value) ?? "none";
@@ -5438,7 +5423,7 @@ export default function App() {
       setShowThinking(false);
       setHideTitlebar(false);
       setAutoCompactContext(true);
-      setModelVariant(null);
+      setModelVariant(DEFAULT_MODEL_VARIANT);
       setUpdateAutoCheck(true);
       setUpdateAutoDownload(false);
       setUpdateStatus({ state: "idle", lastCheckedAt: null });
@@ -7420,12 +7405,20 @@ export default function App() {
           }
         }
 
-        const storedVariant = window.localStorage.getItem(VARIANT_PREF_KEY);
-        if (storedVariant && storedVariant.trim()) {
-          const normalized = normalizeModelVariant(storedVariant);
-          if (normalized) {
-            setModelVariant(normalized);
+        try {
+          const startupVariant = resolveStartupModelVariant({
+            storedVariant: window.localStorage.getItem(VARIANT_PREF_KEY),
+            storedMigrationVersion: window.localStorage.getItem(MODEL_VARIANT_DEFAULT_MIGRATION_KEY),
+          });
+          setModelVariant(startupVariant.variant);
+          if (startupVariant.persistVariant) {
+            window.localStorage.setItem(VARIANT_PREF_KEY, startupVariant.variant);
           }
+          if (startupVariant.persistMigrationVersion) {
+            window.localStorage.setItem(MODEL_VARIANT_DEFAULT_MIGRATION_KEY, startupVariant.persistMigrationVersion);
+          }
+        } finally {
+          setModelVariantPreferenceReady(true);
         }
 
         const storedUpdateAutoCheck = window.localStorage.getItem(
@@ -8086,6 +8079,7 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
+    if (!modelVariantPreferenceReady()) return;
     try {
       const value = modelVariant();
       if (value) {

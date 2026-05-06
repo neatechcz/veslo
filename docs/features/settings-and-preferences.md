@@ -52,6 +52,8 @@ The app exposes:
 - model variant / reasoning effort
 - auto-compaction preference
 
+The built-in thinking default is Max (`xhigh`). Existing app-global thinking values from before the Max-default migration are overwritten to Max once, then future user changes remain controlled by the same app-global preference.
+
 Important product rule:
 
 - Veslo uses one global runtime model for future runs across sessions
