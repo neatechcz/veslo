@@ -61,6 +61,21 @@ test("desktop onboarding page exposes forgot-password and reset-password browser
   assert.equal(onboardingPage.includes('search.get("token")'), true)
 })
 
+test("desktop reset password keeps the reset token out of visible UI and browser history", () => {
+  assert.equal(onboardingPage.includes('for="reset-password-token"'), false)
+  assert.equal(onboardingPage.includes('id="reset-password-token"'), false)
+  assert.equal(onboardingPage.includes("resetTokenInput.value"), false)
+  assert.equal(onboardingPage.includes("scrubResetPasswordTokenFromLocation()"), true)
+  assert.equal(onboardingPage.includes('url.searchParams.delete("token")'), true)
+})
+
+test("desktop reset password signs in and completes handoff after password update", () => {
+  assert.equal(onboardingPage.includes("storeResetPasswordEmail(trimmedEmail)"), true)
+  assert.equal(onboardingPage.includes("signInAfterPasswordReset(resetPasswordInput.value)"), true)
+  assert.equal(onboardingPage.includes('await doHandoff("reset-password")'), true)
+  assert.equal(onboardingPage.includes("Return to sign in and use the new password."), false)
+})
+
 test("desktop onboarding page exposes verification and resend affordances", () => {
   assert.equal(onboardingPage.includes("/api/auth/send-verification-email"), true)
   assert.equal(onboardingPage.includes("emailVerified"), true)

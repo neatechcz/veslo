@@ -39,6 +39,8 @@ Important pieces:
 
 If browser sign-in requires email verification, the verification callback page preserves the active desktop onboarding query context and routes the user back into the same onboarding page. The canonical onboarding page then completes the normal desktop handoff to the `veslo://auth-complete` deep link.
 
+Password reset also stays in the browser handoff flow. The reset page keeps the reset token out of visible UI and removes it from browser history after reading it. When the password update succeeds, the hosted page signs in with the reset email and new password, then completes the same desktop handoff. If the reset email is unavailable or sign-in fails, the page falls back to the normal sign-in form.
+
 The hosted desktop onboarding page also caches the current desktop auth transaction context in browser session storage. If a later auth or verification return lands back on the onboarding page without the original transaction query, the hosted page restores that context before attempting the desktop handoff. This keeps the original desktop auth transaction alive across browser-managed redirects.
 
 Key persistent settings:
