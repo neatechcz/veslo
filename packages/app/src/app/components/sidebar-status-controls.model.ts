@@ -21,8 +21,16 @@ export function getUnifiedStatusMeta(
   clientConnected: boolean,
   vesloServerStatus: VesloServerStatus,
   runtimeAvailableWithoutClient = false,
+  isLoggedIn = true,
 ) {
-  return (clientConnected || runtimeAvailableWithoutClient) && vesloServerStatus === "connected"
+  // Lazy boot policy: the global dot reflects "the app is operational" — i.e.
+  // the user is signed in and the Veslo server is reachable. Active engine /
+  // workspace connection is a per-workspace concern, surfaced separately in
+  // the sidebar items.
+  void clientConnected;
+  void runtimeAvailableWithoutClient;
+
+  return isLoggedIn && vesloServerStatus === "connected"
     ? { dot: "bg-green-9", text: "text-green-11", label: "Ready" }
     : { dot: "bg-red-9", text: "text-red-11", label: "Unavailable" };
 }

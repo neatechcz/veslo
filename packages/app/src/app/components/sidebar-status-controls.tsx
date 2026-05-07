@@ -78,9 +78,6 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
 
   const vesloStatusMeta = createMemo(() => getVesloStatusMeta(props.vesloServerStatus));
 
-  const unifiedStatusMeta = createMemo(() =>
-    getUnifiedStatusMeta(props.clientConnected, props.vesloServerStatus, props.runtimeAvailableWithoutClient ?? false)
-  );
   const persistedAuthenticatedUserLabel = createMemo(() => {
     denAuthRevision();
     return resolveAuthenticatedDenUserLabel(readDenAuth());
@@ -92,6 +89,14 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
     denAuthRevision();
     return Boolean(props.authenticatedUser?.trim() || readDenAuth()?.token?.trim());
   });
+  const unifiedStatusMeta = createMemo(() =>
+    getUnifiedStatusMeta(
+      props.clientConnected,
+      props.vesloServerStatus,
+      props.runtimeAvailableWithoutClient ?? false,
+      isLoggedIn(),
+    )
+  );
 
   const handleLogoutClick = () => {
     closeAccountMenu();

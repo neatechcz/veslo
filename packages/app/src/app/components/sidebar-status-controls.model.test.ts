@@ -8,20 +8,22 @@ import {
   getVesloStatusMeta,
 } from "./sidebar-status-controls.model";
 
-test("unified status is ready only when both client and server are connected", () => {
-  const ready = getUnifiedStatusMeta(true, "connected", false);
-  assert.equal(ready.label, "Ready");
-  assert.equal(ready.dot, "bg-green-9");
+test("unified status is ready when the user is logged in and the server is connected", () => {
+  // Lazy boot policy: dot reflects "the app is operational" — engine /
+  // workspace connection is per-workspace and surfaced separately.
+  const readyEvenWithoutClient = getUnifiedStatusMeta(false, "connected", false, true);
+  assert.equal(readyEvenWithoutClient.label, "Ready");
+  assert.equal(readyEvenWithoutClient.dot, "bg-green-9");
 
-  const unavailable = getUnifiedStatusMeta(true, "limited", false);
-  assert.equal(unavailable.label, "Unavailable");
-  assert.equal(unavailable.dot, "bg-red-9");
+  const limited = getUnifiedStatusMeta(true, "limited", false, true);
+  assert.equal(limited.label, "Unavailable");
+  assert.equal(limited.dot, "bg-red-9");
 });
 
-test("unified status stays ready in local browsing mode when the active workspace is connected", () => {
-  const ready = getUnifiedStatusMeta(false, "connected", true);
-  assert.equal(ready.label, "Ready");
-  assert.equal(ready.dot, "bg-green-9");
+test("unified status is unavailable when the user is not logged in", () => {
+  const loggedOut = getUnifiedStatusMeta(true, "connected", true, false);
+  assert.equal(loggedOut.label, "Unavailable");
+  assert.equal(loggedOut.dot, "bg-red-9");
 });
 
 test("veslo status label maps connected, limited and unavailable", () => {
