@@ -101,7 +101,7 @@ OpenAI-compatible custom providers are admin-managed. The desktop app receives p
 
 Codex limit exhaustion is temporary ineligibility, not a credential health failure. When every automatically selectable Codex credential is exhausted, the request fails explicitly with `all_codex_credentials_exhausted`. Permanent OAuth, token refresh, or auth-material failures are credential health failures when the credential lifecycle marks them that way; provider/runtime auth failures during selection or routing can also make a credential ineligible or rebindable without implying that every upstream invalid-auth response changes credential health.
 
-An admin-assigned Codex or OpenAI-compatible credential is a hard constraint. If that credential is exhausted, unavailable, missing, or invalid for the assigned provider, the request fails explicitly instead of silently rotating to another credential. Auto-assigned Codex credentials are the exception: on the next Codex request, the managed-AI service can repair the user's policy to another healthy eligible Codex credential before routing. If no replacement exists, the request fails explicitly and the stored assignment is kept.
+An assigned Codex credential is repaired on the next Codex request when it is exhausted, unavailable, missing, or invalid for the assigned provider. The managed-AI service can update either an `auto_assigned` or `admin_assigned` Codex policy to another healthy eligible Codex credential before routing, preserving the original assignment origin. If no replacement exists, the request fails explicitly and the stored assignment is kept. OpenAI-compatible credentials remain hard constraints because the assigned credential determines the upstream base URL and API key.
 
 ## Permissions
 

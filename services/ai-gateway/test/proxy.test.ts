@@ -785,7 +785,7 @@ test("POST /providers/codex_oauth/v1/chat/completions routes through the assigne
   }
 });
 
-test("POST /providers/codex_oauth/v1/chat/completions repairs auto-assigned access before resolving the binding", async () => {
+test("POST /providers/codex_oauth/v1/chat/completions repairs assigned access before resolving the binding", async () => {
   const leases = new InMemoryLeaseRepository();
   const credentials = createCodexCredentialRepository();
   const leaseBroker = new LeaseBroker(leases, new DefaultBindingSelector(credentials as never));
@@ -795,12 +795,12 @@ test("POST /providers/codex_oauth/v1/chat/completions repairs auto-assigned acce
 
   const app = createApp({
     proxy: {
-      aiAccess: createCodexAiAccess("cred_codex_assigned", "auto_assigned"),
+      aiAccess: createCodexAiAccess("cred_codex_assigned", "admin_assigned"),
       autoAssignedCodexCredentialRotation: {
         async repairCodexAccess(input: { aiAccess: { credentialId: string | null } }) {
           repairCalls.push(input.aiAccess);
           return {
-            ...(await createCodexAiAccess("cred_codex_fallback", "auto_assigned").getUserAiAccess("user_gateway")),
+            ...(await createCodexAiAccess("cred_codex_fallback", "admin_assigned").getUserAiAccess("user_gateway")),
           };
         },
       },

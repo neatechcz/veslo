@@ -92,3 +92,124 @@ test("listActiveLeasesByCredential skips the database for an empty credential se
 
   assert.deepEqual(await repository.listActiveLeasesByCredential([]), []);
 });
+
+test("listAdminCredentials exposes credential read data used by Codex rotation", async () => {
+  const db = {
+    select(selection?: Record<string, unknown>) {
+      if (!selection) {
+        return {
+          from() {
+            return {
+              async orderBy() {
+                return [
+                  {
+                    id: "cred_old",
+                    name: "Shared Michal CODEX",
+                    owner_user_id: "platform:codex_oauth",
+                    provider: "codex_oauth",
+                    credential_type: "oauth",
+                    state: "unhealthy",
+                    secret_ref: "secret_old",
+                    created_at: new Date("2026-05-05T09:00:00.000Z"),
+                    updated_at: new Date("2026-05-05T10:00:00.000Z"),
+                  },
+                  {
+                    id: "cred_new",
+                    name: "Share Vaclav CODEX - new",
+                    owner_user_id: "platform:codex_oauth",
+                    provider: "codex_oauth",
+                    credential_type: "oauth",
+                    state: "healthy",
+                    secret_ref: "secret_new",
+                    created_at: new Date("2026-05-05T09:10:00.000Z"),
+                    updated_at: new Date("2026-05-05T10:10:00.000Z"),
+                  },
+                ];
+              },
+            };
+          },
+        };
+      }
+
+      if ("activeLeases" in selection) {
+        return {
+          from() {
+            return {
+              innerJoin() {
+                return {
+                  async groupBy() {
+                    return [
+                      {
+                        credentialRecordId: "cred_new",
+                        activeLeases: 2,
+                      },
+                    ];
+                  },
+                };
+              },
+            };
+          },
+        };
+      }
+
+      return {
+        from() {
+          return {
+            async groupBy() {
+              return [
+                {
+                  credentialRecordId: "cred_old",
+                  cachedTokens: 7,
+                  totalTokens: 11,
+                },
+                {
+                  credentialRecordId: "cred_new",
+                  cachedTokens: 13,
+                  totalTokens: 17,
+                },
+              ];
+            },
+          };
+        },
+      };
+    },
+  };
+  const repository = new MySqlCredentialRepository(db as AiGatewayDb);
+
+  const credentials = await repository.listAdminCredentials?.();
+
+  assert.deepEqual(credentials, [
+    {
+      id: "cred_old",
+      name: "Shared Michal CODEX",
+      provider: "codex_oauth",
+      type: "oauth",
+      state: "unhealthy",
+      scope: "platform:codex_oauth",
+      activeLeases: 0,
+      alertCount: 0,
+      lastRefreshAt: "2026-05-05T10:00:00.000Z",
+      lastFailureAt: "2026-05-05T10:00:00.000Z",
+      cachedTokens: 7,
+      totalTokens: 11,
+      nextRotationAt: null,
+      linkedAlertIds: [],
+    },
+    {
+      id: "cred_new",
+      name: "Share Vaclav CODEX - new",
+      provider: "codex_oauth",
+      type: "oauth",
+      state: "healthy",
+      scope: "platform:codex_oauth",
+      activeLeases: 2,
+      alertCount: 0,
+      lastRefreshAt: "2026-05-05T10:10:00.000Z",
+      lastFailureAt: null,
+      cachedTokens: 13,
+      totalTokens: 17,
+      nextRotationAt: null,
+      linkedAlertIds: [],
+    },
+  ]);
+});

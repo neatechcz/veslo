@@ -389,7 +389,7 @@ test("codex_oauth proxy forwards through the configured transport with a sticky 
   }
 })
 
-test("codex_oauth proxy repairs auto-assigned access before resolving the assigned binding", async () => {
+test("codex_oauth proxy repairs assigned access before resolving the assigned binding", async () => {
   const repairCalls: UserAiAccessPolicyRecord[] = []
   const recordUsageCalls: RecordUsageInput[] = []
   const transportAuthJson: Array<string | null | undefined> = []
@@ -453,14 +453,14 @@ test("codex_oauth proxy repairs auto-assigned access before resolving the assign
       },
       aiAccess: {
         async getUserAiAccess() {
-          return createAiAccess({ assignmentOrigin: "auto_assigned" })
+          return createAiAccess({ assignmentOrigin: "admin_assigned" })
         },
       },
       autoAssignedCodexCredentialRotation: {
         async repairCodexAccess(input: { aiAccess: UserAiAccessPolicyRecord }) {
           repairCalls.push(input.aiAccess)
           return createAiAccess({
-            assignmentOrigin: "auto_assigned",
+            assignmentOrigin: "admin_assigned",
             credentialId: "cred_codex_fallback",
           })
         },

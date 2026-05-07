@@ -312,6 +312,15 @@ test("createDefaultRuntimeState uses MySQL-backed runtime stores", () => {
   assert.ok(runtime.leases instanceof MySqlLeaseRepository);
 });
 
+test("default runtime credential repository exposes admin credential listing for Codex rotation", () => {
+  const runtime = createDefaultRuntimeState({
+    db: {} as AiGatewayDb,
+    secretKey: "test_secret_key_32_bytes_minimum____",
+  });
+
+  assert.equal(typeof runtime.credentials.listAdminCredentials, "function");
+});
+
 test("default proxy dependencies wire hosted provider transports to global fetch", async () => {
   const runtime = createPersistentRuntime();
   const originalFetch = globalThis.fetch;

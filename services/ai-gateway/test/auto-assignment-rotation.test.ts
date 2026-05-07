@@ -149,12 +149,67 @@ test("rotates auto-assigned Codex access away from an exhausted credential", asy
       entityId: "user_1",
       action: "user.ai_access.auto_rotate",
       result: "ok",
-      summary: "Rotated auto-assigned Codex credential for user user_1 from cred_old to cred_new.",
+      summary: "Rotated Codex credential for user user_1 from cred_old to cred_new.",
     },
   ]);
 });
 
-test("does not rotate admin-assigned Codex access", async () => {
+test("rotates admin-assigned Codex access away from an exhausted credential", async () => {
+  const upserts: unknown[] = [];
+  const service = createAutoAssignedCodexCredentialRotationService({
+    aiAccess: {
+      async getUserAiAccess() {
+        throw new Error("unused");
+      },
+      async upsertUserAiAccess(input) {
+        upserts.push(input);
+        return createAiAccess({
+          credentialId: input.credentialId,
+          assignmentOrigin: input.assignmentOrigin,
+          updatedAt: new Date("2026-05-05T09:01:00.000Z"),
+        });
+      },
+    },
+    credentials: {
+      async getCredentialRecordById(credentialId: string) {
+        return credentialId === "cred_old" ? createCredentialRecord("cred_old") : null;
+      },
+      async listAdminCredentials() {
+        return [
+          createAdminCredential("cred_old"),
+          createAdminCredential("cred_new"),
+        ];
+      },
+    } as any,
+    codexStatusProvider: {
+      async getStatus(input) {
+        return input.credentialId === "cred_old" ? exhaustedStatus : healthyStatus;
+      },
+    },
+    now: () => new Date("2026-05-05T09:30:00.000Z"),
+  });
+
+  const repaired = await service.repairCodexAccess({
+    aiAccess: createAiAccess({ assignmentOrigin: "admin_assigned" }),
+    reason: "codex_proxy_request",
+  });
+
+  assert.equal(repaired.credentialId, "cred_new");
+  assert.equal(repaired.assignmentOrigin, "admin_assigned");
+  assert.deepEqual(upserts, [
+    {
+      userId: "user_1",
+      enabled: true,
+      provider: "codex_oauth",
+      credentialId: "cred_new",
+      defaultModel: "gpt-5.5",
+      allowedModels: ["gpt-5.5"],
+      assignmentOrigin: "admin_assigned",
+    },
+  ]);
+});
+
+test("does not rotate admin-assigned non-Codex access", async () => {
   const service = createAutoAssignedCodexCredentialRotationService({
     aiAccess: {
       async getUserAiAccess() {
@@ -177,7 +232,10 @@ test("does not rotate admin-assigned Codex access", async () => {
     now: () => new Date("2026-05-05T09:30:00.000Z"),
   });
 
-  const aiAccess = createAiAccess({ assignmentOrigin: "admin_assigned" });
+  const aiAccess = createAiAccess({
+    provider: "openai_compatible",
+    assignmentOrigin: "admin_assigned",
+  });
   const repaired = await service.repairCodexAccess({ aiAccess });
 
   assert.equal(repaired, aiAccess);

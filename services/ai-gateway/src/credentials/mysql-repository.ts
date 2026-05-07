@@ -11,6 +11,7 @@ import {
 } from "../db/schema.js";
 import type {
   ActiveCredentialLeaseRecord,
+  AdminCredentialRecord,
   CreatePlatformCredentialInput,
   CreateUserCredentialInput,
   CredentialBinding,
@@ -23,6 +24,7 @@ import type {
   RecentCredentialUsageRecord,
   RevokeUserCredentialInput,
 } from "./repository.js";
+import { formatAiGatewayProviderLabel } from "../providers/ids.js";
 
 export class MySqlCredentialRepository implements CredentialRepository {
   constructor(private readonly db: AiGatewayDb) {}
@@ -160,6 +162,64 @@ export class MySqlCredentialRepository implements CredentialRepository {
     const row = rows[0];
 
     return row ? mapCredentialBinding(row) : null;
+  }
+
+  async listAdminCredentials(): Promise<AdminCredentialRecord[]> {
+    const [credentialRows, activeLeaseRows, usageRows] = await Promise.all([
+      this.db.select().from(credentialRecordTable).orderBy(desc(credentialRecordTable.updated_at)),
+      this.db
+        .select({
+          credentialRecordId: credentialBindingTable.credential_record_id,
+          activeLeases: sql<number>`count(*)`,
+        })
+        .from(sessionLeaseTable)
+        .innerJoin(credentialBindingTable, eq(sessionLeaseTable.active_binding_id, credentialBindingTable.id))
+        .groupBy(credentialBindingTable.credential_record_id),
+      this.db
+        .select({
+          credentialRecordId: credentialUsageEventTable.credential_record_id,
+          cachedTokens: sql<number>`coalesce(sum(${credentialUsageEventTable.cached_tokens}), 0)`,
+          totalTokens: sql<number>`coalesce(sum(${credentialUsageEventTable.total_tokens}), 0)`,
+        })
+        .from(credentialUsageEventTable)
+        .groupBy(credentialUsageEventTable.credential_record_id),
+    ]);
+
+    const activeLeasesByCredential = new Map(
+      activeLeaseRows.map((row: { credentialRecordId: string; activeLeases: number }) => [
+        row.credentialRecordId,
+        Number(row.activeLeases ?? 0),
+      ]),
+    );
+    const cachedTokensByCredential = new Map(
+      usageRows.map((row: { credentialRecordId: string; cachedTokens: number }) => [
+        row.credentialRecordId,
+        Number(row.cachedTokens ?? 0),
+      ]),
+    );
+    const totalTokensByCredential = new Map(
+      usageRows.map((row: { credentialRecordId: string; totalTokens: number }) => [
+        row.credentialRecordId,
+        Number(row.totalTokens ?? 0),
+      ]),
+    );
+
+    return credentialRows.map((row: typeof credentialRecordTable.$inferSelect) => ({
+      id: row.id,
+      name: row.name?.trim() || `${formatProviderLabel(row.provider)} ${row.id}`,
+      provider: row.provider,
+      type: row.credential_type,
+      state: row.state,
+      scope: row.owner_user_id,
+      activeLeases: activeLeasesByCredential.get(row.id) ?? 0,
+      alertCount: 0,
+      lastRefreshAt: asDate(row.updated_at).toISOString(),
+      lastFailureAt: row.state === "healthy" ? null : asDate(row.updated_at).toISOString(),
+      cachedTokens: cachedTokensByCredential.get(row.id) ?? 0,
+      totalTokens: totalTokensByCredential.get(row.id) ?? 0,
+      nextRotationAt: null,
+      linkedAlertIds: [],
+    }));
   }
 
   async createUserCredential(input: CreateUserCredentialInput): Promise<CredentialRecord> {
@@ -345,4 +405,8 @@ function mapCredentialBinding(row: {
 
 function asDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value);
+}
+
+function formatProviderLabel(provider: string) {
+  return formatAiGatewayProviderLabel(provider);
 }

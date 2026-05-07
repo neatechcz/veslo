@@ -37,7 +37,6 @@ export function createAutoAssignedCodexCredentialRotationService(
       if (
         !aiAccess.enabled ||
         aiAccess.provider !== "codex_oauth" ||
-        aiAccess.assignmentOrigin !== "auto_assigned" ||
         !currentCredentialId
       ) {
         return aiAccess
@@ -60,7 +59,7 @@ export function createAutoAssignedCodexCredentialRotationService(
         credentialId: replacement.credentialId,
         defaultModel: aiAccess.defaultModel,
         allowedModels: aiAccess.allowedModels,
-        assignmentOrigin: "auto_assigned",
+        assignmentOrigin: aiAccess.assignmentOrigin,
       })
 
       await recordRotationAudit({
@@ -162,7 +161,7 @@ export function createAutoAssignedCodexCredentialRotationService(
         entityId: input.userId,
         action: "user.ai_access.auto_rotate",
         result: "ok",
-        summary: `Rotated auto-assigned Codex credential for user ${input.userId} from ${input.previousCredentialId} to ${input.nextCredentialId}.`,
+        summary: `Rotated Codex credential for user ${input.userId} from ${input.previousCredentialId} to ${input.nextCredentialId}.`,
       })
     } catch {
       return
