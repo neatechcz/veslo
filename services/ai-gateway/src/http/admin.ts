@@ -381,7 +381,7 @@ class MySqlAdminSessionReadRepository implements AdminSessionReadRepository {
   }
 }
 
-class MySqlAdminCredentialActionRepository implements AdminCredentialActionRepository {
+export class MySqlAdminCredentialActionRepository implements AdminCredentialActionRepository {
   constructor(private readonly db: AiGatewayDb) {}
 
   async revokeCredential(credentialId: string): Promise<boolean> {
@@ -458,7 +458,7 @@ class MySqlAdminCredentialActionRepository implements AdminCredentialActionRepos
     }
 
     const activeLeases = await this.countActiveLeases(input.credentialId);
-    if (activeLeases > 0) {
+    if (activeLeases > 0 && credential.state !== "revoked") {
       return { deleted: false, reason: "credential_has_active_leases" };
     }
 

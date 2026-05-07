@@ -16,7 +16,7 @@ import type {
   SessionRecord,
   UsageResponse,
 } from "../src/http/admin.js";
-import { createDefaultAdminService } from "../src/http/admin.js";
+import { createDefaultAdminService, MySqlAdminCredentialActionRepository } from "../src/http/admin.js";
 import { createApp } from "../src/index.js";
 
 const AUTHORIZATION = { authorization: "Bearer admin-token" };
@@ -380,6 +380,98 @@ test("createDefaultAdminService soft-deletes an unusable credential and tombston
       summary: "Deleted credential cred_revoked_1.",
     },
   ]);
+});
+
+test("credential delete action allows revoked credentials with active leases", async () => {
+  const updates: Array<Record<string, unknown>> = [];
+  const healthEvents: unknown[] = [];
+  const db = {
+    select(selection?: Record<string, unknown>) {
+      if (!selection) {
+        return {
+          from() {
+            return {
+              where() {
+                return {
+                  async limit() {
+                    return [
+                      {
+                        id: "cred_revoked_1",
+                        state: "revoked",
+                        deleted_at: null,
+                        secret_ref: "secret_revoked_1",
+                      },
+                    ];
+                  },
+                };
+              },
+            };
+          },
+        };
+      }
+
+      if ("activeLeases" in selection) {
+        return {
+          from() {
+            return {
+              innerJoin() {
+                return {
+                  async where() {
+                    return [{ activeLeases: 3 }];
+                  },
+                };
+              },
+            };
+          },
+        };
+      }
+
+      if ("assignedUsers" in selection) {
+        return {
+          from() {
+            return {
+              async where() {
+                return [{ assignedUsers: 0 }];
+              },
+            };
+          },
+        };
+      }
+
+      throw new Error("unexpected_select");
+    },
+    update() {
+      return {
+        set(values: Record<string, unknown>) {
+          updates.push(values);
+          return {
+            async where() {
+              return;
+            },
+          };
+        },
+      };
+    },
+    insert() {
+      return {
+        async values(value: unknown) {
+          healthEvents.push(value);
+        },
+      };
+    },
+  };
+  const repository = new MySqlAdminCredentialActionRepository(db as never);
+
+  const result = await repository.deleteCredential({ credentialId: "cred_revoked_1" });
+
+  assert.equal(result.deleted, true);
+  if (result.deleted) {
+    assert.equal(result.secretRef, "secret_revoked_1");
+  }
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0]?.state, "revoked");
+  assert.ok(updates[0]?.deleted_at instanceof Date);
+  assert.deepEqual(healthEvents, []);
 });
 
 test("POST /admin/api/alerts actions forward admin actor identity and return alert payloads", async () => {
