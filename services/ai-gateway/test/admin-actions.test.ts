@@ -474,6 +474,96 @@ test("credential delete action allows revoked credentials with active leases", a
   assert.deepEqual(healthEvents, []);
 });
 
+test("credential delete action allows revoked credentials with assigned users", async () => {
+  const updates: Array<Record<string, unknown>> = [];
+  const db = {
+    select(selection?: Record<string, unknown>) {
+      if (!selection) {
+        return {
+          from() {
+            return {
+              where() {
+                return {
+                  async limit() {
+                    return [
+                      {
+                        id: "cred_revoked_1",
+                        state: "revoked",
+                        deleted_at: null,
+                        secret_ref: "secret_revoked_1",
+                      },
+                    ];
+                  },
+                };
+              },
+            };
+          },
+        };
+      }
+
+      if ("activeLeases" in selection) {
+        return {
+          from() {
+            return {
+              innerJoin() {
+                return {
+                  async where() {
+                    return [{ activeLeases: 0 }];
+                  },
+                };
+              },
+            };
+          },
+        };
+      }
+
+      if ("assignedUsers" in selection) {
+        return {
+          from() {
+            return {
+              async where() {
+                return [{ assignedUsers: 2 }];
+              },
+            };
+          },
+        };
+      }
+
+      throw new Error("unexpected_select");
+    },
+    update() {
+      return {
+        set(values: Record<string, unknown>) {
+          updates.push(values);
+          return {
+            async where() {
+              return;
+            },
+          };
+        },
+      };
+    },
+    insert() {
+      return {
+        async values() {
+          throw new Error("health_event_not_expected");
+        },
+      };
+    },
+  };
+  const repository = new MySqlAdminCredentialActionRepository(db as never);
+
+  const result = await repository.deleteCredential({ credentialId: "cred_revoked_1" });
+
+  assert.equal(result.deleted, true);
+  if (result.deleted) {
+    assert.equal(result.secretRef, "secret_revoked_1");
+  }
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0]?.state, "revoked");
+  assert.ok(updates[0]?.deleted_at instanceof Date);
+});
+
 test("POST /admin/api/alerts actions forward admin actor identity and return alert payloads", async () => {
   const { service, calls, session } = createAdminServiceSpy();
   const app = createApp({ admin: service });

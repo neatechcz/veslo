@@ -463,7 +463,7 @@ export class MySqlAdminCredentialActionRepository implements AdminCredentialActi
     }
 
     const assignedUsers = await this.countAssignedUsers(input.credentialId);
-    if (assignedUsers > 0) {
+    if (assignedUsers > 0 && credential.state !== "revoked") {
       return { deleted: false, reason: "credential_assigned_to_users" };
     }
 
