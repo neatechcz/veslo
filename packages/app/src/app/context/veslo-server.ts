@@ -179,26 +179,39 @@ export function createVesloServerStore(options: {
     });
   });
 
-  // Poll host info (Tauri only)
+  // Poll host info (Tauri only). Cadence: poll every 1s while the sidecar
+  // is still booting (cold-start typically 1–10s), then back off to 10s once
+  // it reports running. The fixed-interval form keeps perceived latency
+  // bounded — UI flips to "Connected" within ~1s of the server actually
+  // being ready, instead of waiting on an exponential backoff window.
   createEffect(() => {
     if (!isTauriRuntime()) return;
     if (!options.documentVisible()) return;
     let active = true;
+    let timeoutId: number | undefined;
+
+    const schedule = (delayMs: number) => {
+      if (!active) return;
+      timeoutId = window.setTimeout(run, delayMs);
+    };
 
     const run = async () => {
       try {
         const info = await vesloServerInfo();
-        if (active) setHostInfo(info);
+        if (!active) return;
+        setHostInfo(info);
+        schedule(info?.running ? 10_000 : 1_000);
       } catch {
-        if (active) setHostInfo(null);
+        if (!active) return;
+        setHostInfo(null);
+        schedule(1_000);
       }
     };
 
     run();
-    const interval = window.setInterval(run, 10_000);
     onCleanup(() => {
       active = false;
-      window.clearInterval(interval);
+      if (timeoutId) window.clearTimeout(timeoutId);
     });
   });
 

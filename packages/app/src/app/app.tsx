@@ -339,6 +339,7 @@ import {
   AI_ACCESS_ADMIN_MANAGED_MESSAGE,
   AI_ACCESS_LOADING_MESSAGE,
   AI_ACCESS_NOT_CONFIGURED_MESSAGE,
+  extractManagedApiKey,
   formatManagedAiAccessConfig,
   resolveManagedAiAccessBundleState,
   resolveManagedAiGatewayBaseUrl,
@@ -895,7 +896,7 @@ export default function App() {
     let active = true;
     let busy = false;
     let timeoutId: number | undefined;
-    let delayMs = 10_000;
+    let delayMs = 1_000;
 
     const scheduleNext = () => {
       if (!active) return;
@@ -913,9 +914,9 @@ export default function App() {
         delayMs =
           result.status === "connected" || result.status === "limited"
             ? 10_000
-            : Math.min(delayMs * 2, 60_000);
+            : Math.min(delayMs * 2, 5_000);
       } catch {
-        delayMs = Math.min(delayMs * 2, 60_000);
+        delayMs = Math.min(delayMs * 2, 5_000);
       } finally {
         if (!active) return;
         setVesloServerCheckedAt(Date.now());
@@ -935,21 +936,34 @@ export default function App() {
     if (!isTauriRuntime()) return;
     if (!documentVisible()) return;
     let active = true;
+    let timeoutId: number | undefined;
+
+    const schedule = (delayMs: number) => {
+      if (!active) return;
+      timeoutId = window.setTimeout(run, delayMs);
+    };
 
     const run = async () => {
       try {
         const info = await vesloServerInfo();
-        if (active) setVesloServerHostInfo(info);
+        if (!active) return;
+        setVesloServerHostInfo(info);
+        // Cold-start cadence: 1s while the sidecar is still booting, 10s
+        // once it reports running. Without the tight initial cadence the
+        // first running:false answer would pin the UI to "Unavailable" for
+        // a full 10s tick before the next probe.
+        schedule(info?.running ? 10_000 : 1_000);
       } catch {
-        if (active) setVesloServerHostInfo(null);
+        if (!active) return;
+        setVesloServerHostInfo(null);
+        schedule(1_000);
       }
     };
 
     run();
-    const interval = window.setInterval(run, 10_000);
     onCleanup(() => {
       active = false;
-      window.clearInterval(interval);
+      if (timeoutId) window.clearTimeout(timeoutId);
     });
   });
 
