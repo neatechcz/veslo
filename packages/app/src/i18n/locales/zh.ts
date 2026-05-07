@@ -99,6 +99,9 @@ export default {
   "workspace.rename_description": "更新侧边栏中显示的名称。",
   "workspace.rename_label": "工作区名称",
   "workspace.rename_placeholder": "设计团队工作区",
+  "workspace.busy_takeover_title": "另一个工作区正在运行",
+  "workspace.busy_takeover_message": "工作区 \"{name}\" 有正在进行的任务。发送此消息将停止它。继续吗？",
+  "workspace.busy_takeover_confirm": "发送并停止",
 
   // ==================== Feedback ====================
   "feedback.button": "反馈",

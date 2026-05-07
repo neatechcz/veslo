@@ -290,6 +290,62 @@ export function createWorkspaceStore(options: {
 
   const [authorizedDirs, setAuthorizedDirs] = createSignal<string[]>([]);
 
+  // Cross-workspace busy tracker: which workspaces have a running session.
+  // Survives workspace switch (sessionStatus is reset on switch) so we can
+  // warn the user before sendPrompt kills another workspace's engine.
+  const [workspaceBusy, setWorkspaceBusy] = createSignal<
+    Record<string, { sessionId: string; startedAt: number }>
+  >({});
+
+  function markWorkspaceBusy(workspaceId: string, sessionId: string) {
+    const id = workspaceId.trim();
+    if (!id || !sessionId) return;
+    setWorkspaceBusy((prev) => ({
+      ...prev,
+      [id]: { sessionId, startedAt: Date.now() },
+    }));
+  }
+
+  function clearWorkspaceBusy(workspaceId: string, sessionId?: string) {
+    const id = workspaceId.trim();
+    if (!id) return;
+    setWorkspaceBusy((prev) => {
+      const entry = prev[id];
+      if (!entry) return prev;
+      if (sessionId && entry.sessionId !== sessionId) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }
+
+  function clearWorkspaceBusyAllExcept(workspaceId: string) {
+    const keep = workspaceId.trim();
+    setWorkspaceBusy((prev) => {
+      const next: Record<string, { sessionId: string; startedAt: number }> = {};
+      if (keep && prev[keep]) next[keep] = prev[keep];
+      return next;
+    });
+  }
+
+  function isAnyOtherWorkspaceBusy(): { workspaceId: string; displayName: string } | null {
+    const activeId = activeWorkspaceId();
+    const busy = workspaceBusy();
+    for (const [wsId, entry] of Object.entries(busy)) {
+      if (wsId === activeId) continue;
+      if (!entry) continue;
+      const ws = workspaces().find((w) => w.id === wsId);
+      const displayName =
+        ws?.displayName?.trim() ||
+        ws?.vesloWorkspaceName?.trim() ||
+        ws?.name?.trim() ||
+        ws?.path ||
+        wsId;
+      return { workspaceId: wsId, displayName };
+    }
+    return null;
+  }
+
   const [workspaceConfig, setWorkspaceConfig] = createSignal<WorkspaceVesloConfig | null>(null);
   const [workspaceConfigLoaded, setWorkspaceConfigLoaded] = createSignal(false);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = createSignal(false);
@@ -2373,6 +2429,11 @@ export function createWorkspaceStore(options: {
     return await ensureEngineForWorkspaceSingleFlight(workspace.id || workspace.path, async () => {
       _wsLog("[workspace:ensureEngine] starting engine for browsing mode", { id, path: workspace.path });
 
+      // Any engine that was running for another workspace is about to be torn
+      // down by restartWorkspaceRuntime/startHost — clear stale busy entries
+      // so we don't show false "another workspace is running" warnings later.
+      clearWorkspaceBusyAllExcept(workspace.id);
+
       try {
         let ok = false;
         try {
@@ -2502,5 +2563,9 @@ export function createWorkspaceStore(options: {
     workspaceDebugEvents,
     clearWorkspaceDebugEvents,
     isPrivateWorkspacePath,
+    workspaceBusy,
+    markWorkspaceBusy,
+    clearWorkspaceBusy,
+    isAnyOtherWorkspaceBusy,
   };
 }

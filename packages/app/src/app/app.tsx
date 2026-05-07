@@ -103,6 +103,7 @@ import { shouldFallbackFromSessionRoute } from "./lib/session-route-selection-gu
 import { shouldSyncSidebarFromSessionStore } from "./lib/sidebar-session-sync-guard";
 import { partitionVesloUtilitySessions } from "./lib/veslo-utility-session";
 import ResetModal from "./components/reset-modal";
+import ConfirmModal from "./components/confirm-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
 import VesloLogo from "./components/veslo-logo";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
@@ -1097,6 +1098,26 @@ export default function App() {
   const [opencodeConnectStatus, setOpencodeConnectStatus] = createSignal<OpencodeConnectStatus | null>(null);
   const [booting, setBooting] = createSignal(true);
   const [engineReady, setEngineReady] = createSignal(true);
+
+  // VSLO-171: imperative confirm dialog used when sendPrompt is about to
+  // tear down an engine that is still running in another workspace.
+  type CrossWorkspaceConfirmState = {
+    workspaceName: string;
+    resolve: (proceed: boolean) => void;
+  } | null;
+  const [crossWorkspaceConfirm, setCrossWorkspaceConfirm] =
+    createSignal<CrossWorkspaceConfirmState>(null);
+  const confirmCrossWorkspaceTakeover = (workspaceName: string): Promise<boolean> =>
+    new Promise<boolean>((resolve) => {
+      setCrossWorkspaceConfirm({ workspaceName, resolve });
+    });
+  const resolveCrossWorkspaceConfirm = (proceed: boolean) => {
+    const state = crossWorkspaceConfirm();
+    if (!state) return;
+    setCrossWorkspaceConfirm(null);
+    state.resolve(proceed);
+  };
+
   const mountTime = Date.now();
   // Per-workspace deduplication of opencode.jsonc patches. Key is the Veslo
   // workspace id (server-backed branch) or absolute root path (local branch).
@@ -1372,6 +1393,12 @@ export default function App() {
         transcript,
         limit,
       );
+    },
+    onSessionBusyChange: (sessionId, busy) => {
+      const wsId = workspaceStore.activeWorkspaceId().trim();
+      if (!wsId) return;
+      if (busy) workspaceStore.markWorkspaceBusy(wsId, sessionId);
+      else workspaceStore.clearWorkspaceBusy(wsId, sessionId);
     },
   });
 
@@ -1963,6 +1990,20 @@ export default function App() {
 
     // In browsing mode, engine is not connected. Start it before sending.
     if (!engineReady()) {
+      // VSLO-171: warn before we tear down a still-running engine in another worker.
+      const otherBusy = workspaceStore.isAnyOtherWorkspaceBusy();
+      if (otherBusy) {
+        if (crossWorkspaceConfirm()) {
+          recordSendTrace("sendPrompt:blocked-confirm-already-open");
+          return false;
+        }
+        const proceed = await confirmCrossWorkspaceTakeover(otherBusy.displayName);
+        if (!proceed) {
+          recordSendTrace("sendPrompt:cancelled-other-workspace-busy", { other: otherBusy.workspaceId });
+          return false;
+        }
+      }
+
       setBusy(true);
       setBusyLabel("status.connecting");
       setBusyStartedAt(Date.now());
@@ -9296,6 +9337,20 @@ export default function App() {
         title={t("dashboard.edit_remote_workspace_title", currentLocale())}
         subtitle={t("dashboard.edit_remote_workspace_subtitle", currentLocale())}
         confirmLabel={t("dashboard.edit_remote_workspace_confirm", currentLocale())}
+      />
+
+      <ConfirmModal
+        open={!!crossWorkspaceConfirm()}
+        title={t("workspace.busy_takeover_title", currentLocale())}
+        message={t("workspace.busy_takeover_message", currentLocale()).replaceAll(
+          "{name}",
+          crossWorkspaceConfirm()?.workspaceName ?? "",
+        )}
+        confirmLabel={t("workspace.busy_takeover_confirm", currentLocale())}
+        cancelLabel={t("common.cancel", currentLocale())}
+        variant="danger"
+        onConfirm={() => resolveCrossWorkspaceConfirm(true)}
+        onCancel={() => resolveCrossWorkspaceConfirm(false)}
       />
     </>
   );

@@ -151,7 +151,13 @@ export function createSessionStore(options: {
   onHotReloadApplied?: () => void;
   onSessionLoadComplete?: () => void;
   loadOfflineTranscript?: (sessionID: string, limit: number) => Promise<VesloSessionTranscriptSnapshot | null>;
+  onSessionBusyChange?: (sessionId: string, busy: boolean) => void;
 }) {
+
+  const notifySessionBusy = (sessionId: string, status: string) => {
+    if (!options.onSessionBusyChange) return;
+    options.onSessionBusyChange(sessionId, status !== "idle");
+  };
 
   const sessionDebugEnabled = () => options.developerMode();
 
@@ -420,6 +426,7 @@ export function createSessionStore(options: {
     // tries to call a tool that isn't available.
     if (part.sessionID) {
       setStore("sessionStatus", part.sessionID, "idle");
+      notifySessionBusy(part.sessionID, "idle");
     }
 
     const record = part as any;
@@ -443,6 +450,7 @@ export function createSessionStore(options: {
     // Keep run state consistent with a surfaced execution failure.
     if (part.sessionID) {
       setStore("sessionStatus", part.sessionID, "idle");
+      notifySessionBusy(part.sessionID, "idle");
       appendSessionErrorTurn(part.sessionID, addOpencodeCacheHint(detected));
     }
     options.setError(addOpencodeCacheHint(detected));
@@ -1191,6 +1199,7 @@ export function createSessionStore(options: {
         if (sessionID && isKnownSessionId(sessionID)) {
           const normalized = normalizeSessionStatus(record.status);
           setStore("sessionStatus", sessionID, normalized);
+          notifySessionBusy(sessionID, normalized);
           if (sessionID === options.selectedSessionId() && normalized !== "idle") {
             options.setError(null);
           }
@@ -1204,6 +1213,7 @@ export function createSessionStore(options: {
         const sessionID = extractSessionId(record);
         if (sessionID && isKnownSessionId(sessionID)) {
           setStore("sessionStatus", sessionID, "idle");
+          notifySessionBusy(sessionID, "idle");
           const c = options.client();
           if (c) {
             try {
@@ -1227,6 +1237,7 @@ export function createSessionStore(options: {
         const sessionID = extractSessionId(record);
         if (sessionID) {
           setStore("sessionStatus", sessionID, "idle");
+          notifySessionBusy(sessionID, "idle");
         }
         const errorObj = record.error as Record<string, unknown> | undefined;
         if (errorObj) {
@@ -1544,8 +1555,10 @@ export function createSessionStore(options: {
           const fetched = unwrap(await c.session.get({ sessionID })) as Record<string, unknown>;
           const normalized = normalizeSessionStatus(fetched?.status);
           setStore("sessionStatus", sessionID, normalized);
+          notifySessionBusy(sessionID, normalized);
         } catch {
           setStore("sessionStatus", sessionID, "idle");
+          notifySessionBusy(sessionID, "idle");
           continue;
         }
 
