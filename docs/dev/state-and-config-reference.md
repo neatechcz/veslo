@@ -106,6 +106,26 @@ These control which Veslo server URL the app connects to and which bearer token 
 
 Invite-link and bundle-link parsing also lives in `veslo-server.ts`. Incoming query parameters can override the stored connection state for a launch flow.
 
+## Veslo Server Debug Log Pipeline
+
+The server can capture structured runtime logs (its own logger output, audit entries, and any batch posted by the desktop shell to `POST /debug-logs`) into a durable on-disk spool and forward them to a remote ingest endpoint such as Den. The pipeline lives in `packages/server/src/debug-log-pipeline.ts` and is wired into `startServer` so no caller has to manage spool or retry logic.
+
+Environment variables (all optional):
+
+- `VESLO_LOG_INGEST_URL` — remote ingest URL (e.g. Den `/v1/internal/debug-logs`). Required to enable upload.
+- `VESLO_LOG_INGEST_TOKEN` — bearer token sent as `Authorization: Bearer …`. Required to enable upload.
+- `VESLO_LOG_BATCH_MAX_EVENTS` — events per upload batch (default 200).
+- `VESLO_LOG_BATCH_MAX_BYTES` — bytes per upload batch (default 256 KB).
+- `VESLO_LOG_SPOOL_MAX_BYTES` — soft cap for the local spool (default 100 MB). When the spool reaches 90 % of this value the pipeline drops oldest events down to 70 %.
+- `VESLO_LOG_FLUSH_INTERVAL_MS` — uploader flush cadence (default 5000 ms).
+
+Pipeline behavior:
+
+- `enabled` is derived as `Boolean(ingestUrl && ingestToken)`. Without both vars the spool keeps collecting and retention prunes the oldest entries; nothing is sent over the network. Flip the two vars and the pipeline starts uploading on the next tick — no restart required for the upload to start, but the running process must be restarted to pick up new env values.
+- Spool location: `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/debug-log-spool/events/`. One JSON file per event today (file-per-event format owned by `debug-log-spool.ts`); switching to JSONL append-only is tracked separately as a follow-up.
+- Upload retry policy lives in `debug-log-uploader.ts` (3 attempts, 250 ms initial, 2× multiplier, capped at 2 s). Failed batches stay leased in the manifest and the next flush tick re-leases them after the lease TTL.
+- Process signals: `startServer` registers SIGINT/SIGTERM handlers that drain the pipeline (final flush) before exit.
+
 ## Managed-AI Routing and Accounting
 
 Managed-AI inference routing is configured separately from signed-in app identity. Desktop and orchestrator development defaults use the standalone AI Gateway at `https://veslo-ai-gateway-dev.onrender.com`; `VESLO_MANAGED_AI_BASE_URL` overrides it, with `VESLO_AI_GATEWAY_BASE_URL` retained as the legacy fallback.

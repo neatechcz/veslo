@@ -17,6 +17,8 @@ interface DebugLogSpool {
   append(events: DebugLogEvent[]): Promise<void>;
   nextBatch(limits: DebugLogBatchLimits): Promise<DebugLogBatch | null>;
   ackBatch(batchId: string): Promise<void>;
+  currentBytes(): Promise<number>;
+  dropOldest(maxCount: number): Promise<number>;
 }
 
 export function createDebugLogSpool(input: { dir: string; maxBytes: number }): DebugLogSpool {
@@ -149,6 +151,20 @@ export function createDebugLogSpool(input: { dir: string; maxBytes: number }): D
       await Promise.all(lease.files.map((fileName) => rm(join(eventDir, fileName), { force: true })));
       delete manifest.leases[batchId];
       await writeManifest(manifest);
+    },
+
+    async currentBytes() {
+      return currentSpoolBytes();
+    },
+
+    async dropOldest(maxCount) {
+      if (maxCount <= 0) return 0;
+      const manifest = await readManifest();
+      const leasedFiles = new Set(Object.values(manifest.leases).flatMap((lease) => lease.files));
+      const candidates = (await listEventFiles()).filter((fileName) => !leasedFiles.has(fileName));
+      const target = candidates.slice(0, maxCount);
+      await Promise.all(target.map((fileName) => rm(join(eventDir, fileName), { force: true })));
+      return target.length;
     },
   };
 }

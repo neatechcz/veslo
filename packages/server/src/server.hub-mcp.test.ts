@@ -57,6 +57,7 @@ async function startFixture(input: { denApiBase?: string } = {}) {
       batchMaxEvents: 200,
       batchMaxBytes: 256 * 1024,
       spoolMaxBytes: 100 * 1024 * 1024,
+      flushIntervalMs: 5000,
     },
     denApiBase: input.denApiBase,
   });

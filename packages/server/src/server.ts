@@ -1,5 +1,5 @@
 import { readFile, writeFile, rm, readdir, rename, stat } from "node:fs/promises";
-import { createHash, randomInt } from "node:crypto";
+import { createHash, randomInt, randomUUID } from "node:crypto";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type {
@@ -24,7 +24,9 @@ import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./sc
 import { provisionWorkspaceInternalSystem, resolveVesloAppDataDir } from "./internal-system.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
-import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
+import { recordAudit, readAuditEntries, readLastAudit, resolveVesloDataDir, setAuditDebugLogPipeline } from "./audit.js";
+import { createDebugLogPipeline, type DebugLogPipeline } from "./debug-log-pipeline.js";
+import { validateDebugLogBatch } from "./debug-log-events.js";
 import { ReloadEventStore } from "./events.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { opencodeConfigPath, vesloConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
@@ -336,7 +338,42 @@ export function startServer(config: ServerConfig) {
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
   const routes = createRoutes(config, approvals, tokens);
-  const logger = createServerLogger(config);
+  const baseLogger = createServerLogger(config);
+
+  const debugLogPipeline: DebugLogPipeline = createDebugLogPipeline({
+    config: config.debugLogs,
+    spoolDir: join(resolveVesloDataDir(), "debug-log-spool"),
+    logger: baseLogger,
+  });
+  setAuditDebugLogPipeline(debugLogPipeline);
+
+  const logger: typeof baseLogger = {
+    log(level, message, attributes) {
+      baseLogger.log(level, message, attributes);
+      void debugLogPipeline.append({
+        id: randomUUID(),
+        userId: "",
+        orgId: "",
+        workspaceId: "",
+        source: "veslo-server-self",
+        stream: "logger",
+        level,
+        timestamp: Date.now() * 1_000_000,
+        sequenceNo: 0,
+        payload: { message, attributes: attributes ?? {} },
+      }).catch(() => undefined);
+    },
+  };
+
+  const shutdownDebugLogPipeline = async () => {
+    setAuditDebugLogPipeline(null);
+    await debugLogPipeline.shutdown();
+  };
+  const handleSignal = () => {
+    void shutdownDebugLogPipeline();
+  };
+  process.once("SIGINT", handleSignal);
+  process.once("SIGTERM", handleSignal);
 
   const serverOptions: {
     hostname: string;
@@ -488,6 +525,29 @@ export function startServer(config: ServerConfig) {
           proxyBaseUrl = resolveOpenCodeRouterBaseUrl();
           const response = await proxyOpenCodeRouterRequest({ request, url });
           return finalize(response);
+        } catch (error) {
+          const apiError = error instanceof ApiError
+            ? error
+            : new ApiError(500, "internal_error", "Unexpected server error");
+          errorMessage = apiError.message;
+          return finalize(jsonResponse(formatError(apiError), apiError.status));
+        }
+      }
+
+      if (url.pathname === "/debug-logs" && request.method === "POST") {
+        authMode = "host";
+        try {
+          await requireHost(request, config, tokens);
+          const body = await request.json().catch(() => null);
+          const issues = validateDebugLogBatch(body);
+          if (issues.length > 0) {
+            return finalize(
+              jsonResponse({ code: "invalid_batch", message: "Invalid debug log batch", issues }, 400),
+            );
+          }
+          const batch = body as { batchId: string; events: Parameters<DebugLogPipeline["append"]>[0] };
+          await debugLogPipeline.append(batch.events);
+          return finalize(jsonResponse({ ok: true, acceptedBatchIds: [batch.batchId] }, 202));
         } catch (error) {
           const apiError = error instanceof ApiError
             ? error

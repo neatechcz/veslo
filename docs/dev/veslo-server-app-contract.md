@@ -81,6 +81,42 @@ Relevant route:
 
 Settings developer tools surface this audit data directly. If you add a server-side mutation, ensure it is visible in audit when appropriate.
 
+## Debug Log Ingest Contract
+
+Veslo server exposes a host-token-protected ingest route the desktop shell uses to forward captured stdout/stderr from sidecars (and its own tracing) into the durable log pipeline.
+
+Route:
+
+- `POST /debug-logs` — auth: host (`x-veslo-host-token`). Body: `{ batchId: string, events: DebugLogEvent[] }` validated by `validateDebugLogBatch` in `debug-log-events.ts` (1–1000 events per batch). Success returns `202 Accepted` with `{ ok: true, acceptedBatchIds: [batchId] }`. Validation failures return `400 invalid_batch` with a list of issues.
+
+Event shape (single source of truth: `packages/server/src/debug-log-events.ts`):
+
+```ts
+interface DebugLogEvent {
+  id: string;                                 // ≤ 128 chars
+  userId: string;
+  orgId: string;
+  workspaceId: string;
+  workerId?: string | null;
+  sessionId?: string | null;
+  runId?: string | null;
+  source: string;                             // ≤ 64 chars, e.g. "orchestrator", "tauri-shell"
+  stream: string;                             // ≤ 32 chars, e.g. "stdout", "stderr", "jsonl"
+  level?: "info" | "warn" | "error" | null;
+  timestamp: number;                          // UNIX nanos
+  sequenceNo: number;                         // non-negative integer
+  payload: Record<string, unknown>;
+}
+```
+
+Behavior the desktop shell relies on:
+
+- The endpoint accepts and persists batches even when remote ingest is disabled. With `VESLO_LOG_INGEST_URL`/`VESLO_LOG_INGEST_TOKEN` unset the server keeps events in a local spool; once both are set the uploader drains the spool on the next flush tick.
+- Server-originated events (`source: "veslo-server-self"` for logger output, `source: "audit"` for audit entries) join the same pipeline, so the desktop only needs to forward what it captures itself.
+- Workspace/session/run identifiers are forwarded as-is. Server does not enrich them — the remote ingest (Den) is expected to derive any missing context from host token metadata.
+
+See also `docs/dev/state-and-config-reference.md` for environment variables that control batch sizes, spool cap, and flush cadence.
+
 ## Reload Contract
 
 Reload is an explicit server capability, not just a local app trick.

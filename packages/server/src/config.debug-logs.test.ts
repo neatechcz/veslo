@@ -8,6 +8,7 @@ const ENV_KEYS = [
   "VESLO_LOG_BATCH_MAX_EVENTS",
   "VESLO_LOG_BATCH_MAX_BYTES",
   "VESLO_LOG_SPOOL_MAX_BYTES",
+  "VESLO_LOG_FLUSH_INTERVAL_MS",
 ] as const;
 
 const snapshot = new Map<string, string | undefined>();
@@ -30,6 +31,7 @@ describe("debug log config", () => {
     process.env.VESLO_LOG_BATCH_MAX_EVENTS = "250";
     process.env.VESLO_LOG_BATCH_MAX_BYTES = "262144";
     process.env.VESLO_LOG_SPOOL_MAX_BYTES = "104857600";
+    process.env.VESLO_LOG_FLUSH_INTERVAL_MS = "7500";
 
     const config = await resolveServerConfig(parseCliArgs([]));
 
@@ -39,5 +41,15 @@ describe("debug log config", () => {
     expect(config.debugLogs.batchMaxEvents).toBe(250);
     expect(config.debugLogs.batchMaxBytes).toBe(262144);
     expect(config.debugLogs.spoolMaxBytes).toBe(104857600);
+    expect(config.debugLogs.flushIntervalMs).toBe(7500);
+  });
+
+  test("resolveServerConfig defaults flushIntervalMs when env is missing", async () => {
+    for (const key of ENV_KEYS) snapshot.set(key, process.env[key]);
+    for (const key of ENV_KEYS) delete process.env[key];
+
+    const config = await resolveServerConfig(parseCliArgs([]));
+    expect(config.debugLogs.enabled).toBe(false);
+    expect(config.debugLogs.flushIntervalMs).toBe(5000);
   });
 });

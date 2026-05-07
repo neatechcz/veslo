@@ -49,6 +49,7 @@ export interface DebugLogConfig {
   batchMaxEvents: number;
   batchMaxBytes: number;
   spoolMaxBytes: number;
+  flushIntervalMs: number;
 }
 
 export interface ServerConfig {

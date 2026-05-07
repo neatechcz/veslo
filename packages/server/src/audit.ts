@@ -1,20 +1,28 @@
 import { dirname, join } from "node:path";
 import { appendFile, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
 import type { AuditEntry } from "./types.js";
+import type { DebugLogPipeline } from "./debug-log-pipeline.js";
 import { ensureDir, exists } from "./utils.js";
+
+let auditDebugPipeline: DebugLogPipeline | null = null;
+
+export function setAuditDebugLogPipeline(pipeline: DebugLogPipeline | null): void {
+  auditDebugPipeline = pipeline;
+}
+
+export function resolveVesloDataDir(): string {
+  const override = process.env.VESLO_DATA_DIR?.trim();
+  if (override) return expandHome(override);
+  return join(homedir(), ".veslo", "veslo-server");
+}
 
 function expandHome(value: string): string {
   if (value.startsWith("~/")) {
     return join(homedir(), value.slice(2));
   }
   return value;
-}
-
-function resolveVesloDataDir(): string {
-  const override = process.env.VESLO_DATA_DIR?.trim();
-  if (override) return expandHome(override);
-  return join(homedir(), ".veslo", "veslo-server");
 }
 
 export function auditLogPath(workspaceId: string): string {
@@ -39,12 +47,26 @@ export async function recordAudit(workspaceRoot: string, entry: AuditEntry): Pro
     const path = legacyAuditLogPath(workspaceRoot);
     await ensureDir(dirname(path));
     await appendFile(path, JSON.stringify(entry) + "\n", "utf8");
-    return;
+  } else {
+    const path = auditLogPath(workspaceId);
+    await ensureDir(dirname(path));
+    await appendFile(path, JSON.stringify(entry) + "\n", "utf8");
   }
 
-  const path = auditLogPath(workspaceId);
-  await ensureDir(dirname(path));
-  await appendFile(path, JSON.stringify(entry) + "\n", "utf8");
+  const pipeline = auditDebugPipeline;
+  if (pipeline) {
+    void pipeline.append({
+      id: randomUUID(),
+      userId: "",
+      orgId: "",
+      workspaceId: workspaceId ?? "",
+      source: "audit",
+      stream: "jsonl",
+      timestamp: Date.now() * 1_000_000,
+      sequenceNo: 0,
+      payload: entry as unknown as Record<string, unknown>,
+    }).catch(() => undefined);
+  }
 }
 
 export async function readLastAudit(workspaceRoot: string, workspaceId: string): Promise<AuditEntry | null> {

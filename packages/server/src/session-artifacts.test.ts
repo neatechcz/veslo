@@ -329,6 +329,7 @@ describe("latest-run artifact route", () => {
           batchMaxEvents: 200,
           batchMaxBytes: 256 * 1024,
           spoolMaxBytes: 100 * 1024 * 1024,
+          flushIntervalMs: 5000,
         },
       });
       runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });

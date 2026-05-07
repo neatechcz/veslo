@@ -58,6 +58,7 @@ const DEFAULT_LOG_REQUESTS = true;
 const DEFAULT_DEBUG_LOG_BATCH_MAX_EVENTS = 200;
 const DEFAULT_DEBUG_LOG_BATCH_MAX_BYTES = 256 * 1024;
 const DEFAULT_DEBUG_LOG_SPOOL_MAX_BYTES = 100 * 1024 * 1024;
+const DEFAULT_DEBUG_LOG_FLUSH_INTERVAL_MS = 5_000;
 
 function normalizeLogFormat(value: string | undefined): LogFormat | undefined {
   if (!value) return undefined;
@@ -329,6 +330,8 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     parsePositiveInteger(process.env.VESLO_LOG_BATCH_MAX_BYTES) ?? DEFAULT_DEBUG_LOG_BATCH_MAX_BYTES;
   const debugLogSpoolMaxBytes =
     parsePositiveInteger(process.env.VESLO_LOG_SPOOL_MAX_BYTES) ?? DEFAULT_DEBUG_LOG_SPOOL_MAX_BYTES;
+  const debugLogFlushIntervalMs =
+    parsePositiveInteger(process.env.VESLO_LOG_FLUSH_INTERVAL_MS) ?? DEFAULT_DEBUG_LOG_FLUSH_INTERVAL_MS;
   const debugLogs: DebugLogConfig = {
     enabled: Boolean(debugLogIngestUrl && debugLogIngestToken),
     ingestUrl: debugLogIngestUrl,
@@ -336,6 +339,7 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     batchMaxEvents: debugLogBatchMaxEvents,
     batchMaxBytes: debugLogBatchMaxBytes,
     spoolMaxBytes: debugLogSpoolMaxBytes,
+    flushIntervalMs: debugLogFlushIntervalMs,
   };
   const denApiBaseRaw = process.env.VESLO_DEN_API_BASE?.trim() || fileConfig.denApiBase?.trim() || "";
   const denApiBase = denApiBaseRaw ? denApiBaseRaw.replace(/\/+$/, "") : undefined;
