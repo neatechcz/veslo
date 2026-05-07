@@ -160,6 +160,7 @@ export function createDefaultProxyDependencies(
 export type UserCredentialDependencies = {
   sessionResolver: UserSessionResolver
   aiAccess: AiAccessRepository
+  autoAssignedCodexCredentialRotation: AutoAssignedCodexCredentialRotationService
 }
 
 export function createDefaultUserCredentialDependencies(
@@ -169,6 +170,12 @@ export function createDefaultUserCredentialDependencies(
   return {
     sessionResolver: overrides.sessionResolver ?? new DenUserSessionResolver(),
     aiAccess: runtime.aiAccess,
+    autoAssignedCodexCredentialRotation: createAutoAssignedCodexCredentialRotationService({
+      aiAccess: runtime.aiAccess,
+      credentials: runtime.credentials,
+      codexStatusProvider: runtime.codexStatusProvider,
+      audit: runtime.audit,
+    }),
   }
 }
 

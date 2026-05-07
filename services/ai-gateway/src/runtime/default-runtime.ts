@@ -120,9 +120,27 @@ export function createDefaultUserCredentialDependencies(
   runtime: RuntimeState,
   overrides: Partial<Pick<UserCredentialDependencies, "sessionResolver">> = {},
 ): UserCredentialDependencies {
+  const codexStatusProvider = new CachedCodexCredentialStatusProvider({
+    loadCredentialAuthJson: async (credentialId) => {
+      const record = await runtime.credentials.getCredentialRecordById(credentialId);
+      if (!record) {
+        return null;
+      }
+
+      const secret = await runtime.secrets.get(record.secretRef);
+      return secret.kind === "codex_auth_json" ? secret.authJson : null;
+    },
+  });
+
   return {
     sessionResolver: overrides.sessionResolver ?? new DenUserSessionResolver({ denApiBase: env.denApiBase }),
     aiAccess: runtime.aiAccess,
+    autoAssignedCodexCredentialRotation: createAutoAssignedCodexCredentialRotationService({
+      aiAccess: runtime.aiAccess,
+      credentials: runtime.credentials,
+      codexStatusProvider,
+      audit: runtime.audit,
+    }),
   };
 }
 

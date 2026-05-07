@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { createAutoAssignedCodexCredentialRotationService, type AutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js";
 import type { AlertRecord, AlertRepository } from "../alerts/repository.js";
 import type { AiAccessProvider, AiAccessRepository, UpsertUserAiAccessPolicyInput, UserAiAccessPolicyRecord } from "../access/repository.js";
 import { MySqlAiAccessRepository } from "../access/mysql-repository.js";
@@ -14,7 +15,7 @@ import { MySqlAuditRepository } from "../audit/mysql-repository.js";
 import { getPlatformCredentialOwnerUserId } from "../credentials/platform-owner.js";
 import { MySqlCredentialRepository } from "../credentials/mysql-repository.js";
 import { MySqlSecretStore } from "../credentials/mysql-secret-store.js";
-import type { AdminCredentialRecord, CreatePlatformCredentialInput, CredentialRecord as GatewayCredentialRecord } from "../credentials/repository.js";
+import type { AdminCredentialRecord, CreatePlatformCredentialInput, CredentialRecord as GatewayCredentialRecord, CredentialRepository } from "../credentials/repository.js";
 import type { SecretStore, StoredSecret } from "../credentials/secret-store.js";
 import type { AiGatewayDb } from "../db/index.js";
 import { createDb } from "../db/index.js";
@@ -255,6 +256,7 @@ type AdminReadModelDependencies = {
   credentialReadRepository?: AdminCredentialReadRepository;
   credentialActionRepository?: AdminCredentialActionRepository;
   credentialWriteRepository?: AdminCredentialWriteRepository;
+  credentialRotationService?: AutoAssignedCodexCredentialRotationService;
   sessionReadRepository?: AdminSessionReadRepository;
   aiAccessRepository?: AiAccessRepository;
   alertRepository?: AlertRepository;
@@ -810,6 +812,50 @@ export function createDefaultAdminService(
           },
         })
       : new UnavailableCodexCredentialStatusProvider());
+  let credentialRotationService: AutoAssignedCodexCredentialRotationService | null =
+    deps.credentialRotationService ?? null;
+
+  function getCredentialRotationService() {
+    if (!credentialRotationService) {
+      credentialRotationService = createAutoAssignedCodexCredentialRotationService({
+        aiAccess: getAiAccessRepository(),
+        credentials: getCredentialWriteRepository() as unknown as CredentialRepository,
+        codexStatusProvider,
+        audit: getAuditRepository(),
+        now,
+      });
+    }
+
+    return credentialRotationService;
+  }
+
+  async function repairCodexAccessForRead(
+    aiAccess: UserAiAccessPolicyRecord | null,
+    availableCredentials: AdminCredentialOption[] | undefined,
+  ): Promise<UserAiAccessPolicyRecord | null> {
+    if (!aiAccess || aiAccess.provider !== "codex_oauth") {
+      return aiAccess;
+    }
+
+    if (
+      aiAccess.credentialId &&
+      availableCredentials?.some((entry) =>
+        entry.provider === "codex_oauth" && entry.id === aiAccess.credentialId
+      )
+    ) {
+      return aiAccess;
+    }
+
+    try {
+      return await getCredentialRotationService().repairCodexAccess({
+        aiAccess,
+        reason: "admin_ai_access_read",
+      });
+    } catch (error) {
+      console.error("admin_codex_assignment_repair_failed", error);
+      return aiAccess;
+    }
+  }
 
   async function recordAuditEvent(input: {
     actorUserId?: string | null;
@@ -1125,9 +1171,15 @@ export function createDefaultAdminService(
       return updated;
     },
     async getUserAiAccess(_token, userId) {
+      const availableCredentials = await listAvailableAssignmentCredentials();
+      const aiAccess = await repairCodexAccessForRead(
+        await getAiAccessRepository().getUserAiAccess(userId),
+        availableCredentials,
+      );
+
       return {
-        aiAccess: toAdminUserAiAccessRecord(await getAiAccessRepository().getUserAiAccess(userId)),
-        availableCredentials: await listAvailableAssignmentCredentials(),
+        aiAccess: toAdminUserAiAccessRecord(aiAccess),
+        availableCredentials,
       };
     },
     async upsertUserAiAccess(_token, userId, input) {

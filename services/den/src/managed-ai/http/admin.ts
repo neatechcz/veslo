@@ -16,6 +16,10 @@ import type {
   AdminUsageResponse,
   AdminUserAiAccessRecord,
 } from "../../http/admin.js"
+import {
+  createAutoAssignedCodexCredentialRotationService,
+  type AutoAssignedCodexCredentialRotationService,
+} from "../access/auto-assignment-rotation.js"
 import type { AiAccessProvider, AiAccessRepository, UpsertUserAiAccessPolicyInput, UserAiAccessPolicyRecord } from "../access/repository.js"
 import type { AlertRecord, AlertRepository } from "../alerts/repository.js"
 import type { AuditRepository } from "../audit/repository.js"
@@ -69,6 +73,7 @@ type ManagedAiAdminRouteOptions = {
   leases: LeaseRepository
   secrets: SecretStore
   usage: UsageRepository
+  autoAssignedCodexCredentialRotation?: AutoAssignedCodexCredentialRotationService
   codexStatusProvider?: CodexCredentialStatusProvider | null
   now?: () => Date
 }
@@ -117,6 +122,59 @@ export function createManagedAiAdminRouteDeps(
     deps.codexStatusProvider === null
       ? null
       : deps.codexStatusProvider ?? createDefaultCodexStatusProvider(deps.credentials, deps.secrets)
+  let credentialRotationService: AutoAssignedCodexCredentialRotationService | null =
+    deps.autoAssignedCodexCredentialRotation ?? null
+
+  function getCredentialRotationService() {
+    if (!codexStatusProvider) {
+      return null
+    }
+
+    if (!credentialRotationService) {
+      credentialRotationService = createAutoAssignedCodexCredentialRotationService({
+        aiAccess: deps.aiAccess,
+        credentials: deps.credentials,
+        codexStatusProvider,
+        audit: deps.audit,
+        now,
+      })
+    }
+
+    return credentialRotationService
+  }
+
+  async function repairCodexAccessForRead(
+    aiAccess: UserAiAccessPolicyRecord | null,
+    availableCredentials: AdminCredentialOption[] | undefined,
+  ): Promise<UserAiAccessPolicyRecord | null> {
+    if (!aiAccess || aiAccess.provider !== "codex_oauth") {
+      return aiAccess
+    }
+
+    if (
+      aiAccess.credentialId &&
+      availableCredentials?.some((entry) =>
+        entry.provider === "codex_oauth" && entry.id === aiAccess.credentialId
+      )
+    ) {
+      return aiAccess
+    }
+
+    const rotationService = getCredentialRotationService()
+    if (!rotationService) {
+      return aiAccess
+    }
+
+    try {
+      return await rotationService.repairCodexAccess({
+        aiAccess,
+        reason: "admin_ai_access_read",
+      })
+    } catch (error) {
+      console.error("managed_ai_admin_codex_assignment_repair_failed", error)
+      return aiAccess
+    }
+  }
 
   async function recordAuditEvent(input: {
     actorUserId?: string | null
@@ -352,9 +410,15 @@ export function createManagedAiAdminRouteDeps(
       }
 
       try {
+        const availableCredentials = await listAvailableAssignmentCredentials()
+        const aiAccess = await repairCodexAccessForRead(
+          await deps.aiAccess.getUserAiAccess(userId),
+          availableCredentials,
+        )
+
         return {
-          aiAccess: toAdminUserAiAccessRecord(await deps.aiAccess.getUserAiAccess(userId)),
-          availableCredentials: await listAvailableAssignmentCredentials(),
+          aiAccess: toAdminUserAiAccessRecord(aiAccess),
+          availableCredentials,
         }
       } catch (error) {
         return handleRouteError(res, error, "ai_access_lookup_failed")

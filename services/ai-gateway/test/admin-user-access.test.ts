@@ -347,6 +347,185 @@ test("GET /admin/api/users/:userId/ai-access only returns eligible codex credent
   }
 });
 
+test("GET /admin/api/users/:userId/ai-access repairs admin-assigned Codex credentials before returning", async () => {
+  const upserts: unknown[] = [];
+  const app = createApp({
+    admin: createDefaultAdminService("http://den.example.test", {
+      denClient: {
+        async startBrowserAuth() {
+          throw new Error("unused");
+        },
+        async exchangeBrowserAuth() {
+          throw new Error("unused");
+        },
+        async getSession() {
+          return {
+            user: {
+              id: "user_admin",
+              email: "admin@example.test",
+              emailVerified: true,
+              name: "Admin",
+            },
+            platformAdmin: true,
+            activeOrgId: null,
+            organizations: [],
+          };
+        },
+        async listUsers() {
+          return [];
+        },
+        async createUser() {
+          throw new Error("unused");
+        },
+        async updateUser() {
+          throw new Error("unused");
+        },
+        async disableUser() {
+          throw new Error("unused");
+        },
+        async enableUser() {
+          throw new Error("unused");
+        },
+        async deleteUser() {
+          return;
+        },
+      },
+      aiAccessRepository: {
+        async getUserAiAccess(userId: string) {
+          return {
+            id: "ai_access_user_123",
+            userId,
+            enabled: true,
+            provider: "codex_oauth",
+            credentialId: "cred_old",
+            defaultModel: "gpt-5.5",
+            allowedModels: ["gpt-5.5"],
+            assignmentOrigin: "admin_assigned",
+            createdAt: new Date("2026-05-07T08:00:00.000Z"),
+            updatedAt: new Date("2026-05-07T08:00:00.000Z"),
+          };
+        },
+        async upsertUserAiAccess(input) {
+          upserts.push(input);
+          return {
+            id: "ai_access_user_123",
+            userId: input.userId,
+            enabled: input.enabled,
+            provider: input.provider,
+            credentialId: input.credentialId,
+            defaultModel: input.defaultModel,
+            allowedModels: input.allowedModels,
+            assignmentOrigin: input.assignmentOrigin,
+            createdAt: new Date("2026-05-07T08:00:00.000Z"),
+            updatedAt: new Date("2026-05-07T09:00:00.000Z"),
+          };
+        },
+      },
+      credentialReadRepository: {
+        async listAdminCredentials() {
+          return [
+            createCredential("cred_old", {
+              provider: "codex_oauth",
+              state: "unhealthy",
+              activeLeases: 0,
+            }),
+            createCredential("cred_new", {
+              provider: "codex_oauth",
+              state: "healthy",
+              activeLeases: 0,
+            }),
+          ];
+        },
+      },
+      credentialWriteRepository: {
+        async getCredentialRecordById(credentialId: string) {
+          if (credentialId === "cred_old") {
+            return createCredential("cred_old", {
+              provider: "codex_oauth",
+              state: "unhealthy",
+              activeLeases: 0,
+            });
+          }
+          if (credentialId === "cred_new") {
+            return createCredential("cred_new", {
+              provider: "codex_oauth",
+              state: "healthy",
+              activeLeases: 0,
+            });
+          }
+          return null;
+        },
+        async listAdminCredentials() {
+          return [
+            createCredential("cred_old", {
+              provider: "codex_oauth",
+              state: "unhealthy",
+              activeLeases: 0,
+            }),
+            createCredential("cred_new", {
+              provider: "codex_oauth",
+              state: "healthy",
+              activeLeases: 0,
+            }),
+          ];
+        },
+      } as any,
+      codexStatusProvider: {
+        async getStatus(input) {
+          return {
+            available: input.credentialId === "cred_new",
+            source: input.credentialId === "cred_new" ? "codex_exec_no_rate_limits" : "unavailable",
+            label: input.credentialId === "cred_new" ? "Codex OK, limits unknown" : "Codex unavailable",
+            detail: input.credentialId === "cred_new" ? null : "invalid_grant",
+            checkedAt: "2026-05-07T09:00:00.000Z",
+            limits: input.credentialId === "cred_new"
+              ? {
+                  fiveHour: null,
+                  weekly: null,
+                }
+              : undefined,
+          };
+        },
+      },
+      auditRepository: {
+        async recordEvent() {
+          return;
+        },
+        async listEvents() {
+          return [];
+        },
+      },
+    }),
+  });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+      headers: ADMIN_AUTHORIZATION,
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.aiAccess.credentialId, "cred_new");
+    assert.deepEqual(upserts, [
+      {
+        userId: "user_123",
+        enabled: true,
+        provider: "codex_oauth",
+        credentialId: "cred_new",
+        defaultModel: "gpt-5.5",
+        allowedModels: ["gpt-5.5"],
+        assignmentOrigin: "admin_assigned",
+      },
+    ]);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
 test("PUT /admin/api/users/:userId/ai-access rejects ineligible codex credentials", async () => {
   let upsertCalled = false;
   const app = createApp({
