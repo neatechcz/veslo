@@ -22,6 +22,15 @@ export type OpenAiCompatibleTransportInput = {
   body: unknown;
 };
 
+export type OpenAiCompatibleModelsTransportInput = {
+  apiKey: string;
+  baseUrl: string;
+};
+
+export type OpenAiCompatibleModelsTransportResponse = {
+  models: string[];
+};
+
 export type ProviderTransportResponse = {
   status: number;
   body: unknown;
@@ -66,6 +75,7 @@ export interface CodexOAuthProviderTransport {
 
 export interface OpenAiCompatibleProviderTransport {
   chatCompletions(input: OpenAiCompatibleTransportInput): Promise<ProviderTransportResponse>;
+  listModels?(input: OpenAiCompatibleModelsTransportInput): Promise<OpenAiCompatibleModelsTransportResponse>;
 }
 
 export function headersToRecord(headers: Headers): Record<string, string> {

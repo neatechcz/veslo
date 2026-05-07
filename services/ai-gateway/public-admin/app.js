@@ -31,6 +31,7 @@ const state = {
   userMode: "edit",
   userAiAccessByUserId: {},
   userAiAccessAvailableCredentialsByUserId: {},
+  userAiAccessModelsByCredentialId: {},
 };
 
 const els = {
@@ -87,6 +88,7 @@ const els = {
   userAiAccessProvider: document.getElementById("user-ai-access-provider"),
   userAiAccessCredential: document.getElementById("user-ai-access-credential"),
   userAiAccessDefaultModel: document.getElementById("user-ai-access-default-model"),
+  userAiAccessModelOptions: document.getElementById("user-ai-access-model-options"),
   userAiAccessAllowedModels: document.getElementById("user-ai-access-allowed-models"),
   userAiAccessStatus: document.getElementById("user-ai-access-status"),
   userDisableButton: document.getElementById("user-disable-button"),
@@ -299,6 +301,40 @@ function normalizeAvailableCredentials(payload) {
 function currentUserAiAccessAvailableCredentials(userId, provider = "") {
   return normalizeAvailableCredentials(state.userAiAccessAvailableCredentialsByUserId[userId] || [])
     .filter((entry) => !provider || entry.provider === provider);
+}
+
+function selectedAiAccessCredentialId() {
+  return els.userAiAccessCredential.value.trim();
+}
+
+function setAiAccessModelOptions(models) {
+  const normalized = Array.isArray(models)
+    ? Array.from(new Set(models.map((entry) => typeof entry === "string" ? entry.trim() : "").filter(Boolean)))
+    : [];
+  els.userAiAccessModelOptions.innerHTML = normalized
+    .map((model) => `<option value="${escapeHtml(model)}"></option>`)
+    .join("");
+}
+
+async function loadAiAccessModelsForCredential(credentialId) {
+  if (!credentialId) {
+    setAiAccessModelOptions([]);
+    return [];
+  }
+
+  if (Array.isArray(state.userAiAccessModelsByCredentialId[credentialId])) {
+    const cached = state.userAiAccessModelsByCredentialId[credentialId];
+    setAiAccessModelOptions(cached);
+    return cached;
+  }
+
+  const payload = await fetchJson(`/credentials/${encodeURIComponent(credentialId)}/models`);
+  const models = Array.isArray(payload?.models)
+    ? payload.models.filter((entry) => typeof entry === "string").map((entry) => entry.trim()).filter(Boolean)
+    : [];
+  state.userAiAccessModelsByCredentialId[credentialId] = models;
+  setAiAccessModelOptions(models);
+  return models;
 }
 
 function formatAllowedModels(models) {
@@ -1180,6 +1216,11 @@ function populateUserEditor(user) {
   els.userAiAccessAllowedModels.value = formatAllowedModels(aiAccess.allowedModels);
   els.userAiAccessAllowedModels.disabled = isCreate || !user;
   updateAiAccessStatusText(user, aiAccess);
+  if (!isCreate && aiAccess.provider === "openai_compatible" && aiAccess.credentialId) {
+    void refreshSelectedAiAccessModels();
+  } else {
+    setAiAccessModelOptions([]);
+  }
 }
 
 function renderUsers() {
@@ -1276,6 +1317,27 @@ async function refreshSelectedUserAiAccessOptions() {
   const user = currentUser();
   if (user) {
     populateUserEditor(user);
+  }
+}
+
+async function refreshSelectedAiAccessModels() {
+  const selectedProvider = els.userAiAccessProvider.value || "";
+  const credentialId = selectedAiAccessCredentialId();
+  if (selectedProvider !== "openai_compatible" || !credentialId) {
+    setAiAccessModelOptions([]);
+    return;
+  }
+
+  els.userAiAccessStatus.textContent = "Loading models from the assigned credential...";
+  try {
+    const models = await loadAiAccessModelsForCredential(credentialId);
+    els.userAiAccessStatus.textContent = models.length > 0
+      ? `Loaded ${models.length} models from the assigned credential.`
+      : "No models were returned by this credential. Enter a model manually.";
+  } catch (error) {
+    setAiAccessModelOptions([]);
+    els.userAiAccessStatus.textContent =
+      `Unable to load models: ${error instanceof Error ? error.message : "unknown_error"}. Enter a model manually.`;
   }
 }
 
@@ -1664,6 +1726,10 @@ function bindActions() {
     const aiAccess = user?.id ? currentUserAiAccess(user.id) : normalizeAiAccess(null);
     renderAiAccessCredentialOptions(user, aiAccess);
     updateAiAccessStatusText(user, aiAccess);
+    void refreshSelectedAiAccessModels();
+  });
+  els.userAiAccessCredential.addEventListener("change", () => {
+    void refreshSelectedAiAccessModels();
   });
   els.auditSearch.addEventListener("input", renderAudit);
   els.auditActorFilter.addEventListener("change", renderAudit);

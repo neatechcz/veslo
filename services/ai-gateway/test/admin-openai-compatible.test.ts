@@ -235,3 +235,74 @@ test("GET /admin/api/users/:userId/ai-access returns assignable openai-compatibl
     await once(server, "close");
   }
 });
+
+test("GET /admin/api/credentials/:credentialId/models discovers openai-compatible models", async () => {
+  const modelCalls: unknown[] = [];
+  const app = createApp({
+    admin: createDefaultAdminService("http://den.example.test", {
+      denClient: createDenClient() as never,
+      credentialSecretLookupRepository: {
+        async getCredentialRecordById(credentialId: string) {
+          assert.equal(credentialId, "cred_custom_1");
+          return {
+            id: "cred_custom_1",
+            provider: "openai_compatible",
+            state: "healthy",
+            secretRef: "secret_custom_1",
+          };
+        },
+      },
+      secretStore: {
+        async put() {
+          throw new Error("unused");
+        },
+        async get(secretRef: string) {
+          assert.equal(secretRef, "secret_custom_1");
+          return {
+            kind: "openai_compatible_api_key",
+            apiKey: "sk-compatible",
+            baseUrl: "https://custom.example.test/v1",
+          };
+        },
+        async replace() {
+          throw new Error("unused");
+        },
+      },
+      openAiCompatibleTransport: {
+        async chatCompletions() {
+          throw new Error("unused");
+        },
+        async listModels(input) {
+          modelCalls.push(input);
+          return {
+            models: ["qwen3.6", "qwen3.6:free"],
+          };
+        },
+      },
+    }),
+  });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/credentials/cred_custom_1/models`, {
+      headers: ADMIN_AUTHORIZATION,
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      credentialId: "cred_custom_1",
+      models: ["qwen3.6", "qwen3.6:free"],
+    });
+    assert.deepEqual(modelCalls, [
+      {
+        apiKey: "sk-compatible",
+        baseUrl: "https://custom.example.test/v1",
+      },
+    ]);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});

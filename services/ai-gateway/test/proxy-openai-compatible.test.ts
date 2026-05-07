@@ -290,3 +290,45 @@ test("openai-compatible proxy sanitizes upstream error bodies", async () => {
     await once(server, "close");
   }
 });
+
+test("openai-compatible proxy returns sanitized transport diagnostics for network failures", async () => {
+  const app = createProxyApp({
+    transport: {
+      async chatCompletions() {
+        throw new ProviderTransportError("fetch failed for https://secret-upstream.example.test/v1", {
+          statusCode: 502,
+          code: "openai_compatible_request_failed",
+        });
+      },
+    },
+  });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/providers/openai_compatible/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        ...GATEWAY_AUTH_HEADER,
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_custom_1",
+      },
+      body: JSON.stringify({
+        model: "custom-model",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+
+    const responseText = await response.text();
+    assert.equal(response.status, 502);
+    assert.deepEqual(JSON.parse(responseText), {
+      error: "openai_compatible_request_failed",
+      reason: "upstream_fetch_failed",
+    });
+    assert.equal(responseText.includes("secret-upstream"), false);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});

@@ -42,6 +42,7 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 - The DEN admin `Credentials` page is the place to connect/reconnect OpenAI and create/rotate shared Anthropic, Codex OAuth inference, and OpenAI-compatible credentials.
 - OpenAI-compatible credentials require a display name, custom HTTP(S) `/v1` base URL, and bearer API key. Local `http://localhost`, `http://127.0.0.1`, and `http://[::1]` URLs are allowed for development; hosted/non-loopback URLs must use HTTPS.
 - OpenAI-compatible user access requires assigning a healthy `openai_compatible` credential. DEN does not automatically pick from a mixed custom-provider pool because the assigned credential determines the upstream base URL.
+- When an OpenAI-compatible credential is selected in the user AI access editor, the admin UI asks that credential's `/models` endpoint for available model IDs and uses the result as suggestions for the default model field. Admins can still type a model manually when discovery fails or the upstream returns an empty list.
 - The hosted admin `Usage` page shows recorded usage for every credential, including credentials with zero recorded traffic.
 - The hosted admin `Usage` and `Credentials` pages show best-effort Codex upstream status for inference credentials. When the Codex probe returns parseable 5h and weekly windows, both pages show those windows and reset times. When the probe succeeds but no windows are parsed, both pages show `Codex OK, limits unknown` without making the credential ineligible. Authentication failures such as `invalid_grant`, reused refresh tokens, or 401 responses remain visible as unavailable upstream status and require reconnecting or rotating the credential.
 
@@ -56,6 +57,8 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 - Session ownership and usage attribution still stay tied to the real signed-in user.
 
 OpenAI-compatible credentials store their upstream base URL and API key in the encrypted managed-AI secret store as platform-owned connection material. End users only receive the read-only provider/model assignment and never receive the upstream API key or base URL.
+
+OpenAI-compatible proxy transport failures are reported separately from upstream HTTP error responses. A network, DNS, TLS, or invalid base-URL failure returns `openai_compatible_request_failed` with `reason: upstream_fetch_failed`; an upstream HTTP response failure returns `openai_compatible_upstream_error` without exposing upstream response bodies.
 
 ## Manual setup
 
@@ -113,6 +116,7 @@ Use these commands when verifying the admin-managed flow locally or against the 
 ## Main endpoints
 
 - Admin read/update:
+  - `GET /admin/api/credentials/:credentialId/models`
   - `GET /admin/api/users/:userId/ai-access`
   - `PUT /admin/api/users/:userId/ai-access`
 - User self-read:

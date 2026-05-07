@@ -82,6 +82,13 @@ export function createOpenAiCompatibleProxyRouter(
       applyUpstreamResponse(res, upstreamResponse);
     } catch (error) {
       if (error instanceof ProviderTransportError) {
+        if (error.code === "openai_compatible_request_failed") {
+          res.status(error.statusCode ?? 502).json({
+            error: "openai_compatible_request_failed",
+            reason: "upstream_fetch_failed",
+          });
+          return;
+        }
         res.status(error.statusCode ?? 502).json({ error: "openai_compatible_upstream_error" });
         return;
       }
