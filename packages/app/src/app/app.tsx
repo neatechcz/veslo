@@ -1098,7 +1098,12 @@ export default function App() {
   const [booting, setBooting] = createSignal(true);
   const [engineReady, setEngineReady] = createSignal(true);
   const mountTime = Date.now();
-  const [lastKnownConfigSnapshot, setLastKnownConfigSnapshot] = createSignal("");
+  // Per-workspace deduplication of opencode.jsonc patches. Key is the Veslo
+  // workspace id (server-backed branch) or absolute root path (local branch).
+  // A global signal would skip the patch for non-active workspaces after the
+  // first one was patched in this session — see VSLO retry-loop bug after
+  // server token rotation.
+  const lastKnownConfigSnapshotByWs = new Map<string, string>();
   // Tracks which Veslo server token we already triggered a managed-AI engine
   // reload for. The Veslo server mints a fresh client token on every restart,
   // so opencode.jsonc files in workspaces that were not visited since the
@@ -2851,6 +2856,7 @@ export default function App() {
   createEffect(() => {
     managedAiAccess();
     setLastReloadedForServerToken("");
+    lastKnownConfigSnapshotByWs.clear();
   });
   const managedAiBootstrapBusy = createMemo(
     () => managedAiAccessBusy() || managedAiBootstrapPendingCount() > 0,
@@ -7696,7 +7702,7 @@ export default function App() {
       }
 
       if (workspaceType === "local" && workspaceRoot) {
-        setLastKnownConfigSnapshot(getConfigSnapshot(configFileContent));
+        lastKnownConfigSnapshotByWs.set(workspaceRoot, getConfigSnapshot(configFileContent));
       }
 
       if (!cancelled) {
@@ -7773,17 +7779,26 @@ export default function App() {
               },
             );
             const desiredSnapshot = getConfigSnapshot(content);
-            if (lastKnownConfigSnapshot() === desiredSnapshot) {
+            const wsKey = vesloWorkspaceId;
+            // Self-heal: if the file on disk holds an apiKey that differs from
+            // the current server client token, the cached snapshot is stale —
+            // drop it so the patch below runs even when the desired snapshot
+            // matches the cache from a previous workspace.
+            const currentApiKey = extractManagedApiKey(currentOpencodeContent);
+            if (currentApiKey && currentApiKey !== providerRoutingTarget.serverClientToken) {
+              lastKnownConfigSnapshotByWs.delete(wsKey);
+            }
+            if (lastKnownConfigSnapshotByWs.get(wsKey) === desiredSnapshot) {
               return;
             }
             if (managedConfigContentsMatchForServerPatch(currentOpencodeContent, content)) {
-              setLastKnownConfigSnapshot(desiredSnapshot);
+              lastKnownConfigSnapshotByWs.set(wsKey, desiredSnapshot);
               return;
             }
             await vesloClient.patchConfig(vesloWorkspaceId, {
               opencode: JSON.parse(content) as Record<string, unknown>,
             });
-            setLastKnownConfigSnapshot(desiredSnapshot);
+            lastKnownConfigSnapshotByWs.set(wsKey, desiredSnapshot);
             markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
             // Engine needs to be reloaded so it picks up the new managed-AI
             // tokens — but only ONCE per Veslo server token. The engine is
@@ -7848,7 +7863,7 @@ export default function App() {
           if (!result.ok) {
             throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
           }
-          setLastKnownConfigSnapshot(getConfigSnapshot(content));
+          lastKnownConfigSnapshotByWs.set(root, getConfigSnapshot(content));
           markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
           // Reload engine only once per Veslo server token — see comment above.
           if (
@@ -7890,7 +7905,7 @@ export default function App() {
         if (!result.ok) {
           throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
         }
-        setLastKnownConfigSnapshot(getConfigSnapshot(content));
+        lastKnownConfigSnapshotByWs.set(root, getConfigSnapshot(content));
         markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
       } catch (error) {
         if (cancelled) return;

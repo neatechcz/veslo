@@ -312,6 +312,27 @@ export function resolveManagedAiAccessBundleState(input: {
   };
 }
 
+export function extractManagedApiKey(content: string | null | undefined): string | null {
+  const trimmed = content?.trim() ?? "";
+  if (!trimmed) return null;
+  try {
+    const parsed = parse(trimmed);
+    if (!parsed || typeof parsed !== "object") return null;
+    const provider = (parsed as Record<string, unknown>).provider;
+    if (!provider || typeof provider !== "object") return null;
+    for (const entry of Object.values(provider as Record<string, unknown>)) {
+      if (!entry || typeof entry !== "object") continue;
+      const options = (entry as Record<string, unknown>).options;
+      if (!options || typeof options !== "object") continue;
+      const apiKey = (options as Record<string, unknown>).apiKey;
+      if (typeof apiKey === "string" && apiKey.trim()) return apiKey;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function formatManagedAiAccessConfig(
   content: string | null | undefined,
   input: {
