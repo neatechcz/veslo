@@ -455,7 +455,7 @@ test("settings tab labels include archived and keep developer tabs unavailable",
   assert.doesNotMatch(settingsTabLabelSource, /model:\s*"settings\.model"/);
   assert.match(
     settingsTabLabelSource,
-    /const visibleSettingsTabs: SettingsTab\[] = \["general", "archived"\]/,
+    /const visibleSettingsTabs: SettingsTab\[] = \["general", "extensions", "archived"\]/,
   );
 
   const enLocale = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");

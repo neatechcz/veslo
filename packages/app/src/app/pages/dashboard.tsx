@@ -1709,6 +1709,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   connectNotion={props.connectNotion}
                   sessionArchives={props.sessionArchives}
                   onUnarchiveSession={props.onUnarchiveArchivedSession}
+                  workspaces={props.workspaces}
                 />
 
             </Match>

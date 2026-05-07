@@ -567,6 +567,7 @@ export default {
   "settings.sidecar_unsupported": "Sidecar je dostupný ve Windows",
   "settings.sidecar_unavailable_detail": "Sidecar je přibalený, když je k dispozici.",
   "settings.general": "Obecné",
+  "settings.extensions": "Skilly a MCP",
   "settings.archived": "Archivované",
   "settings.archived_sessions_label": "Archivované relace",
   "settings.archived_sessions_description": "Procházejte archivované relace napříč všemi workspace a tady je odarchivujte.",

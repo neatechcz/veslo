@@ -20,7 +20,9 @@ import type {
   AppBuildInfo,
   OpenCodeRouterInfo,
   SandboxDebugProbeResult,
+  WorkspaceInfo,
 } from "../lib/tauri";
+import ExtensionsOverview from "./extensions-overview";
 import {
   appBuildInfo,
   engineRestart,
@@ -144,6 +146,7 @@ export type SettingsViewProps = {
   engineDoctorVersion: string | null;
   sessionArchives?: SessionArchiveItem[];
   onUnarchiveSession?: (sessionId: string) => Promise<void> | void;
+  workspaces: WorkspaceInfo[];
 };
 
 export default function SettingsView(props: SettingsViewProps) {
@@ -534,7 +537,7 @@ export default function SettingsView(props: SettingsViewProps) {
   const startupLabel = createMemo(() => "Connect to cloud server");
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "archived"];
+    const tabs: SettingsTab[] = ["general", "extensions", "archived"];
     return tabs;
   });
 
@@ -1069,6 +1072,10 @@ export default function SettingsView(props: SettingsViewProps) {
           </div>
         </Match>
 
+        <Match when={activeTab() === "extensions"}>
+          <ExtensionsOverview workspaces={props.workspaces} />
+        </Match>
+
         <Match when={activeTab() === "archived"}>
           <div class="space-y-6">
             <Show when={props.sessionArchives !== undefined}>
@@ -1078,6 +1085,9 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div class="flex items-center gap-2">
                       <RefreshCcw size={16} class="text-gray-11" />
                       <div class="text-sm font-medium text-gray-12">{translate("settings.archived_sessions_label")}</div>
+                      <span class="rounded-full border border-gray-6/60 bg-gray-3/40 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-10">
+                        This workspace
+                      </span>
                     </div>
                     <div class="text-xs text-gray-9 mt-1">{translate("settings.archived_sessions_description")}</div>
                   </div>
