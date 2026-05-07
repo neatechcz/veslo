@@ -87,6 +87,8 @@ When managed AI is enabled, signed-in app identity and desktop handoff can come 
 
 New DEN sign-ups automatically receive a healthy eligible Codex credential with default model `gpt-5.5` when one is available. The assignment is applied during the auth sign-up hook, marked `auto_assigned`, and skipped without blocking account creation when no eligible credential exists.
 
+Standalone AI Gateway admin exposes model choices for assignments through the credential model-list endpoint. OpenAI-compatible credentials use live upstream `/models` discovery. Codex OAuth credentials use the gateway-owned Codex model catalog, with `gpt-5.5` as the default, so admins can select from known Codex model ids without relying on experimental Codex model-discovery internals.
+
 In desktop local workspaces, the app can read managed-AI access policy from DEN or standalone AI Gateway, but generated OpenCode provider config must still route through the active local Veslo server. Remote DEN/Veslo URLs are not valid provider `baseURL` targets for local-first desktop execution.
 
 For `codex_oauth`, local OpenCode remains the agent runtime. OpenCode sends tool-capable OpenAI-compatible chat-completions requests through the local Veslo server to the managed gateway; the gateway resolves the server-side Codex OAuth credential, calls the ChatGPT Codex Responses endpoint, translates the Responses stream back to OpenAI-compatible JSON/SSE, and returns it without running `codex exec` for local desktop sessions. Codex OAuth secrets stay server-side, while local config contains only Veslo-scoped proxy tokens.
@@ -101,7 +103,7 @@ OpenAI-compatible custom providers are admin-managed. The desktop app receives p
 
 Codex limit exhaustion is temporary ineligibility, not a credential health failure. When every automatically selectable Codex credential is exhausted, the request fails explicitly with `all_codex_credentials_exhausted`. Permanent OAuth, token refresh, or auth-material failures are credential health failures when the credential lifecycle marks them that way; provider/runtime auth failures during selection or routing can also make a credential ineligible or rebindable without implying that every upstream invalid-auth response changes credential health.
 
-An assigned Codex credential is repaired on the next Codex request when it is exhausted, unavailable, missing, or invalid for the assigned provider. The managed-AI service can update either an `auto_assigned` or `admin_assigned` Codex policy to another healthy eligible Codex credential before routing, preserving the original assignment origin. If no replacement exists, the request fails explicitly and the stored assignment is kept. OpenAI-compatible credentials remain hard constraints because the assigned credential determines the upstream base URL and API key.
+An assigned Codex credential is repaired on the next Codex request when it is exhausted, unavailable, missing, or invalid for the assigned provider. The managed-AI service can update either an `auto_assigned` or `admin_assigned` Codex policy to another healthy eligible Codex credential before routing, preserving the original assignment origin and model policy. If a legacy Codex policy has no model during repair, the gateway fills the Codex catalog default. If no replacement exists, the request fails explicitly and the stored assignment is kept. OpenAI-compatible credentials remain hard constraints because the assigned credential determines the upstream base URL and API key.
 
 ## Permissions
 

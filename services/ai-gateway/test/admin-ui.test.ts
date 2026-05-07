@@ -249,7 +249,10 @@ test("GET /admin/app.js loads and saves per-user ai access assignments", async (
     assert.match(script, /No eligible Codex credential/)
     assert.match(script, /No healthy Codex credentials with OK upstream status are available for assignment\./)
     assert.match(script, /\/credentials\/\$\{encodeURIComponent\(credentialId\)\}\/models/)
-    assert.match(script, /Loaded \$\{models\.length\} models from the assigned credential\./)
+    assert.match(script, /selectedProvider !== "codex_oauth" && selectedProvider !== "openai_compatible"/)
+    assert.match(script, /defaultModel:\s*typeof payload\?\.defaultModel === "string" \? payload\.defaultModel\.trim\(\) : ""/)
+    assert.match(script, /if \(!els\.userAiAccessDefaultModel\.value\.trim\(\) && payload\.defaultModel\) \{/)
+    assert.match(script, /Loaded \$\{payload\.models\.length\} models from the assigned credential\./)
     assert.match(script, /credentialId:\s*typeof payload\.credentialId === "string" \? payload\.credentialId : null/)
     assert.match(script, /credentialId:\s*readAiAccessCredentialValue\(\)/)
     assert.match(

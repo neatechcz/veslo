@@ -209,6 +209,63 @@ test("rotates admin-assigned Codex access away from an exhausted credential", as
   ]);
 });
 
+test("fills Codex catalog default when rotating a legacy policy without a model", async () => {
+  const upserts: unknown[] = [];
+  const service = createAutoAssignedCodexCredentialRotationService({
+    aiAccess: {
+      async getUserAiAccess() {
+        throw new Error("unused");
+      },
+      async upsertUserAiAccess(input) {
+        upserts.push(input);
+        return createAiAccess({
+          credentialId: input.credentialId,
+          defaultModel: input.defaultModel,
+          allowedModels: input.allowedModels,
+          updatedAt: new Date("2026-05-05T09:01:00.000Z"),
+        });
+      },
+    },
+    credentials: {
+      async getCredentialRecordById(credentialId: string) {
+        return credentialId === "cred_old" ? createCredentialRecord("cred_old") : null;
+      },
+      async listAdminCredentials() {
+        return [
+          createAdminCredential("cred_old"),
+          createAdminCredential("cred_new"),
+        ];
+      },
+    } as any,
+    codexStatusProvider: {
+      async getStatus(input) {
+        return input.credentialId === "cred_old" ? exhaustedStatus : healthyStatus;
+      },
+    },
+    now: () => new Date("2026-05-05T09:30:00.000Z"),
+  });
+
+  const repaired = await service.repairCodexAccess({
+    aiAccess: createAiAccess({ defaultModel: null, allowedModels: [] }),
+    reason: "codex_proxy_request",
+  });
+
+  assert.equal(repaired.credentialId, "cred_new");
+  assert.equal(repaired.defaultModel, "gpt-5.5");
+  assert.deepEqual(repaired.allowedModels, ["gpt-5.5"]);
+  assert.deepEqual(upserts, [
+    {
+      userId: "user_1",
+      enabled: true,
+      provider: "codex_oauth",
+      credentialId: "cred_new",
+      defaultModel: "gpt-5.5",
+      allowedModels: ["gpt-5.5"],
+      assignmentOrigin: "auto_assigned",
+    },
+  ]);
+});
+
 test("does not rotate admin-assigned non-Codex access", async () => {
   const service = createAutoAssignedCodexCredentialRotationService({
     aiAccess: {

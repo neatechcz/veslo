@@ -22,6 +22,7 @@ import { createDb } from "../db/index.js";
 import { credentialBindingTable, credentialHealthEventTable, credentialRecordTable, credentialUsageEventTable, sessionLeaseTable, type CredentialState } from "../db/schema.js";
 import { env } from "../env.js";
 import type { AdminSessionRecord, LeaseProvider } from "../leases/repository.js";
+import { CODEX_DEFAULT_MODEL, listCodexModelCatalog, resolveCodexModelPolicy } from "../providers/codex-model-catalog.js";
 import { formatAiGatewayProviderLabel, isAiGatewayProvider } from "../providers/ids.js";
 import { OpenAiCompatibleTransport } from "../providers/openai-compatible-transport.js";
 import { ProviderTransportError, type OpenAiCompatibleProviderTransport } from "../providers/transport.js";
@@ -198,7 +199,7 @@ export interface AdminService {
   enableUser(token: string, userId: string): Promise<AdminUserRecord>;
   deleteUser(token: string, userId: string): Promise<void>;
   listCredentials(_token: string): Promise<{ credentials: CredentialRecord[] }>;
-  listCredentialModels(_token: string, credentialId: string): Promise<{ credentialId: string; models: string[] }>;
+  listCredentialModels(_token: string, credentialId: string): Promise<{ credentialId: string; models: string[]; defaultModel?: string }>;
   createCredential(_token: string, input: CreateCredentialInput, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   revokeCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   drainCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
@@ -251,7 +252,7 @@ type AdminCredentialWriteRepository = {
 };
 
 type CredentialSecretLookupRepository = {
-  getCredentialRecordById(credentialId: string): Promise<{ secretRef: string } | null>;
+  getCredentialRecordById(credentialId: string): Promise<Pick<GatewayCredentialRecord, "provider" | "secretRef"> | null>;
 };
 
 type AdminReadModelDependencies = {
@@ -1259,6 +1260,14 @@ export function createDefaultAdminService(
         throw new HttpError("credential_not_found", 404);
       }
 
+      if (credential.provider === "codex_oauth") {
+        return {
+          credentialId,
+          models: listCodexModelCatalog(),
+          defaultModel: CODEX_DEFAULT_MODEL,
+        };
+      }
+
       const secret = await getSecretStore().get(credential.secretRef).catch(() => null);
       if (!secret || secret.kind !== "openai_compatible_api_key") {
         throw new HttpError("invalid_custom_provider_config", 503);
@@ -1488,8 +1497,16 @@ function validateUserAiAccessInput(
     typeof input.credentialId === "string" && input.credentialId.trim()
       ? input.credentialId.trim()
       : null;
-  const defaultModel = typeof input.defaultModel === "string" ? input.defaultModel.trim() : "";
-  const allowedModels = normalizeAllowedModels(input.allowedModels);
+  let defaultModel = typeof input.defaultModel === "string" ? input.defaultModel.trim() : "";
+  let allowedModels = normalizeAllowedModels(input.allowedModels);
+  if (enabled && provider === "codex_oauth") {
+    const resolvedPolicy = resolveCodexModelPolicy({
+      defaultModel,
+      allowedModels,
+    });
+    defaultModel = resolvedPolicy.defaultModel;
+    allowedModels = resolvedPolicy.allowedModels;
+  }
 
   if (enabled && !provider) {
     throw new HttpError("invalid_ai_access_provider", 400);

@@ -307,6 +307,10 @@ function selectedAiAccessCredentialId() {
   return els.userAiAccessCredential.value.trim();
 }
 
+function isAiAccessModelCatalogProvider(provider) {
+  return provider === "codex_oauth" || provider === "openai_compatible";
+}
+
 function setAiAccessModelOptions(models) {
   const normalized = Array.isArray(models)
     ? Array.from(new Set(models.map((entry) => typeof entry === "string" ? entry.trim() : "").filter(Boolean)))
@@ -319,12 +323,12 @@ function setAiAccessModelOptions(models) {
 async function loadAiAccessModelsForCredential(credentialId) {
   if (!credentialId) {
     setAiAccessModelOptions([]);
-    return [];
+    return { models: [], defaultModel: "" };
   }
 
-  if (Array.isArray(state.userAiAccessModelsByCredentialId[credentialId])) {
-    const cached = state.userAiAccessModelsByCredentialId[credentialId];
-    setAiAccessModelOptions(cached);
+  const cached = state.userAiAccessModelsByCredentialId[credentialId];
+  if (cached && Array.isArray(cached.models)) {
+    setAiAccessModelOptions(cached.models);
     return cached;
   }
 
@@ -332,9 +336,13 @@ async function loadAiAccessModelsForCredential(credentialId) {
   const models = Array.isArray(payload?.models)
     ? payload.models.filter((entry) => typeof entry === "string").map((entry) => entry.trim()).filter(Boolean)
     : [];
-  state.userAiAccessModelsByCredentialId[credentialId] = models;
+  const result = {
+    models,
+    defaultModel: typeof payload?.defaultModel === "string" ? payload.defaultModel.trim() : "",
+  };
+  state.userAiAccessModelsByCredentialId[credentialId] = result;
   setAiAccessModelOptions(models);
-  return models;
+  return result;
 }
 
 function formatAllowedModels(models) {
@@ -1216,7 +1224,7 @@ function populateUserEditor(user) {
   els.userAiAccessAllowedModels.value = formatAllowedModels(aiAccess.allowedModels);
   els.userAiAccessAllowedModels.disabled = isCreate || !user;
   updateAiAccessStatusText(user, aiAccess);
-  if (!isCreate && aiAccess.provider === "openai_compatible" && aiAccess.credentialId) {
+  if (!isCreate && isAiAccessModelCatalogProvider(aiAccess.provider) && aiAccess.credentialId) {
     void refreshSelectedAiAccessModels();
   } else {
     setAiAccessModelOptions([]);
@@ -1323,16 +1331,22 @@ async function refreshSelectedUserAiAccessOptions() {
 async function refreshSelectedAiAccessModels() {
   const selectedProvider = els.userAiAccessProvider.value || "";
   const credentialId = selectedAiAccessCredentialId();
-  if (selectedProvider !== "openai_compatible" || !credentialId) {
+  if ((selectedProvider !== "codex_oauth" && selectedProvider !== "openai_compatible") || !credentialId) {
     setAiAccessModelOptions([]);
     return;
   }
 
   els.userAiAccessStatus.textContent = "Loading models from the assigned credential...";
   try {
-    const models = await loadAiAccessModelsForCredential(credentialId);
-    els.userAiAccessStatus.textContent = models.length > 0
-      ? `Loaded ${models.length} models from the assigned credential.`
+    const payload = await loadAiAccessModelsForCredential(credentialId);
+    if (!els.userAiAccessDefaultModel.value.trim() && payload.defaultModel) {
+      els.userAiAccessDefaultModel.value = payload.defaultModel;
+      if (!els.userAiAccessAllowedModels.value.trim()) {
+        els.userAiAccessAllowedModels.value = payload.defaultModel;
+      }
+    }
+    els.userAiAccessStatus.textContent = payload.models.length > 0
+      ? `Loaded ${payload.models.length} models from the assigned credential.`
       : "No models were returned by this credential. Enter a model manually.";
   } catch (error) {
     setAiAccessModelOptions([]);

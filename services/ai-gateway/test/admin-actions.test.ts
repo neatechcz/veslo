@@ -556,6 +556,39 @@ test("default admin service returns null when no eligible codex credential exist
   assert.deepEqual(statusChecks, ["cred_codex_unavailable"]);
 });
 
+test("default admin service returns Codex model catalog for codex credentials", async () => {
+  const service = createDefaultAdminService("http://den.example.test", {
+    denClient: createUnusedDenClient(),
+    credentialSecretLookupRepository: {
+      async getCredentialRecordById(credentialId: string) {
+        assert.equal(credentialId, "cred_codex_1");
+        return {
+          provider: "codex_oauth",
+          secretRef: "secret_codex_1",
+        };
+      },
+    },
+    secretStore: {
+      async put() {
+        throw new Error("unused");
+      },
+      async get() {
+        throw new Error("should_not_read_codex_secret_for_catalog");
+      },
+      async replace() {
+        throw new Error("unused");
+      },
+    },
+  });
+
+  const payload = await service.listCredentialModels("admin-token", "cred_codex_1");
+
+  assert.equal(payload.credentialId, "cred_codex_1");
+  assert.equal(payload.defaultModel, "gpt-5.5");
+  assert.ok(payload.models.includes("gpt-5.4"));
+  assert.ok(payload.models.includes("gpt-5.5"));
+});
+
 test("createDefaultAdminService does not auto-assign codex ai access on user creation", async () => {
   const createdUser: AdminUserRecord = {
     id: "user_created",
