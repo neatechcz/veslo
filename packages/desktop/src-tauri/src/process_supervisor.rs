@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex};
 use tauri::async_runtime::Receiver;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 
+use crate::debug_logs_forwarder::{DebugLogsForwarder, LogStream};
 use crate::utils::truncate_output;
+
+pub type SupervisorForwarder = (Arc<DebugLogsForwarder>, &'static str);
 
 const OUTPUT_BUFFER_LIMIT: usize = 8000;
 
@@ -53,10 +56,22 @@ pub fn append_stderr<S: SupervisedChild>(state: &mut S, line: &str) {
     state.set_last_stderr(Some(combined));
 }
 
+#[allow(dead_code)]
 pub fn spawn_output_collector<S>(
+    rx: Receiver<CommandEvent>,
+    state_handle: Arc<Mutex<S>>,
+    terminated_label: &'static str,
+) where
+    S: SupervisedChild + Send + 'static,
+{
+    spawn_output_collector_with_forwarder::<S>(rx, state_handle, terminated_label, None);
+}
+
+pub fn spawn_output_collector_with_forwarder<S>(
     mut rx: Receiver<CommandEvent>,
     state_handle: Arc<Mutex<S>>,
     terminated_label: &'static str,
+    forwarder: Option<SupervisorForwarder>,
 ) where
     S: SupervisedChild + Send + 'static,
 {
@@ -65,12 +80,18 @@ pub fn spawn_output_collector<S>(
             match event {
                 CommandEvent::Stdout(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
+                    if let Some((fwd, source)) = forwarder.as_ref() {
+                        fwd.append(source, LogStream::Stdout, &line);
+                    }
                     if let Ok(mut state) = state_handle.try_lock() {
                         append_stdout(&mut *state, &line);
                     }
                 }
                 CommandEvent::Stderr(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
+                    if let Some((fwd, source)) = forwarder.as_ref() {
+                        fwd.append(source, LogStream::Stderr, &line);
+                    }
                     if let Ok(mut state) = state_handle.try_lock() {
                         append_stderr(&mut *state, &line);
                     }
@@ -88,6 +109,9 @@ pub fn spawn_output_collector<S>(
                     }
                 }
                 CommandEvent::Error(message) => {
+                    if let Some((fwd, source)) = forwarder.as_ref() {
+                        fwd.append(source, LogStream::Stderr, &message);
+                    }
                     if let Ok(mut state) = state_handle.try_lock() {
                         state.set_child_exited(true);
                         append_stderr(&mut *state, &message);

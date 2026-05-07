@@ -8,7 +8,9 @@ use tauri::AppHandle;
 use tauri::Manager;
 use uuid::Uuid;
 
-use crate::process_supervisor::spawn_output_collector;
+use crate::debug_logs_forwarder::DebugLogsForwarder;
+use crate::process_supervisor::spawn_output_collector_with_forwarder;
+use std::sync::Arc;
 use crate::types::VesloServerInfo;
 
 pub mod manager;
@@ -221,7 +223,10 @@ pub fn start_veslo_server(
     state.last_stdout = None;
     state.last_stderr = None;
 
-    spawn_output_collector(rx, manager.inner.clone(), "Veslo server");
+    let forwarder = app
+        .try_state::<Arc<DebugLogsForwarder>>()
+        .map(|s| (s.inner().clone(), "veslo-server-shell"));
+    spawn_output_collector_with_forwarder(rx, manager.inner.clone(), "Veslo server", forwarder);
 
     let info = VesloServerManager::snapshot_locked(&mut state);
     drop(state);

@@ -1,6 +1,7 @@
 mod bun_env;
 mod commands;
 mod config;
+mod debug_logs_forwarder;
 mod engine;
 mod env_guard;
 mod fs;
@@ -66,6 +67,32 @@ use orchestrator::manager::OrchestratorManager;
 use tauri::{Emitter, Manager};
 use veslo_server::manager::VesloServerManager;
 use workspace::watch::WorkspaceWatchState;
+
+fn register_debug_logs_forwarder(app_handle: &tauri::AppHandle) {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let spool_dir = paths::app_local_data_dir_override()
+        .or_else(|| {
+            tauri::Manager::path(app_handle)
+                .app_local_data_dir()
+                .ok()
+        })
+        .map(|dir| dir.join("desktop-debug-log-spool"));
+
+    let Some(spool_dir) = spool_dir else {
+        eprintln!("[debug-logs-forwarder] no app local data dir resolved, forwarding disabled");
+        return;
+    };
+
+    let forwarder = Arc::new(debug_logs_forwarder::DebugLogsForwarder::new(spool_dir));
+    debug_logs_forwarder::spawn_flush_task(
+        forwarder.clone(),
+        app_handle.clone(),
+        Duration::from_secs(5),
+    );
+    tauri::Manager::manage(app_handle, forwarder);
+}
 
 fn stop_managed_services(app_handle: &tauri::AppHandle) {
     if let Ok(mut engine) = app_handle.state::<EngineManager>().inner.lock() {
@@ -208,6 +235,8 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building Veslo");
+
+    register_debug_logs_forwarder(app.handle());
 
     // Best-effort cleanup on app exit. Without this, background sidecars can keep
     // running after the UI quits (especially during dev), leading to multiple

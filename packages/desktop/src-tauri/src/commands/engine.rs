@@ -524,11 +524,21 @@ pub fn engine_start(
 
             let orchestrator_state_handle = orchestrator_manager.inner.clone();
             let orchestrator_state_wait_handle = orchestrator_state_handle.clone();
+            let orchestrator_forwarder = app
+                .try_state::<std::sync::Arc<crate::debug_logs_forwarder::DebugLogsForwarder>>()
+                .map(|s| s.inner().clone());
             tauri::async_runtime::spawn(async move {
                 while let Some(event) = rx.recv().await {
                     match event {
                         CommandEvent::Stdout(line_bytes) => {
                             let line = String::from_utf8_lossy(&line_bytes).to_string();
+                            if let Some(fwd) = orchestrator_forwarder.as_ref() {
+                                fwd.append(
+                                    "orchestrator",
+                                    crate::debug_logs_forwarder::LogStream::Stdout,
+                                    &line,
+                                );
+                            }
                             if let Ok(mut state) = orchestrator_state_handle.try_lock() {
                                 let next = state.last_stdout.as_deref().unwrap_or_default().to_string()
                                     + &line;
@@ -537,6 +547,13 @@ pub fn engine_start(
                         }
                         CommandEvent::Stderr(line_bytes) => {
                             let line = String::from_utf8_lossy(&line_bytes).to_string();
+                            if let Some(fwd) = orchestrator_forwarder.as_ref() {
+                                fwd.append(
+                                    "orchestrator",
+                                    crate::debug_logs_forwarder::LogStream::Stderr,
+                                    &line,
+                                );
+                            }
                             if let Ok(mut state) = orchestrator_state_handle.try_lock() {
                                 let next = state.last_stderr.as_deref().unwrap_or_default().to_string()
                                     + &line;
@@ -549,6 +566,13 @@ pub fn engine_start(
                             }
                         }
                         CommandEvent::Error(message) => {
+                            if let Some(fwd) = orchestrator_forwarder.as_ref() {
+                                fwd.append(
+                                    "orchestrator",
+                                    crate::debug_logs_forwarder::LogStream::Stderr,
+                                    &message,
+                                );
+                            }
                             if let Ok(mut state) = orchestrator_state_handle.try_lock() {
                                 state.child_exited = true;
                                 let next = state.last_stderr.as_deref().unwrap_or_default().to_string()
@@ -722,12 +746,18 @@ pub fn engine_start(
     let output_state = std::sync::Arc::new(std::sync::Mutex::new(OutputState::default()));
     let output_state_handle = output_state.clone();
     let state_handle = manager.inner.clone();
+    let engine_forwarder = app
+        .try_state::<std::sync::Arc<crate::debug_logs_forwarder::DebugLogsForwarder>>()
+        .map(|s| s.inner().clone());
 
     tauri::async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
+                    if let Some(fwd) = engine_forwarder.as_ref() {
+                        fwd.append("engine", crate::debug_logs_forwarder::LogStream::Stdout, &line);
+                    }
                     if let Ok(mut output) = output_state_handle.lock() {
                         output.stdout.push_str(&line);
                     }
@@ -739,6 +769,9 @@ pub fn engine_start(
                 }
                 CommandEvent::Stderr(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
+                    if let Some(fwd) = engine_forwarder.as_ref() {
+                        fwd.append("engine", crate::debug_logs_forwarder::LogStream::Stderr, &line);
+                    }
                     if let Ok(mut output) = output_state_handle.lock() {
                         output.stderr.push_str(&line);
                     }
@@ -758,6 +791,13 @@ pub fn engine_start(
                     }
                 }
                 CommandEvent::Error(message) => {
+                    if let Some(fwd) = engine_forwarder.as_ref() {
+                        fwd.append(
+                            "engine",
+                            crate::debug_logs_forwarder::LogStream::Stderr,
+                            &message,
+                        );
+                    }
                     if let Ok(mut output) = output_state_handle.lock() {
                         output.exited = true;
                         output.exit_code = Some(-1);
