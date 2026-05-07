@@ -820,6 +820,16 @@ export function createDefaultAdminService(
             const secret = await getSecretStore().get(credential.secretRef).catch(() => null);
             return secret?.kind === "codex_auth_json" ? secret.authJson : null;
           },
+          saveCredentialAuthJson: async (credentialId, authJson) => {
+            const credential = await getCredentialSecretLookupRepository().getCredentialRecordById(credentialId);
+            if (!credential) {
+              return;
+            }
+            await getSecretStore().replace(credential.secretRef, {
+              kind: "codex_auth_json",
+              authJson,
+            });
+          },
         })
       : new UnavailableCodexCredentialStatusProvider());
   let credentialRotationService: AutoAssignedCodexCredentialRotationService | null =

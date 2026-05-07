@@ -74,6 +74,16 @@ export function createDefaultProxyDependencies(
       const secret = await runtime.secrets.get(record.secretRef);
       return secret.kind === "codex_auth_json" ? secret.authJson : null;
     },
+    saveCredentialAuthJson: async (credentialId, authJson) => {
+      const record = await runtime.credentials.getCredentialRecordById(credentialId);
+      if (!record) {
+        return;
+      }
+      await runtime.secrets.replace(record.secretRef, {
+        kind: "codex_auth_json",
+        authJson,
+      });
+    },
     now: overrides.now,
   });
 
@@ -129,6 +139,16 @@ export function createDefaultUserCredentialDependencies(
 
       const secret = await runtime.secrets.get(record.secretRef);
       return secret.kind === "codex_auth_json" ? secret.authJson : null;
+    },
+    saveCredentialAuthJson: async (credentialId, authJson) => {
+      const record = await runtime.credentials.getCredentialRecordById(credentialId);
+      if (!record) {
+        return;
+      }
+      await runtime.secrets.replace(record.secretRef, {
+        kind: "codex_auth_json",
+        authJson,
+      });
     },
   });
 

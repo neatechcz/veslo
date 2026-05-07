@@ -63,10 +63,12 @@ type ProbeResult = {
   rateLimits: CodexRateLimitsSnapshot | null;
   ok?: boolean;
   detail?: string | null;
+  updatedAuthJson?: string | null;
 };
 
 export type CachedCodexCredentialStatusProviderDeps = {
   loadCredentialAuthJson: (credentialId: string) => Promise<string | null>;
+  saveCredentialAuthJson?: (credentialId: string, authJson: string) => Promise<void>;
   probe?: (input: {
     credentialId: string;
     credentialName: string;
@@ -87,6 +89,7 @@ export class UnavailableCodexCredentialStatusProvider implements CodexCredential
 
 export class CachedCodexCredentialStatusProvider implements CodexCredentialStatusProvider {
   private readonly loadCredentialAuthJson: (credentialId: string) => Promise<string | null>;
+  private readonly saveCredentialAuthJson: ((credentialId: string, authJson: string) => Promise<void>) | null;
   private readonly probe: (input: {
     credentialId: string;
     credentialName: string;
@@ -99,6 +102,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
 
   constructor(deps: CachedCodexCredentialStatusProviderDeps) {
     this.loadCredentialAuthJson = deps.loadCredentialAuthJson;
+    this.saveCredentialAuthJson = deps.saveCredentialAuthJson ?? null;
     this.ttlMs = deps.ttlMs ?? parseTimeoutMs(process.env.AI_GATEWAY_CODEX_STATUS_TTL_MS, 5 * 60 * 1000);
     this.now = deps.now ?? (() => new Date());
     this.probe =
@@ -137,6 +141,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
             credentialName: input.credentialName,
             authJson,
           });
+          await this.persistUpdatedAuthJson(input.credentialId, authJson, result.updatedAuthJson);
           status = result.rateLimits
             ? codexUsageStatusFromRateLimits(result.rateLimits, result.checkedAt, result.detail)
             : result.ok === true
@@ -163,6 +168,19 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
     } finally {
       this.inFlight.delete(input.credentialId);
     }
+  }
+
+  private async persistUpdatedAuthJson(
+    credentialId: string,
+    previousAuthJson: string,
+    updatedAuthJson: string | null | undefined,
+  ): Promise<void> {
+    const nextAuthJson = updatedAuthJson?.trim();
+    if (!this.saveCredentialAuthJson || !nextAuthJson || nextAuthJson === previousAuthJson.trim()) {
+      return;
+    }
+
+    await this.saveCredentialAuthJson(credentialId, nextAuthJson);
   }
 }
 
@@ -379,6 +397,7 @@ async function runCodexExecRateLimitProbe(input: {
       codexHome,
       timeoutMs: input.timeoutMs,
     });
+    const updatedAuthJson = await readUpdatedCodexAuthJson(codexHome, input.authJson);
 
     const rateLimits = await readLatestRateLimitsSnapshot(codexHome);
     if (rateLimits) {
@@ -387,6 +406,7 @@ async function runCodexExecRateLimitProbe(input: {
         rateLimits,
         ok: result.exitCode === 0 && !result.timedOut,
         detail: summarizeProbeDetail(result),
+        updatedAuthJson,
       };
     }
 
@@ -395,11 +415,22 @@ async function runCodexExecRateLimitProbe(input: {
       rateLimits: null,
       ok: result.exitCode === 0 && !result.timedOut,
       detail: summarizeProbeFailure(result, "Codex rate limit snapshot was not found."),
+      updatedAuthJson,
     };
   } finally {
     await rm(codexHome, { recursive: true, force: true });
     await rm(scratchDir, { recursive: true, force: true });
   }
+}
+
+async function readUpdatedCodexAuthJson(codexHome: string, previousAuthJson: string): Promise<string | null> {
+  const authPath = path.join(codexHome, "auth.json");
+  const raw = await readFile(authPath, "utf8").catch(() => "");
+  const updated = raw.trim();
+  if (!updated || updated === previousAuthJson.trim()) {
+    return null;
+  }
+  return updated;
 }
 
 async function readLatestRateLimitsSnapshot(codexHome: string): Promise<CodexRateLimitsSnapshot | null> {

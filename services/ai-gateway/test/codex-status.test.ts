@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -338,6 +341,180 @@ test("CachedCodexCredentialStatusProvider shares concurrent probes for the same 
 
   assert.equal(probeCalls, 1);
   assert.deepEqual(second, first);
+});
+
+test("CachedCodexCredentialStatusProvider persists refreshed Codex auth JSON from probes", async () => {
+  const savedAuthJson: Array<{ credentialId: string; authJson: string }> = [];
+  const provider = new CachedCodexCredentialStatusProvider({
+    ttlMs: 5 * 60 * 1000,
+    now: () => new Date("2026-04-26T12:00:00.000Z"),
+    loadCredentialAuthJson: async () => JSON.stringify({
+      auth_mode: "chatgpt",
+      tokens: {
+        refresh_token: "old-refresh-token",
+        account_id: "acct",
+      },
+    }),
+    saveCredentialAuthJson: async (credentialId, authJson) => {
+      savedAuthJson.push({ credentialId, authJson });
+    },
+    probe: async () => ({
+      checkedAt: "2026-04-26T12:00:00.000Z",
+      updatedAuthJson: JSON.stringify({
+        auth_mode: "chatgpt",
+        tokens: {
+          refresh_token: "new-refresh-token",
+          account_id: "acct",
+        },
+      }),
+      rateLimits: {
+        primary: {
+          used_percent: 30,
+          window_minutes: 300,
+          resets_at: 1777215600,
+        },
+        secondary: null,
+        plan_type: "plus",
+      },
+    }),
+  });
+
+  await provider.getStatus({
+    credentialId: "cred_codex_1",
+    credentialName: "Credential cred_codex_1",
+  });
+
+  assert.deepEqual(savedAuthJson, [
+    {
+      credentialId: "cred_codex_1",
+      authJson: JSON.stringify({
+        auth_mode: "chatgpt",
+        tokens: {
+          refresh_token: "new-refresh-token",
+          account_id: "acct",
+        },
+      }),
+    },
+  ]);
+});
+
+test("CachedCodexCredentialStatusProvider does not rewrite unchanged Codex auth JSON", async () => {
+  const authJson = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      refresh_token: "same-refresh-token",
+      account_id: "acct",
+    },
+  });
+  const savedAuthJson: string[] = [];
+  const provider = new CachedCodexCredentialStatusProvider({
+    ttlMs: 5 * 60 * 1000,
+    now: () => new Date("2026-04-26T12:00:00.000Z"),
+    loadCredentialAuthJson: async () => authJson,
+    saveCredentialAuthJson: async (_credentialId, nextAuthJson) => {
+      savedAuthJson.push(nextAuthJson);
+    },
+    probe: async () => ({
+      checkedAt: "2026-04-26T12:00:00.000Z",
+      updatedAuthJson: authJson,
+      rateLimits: {
+        primary: {
+          used_percent: 30,
+          window_minutes: 300,
+          resets_at: 1777215600,
+        },
+        secondary: null,
+        plan_type: "plus",
+      },
+    }),
+  });
+
+  await provider.getStatus({
+    credentialId: "cred_codex_1",
+    credentialName: "Credential cred_codex_1",
+  });
+
+  assert.deepEqual(savedAuthJson, []);
+});
+
+test("CachedCodexCredentialStatusProvider persists auth JSON written by the Codex subprocess", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "veslo-codex-status-test-"));
+  const commandPath = path.join(rootDir, "fake-codex.cjs");
+  const savedAuthJson: Array<{ credentialId: string; authJson: string }> = [];
+  const oldAuthJson = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      refresh_token: "old-refresh-token",
+      account_id: "acct",
+    },
+  });
+  const newAuthJson = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      refresh_token: "new-refresh-token",
+      account_id: "acct",
+    },
+  });
+
+  await writeFile(
+    commandPath,
+    [
+      "#!/usr/bin/env node",
+      'const { mkdirSync, writeFileSync } = require("node:fs");',
+      'const path = require("node:path");',
+      `writeFileSync(path.join(process.env.CODEX_HOME, "auth.json"), ${JSON.stringify(`${newAuthJson}\n`)});`,
+      'const sessionDir = path.join(process.env.CODEX_HOME, "sessions", "2026", "04", "26");',
+      "mkdirSync(sessionDir, { recursive: true });",
+      "const event = {",
+      '  timestamp: "2026-04-26T12:00:00.000Z",',
+      '  type: "event_msg",',
+      "  payload: {",
+      '    type: "token_count",',
+      "    info: {",
+      "      rate_limits: {",
+      "        primary: { used_percent: 30, window_minutes: 300, resets_at: 1777215600 },",
+      "        secondary: null,",
+      '        plan_type: "plus",',
+      "      },",
+      "    },",
+      "  },",
+      "};",
+      'writeFileSync(path.join(sessionDir, "probe.jsonl"), `${JSON.stringify(event)}\\n`);',
+      'console.log("OK");',
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  await chmod(commandPath, 0o755);
+
+  try {
+    const provider = new CachedCodexCredentialStatusProvider({
+      ttlMs: 5 * 60 * 1000,
+      now: () => new Date("2026-04-26T12:00:00.000Z"),
+      loadCredentialAuthJson: async () => oldAuthJson,
+      saveCredentialAuthJson: async (credentialId, authJson) => {
+        savedAuthJson.push({ credentialId, authJson });
+      },
+      command: commandPath,
+      workDir: rootDir,
+      timeoutMs: 5000,
+    });
+
+    const status = await provider.getStatus({
+      credentialId: "cred_codex_1",
+      credentialName: "Credential cred_codex_1",
+    });
+
+    assert.equal(status.available, true);
+    assert.deepEqual(savedAuthJson, [
+      {
+        credentialId: "cred_codex_1",
+        authJson: newAuthJson,
+      },
+    ]);
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
 });
 
 test("CachedCodexCredentialStatusProvider reports healthy probes with unknown limits", async () => {
