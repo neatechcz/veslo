@@ -23,6 +23,7 @@ const state = {
     userId: "",
     orgId: "",
   },
+  showDeletedCredentials: false,
   selectedCredentialId: null,
   selectedSessionId: null,
   selectedAlertId: null,
@@ -56,6 +57,7 @@ const els = {
   credentialCreateSecret: document.getElementById("credential-create-secret"),
   credentialCreateSubmit: document.getElementById("credential-create-submit"),
   credentialCreateStatus: document.getElementById("credential-create-status"),
+  credentialsShowDeleted: document.getElementById("credentials-show-deleted"),
   credentialsTableBody: document.getElementById("credentials-table-body"),
   credentialDetail: document.getElementById("credential-detail"),
   sessionList: document.getElementById("session-list"),
@@ -664,7 +666,8 @@ async function loadAllData() {
 
 async function loadCredentials() {
   try {
-    const payload = await fetchJson("/credentials");
+    const includeDeleted = state.showDeletedCredentials ? "?includeDeleted=true" : "";
+    const payload = await fetchJson(`/credentials${includeDeleted}`);
     state.credentials = Array.isArray(payload?.credentials) ? payload.credentials : [];
     if (!state.selectedCredentialId || !state.credentials.some((entry) => entry.id === state.selectedCredentialId)) {
       state.selectedCredentialId = state.credentials[0]?.id || null;
@@ -826,11 +829,15 @@ function renderOverview() {
 
 function renderCredentials() {
   const rows = state.credentials.map((credential) => {
-    const activeClass = credential.id === state.selectedCredentialId ? "row-alert" : "";
-    return `<tr class="${activeClass}" data-credential-id="${escapeHtml(credential.id)}">
+    const displayState = credential.deletedAt ? "deleted" : credential.state;
+    const rowClasses = [
+      credential.id === state.selectedCredentialId ? "row-alert" : "",
+      credential.deletedAt ? "row-muted" : "",
+    ].filter(Boolean).join(" ");
+    return `<tr class="${escapeHtml(rowClasses)}" data-credential-id="${escapeHtml(credential.id)}">
       <td><strong>${escapeHtml(credential.name)}</strong><span>${escapeHtml(credential.scope)}</span></td>
       <td>${escapeHtml(credential.type)}</td>
-      <td><span class="status-chip">${escapeHtml(credential.state)}</span></td>
+      <td><span class="status-chip ${escapeHtml(credentialStateTone(displayState))}">${escapeHtml(displayState)}</span></td>
       <td><a href="/admin/alerts" data-open-alerts="${escapeHtml(credential.id)}">${escapeHtml(String(credential.alertCount))} active alerts</a></td>
       <td>${escapeHtml(String(credential.activeLeases))}</td>
       <td>${escapeHtml(formatDate(credential.lastRefreshAt))}</td>
@@ -845,11 +852,13 @@ function renderCredentials() {
   const selected = currentCredential();
   if (selected) {
     const selectedUpstreamStatus = formatCredentialUpstreamStatus(selected);
+    const displayState = selected.deletedAt ? "deleted" : selected.state;
     els.credentialDetail.innerHTML = `
       <p class="eyebrow">Selected credential</p>
       <h3>${escapeHtml(selected.name)}</h3>
       <div class="stack">
-        <div class="detail-line"><span>Health</span><strong>${escapeHtml(selected.state)}</strong></div>
+        <div class="detail-line"><span>Health</span><strong>${escapeHtml(displayState)}</strong></div>
+        ${selected.deletedAt ? `<div class="detail-line"><span>Deleted</span><strong>${escapeHtml(formatDate(selected.deletedAt))}</strong></div>` : ""}
         <div class="detail-line"><span>Linked alerts</span><strong>${escapeHtml(String(selected.alertCount))}</strong></div>
         <div class="detail-line"><span>Last failure</span><strong>${escapeHtml(formatDate(selected.lastFailureAt))}</strong></div>
         <div class="detail-line"><span>Rotation</span><strong>${escapeHtml(formatDate(selected.nextRotationAt))}</strong></div>
@@ -862,13 +871,24 @@ function renderCredentials() {
         ` : ""}
       </div>
       <div class="button-row">
-        <button class="button button-secondary" type="button" data-credential-action="drain">Drain</button>
-        <button class="button button-secondary" type="button" data-credential-action="rotate">Rotate</button>
-        <button class="button button-secondary" type="button" data-credential-action="revoke">Revoke</button>
-        <button class="button button-primary" type="button" data-route-alerts>Open alerts</button>
+        ${renderCredentialActionButtons(selected)}
       </div>
     `;
   }
+}
+
+function renderCredentialActionButtons(credential) {
+  if (credential.deletedAt) {
+    return `<button class="button button-primary" type="button" data-route-alerts>Open alerts</button>`;
+  }
+
+  return `
+    <button class="button button-secondary" type="button" data-credential-action="drain">Drain</button>
+    <button class="button button-secondary" type="button" data-credential-action="rotate">Rotate</button>
+    <button class="button button-secondary" type="button" data-credential-action="revoke">Revoke</button>
+    <button class="button button-secondary button-danger" type="button" data-credential-action="delete">Delete</button>
+    <button class="button button-primary" type="button" data-route-alerts>Open alerts</button>
+  `;
 }
 
 function renderSessions() {
@@ -1021,6 +1041,14 @@ function credentialEligibilityTone(state) {
   if (state === "exhausted" || state === "draining") return "warning";
   if (state === "revoked" || state === "unhealthy") return "danger";
   return "info";
+}
+
+function credentialStateTone(state) {
+  if (state === "healthy") return "success";
+  if (state === "degraded" || state === "draining") return "warning";
+  if (state === "unhealthy" || state === "revoked") return "danger";
+  if (state === "deleted") return "info";
+  return "";
 }
 
 function formatCredentialLimitSummary(status) {
@@ -1461,6 +1489,16 @@ function openAlertsForSelectedCredential() {
   renderAlerts();
 }
 
+function credentialActionRequest(credentialId, action) {
+  const encodedCredentialId = encodeURIComponent(credentialId);
+  return {
+    path: action === "delete"
+      ? `/credentials/${encodedCredentialId}`
+      : `/credentials/${encodedCredentialId}/${action}`,
+    method: action === "delete" ? "DELETE" : "POST",
+  };
+}
+
 async function runCredentialAction(action) {
   const credential = currentCredential();
   if (!credential || !action) {
@@ -1471,6 +1509,7 @@ async function runCredentialAction(action) {
     drain: `Drain ${credential.name}? New sessions will stop using this credential.`,
     rotate: `Rotate ${credential.name}? Active sessions will move to another healthy credential if one is available.`,
     revoke: `Revoke ${credential.name}? Existing sessions may lose access if no replacement is available.`,
+    delete: `Delete ${credential.name}? This moves it to Show Deleted and prevents future assignment or use.`,
   };
 
   const confirmed = window.confirm(confirmationMessages[action] || `Apply ${action} to ${credential.name}?`);
@@ -1479,10 +1518,18 @@ async function runCredentialAction(action) {
   }
 
   try {
-    await fetchJson(`/credentials/${encodeURIComponent(credential.id)}/${action}`, {
-      method: "POST",
+    const request = credentialActionRequest(credential.id, action);
+    await fetchJson(request.path, {
+      method: request.method,
     });
+    if (action === "delete") {
+      state.showDeletedCredentials = true;
+      els.credentialsShowDeleted.checked = true;
+    }
     await refreshCredentialOperations();
+    if (action === "delete") {
+      await refreshSelectedUserAiAccessOptions();
+    }
   } catch (error) {
     window.alert(`Unable to ${action} credential: ${error instanceof Error ? error.message : "unknown_error"}`);
   }
@@ -1652,6 +1699,10 @@ function bindActions() {
   els.createUserButtonInline.addEventListener("click", enterCreateMode);
   els.credentialCreateProvider.addEventListener("change", updateCredentialCreateFields);
   els.credentialCreateSubmit.addEventListener("click", () => void createCredential());
+  els.credentialsShowDeleted.addEventListener("change", () => {
+    state.showDeletedCredentials = els.credentialsShowDeleted.checked;
+    void loadCredentials();
+  });
   els.userSaveButton.addEventListener("click", () => void saveUser());
   els.userDisableButton.addEventListener("click", () => void toggleUserDisabled());
   els.userDeleteButton.addEventListener("click", () => void deleteUser());

@@ -11,6 +11,7 @@ export type CredentialRecord = {
   createdAt: Date;
   updatedAt: Date;
   lastFailureAt?: Date | null;
+  deletedAt?: Date | null;
 };
 
 export type CredentialBinding = {
@@ -37,6 +38,11 @@ export type AdminCredentialRecord = {
   totalTokens: number;
   nextRotationAt: string | null;
   linkedAlertIds: string[];
+  deletedAt?: string | null;
+};
+
+export type ListAdminCredentialsInput = {
+  includeDeleted?: boolean;
 };
 
 export type ListEligibleBindingsInput = {
@@ -106,7 +112,7 @@ export interface CredentialRepository {
   listRecentCredentialUsage?(input: ListRecentCredentialUsageInput): Promise<RecentCredentialUsageRecord[]>;
   getBindingByCredentialId?(credentialId: string): Promise<CredentialBinding | null>;
   getCredentialRecordByBindingId?(bindingId: string): Promise<CredentialRecord | null>;
-  listAdminCredentials?(): Promise<AdminCredentialRecord[]>;
+  listAdminCredentials?(input?: ListAdminCredentialsInput): Promise<AdminCredentialRecord[]>;
   createUserCredential?(input: CreateUserCredentialInput): Promise<CredentialRecord>;
   createPlatformCredential?(input: CreatePlatformCredentialInput): Promise<CredentialRecord>;
   listUserCredentials?(input: ListUserCredentialsInput): Promise<CredentialRecord[]>;

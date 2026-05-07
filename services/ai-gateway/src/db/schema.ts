@@ -37,6 +37,7 @@ export const credentialRecordTable = mysqlTable(
     credential_type: mysqlEnum("credential_type", CredentialType).notNull(),
     state: mysqlEnum("state", CredentialState).notNull(),
     secret_ref: varchar("secret_ref", { length: 255 }).notNull(),
+    deleted_at: timestamp("deleted_at", { fsp: 3 }),
     ...timestamps,
   },
   (table) => [

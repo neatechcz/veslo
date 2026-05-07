@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, ne, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 import type { AiGatewayDb } from "../db/index.js";
@@ -18,6 +18,7 @@ import type {
   CredentialRecord,
   CredentialRepository,
   ListEligibleBindingsInput,
+  ListAdminCredentialsInput,
   ListRecentCredentialUsageInput,
   ListUserCredentialsInput,
   MarkCredentialStateInput,
@@ -44,7 +45,7 @@ export class MySqlCredentialRepository implements CredentialRepository {
     const rows = await this.db
       .select({ id: credentialRecordTable.id })
       .from(credentialRecordTable)
-      .where(eq(credentialRecordTable.state, "healthy"));
+      .where(and(eq(credentialRecordTable.state, "healthy"), isNull(credentialRecordTable.deleted_at)));
 
     return rows.map((row) => row.id);
   }
@@ -54,6 +55,7 @@ export class MySqlCredentialRepository implements CredentialRepository {
       eq(credentialBindingTable.owner_user_id, input.ownerUserId),
       eq(credentialBindingTable.provider, input.provider),
       eq(credentialRecordTable.state, "healthy"),
+      isNull(credentialRecordTable.deleted_at),
     ];
 
     if (input.excludeBindingId) {
@@ -155,6 +157,7 @@ export class MySqlCredentialRepository implements CredentialRepository {
         and(
           eq(credentialBindingTable.credential_record_id, credentialId),
           eq(credentialRecordTable.state, "healthy"),
+          isNull(credentialRecordTable.deleted_at),
         ),
       )
       .orderBy(credentialBindingTable.created_at)
@@ -164,7 +167,7 @@ export class MySqlCredentialRepository implements CredentialRepository {
     return row ? mapCredentialBinding(row) : null;
   }
 
-  async listAdminCredentials(): Promise<AdminCredentialRecord[]> {
+  async listAdminCredentials(input: ListAdminCredentialsInput = {}): Promise<AdminCredentialRecord[]> {
     const [credentialRows, activeLeaseRows, usageRows] = await Promise.all([
       this.db.select().from(credentialRecordTable).orderBy(desc(credentialRecordTable.updated_at)),
       this.db
@@ -204,22 +207,25 @@ export class MySqlCredentialRepository implements CredentialRepository {
       ]),
     );
 
-    return credentialRows.map((row: typeof credentialRecordTable.$inferSelect) => ({
-      id: row.id,
-      name: row.name?.trim() || `${formatProviderLabel(row.provider)} ${row.id}`,
-      provider: row.provider,
-      type: row.credential_type,
-      state: row.state,
-      scope: row.owner_user_id,
-      activeLeases: activeLeasesByCredential.get(row.id) ?? 0,
-      alertCount: 0,
-      lastRefreshAt: asDate(row.updated_at).toISOString(),
-      lastFailureAt: row.state === "healthy" ? null : asDate(row.updated_at).toISOString(),
-      cachedTokens: cachedTokensByCredential.get(row.id) ?? 0,
-      totalTokens: totalTokensByCredential.get(row.id) ?? 0,
-      nextRotationAt: null,
-      linkedAlertIds: [],
-    }));
+    return credentialRows
+      .filter((row: typeof credentialRecordTable.$inferSelect) => input.includeDeleted === true || !row.deleted_at)
+      .map((row: typeof credentialRecordTable.$inferSelect) => ({
+        id: row.id,
+        name: row.name?.trim() || `${formatProviderLabel(row.provider)} ${row.id}`,
+        provider: row.provider,
+        type: row.credential_type,
+        state: row.state,
+        scope: row.owner_user_id,
+        activeLeases: activeLeasesByCredential.get(row.id) ?? 0,
+        alertCount: 0,
+        lastRefreshAt: asDate(row.updated_at).toISOString(),
+        lastFailureAt: row.state === "healthy" ? null : asDate(row.updated_at).toISOString(),
+        cachedTokens: cachedTokensByCredential.get(row.id) ?? 0,
+        totalTokens: totalTokensByCredential.get(row.id) ?? 0,
+        nextRotationAt: null,
+        linkedAlertIds: [],
+        ...(row.deleted_at ? { deletedAt: asDate(row.deleted_at).toISOString() } : {}),
+      }));
   }
 
   async createUserCredential(input: CreateUserCredentialInput): Promise<CredentialRecord> {
@@ -261,6 +267,7 @@ export class MySqlCredentialRepository implements CredentialRepository {
       createdAt,
       updatedAt: createdAt,
       lastFailureAt: null,
+      deletedAt: null,
     };
     const binding: CredentialBinding = {
       id: `binding_${randomUUID()}`,
@@ -279,6 +286,7 @@ export class MySqlCredentialRepository implements CredentialRepository {
       credential_type: record.credentialType,
       state: record.state,
       secret_ref: record.secretRef,
+      deleted_at: null,
       created_at: createdAt,
       updated_at: createdAt,
     });
@@ -302,6 +310,7 @@ export class MySqlCredentialRepository implements CredentialRepository {
         and(
           eq(credentialRecordTable.owner_user_id, input.ownerUserId),
           eq(credentialRecordTable.provider, input.provider),
+          isNull(credentialRecordTable.deleted_at),
         ),
       )
       .orderBy(desc(credentialRecordTable.created_at));
@@ -382,6 +391,7 @@ function mapCredentialRecord(row: typeof credentialRecordTable.$inferSelect): Cr
     createdAt: asDate(row.created_at),
     updatedAt,
     lastFailureAt: row.state === "healthy" ? null : updatedAt,
+    deletedAt: row.deleted_at ? asDate(row.deleted_at) : null,
   };
 }
 

@@ -9,6 +9,7 @@ import {
   type AuditRecord,
   type AdminCredentialUsageRecord,
   type CredentialRecord,
+  type ListCredentialsInput,
   type SessionRecord,
   type UsageResponse,
 } from "../src/http/admin.js"
@@ -171,12 +172,14 @@ function createAdminApp(overrides: {
   alerts?: AlertRecord[]
   audit?: AuditRecord[]
   codexStatusProvider?: { getStatus(input: { credentialId: string; credentialName: string }): Promise<AdminCredentialUsageRecord["upstreamStatus"]> }
+  onListCredentialsInput?: (input: ListCredentialsInput | undefined) => void
   onAggregateUsageInput?: (input: AggregateUsageInput) => void
 }) {
   const service = createDefaultAdminService("http://den.example.test", {
     denClient: createDenClient(),
     credentialReadRepository: {
-      async listAdminCredentials() {
+      async listAdminCredentials(input) {
+        overrides.onListCredentialsInput?.(input)
         return overrides.credentials ?? []
       },
     },
@@ -228,6 +231,39 @@ test("admin credentials endpoint returns repository-backed credentials", async (
 
     assert.equal(response.status, 200)
     assert.deepEqual(await response.json(), { credentials: expected })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("admin credentials endpoint only includes deleted credentials when explicitly requested", async () => {
+  const inputs: Array<ListCredentialsInput | undefined> = []
+  const app = createAdminApp({
+    credentials: [createCredential("cred_openai_1")],
+    onListCredentialsInput(input) {
+      inputs.push(input)
+    },
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const baseUrl = `http://127.0.0.1:${port}/admin/api/credentials`
+    const defaultResponse = await fetch(baseUrl, {
+      headers: AUTHORIZATION,
+    })
+    const showDeletedResponse = await fetch(`${baseUrl}?includeDeleted=true`, {
+      headers: AUTHORIZATION,
+    })
+
+    assert.equal(defaultResponse.status, 200)
+    assert.equal(showDeletedResponse.status, 200)
+    assert.deepEqual(inputs, [
+      { includeDeleted: false },
+      { includeDeleted: true },
+    ])
   } finally {
     server.close()
     await once(server, "close")

@@ -104,6 +104,7 @@ export async function ensureAiGatewaySchema(db: SchemaReconcileDb) {
       \`credential_type\` enum('api_key','oauth') NOT NULL,
       \`state\` enum('healthy','degraded','draining','unhealthy','revoked') NOT NULL,
       \`secret_ref\` varchar(255) NOT NULL,
+      \`deleted_at\` timestamp(3) NULL,
       \`created_at\` timestamp(3) NOT NULL,
       \`updated_at\` timestamp(3) NOT NULL
     )
@@ -182,6 +183,7 @@ export async function ensureAiGatewaySchema(db: SchemaReconcileDb) {
   await ensureColumn(db, "user_ai_access_policy", "credential_id", "varchar(64)");
   await ensureColumn(db, "user_ai_access_policy", "assignment_origin", "varchar(32) NOT NULL DEFAULT 'admin_assigned'");
   await ensureColumn(db, "credential_record", "name", "varchar(255)");
+  await ensureColumn(db, "credential_record", "deleted_at", "timestamp(3) NULL");
   await ensureIndex(db, "credential_record", "credential_record_owner_provider_state", [
     "owner_user_id",
     "provider",

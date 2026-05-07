@@ -2,7 +2,8 @@ export type StoredSecret =
   | { kind: "api_key"; apiKey: string }
   | { kind: "openai_compatible_api_key"; apiKey: string; baseUrl: string }
   | { kind: "openai_oauth"; accessToken: string; refreshToken: string; expiresAt: string }
-  | { kind: "codex_auth_json"; authJson: string };
+  | { kind: "codex_auth_json"; authJson: string }
+  | { kind: "deleted"; deletedAt: string; reason: string };
 
 export interface SecretStore {
   put(secret: StoredSecret): Promise<{ secretRef: string }>;

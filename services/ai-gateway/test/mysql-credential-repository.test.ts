@@ -124,6 +124,18 @@ test("listAdminCredentials exposes credential read data used by Codex rotation",
                     created_at: new Date("2026-05-05T09:10:00.000Z"),
                     updated_at: new Date("2026-05-05T10:10:00.000Z"),
                   },
+                  {
+                    id: "cred_deleted",
+                    name: "Shared Michal CODEX - deleted",
+                    owner_user_id: "platform:codex_oauth",
+                    provider: "codex_oauth",
+                    credential_type: "oauth",
+                    state: "revoked",
+                    secret_ref: "secret_deleted",
+                    created_at: new Date("2026-05-05T09:20:00.000Z"),
+                    updated_at: new Date("2026-05-05T10:20:00.000Z"),
+                    deleted_at: new Date("2026-05-05T11:20:00.000Z"),
+                  },
                 ];
               },
             };
@@ -166,6 +178,11 @@ test("listAdminCredentials exposes credential read data used by Codex rotation",
                   credentialRecordId: "cred_new",
                   cachedTokens: 13,
                   totalTokens: 17,
+                },
+                {
+                  credentialRecordId: "cred_deleted",
+                  cachedTokens: 19,
+                  totalTokens: 23,
                 },
               ];
             },
@@ -212,4 +229,24 @@ test("listAdminCredentials exposes credential read data used by Codex rotation",
       linkedAlertIds: [],
     },
   ]);
+
+  const credentialsWithDeleted = await repository.listAdminCredentials?.({ includeDeleted: true });
+
+  assert.deepEqual(credentialsWithDeleted?.at(-1), {
+    id: "cred_deleted",
+    name: "Shared Michal CODEX - deleted",
+    provider: "codex_oauth",
+    type: "oauth",
+    state: "revoked",
+    scope: "platform:codex_oauth",
+    activeLeases: 0,
+    alertCount: 0,
+    lastRefreshAt: "2026-05-05T10:20:00.000Z",
+    lastFailureAt: "2026-05-05T10:20:00.000Z",
+    cachedTokens: 19,
+    totalTokens: 23,
+    nextRotationAt: null,
+    linkedAlertIds: [],
+    deletedAt: "2026-05-05T11:20:00.000Z",
+  });
 });

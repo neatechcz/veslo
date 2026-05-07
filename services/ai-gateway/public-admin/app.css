@@ -248,6 +248,12 @@ a {
   border-color: rgba(131, 151, 189, 0.16);
 }
 
+.button-danger {
+  color: var(--danger);
+  border-color: rgba(255, 123, 136, 0.28);
+  background: rgba(255, 123, 136, 0.1);
+}
+
 .input {
   width: 100%;
   min-height: 44px;
@@ -404,6 +410,28 @@ a {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 14px;
+}
+
+.credentials-toolbar {
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 0.7fr) minmax(160px, 0.6fr) auto;
+  align-items: center;
+}
+
+.checkbox-row {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  color: #d9e4fb;
+  font-size: 0.92rem;
+  white-space: nowrap;
+}
+
+.checkbox-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary);
 }
 
 .split-layout {
@@ -625,6 +653,14 @@ td span,
 .alert-card.active {
   background: rgba(143, 180, 255, 0.09);
   border-color: rgba(143, 180, 255, 0.24);
+}
+
+tr.row-muted td {
+  color: var(--muted);
+}
+
+tr.row-muted strong {
+  color: #c6d3ea;
 }
 
 .timeline {

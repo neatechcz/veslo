@@ -89,6 +89,8 @@ New DEN sign-ups automatically receive a healthy eligible Codex credential with 
 
 Standalone AI Gateway admin exposes model choices for assignments through the credential model-list endpoint. OpenAI-compatible credentials use live upstream `/models` discovery. Codex OAuth credentials use the gateway-owned Codex model catalog, with `gpt-5.5` as the default, so admins can select from known Codex model ids without relying on experimental Codex model-discovery internals.
 
+Standalone AI Gateway admin can soft-delete unusable credentials from the credential detail view. Deleted credentials are hidden from the default credential inventory, exposed only by the Show Deleted toggle, tombstone their stored secret material, and are excluded from assignment, automatic rotation, lease selection, and user AI-access options while their historical usage, alert, and audit records remain inspectable.
+
 In desktop local workspaces, the app can read managed-AI access policy from DEN or standalone AI Gateway, but generated OpenCode provider config must still route through the active local Veslo server. Remote DEN/Veslo URLs are not valid provider `baseURL` targets for local-first desktop execution.
 
 For `codex_oauth`, local OpenCode remains the agent runtime. OpenCode sends tool-capable OpenAI-compatible chat-completions requests through the local Veslo server to the managed gateway; the gateway resolves the server-side Codex OAuth credential, calls the ChatGPT Codex Responses endpoint, translates the Responses stream back to OpenAI-compatible JSON/SSE, and returns it without running `codex exec` for local desktop sessions. Codex OAuth secrets stay server-side, while local config contains only Veslo-scoped proxy tokens.

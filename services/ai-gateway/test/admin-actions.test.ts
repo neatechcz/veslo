@@ -177,6 +177,15 @@ function createAdminServiceSpy() {
       calls.credential.push({ action: "rotate", credentialId, token, actorUserId });
       return { credential: createCredential(credentialId, "draining") };
     },
+    async deleteCredential(token, credentialId, actorUserId) {
+      calls.credential.push({ action: "delete", credentialId, token, actorUserId });
+      return {
+        credential: {
+          ...createCredential(credentialId, "revoked", { activeLeases: 0 }),
+          deletedAt: "2026-04-03T11:00:00.000Z",
+        },
+      };
+    },
     async listSessions(): Promise<{ sessions: SessionRecord[] }> {
       return { sessions: [] };
     },
@@ -245,6 +254,132 @@ test("POST /admin/api/credentials actions forward admin actor identity and retur
     server.close();
     await once(server, "close");
   }
+});
+
+test("DELETE /admin/api/credentials/:credentialId forwards admin actor identity", async () => {
+  const { service, calls, session } = createAdminServiceSpy();
+  const app = createApp({ admin: service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/credentials/cred_revoked_1`, {
+      method: "DELETE",
+      headers: AUTHORIZATION,
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      credential: {
+        ...createCredential("cred_revoked_1", "revoked", { activeLeases: 0 }),
+        deletedAt: "2026-04-03T11:00:00.000Z",
+      },
+    });
+    assert.deepEqual(calls.credential, [
+      { action: "delete", credentialId: "cred_revoked_1", token: "admin-token", actorUserId: session.user.email },
+    ]);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("createDefaultAdminService soft-deletes an unusable credential and tombstones its secret", async () => {
+  const deletedCredential = {
+    ...createCredential("cred_revoked_1", "revoked", { activeLeases: 0 }),
+    alertCount: 0,
+    linkedAlertIds: [],
+    deletedAt: "2026-04-03T11:00:00.000Z",
+  };
+  const tombstones: unknown[] = [];
+  const auditCalls: Array<{
+    actorUserId?: string | null;
+    entityType: string;
+    entityId: string;
+    action: string;
+    result: "ok" | "warning" | "error";
+    summary?: string | null;
+  }> = [];
+  const deleteCalls: Array<{ credentialId: string; allowHealthyUnavailable: boolean }> = [];
+  const service = createDefaultAdminService("http://den.example.test", {
+    denClient: createUnusedDenClient(),
+    credentialReadRepository: {
+      async listAdminCredentials(input?: { includeDeleted?: boolean }) {
+        assert.equal(input?.includeDeleted, true);
+        return [deletedCredential];
+      },
+    },
+    credentialActionRepository: {
+      async revokeCredential() {
+        throw new Error("unused");
+      },
+      async drainCredential() {
+        throw new Error("unused");
+      },
+      async rotateCredential() {
+        throw new Error("unused");
+      },
+      async deleteCredential(input: { credentialId: string; allowHealthyUnavailable?: boolean }) {
+        deleteCalls.push({
+          credentialId: input.credentialId,
+          allowHealthyUnavailable: input.allowHealthyUnavailable === true,
+        });
+        return {
+          deleted: true,
+          secretRef: "secret_revoked_1",
+          deletedAt: "2026-04-03T11:00:00.000Z",
+        };
+      },
+    },
+    secretStore: {
+      async put() {
+        throw new Error("unused");
+      },
+      async get() {
+        throw new Error("unused");
+      },
+      async replace(secretRef, secret) {
+        tombstones.push({ secretRef, secret });
+      },
+    },
+    auditRepository: {
+      async recordEvent(input) {
+        auditCalls.push(input);
+      },
+    },
+    alertRepository: {
+      async listAlerts() {
+        return [];
+      },
+    },
+    now: () => new Date("2026-04-03T11:00:00.000Z"),
+  });
+
+  const payload = await service.deleteCredential("admin-token", "cred_revoked_1", "admin@example.test");
+
+  assert.deepEqual(payload, { credential: deletedCredential });
+  assert.deepEqual(deleteCalls, [{ credentialId: "cred_revoked_1", allowHealthyUnavailable: false }]);
+  assert.deepEqual(tombstones, [
+    {
+      secretRef: "secret_revoked_1",
+      secret: {
+        kind: "deleted",
+        deletedAt: "2026-04-03T11:00:00.000Z",
+        reason: "admin_deleted",
+      },
+    },
+  ]);
+  assert.deepEqual(auditCalls, [
+    {
+      actorUserId: "admin@example.test",
+      action: "credential.delete",
+      entityType: "credential",
+      entityId: "cred_revoked_1",
+      result: "warning",
+      summary: "Deleted credential cred_revoked_1.",
+    },
+  ]);
 });
 
 test("POST /admin/api/alerts actions forward admin actor identity and return alert payloads", async () => {

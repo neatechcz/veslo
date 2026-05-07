@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import express, { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -19,7 +19,7 @@ import type { AdminCredentialRecord, CreatePlatformCredentialInput, CredentialRe
 import type { SecretStore, StoredSecret } from "../credentials/secret-store.js";
 import type { AiGatewayDb } from "../db/index.js";
 import { createDb } from "../db/index.js";
-import { credentialBindingTable, credentialHealthEventTable, credentialRecordTable, credentialUsageEventTable, sessionLeaseTable, type CredentialState } from "../db/schema.js";
+import { credentialBindingTable, credentialHealthEventTable, credentialRecordTable, credentialUsageEventTable, sessionLeaseTable, userAiAccessPolicyTable, type CredentialState } from "../db/schema.js";
 import { env } from "../env.js";
 import type { AdminSessionRecord, LeaseProvider } from "../leases/repository.js";
 import { CODEX_DEFAULT_MODEL, listCodexModelCatalog, resolveCodexModelPolicy } from "../providers/codex-model-catalog.js";
@@ -178,6 +178,10 @@ export type CreateCredentialInput = {
   baseUrl?: string | null;
 };
 
+export type ListCredentialsInput = {
+  includeDeleted?: boolean;
+};
+
 export interface AdminService {
   startBrowserAuth(input: BrowserAuthStartInput): Promise<BrowserAuthStartPayload>;
   exchangeBrowserAuth(input: BrowserAuthExchangeInput): Promise<AuthPayload>;
@@ -198,12 +202,13 @@ export interface AdminService {
   disableUser(token: string, userId: string): Promise<AdminUserRecord>;
   enableUser(token: string, userId: string): Promise<AdminUserRecord>;
   deleteUser(token: string, userId: string): Promise<void>;
-  listCredentials(_token: string): Promise<{ credentials: CredentialRecord[] }>;
+  listCredentials(_token: string, input?: ListCredentialsInput): Promise<{ credentials: CredentialRecord[] }>;
   listCredentialModels(_token: string, credentialId: string): Promise<{ credentialId: string; models: string[]; defaultModel?: string }>;
   createCredential(_token: string, input: CreateCredentialInput, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   revokeCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   drainCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   rotateCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
+  deleteCredential(_token: string, credentialId: string, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   listSessions(_token: string): Promise<{ sessions: SessionRecord[] }>;
   getUsage(_token: string, input: { groupBy: UsageGroupBy; credentialId: string | null; userId: string | null; orgId: string | null }): Promise<UsageResponse>;
   listAlerts(_token: string): Promise<{ alerts: AlertRecord[] }>;
@@ -234,8 +239,19 @@ type DenAdminApi = {
 };
 
 type AdminCredentialReadRepository = {
-  listAdminCredentials(): Promise<CredentialRecord[]>;
+  listAdminCredentials(input?: ListCredentialsInput): Promise<CredentialRecord[]>;
 };
+
+type DeleteCredentialBlockReason =
+  | "credential_not_found"
+  | "credential_already_deleted"
+  | "credential_still_healthy"
+  | "credential_has_active_leases"
+  | "credential_assigned_to_users";
+
+type DeleteCredentialResult =
+  | { deleted: true; secretRef: string; deletedAt: string }
+  | { deleted: false; reason: DeleteCredentialBlockReason };
 
 type AdminSessionReadRepository = {
   listAdminSessions(): Promise<SessionRecord[]>;
@@ -245,6 +261,7 @@ type AdminCredentialActionRepository = {
   revokeCredential(credentialId: string): Promise<boolean>;
   drainCredential(credentialId: string): Promise<boolean>;
   rotateCredential(credentialId: string): Promise<boolean>;
+  deleteCredential(input: { credentialId: string; allowHealthyUnavailable?: boolean }): Promise<DeleteCredentialResult>;
 };
 
 type AdminCredentialWriteRepository = {
@@ -276,7 +293,7 @@ type AdminReadModelDependencies = {
 export class MySqlAdminCredentialReadRepository implements AdminCredentialReadRepository {
   constructor(private readonly db: AiGatewayDb) {}
 
-  async listAdminCredentials(): Promise<CredentialRecord[]> {
+  async listAdminCredentials(input: ListCredentialsInput = {}): Promise<CredentialRecord[]> {
     const [credentialRows, activeLeaseRows, usageRows] = await Promise.all([
       this.db.select().from(credentialRecordTable).orderBy(desc(credentialRecordTable.updated_at)),
       this.db
@@ -307,22 +324,25 @@ export class MySqlAdminCredentialReadRepository implements AdminCredentialReadRe
       usageRows.map((row) => [row.credentialRecordId, Number(row.cachedTokens ?? 0)]),
     );
 
-    return credentialRows.map((row) => ({
-      id: row.id,
-      name: row.name?.trim() || `${formatProviderLabel(row.provider)} ${row.id}`,
-      provider: row.provider,
-      type: row.credential_type,
-      state: row.state,
-      scope: row.owner_user_id,
-      activeLeases: activeLeasesByCredential.get(row.id) ?? 0,
-      alertCount: 0,
-      lastRefreshAt: toIsoString(row.updated_at),
-      lastFailureAt: row.state === "healthy" ? null : toIsoString(row.updated_at),
-      cachedTokens: cachedTokensByCredential.get(row.id) ?? 0,
-      totalTokens: totalTokensByCredential.get(row.id) ?? 0,
-      nextRotationAt: null,
-      linkedAlertIds: [],
-    }));
+    return credentialRows
+      .filter((row) => input.includeDeleted === true || !row.deleted_at)
+      .map((row) => ({
+        id: row.id,
+        name: row.name?.trim() || `${formatProviderLabel(row.provider)} ${row.id}`,
+        provider: row.provider,
+        type: row.credential_type,
+        state: row.state,
+        scope: row.owner_user_id,
+        activeLeases: activeLeasesByCredential.get(row.id) ?? 0,
+        alertCount: 0,
+        lastRefreshAt: toIsoString(row.updated_at),
+        lastFailureAt: row.state === "healthy" ? null : toIsoString(row.updated_at),
+        cachedTokens: cachedTokensByCredential.get(row.id) ?? 0,
+        totalTokens: totalTokensByCredential.get(row.id) ?? 0,
+        nextRotationAt: null,
+        linkedAlertIds: [],
+        ...(row.deleted_at ? { deletedAt: toIsoString(row.deleted_at) } : {}),
+      }));
   }
 }
 
@@ -396,6 +416,7 @@ class MySqlAdminCredentialActionRepository implements AdminCredentialActionRepos
             eq(credentialBindingTable.provider, credential.provider),
             ne(credentialBindingTable.credential_record_id, credentialId),
             eq(credentialRecordTable.state, "healthy"),
+            isNull(credentialRecordTable.deleted_at),
           ),
         )
         .orderBy(credentialBindingTable.created_at);
@@ -420,6 +441,59 @@ class MySqlAdminCredentialActionRepository implements AdminCredentialActionRepos
     }
 
     return this.transitionCredentialState(credentialId, "draining", "admin_rotate", credential);
+  }
+
+  async deleteCredential(input: { credentialId: string; allowHealthyUnavailable?: boolean }): Promise<DeleteCredentialResult> {
+    const credential = await this.getCredential(input.credentialId);
+    if (!credential) {
+      return { deleted: false, reason: "credential_not_found" };
+    }
+
+    if (credential.deleted_at) {
+      return { deleted: false, reason: "credential_already_deleted" };
+    }
+
+    if (credential.state === "healthy" && input.allowHealthyUnavailable !== true) {
+      return { deleted: false, reason: "credential_still_healthy" };
+    }
+
+    const activeLeases = await this.countActiveLeases(input.credentialId);
+    if (activeLeases > 0) {
+      return { deleted: false, reason: "credential_has_active_leases" };
+    }
+
+    const assignedUsers = await this.countAssignedUsers(input.credentialId);
+    if (assignedUsers > 0) {
+      return { deleted: false, reason: "credential_assigned_to_users" };
+    }
+
+    const deletedAt = new Date();
+    const nextState: CredentialState = credential.state === "healthy" ? "revoked" : credential.state;
+    await this.db
+      .update(credentialRecordTable)
+      .set({
+        state: nextState,
+        deleted_at: deletedAt,
+        updated_at: deletedAt,
+      })
+      .where(eq(credentialRecordTable.id, input.credentialId));
+
+    if (nextState !== credential.state) {
+      await this.db.insert(credentialHealthEventTable).values({
+        id: `health_${randomUUID()}`,
+        credential_record_id: input.credentialId,
+        from_state: credential.state,
+        to_state: nextState,
+        reason: "admin_delete",
+        created_at: deletedAt,
+      });
+    }
+
+    return {
+      deleted: true,
+      secretRef: credential.secret_ref,
+      deletedAt: deletedAt.toISOString(),
+    };
   }
 
   private async transitionCredentialState(
@@ -464,6 +538,25 @@ class MySqlAdminCredentialActionRepository implements AdminCredentialActionRepos
       .limit(1);
 
     return rows[0] ?? null;
+  }
+
+  private async countActiveLeases(credentialId: string): Promise<number> {
+    const rows = await this.db
+      .select({ activeLeases: sql<number>`count(*)` })
+      .from(sessionLeaseTable)
+      .innerJoin(credentialBindingTable, eq(sessionLeaseTable.active_binding_id, credentialBindingTable.id))
+      .where(eq(credentialBindingTable.credential_record_id, credentialId));
+
+    return Number(rows[0]?.activeLeases ?? 0);
+  }
+
+  private async countAssignedUsers(credentialId: string): Promise<number> {
+    const rows = await this.db
+      .select({ assignedUsers: sql<number>`count(*)` })
+      .from(userAiAccessPolicyTable)
+      .where(eq(userAiAccessPolicyTable.credential_id, credentialId));
+
+    return Number(rows[0]?.assignedUsers ?? 0);
   }
 }
 
@@ -904,9 +997,9 @@ export function createDefaultAdminService(
     }
   }
 
-  async function listCredentialsWithAlerts(): Promise<CredentialRecord[]> {
+  async function listCredentialsWithAlerts(input: ListCredentialsInput = {}): Promise<CredentialRecord[]> {
     const [credentials, alerts] = await Promise.all([
-      getCredentialReadRepository().listAdminCredentials(),
+      getCredentialReadRepository().listAdminCredentials(input),
       getAlertRepository().listAlerts(),
     ]);
 
@@ -937,6 +1030,18 @@ export function createDefaultAdminService(
   ): Promise<CredentialRecord[]> {
     return Promise.all(
       credentials.map(async (credential) => {
+        if (credential.deletedAt) {
+          return {
+            ...credential,
+            upstreamStatus: null,
+            eligibility: {
+              state: "revoked",
+              reason: "Credential is deleted.",
+              resetAt: null,
+            },
+          };
+        }
+
         if (credential.provider !== "codex_oauth") {
           return credential;
         }
@@ -1053,13 +1158,28 @@ export function createDefaultAdminService(
     }
   }
 
-  async function getCredentialOrThrow(credentialId: string): Promise<CredentialRecord> {
-    const credentials = await listCredentialsWithAlerts();
+  async function getCredentialOrThrow(credentialId: string, input: ListCredentialsInput = {}): Promise<CredentialRecord> {
+    const credentials = await listCredentialsWithAlerts(input);
     const credential = credentials.find((entry) => entry.id === credentialId);
     if (!credential) {
       throw new HttpError("credential_not_found", 404);
     }
     return credential;
+  }
+
+  function canDeleteHealthyUnavailableCredential(credential: CredentialRecord): boolean {
+    return credential.state === "healthy" &&
+      credential.provider === "codex_oauth" &&
+      credential.eligibility?.state === "unavailable";
+  }
+
+  function mapDeleteCredentialResult(result: DeleteCredentialResult): never | { secretRef: string; deletedAt: string } {
+    if (result.deleted) {
+      return result;
+    }
+
+    const status = result.reason === "credential_not_found" ? 404 : 409;
+    throw new HttpError(result.reason, status);
   }
 
   async function withCredentialUsage(
@@ -1259,9 +1379,9 @@ export function createDefaultAdminService(
         summary: `Deleted user ${userId}.`,
       });
     },
-    async listCredentials() {
+    async listCredentials(_token, input = {}) {
       return {
-        credentials: await withCodexUpstreamStatus(await listCredentialsWithAlerts(), codexStatusProvider),
+        credentials: await withCodexUpstreamStatus(await listCredentialsWithAlerts(input), codexStatusProvider),
       };
     },
     async listCredentialModels(_token, credentialId) {
@@ -1364,6 +1484,30 @@ export function createDefaultAdminService(
         summary: `Rotated active sessions off credential ${credentialId}.`,
       });
       return { credential: await getCredentialOrThrow(credentialId) };
+    },
+    async deleteCredential(_token, credentialId, actorUserId) {
+      const decoratedCredential = (await withCodexUpstreamStatus(
+        [await getCredentialOrThrow(credentialId, { includeDeleted: true })],
+        codexStatusProvider,
+      ))[0]!;
+      const result = mapDeleteCredentialResult(await getCredentialActionRepository().deleteCredential({
+        credentialId,
+        allowHealthyUnavailable: canDeleteHealthyUnavailableCredential(decoratedCredential),
+      }));
+      await getSecretStore().replace(result.secretRef, {
+        kind: "deleted",
+        deletedAt: result.deletedAt,
+        reason: "admin_deleted",
+      });
+      await recordAuditEvent({
+        actorUserId,
+        action: "credential.delete",
+        entityType: "credential",
+        entityId: credentialId,
+        result: "warning",
+        summary: `Deleted credential ${credentialId}.`,
+      });
+      return { credential: await getCredentialOrThrow(credentialId, { includeDeleted: true }) };
     },
     async listSessions() {
       return { sessions: await getSessionReadRepository().listAdminSessions() };
@@ -1640,6 +1784,7 @@ function toAdminCredentialRecord(record: GatewayCredentialRecord): CredentialRec
     cachedTokens: 0,
     nextRotationAt: null,
     linkedAlertIds: [],
+    ...(record.deletedAt instanceof Date ? { deletedAt: record.deletedAt.toISOString() } : {}),
   };
 }
 
@@ -1814,7 +1959,8 @@ export function createAdminRouter(adminService: AdminService) {
 
   router.get("/admin/api/credentials", async (req, res) => {
     try {
-      const payload = await adminService.listCredentials(res.locals.adminToken as string);
+      const includeDeleted = req.query.includeDeleted === "true" || req.query.includeDeleted === "1";
+      const payload = await adminService.listCredentials(res.locals.adminToken as string, { includeDeleted });
       res.json(payload);
     } catch (error) {
       if (mapHttpError(error, res)) {
@@ -1857,6 +2003,22 @@ export function createAdminRouter(adminService: AdminService) {
         return;
       }
       res.status(502).json({ error: "credential_create_failed" });
+    }
+  });
+
+  router.delete("/admin/api/credentials/:credentialId", async (req, res) => {
+    try {
+      const payload = await adminService.deleteCredential(
+        res.locals.adminToken as string,
+        req.params.credentialId,
+        getAdminActorUserId(res),
+      );
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "credential_delete_failed" });
     }
   });
 

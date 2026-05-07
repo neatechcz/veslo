@@ -26,6 +26,8 @@ test("GET /admin/credentials serves the admin shell with an admin-only platform 
     assert.match(html, /id="credential-create-base-url"/)
     assert.match(html, /id="credential-create-secret"/)
     assert.match(html, /id="credential-create-submit"/)
+    assert.match(html, /id="credentials-show-deleted"/)
+    assert.match(html, /Show deleted/)
     assert.match(html, /Codex \/ ChatGPT runtime profile/)
     assert.match(html, /<option value="codex_oauth">Codex \/ ChatGPT runtime<\/option>/)
     assert.match(html, /<option value="openai_compatible">OpenAI-compatible provider<\/option>/)
@@ -296,6 +298,35 @@ test("GET /admin/app.js creates platform credentials from the Credentials page",
       script,
       /async function createCredential\(\) \{[\s\S]*await fetchJson\("\/credentials", \{\s*method: "POST"[\s\S]*await refreshSelectedUserAiAccessOptions\(\)/,
     )
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js supports showing and soft-deleting credential archive records", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /showDeletedCredentials:\s*false/)
+    assert.match(script, /credentialsShowDeleted:\s*document\.getElementById\("credentials-show-deleted"\)/)
+    assert.match(script, /includeDeleted/)
+    assert.match(script, /state\.showDeletedCredentials\s*\?\s*"\?includeDeleted=true"\s*:\s*""/)
+    assert.match(script, /credential\.deletedAt \? "deleted" : credential\.state/)
+    assert.match(script, /data-credential-action="delete"/)
+    assert.match(script, /Delete \$\{credential\.name\}\? This moves it to Show Deleted/)
+    assert.match(script, /credentialActionRequest\(credential\.id,\s*action\)/)
+    assert.match(script, /method:\s*action === "delete" \? "DELETE" : "POST"/)
+    assert.match(script, /state\.showDeletedCredentials = true/)
+    assert.match(script, /els\.credentialsShowDeleted\.checked = true/)
+    assert.match(script, /credential\.deletedAt[\s\S]*data-route-alerts>Open alerts<\/button>/)
   } finally {
     server.close()
     await once(server, "close")
