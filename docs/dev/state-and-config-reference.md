@@ -106,6 +106,25 @@ These control which Veslo server URL the app connects to and which bearer token 
 
 Invite-link and bundle-link parsing also lives in `veslo-server.ts`. Incoming query parameters can override the stored connection state for a launch flow.
 
+## Desktop Debug Log Forwarder
+
+The Tauri shell forwards stdout/stderr from every supervised sidecar (`veslo-server`, `opencode-router`, `veslo-orchestrator`, `engine`) into the veslo-server debug log pipeline. Implementation lives in `packages/desktop/src-tauri/src/debug_logs_forwarder.rs`.
+
+Spool location:
+
+- `${VESLO_APP_LOCAL_DATA_DIR or app_local_data_dir()}/desktop-debug-log-spool/`
+- `pending.jsonl` — append-only file growing as sidecars emit lines.
+- `flushing-{uuid}.jsonl` — appears briefly during a flush; deleted on success, kept on failure for retry.
+
+Behavior:
+
+- A dedicated OS thread wakes every 5 s, reads veslo-server `port` and `host_token` from `VesloServerManager` state, atomically renames `pending.jsonl` to a `flushing-*` file, and POSTs batches of up to 500 events to `http://127.0.0.1:{port}/debug-logs` with `x-veslo-host-token`. Server-side validation lives in `validateDebugLogBatch`.
+- Source labels in events: `veslo-server-shell` (Tauri-side capture, distinct from server-internal `veslo-server-self`), `opencode-router`, `orchestrator`, `engine`. `chrome-devtools-mcp` is covered transparently because it runs as an orchestrator child.
+- Retention: `pending.jsonl` is truncated back to ~35 MB whenever it crosses the 50 MB high-water mark. Truncation drops the oldest lines and keeps the JSONL boundary clean.
+- Resilience: when veslo-server is not running (no port/token available) the flush thread skips the cycle. POST failures leave the `flushing-*` file in place; the next tick retries.
+
+This forwarder is independent of the veslo-server pipeline below — events arrive at the server endpoint and join the same downstream spool/uploader path.
+
 ## Veslo Server Debug Log Pipeline
 
 The server can capture structured runtime logs (its own logger output, audit entries, and any batch posted by the desktop shell to `POST /debug-logs`) into a durable on-disk spool and forward them to a remote ingest endpoint such as Den. The pipeline lives in `packages/server/src/debug-log-pipeline.ts` and is wired into `startServer` so no caller has to manage spool or retry logic.
