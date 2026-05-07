@@ -56,7 +56,6 @@ import type { OpencodeConnectStatus, ProviderListItem } from "../types";
 import { t, currentLocale, isLanguage } from "../../i18n";
 import { mapConfigProvidersToList } from "../utils/providers";
 import { withTimeoutOrThrow } from "../utils/promise-timeout";
-import { connectOrRecoverLocalBootstrap } from "../utils/bootstrap-local-recovery";
 import { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecycle";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { createWorkspaceActivateGuard } from "./workspace-activate-guard";
@@ -2028,12 +2027,11 @@ export function createWorkspaceStore(options: {
       }
     }
 
-    bootTrace("refreshEngine...");
-    await withTimeout(engineStore.refreshEngine(), 10_000, "refreshEngine");
-    bootTrace("refreshEngine DONE");
-    bootTrace("refreshEngineDoctor...");
-    await withTimeout(engineStore.refreshEngineDoctor(), 10_000, "refreshEngineDoctor");
-    bootTrace("refreshEngineDoctor DONE");
+    bootTrace("refreshEngine + refreshEngineDoctor → background");
+    void Promise.allSettled([
+      withTimeout(engineStore.refreshEngine(), 10_000, "refreshEngine").catch(() => {}),
+      withTimeout(engineStore.refreshEngineDoctor(), 10_000, "refreshEngineDoctor").catch(() => {}),
+    ]);
 
     if (isTauriRuntime()) {
       const active = workspaces().find((w) => w.id === activeWorkspaceId()) ?? null;
@@ -2099,19 +2097,21 @@ export function createWorkspaceStore(options: {
       options.setOnboardingStep("auth");
       return;
     }
-    // Validate stored auth with Den server before allowing app use.
-    bootTrace("validateDenAuth...");
-    const authResult = await validateDenAuth(denAuth);
-    bootTrace("validateDenAuth DONE, result=", authResult);
-    if (authResult === "invalid") {
-      clearDenAuth();
-      bootTrace("→ auth invalid (401/403), setOnboardingStep('auth') and RETURN");
-      options.setOnboardingStep("auth");
-      return;
-    }
-    if (authResult === "unreachable") {
-      bootTrace("→ auth server unreachable, proceeding with cached token");
-    }
+    // Fire-and-forget validation: app proceeds with cached token immediately.
+    // If the token turns out to be invalid (401/403), the handler clears it
+    // and pushes the user to the auth screen reactively.
+    bootTrace("validateDenAuth → background");
+    void validateDenAuth(denAuth)
+      .then((authResult) => {
+        bootTrace("validateDenAuth (bg) result=", authResult);
+        if (authResult === "invalid") {
+          clearDenAuth();
+          options.setOnboardingStep("auth");
+        }
+      })
+      .catch(() => {
+        // Network error / unreachable — keep cached token, no UI change.
+      });
 
     if (CLOUD_ONLY_MODE) {
       options.setStartupPreference("server");
@@ -2132,14 +2132,12 @@ export function createWorkspaceStore(options: {
 
     bootTrace("activeWorkspace type=", activeWorkspace?.workspaceType, "CLOUD_ONLY=", CLOUD_ONLY_MODE);
     if (activeWorkspace?.workspaceType === "remote") {
-      bootTrace("remote workspace → activateWorkspace...");
+      // Lazy boot: keep the workspace pre-selected in the sidebar but do NOT
+      // auto-activate. The user clicks the workspace to connect on demand.
+      bootTrace("remote workspace → pre-selected, no auto-activate");
       options.setStartupPreference("server");
-      options.setOnboardingStep("connecting");
-      const ok = await activateWorkspace(activeWorkspace.id);
-      bootTrace("activateWorkspace ok=", ok);
-      if (!ok) {
-        options.setOnboardingStep("server");
-      }
+      options.setEngineReady?.(false);
+      markOnboardingComplete();
       return;
     }
 
@@ -2176,84 +2174,15 @@ export function createWorkspaceStore(options: {
     bootTrace("activeWorkspacePath=", activeWorkspacePath().trim() || "(empty)");
     if (activeWorkspacePath().trim()) {
       const workspacePath = activeWorkspacePath().trim();
-      const runningEngineProjectDir = info?.projectDir?.trim() ?? "";
-      const canReuseRunningEngine =
-        normalizeDirectoryPath(runningEngineProjectDir) !== "" &&
-        normalizeDirectoryPath(runningEngineProjectDir) === normalizeDirectoryPath(workspacePath);
       options.setStartupPreference("local");
 
-      if (info?.running && info.baseUrl && canReuseRunningEngine) {
-        const engineBaseUrl = info.baseUrl;
-        _wsLog("[workspace:bootstrap] engine already running, connectToServer...", { baseUrl: engineBaseUrl, projectDir: info.projectDir });
-        bootTrace("engine running, connectToServer...");
-        options.setOnboardingStep("connecting");
-        let ok = false;
-        try {
-          ok = await connectOrRecoverLocalBootstrap({
-            connect: async () => {
-              const connected = await connectToServer(
-                engineBaseUrl,
-                (workspacePath || info.projectDir || undefined),
-                {
-                  workspaceId: activeWorkspace?.id || undefined,
-                  workspaceType: "local",
-                  targetRoot: workspacePath || undefined,
-                  reason: "bootstrap-local",
-                },
-                engineStore.engineAuth() ?? undefined,
-                { navigate: false },
-              );
-              bootTrace("connectToServer ok=", connected);
-              return connected;
-            },
-            onRecover: (cause) => {
-              const reason = cause.kind === "connect-threw"
-                ? cause.error instanceof Error
-                  ? cause.error.message
-                  : String(cause.error)
-                : "connectToServer returned false";
-              _wsLog("[workspace:bootstrap] local reattach failed, recovering with startHost...", {
-                baseUrl: engineBaseUrl,
-                workspacePath,
-                reason,
-              });
-              bootTrace("local reattach failed, recovering with startHost:", reason);
-            },
-            startHost: async () => {
-              return await withTimeoutOrThrow(
-                engineStore.startHost({ workspacePath, navigate: false }),
-                { timeoutMs: START_HOST_TIMEOUT_MS, label: "bootstrap_startHost" },
-              );
-            },
-          });
-        } catch (e) {
-          _wsLog("[workspace:bootstrap] recovery startHost FAILED/TIMED OUT:", e instanceof Error ? e.message : String(e));
-          bootTrace("recovery startHost timed out or failed:", e instanceof Error ? e.message : String(e));
-        }
-        if (!ok) {
-          options.setOnboardingStep("local");
-          return;
-        }
-        markOnboardingComplete();
-        return;
-      }
-
-      if (info?.running && info.baseUrl && !canReuseRunningEngine) {
-        _wsLog("[workspace:bootstrap] running engine project mismatch, restarting host...", {
-          workspacePath,
-          runningEngineProjectDir,
-        });
-        bootTrace("running engine project mismatch, restarting host...", runningEngineProjectDir);
-      }
-
-      // BROWSING MODE BOOT: Load sessions from SQLite directly instead of
-      // starting the engine (which takes ~2.5s and wipes state via
-      // connectToServer).  The engine starts on-demand when the user sends a
-      // message (via ensureEngineForWorkspace in sendPrompt).
+      // Lazy boot: do NOT connect to or start the engine here. Pre-load the
+      // sidebar from SQLite so the workspace is browsable immediately. The
+      // engine spins up on demand when the user clicks a workspace / sends
+      // a message (activateWorkspace → ensureEngineForWorkspace).
       if (isTauriRuntime() && options.populateSidebarFromDb) {
-        _wsLog("[workspace:bootstrap] browsing mode boot — loading sidebar from DB", { workspacePath });
-        bootTrace("browsing mode boot — populateSidebarFromDb...");
-        options.setStartupPreference("local");
+        _wsLog("[workspace:bootstrap] lazy boot — sidebar from DB", { workspacePath });
+        bootTrace("lazy boot — populateSidebarFromDb...");
         options.setEngineReady?.(false);
         try {
           await options.populateSidebarFromDb(activeWorkspace?.id ?? "", workspacePath);
@@ -2268,38 +2197,12 @@ export function createWorkspaceStore(options: {
           _wsLog("[workspace:bootstrap] hydrateLatestSessionFromDb failed", e);
         }
         markOnboardingComplete();
-
-        // Start the engine in the background so veslo-server connects
-        // (green status dot).  The user can already browse sessions from
-        // SQLite while this runs (~2-3s).
-        void ensureEngineForWorkspace().catch((e) => {
-          _wsLog("[workspace:bootstrap] background engine start failed (non-fatal)", e);
-        });
-
         return;
       }
 
-      // Non-Tauri fallback: start engine the traditional way
-      _wsLog("[workspace:bootstrap] startHost...", { workspacePath });
-      bootTrace("startHost...");
-      options.setOnboardingStep("connecting");
-      let ok = false;
-      try {
-        ok = await withTimeoutOrThrow(
-          engineStore.startHost({ workspacePath, navigate: false }),
-          { timeoutMs: START_HOST_TIMEOUT_MS, label: "bootstrap_startHost" },
-        );
-      } catch (e) {
-        _wsLog("[workspace:bootstrap] startHost FAILED/TIMED OUT:", e instanceof Error ? e.message : String(e));
-        bootTrace("startHost timed out or failed:", e instanceof Error ? e.message : String(e));
-      }
-      _wsLog("[workspace:bootstrap] startHost ok=", ok);
-      bootTrace("startHost ok=", ok);
-      if (!ok) {
-        options.setOnboardingStep("local");
-        return;
-      }
-      markOnboardingComplete();
+      // Non-Tauri fallback: still no auto-engine-start. Land on the local
+      // onboarding step so the user can choose to connect.
+      options.setOnboardingStep("local");
       return;
     }
 

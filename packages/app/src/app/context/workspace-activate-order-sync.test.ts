@@ -76,29 +76,32 @@ test("browsing mode keeps the live client but marks the engine not ready before 
   );
 });
 
-test("bootstrap reuses a running local engine only when its projectDir matches the active workspace", () => {
-  assert.match(source, /const runningEngineProjectDir = info\?\.projectDir\?\.trim\(\) \?\? "";/);
-  assert.match(
+test("bootstrap does not auto-connect or start the engine under lazy boot policy", () => {
+  // Lazy boot: bootstrap pre-loads the sidebar from SQLite and lets the user
+  // open the workspace explicitly. The bootstrap-specific connect/start
+  // helpers must not be invoked anywhere in this file.
+  assert.doesNotMatch(
     source,
-    /const canReuseRunningEngine =[\s\S]*normalizeDirectoryPath\(runningEngineProjectDir\)[\s\S]*normalizeDirectoryPath\(workspacePath\);/s,
+    /connectOrRecoverLocalBootstrap/,
+    "bootstrap must not invoke connectOrRecoverLocalBootstrap; activate flow owns connect",
   );
-  assert.match(
+  assert.doesNotMatch(
     source,
-    /if \(info\?\.running && info\.baseUrl && canReuseRunningEngine\) \{/,
-    "bootstrap must not silently attach Prometheus to a stale engine from another workspace",
+    /reason: "bootstrap-local"/,
+    "no connectToServer call may run with reason 'bootstrap-local' — bootstrap must not connect",
   );
 });
 
-test("bootstrap local connect/start preserves the current session route instead of navigating back to the empty session view", () => {
+test("bootstrap pre-loads the sidebar from SQLite without starting the engine", () => {
   assert.match(
     source,
-    /const connected = await connectToServer\([\s\S]*engineStore\.engineAuth\(\) \?\? undefined,[\s\S]*\{ navigate: false \},[\s\S]*\);/s,
-    "bootstrap reattach must not clobber a deep-linked session route while reconnecting to the local host",
+    /async function bootstrapOnboarding\(\)[\s\S]*?options\.populateSidebarFromDb\(/s,
+    "bootstrap must populate the sidebar from SQLite for instant browsability",
   );
   assert.match(
     source,
-    /engineStore\.startHost\(\{ workspacePath, navigate: false \}\)/,
-    "bootstrap startHost must preserve the current route so session opening can complete after the host becomes ready",
+    /async function bootstrapOnboarding\(\)[\s\S]*?options\.setEngineReady\?\.\(false\)/s,
+    "bootstrap must explicitly mark engine as not-ready so browsing-mode UI activates",
   );
 });
 

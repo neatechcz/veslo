@@ -12,23 +12,21 @@ test("startHost clears the stale live client before launching a different local 
   );
 });
 
-test("refreshEngine does not resurrect a live client while browsing a different local workspace", () => {
+test("refreshEngine still skips state sync when browsing a different local workspace", () => {
   assert.match(
     source,
     /const browsingDifferentLocalWorkspace =[\s\S]*activeWorkspaceRoot !== engineProjectDir;/s,
     "refreshEngine should detect when the active local workspace is only being browsed while the engine still points at another root",
   );
+});
 
-  assert.match(
+test("refreshEngine does not auto-reconnect under lazy boot policy", () => {
+  // Lazy boot: the user-driven activateWorkspace owns connect. refreshEngine
+  // is purely informational and must not trigger connectToServer itself.
+  assert.doesNotMatch(
     source,
-    /const workspaceOwnsLocalReconnect = syncLocalState && activeWorkspacePath\.length > 0;/,
-    "refreshEngine should let the active local workspace bootstrap own the connect flow instead of racing it from the engine poller",
-  );
-
-  assert.match(
-    source,
-    /if \(\s*syncLocalState &&\s*info\.running &&\s*info\.baseUrl &&\s*!deps\.client\(\) &&\s*!reconnectingEngine &&\s*!workspaceOwnsLocalReconnect &&\s*!browsingDifferentLocalWorkspace\s*\)/s,
-    "engine refresh must not auto-reconnect while a local workspace bootstrap or browse-mode flow intentionally owns connectivity",
+    /async function refreshEngine\(\)[\s\S]*?deps\.connectToServer\(/s,
+    "refreshEngine must not call connectToServer; activate flow owns reconnect",
   );
 });
 

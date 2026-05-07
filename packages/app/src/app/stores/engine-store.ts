@@ -10,7 +10,6 @@ import {
 import { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecycle";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { t, currentLocale } from "../../i18n";
-import { reportError } from "../lib/error-reporter";
 import type { OpencodeAuth } from "../lib/opencode";
 import {
   engineDoctor,
@@ -128,22 +127,17 @@ export function createEngineStore(deps: EngineStoreDeps) {
       ),
   });
 
-  let lastEngineReconnectAt = 0;
-  let reconnectingEngine = false;
-
   async function refreshEngine() {
     if (!isTauriRuntime()) return;
 
     try {
       const info = await engineInfo();
-      const auth = localRuntimeLifecycle.syncEngineSnapshot(info) ?? null;
+      localRuntimeLifecycle.syncEngineSnapshot(info);
 
       const isRemoteWorkspace = deps.activeWorkspaceInfo()?.workspaceType === "remote";
       const syncLocalState = !isRemoteWorkspace;
-      const activeWorkspacePath = normalizeDirectoryPath(deps.activeWorkspacePath().trim());
       const activeWorkspaceRoot = normalizeDirectoryPath(deps.activeWorkspaceRoot().trim());
       const engineProjectDir = normalizeDirectoryPath(info.projectDir?.trim() ?? "");
-      const workspaceOwnsLocalReconnect = syncLocalState && activeWorkspacePath.length > 0;
       const browsingDifferentLocalWorkspace =
         syncLocalState &&
         !deps.client() &&
@@ -158,37 +152,9 @@ export function createEngineStore(deps: EngineStoreDeps) {
         deps.setBaseUrl(info.baseUrl);
       }
 
-      if (
-        syncLocalState &&
-        info.running &&
-        info.baseUrl &&
-        !deps.client() &&
-        !reconnectingEngine &&
-        !workspaceOwnsLocalReconnect &&
-        !browsingDifferentLocalWorkspace
-      ) {
-        const now = Date.now();
-        if (now - lastEngineReconnectAt > 10_000) {
-          lastEngineReconnectAt = now;
-          reconnectingEngine = true;
-          deps.connectToServer(
-            info.baseUrl,
-            (deps.activeWorkspaceRoot().trim() || info.projectDir || undefined),
-            {
-              workspaceId: deps.activeWorkspaceId().trim() || undefined,
-              workspaceType: "local",
-              targetRoot: deps.activeWorkspaceRoot().trim() || undefined,
-              reason: "engine-refresh",
-            },
-            auth ?? undefined,
-            { quiet: true, navigate: false },
-          )
-            .catch(e => reportError(e, "workspace.reconnect"))
-            .finally(() => {
-              reconnectingEngine = false;
-            });
-        }
-      }
+      // Lazy boot policy: refreshEngine no longer auto-reconnects. The
+      // user-driven `activateWorkspace` owns the connect flow (it calls
+      // connectToServer idempotently when the workspace is opened).
     } catch {
       // ignore
     }
