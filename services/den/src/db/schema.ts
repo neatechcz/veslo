@@ -369,6 +369,60 @@ export const FeedbackProjectorAttemptTable = mysqlTable(
   (table) => [index("feedback_projector_attempt_feedback_id").on(table.feedback_id)],
 )
 
+export const DebugLogBatchTable = mysqlTable(
+  "debug_log_batch",
+  {
+    id: id().primaryKey(),
+    batch_id: varchar("batch_id", { length: 128 }).notNull(),
+    idempotency_key: varchar("idempotency_key", { length: 255 }).notNull(),
+    event_count: int("event_count", { unsigned: true }).notNull(),
+    expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("debug_log_batch_batch_id").on(table.batch_id),
+    uniqueIndex("debug_log_batch_idempotency_key").on(table.idempotency_key),
+    index("debug_log_batch_expires_at").on(table.expires_at),
+  ],
+)
+
+export const DebugLogEventTable = mysqlTable(
+  "debug_log_event",
+  {
+    id: id().primaryKey(),
+    batch_id: varchar("batch_id", { length: 128 }).notNull(),
+    event_id: varchar("event_id", { length: 128 }).notNull(),
+    user_id: varchar("user_id", { length: 128 }).notNull(),
+    org_id: varchar("org_id", { length: 128 }).notNull(),
+    workspace_id: varchar("workspace_id", { length: 128 }).notNull(),
+    worker_id: varchar("worker_id", { length: 128 }),
+    session_id: varchar("session_id", { length: 128 }),
+    run_id: varchar("run_id", { length: 128 }),
+    source: varchar("source", { length: 64 }).notNull(),
+    stream: varchar("stream", { length: 32 }).notNull(),
+    level: varchar("level", { length: 16 }),
+    event_timestamp: timestamp("event_timestamp", { fsp: 3 }).notNull(),
+    sequence_no: int("sequence_no", { unsigned: true }).notNull(),
+    payload_sha256: varchar("payload_sha256", { length: 64 }).notNull(),
+    payload_bytes: int("payload_bytes", { unsigned: true }).notNull(),
+    encryption_key_version: varchar("encryption_key_version", { length: 128 }).notNull(),
+    payload_ciphertext: longtext("payload_ciphertext").notNull(),
+    payload_iv: text("payload_iv").notNull(),
+    payload_auth_tag: text("payload_auth_tag").notNull(),
+    expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("debug_log_event_batch_event").on(table.batch_id, table.event_id),
+    index("debug_log_event_user_time").on(table.user_id, table.event_timestamp),
+    index("debug_log_event_org_time").on(table.org_id, table.event_timestamp),
+    index("debug_log_event_workspace_time").on(table.workspace_id, table.event_timestamp),
+    index("debug_log_event_session_time").on(table.session_id, table.event_timestamp),
+    index("debug_log_event_run_time").on(table.run_id, table.event_timestamp),
+    index("debug_log_event_expires_at").on(table.expires_at),
+  ],
+)
+
 export const AuditEventTable = mysqlTable(
   "audit_event",
   {

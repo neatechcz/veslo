@@ -565,6 +565,56 @@ async function ensureTables() {
     )
 
     await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`debug_log_batch\` (
+        \`id\` varchar(64) NOT NULL,
+        \`batch_id\` varchar(128) NOT NULL,
+        \`idempotency_key\` varchar(255) NOT NULL,
+        \`event_count\` int unsigned NOT NULL,
+        \`expires_at\` timestamp(3) NOT NULL,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        CONSTRAINT \`debug_log_batch_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await ensureIndex("debug_log_batch", "debug_log_batch_batch_id", ["batch_id"], true)
+    await ensureIndex("debug_log_batch", "debug_log_batch_idempotency_key", ["idempotency_key"], true)
+    await ensureIndex("debug_log_batch", "debug_log_batch_expires_at", ["expires_at"])
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`debug_log_event\` (
+        \`id\` varchar(64) NOT NULL,
+        \`batch_id\` varchar(128) NOT NULL,
+        \`event_id\` varchar(128) NOT NULL,
+        \`user_id\` varchar(128) NOT NULL,
+        \`org_id\` varchar(128) NOT NULL,
+        \`workspace_id\` varchar(128) NOT NULL,
+        \`worker_id\` varchar(128),
+        \`session_id\` varchar(128),
+        \`run_id\` varchar(128),
+        \`source\` varchar(64) NOT NULL,
+        \`stream\` varchar(32) NOT NULL,
+        \`level\` varchar(16),
+        \`event_timestamp\` timestamp(3) NOT NULL,
+        \`sequence_no\` int unsigned NOT NULL,
+        \`payload_sha256\` varchar(64) NOT NULL,
+        \`payload_bytes\` int unsigned NOT NULL,
+        \`encryption_key_version\` varchar(128) NOT NULL,
+        \`payload_ciphertext\` longtext NOT NULL,
+        \`payload_iv\` text NOT NULL,
+        \`payload_auth_tag\` text NOT NULL,
+        \`expires_at\` timestamp(3) NOT NULL,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        CONSTRAINT \`debug_log_event_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await ensureIndex("debug_log_event", "debug_log_event_batch_event", ["batch_id", "event_id"], true)
+    await ensureIndex("debug_log_event", "debug_log_event_user_time", ["user_id", "event_timestamp"])
+    await ensureIndex("debug_log_event", "debug_log_event_org_time", ["org_id", "event_timestamp"])
+    await ensureIndex("debug_log_event", "debug_log_event_workspace_time", ["workspace_id", "event_timestamp"])
+    await ensureIndex("debug_log_event", "debug_log_event_session_time", ["session_id", "event_timestamp"])
+    await ensureIndex("debug_log_event", "debug_log_event_run_time", ["run_id", "event_timestamp"])
+    await ensureIndex("debug_log_event", "debug_log_event_expires_at", ["expires_at"])
+
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`desktop_auth_handoff\` (
         \`id\` varchar(64) NOT NULL,
         \`code\` varchar(255) NOT NULL,
