@@ -7,9 +7,11 @@ import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 import { sql } from "drizzle-orm"
 import { auth } from "./auth.js"
 import { db } from "./db/index.js"
+import { createDbDebugLogStore, createDebugLogService } from "./debug-logs/repository.js"
 import { shouldWidenVarcharColumn } from "./db/schema-reconcile.js"
 import { env } from "./env.js"
 import { createDbFeedbackProjectorStore, createFeedbackProjector } from "./feedback/projector.js"
+import { createDebugLogsIngestRouter } from "./http/debug-logs.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { requireSession } from "./http/session.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
@@ -56,6 +58,19 @@ const feedbackProjector = createFeedbackProjector({
 const feedbackRouter = createFeedbackRouter({
   projector: feedbackProjector,
 })
+const debugLogStore = createDbDebugLogStore(db)
+const debugLogService = env.debugLogs.masterKey && env.debugLogs.masterKeyVersion
+  ? createDebugLogService({
+    store: debugLogStore,
+    masterKey: env.debugLogs.masterKey,
+    masterKeyVersion: env.debugLogs.masterKeyVersion,
+    retentionDays: env.debugLogs.retentionDays,
+  })
+  : null
+const debugLogsIngestRouter = createDebugLogsIngestRouter({
+  ingestToken: env.debugLogs.ingestToken,
+  service: debugLogService,
+})
 const desktopCorsOrigins = ["tauri://localhost", "http://localhost:1420", "http://localhost:1421"] as const
 const corsOrigins =
   env.corsOrigins.length > 0
@@ -76,6 +91,7 @@ if (corsOrigins.length > 0) {
 // so the body stream isn't consumed by Express's JSON parser first
 app.all("/api/auth/*", toNodeHandler(auth))
 app.use("/v1", feedbackRouter)
+app.use("/v1/internal", debugLogsIngestRouter)
 if (managedAiRuntime) {
   app.use("/providers", managedAiProxyJsonParser)
 }
