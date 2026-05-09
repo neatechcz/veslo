@@ -50,6 +50,10 @@ const schema = z.object({
   YOUTRACK_MCP_WIRE_PROTOCOL: z.enum(["content-length", "line"]).optional(),
   YOUTRACK_MCP_URL: z.string().optional(),
   YOUTRACK_MCP_TOKEN: z.string().optional(),
+  DEN_LOG_INGEST_TOKEN: z.string().optional(),
+  DEN_LOG_MASTER_KEY: z.string().optional(),
+  DEN_LOG_MASTER_KEY_VERSION: z.string().optional(),
+  DEN_LOG_RETENTION_DAYS: z.string().optional(),
   MANAGED_AI_DATABASE_URL: z.string().optional(),
   MANAGED_AI_SECRET_KEY: z.string().optional(),
   MANAGED_AI_OPENAI_CLIENT_ID: z.string().optional(),
@@ -165,6 +169,12 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
       mcpWireProtocol: parsed.YOUTRACK_MCP_WIRE_PROTOCOL ?? "content-length",
       mcpUrl: parsed.YOUTRACK_MCP_URL?.trim() || null,
       mcpToken: parsed.YOUTRACK_MCP_TOKEN?.trim() || null,
+    },
+    debugLogs: {
+      ingestToken: parsed.DEN_LOG_INGEST_TOKEN?.trim() || null,
+      masterKey: parsed.DEN_LOG_MASTER_KEY?.trim() || null,
+      masterKeyVersion: parsed.DEN_LOG_MASTER_KEY_VERSION?.trim() || null,
+      retentionDays: parsePositiveNumber(parsed.DEN_LOG_RETENTION_DAYS, 30, "DEN_LOG_RETENTION_DAYS"),
     },
     managedAi: parseManagedAiEnv(parsed),
   }
