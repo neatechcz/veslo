@@ -1,5 +1,6 @@
 import express from "express"
 import { OrgRole } from "../db/schema.js"
+import type { DebugLogDetail, DebugLogListEntry } from "../debug-logs/types.js"
 import type { ManagedAiProvider } from "../managed-ai/providers/ids.js"
 import type { CodexUsageStatus } from "../managed-ai/usage/codex-status.js"
 
@@ -222,6 +223,18 @@ export type AdminRouteDeps = {
     req: express.Request,
     res: express.Response,
   ) => Promise<{ events: AdminAuditRecord[] } | null>
+  listDebugLogs?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ events: DebugLogListEntry[] } | null>
+  getDebugLog?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ event: DebugLogDetail } | null>
+  exportDebugLogs?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ filename: string; body: string } | null>
 }
 
 export function serializeAdminSessionSnapshot(input: AdminSessionSnapshot) {
@@ -526,6 +539,52 @@ export function createAdminRouter(deps: AdminRouteDeps) {
     }
 
     const payload = await deps.listAudit(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  router.get("/debug-logs", async (req, res) => {
+    if (!deps.listDebugLogs) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.listDebugLogs(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  router.get("/debug-logs/export", async (req, res) => {
+    if (!deps.exportDebugLogs) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.exportDebugLogs(req, res)
+    if (!payload) {
+      return
+    }
+
+    res
+      .status(200)
+      .setHeader("Content-Type", "application/x-ndjson; charset=utf-8")
+      .setHeader("Content-Disposition", `attachment; filename="${payload.filename}"`)
+      .send(payload.body)
+  })
+
+  router.get("/debug-logs/:eventId", async (req, res) => {
+    if (!deps.getDebugLog) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.getDebugLog(req, res)
     if (!payload) {
       return
     }

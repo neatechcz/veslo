@@ -4,6 +4,8 @@ import { randomBytes, randomUUID } from "node:crypto"
 
 import { recordAuditEvent } from "../audit.js"
 import { db } from "../db/index.js"
+import type { DebugLogService } from "../debug-logs/repository.js"
+import type { DebugLogLevel, DebugLogSearchFilters } from "../debug-logs/types.js"
 import {
   AdminUserStateTable,
   AuthAccountTable,
@@ -593,6 +595,102 @@ async function deleteAdminUser(req: express.Request, res: express.Response) {
 
 export type CreateAdminRuntimeRouterOptions = {
   managedAi?: RuntimeState | null
+  debugLogs?: DebugLogService | null
+}
+
+function readQueryString(value: unknown) {
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value.trim()
+  }
+  if (Array.isArray(value)) {
+    return readQueryString(value[0])
+  }
+  return undefined
+}
+
+function readQueryDate(value: unknown) {
+  const raw = readQueryString(value)
+  if (!raw) return undefined
+  const date = new Date(raw)
+  return Number.isNaN(date.getTime()) ? undefined : date
+}
+
+function readQueryLimit(value: unknown) {
+  const raw = readQueryString(value)
+  if (!raw) return undefined
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(Math.floor(parsed), 1000) : undefined
+}
+
+function readDebugLogLevel(value: unknown): DebugLogLevel | undefined {
+  const raw = readQueryString(value)
+  return raw === "info" || raw === "warn" || raw === "error" ? raw : undefined
+}
+
+function readDebugLogFilters(req: express.Request): DebugLogSearchFilters {
+  return {
+    userId: readQueryString(req.query.userId),
+    orgId: readQueryString(req.query.orgId),
+    workspaceId: readQueryString(req.query.workspaceId),
+    sessionId: readQueryString(req.query.sessionId),
+    runId: readQueryString(req.query.runId),
+    source: readQueryString(req.query.source),
+    stream: readQueryString(req.query.stream),
+    level: readDebugLogLevel(req.query.level),
+    from: readQueryDate(req.query.from),
+    to: readQueryDate(req.query.to),
+    limit: readQueryLimit(req.query.limit),
+  }
+}
+
+function createDebugLogAdminRouteDeps(debugLogs: DebugLogService | null | undefined): Pick<
+  AdminRouteDeps,
+  "listDebugLogs" | "getDebugLog" | "exportDebugLogs"
+> {
+  async function requireDebugLogAccess(req: express.Request, res: express.Response) {
+    const snapshot = await requirePlatformAdminSnapshot(req, res)
+    if (!snapshot) {
+      return false
+    }
+    if (!debugLogs) {
+      res.status(503).json({ error: "debug_logs_not_configured" })
+      return false
+    }
+    return true
+  }
+
+  return {
+    async listDebugLogs(req, res) {
+      if (!await requireDebugLogAccess(req, res)) {
+        return null
+      }
+      return debugLogs!.searchLogs(readDebugLogFilters(req))
+    },
+
+    async getDebugLog(req, res) {
+      if (!await requireDebugLogAccess(req, res)) {
+        return null
+      }
+      const event = await debugLogs!.getLog(req.params.eventId)
+      if (!event) {
+        res.status(404).json({ error: "debug_log_not_found" })
+        return null
+      }
+      return { event }
+    },
+
+    async exportDebugLogs(req, res) {
+      if (!await requireDebugLogAccess(req, res)) {
+        return null
+      }
+      const events = await debugLogs!.exportLogs(readDebugLogFilters(req))
+      const body = events.map((event) => JSON.stringify(event)).join("\n")
+      return {
+        filename: "debug-logs.jsonl",
+        body: body.length > 0 ? `${body}\n` : "",
+      }
+    },
+  }
 }
 
 export function createAdminRuntimeRouter(options: CreateAdminRuntimeRouterOptions = {}) {
@@ -610,6 +708,7 @@ export function createAdminRuntimeRouter(options: CreateAdminRuntimeRouterOption
     disableUser: disableAdminUser,
     enableUser: enableAdminUser,
     deleteUser: deleteAdminUser,
+    ...createDebugLogAdminRouteDeps(options.debugLogs),
   }
 
   if (options.managedAi) {
