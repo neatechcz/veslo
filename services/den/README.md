@@ -75,6 +75,10 @@ cp .env.development .env
 - `YOUTRACK_MCP_WIRE_PROTOCOL` stdio framing for the MCP command: `content-length` by default, or `line` for the local wrapper used by the live desktop smoke
 - `YOUTRACK_MCP_URL` optional remote MCP URL used directly when no stdio MCP command is configured; also forwarded to child MCP wrappers through the process environment
 - `YOUTRACK_MCP_TOKEN` optional remote MCP token used directly when no stdio MCP command is configured; also forwarded to child MCP wrappers through the process environment
+- `DEN_LOG_INGEST_TOKEN` internal bearer token required by `POST /v1/internal/debug-logs`
+- `DEN_LOG_MASTER_KEY` master key material used to encrypt debug log payloads at ingest
+- `DEN_LOG_MASTER_KEY_VERSION` operator-managed key version stored with each encrypted payload
+- `DEN_LOG_RETENTION_DAYS` retention window for debug log events and accepted batch ids (default `30`)
 
 ## Auth setup (Better Auth)
 
@@ -136,6 +140,18 @@ pnpm db:migrate
   - Screenshot data is stored directly on the feedback row for v1 as base64 payload + mime type + byte size.
   - Rejects invalid payloads with `400 invalid_feedback_payload` and oversized screenshots with `413 feedback_screenshot_too_large`.
   - The feedback route uses a larger JSON body limit to support screenshot-bearing payloads without widening limits for unrelated endpoints.
+- `POST /v1/internal/debug-logs`
+  - Internal server-to-server route used by `veslo-server` debug-log shipping.
+  - Requires `Authorization: Bearer <DEN_LOG_INGEST_TOKEN>`.
+  - Accepts `{ batchId, events }`, stores encrypted event payloads, and returns `202 { acceptedBatchIds }`.
+  - Repeated `batchId` or `Idempotency-Key` values are treated as accepted retries and do not duplicate event rows.
+- `GET /admin/api/debug-logs`
+  - Platform-admin-only backend-first debug-log search API.
+  - Supports metadata filters such as user, org, workspace, session, run, source, stream, level, and time range.
+- `GET /admin/api/debug-logs/:eventId`
+  - Platform-admin-only row detail API that decrypts and returns the payload for one stored debug-log event.
+- `GET /admin/api/debug-logs/export`
+  - Platform-admin-only JSONL export for the active debug-log filters.
 - `POST /v1/desktop-auth/handoff`
   - Requires an authenticated browser session (Better Auth cookie). Returns a single-use, short-lived one-time code that the desktop app can exchange for credentials.
   - Respects `x-veslo-org-id` header to select the active organization.

@@ -145,6 +145,32 @@ Pipeline behavior:
 - Upload retry policy lives in `debug-log-uploader.ts` (3 attempts, 250 ms initial, 2× multiplier, capped at 2 s). Failed batches stay leased in the manifest and the next flush tick re-leases them after the lease TTL.
 - Process signals: `startServer` registers SIGINT/SIGTERM handlers that drain the pipeline (final flush) before exit.
 
+## Den Debug Log Ingest
+
+Den accepts uploaded debug-log batches from `veslo-server` at `POST /v1/internal/debug-logs`. The route uses a dedicated server-to-server bearer token (`DEN_LOG_INGEST_TOKEN`) and stores each event payload encrypted with `DEN_LOG_MASTER_KEY` plus operator-managed `DEN_LOG_MASTER_KEY_VERSION`.
+
+Environment variables:
+
+- `DEN_LOG_INGEST_TOKEN` - internal bearer token required for ingest.
+- `DEN_LOG_MASTER_KEY` - master key material used for AES-GCM payload encryption.
+- `DEN_LOG_MASTER_KEY_VERSION` - key version stored with each event so manual rotations are traceable.
+- `DEN_LOG_RETENTION_DAYS` - retention window for stored events and idempotency batch records (default 30).
+
+Storage behavior:
+
+- Searchable metadata remains cleartext: user, org, workspace, session, run, source, stream, level, event timestamp, sequence number, payload hash, and payload size.
+- Raw payload content is encrypted before database insert and returned only through the admin read path.
+- Batch id and `Idempotency-Key` are stored so `veslo-server` retry uploads are accepted without duplicating rows.
+- Den runs a startup purge and daily retention loop for expired debug-log rows.
+
+Read path:
+
+- `GET /admin/api/debug-logs`
+- `GET /admin/api/debug-logs/:eventId`
+- `GET /admin/api/debug-logs/export`
+
+This backend-first slice is platform-admin-only. A narrower `debug-logs-reader` role and full static Admin UI page remain follow-up work.
+
 ## Managed-AI Routing and Accounting
 
 Managed-AI inference routing is configured separately from signed-in app identity. Desktop and orchestrator development defaults use the standalone AI Gateway at `https://veslo-ai-gateway-dev.onrender.com`; `VESLO_MANAGED_AI_BASE_URL` overrides it, with `VESLO_AI_GATEWAY_BASE_URL` retained as the legacy fallback.

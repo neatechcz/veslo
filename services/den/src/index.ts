@@ -39,6 +39,7 @@ import { createYouTrackMcpIssueClient } from "./integrations/youtrack-mcp.js"
 const app = express()
 const MANAGED_AI_PROXY_JSON_LIMIT = "10mb"
 const FEEDBACK_PROJECTOR_DUE_RETRY_INTERVAL_MS = 60_000
+const DEBUG_LOG_RETENTION_INTERVAL_MS = 86_400_000
 const managedAiRuntime = env.managedAi.enabled ? createDefaultRuntimeState() : null
 const managedAiProxyJsonParser = express.json({ limit: MANAGED_AI_PROXY_JSON_LIMIT })
 const currentFile = fileURLToPath(import.meta.url)
@@ -177,6 +178,23 @@ function startFeedbackProjectorDueRetryLoop(projector: Pick<ReturnType<typeof cr
 
   runDueRetries()
   const interval = setInterval(runDueRetries, FEEDBACK_PROJECTOR_DUE_RETRY_INTERVAL_MS)
+  unrefTimer(interval)
+}
+
+function startDebugLogRetentionLoop(service: typeof debugLogService) {
+  if (!service) {
+    return
+  }
+
+  const runPurge = () => {
+    void service.purgeExpired().catch((error) => {
+      const message = error instanceof Error ? error.stack ?? error.message : String(error)
+      console.error(`[den] debug log retention purge failed: ${message}`)
+    })
+  }
+
+  runPurge()
+  const interval = setInterval(runPurge, DEBUG_LOG_RETENTION_INTERVAL_MS)
   unrefTimer(interval)
 }
 
@@ -739,6 +757,7 @@ async function ensureTables() {
 async function bootstrap() {
   await ensureTables()
   startFeedbackProjectorDueRetryLoop(feedbackProjector)
+  startDebugLogRetentionLoop(debugLogService)
   if (env.managedAi.enabled) {
     console.log("[den] managed-ai runtime enabled")
   }
