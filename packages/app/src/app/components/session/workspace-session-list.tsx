@@ -121,6 +121,7 @@ type Props = {
 type WorkspaceMenuTarget = {
   workspaceId: string;
   anchorKey: string;
+  source: "session" | "workspace";
 };
 
 type ProjectDropIndicator = {
@@ -667,7 +668,7 @@ export default function WorkspaceSessionList(props: Props) {
   ) => {
     event.preventDefault();
     event.stopPropagation();
-    setWorkspaceMenuTarget({ workspaceId, anchorKey });
+    setWorkspaceMenuTarget({ workspaceId, anchorKey, source: "session" });
   };
 
   const PROJECT_POINTER_DRAG_START_THRESHOLD_PX = 2;
@@ -1166,16 +1167,18 @@ export default function WorkspaceSessionList(props: Props) {
               {tr("sidebar.edit_connection")}
             </button>
           </Show>
-          <button
-            type="button"
-            class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3 text-red-11"
-            onClick={() => {
-              props.onForgetWorkspace(workspace.id);
-              setWorkspaceMenuTarget(null);
-            }}
-          >
-            {tr("sidebar.remove_workspace")}
-          </button>
+          <Show when={workspaceMenuTarget()?.source !== "session"}>
+            <button
+              type="button"
+              class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3 text-red-11"
+              onClick={() => {
+                props.onForgetWorkspace(workspace.id);
+                setWorkspaceMenuTarget(null);
+              }}
+            >
+              {tr("sidebar.remove_workspace")}
+            </button>
+          </Show>
         </div>
       </Show>
     );
@@ -1759,7 +1762,9 @@ export default function WorkspaceSessionList(props: Props) {
                           onClick={(event) => {
                             event.stopPropagation();
                             setWorkspaceMenuTarget((current) =>
-                              current?.anchorKey === anchorKey ? null : { workspaceId: workspace().id, anchorKey },
+                              current?.anchorKey === anchorKey
+                                ? null
+                                : { workspaceId: workspace().id, anchorKey, source: "workspace" },
                             );
                           }}
                           aria-label={tr("sidebar.workspace_options")}

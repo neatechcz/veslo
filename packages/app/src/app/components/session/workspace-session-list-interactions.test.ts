@@ -321,6 +321,12 @@ test("session rows use archive action and open submenu on right-click", () => {
 
   assert.match(
     source,
+    /setWorkspaceMenuTarget\(\{\s*workspaceId,\s*anchorKey,\s*source: ["']session["'],?\s*\}\);/,
+    "right-clicking a session row should mark the workspace menu as session-originated",
+  );
+
+  assert.match(
+    source,
     /onContextMenu=\{\(event\) => handleSessionRowContextMenu\(event, workspace\(\)\.id, anchorKey\)\}/,
     "recent session rows should open submenu from right-click",
   );
@@ -347,6 +353,12 @@ test("session rows use archive action and open submenu on right-click", () => {
     source,
     /onUnarchiveSession\?: \(workspaceId: string, sessionId: string\) => Promise<void> \| void;/,
     "session list should accept an unarchive callback from callers",
+  );
+
+  assert.match(
+    source,
+    /<Show when=\{workspaceMenuTarget\(\)\?\.source !== ["']session["']\}>[\s\S]*tr\(["']sidebar\.remove_workspace["']\)[\s\S]*<\/Show>/,
+    "session-originated menus should not render the destructive remove-workspace action",
   );
 
   assert.match(
