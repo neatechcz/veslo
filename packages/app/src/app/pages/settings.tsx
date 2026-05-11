@@ -219,7 +219,7 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const generalUpdateActionLabel = createMemo(() => {
-    if (updateState() === "available") return translate("settings.download_update");
+    if (updateState() === "available" && !props.updateAutoDownload) return translate("settings.download_update");
     if (updateState() === "ready") return translate("settings.install_restart");
     if (updateState() === "error") return translate("settings.retry");
     if (updateState() === "checking" || updateState() === "downloading") return null;

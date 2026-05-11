@@ -1116,6 +1116,9 @@ export default function DashboardView(props: DashboardViewProps) {
     if (state === "ready") {
       return t("settings.sidebar_update_ready", currentLocale());
     }
+    if (state === "available" && props.updateAutoDownload) {
+      return t("settings.sidebar_update_preparing", currentLocale());
+    }
     if (state === "downloading") {
       const percent = updateDownloadPercent();
       const label = t("settings.update_downloading", currentLocale());
@@ -1198,6 +1201,9 @@ export default function DashboardView(props: DashboardViewProps) {
         : `${t("settings.sidebar_update_ready", currentLocale())}${version}`;
     }
     if (state === "downloading") return `${t("settings.update_downloading", currentLocale())}${version}`;
+    if (state === "available" && props.updateAutoDownload) {
+      return `${t("settings.sidebar_update_preparing", currentLocale())}${version}`;
+    }
     return `${t("settings.sidebar_update_available", currentLocale())}${version}`;
   });
 

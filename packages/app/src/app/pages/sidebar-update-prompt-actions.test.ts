@@ -56,3 +56,11 @@ test("left-menu update action copy is localized", () => {
     assert.match(source, /"settings\.sidebar_update_ready"/);
   }
 });
+
+test("left-menu preparing update copy is localized", () => {
+  for (const source of [enLocale, csLocale, zhLocale]) {
+    assert.match(source, /"settings\.sidebar_update_preparing"/);
+  }
+  assert.match(dashboardSource, /settings\.sidebar_update_preparing/);
+  assert.match(sessionSource, /settings\.sidebar_update_preparing/);
+});
