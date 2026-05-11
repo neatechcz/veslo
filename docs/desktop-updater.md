@@ -74,6 +74,8 @@ Relevant keys in local storage:
 - `veslo.updateAutoDownload`
 - `veslo.updateLastCheckedAt`
 
+`veslo.updateAutoDownload` is default-on when absent. Users can opt out through Settings, which stores an explicit disabled preference and keeps the manual download flow available.
+
 ### 4. Manual checks
 
 Manual checks use:
@@ -86,10 +88,7 @@ If Tauri reports an available update, Veslo stores the returned update handle an
 
 ### 5. Downloading
 
-Downloads are triggered either:
-
-- manually from the Settings page or the left-menu update pill, or
-- automatically when `veslo.updateAutoDownload=1`
+Downloads start automatically by default after an update is detected. Users can opt out through Settings, which keeps the update in the available state until they choose Download manually.
 
 The app listens to Tauri download events and converts them into progress state for the UI.
 
@@ -113,7 +112,7 @@ Updater state is exposed in three places:
 - dashboard left-menu update pill
 - session view left-menu update pill
 
-The Settings view remains the primary surface for manual testing because it exposes check controls and detailed updater state. The left-menu update pills also expose direct `Download` and `Update` actions so users do not need to open Settings after an update has been detected.
+The Settings view remains the primary surface for manual testing because it exposes check controls and detailed updater state. With auto-download enabled, the left-menu pill moves through download progress and then exposes `Update`; with auto-download disabled, it keeps the manual `Download` action so users do not need to open Settings after an update has been detected.
 
 ## Release And Feed Pipeline
 
