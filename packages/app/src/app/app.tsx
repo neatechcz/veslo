@@ -3746,18 +3746,51 @@ export default function App() {
   };
 
   let lastSessionArchiveClientKey = "";
+  let failedSessionArchiveClientKey = "";
+  let sessionArchiveLoadInFlightKey = "";
+  let lastSessionArchiveRetryCheckedAt: number | null = null;
   createEffect(() => {
     const client = vesloArchiveClient();
     const ownerKey = sessionArchiveOwnerKey();
+    const archiveServerStatus = vesloServerStatus();
+    const archiveServerCheckedAt = vesloServerCheckedAt();
     const key = client && ownerKey ? `${client.baseUrl}::${client.token ?? ""}::${ownerKey}` : "";
-    if (key === lastSessionArchiveClientKey) return;
+    const retryFailedSessionArchiveLoad =
+      Boolean(key) &&
+      failedSessionArchiveClientKey === key &&
+      archiveServerStatus === "connected" &&
+      archiveServerCheckedAt !== null &&
+      archiveServerCheckedAt !== lastSessionArchiveRetryCheckedAt;
+
+    if (key === lastSessionArchiveClientKey && !retryFailedSessionArchiveLoad) return;
+    if (sessionArchiveLoadInFlightKey === key) return;
+
     lastSessionArchiveClientKey = key;
+    if (retryFailedSessionArchiveLoad) {
+      lastSessionArchiveRetryCheckedAt = archiveServerCheckedAt;
+    } else {
+      lastSessionArchiveRetryCheckedAt = null;
+    }
+    sessionArchiveLoadInFlightKey = key;
     setSessionArchiveReady(false);
-    void loadSessionArchives().catch((error) => {
-      reportError(error, "sessionArchives.load");
-      setSessionArchiveRecords([]);
-      setSessionArchiveReady(true);
-    });
+    void loadSessionArchives()
+      .then(() => {
+        if (sessionArchiveLoadInFlightKey !== key) return;
+        failedSessionArchiveClientKey = "";
+        lastSessionArchiveRetryCheckedAt = null;
+      })
+      .catch((error) => {
+        if (sessionArchiveLoadInFlightKey !== key) return;
+        failedSessionArchiveClientKey = key;
+        reportError(error, "sessionArchives.load");
+        setSessionArchiveRecords([]);
+        setSessionArchiveReady(true);
+      })
+      .finally(() => {
+        if (sessionArchiveLoadInFlightKey === key) {
+          sessionArchiveLoadInFlightKey = "";
+        }
+      });
   });
 
   let sessionArchiveMigrationRunning = false;

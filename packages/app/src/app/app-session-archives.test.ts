@@ -59,3 +59,26 @@ test("update preference persistence waits for startup preference hydration", () 
     "stored update preferences should be read before async desktop startup work can yield",
   );
 });
+
+test("session archive loader retries the same client after server readiness changes", () => {
+  const archiveLoadEffect = source.match(
+    /let lastSessionArchiveClientKey = "";[\s\S]*?let sessionArchiveMigrationRunning = false;/m,
+  )?.[0] ?? "";
+
+  assert.ok(archiveLoadEffect, "app should define the session archive startup load effect");
+  assert.match(
+    archiveLoadEffect,
+    /const archiveServerStatus = vesloServerStatus\(\);/,
+    "archive startup loading should track server status so a failed initial load retries when the server becomes ready",
+  );
+  assert.match(
+    archiveLoadEffect,
+    /const archiveServerCheckedAt = vesloServerCheckedAt\(\);/,
+    "archive startup loading should track server health checks so retryable startup failures are not stuck until a mutation",
+  );
+  assert.match(
+    archiveLoadEffect,
+    /failedSessionArchiveClientKey === key/,
+    "archive startup loading should remember the failed archive client key and retry that same key after readiness changes",
+  );
+});
