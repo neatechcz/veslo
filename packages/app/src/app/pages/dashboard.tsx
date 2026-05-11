@@ -1126,7 +1126,7 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const updatePillActionLabel = createMemo(() => {
     const state = props.updateStatus?.state;
-    if (state === "available") return t("settings.sidebar_download_update", currentLocale());
+    if (state === "available" && !props.updateAutoDownload) return t("settings.sidebar_download_update", currentLocale());
     if (state === "ready") return t("settings.sidebar_install_update", currentLocale());
     return null;
   });
@@ -1204,7 +1204,9 @@ export default function DashboardView(props: DashboardViewProps) {
   const handleUpdatePillClick = () => {
     const state = props.updateStatus?.state;
     if (state === "available") {
-      props.downloadUpdate();
+      if (!props.updateAutoDownload) {
+        props.downloadUpdate();
+      }
       return;
     }
     if (state === "ready" && !props.anyActiveRuns) {
@@ -1348,7 +1350,9 @@ export default function DashboardView(props: DashboardViewProps) {
                     onClick={(event) => {
                       event.stopPropagation();
                       if (props.updateStatus?.state === "available") {
-                        props.downloadUpdate();
+                        if (!props.updateAutoDownload) {
+                          props.downloadUpdate();
+                        }
                         return;
                       }
                       if (props.updateStatus?.state === "ready" && !props.anyActiveRuns) {

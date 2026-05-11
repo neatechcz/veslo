@@ -201,6 +201,7 @@ export type SessionViewProps = {
     message?: string;
   } | null;
   updateEnv: { supported?: boolean; reason?: string | null } | null;
+  updateAutoDownload: boolean;
   anyActiveRuns: boolean;
   downloadUpdate: () => void;
   installUpdateAndRestart: () => void;
@@ -3647,7 +3648,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const updatePillActionLabel = createMemo(() => {
     const state = props.updateStatus?.state;
-    if (state === "available") return t("settings.sidebar_download_update", currentLocale());
+    if (state === "available" && !props.updateAutoDownload) return t("settings.sidebar_download_update", currentLocale());
     if (state === "ready") return t("settings.sidebar_install_update", currentLocale());
     return null;
   });
@@ -3784,7 +3785,9 @@ export default function SessionView(props: SessionViewProps) {
                   onClick={(event) => {
                     event.stopPropagation();
                     if (props.updateStatus?.state === "available") {
-                      props.downloadUpdate();
+                      if (!props.updateAutoDownload) {
+                        props.downloadUpdate();
+                      }
                       return;
                     }
                     if (props.updateStatus?.state === "ready" && !props.anyActiveRuns) {

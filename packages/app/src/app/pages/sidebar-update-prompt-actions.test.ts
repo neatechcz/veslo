@@ -4,6 +4,7 @@ import test from "node:test";
 
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
 const sessionSource = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const enLocale = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
 const csLocale = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
 const zhLocale = readFileSync(new URL("../../i18n/locales/zh.ts", import.meta.url), "utf8");
@@ -37,6 +38,14 @@ test("left-menu update prompts expose direct download and update actions", () =>
   assert.match(sessionLeftSidebar, /updatePillActionLabel\(\)/);
   assert.match(sessionLeftSidebar, /props\.downloadUpdate\(\)/);
   assert.match(sessionLeftSidebar, /props\.installUpdateAndRestart\(\)/);
+});
+
+test("left-menu manual download action is only exposed when auto-download is disabled", () => {
+  assert.match(dashboardSource, /state === "available" && !props\.updateAutoDownload/);
+  assert.match(sessionSource, /state === "available" && !props\.updateAutoDownload/);
+  assert.match(sessionSource, /updateAutoDownload: boolean;/);
+  assert.match(appSource, /updateAutoDownload: updateAutoDownload\(\)/);
+  assert.match(dashboardSource, /updateAutoDownload={props\.updateAutoDownload}/);
 });
 
 test("left-menu update action copy is localized", () => {

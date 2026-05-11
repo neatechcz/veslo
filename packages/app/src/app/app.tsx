@@ -8838,6 +8838,7 @@ export default function App() {
     busyHint: busyHint(),
     updateStatus: updateStatus(),
     updateEnv: updateEnv(),
+    updateAutoDownload: updateAutoDownload(),
     anyActiveRuns: anyActiveRuns(),
     downloadUpdate: () => downloadUpdate(),
     installUpdateAndRestart,
