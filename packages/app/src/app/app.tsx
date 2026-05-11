@@ -2964,6 +2964,7 @@ export default function App() {
   const [autoCompactContext, setAutoCompactContext] = createSignal(true);
   const [modelVariant, setModelVariant] = createSignal<string | null>(DEFAULT_MODEL_VARIANT);
   const [modelVariantPreferenceReady, setModelVariantPreferenceReady] = createSignal(false);
+  const [updatePreferencesReady, setUpdatePreferencesReady] = createSignal(false);
   const [autoCompactingSessionId, setAutoCompactingSessionId] = createSignal<string | null>(null);
 
   const formatModelVariantLabel = (value: string | null) => {
@@ -7307,6 +7308,29 @@ export default function App() {
       setStartupPreference(startupPref);
     }
 
+    if (typeof window !== "undefined") {
+      try {
+        const storedUpdateAutoCheck = window.localStorage.getItem(
+          "veslo.updateAutoCheck"
+        );
+        const storedUpdateAutoDownload = window.localStorage.getItem(
+          "veslo.updateAutoDownload"
+        );
+        const startupUpdatePreferences = resolveUpdateStartupPreferences({
+          storedAutoCheck: storedUpdateAutoCheck,
+          storedAutoDownload: storedUpdateAutoDownload,
+        });
+        setUpdateAutoCheck(startupUpdatePreferences.autoCheck);
+        setUpdateAutoDownload(startupUpdatePreferences.autoDownload);
+      } catch {
+        // ignore
+      } finally {
+        setUpdatePreferencesReady(true);
+      }
+    } else {
+      setUpdatePreferencesReady(true);
+    }
+
     if (isTauriRuntime()) {
       const storedPendingDraftKey = readActivePendingDraftKey();
       if (storedPendingDraftKey) {
@@ -7473,19 +7497,6 @@ export default function App() {
         } finally {
           setModelVariantPreferenceReady(true);
         }
-
-        const storedUpdateAutoCheck = window.localStorage.getItem(
-          "veslo.updateAutoCheck"
-        );
-        const storedUpdateAutoDownload = window.localStorage.getItem(
-          "veslo.updateAutoDownload"
-        );
-        const startupUpdatePreferences = resolveUpdateStartupPreferences({
-          storedAutoCheck: storedUpdateAutoCheck,
-          storedAutoDownload: storedUpdateAutoDownload,
-        });
-        setUpdateAutoCheck(startupUpdatePreferences.autoCheck);
-        setUpdateAutoDownload(startupUpdatePreferences.autoDownload);
 
         const storedUpdateCheckedAt = window.localStorage.getItem(
           "veslo.updateLastCheckedAt"
@@ -8059,6 +8070,7 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
+    if (!updatePreferencesReady()) return;
     try {
       window.localStorage.setItem(
         "veslo.updateAutoCheck",
@@ -8071,6 +8083,7 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
+    if (!updatePreferencesReady()) return;
     try {
       window.localStorage.setItem(
         "veslo.updateAutoDownload",

@@ -30,3 +30,32 @@ test("session archive flow uses the resolved archive owner key instead of requir
   assert.match(archiveFlow, /const ownerKey = sessionArchiveOwnerKey\(\);/);
   assert.match(archiveFlow, /writeArchiveMigrationDone\(ownerKey\);/);
 });
+
+test("update preference persistence waits for startup preference hydration", () => {
+  assert.match(
+    source,
+    /const \[updatePreferencesReady, setUpdatePreferencesReady\] = createSignal\(false\);/,
+    "app should track whether update preferences have been read before writing them back",
+  );
+  assert.match(
+    source,
+    /if \(!updatePreferencesReady\(\)\) return;[\s\S]*?window\.localStorage\.setItem\(\s*"veslo\.updateAutoCheck"/,
+    "auto-check persistence should not write the default before startup hydration reads stored preferences",
+  );
+  assert.match(
+    source,
+    /if \(!updatePreferencesReady\(\)\) return;[\s\S]*?window\.localStorage\.setItem\(\s*"veslo\.updateAutoDownload"/,
+    "auto-download persistence should not write the default before startup hydration reads stored preferences",
+  );
+
+  const startupMount = source.match(/onMount\(async \(\) => \{[\s\S]*?setActivePendingDraftStorageReady\(true\);/)?.[0] ?? "";
+  assert.ok(startupMount, "app should define the async startup mount flow");
+  const updatePrefsIndex = startupMount.indexOf("const storedUpdateAutoDownload = window.localStorage.getItem");
+  const pendingDraftAwaitIndex = startupMount.indexOf("await pendingSessionDraftsList()");
+  assert.ok(updatePrefsIndex >= 0, "startup flow should read stored update auto-download preference");
+  assert.ok(pendingDraftAwaitIndex >= 0, "startup flow should hydrate pending drafts on desktop startup");
+  assert.ok(
+    updatePrefsIndex < pendingDraftAwaitIndex,
+    "stored update preferences should be read before async desktop startup work can yield",
+  );
+});

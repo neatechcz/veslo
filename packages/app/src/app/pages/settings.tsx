@@ -207,6 +207,11 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const generalUpdateLabel = createMemo(() => {
     const version = updateVersion() ?? "";
+    if (updateState() === "available" && props.updateAutoDownload) {
+      return version
+        ? `${translate("settings.sidebar_update_preparing")} v${version}`
+        : translate("settings.sidebar_update_preparing");
+    }
     if (updateState() === "available") return `${translate("settings.update_available")}${version}`;
     if (updateState() === "ready") return `${translate("settings.update_ready")}${version}`;
     if (updateState() === "downloading") {

@@ -52,6 +52,8 @@ test("settings keeps compact update controls in general instead of a floating to
   assert.match(source, /translate\("settings\.check_update"\)/);
   assert.match(source, /translate\("settings\.download_update"\)/);
   assert.match(source, /translate\("settings\.install_restart"\)/);
+  assert.match(source, /settings\.sidebar_update_preparing/);
+  assert.match(source, /updateState\(\) === "available" && props\.updateAutoDownload/);
   assert.doesNotMatch(source, /"Checking for updates"|"Up to date"|"Check"|"Download"|"Install"|"Retry"|"Last checked"/);
 });
 
