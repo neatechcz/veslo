@@ -36,7 +36,11 @@ import {
   resolveCompactionThreshold,
   shouldAutoCompact,
 } from "./lib/auto-compaction";
-import { shouldAutoCheckForUpdatesAt } from "./context/updater";
+import {
+  DEFAULT_UPDATE_AUTO_DOWNLOAD,
+  resolveUpdateStartupPreferences,
+  shouldAutoCheckForUpdatesAt,
+} from "./context/updater";
 import {
   parseStoredEngineSourceExplicitPreference,
   resolveStoredEngineSourcePreference,
@@ -5486,7 +5490,7 @@ export default function App() {
       setAutoCompactContext(true);
       setModelVariant(DEFAULT_MODEL_VARIANT);
       setUpdateAutoCheck(true);
-      setUpdateAutoDownload(false);
+      setUpdateAutoDownload(DEFAULT_UPDATE_AUTO_DOWNLOAD);
       setUpdateStatus({ state: "idle", lastCheckedAt: null });
       clearStartupPreference();
       setStartupPreference(null);
@@ -7473,20 +7477,15 @@ export default function App() {
         const storedUpdateAutoCheck = window.localStorage.getItem(
           "veslo.updateAutoCheck"
         );
-        if (storedUpdateAutoCheck === "0" || storedUpdateAutoCheck === "1") {
-          setUpdateAutoCheck(storedUpdateAutoCheck === "1");
-        }
-
         const storedUpdateAutoDownload = window.localStorage.getItem(
           "veslo.updateAutoDownload"
         );
-        if (storedUpdateAutoDownload === "0" || storedUpdateAutoDownload === "1") {
-          const enabled = storedUpdateAutoDownload === "1";
-          setUpdateAutoDownload(enabled);
-          if (enabled) {
-            setUpdateAutoCheck(true);
-          }
-        }
+        const startupUpdatePreferences = resolveUpdateStartupPreferences({
+          storedAutoCheck: storedUpdateAutoCheck,
+          storedAutoDownload: storedUpdateAutoDownload,
+        });
+        setUpdateAutoCheck(startupUpdatePreferences.autoCheck);
+        setUpdateAutoDownload(startupUpdatePreferences.autoDownload);
 
         const storedUpdateCheckedAt = window.localStorage.getItem(
           "veslo.updateLastCheckedAt"
