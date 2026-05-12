@@ -246,7 +246,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const handleGeneralUpdateAction = () => {
     if (generalUpdateDisabled()) return;
-    if (updateState() === "available") {
+    if (updateState() === "available" && !props.updateAutoDownload) {
       props.downloadUpdate();
       return;
     }
