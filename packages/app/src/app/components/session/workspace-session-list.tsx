@@ -260,6 +260,7 @@ export default function WorkspaceSessionList(props: Props) {
     filterVisibleProjectGroups(projectGroups(), shouldShowSessionRow),
   );
   const orderedProjectGroups = createMemo(() => applyProjectOrder(visibleProjectGroups(), projectOrder()));
+  const addDirectorySessionDisabled = createMemo(() => !props.onAddDirectorySession);
   const [frozenProjectGroups, setFrozenProjectGroups] = createSignal<ProjectSessionGroup[]>([]);
   const suspendProjectReorder = createMemo(() => Boolean(props.suspendProjectReorder));
 
@@ -1297,7 +1298,7 @@ export default function WorkspaceSessionList(props: Props) {
             type="button"
             class={topRailButtonClass}
             data-tooltip={tr("sidebar.add_directory_or_project")}
-            disabled={!props.onAddDirectorySession || props.newTaskDisabled}
+            disabled={addDirectorySessionDisabled()}
             onClick={() => {
               setAddWorkspaceMenuOpen(false);
               setMoreActionsMenuOpen(false);

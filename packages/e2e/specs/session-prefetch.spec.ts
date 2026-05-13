@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { expect } from "@wdio/globals";
 
-import { navigateToHash } from "../helpers/app-launcher.js";
+import { currentHashRoute, navigateToHash } from "../helpers/app-launcher.js";
 
 type WorkspaceInfo = {
   id: string;
@@ -444,7 +444,7 @@ describeRealProfile("Cross-workspace sidebar session prefetch", () => {
       await clickSidebarRow(candidate!.row);
 
       await browser.waitUntil(
-        async () => (await browser.getUrl()).includes(candidate!.session.id),
+        async () => (await currentHashRoute()).includes(candidate!.session.id),
         {
           timeout: 20_000,
           timeoutMsg: `Route did not change to the selected session ${candidate!.session.id}`,

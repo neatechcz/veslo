@@ -5,7 +5,7 @@ import test from "node:test";
 const source = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
 
 const leftSidebarStart = source.indexOf('<Show when={leftSidebarVisible()}>');
-const mainStart = source.indexOf('<main class="flex-1 flex flex-col overflow-hidden bg-dls-surface">');
+const mainStart = source.indexOf('<main class="flex-1 flex flex-col overflow-hidden bg-dls-surface pt-12">');
 const rightSidebarStart = source.indexOf('<Show when={rightSidebarVisible()}>');
 
 const leftSidebar = leftSidebarStart >= 0 && mainStart >= 0 ? source.slice(leftSidebarStart, mainStart) : "";
@@ -38,5 +38,23 @@ test("dashboard keeps the mobile bottom nav intact", () => {
   assert.doesNotMatch(
     source,
     /<nav class="md:hidden border-t border-dls-border bg-dls-surface">[\s\S]*Automations[\s\S]*Soul[\s\S]*Skills[\s\S]*Extensions/,
+  );
+});
+
+test("dashboard reserves a titlebar-safe top strip for shell columns", () => {
+  assert.match(
+    leftSidebar,
+    /class=\{`relative hidden md:flex flex-col bg-dls-sidebar border-r border-dls-border p-4 pt-12/,
+    "left sidebar content should start below the fixed shared titlebar controls",
+  );
+  assert.match(
+    source,
+    /<main class="flex-1 flex flex-col overflow-hidden bg-dls-surface pt-12">/,
+    "main dashboard content should start below the fixed shared titlebar controls",
+  );
+  assert.match(
+    rightSidebar,
+    /<aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4 pt-12">/,
+    "right sidebar content should start below the fixed shared titlebar controls",
   );
 });

@@ -1,4 +1,5 @@
 import { expect } from '@wdio/globals';
+import { defaultE2EDesktopAuthSeed } from '../helpers/desktop-auth-seed.js';
 
 type BrowserLanguageState = {
   language: string | null;
@@ -18,7 +19,7 @@ const authState = {
   org: { id: 'org_language_persistence', slug: 'language-persistence-org' },
 };
 
-async function writeLanguageState(language: string): Promise<void> {
+async function writeLanguageState(language: string, authJson = JSON.stringify(authState)): Promise<void> {
   const result = await browser.executeAsync((nextLanguage: string, authJson: string, done) => {
     void (async () => {
       try {
@@ -96,7 +97,8 @@ async function readBrowserLanguageState(): Promise<BrowserLanguageState> {
 
 describe('Language persistence', () => {
   afterEach(async () => {
-    await writeLanguageState('en');
+    const seed = defaultE2EDesktopAuthSeed();
+    await writeLanguageState(seed.language ?? 'en', seed.authJson ?? JSON.stringify(authState));
     await browser.refresh();
   });
 

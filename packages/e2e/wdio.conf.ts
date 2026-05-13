@@ -12,10 +12,36 @@ const platformDir = process.platform === 'darwin' ? 'macos'
   : process.platform === 'win32' ? 'windows'
   : 'linux';
 
+const defaultSpecs = [
+  './specs/admin-managed-ai-access.spec.ts',
+  './specs/attachment-staging.spec.ts',
+  './specs/composer.spec.ts',
+  './specs/den-managed-openai-anthropic.spec.ts',
+  './specs/extensions-mcp.spec.ts',
+  './specs/feedback-bug-report.spec.ts',
+  './specs/feedback-youtrack-live.spec.ts',
+  './specs/live-admin-codex-roundtrip.spec.ts',
+  './specs/markdown-drop-guard.spec.ts',
+  './specs/navigation.spec.ts',
+  './specs/session-prefetch.spec.ts',
+  './specs/session.spec.ts',
+  './specs/settings-gear-navigation.spec.ts',
+  './specs/sidebar-primary-actions-overflow.spec.ts',
+  './specs/sidebar-primary-actions-pointer-navigation.spec.ts',
+  './specs/smoke.spec.ts',
+  './specs/typography.spec.ts',
+  './specs/veslo-server-startup.spec.ts',
+  './specs/visual-regression.spec.ts',
+  // This spec intentionally reloads the Tauri webview while rewriting auth and
+  // language state, which can leave later WebDriver sessions unable to mutate
+  // hash routes on WebKit. Keep it last in the shared desktop app process.
+  './specs/language-persistence.spec.ts',
+];
+
 export const config = {
   runner: 'local',
 
-  specs: ['./specs/*.spec.ts'],
+  specs: defaultSpecs,
   maxInstances: 1,
 
   capabilities: [{

@@ -111,6 +111,12 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
 
   assert.doesNotMatch(
     source,
+    /data-tooltip=\{tr\("sidebar\.add_directory_or_project"\)\}[\s\S]*disabled=\{!props\.onAddDirectorySession \|\| props\.newTaskDisabled\}/,
+    "add-directory-or-project should stay clickable during browsing-mode boot when no client exists",
+  );
+
+  assert.doesNotMatch(
+    source,
     /data-tooltip=\{tr\("sidebar\.show_archived"\)\}/,
     "show archived should no longer be a top-level control",
   );

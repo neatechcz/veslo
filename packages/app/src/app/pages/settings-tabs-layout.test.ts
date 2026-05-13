@@ -9,7 +9,7 @@ const csLocaleSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.m
 const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
 
 test("settings exposes archived tab and keeps developer tabs unavailable", () => {
-  assert.match(source, /const tabs: SettingsTab\[\] = \["general", "archived"\]/);
+  assert.match(source, /const tabs: SettingsTab\[\] = \["general", "extensions", "archived"\]/);
   assert.doesNotMatch(source, /if \(props\.developerMode\) tabs\.push\("advanced", "debug"\);/);
   assert.match(source, /<Match when=\{activeTab\(\) === "archived"\}>/);
   assert.doesNotMatch(source, /<Match when=\{activeTab\(\) === "model"\}>/);

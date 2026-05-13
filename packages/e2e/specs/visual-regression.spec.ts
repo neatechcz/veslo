@@ -1,14 +1,20 @@
 import { expect } from '@wdio/globals';
-import { navigateToHash } from '../helpers/app-launcher.js';
+import { navigateToHash, waitForHashRoute } from '../helpers/app-launcher.js';
 
 const VISUAL_DIFF_LIMIT = 1.5;
 const UPDATE_BASELINES = process.argv.includes('--update-visual-baseline');
 
+type VisualCompareResult = number | { misMatchPercentage: number } | Record<string, number | { misMatchPercentage: number }>;
+
+function mismatchPercentage(result: VisualCompareResult): number {
+  if (typeof result === 'number') return result;
+  const direct = (result as { misMatchPercentage?: unknown }).misMatchPercentage;
+  if (typeof direct === 'number') return direct;
+  return Math.max(...Object.values(result).map(mismatchPercentage));
+}
+
 async function waitForRoute(hashFragment: string, timeout = 10000): Promise<void> {
-  await browser.waitUntil(
-    async () => (await browser.getUrl()).includes(hashFragment),
-    { timeout, timeoutMsg: `Route did not change to ${hashFragment} within ${timeout}ms` },
-  );
+  await waitForHashRoute(hashFragment, timeout);
 }
 
 async function waitForText(text: string, timeout = 15000): Promise<void> {
@@ -50,6 +56,11 @@ async function installVisualStabilityCss(): Promise<void> {
         caret-color: transparent !important;
         transition-delay: 0s !important;
         transition-duration: 0s !important;
+      }
+
+      [data-session-sidebar-row="true"],
+      [data-session-sidebar-row="true"] ~ * {
+        display: none !important;
       }
     `;
     document.head.appendChild(style);
@@ -102,9 +113,9 @@ async function openVisualRoute(path: string, hashFragment: string, readyText: st
   await waitForVisualIdle();
 }
 
-function expectVisualDiff(result: number): void {
+function expectVisualDiff(result: VisualCompareResult): void {
   if (UPDATE_BASELINES) return;
-  expect(result).toBeLessThanOrEqual(VISUAL_DIFF_LIMIT);
+  expect(mismatchPercentage(result)).toBeLessThanOrEqual(VISUAL_DIFF_LIMIT);
 }
 
 describe('Visual regression', () => {

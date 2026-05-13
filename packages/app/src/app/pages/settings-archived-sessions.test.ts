@@ -22,8 +22,8 @@ test("settings renders archived sessions inside the archived tab only", () => {
   assert.doesNotMatch(generalMatch[0], /settings\.archived_sessions_label/);
 });
 
-test("settings tab list exposes only general and archived", () => {
-  assert.match(source, /const tabs: SettingsTab\[] = \["general", "archived"\]/);
+test("settings tab list exposes general, extensions, and archived", () => {
+  assert.match(source, /const tabs: SettingsTab\[] = \["general", "extensions", "archived"\]/);
   assert.doesNotMatch(source, /if \(props\.developerMode\) tabs\.push\("advanced", "debug"\);/);
 });
 

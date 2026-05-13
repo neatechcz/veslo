@@ -2,7 +2,7 @@ import { expect } from '@wdio/globals';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { navigateToHash } from '../helpers/app-launcher.js';
+import { navigateToHash, waitForHashRoute } from '../helpers/app-launcher.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -37,10 +37,7 @@ async function ensureSessionComposer() {
 describe('Attachment staging', () => {
   before(async () => {
     await navigateToHash('/session');
-    await browser.waitUntil(
-      async () => (await browser.getUrl()).includes('#/session'),
-      { timeout: 5000 }
-    );
+    await waitForHashRoute('#/session', 5000);
   });
 
   it('shows the session composer', async () => {

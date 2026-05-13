@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 export type DesktopAuthSeed = {
@@ -28,6 +28,38 @@ function normalizeOptionalBoolean(value: unknown): boolean | null {
   return null;
 }
 
+function firstOptionalText(...values: unknown[]): string | null {
+  for (const value of values) {
+    const normalized = normalizeOptionalText(value);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function firstOptionalBoolean(...values: unknown[]): boolean | null {
+  for (const value of values) {
+    const normalized = normalizeOptionalBoolean(value);
+    if (normalized !== null) return normalized;
+  }
+  return null;
+}
+
+export function defaultE2EDesktopAuthSeed(): DesktopAuthSeed {
+  return {
+    authJson: JSON.stringify({
+      denApiBase: 'http://127.0.0.1:9',
+      token: 'veslo-e2e-default-token',
+      orgId: 'org_veslo_e2e_default',
+      user: { id: 'user_veslo_e2e_default', email: 'veslo-e2e@example.test' },
+      org: { id: 'org_veslo_e2e_default', slug: 'veslo-e2e' },
+    }),
+    keepSignedIn: true,
+    language: 'en',
+    onboardingComplete: true,
+    source: 'e2e-default',
+  };
+}
+
 function parseSnapshotFile(raw: string): DesktopAuthSeed {
   const parsed = JSON.parse(raw.replace(/^\uFEFF/, "")) as Partial<DesktopAuthSnapshotFile>;
   return {
@@ -46,21 +78,24 @@ export function resolveE2EDesktopAuthSnapshotPath(opencodeHome: string): string 
 export function resolveDesktopAuthSeedFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): DesktopAuthSeed | null {
-  const snapshotFile = normalizeOptionalText(env.VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE);
+  const snapshotFile = firstOptionalText(
+    env.VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE,
+    env.E2E_DEN_AUTH_SNAPSHOT_FILE,
+  );
   if (snapshotFile) {
     return parseSnapshotFile(readFileSync(snapshotFile, 'utf8'));
   }
 
-  const authJson = normalizeOptionalText(env.VESLO_E2E_DEN_AUTH_JSON);
+  const authJson = firstOptionalText(env.VESLO_E2E_DEN_AUTH_JSON, env.E2E_DEN_AUTH_JSON);
   if (!authJson) {
     return null;
   }
 
   return {
     authJson,
-    keepSignedIn: normalizeOptionalBoolean(env.VESLO_E2E_DEN_KEEP_SIGNED_IN) ?? true,
-    language: normalizeOptionalText(env.VESLO_E2E_LANGUAGE) ?? 'en',
-    onboardingComplete: normalizeOptionalBoolean(env.VESLO_E2E_ONBOARDING_COMPLETE) ?? true,
+    keepSignedIn: firstOptionalBoolean(env.VESLO_E2E_DEN_KEEP_SIGNED_IN, env.E2E_DEN_KEEP_SIGNED_IN) ?? true,
+    language: firstOptionalText(env.VESLO_E2E_LANGUAGE, env.E2E_LANGUAGE) ?? 'en',
+    onboardingComplete: firstOptionalBoolean(env.VESLO_E2E_ONBOARDING_COMPLETE, env.E2E_ONBOARDING_COMPLETE) ?? true,
     source: 'e2e-env',
   };
 }
@@ -94,7 +129,7 @@ export function prepareDesktopAuthSeed(
     // Custom E2E profiles may already carry a real desktop auth snapshot.
     // Preserve it unless the caller explicitly provides a replacement seed.
   } else {
-    rmSync(snapshotPath, { force: true });
+    writeDesktopAuthSeedFile(snapshotPath, defaultE2EDesktopAuthSeed());
   }
   return snapshotPath;
 }

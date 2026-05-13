@@ -263,6 +263,91 @@ test("technical config and instruction files are filtered in fallback data", () 
   assert.deepEqual(paths, ["packages/app/src/app/pages/session.tsx"]);
 });
 
+test("right sidebar artifacts keep user files and hide helper cache build and skill implementation paths", () => {
+  const families = buildArtifactFamilies({
+    artifacts: [
+      artifact({
+        id: "user-file",
+        family: "files",
+        kind: "file_output",
+        status: "updated",
+        title: "context-panel.tsx",
+        path: "packages/app/src/app/components/session/context-panel.tsx",
+        timestamp: 30,
+      }),
+      artifact({
+        id: "cache-file",
+        family: "files",
+        kind: "file_discovered",
+        status: "scanned",
+        title: "worker.json",
+        path: ".cache/veslo/worker.json",
+        timestamp: 29,
+      }),
+      artifact({
+        id: "build-file",
+        family: "files",
+        kind: "file_output",
+        status: "updated",
+        title: "bundle.js",
+        path: "packages/app/dist/assets/bundle.js",
+        timestamp: 28,
+      }),
+      artifact({
+        id: "temp-file",
+        family: "files",
+        kind: "file_discovered",
+        status: "scanned",
+        title: "scratch.txt",
+        path: "tmp/scratch.txt",
+        timestamp: 27,
+      }),
+      artifact({
+        id: "skill-row",
+        family: "skills",
+        kind: "skill_used",
+        status: "used",
+        title: "SKILL.md",
+        path: "/Users/vaclavsoukup/.codex/skills/systematic-debugging/SKILL.md",
+        timestamp: 26,
+      }),
+      artifact({
+        id: "source-cache-file",
+        family: "files",
+        kind: "file_output",
+        status: "updated",
+        title: "client.ts",
+        path: "src/cache/client.ts",
+        timestamp: 25,
+      }),
+      artifact({
+        id: "source-build-file",
+        family: "files",
+        kind: "file_output",
+        status: "updated",
+        title: "index.ts",
+        path: "src/build/index.ts",
+        timestamp: 24,
+      }),
+    ],
+  });
+
+  assert.deepEqual(families.map(familyLabel), ["Files", "Skills"]);
+
+  const filesFamily = families[0] as Record<string, unknown>;
+  const filePaths = familyItems(filesFamily).map((item) => String((item as Record<string, unknown>).path ?? ""));
+  assert.deepEqual(filePaths, [
+    "packages/app/src/app/components/session/context-panel.tsx",
+    "src/cache/client.ts",
+    "src/build/index.ts",
+  ]);
+
+  const skillsFamily = families[1] as Record<string, unknown>;
+  const [skillItem] = familyItems(skillsFamily) as Array<Record<string, unknown>>;
+  assert.equal(skillItem.title, "Systematic Debugging");
+  assert.equal(skillItem.path, undefined);
+});
+
 test("family ordering prefers active families in Files, Skills, MCP, Soul order", () => {
   const families = buildArtifactFamilies({
     artifacts: [

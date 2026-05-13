@@ -1,9 +1,23 @@
 import { expect } from '@wdio/globals';
 import { navigateToHash } from '../helpers/app-launcher.js';
+// @ts-expect-error -- shared app test utilities are JS-only in this workspace.
 import { makeClient, waitForHealthy } from '../../app/scripts/_util.mjs';
 
 function isUnauthenticatedAuthGate(text: string): boolean {
   return text.includes('Sign in to Veslo') && text.includes('Sign in with Browser');
+}
+
+async function isDefaultE2EDenAuthSeed(): Promise<boolean> {
+  return browser.execute(() => {
+    const raw = window.localStorage.getItem('veslo.den.auth') ?? window.sessionStorage.getItem('veslo.den.auth');
+    if (!raw) return false;
+    try {
+      const auth = JSON.parse(raw) as { denApiBase?: unknown; token?: unknown };
+      return auth.denApiBase === 'http://127.0.0.1:9' || auth.token === 'veslo-e2e-default-token';
+    } catch {
+      return false;
+    }
+  });
 }
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -648,6 +662,10 @@ describe('DEN-managed AI roundtrip', () => {
     const initialText = await readRootText();
     if (isUnauthenticatedAuthGate(initialText)) {
       console.warn('[den-managed-ai-roundtrip] Skipping because the desktop profile is still unauthenticated. Seed or sign in before running this spec.');
+      this.skip();
+    }
+    if (await isDefaultE2EDenAuthSeed()) {
+      console.warn('[den-managed-ai-roundtrip] Skipping because the desktop profile is using the default non-live E2E auth seed.');
       this.skip();
     }
 

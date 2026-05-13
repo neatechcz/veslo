@@ -50,7 +50,7 @@ describe("debug-log-pipeline", () => {
       const fetchImpl = (async () => {
         fetchCalls += 1;
         return new Response(JSON.stringify({ acceptedBatchIds: [] }), { status: 200 });
-      }) as typeof fetch;
+      }) as unknown as typeof fetch;
 
       const pipeline = createDebugLogPipeline({
         config: makeConfig({ enabled: false }),

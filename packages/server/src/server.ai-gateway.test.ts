@@ -291,6 +291,87 @@ describe("ai gateway proxy routes", () => {
     }
   });
 
+  test("server reports upstream codex_oauth html blocks as gateway diagnostics", async () => {
+    const upstream = createServer((_req, res) => {
+      res.statusCode = 403;
+      res.statusMessage = "Forbidden";
+      res.setHeader("content-type", "text/html; charset=utf-8");
+      res.setHeader("x-request-id", "upstream-request-123");
+      res.end("<!doctype html><html><head><title>Blocked</title></head><body>Blocked by gateway gateway-access-token</body></html>");
+    });
+    const upstreamPort = await listenTestServer(upstream);
+
+    try {
+      await withManagedAiEnv(
+        {
+          managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}`,
+        },
+        async () => {
+          const server = startServer(createTestConfig());
+
+          try {
+            const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
+              method: "POST",
+              headers: {
+                authorization: "Bearer client-token",
+                "content-type": "application/json",
+                "x-veslo-gateway-token": "gateway-access-token",
+                "x-veslo-session-id": "session_codex_blocked_123",
+                "x-veslo-account-id": "user_123",
+                "x-veslo-den-org-id": "org_123",
+              },
+              body: JSON.stringify({
+                model: "gpt-5.4",
+                messages: [{ role: "user", content: "Hello" }],
+              }),
+            });
+
+            expect(response.status).toBe(502);
+            expect(response.headers.get("content-type")).toContain("application/json");
+
+            const payload = await response.json() as {
+              code: string;
+              message: string;
+              details: {
+                requestId: string;
+                provider: string;
+                model: string;
+                sessionId: string;
+                userId: string;
+                orgId: string;
+                upstreamStatus: number;
+                upstreamStatusText: string;
+                upstreamRequestId: string;
+                upstreamContentType: string;
+                upstreamResponse: string;
+              };
+            };
+
+            expect(payload.code).toBe("ai_gateway_upstream_failed");
+            expect(payload.message).toBe("AI gateway upstream request failed");
+            expect(payload.details.requestId).toBeString();
+            expect(payload.details.provider).toBe("codex_oauth");
+            expect(payload.details.model).toBe("gpt-5.4");
+            expect(payload.details.sessionId).toBe("session_codex_blocked_123");
+            expect(payload.details.userId).toBe("user_123");
+            expect(payload.details.orgId).toBe("org_123");
+            expect(payload.details.upstreamStatus).toBe(403);
+            expect(payload.details.upstreamStatusText).toBe("Forbidden");
+            expect(payload.details.upstreamRequestId).toBe("upstream-request-123");
+            expect(payload.details.upstreamContentType).toBe("text/html; charset=utf-8");
+            expect(payload.details.upstreamResponse).toContain("<title>Blocked</title>");
+            expect(payload.details.upstreamResponse).not.toContain("gateway-access-token");
+          } finally {
+            stopTestServer(server);
+          }
+        },
+      );
+    } finally {
+      upstream.close();
+      await once(upstream, "close");
+    }
+  });
+
   test("server strips compression headers from streamed ai-gateway responses", async () => {
     const requests: Array<{
       acceptEncoding: string | null;
@@ -734,6 +815,53 @@ describe("ai gateway proxy routes", () => {
     }
   });
 
+  test("server redacts bare caller auth tokens from upstream ai-access failures", async () => {
+    const upstream = createServer((_req, res) => {
+      res.statusCode = 403;
+      res.statusMessage = "Forbidden";
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({
+        error: "blocked",
+        detail: "token den-user-token was rejected by policy",
+      }));
+    });
+    const upstreamPort = await listenTestServer(upstream);
+
+    try {
+      await withManagedAiEnv(
+        {
+          managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}`,
+        },
+        async () => {
+          const server = startServer(createTestConfig());
+
+          try {
+            const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/me/ai-access`, {
+              headers: {
+                authorization: "Bearer client-token",
+                "x-veslo-gateway-authorization": "Bearer den-user-token",
+              },
+            });
+
+            expect(response.status).toBe(502);
+            const payload = await response.json() as {
+              details: {
+                upstreamResponse: string;
+              };
+            };
+            expect(payload.details.upstreamResponse).toContain(REDACTED_SECRET_VALUE);
+            expect(payload.details.upstreamResponse).not.toContain("den-user-token");
+          } finally {
+            stopTestServer(server);
+          }
+        },
+      );
+    } finally {
+      upstream.close();
+      await once(upstream, "close");
+    }
+  });
+
   test("server prefers VESLO_MANAGED_AI_BASE_URL over VESLO_AI_GATEWAY_BASE_URL", async () => {
     const managedRequests: string[] = [];
     const legacyRequests: string[] = [];
@@ -797,7 +925,7 @@ describe("ai gateway proxy routes", () => {
     }
   });
 
-  test("server redacts gateway access tokens and never returns provider secrets", async () => {
+  test("server preserves the ai-access gateway token while redacting provider secrets", async () => {
     const upstream = createServer((_req, res) => {
       res.statusCode = 200;
       res.setHeader("content-type", "application/json");
@@ -848,11 +976,10 @@ describe("ai gateway proxy routes", () => {
       };
       const serialized = JSON.stringify(payload);
 
-      expect(serialized).not.toContain("gateway-access-token");
       expect(serialized).not.toContain("provider-refresh-token");
       expect(serialized).not.toContain("sk-live-openai");
       expect(serialized).not.toContain("nested-access-token");
-      expect(payload.accessToken).toBe(REDACTED_SECRET_VALUE);
+      expect(payload.accessToken).toBe("gateway-access-token");
       expect(payload.refreshToken).toBe(REDACTED_SECRET_VALUE);
       expect(payload.aiAccess.defaultModel).toBe("gpt-4o-mini");
       expect(payload.nested.apiKey).toBe(REDACTED_SECRET_VALUE);

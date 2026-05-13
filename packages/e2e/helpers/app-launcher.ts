@@ -147,9 +147,17 @@ export function createAppLaunchEnv(
   return env;
 }
 
-function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv): void {
+const ENTERPRISE_CREATOR_SEED_MARKER = '.veslo-enterprise-creators';
+
+export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv): void {
   const workspacePath = join(root, 'workspaces', 'visual-workspace');
   mkdirSync(workspacePath, { recursive: true });
+  const opencodePath = join(workspacePath, '.opencode');
+  mkdirSync(opencodePath, { recursive: true });
+  writeFileSync(
+    join(opencodePath, ENTERPRISE_CREATOR_SEED_MARKER),
+    'skipped for deterministic e2e fixture\n',
+  );
 
   const workspaceState = {
     version: 4,
@@ -315,5 +323,33 @@ export function hashFragment(path: string): string {
  */
 export async function navigateToHash(path: string): Promise<void> {
   const hash = path.startsWith('/') ? path : '/' + path;
-  await browser.execute((h: string) => { window.location.hash = h; }, hash);
+  const previousHash = await currentHashRoute().catch(() => '');
+  await browser.execute((h: string) => {
+    const oldUrl = window.location.href;
+    window.location.hash = h;
+    window.dispatchEvent(new HashChangeEvent('hashchange', {
+      oldURL: oldUrl,
+      newURL: window.location.href,
+    }));
+  }, hash);
+
+  await browser.pause(50);
+  const nextHash = await currentHashRoute().catch(() => '');
+  if (nextHash === previousHash && !nextHash.includes(hash)) {
+    const currentUrl = await browser.getUrl().catch(() => '');
+    const baseUrl = currentUrl.replace(/#.*$/, '');
+    if (!baseUrl) throw new Error(`Unable to resolve current URL before navigating to #${hash}`);
+    await browser.url(`${baseUrl}#${hash}`);
+  }
+}
+
+export async function currentHashRoute(): Promise<string> {
+  return browser.execute(() => window.location.hash);
+}
+
+export async function waitForHashRoute(hashFragment: string, timeout = 10000): Promise<void> {
+  await browser.waitUntil(
+    async () => (await currentHashRoute()).includes(hashFragment),
+    { timeout, timeoutMsg: `Route did not change to ${hashFragment} within ${timeout}ms` },
+  );
 }

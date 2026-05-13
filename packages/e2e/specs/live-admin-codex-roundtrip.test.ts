@@ -20,6 +20,19 @@ test('live admin Codex spec accepts desktop-runtime snapshots in addition to liv
   );
 });
 
+test('live admin Codex spec is skipped unless the live smoke is explicitly enabled', () => {
+  assert.match(
+    source,
+    /const LIVE_SMOKE_ENABLED = process\.env\.E2E_LIVE_ADMIN_CODEX_ROUNDTRIP\?\.trim\(\) === '1';/,
+    'live admin Codex spec should require an explicit live smoke flag',
+  );
+  assert.match(
+    source,
+    /const maybeLiveIt = LIVE_SMOKE_ENABLED \? it : it\.skip;[\s\S]*?maybeLiveIt\('should send a real Codex prompt/,
+    'live admin Codex test should skip before reading required live auth env by default',
+  );
+});
+
 test('live admin Codex spec forces managed-access refreshes while waiting for the assigned provider/model to appear', () => {
   assert.match(
     source,

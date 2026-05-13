@@ -9043,6 +9043,35 @@ export default function App() {
     return "scheduled";
   };
 
+  const syncExternalHashRoute = () => {
+    if (!isTauriRuntime()) return;
+    const hashPath = window.location.hash.replace(/^#/, "").trim();
+    if (!hashPath.startsWith("/")) return;
+
+    const pathname = hashPath.split(/[?#]/, 1)[0]?.toLowerCase() ?? "";
+    if (pathname.startsWith("/dashboard")) {
+      const [, , tabSegment] = pathname.split("/");
+      const resolvedTab = resolveDashboardTab(tabSegment);
+      if (resolvedTab !== tab()) {
+        setTabState(resolvedTab);
+      }
+    }
+
+    if (location.pathname.toLowerCase() !== pathname) {
+      navigate(hashPath, { replace: true });
+    }
+  };
+
+  onMount(() => {
+    if (!isTauriRuntime()) return;
+    window.addEventListener("hashchange", syncExternalHashRoute);
+  });
+
+  onCleanup(() => {
+    if (!isTauriRuntime()) return;
+    window.removeEventListener("hashchange", syncExternalHashRoute);
+  });
+
   const initialRoute = () => {
     if (typeof window === "undefined") return "/session";
     return "/session";

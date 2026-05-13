@@ -59,6 +59,25 @@ const SOUL_KIND_RANK: Record<string, number> = {
   heartbeat_used: 1,
 };
 
+const GENERATED_OR_INTERNAL_PATH_SEGMENTS = new Set([
+  ".cache",
+  ".git",
+  ".next",
+  ".nuxt",
+  ".svelte-kit",
+  ".turbo",
+  "coverage",
+  "node_modules",
+]);
+const ROOT_GENERATED_PATH_SEGMENTS = new Set(["build", "cache", "coverage", "dist", "out", "target", "temp", "tmp"]);
+
+function isGeneratedOrInternalPathSegment(segment: string, index: number, segments: string[]): boolean {
+  if (GENERATED_OR_INTERNAL_PATH_SEGMENTS.has(segment)) return true;
+  if (!ROOT_GENERATED_PATH_SEGMENTS.has(segment)) return false;
+  if (index === 0) return true;
+  return !segments.slice(0, index).includes("src");
+}
+
 function isAbsolutePath(path: string): boolean {
   return path.startsWith("/") || path.startsWith("//") || /^[A-Za-z]:\//.test(path);
 }
@@ -82,8 +101,11 @@ function isTechnicalArtifactPath(path: string | undefined, workspaceRoot?: strin
   }
 
   const baseName = basename(normalized).toLowerCase();
+  const segments = normalizedLower.split("/").filter(Boolean);
   if (baseName === "agents.md" || baseName === "claude.md") return true;
   if (baseName === "opencode.json" || baseName === "opencode.jsonc") return true;
+  if (baseName === ".ds_store" || baseName.endsWith(".tsbuildinfo")) return true;
+  if (segments.some((segment, index) => isGeneratedOrInternalPathSegment(segment, index, segments))) return true;
   if (normalizedLower === ".opencode" || normalizedLower.startsWith(".opencode/")) return true;
   if (normalizedLower.includes("/.opencode/")) return true;
   if (normalizedLower.startsWith("prompts/") || normalizedLower.includes("/prompts/")) return true;
@@ -94,9 +116,57 @@ function isTechnicalArtifactPath(path: string | undefined, workspaceRoot?: strin
   return false;
 }
 
+export function isUserRelevantArtifactPath(path: string | undefined, workspaceRoot?: string): boolean {
+  const normalized = normalizePath(path ?? "");
+  return Boolean(normalized) && !isTechnicalArtifactPath(normalized, workspaceRoot);
+}
+
+function extractSkillNameFromPath(path: string): string | null {
+  const normalized = normalizePath(path);
+  const segments = normalized.split("/").filter(Boolean);
+  const last = segments[segments.length - 1]?.toLowerCase();
+  if (last !== "skill.md") return null;
+  return segments[segments.length - 2] ?? null;
+}
+
+function normalizeSkillName(raw: string | undefined): string | null {
+  const value = raw?.trim();
+  if (!value) return null;
+  const withoutPrefix = value.replace(/^load skill\s+/i, "").trim();
+  const pathSkillName = extractSkillNameFromPath(withoutPrefix);
+  const candidate = pathSkillName ?? withoutPrefix;
+  const normalized = normalizePath(candidate).replace(/^@[^/]+\//, "");
+  const segments = normalized.split("/").filter(Boolean);
+  const leaf = segments[segments.length - 1] ?? normalized;
+  const cleaned = leaf.replace(/[-_]+/g, " ").replace(/\.md$/i, "").trim();
+  if (!cleaned || cleaned.toLowerCase() === "skill") return null;
+  return cleaned
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 function toFamilyItem(item: VesloSessionArtifactItem, workspaceRoot?: string): ArtifactFamilyItem | null {
   if (item.family === "files" && isTechnicalArtifactPath(item.path, workspaceRoot)) {
     return null;
+  }
+  if (item.family === "skills") {
+    const title =
+      normalizeSkillName(item.sourceName) ??
+      normalizeSkillName(item.title) ??
+      normalizeSkillName(item.path) ??
+      "Skill";
+    return {
+      id: item.id,
+      family: item.family,
+      kind: item.kind,
+      status: item.status,
+      title,
+      subtitle: item.subtitle,
+      sourceName: normalizeSkillName(item.sourceName) ?? title,
+      timestamp: item.timestamp,
+    };
   }
   return {
     id: item.id,

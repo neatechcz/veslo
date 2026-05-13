@@ -21,7 +21,6 @@ import type {
 import type { McpDirectoryInfo } from "../constants";
 import {
   formatRelativeTime,
-  isMacPlatform,
   getWorkspaceTaskLoadErrorDisplay,
   isTauriRuntime,
   isWindowsPlatform,
@@ -67,7 +66,6 @@ import SidebarAdvancedNav from "../components/session/sidebar-advanced-nav";
 import SidebarDashboardNav from "../components/session/sidebar-dashboard-nav";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
-import { resolveTitlebarContentInsetClass } from "../components/titlebar-menu-layout";
 import {
   clampLeftSidebarWidth,
   readLeftSidebarWidth,
@@ -79,7 +77,6 @@ import {
   resolveLeftMenuAction,
   shouldReturnToSessionOnEscape,
 } from "./dashboard-menu-navigation";
-import { resolveSettingsTabLabel, resolveVisibleSettingsTab } from "../lib/settings-tab-label";
 import {
   ArrowLeft,
   Box,
@@ -441,13 +438,6 @@ export default function DashboardView(props: DashboardViewProps) {
         return t("nav.automations", currentLocale());
     }
   });
-  const visibleSettingsTab = createMemo(() =>
-    resolveVisibleSettingsTab(props.settingsTab, props.developerMode),
-  );
-  const dashboardTitlebarContext = createMemo(() =>
-    props.tab === "settings" ? resolveSettingsTabLabel(visibleSettingsTab()) : title(),
-  );
-
   let releaseNativeWindowTitleLease: (() => void) | null = null;
 
   onMount(() => {
@@ -1222,14 +1212,6 @@ export default function DashboardView(props: DashboardViewProps) {
     openSettings("advanced");
   };
 
-  const titlebarContentInsetClass = createMemo(() =>
-    resolveTitlebarContentInsetClass({
-      tauri: isTauriRuntime(),
-      mac: isMacPlatform(),
-      hideTitlebar: props.hideTitlebar,
-    }),
-  );
-
   const leftMenuAction = createMemo(() =>
     resolveLeftMenuAction({
       tab: props.tab,
@@ -1290,12 +1272,12 @@ export default function DashboardView(props: DashboardViewProps) {
   return (
     <div
       data-feedback-capture-root
-      class={`flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden ${titlebarContentInsetClass()}`}
+      class="flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden"
     >
       <TitlebarMenuToggles
         leftActive={leftMenuActive()}
         rightActive={rightSidebarVisible()}
-        centerContent={dashboardTitlebarContext()}
+        centerContent={title()}
         rightContent={
           <button
             type="button"
@@ -1315,7 +1297,7 @@ export default function DashboardView(props: DashboardViewProps) {
 
       <Show when={leftSidebarVisible()}>
         <aside
-          class={`relative hidden md:flex flex-col bg-dls-sidebar border-r border-dls-border p-4 ${
+          class={`relative hidden md:flex flex-col bg-dls-sidebar border-r border-dls-border p-4 pt-12 ${
             leftSidebarResizing() ? "cursor-col-resize" : ""
           }`}
           style={leftSidebarStyle()}
@@ -1434,7 +1416,7 @@ export default function DashboardView(props: DashboardViewProps) {
         </aside>
       </Show>
 
-      <main class="flex-1 flex flex-col overflow-hidden bg-dls-surface">
+      <main class="flex-1 flex flex-col overflow-hidden bg-dls-surface pt-12">
         <div class="flex-1 overflow-y-auto">
         <header class="h-14 flex items-center justify-between px-6 md:px-10 border-b border-dls-border sticky top-0 bg-dls-surface z-10">
           <div class="flex items-center gap-3">
@@ -1474,7 +1456,9 @@ export default function DashboardView(props: DashboardViewProps) {
                 Soul on
               </div>
             </Show>
-            <h1 class="font-product type-title-sm">{title()}</h1>
+            <Show when={props.tab !== "settings"}>
+              <h1 class="font-product type-title-sm">{title()}</h1>
+            </Show>
             <Show when={props.developerMode}>
               <span class="font-product type-ui-xs text-dls-secondary">{props.headerStatus}</span>
             </Show>
@@ -1848,7 +1832,7 @@ export default function DashboardView(props: DashboardViewProps) {
       </main>
 
       <Show when={rightSidebarVisible()}>
-        <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
+        <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4 pt-12">
           <Show when={props.developerMode}>
             <div class="space-y-1 pt-2">
               <SidebarAdvancedNav

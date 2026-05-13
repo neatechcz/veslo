@@ -1,6 +1,6 @@
 import { expect } from "@wdio/globals";
 
-import { navigateToHash } from "../helpers/app-launcher.js";
+import { navigateToHash, waitForHashRoute } from "../helpers/app-launcher.js";
 
 type LocaleCopy = {
   moreActions: string;
@@ -66,10 +66,7 @@ async function waitForMenuItem(label: string) {
 describe("Sidebar overflow actions via pointer clicks", () => {
   async function expectArchivedNavigationFrom(route: string) {
     await navigateToHash(route);
-    await browser.waitUntil(
-      async () => (await browser.getUrl()).includes(`#${route}`),
-      { timeout: 5000, timeoutMsg: `Route ${route} did not load.` },
-    );
+    await waitForHashRoute(`#${route}`, 5000);
 
     const locale = await getLocale();
     const copy = UI_COPY[locale];
@@ -80,14 +77,7 @@ describe("Sidebar overflow actions via pointer clicks", () => {
     const archivedItemButton = await waitForMenuItem(copy.archivedItems);
     await archivedItemButton.click();
 
-    await browser.waitUntil(
-      async () => (await browser.getUrl()).includes("#/dashboard/settings"),
-      {
-        timeout: 10000,
-        interval: 100,
-        timeoutMsg: "Archived items did not navigate to settings after a real click.",
-      },
-    );
+    await waitForHashRoute("#/dashboard/settings", 10000);
 
     await browser.waitUntil(
       async () => (await $("body")).getText().then((text) => text.includes(copy.archivedSection)),

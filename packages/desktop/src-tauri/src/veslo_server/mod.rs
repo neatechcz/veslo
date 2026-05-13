@@ -10,8 +10,8 @@ use uuid::Uuid;
 
 use crate::debug_logs_forwarder::DebugLogsForwarder;
 use crate::process_supervisor::spawn_output_collector_with_forwarder;
-use std::sync::Arc;
 use crate::types::VesloServerInfo;
+use std::sync::Arc;
 
 pub mod manager;
 pub mod spawn;
@@ -85,32 +85,46 @@ pub(crate) fn server_health_ok(base_url: &str) -> bool {
         .timeout(std::time::Duration::from_millis(1200))
         .build();
 
-    agent.get(&url).call().map(|response| response.status() == 200).unwrap_or(false)
+    agent
+        .get(&url)
+        .call()
+        .map(|response| response.status() == 200)
+        .unwrap_or(false)
 }
 
-fn persisted_state_to_info(state: PersistedVesloServerState) -> Option<VesloServerInfo> {
-    let base_url = state.base_url.clone().filter(|value| !value.trim().is_empty())?;
-    if !server_health_ok(&base_url) {
+fn persisted_state_to_info_with_health(
+    state: &PersistedVesloServerState,
+    health_check: impl Fn(&str) -> bool,
+) -> Option<VesloServerInfo> {
+    let base_url = state
+        .base_url
+        .clone()
+        .filter(|value| !value.trim().is_empty())?;
+    if !health_check(&base_url) {
         return None;
     }
 
     Some(VesloServerInfo {
         running: true,
-        host: state.host,
+        host: state.host.clone(),
         port: state.port,
         base_url: Some(base_url),
-        connect_url: state.connect_url,
-        mdns_url: state.mdns_url,
-        lan_url: state.lan_url,
-        client_token: state.client_token,
-        host_token: state.host_token,
+        connect_url: state.connect_url.clone(),
+        mdns_url: state.mdns_url.clone(),
+        lan_url: state.lan_url.clone(),
+        client_token: state.client_token.clone(),
+        host_token: state.host_token.clone(),
         pid: state.pid,
         last_stdout: None,
         last_stderr: None,
     })
 }
 
-pub fn read_persisted_veslo_server_info(dir: &Path) -> Result<Option<VesloServerInfo>, String> {
+fn read_persisted_veslo_server_info_with_cleanup(
+    dir: &Path,
+    health_check: impl Fn(&str) -> bool,
+    mut cleanup_stale_pid: impl FnMut(u32) -> Result<(), String>,
+) -> Result<Option<VesloServerInfo>, String> {
     let path = persisted_state_path(dir);
     if !path.exists() {
         return Ok(None);
@@ -121,14 +135,57 @@ pub fn read_persisted_veslo_server_info(dir: &Path) -> Result<Option<VesloServer
     let state: PersistedVesloServerState = serde_json::from_str(&payload)
         .map_err(|e| format!("Failed to parse {}: {e}", path.display()))?;
 
-    let info = persisted_state_to_info(state);
+    let info = persisted_state_to_info_with_health(&state, health_check);
     if info.is_none() {
+        if let Some(pid) = state.pid.filter(|pid| *pid > 0) {
+            cleanup_stale_pid(pid)?;
+        }
         let _ = fs::remove_file(&path);
     }
     Ok(info)
 }
 
-pub fn recover_persisted_veslo_server_info(app: &AppHandle) -> Result<Option<VesloServerInfo>, String> {
+pub fn read_persisted_veslo_server_info(dir: &Path) -> Result<Option<VesloServerInfo>, String> {
+    read_persisted_veslo_server_info_with_cleanup(dir, server_health_ok, |pid| {
+        kill_stale_veslo_server_process(pid)
+    })
+}
+
+fn kill_stale_veslo_server_process(pid: u32) -> Result<(), String> {
+    terminate_stale_veslo_server_process(pid)
+        .map_err(|error| format!("Failed to terminate stale persisted PID {pid}: {error}"))
+}
+
+#[cfg(windows)]
+fn terminate_stale_veslo_server_process(pid: u32) -> Result<(), String> {
+    let pid_arg = pid.to_string();
+    let status = std::process::Command::new("taskkill")
+        .args([
+            "/PID",
+            pid_arg.as_str(),
+            "/T",
+            "/F",
+            "/FI",
+            "IMAGENAME eq veslo-server.exe",
+        ])
+        .status()
+        .map_err(|e| format!("failed to launch taskkill: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("taskkill exited with status {status}"))
+    }
+}
+
+#[cfg(not(windows))]
+fn terminate_stale_veslo_server_process(_pid: u32) -> Result<(), String> {
+    Ok(())
+}
+
+pub fn recover_persisted_veslo_server_info(
+    app: &AppHandle,
+) -> Result<Option<VesloServerInfo>, String> {
     let dir = persisted_state_dir(app)?;
     read_persisted_veslo_server_info(&dir)
 }
@@ -145,8 +202,12 @@ pub fn clear_persisted_veslo_server_info(app: &AppHandle) -> Result<(), String> 
 
 fn persist_veslo_server_info(app: &AppHandle, info: &VesloServerInfo) -> Result<(), String> {
     let dir = persisted_state_dir(app)?;
-    fs::create_dir_all(&dir)
-        .map_err(|e| format!("Failed to create persisted state dir {}: {e}", dir.display()))?;
+    fs::create_dir_all(&dir).map_err(|e| {
+        format!(
+            "Failed to create persisted state dir {}: {e}",
+            dir.display()
+        )
+    })?;
     let path = persisted_state_path(&dir);
     let state = PersistedVesloServerState {
         host: info.host.clone(),
@@ -240,7 +301,10 @@ pub fn start_veslo_server(
 
 #[cfg(test)]
 mod tests {
-    use super::{read_persisted_veslo_server_info, PersistedVesloServerState};
+    use super::{
+        read_persisted_veslo_server_info, read_persisted_veslo_server_info_with_cleanup,
+        PersistedVesloServerState,
+    };
     use std::fs;
     use std::io::ErrorKind;
     use std::io::Read;
@@ -251,7 +315,8 @@ mod tests {
 
     #[test]
     fn read_persisted_server_info_returns_none_without_state() {
-        let dir = std::env::temp_dir().join(format!("veslo-server-state-missing-{}", Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("veslo-server-state-missing-{}", Uuid::new_v4()));
         fs::create_dir_all(&dir).expect("create test dir");
 
         let recovered = read_persisted_veslo_server_info(&dir).expect("read persisted state");
@@ -308,12 +373,89 @@ mod tests {
         let recovered = read_persisted_veslo_server_info(&dir)
             .expect("read persisted state")
             .expect("recover live server info");
-        assert_eq!(recovered.base_url.as_deref(), Some(expected_base_url.as_str()));
+        assert_eq!(
+            recovered.base_url.as_deref(),
+            Some(expected_base_url.as_str())
+        );
         assert_eq!(recovered.client_token.as_deref(), Some("client-token"));
         assert_eq!(recovered.host_token.as_deref(), Some("host-token"));
         assert!(recovered.running);
 
         handle.join().expect("health thread");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn read_persisted_server_info_recycles_unhealthy_pid() {
+        let dir = std::env::temp_dir().join(format!("veslo-server-state-stale-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let state = PersistedVesloServerState {
+            host: Some("0.0.0.0".to_string()),
+            port: Some(8787),
+            base_url: Some("http://127.0.0.1:8787".to_string()),
+            connect_url: Some("http://127.0.0.1:8787".to_string()),
+            mdns_url: None,
+            lan_url: None,
+            client_token: Some("client-token".to_string()),
+            host_token: Some("host-token".to_string()),
+            pid: Some(4242),
+        };
+        fs::write(
+            dir.join("veslo-server-state.json"),
+            serde_json::to_string_pretty(&state).expect("serialize state"),
+        )
+        .expect("write state file");
+
+        let mut recycled_pids = Vec::new();
+        let recovered = read_persisted_veslo_server_info_with_cleanup(
+            &dir,
+            |_| false,
+            |pid| {
+                recycled_pids.push(pid);
+                Ok(())
+            },
+        )
+        .expect("read persisted state");
+
+        assert!(recovered.is_none());
+        assert_eq!(recycled_pids, vec![4242]);
+        assert!(!dir.join("veslo-server-state.json").exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn read_persisted_server_info_keeps_state_when_pid_recycle_fails() {
+        let dir =
+            std::env::temp_dir().join(format!("veslo-server-state-stale-fail-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let state = PersistedVesloServerState {
+            host: Some("0.0.0.0".to_string()),
+            port: Some(8787),
+            base_url: Some("http://127.0.0.1:8787".to_string()),
+            connect_url: Some("http://127.0.0.1:8787".to_string()),
+            mdns_url: None,
+            lan_url: None,
+            client_token: Some("client-token".to_string()),
+            host_token: Some("host-token".to_string()),
+            pid: Some(4242),
+        };
+        fs::write(
+            dir.join("veslo-server-state.json"),
+            serde_json::to_string_pretty(&state).expect("serialize state"),
+        )
+        .expect("write state file");
+
+        let error = read_persisted_veslo_server_info_with_cleanup(
+            &dir,
+            |_| false,
+            |_| Err("taskkill failed".to_string()),
+        )
+        .expect_err("cleanup failure should stop recovery");
+
+        assert!(error.contains("taskkill failed"));
+        assert!(dir.join("veslo-server-state.json").exists());
+
         let _ = fs::remove_dir_all(dir);
     }
 }

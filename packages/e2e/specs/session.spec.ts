@@ -1,6 +1,6 @@
 import { expect } from "@wdio/globals";
 
-import { navigateToHash } from "../helpers/app-launcher.js";
+import { currentHashRoute, navigateToHash, waitForHashRoute } from "../helpers/app-launcher.js";
 
 type EngineInfo = {
   running: boolean;
@@ -36,13 +36,7 @@ function trimText(value: string | null | undefined) {
 }
 
 async function waitForRoute(hashFragment: string, timeout = WAIT_TIMEOUT_MS) {
-  await browser.waitUntil(
-    async () => (await browser.getUrl()).includes(hashFragment),
-    {
-      timeout,
-      timeoutMsg: `Route did not change to ${hashFragment} within ${timeout}ms`,
-    },
-  );
+  await waitForHashRoute(hashFragment, timeout);
 }
 
 async function tauriInvoke<T>(command: string, payload: Record<string, unknown> = {}): Promise<T> {
@@ -107,6 +101,25 @@ async function readActiveClientContext() {
   };
 }
 
+async function ensureActiveEngineStarted() {
+  const engine = await tauriInvoke<EngineInfo>("engine_info").catch(() => null);
+  if (engine?.running && trimText(engine.baseUrl)) return;
+
+  const bootstrap = await tauriInvoke<WorkspaceList>("workspace_bootstrap");
+  const activeWorkspace = bootstrap.workspaces.find((workspace) => workspace.id === bootstrap.activeId);
+  const directory = trimText(activeWorkspace?.directory) || trimText(activeWorkspace?.path);
+  if (!activeWorkspace || !directory) {
+    throw new Error("Active workspace is not ready yet");
+  }
+
+  await tauriInvoke<EngineInfo>("engine_start", {
+    projectDir: directory,
+    preferSidecar: true,
+    runtime: "direct",
+    workspacePaths: [directory],
+  });
+}
+
 async function waitForActiveClientContext() {
   let context: Awaited<ReturnType<typeof readActiveClientContext>> | null = null;
 
@@ -130,6 +143,7 @@ async function waitForActiveClientContext() {
 }
 
 async function seedSessions(count: number): Promise<SeededSession[]> {
+  await ensureActiveEngineStarted();
   const { baseUrl, directory, username, password } = await waitForActiveClientContext();
   // @ts-expect-error -- shared app test utilities are JS-only in this workspace.
   const { makeClient, waitForHealthy } = await import("../../app/scripts/_util.mjs");
@@ -252,7 +266,7 @@ async function waitForSessionContent(target: SeededSession) {
   const root = await $("#root");
 
   await browser.waitUntil(
-    async () => (await browser.getUrl()).includes(target.id),
+    async () => (await currentHashRoute()).includes(target.id),
     {
       timeout: WAIT_TIMEOUT_MS,
       timeoutMsg: `Route did not switch to session ${target.id} after clicking "${target.title}"`,

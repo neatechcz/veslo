@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAppLaunchEnv, resolveWebDriverPort } from './app-launcher.js';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createAppLaunchEnv, resolveWebDriverPort, seedDefaultWorkspaceState } from './app-launcher.js';
 
 test('createAppLaunchEnv forces x11 on linux so GTK-backed Tauri can start in headless E2E runs', () => {
   const env = createAppLaunchEnv(
@@ -53,4 +56,18 @@ test('createAppLaunchEnv isolates Windows app, local, and WebView2 storage so st
 
 test('resolveWebDriverPort allows E2E runs to move off a stale default port', () => {
   assert.equal(resolveWebDriverPort({ E2E_WEBDRIVER_PORT: '4455' }), 4455);
+});
+
+test('seedDefaultWorkspaceState skips network-backed enterprise creators for deterministic E2E fixtures', () => {
+  const root = mkdtempSync(join(tmpdir(), 'veslo-e2e-home-'));
+  try {
+    seedDefaultWorkspaceState(root, {});
+
+    assert.equal(
+      existsSync(join(root, 'workspaces', 'visual-workspace', '.opencode', '.veslo-enterprise-creators')),
+      true,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

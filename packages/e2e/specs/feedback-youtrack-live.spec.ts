@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { expect } from "@wdio/globals";
 
-import { navigateToHash } from "../helpers/app-launcher.js";
+import { navigateToHash, waitForHashRoute } from "../helpers/app-launcher.js";
 import {
   hasExplicitLiveFeedbackDenAuth,
   parseSafeDenAuthSummary,
@@ -25,10 +25,7 @@ function makeRunId() {
 }
 
 async function waitForRoute(hashFragment: string, timeout = 10_000): Promise<void> {
-  await browser.waitUntil(async () => (await browser.getUrl()).includes(hashFragment), {
-    timeout,
-    timeoutMsg: `Route did not change to ${hashFragment} within ${timeout}ms`,
-  });
+  await waitForHashRoute(hashFragment, timeout);
 }
 
 async function seedDenAuthFromEnvIfPresent() {

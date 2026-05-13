@@ -1,12 +1,5 @@
 import { expect } from '@wdio/globals';
-import { navigateToHash } from '../helpers/app-launcher.js';
-
-async function waitForRoute(hashFragment: string, timeout = 5000): Promise<void> {
-  await browser.waitUntil(
-    async () => (await browser.getUrl()).includes(hashFragment),
-    { timeout, timeoutMsg: `Route did not change to ${hashFragment} within ${timeout}ms` },
-  );
-}
+import { navigateToHash, waitForHashRoute } from '../helpers/app-launcher.js';
 
 async function waitForBodyText(expected: string, timeout = 5000): Promise<string> {
   await browser.waitUntil(
@@ -28,7 +21,7 @@ function containsAny(text: string, values: string[]): boolean {
 describe('Extensions MCP', () => {
   it('shows only Control Chrome on the Extensions screen and keeps Add MCP server', async () => {
     await navigateToHash('/dashboard/mcp');
-    await waitForRoute('#/dashboard/mcp');
+    await waitForHashRoute('#/dashboard/mcp');
 
     const bodyText = await waitForBodyText('Control Chrome');
 

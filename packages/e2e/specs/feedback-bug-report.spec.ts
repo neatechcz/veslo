@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 
 import { expect } from "@wdio/globals";
 
-import { navigateToHash } from "../helpers/app-launcher.js";
+import { navigateToHash, waitForHashRoute } from "../helpers/app-launcher.js";
 
 type FeedbackRequest = {
   method: string;
@@ -12,10 +12,7 @@ type FeedbackRequest = {
 };
 
 function waitForRoute(hashFragment: string, timeout = 10_000): Promise<void> {
-  return browser.waitUntil(async () => (await browser.getUrl()).includes(hashFragment), {
-    timeout,
-    timeoutMsg: `Route did not change to ${hashFragment} within ${timeout}ms`,
-  }).then(() => undefined);
+  return waitForHashRoute(hashFragment, timeout);
 }
 
 function createFeedbackStubServer() {

@@ -854,8 +854,9 @@ export default function SettingsView(props: SettingsViewProps) {
 
   return (
     <section class="space-y-6">
-      <div class="flex flex-wrap gap-2 rounded-2xl border border-gray-6/40 bg-gray-1/40 px-3 py-2">
-        <div class="flex flex-wrap gap-2">
+      <div class="space-y-4">
+        <h1 class="font-product type-title-md text-gray-12">{translate("dashboard.settings")}</h1>
+        <div class="flex flex-wrap gap-2 rounded-2xl border border-gray-6/40 bg-gray-1/40 px-3 py-2">
           <For each={availableTabs()}>
             {(tab) => (
               <button

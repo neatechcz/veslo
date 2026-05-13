@@ -1,5 +1,5 @@
 import { expect } from '@wdio/globals';
-import { navigateToHash } from '../helpers/app-launcher.js';
+import { navigateToHash, waitForHashRoute } from '../helpers/app-launcher.js';
 
 describe('Typography system', () => {
   it('exposes the expected font families via CSS variables', async () => {
@@ -39,7 +39,8 @@ describe('Typography system', () => {
 
   it('uses the product typography on shell page titles', async () => {
     await navigateToHash('/dashboard/skills');
-    const title = await $('h2');
+    await waitForHashRoute('#/dashboard/skills');
+    const title = await $('h2*=Skills');
     await title.waitForExist({ timeout: 10000 });
 
     const fontFamily = await browser.execute((element) => {

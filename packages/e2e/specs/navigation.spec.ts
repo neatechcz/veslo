@@ -1,12 +1,5 @@
 import { expect } from '@wdio/globals';
-import { navigateToHash } from '../helpers/app-launcher.js';
-
-async function waitForRoute(hashFragment: string, timeout = 5000): Promise<void> {
-  await browser.waitUntil(
-    async () => (await browser.getUrl()).includes(hashFragment),
-    { timeout, timeoutMsg: `Route did not change to ${hashFragment} within ${timeout}ms` }
-  );
-}
+import { currentHashRoute, navigateToHash, waitForHashRoute } from '../helpers/app-launcher.js';
 
 async function waitForBodyText(expected: string, timeout = 10000): Promise<void> {
   await browser.waitUntil(
@@ -20,8 +13,8 @@ async function waitForBodyText(expected: string, timeout = 10000): Promise<void>
 
 async function expectNoDeveloperModeEntry(): Promise<void> {
   await navigateToHash('/dashboard/settings');
-  await waitForRoute('#/dashboard/settings', 10000);
-  await waitForBodyText('AI access');
+  await waitForHashRoute('#/dashboard/settings', 10000);
+  await waitForBodyText('Settings');
 
   const result = await browser.execute(() => {
     const text = document.body.innerText;
@@ -46,41 +39,41 @@ describe('Navigation', () => {
 
   it('should navigate to settings via URL', async () => {
     await navigateToHash('/dashboard/settings');
-    await waitForRoute('#/dashboard/settings');
-    const url = await browser.getUrl();
-    expect(url).toContain('#/dashboard/settings');
+    await waitForHashRoute('#/dashboard/settings');
+    const hash = await currentHashRoute();
+    expect(hash).toContain('/dashboard/settings');
   });
 
   it('should navigate back to session view', async () => {
     await navigateToHash('/session');
-    await waitForRoute('#/session');
-    const url = await browser.getUrl();
-    expect(url).toContain('#/session');
+    await waitForHashRoute('#/session');
+    const hash = await currentHashRoute();
+    expect(hash).toContain('/session');
   });
 
   it('should navigate to skills dashboard', async () => {
     await navigateToHash('/dashboard/skills');
-    await waitForRoute('#/dashboard/skills');
-    const url = await browser.getUrl();
-    expect(url).toContain('#/dashboard/skills');
+    await waitForHashRoute('#/dashboard/skills');
+    const hash = await currentHashRoute();
+    expect(hash).toContain('/dashboard/skills');
   });
 
   it('should not expose developer mode or stay on the developer config dashboard', async () => {
     await expectNoDeveloperModeEntry();
     await navigateToHash('/dashboard/config');
-    await waitForRoute('#/dashboard/scheduled', 10000);
-    const url = await browser.getUrl();
-    expect(url).not.toContain('#/dashboard/config');
+    await waitForHashRoute('#/dashboard/scheduled', 10000);
+    const hash = await currentHashRoute();
+    expect(hash).not.toContain('/dashboard/config');
   });
 
   it('should handle browser back navigation', async () => {
     await navigateToHash('/session');
-    await waitForRoute('#/session');
+    await waitForHashRoute('#/session');
     await navigateToHash('/dashboard/settings');
-    await waitForRoute('#/dashboard/settings');
+    await waitForHashRoute('#/dashboard/settings');
     await browser.back();
-    await waitForRoute('#/session');
-    const url = await browser.getUrl();
-    expect(url).toContain('#/session');
+    await waitForHashRoute('#/session');
+    const hash = await currentHashRoute();
+    expect(hash).toContain('/session');
   });
 });

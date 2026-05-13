@@ -1,5 +1,5 @@
 import { expect } from '@wdio/globals';
-import { navigateToHash } from '../helpers/app-launcher.js';
+import { navigateToHash, waitForHashRoute } from '../helpers/app-launcher.js';
 
 const MORE_ACTIONS_MENU_ID = 'sidebar-more-actions-menu';
 
@@ -144,10 +144,7 @@ async function getSettingsTabButtonClass(label: string): Promise<string | null> 
 describe('Sidebar overflow actions', () => {
   before(async () => {
     await navigateToHash('/session');
-    await browser.waitUntil(
-      async () => (await browser.getUrl()).includes('#/session'),
-      { timeout: 5000, timeoutMsg: 'Session route did not load.' },
-    );
+    await waitForHashRoute('#/session', 5000);
 
     const root = await $('#root');
     await root.waitForExist({ timeout: 10000 });
@@ -195,14 +192,7 @@ describe('Sidebar overflow actions', () => {
 
     await clickOverflowMenuItem(copy.archivedItems);
 
-    await browser.waitUntil(
-      async () => (await browser.getUrl()).includes('#/dashboard/settings'),
-      {
-        timeout: 10000,
-        interval: 250,
-        timeoutMsg: 'Archived items did not navigate to settings.',
-      },
-    );
+    await waitForHashRoute('#/dashboard/settings', 10000);
 
     await browser.waitUntil(
       async () => bodyContainsLabel(copy.archivedSection),

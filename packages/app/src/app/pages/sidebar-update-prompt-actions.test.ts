@@ -10,7 +10,7 @@ const csLocale = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.ur
 const zhLocale = readFileSync(new URL("../../i18n/locales/zh.ts", import.meta.url), "utf8");
 
 const dashboardLeftSidebarStart = dashboardSource.indexOf("<Show when={leftSidebarVisible()}>");
-const dashboardMainStart = dashboardSource.indexOf('<main class="flex-1 flex flex-col overflow-hidden bg-dls-surface">');
+const dashboardMainStart = dashboardSource.indexOf('<main class="flex-1 flex flex-col overflow-hidden bg-dls-surface pt-12">');
 const dashboardLeftSidebar =
   dashboardLeftSidebarStart >= 0 && dashboardMainStart >= 0
     ? dashboardSource.slice(dashboardLeftSidebarStart, dashboardMainStart)

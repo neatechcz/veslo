@@ -53,6 +53,7 @@ const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
 const SESSION_TRANSCRIPT_DEFAULT_LIMIT = 140;
 const SESSION_TRANSCRIPT_MAX_LIMIT = 200;
 const AI_GATEWAY_DEFAULT_PORT = 4034;
+const AI_GATEWAY_UPSTREAM_RESPONSE_SNIPPET_MAX = 1000;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
 const GATEWAY_CALLER_AUTH_HEADER = "x-veslo-gateway-authorization";
 const GATEWAY_ACCESS_TOKEN_HEADER = "x-veslo-gateway-token";
@@ -103,6 +104,19 @@ export function redactSensitiveConfig<T>(value: T): T {
       continue;
     }
     output[key] = redactSensitiveConfig(rawValue);
+  }
+  return output as T;
+}
+
+function redactAiAccessBundleForClient<T>(value: T): T {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return redactSensitiveConfig(value);
+  }
+
+  const input = value as Record<string, unknown>;
+  const output = redactSensitiveConfig(input) as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(input, "accessToken")) {
+    output.accessToken = input.accessToken;
   }
   return output as T;
 }
@@ -162,8 +176,9 @@ function logRequest(input: {
   proxyService?: "opencode" | "opencode-router";
   proxyBaseUrl?: string;
   error?: string;
+  errorDetails?: unknown;
 }) {
-  const { logger, request, response, durationMs, authMode, proxyService, proxyBaseUrl, error } = input;
+  const { logger, request, response, durationMs, authMode, proxyService, proxyBaseUrl, error, errorDetails } = input;
   const status = response.status;
   const level: LogLevel = status >= 500 ? "error" : status >= 400 ? "warn" : "info";
   const url = new URL(request.url);
@@ -183,6 +198,9 @@ function logRequest(input: {
   }
   if (error) {
     attributes.error = error;
+  }
+  if (errorDetails !== undefined) {
+    attributes["error.details"] = redactSensitiveConfig(errorDetails);
   }
   logger.log(level, message, attributes);
 }
@@ -389,6 +407,7 @@ export function startServer(config: ServerConfig) {
       let proxyService: "opencode" | "opencode-router" | undefined;
       let proxyBaseUrl: string | undefined;
       let errorMessage: string | undefined;
+      let errorDetails: unknown;
 
       const finalize = (response: Response) => {
         const wrapped = withCors(response, request, config);
@@ -402,6 +421,7 @@ export function startServer(config: ServerConfig) {
               proxyService,
               proxyBaseUrl,
               error: errorMessage,
+              errorDetails,
             });
         }
         return wrapped;
@@ -427,6 +447,7 @@ export function startServer(config: ServerConfig) {
             ? error
             : new ApiError(500, "internal_error", "Unexpected server error");
           errorMessage = apiError.message;
+          errorDetails = apiError.details;
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
       }
@@ -455,6 +476,7 @@ export function startServer(config: ServerConfig) {
             ? error
             : new ApiError(500, "internal_error", "Unexpected server error");
           errorMessage = apiError.message;
+          errorDetails = apiError.details;
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
       }
@@ -502,6 +524,7 @@ export function startServer(config: ServerConfig) {
             ? error
             : new ApiError(500, "internal_error", "Unexpected server error");
           errorMessage = apiError.message;
+          errorDetails = apiError.details;
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
       }
@@ -530,6 +553,7 @@ export function startServer(config: ServerConfig) {
             ? error
             : new ApiError(500, "internal_error", "Unexpected server error");
           errorMessage = apiError.message;
+          errorDetails = apiError.details;
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
       }
@@ -553,6 +577,7 @@ export function startServer(config: ServerConfig) {
             ? error
             : new ApiError(500, "internal_error", "Unexpected server error");
           errorMessage = apiError.message;
+          errorDetails = apiError.details;
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
       }
@@ -589,6 +614,7 @@ export function startServer(config: ServerConfig) {
           ? error
           : new ApiError(500, "internal_error", "Unexpected server error");
         errorMessage = apiError.message;
+        errorDetails = apiError.details;
         return finalize(jsonResponse(formatError(apiError), apiError.status));
       }
     },
@@ -816,12 +842,139 @@ function requireAiGatewaySessionId(request: Request): string {
   return sessionId;
 }
 
+function trimmedHeader(request: Request, name: string): string | undefined {
+  const value = request.headers.get(name)?.trim() ?? "";
+  return value || undefined;
+}
+
+function resolveAiGatewayProvider(gatewayPath: string): string | undefined {
+  const match = gatewayPath.match(/^\/providers\/([^/]+)/);
+  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+}
+
+async function readAiGatewayRequestModel(request: Request): Promise<string | undefined> {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().includes("application/json")) return undefined;
+
+  try {
+    const text = await request.clone().text();
+    const json = text ? JSON.parse(text) : null;
+    if (!json || typeof json !== "object") return undefined;
+    const model = (json as { model?: unknown }).model;
+    return typeof model === "string" && model.trim() ? model.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function redactKnownSecretsFromText(text: string, secrets: Array<string | undefined>): string {
+  let output = text;
+  for (const secret of secrets) {
+    if (!secret) continue;
+    output = output.split(secret).join(REDACTED_SECRET_VALUE);
+  }
+  return output
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${REDACTED_SECRET_VALUE}`)
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, REDACTED_SECRET_VALUE);
+}
+
+function expandKnownSecrets(secrets: Array<string | undefined>): Array<string | undefined> {
+  const expanded: string[] = [];
+  for (const secret of secrets) {
+    const trimmed = secret?.trim();
+    if (!trimmed) continue;
+    expanded.push(trimmed);
+    const bearer = trimmed.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+    if (bearer) {
+      expanded.push(bearer);
+    }
+  }
+  return Array.from(new Set(expanded));
+}
+
+function truncateAiGatewaySnippet(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= AI_GATEWAY_UPSTREAM_RESPONSE_SNIPPET_MAX) return normalized;
+  return `${normalized.slice(0, AI_GATEWAY_UPSTREAM_RESPONSE_SNIPPET_MAX)}...`;
+}
+
+function buildAiGatewayUpstreamSnippet(input: {
+  text: string;
+  contentType: string;
+  knownSecrets: Array<string | undefined>;
+}): string {
+  const contentType = input.contentType.toLowerCase();
+  let text = input.text;
+  if (contentType.includes("application/json")) {
+    try {
+      text = JSON.stringify(redactSensitiveConfig(JSON.parse(input.text)));
+    } catch {
+      text = input.text;
+    }
+  }
+  return truncateAiGatewaySnippet(redactKnownSecretsFromText(text, input.knownSecrets));
+}
+
+function firstResponseHeader(headers: Headers, names: string[]): string | undefined {
+  for (const name of names) {
+    const value = headers.get(name)?.trim() ?? "";
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function buildAiGatewayFailureDetails(input: {
+  requestId: string;
+  request: Request;
+  gatewayPath: string;
+  sessionId?: string;
+  model?: string;
+  response: Response;
+  responseText: string;
+  knownSecrets: Array<string | undefined>;
+}) {
+  const contentType = input.response.headers.get("content-type") ?? "";
+  const userId =
+    trimmedHeader(input.request, "x-veslo-account-id") ??
+    trimmedHeader(input.request, "x-veslo-user-id") ??
+    trimmedHeader(input.request, "x-veslo-den-user-id");
+  const orgId =
+    trimmedHeader(input.request, "x-veslo-den-org-id") ??
+    trimmedHeader(input.request, "x-veslo-org-id");
+
+  return {
+    requestId: input.requestId,
+    provider: resolveAiGatewayProvider(input.gatewayPath),
+    model: input.model,
+    sessionId: input.sessionId,
+    userId,
+    orgId,
+    upstreamStatus: input.response.status,
+    upstreamStatusText: input.response.statusText,
+    upstreamRequestId: firstResponseHeader(input.response.headers, [
+      "x-request-id",
+      "x-correlation-id",
+      "openai-request-id",
+      "cf-ray",
+      "x-vercel-id",
+      "x-amzn-trace-id",
+    ]),
+    upstreamContentType: contentType || undefined,
+    upstreamResponse: buildAiGatewayUpstreamSnippet({
+      text: input.responseText,
+      contentType,
+      knownSecrets: input.knownSecrets,
+    }),
+  };
+}
+
 async function proxyAiGatewayRequest(input: {
   request: Request;
   url: URL;
   gatewayPath: string;
   auth: "caller" | "gateway-token";
   requireSessionId?: boolean;
+  preserveAiAccessToken?: boolean;
 }) {
   const baseUrl = resolveAiGatewayBaseUrl();
   const target = new URL(baseUrl);
@@ -829,13 +982,19 @@ async function proxyAiGatewayRequest(input: {
   target.search = input.url.search;
 
   const headers = new Headers(input.request.headers);
-  headers.set(
-    "Authorization",
-    input.auth === "caller" ? requireAiGatewayCallerAuth(input.request) : requireAiGatewayAccessToken(input.request),
-  );
+  const requestId = randomUUID();
+  const gatewayAccessToken = input.request.headers.get(GATEWAY_ACCESS_TOKEN_HEADER)?.trim() ?? "";
+  const gatewayCallerAuth = input.request.headers.get(GATEWAY_CALLER_AUTH_HEADER)?.trim() ?? "";
+  const authorization =
+    input.auth === "caller" ? requireAiGatewayCallerAuth(input.request) : requireAiGatewayAccessToken(input.request);
+  const sessionId = input.requireSessionId ? requireAiGatewaySessionId(input.request) : undefined;
+  const model = await readAiGatewayRequestModel(input.request);
+
+  headers.set("Authorization", authorization);
   if (input.requireSessionId) {
-    headers.set(GATEWAY_SESSION_ID_HEADER, requireAiGatewaySessionId(input.request));
+    headers.set(GATEWAY_SESSION_ID_HEADER, sessionId ?? "");
   }
+  headers.set("x-veslo-request-id", requestId);
   headers.delete(GATEWAY_CALLER_AUTH_HEADER);
   headers.delete(GATEWAY_ACCESS_TOKEN_HEADER);
   headers.delete("x-veslo-host-token");
@@ -857,6 +1016,10 @@ async function proxyAiGatewayRequest(input: {
     });
   } catch (error) {
     throw new ApiError(503, "ai_gateway_unreachable", "AI gateway is not reachable on this host", {
+      requestId,
+      provider: resolveAiGatewayProvider(input.gatewayPath),
+      model,
+      sessionId,
       baseUrl,
       targetUrl: target.toString(),
       error: error instanceof Error ? error.message : String(error),
@@ -864,6 +1027,20 @@ async function proxyAiGatewayRequest(input: {
   }
 
   const contentType = response.headers.get("content-type") ?? "";
+  if (!response.ok) {
+    const text = await response.text();
+    throw new ApiError(502, "ai_gateway_upstream_failed", "AI gateway upstream request failed", buildAiGatewayFailureDetails({
+      requestId,
+      request: input.request,
+      gatewayPath: input.gatewayPath,
+      sessionId,
+      model,
+      response,
+      responseText: text,
+      knownSecrets: expandKnownSecrets([gatewayAccessToken, gatewayCallerAuth, authorization]),
+    }));
+  }
+
   if (!contentType.toLowerCase().includes("application/json")) {
     return new Response(response.body, {
       status: response.status,
@@ -883,7 +1060,10 @@ async function proxyAiGatewayRequest(input: {
     });
   }
 
-  return jsonResponse(redactSensitiveConfig(json), response.status);
+  return jsonResponse(
+    input.preserveAiAccessToken ? redactAiAccessBundleForClient(json) : redactSensitiveConfig(json),
+    response.status,
+  );
 }
 
 function sanitizeDecodedProxyResponseHeaders(headers: Headers): Headers {
@@ -925,7 +1105,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   headers.set("Access-Control-Allow-Origin", allowOrigin);
   headers.set(
     "Access-Control-Allow-Headers",
-    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, x-veslo-account-id, X-Veslo-Gateway-Authorization, X-Veslo-Gateway-Token, X-Veslo-Session-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
+    "Authorization, Content-Type, X-Veslo-Host-Token, X-Veslo-Client-Id, x-veslo-account-id, X-Veslo-User-Id, X-Veslo-Den-User-Id, X-Veslo-Org-Id, X-Veslo-Den-Org-Id, X-Veslo-Gateway-Authorization, X-Veslo-Gateway-Token, X-Veslo-Session-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
   );
   headers.set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
   headers.set("Vary", "Origin");
@@ -1800,6 +1980,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       url: ctx.url,
       gatewayPath: "/api/me/ai-access",
       auth: "caller",
+      preserveAiAccessToken: true,
     });
   });
 

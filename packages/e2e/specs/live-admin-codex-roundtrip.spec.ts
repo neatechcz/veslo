@@ -30,6 +30,7 @@ type DenAuthState = {
 
 const DEFAULT_GATEWAY_BASE = 'https://veslo-ai-gateway-dev.onrender.com';
 const DEFAULT_MODEL = 'gpt-5.5';
+const LIVE_SMOKE_ENABLED = process.env.E2E_LIVE_ADMIN_CODEX_ROUNDTRIP?.trim() === '1';
 
 function readLiveAdminAuth(): { authJson: string; auth: DenAuthState; source: string | null } {
   const snapshotPath = process.env.VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE?.trim();
@@ -378,8 +379,10 @@ async function clickSend(): Promise<void> {
   console.log(`[live-admin-codex] after send=${JSON.stringify(after)}`);
 }
 
+const maybeLiveIt = LIVE_SMOKE_ENABLED ? it : it.skip;
+
 describe('Live admin Codex roundtrip', () => {
-  it('should send a real Codex prompt from the Windows desktop app through DEN', async function () {
+  maybeLiveIt('should send a real Codex prompt from the Windows desktop app through DEN', async function () {
     this.timeout(300000);
 
     const { auth, source } = readLiveAdminAuth();

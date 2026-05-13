@@ -1,10 +1,11 @@
-import { For, Show } from "solid-js";
+import { For, Show, createMemo } from "solid-js";
 import { ChevronDown, Circle, File, Folder, Package } from "lucide-solid";
 
 import { SUGGESTED_PLUGINS } from "../../constants";
 import type { McpServerEntry, McpStatus, McpStatusMap, SkillCard } from "../../types";
 import { stripPluginVersion } from "../../utils/plugins";
 import { splitPathSegments, toWorkspaceRelative } from "../../utils/workspace-path";
+import { isUserRelevantArtifactPath } from "./artifact-family-model";
 
 export type ContextPanelProps = {
   activePlugins: string[];
@@ -56,7 +57,17 @@ const matchSuggestedPlugin = (name: string) => {
 };
 
 const humanizeSkill = (name: string) => {
-  const cleaned = name.replace(/^@[^/]+\//, "").replace(/[-_]+/g, " ").trim();
+  const normalized = name.trim().replace(/[\\/]+/g, "/");
+  const segments = normalized.split("/").filter(Boolean);
+  const skillPathName =
+    segments[segments.length - 1]?.toLowerCase() === "skill.md"
+      ? segments[segments.length - 2]
+      : null;
+  const cleaned = (skillPathName ?? normalized)
+    .replace(/^@[^/]+\//, "")
+    .replace(/\.md$/i, "")
+    .replace(/[-_]+/g, " ")
+    .trim();
   if (!cleaned) return name;
   return cleaned
     .split(" ")
@@ -128,8 +139,15 @@ const mcpStatusDot = (status?: McpStatus, disabled?: boolean) => {
 };
 
 export default function ContextPanel(props: ContextPanelProps) {
-  const displayFiles = () =>
-    props.workingFiles.map((entry) => toWorkspaceRelative(entry, props.workspaceRoot));
+  const fileRows = createMemo(() =>
+    props.workingFiles
+      .filter((entry) => isUserRelevantArtifactPath(entry, props.workspaceRoot))
+      .map((path) => ({
+        path,
+        displayPath: toWorkspaceRelative(path, props.workspaceRoot),
+      })),
+  );
+  const displayFiles = createMemo(() => fileRows().map((entry) => entry.displayPath));
 
   return (
     <div class="flex flex-col h-full overflow-hidden">
@@ -153,13 +171,12 @@ export default function ContextPanel(props: ContextPanelProps) {
                 </div>
                 <div class="space-y-2">
                   <Show
-                    when={props.workingFiles.length}
+                    when={fileRows().length}
                     fallback={<div class="text-xs text-gray-9">None yet.</div>}
                   >
-                    <For each={props.workingFiles}>
+                    <For each={fileRows()}>
                       {(file) => {
-                        const displayPath = () => toWorkspaceRelative(file, props.workspaceRoot);
-                        const label = () => getSmartFileName(displayFiles(), displayPath());
+                        const label = () => getSmartFileName(displayFiles(), file.displayPath);
                         const canOpen = () => typeof props.onFileClick === "function";
                         return (
                           <button
@@ -169,8 +186,8 @@ export default function ContextPanel(props: ContextPanelProps) {
                                 ? "hover:text-gray-12 hover:bg-gray-3"
                                 : "cursor-default opacity-70"
                             }`.trim()}
-                            onClick={() => props.onFileClick?.(file)}
-                            title={canOpen() ? `Open ${displayPath()}` : displayPath()}
+                            onClick={() => props.onFileClick?.(file.path)}
+                            title={canOpen() ? `Open ${file.displayPath}` : file.displayPath}
                             disabled={!canOpen()}
                           >
                             <File size={12} class="text-gray-9" />

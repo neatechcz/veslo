@@ -1,13 +1,10 @@
 import { expect } from '@wdio/globals';
-import { navigateToHash } from '../helpers/app-launcher.js';
+import { navigateToHash, waitForHashRoute } from '../helpers/app-launcher.js';
 
 describe('Composer', () => {
   before(async () => {
     await navigateToHash('/session');
-    await browser.waitUntil(
-      async () => (await browser.getUrl()).includes('#/session'),
-      { timeout: 5000 }
-    );
+    await waitForHashRoute('#/session', 5000);
   });
 
   it('should have a textbox for composing messages', async () => {

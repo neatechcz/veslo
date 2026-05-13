@@ -402,29 +402,19 @@ test("dashboard header no longer shows settings update controls", () => {
   assert.doesNotMatch(headerSource, /settingsHeaderUpdateActionLabel\(\)/);
 });
 
-test("dashboard centers the titlebar on the active settings subsection", () => {
+test("dashboard keeps settings page state out of the shared titlebar chrome", () => {
   assert.match(
     dashboardSource,
-    /import\s*\{\s*resolveSettingsTabLabel,\s*resolveVisibleSettingsTab\s*\}\s*from\s+["']\.\.\/lib\/settings-tab-label["'];/,
+    /<TitlebarMenuToggles[\s\S]*centerContent=\{title\(\)\}/,
   );
-  assert.match(
-    dashboardSource,
-    /resolveVisibleSettingsTab\(\s*props\.settingsTab,\s*props\.developerMode\s*\)/,
-  );
-  assert.match(
-    dashboardSource,
-    /props\.tab\s*===\s*["']settings["']\s*\?\s*resolveSettingsTabLabel\(\s*visibleSettingsTab\(\)\s*\)\s*:\s*title\(\)/,
-  );
-  assert.match(
-    dashboardSource,
-    /<TitlebarMenuToggles[\s\S]*centerContent=\{dashboardTitlebarContext\(\)\}/,
-  );
-  assert.doesNotMatch(dashboardSource, /<TitlebarMenuToggles[\s\S]*centerContent=\{title\(\)\}/);
+  assert.doesNotMatch(dashboardSource, /dashboardTitlebarContext/);
+  assert.doesNotMatch(dashboardSource, /resolveSettingsTabLabel\(visibleSettingsTab\(\)\)/);
   assert.match(
     settingsSource,
     /import\s*\{\s*resolveSettingsTabLabel,\s*resolveVisibleSettingsTab\s*\}\s*from\s+["']\.\.\/lib\/settings-tab-label["'];/,
   );
   assert.match(settingsSource, /resolveVisibleSettingsTab\(\s*props\.settingsTab,\s*props\.developerMode\s*\)/);
+  assert.match(settingsSource, /<h1 class="font-product type-title-md text-gray-12">\s*\{translate\("dashboard\.settings"\)\}\s*<\/h1>/);
   assert.match(settingsSource, /{resolveSettingsTabLabel\(tab\)}/);
   assert.doesNotMatch(settingsSource, /tabLabel\(tab\)/);
 });

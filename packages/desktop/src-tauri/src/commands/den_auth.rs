@@ -1,15 +1,12 @@
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
 use crate::paths::home_dir;
 use crate::utils::now_ms;
 
-#[cfg(target_os = "macos")]
-use std::path::Path;
-#[cfg(target_os = "macos")]
-use std::process::Command;
 #[cfg(target_os = "macos")]
 use std::time::SystemTime;
 #[cfg(target_os = "macos")]
@@ -171,12 +168,8 @@ fn decode_webkit_storage_hex_value(raw_hex: &str) -> Option<String> {
         return Some(String::new());
     }
 
-    let looks_utf16le = bytes.len() % 2 == 0
-        && bytes
-            .chunks_exact(2)
-            .filter(|chunk| chunk[1] == 0)
-            .count()
-            > 0;
+    let looks_utf16le =
+        bytes.len() % 2 == 0 && bytes.chunks_exact(2).filter(|chunk| chunk[1] == 0).count() > 0;
 
     if looks_utf16le {
         let utf16 = bytes
@@ -193,14 +186,22 @@ fn decode_webkit_storage_hex_value(raw_hex: &str) -> Option<String> {
         .map(|value| value.trim_end_matches('\u{0}').to_string())
 }
 
+fn sqlite3_command() -> Command {
+    #[cfg(target_os = "macos")]
+    {
+        let system_sqlite = std::path::Path::new("/usr/bin/sqlite3");
+        if system_sqlite.is_file() {
+            return Command::new(system_sqlite);
+        }
+    }
+
+    Command::new("sqlite3")
+}
+
 #[cfg(target_os = "macos")]
-fn read_webkit_localstorage_value(db_path: &Path, key: &str) -> Option<String> {
+fn read_webkit_localstorage_value(db_path: &std::path::Path, key: &str) -> Option<String> {
     let query = format!("SELECT hex(value) FROM ItemTable WHERE key='{key}' LIMIT 1;");
-    let output = Command::new("sqlite3")
-        .arg(db_path)
-        .arg(query)
-        .output()
-        .ok()?;
+    let output = sqlite3_command().arg(db_path).arg(query).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -409,20 +410,17 @@ pub fn den_auth_snapshot_write(
 
 #[cfg(test)]
 mod tests {
+    use crate::env_guard::EnvVarGuard;
+
     use super::{
         decode_webkit_storage_hex_value, den_auth_snapshot_read, den_auth_snapshot_write,
-        parse_keep_signed_in,
-        resolve_den_auth_snapshot_path,
+        parse_keep_signed_in, resolve_den_auth_snapshot_path, sqlite3_command,
     };
     use std::fs;
     use std::path::PathBuf;
-    use std::process::Command;
-    use std::sync::Mutex;
     use std::thread::sleep;
     use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn unique_temp_home(prefix: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -465,12 +463,15 @@ mod tests {
             auth_hex = auth_hex,
             keep_hex = keep_hex,
         );
-        let sqlite_status = Command::new("sqlite3")
+        let sqlite_status = sqlite3_command()
             .arg(&legacy_db)
             .arg(sql)
             .status()
             .expect("sqlite3 command");
-        assert!(sqlite_status.success(), "sqlite3 failed to create legacy db");
+        assert!(
+            sqlite_status.success(),
+            "sqlite3 failed to create legacy db"
+        );
 
         legacy_db
     }
@@ -498,13 +499,13 @@ mod tests {
 
     #[test]
     fn den_auth_snapshot_read_migrates_from_legacy_webkit_storage() {
-        let _lock = ENV_LOCK.lock().expect("env lock");
-
         let temp_home = unique_temp_home("veslo-den-auth-migration");
         fs::create_dir_all(&temp_home).expect("temp home");
 
-        let previous_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", temp_home.to_string_lossy().to_string());
+        let _env = EnvVarGuard::apply_many(&[
+            ("HOME", Some(temp_home.to_string_lossy().as_ref())),
+            ("VESLO_DEN_AUTH_SNAPSHOT_PATH", None),
+        ]);
 
         let auth_json = r#"{"denApiBase":"https://den-control-plane-veslo.onrender.com","token":"token_123","orgId":"org_123"}"#;
         create_legacy_webkit_db(&temp_home, "com.neatech.veslo.dev", auth_json);
@@ -525,24 +526,41 @@ mod tests {
         let snapshot_path = resolve_den_auth_snapshot_path();
         assert!(snapshot_path.is_file(), "snapshot file not created");
 
-        if let Some(previous) = previous_home {
-            std::env::set_var("HOME", previous);
-        } else {
-            std::env::remove_var("HOME");
-        }
-
         let _ = fs::remove_dir_all(temp_home);
     }
 
     #[test]
-    fn den_auth_snapshot_read_prefers_app_bundle_snapshot_over_generic_webkit_bucket() {
-        let _lock = ENV_LOCK.lock().expect("env lock");
+    fn den_auth_snapshot_read_migrates_when_path_excludes_sqlite3() {
+        let temp_home = unique_temp_home("veslo-den-auth-path-isolation");
+        let temp_path = unique_temp_home("veslo-den-auth-empty-path");
+        fs::create_dir_all(&temp_home).expect("temp home");
+        fs::create_dir_all(&temp_path).expect("temp path");
 
+        let _env = EnvVarGuard::apply_many(&[
+            ("HOME", Some(temp_home.to_string_lossy().as_ref())),
+            ("VESLO_DEN_AUTH_SNAPSHOT_PATH", None),
+            ("PATH", Some(temp_path.to_string_lossy().as_ref())),
+        ]);
+
+        let auth_json = r#"{"denApiBase":"https://den-control-plane-veslo.onrender.com","token":"token_123","orgId":"org_123"}"#;
+        create_legacy_webkit_db(&temp_home, "com.neatech.veslo.dev", auth_json);
+
+        let snapshot = den_auth_snapshot_read().expect("snapshot read");
+        assert_eq!(snapshot.auth_json, Some(auth_json.to_string()));
+
+        let _ = fs::remove_dir_all(temp_home);
+        let _ = fs::remove_dir_all(temp_path);
+    }
+
+    #[test]
+    fn den_auth_snapshot_read_prefers_app_bundle_snapshot_over_generic_webkit_bucket() {
         let temp_home = unique_temp_home("veslo-den-auth-priority");
         fs::create_dir_all(&temp_home).expect("temp home");
 
-        let previous_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", temp_home.to_string_lossy().to_string());
+        let _env = EnvVarGuard::apply_many(&[
+            ("HOME", Some(temp_home.to_string_lossy().as_ref())),
+            ("VESLO_DEN_AUTH_SNAPSHOT_PATH", None),
+        ]);
 
         let preferred_auth = r#"{"email":"vaclav.soukup@neatech.cz","token":"real-token"}"#;
         let fallback_auth = r#"{"email":"feedback@example.com","token":"test-token"}"#;
@@ -576,24 +594,18 @@ mod tests {
             snapshot.source
         );
 
-        if let Some(previous) = previous_home {
-            std::env::set_var("HOME", previous);
-        } else {
-            std::env::remove_var("HOME");
-        }
-
         let _ = fs::remove_dir_all(temp_home);
     }
 
     #[test]
     fn den_auth_snapshot_read_repairs_loopback_snapshot_file_from_legacy_storage() {
-        let _lock = ENV_LOCK.lock().expect("env lock");
-
         let temp_home = unique_temp_home("veslo-den-auth-repair");
         fs::create_dir_all(&temp_home).expect("temp home");
 
-        let previous_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", temp_home.to_string_lossy().to_string());
+        let _env = EnvVarGuard::apply_many(&[
+            ("HOME", Some(temp_home.to_string_lossy().as_ref())),
+            ("VESLO_DEN_AUTH_SNAPSHOT_PATH", None),
+        ]);
 
         let loopback_auth = r#"{"denApiBase":"http://127.0.0.1:65187","token":"den-token-e2e","orgId":"org-e2e","user":{"id":"user-e2e","email":"feedback@example.com","name":"Feedback Tester"},"org":{"id":"org-e2e","name":"E2E Org","slug":"e2e-org","role":"owner"}}"#;
         let preferred_auth = r#"{"denApiBase":"https://den-control-plane-veslo.onrender.com","token":"real-token","orgId":"org-real","user":{"id":"user-real","email":"vaclav.soukup@neatech.cz","name":"Václav Soukup"},"org":{"id":"org-real","name":"Personal","slug":"personal","role":"owner"}}"#;
@@ -635,27 +647,18 @@ mod tests {
             "expected repaired snapshot file to be rewritten"
         );
 
-        if let Some(previous) = previous_home {
-            std::env::set_var("HOME", previous);
-        } else {
-            std::env::remove_var("HOME");
-        }
-
         let _ = fs::remove_dir_all(temp_home);
     }
 
     #[test]
     fn den_auth_snapshot_round_trips_language_and_onboarding_complete() {
-        let _lock = ENV_LOCK.lock().expect("env lock");
-
         let temp_home = unique_temp_home("veslo-den-auth-roundtrip");
         fs::create_dir_all(&temp_home).expect("temp home");
         let snapshot_path = temp_home.join("den-auth.json");
 
-        let previous_snapshot_path = std::env::var("VESLO_DEN_AUTH_SNAPSHOT_PATH").ok();
-        std::env::set_var(
+        let _env = EnvVarGuard::apply(
             "VESLO_DEN_AUTH_SNAPSHOT_PATH",
-            snapshot_path.to_string_lossy().to_string(),
+            Some(snapshot_path.to_string_lossy().as_ref()),
         );
 
         den_auth_snapshot_write(
@@ -667,16 +670,13 @@ mod tests {
         .expect("snapshot write");
 
         let snapshot = den_auth_snapshot_read().expect("snapshot read");
-        assert_eq!(snapshot.auth_json, Some(r#"{"token":"token_123"}"#.to_string()));
+        assert_eq!(
+            snapshot.auth_json,
+            Some(r#"{"token":"token_123"}"#.to_string())
+        );
         assert_eq!(snapshot.keep_signed_in, Some(true));
         assert_eq!(snapshot.language, Some("en".to_string()));
         assert_eq!(snapshot.onboarding_complete, Some(true));
-
-        if let Some(previous) = previous_snapshot_path {
-            std::env::set_var("VESLO_DEN_AUTH_SNAPSHOT_PATH", previous);
-        } else {
-            std::env::remove_var("VESLO_DEN_AUTH_SNAPSHOT_PATH");
-        }
 
         let _ = fs::remove_dir_all(temp_home);
     }

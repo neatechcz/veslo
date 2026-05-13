@@ -40,6 +40,35 @@ test("resolveDesktopAuthSeedFromEnv builds a seed from raw auth env values", () 
   });
 });
 
+test("resolveDesktopAuthSeedFromEnv accepts the documented E2E auth env names", () => {
+  const seed = resolveDesktopAuthSeedFromEnv({
+    E2E_DEN_AUTH_JSON: JSON.stringify({
+      denApiBase: "https://den-control-plane-veslo.onrender.com",
+      token: "documented-seed-token",
+      orgId: "org_123",
+      user: { id: "user_123", email: "seed@example.com" },
+      org: { id: "org_123", slug: "seed-org" },
+    }),
+    E2E_DEN_KEEP_SIGNED_IN: "true",
+    E2E_LANGUAGE: "en",
+    E2E_ONBOARDING_COMPLETE: "1",
+  });
+
+  assert.deepEqual(seed, {
+    authJson: JSON.stringify({
+      denApiBase: "https://den-control-plane-veslo.onrender.com",
+      token: "documented-seed-token",
+      orgId: "org_123",
+      user: { id: "user_123", email: "seed@example.com" },
+      org: { id: "org_123", slug: "seed-org" },
+    }),
+    keepSignedIn: true,
+    language: "en",
+    onboardingComplete: true,
+    source: "e2e-env",
+  });
+});
+
 test("writeDesktopAuthSeedFile writes the extended snapshot schema into the isolated e2e home", () => {
   const opencodeHome = mkdtempSync(join(tmpdir(), "veslo-e2e-auth-seed-"));
   const snapshotPath = resolveE2EDesktopAuthSnapshotPath(opencodeHome);
@@ -140,7 +169,7 @@ test("prepareDesktopAuthSeed preserves an existing custom-profile snapshot when 
   }
 });
 
-test("prepareDesktopAuthSeed clears an existing snapshot by default when no replacement seed is provided", () => {
+test("prepareDesktopAuthSeed replaces stale isolated-profile snapshots with the default authenticated seed", () => {
   const opencodeHome = mkdtempSync(join(tmpdir(), "veslo-e2e-auth-clear-"));
   const snapshotPath = resolveE2EDesktopAuthSnapshotPath(opencodeHome);
   writeDesktopAuthSeedFile(snapshotPath, {
@@ -153,7 +182,32 @@ test("prepareDesktopAuthSeed clears an existing snapshot by default when no repl
 
   try {
     prepareDesktopAuthSeed(opencodeHome, {});
-    assert.equal(existsSync(snapshotPath), false);
+    const parsed = JSON.parse(readFileSync(snapshotPath, "utf8")) as Record<string, unknown>;
+    assert.equal(parsed.source, "e2e-default");
+    assert.notEqual(parsed.authJson, "{\"token\":\"stale\"}");
+  } finally {
+    rmSync(opencodeHome, { recursive: true, force: true });
+  }
+});
+
+test("prepareDesktopAuthSeed writes a default authenticated seed for isolated e2e profiles", () => {
+  const opencodeHome = mkdtempSync(join(tmpdir(), "veslo-e2e-auth-default-"));
+  const snapshotPath = resolveE2EDesktopAuthSnapshotPath(opencodeHome);
+
+  try {
+    const preparedPath = prepareDesktopAuthSeed(opencodeHome, {});
+    assert.equal(preparedPath, snapshotPath);
+    assert.equal(existsSync(snapshotPath), true);
+
+    const parsed = JSON.parse(readFileSync(snapshotPath, "utf8")) as Record<string, unknown>;
+    assert.equal(parsed.keepSignedIn, true);
+    assert.equal(parsed.language, "en");
+    assert.equal(parsed.onboardingComplete, true);
+    assert.equal(parsed.source, "e2e-default");
+
+    const auth = JSON.parse(String(parsed.authJson)) as Record<string, unknown>;
+    assert.equal(auth.denApiBase, "http://127.0.0.1:9");
+    assert.equal(auth.token, "veslo-e2e-default-token");
   } finally {
     rmSync(opencodeHome, { recursive: true, force: true });
   }

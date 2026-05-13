@@ -58,6 +58,45 @@ async function fetchJson(url, init) {
   return payload;
 }
 
+function hasExited(child) {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+async function waitForExit(child, timeoutMs) {
+  if (hasExited(child)) return true;
+
+  const exit = once(child, "exit").then(() => true);
+  const timeout = new Promise((resolveTimeout) => setTimeout(() => resolveTimeout(false), timeoutMs));
+  return Promise.race([exit, timeout]);
+}
+
+function signalProcessTree(child, signal) {
+  if (!child.pid || hasExited(child)) return;
+
+  if (process.platform === "win32") {
+    child.kill(signal);
+    return;
+  }
+
+  try {
+    process.kill(-child.pid, signal);
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
+  }
+}
+
+async function terminateProcessTree(child, { gracefulMs = 3000, forceMs = 2000 } = {}) {
+  if (hasExited(child)) return;
+
+  signalProcessTree(child, "SIGTERM");
+  if (await waitForExit(child, gracefulMs)) return;
+
+  signalProcessTree(child, "SIGKILL");
+  if (await waitForExit(child, forceMs)) return;
+
+  throw new Error(`Server process ${child.pid ?? "<unknown>"} did not exit after SIGKILL`);
+}
+
 async function runCli(args) {
   const child = spawn("node", [cliPath, ...args], { stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";
@@ -107,7 +146,7 @@ const server = spawn(
     "--host-token",
     hostToken,
   ],
-  { stdio: ["ignore", "pipe", "pipe"] },
+  { detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] },
 );
 
 let serverStderr = "";
@@ -304,9 +343,6 @@ try {
   );
   process.exitCode = 1;
 } finally {
-  if (server.exitCode === null) {
-    server.kill("SIGTERM");
-    await Promise.race([once(server, "exit"), new Promise((resolveDelay) => setTimeout(resolveDelay, 3000))]);
-  }
+  await terminateProcessTree(server);
   await rm(root, { recursive: true, force: true });
 }

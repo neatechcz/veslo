@@ -10,26 +10,31 @@ fn lock_env() -> MutexGuard<'static, ()> {
 }
 
 pub struct EnvVarGuard {
-    key: &'static str,
-    original: Option<OsString>,
+    originals: Vec<(&'static str, Option<OsString>)>,
     _lock: MutexGuard<'static, ()>,
 }
 
 impl EnvVarGuard {
     pub fn apply(key: &'static str, value: Option<&str>) -> Self {
+        Self::apply_many(&[(key, value)])
+    }
+
+    pub fn apply_many(values: &[(&'static str, Option<&str>)]) -> Self {
         let lock = lock_env();
-        let original = std::env::var_os(key);
-        match value {
-            Some(next) if !next.trim().is_empty() => {
-                std::env::set_var(key, next.trim());
-            }
-            _ => {
-                std::env::remove_var(key);
+        let mut originals = Vec::with_capacity(values.len());
+        for (key, value) in values {
+            originals.push((*key, std::env::var_os(key)));
+            match value {
+                Some(next) if !next.trim().is_empty() => {
+                    std::env::set_var(key, next.trim());
+                }
+                _ => {
+                    std::env::remove_var(key);
+                }
             }
         }
         Self {
-            key,
-            original,
+            originals,
             _lock: lock,
         }
     }
@@ -37,9 +42,11 @@ impl EnvVarGuard {
 
 impl Drop for EnvVarGuard {
     fn drop(&mut self) {
-        match &self.original {
-            Some(value) => std::env::set_var(self.key, value),
-            None => std::env::remove_var(self.key),
+        for (key, original) in self.originals.iter().rev() {
+            match original {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
         }
     }
 }
