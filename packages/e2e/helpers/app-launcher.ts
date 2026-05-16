@@ -25,6 +25,17 @@ const APP_IDENTIFIERS = [
 let appProcess: ChildProcess | null = null;
 let appProcessOwnedByHarness = false;
 
+type TerminateAppProcessOptions = {
+  platform?: NodeJS.Platform;
+  forceKillAfterMs?: number;
+  log?: (message: string) => void;
+};
+
+type TerminateAppProcessResult = {
+  exited: boolean;
+  forced: boolean;
+};
+
 type AppLaunchEnvOptions = {
   platform?: NodeJS.Platform;
   port: number;
@@ -112,6 +123,68 @@ async function hasReadyWebDriverServer(port: number): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function childHasExited(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+export async function terminateAppProcess(
+  child: ChildProcess,
+  options: TerminateAppProcessOptions = {},
+): Promise<TerminateAppProcessResult> {
+  const platform = options.platform ?? process.platform;
+  const forceKillAfterMs = options.forceKillAfterMs ?? 5_000;
+  const log = options.log ?? console.log;
+
+  if (childHasExited(child)) {
+    return { exited: true, forced: false };
+  }
+
+  let forced = false;
+  let forceKillTimer: NodeJS.Timeout | null = null;
+  let timeoutTimer: NodeJS.Timeout | null = null;
+
+  const exited = await new Promise<boolean>((resolveExit) => {
+    let settled = false;
+    const finish = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      resolveExit(value);
+    };
+
+    child.once('exit', () => finish(true));
+    if (childHasExited(child)) {
+      finish(true);
+      return;
+    }
+
+    if (platform === 'win32') {
+      child.kill();
+    } else {
+      child.kill('SIGTERM');
+    }
+
+    forceKillTimer = setTimeout(() => {
+      if (childHasExited(child)) return;
+
+      forced = true;
+      log('[e2e] Force killing app process...');
+      if (platform === 'win32') {
+        child.kill();
+      } else {
+        child.kill('SIGKILL');
+      }
+    }, forceKillAfterMs);
+
+    timeoutTimer = setTimeout(() => {
+      if (!childHasExited(child)) finish(false);
+    }, forceKillAfterMs + 5_000);
+  });
+
+  return { exited, forced };
 }
 
 export function createAppLaunchEnv(
@@ -286,28 +359,25 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
         `If Veslo is already running, run it with the e2e WebDriver build or stop it before launching tests.`,
       );
     }
-    stopApp();
+    await stopApp();
     throw error;
   }
 }
 
-export function stopApp(): void {
+export async function stopApp(): Promise<void> {
   if (!appProcessOwnedByHarness || !appProcess) {
     return;
   }
-  console.log(`[e2e] Stopping app process (PID ${appProcess.pid})...`);
+  const processToStop = appProcess;
+  console.log(`[e2e] Stopping app process (PID ${processToStop.pid})...`);
 
-  if (process.platform === 'win32') {
-    appProcess.kill();
-  } else {
-    appProcess.kill('SIGTERM');
-    const forceKillTimeout = setTimeout(() => {
-      if (appProcess) {
-        console.log('[e2e] Force killing app process...');
-        appProcess.kill('SIGKILL');
-      }
-    }, 5000);
-    appProcess.on('exit', () => clearTimeout(forceKillTimeout));
+  const result = await terminateAppProcess(processToStop);
+  if (appProcess === processToStop) {
+    appProcess = null;
+    appProcessOwnedByHarness = false;
+  }
+  if (!result.exited) {
+    console.warn(`[e2e] App process PID ${processToStop.pid} did not exit after termination request.`);
   }
 }
 

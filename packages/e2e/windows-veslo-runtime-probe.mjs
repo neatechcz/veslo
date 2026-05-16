@@ -178,5 +178,5 @@ try {
   if (browser) {
     await browser.deleteSession().catch(() => {});
   }
-  stopApp();
+  await stopApp();
 }

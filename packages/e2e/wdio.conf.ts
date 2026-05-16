@@ -84,7 +84,7 @@ export const config = {
     await ensureWebDriverReady(WEBDRIVER_PORT);
   },
 
-  onComplete: () => {
-    stopApp();
+  onComplete: async () => {
+    await stopApp();
   },
 };

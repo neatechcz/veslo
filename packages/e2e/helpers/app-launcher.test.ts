@@ -1,9 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createAppLaunchEnv, resolveWebDriverPort, seedDefaultWorkspaceState } from './app-launcher.js';
+import {
+  createAppLaunchEnv,
+  resolveWebDriverPort,
+  seedDefaultWorkspaceState,
+  terminateAppProcess,
+} from './app-launcher.js';
 
 test('createAppLaunchEnv forces x11 on linux so GTK-backed Tauri can start in headless E2E runs', () => {
   const env = createAppLaunchEnv(
@@ -69,5 +76,34 @@ test('seedDefaultWorkspaceState skips network-backed enterprise creators for det
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('terminateAppProcess waits for stubborn app processes to exit before returning', {
+  skip: process.platform === 'win32' ? 'POSIX signal escalation is not available on Windows.' : false,
+}, async () => {
+  const child = spawn(process.execPath, [
+    '-e',
+    'process.on("SIGTERM", () => {}); console.log("ready"); setInterval(() => {}, 1000);',
+  ], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+
+  try {
+    await once(child.stdout!, 'data');
+
+    const result = await terminateAppProcess(child, {
+      forceKillAfterMs: 50,
+      platform: process.platform,
+      log: () => {},
+    });
+
+    assert.equal(result.exited, true);
+    assert.equal(result.forced, true);
+    assert.notEqual(child.exitCode ?? child.signalCode, null);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGKILL');
+    }
   }
 });

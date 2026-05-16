@@ -36,6 +36,8 @@ If a match looks like a user-launched production/bundled app or otherwise cannot
 
 Existing WebDriver reuse is not the default desktop test flow. Attach to an existing WebDriver server only when the user explicitly asks for a debug attach workflow.
 
+The WebdriverIO launcher waits for the Tauri process it started to exit during teardown and escalates to a force kill if the process ignores the graceful stop signal. This harness cleanup does not replace the preflight above; clear matching Veslo dev/test processes before each desktop runtime launch.
+
 ## Fast Checks by Surface
 
 ### App-only documentation or copy changes
