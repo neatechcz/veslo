@@ -4170,6 +4170,11 @@ async function runRouterDaemon(args: ParsedArgs) {
     logger.warn("opencode version probe failed", { error: String(err) }, "veslo-orchestrator");
   }
 
+  // F2Ú5 — 2-stage closure: `pool` references `persistEngines`, which itself
+  // references `pool`. Mutable placeholder breaks the cycle; assigned right
+  // after `pool` is constructed.
+  let persistEngines: () => void = () => {};
+
   const pool = new EnginePool({
     deps: {
       resolveWorkspace: async (ws) => {
@@ -4203,16 +4208,29 @@ async function runRouterDaemon(args: ParsedArgs) {
       findFreePort: () => findFreePort(opencodeHost),
       isProcessAlive,
       log: (msg, attrs) => logger.info(msg, attrs, "engine-pool"),
+      // F2Ú5 — per-engine health probe (2s timeout, 250ms retry). Pool
+      // strikes 3× before treating as crashed.
+      healthCheck: async (baseUrl) => {
+        const client = createOpencodeClient({ baseUrl, headers: authHeaders });
+        await waitForOpencodeHealthy(client, 2000, 250);
+      },
+      // F2Ú5 — state transition events. Log + trigger debounced persist.
+      onEngineChange: (workspaceId, event) => {
+        logger.info("engine event", { workspaceId, event }, "engine-pool");
+        persistEngines();
+      },
     },
     config: { maxEngines, idleSuspendMs },
   });
 
-  const persistEnginesSnapshot = (): void => {
+  persistEngines = (): void => {
     state.engines = Object.fromEntries(
       pool.snapshot().map((entry) => [entry.workspaceId, entry]),
     );
     persistDebounced(statePath, state);
   };
+
+  const persistEnginesSnapshot = persistEngines;
 
   const server = createHttpServer(async (req, res) => {
     const startedAt = Date.now();
