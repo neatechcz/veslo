@@ -173,6 +173,7 @@ import {
   MODEL_PREF_KEY,
   SUGGESTED_PLUGINS,
   THINKING_PREF_KEY,
+  ROUTING_MULTI_CLIENT_PREF_KEY,
   VARIANT_PREF_KEY,
   type McpDirectoryInfo,
 } from "./constants";
@@ -3911,6 +3912,11 @@ export default function App() {
 
   const [showThinking, setShowThinking] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
+  // VSLO-171 F3Ú2 — feature flag for multi-workspace routing.
+  // Read at startup, requires app restart to apply (routing.mode is captured
+  // at createWorkspaceRouting init). Default false; multi mode itself is wired
+  // in F3Ú5/F3Ú6 — until then this is "armed but inert".
+  const [multiClientEnabled, setMultiClientEnabled] = createSignal(false);
   const [autoCompactContext, setAutoCompactContext] = createSignal(true);
   const [modelVariant, setModelVariant] = createSignal<string | null>(DEFAULT_MODEL_VARIANT);
   const [modelVariantPreferenceReady, setModelVariantPreferenceReady] = createSignal(false);
@@ -4010,8 +4016,10 @@ export default function App() {
   });
   // VSLO-171 F3Ú1 — single-active adapter over the existing global `client()`
   // signal. Behaves as a no-op proxy until multi mode is wired (F3Ú5/F3Ú6).
+  // F3Ú2: `mode` is reactive on multiClientEnabled() so toggling the
+  // veslo.routing.multiClient pref + restart flips the reported mode.
   const workspaceRouting = createWorkspaceRouting({
-    mode: () => "single-active",
+    mode: () => (multiClientEnabled() ? "multi" : "single-active"),
     clientSource: client,
     activeWorkspaceId: () => workspaceStore.activeWorkspaceId().trim(),
   });
@@ -9372,6 +9380,19 @@ export default function App() {
           }
         }
 
+        const storedMultiClient = window.localStorage.getItem(ROUTING_MULTI_CLIENT_PREF_KEY);
+        if (storedMultiClient != null) {
+          try {
+            const parsed = JSON.parse(storedMultiClient);
+            if (typeof parsed === "boolean") {
+              setMultiClientEnabled(parsed);
+            }
+          } catch {
+            // ignore
+          }
+        }
+        console.info("[veslo.routing] mode=", multiClientEnabled() ? "multi" : "single-active");
+
         const storedHideTitlebar = window.localStorage.getItem(HIDE_TITLEBAR_PREF_KEY);
         if (storedHideTitlebar != null) {
           try {
@@ -10020,6 +10041,18 @@ export default function App() {
     }
   });
 
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        ROUTING_MULTI_CLIENT_PREF_KEY,
+        JSON.stringify(multiClientEnabled())
+      );
+    } catch {
+      // ignore
+    }
+  });
+
   // Persist and apply hideTitlebar setting
   createEffect(() => {
     if (typeof window === "undefined") return;
@@ -10629,6 +10662,8 @@ export default function App() {
       toggleShowThinking: () => setShowThinking((v) => !v),
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
+      multiClientEnabled: multiClientEnabled(),
+      toggleMultiClient: () => setMultiClientEnabled((v) => !v),
       modelVariantLabel: formatModelVariantLabel(modelVariant()),
       modelVariant: normalizeModelVariant(modelVariant()) ?? "none",
       setModelVariant: (value: string) => setModelVariant(value),

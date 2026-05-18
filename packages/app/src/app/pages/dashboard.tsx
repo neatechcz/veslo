@@ -317,6 +317,8 @@ export type DashboardViewProps = {
   toggleShowThinking: () => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
+  multiClientEnabled: boolean;
+  toggleMultiClient: () => void;
   modelVariantLabel: string;
   modelVariant: string;
   setModelVariant: (value: string) => void;
@@ -1738,6 +1740,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   toggleShowThinking={props.toggleShowThinking}
                   hideTitlebar={props.hideTitlebar}
                   toggleHideTitlebar={props.toggleHideTitlebar}
+                  multiClientEnabled={props.multiClientEnabled}
+                  toggleMultiClient={props.toggleMultiClient}
                   modelVariantLabel={props.modelVariantLabel}
                   modelVariant={props.modelVariant}
                   setModelVariant={props.setModelVariant}
