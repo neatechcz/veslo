@@ -39,9 +39,9 @@ use commands::opencode_router::{
 };
 use commands::opkg::{import_skill, opkg_install};
 use commands::orchestrator::{
-    orchestrator_instance_dispose, orchestrator_start_detached, orchestrator_status,
-    orchestrator_workspace_activate, sandbox_cleanup_veslo_containers, sandbox_debug_probe,
-    sandbox_doctor, sandbox_stop,
+    orchestrator_engines_list, orchestrator_instance_dispose, orchestrator_start_detached,
+    orchestrator_status, orchestrator_workspace_activate, sandbox_cleanup_veslo_containers,
+    sandbox_debug_probe, sandbox_doctor, sandbox_stop, spawn_engine_event_poller,
 };
 use commands::pending_session_drafts::{
     pending_session_drafts_delete, pending_session_drafts_get, pending_session_drafts_list,
@@ -169,6 +169,7 @@ pub fn run() {
             engine_install,
             engine_restart,
             orchestrator_status,
+            orchestrator_engines_list,
             orchestrator_workspace_activate,
             orchestrator_instance_dispose,
             orchestrator_start_detached,
@@ -237,6 +238,11 @@ pub fn run() {
         .expect("error while building Veslo");
 
     register_debug_logs_forwarder(app.handle());
+
+    // F2Ú7: background poller that watches orchestrator engine snapshots and
+    // emits `veslo://engine-event` on state transitions. Runs on a dedicated
+    // OS thread for the lifetime of the app process.
+    spawn_engine_event_poller(app.handle().clone());
 
     // Best-effort cleanup on app exit. Without this, background sidecars can keep
     // running after the UI quits (especially during dev), leading to multiple

@@ -11,8 +11,8 @@ use tauri_plugin_shell::ShellExt;
 use crate::paths::home_dir;
 use crate::paths::{prepended_path_env, sidecar_path_candidates};
 use crate::types::{
-    OrchestratorBinaryState, OrchestratorDaemonState, OrchestratorOpencodeState,
-    OrchestratorSidecarInfo, OrchestratorStatus, OrchestratorWorkspace,
+    OrchestratorBinaryState, OrchestratorDaemonState, OrchestratorEngineSnapshot,
+    OrchestratorOpencodeState, OrchestratorSidecarInfo, OrchestratorStatus, OrchestratorWorkspace,
 };
 
 pub mod manager;
@@ -52,6 +52,8 @@ pub struct OrchestratorHealth {
     pub binaries: Option<OrchestratorBinaryState>,
     pub active_id: Option<String>,
     pub workspace_count: Option<usize>,
+    #[serde(default)]
+    pub engines: Vec<OrchestratorEngineSnapshot>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -361,6 +363,7 @@ pub fn orchestrator_status_from_state(
         active_id,
         workspace_count,
         workspaces,
+        engines: Vec::new(),
         last_error,
     }
 }
@@ -406,6 +409,7 @@ pub fn resolve_orchestrator_status(
                 active_id,
                 workspace_count,
                 workspaces,
+                engines: health.engines,
                 last_error: None,
             }
         }
