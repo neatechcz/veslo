@@ -185,6 +185,51 @@ async function makeOrchestrator(opts: {
       return;
     }
 
+    // F2Ú3 surrogate: minimální handler pro activate (jen update activeId, žádný spawn).
+    if (
+      parts[0] === "workspaces" &&
+      parts.length === 3 &&
+      parts[2] === "activate" &&
+      req.method === "POST"
+    ) {
+      const ws = opts.workspaces.find(
+        (w) => w.id === decodeURIComponent(parts[1] ?? ""),
+      );
+      if (!ws) {
+        res.statusCode = 404;
+        res.end(JSON.stringify({ error: "workspace not found" }));
+        return;
+      }
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ activeId: ws.id, workspace: ws }));
+      return;
+    }
+
+    // F2Ú3 surrogate: dispose mapuje na pool.suspend (kill engine, lazy respawn).
+    if (
+      parts[0] === "instances" &&
+      parts.length === 3 &&
+      parts[2] === "dispose" &&
+      req.method === "POST"
+    ) {
+      const ws = opts.workspaces.find(
+        (w) => w.id === decodeURIComponent(parts[1] ?? ""),
+      );
+      if (!ws) {
+        res.statusCode = 404;
+        res.end(JSON.stringify({ error: "workspace not found" }));
+        return;
+      }
+      if (ws.type === "local") {
+        await pool.suspend(ws.id);
+      }
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ disposed: true }));
+      return;
+    }
+
     res.statusCode = 404;
     res.end(JSON.stringify({ error: "not found" }));
   });
@@ -391,6 +436,63 @@ describe("router proxy + EnginePool integration", () => {
     engine.baseUrl = "http://127.0.0.1:1"; // unbound on most systems
     const res = await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/fail`);
     expect(res.status).toBe(502);
+  });
+
+  // F2Ú3: activate endpoint je teď pure state update — žádný kill+spawn.
+  test("activate updates activeId without spawning engine (F2Ú3)", async () => {
+    const { orch } = await setup([
+      { id: "ws-a", path: "/tmp/ws-a", type: "local" },
+      { id: "ws-b", path: "/tmp/ws-b", type: "local" },
+    ]);
+    expect(orch.pool.size()).toBe(0);
+
+    const res = await fetchJson(`${orch.baseUrl}/workspaces/ws-a/activate`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ activeId: "ws-a" });
+    // Klíčový invariant F2Ú3: activate nesmí spawnnout engine.
+    expect(orch.pool.size()).toBe(0);
+
+    // Až proxy request spawne (lazy).
+    await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/x`);
+    expect(orch.pool.size()).toBe(1);
+  });
+
+  // F2Ú3: dispose mapuje na pool.suspend (kill engine, lazy respawn).
+  test("dispose suspends pooled engine and lazy-respawns on next request (F2Ú3)", async () => {
+    const { orch } = await setup([
+      { id: "ws-a", path: "/tmp/ws-a", type: "local" },
+    ]);
+    await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/warmup`);
+    const firstPid = orch.pool.get("ws-a")?.pid;
+    expect(firstPid).toBeGreaterThan(0);
+
+    const disposeRes = await fetchJson(`${orch.baseUrl}/instances/ws-a/dispose`, {
+      method: "POST",
+    });
+    expect(disposeRes.status).toBe(200);
+    expect(disposeRes.body).toMatchObject({ disposed: true });
+    expect(orch.pool.get("ws-a")?.state).toBe("suspended");
+
+    // Další request engine respawne (jiný pid).
+    await fetchJson(`${orch.baseUrl}/workspace/ws-a/opencode/again`);
+    const secondPid = orch.pool.get("ws-a")?.pid;
+    expect(secondPid).toBeGreaterThan(0);
+    expect(secondPid).not.toBe(firstPid);
+    expect(orch.pool.get("ws-a")?.state).toBe("ready");
+  });
+
+  // F2Ú3: dispose for unknown workspace is 404, no side effect.
+  test("dispose for unknown workspace returns 404 (F2Ú3)", async () => {
+    const { orch } = await setup([
+      { id: "ws-a", path: "/tmp/ws-a", type: "local" },
+    ]);
+    const res = await fetchJson(`${orch.baseUrl}/instances/ws-missing/dispose`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(404);
+    expect(orch.pool.size()).toBe(0);
   });
 });
 

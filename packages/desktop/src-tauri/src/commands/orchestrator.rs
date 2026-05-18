@@ -764,8 +764,9 @@ pub fn orchestrator_workspace_activate(
         .send_string("")
         .map_err(|e| format!("Failed to activate workspace: {e}"))?;
 
-    let path_url = format!("{}/workspaces/{}/path", base_url.trim_end_matches('/'), id);
-    let _ = ureq::get(&path_url).call();
+    // VSLO-171 fáze 2 F2Ú3: GET /workspaces/:id/path endpoint smazán v
+    // orchestratoru. Tady jsme response stejně ignorovali (`let _ = ...`),
+    // takže smazání volání = no-op pro caller.
 
     Ok(added.workspace)
 }
