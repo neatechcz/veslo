@@ -19,7 +19,7 @@ use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{resolve_orchestrator_data_dir, resolve_orchestrator_status};
 use crate::platform::configure_hidden;
 use crate::supervised_process;
-use crate::types::{ExecResult, OrchestratorStatus, OrchestratorWorkspace};
+use crate::types::{ExecResult, OrchestratorEngineSnapshot, OrchestratorStatus, OrchestratorWorkspace};
 
 const SANDBOX_PROGRESS_EVENT: &str = "veslo://sandbox-create-progress";
 
@@ -632,6 +632,104 @@ pub fn orchestrator_status(manager: State<OrchestratorManager>) -> OrchestratorS
         .ok()
         .and_then(|state| state.last_stderr.clone());
     resolve_orchestrator_status(&data_dir, last_error)
+}
+
+#[tauri::command]
+pub fn orchestrator_engines_list(
+    manager: State<OrchestratorManager>,
+) -> Vec<OrchestratorEngineSnapshot> {
+    let data_dir = resolve_data_dir(&manager);
+    let last_error = manager
+        .inner
+        .lock()
+        .ok()
+        .and_then(|state| state.last_stderr.clone());
+    resolve_orchestrator_status(&data_dir, last_error).engines
+}
+
+const ENGINE_EVENT_NAME: &str = "veslo://engine-event";
+const ENGINE_EVENT_POLL_MS: u64 = 2000;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EngineEvent {
+    workspace_id: String,
+    event_type: String,
+    at: u64,
+}
+
+fn diff_engine_events(
+    prev: &[OrchestratorEngineSnapshot],
+    curr: &[OrchestratorEngineSnapshot],
+    at: u64,
+) -> Vec<EngineEvent> {
+    let mut events = Vec::new();
+    for c in curr {
+        let p = prev.iter().find(|p| p.workspace_id == c.workspace_id);
+        match (p.map(|p| p.state.as_str()), c.state.as_str()) {
+            (None, "ready") => events.push(EngineEvent {
+                workspace_id: c.workspace_id.clone(),
+                event_type: "spawned".into(),
+                at,
+            }),
+            (Some("suspended"), "ready") => events.push(EngineEvent {
+                workspace_id: c.workspace_id.clone(),
+                event_type: "restored".into(),
+                at,
+            }),
+            (Some("ready"), "suspended") | (Some("idle"), "suspended") => {
+                events.push(EngineEvent {
+                    workspace_id: c.workspace_id.clone(),
+                    event_type: "suspended".into(),
+                    at,
+                })
+            }
+            _ => {}
+        }
+    }
+    for p in prev {
+        if !curr.iter().any(|c| c.workspace_id == p.workspace_id) {
+            events.push(EngineEvent {
+                workspace_id: p.workspace_id.clone(),
+                event_type: "crashed".into(),
+                at,
+            });
+        }
+    }
+    events
+}
+
+/// Background poll loop that watches orchestrator engine snapshots and emits
+/// `veslo://engine-event` on state transitions. Spawned on a dedicated OS
+/// thread so it doesn't require a tokio runtime; sleeps when no orchestrator
+/// manager state is registered yet.
+pub fn spawn_engine_event_poller(app: AppHandle) {
+    use tauri::Manager;
+    use std::thread;
+
+    thread::spawn(move || {
+        let mut last: Vec<OrchestratorEngineSnapshot> = Vec::new();
+        loop {
+            thread::sleep(Duration::from_millis(ENGINE_EVENT_POLL_MS));
+            let Some(manager) = app.try_state::<OrchestratorManager>() else {
+                continue;
+            };
+            let data_dir = resolve_data_dir(&manager);
+            let last_error = manager
+                .inner
+                .lock()
+                .ok()
+                .and_then(|state| state.last_stderr.clone());
+            let status = resolve_orchestrator_status(&data_dir, last_error);
+            let curr = status.engines;
+            if curr != last {
+                for event in diff_engine_events(&last, &curr, now_ms()) {
+                    let _ = app.emit(ENGINE_EVENT_NAME, &event);
+                }
+                last = curr;
+            }
+        }
+    });
 }
 
 #[tauri::command]

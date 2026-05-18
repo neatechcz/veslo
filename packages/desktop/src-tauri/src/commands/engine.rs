@@ -114,6 +114,7 @@ fn should_retry_orchestrator_start(
 pub fn engine_info(
     manager: State<EngineManager>,
     orchestrator_manager: State<OrchestratorManager>,
+    workspace_id: Option<String>,
 ) -> EngineInfo {
     let (
         direct_snapshot,
@@ -124,7 +125,10 @@ pub fn engine_info(
     ) = {
         let mut state = manager.inner.lock().expect("engine mutex poisoned");
         let direct_snapshot = EngineManager::snapshot_locked(&mut state);
-        if state.runtime != EngineRuntime::Orchestrator && direct_snapshot.running {
+        if workspace_id.is_none()
+            && state.runtime != EngineRuntime::Orchestrator
+            && direct_snapshot.running
+        {
             return direct_snapshot;
         }
         (
@@ -173,6 +177,42 @@ pub fn engine_info(
     let auth_project_dir = auth_snapshot
         .as_ref()
         .and_then(|auth| auth.project_dir.clone());
+
+    // Per-workspace branch: route to a pooled engine via the orchestrator's
+    // /workspace/:id/opencode/* proxy (F2Ú2). The SDK still talks to the
+    // returned base_url; the orchestrator injects x-opencode-directory and
+    // basic auth on the way to the upstream engine.
+    if let Some(ref ws_id) = workspace_id {
+        let daemon_port = status.daemon.as_ref().map(|d| d.port);
+        let engine = status.engines.iter().find(|e| &e.workspace_id == ws_id);
+        let workspace_path = status
+            .workspaces
+            .iter()
+            .find(|ws| &ws.id == ws_id)
+            .map(|ws| ws.path.clone())
+            .or_else(|| engine.map(|e| e.workdir.clone()));
+        // Workspace IDs are `ws-` + 12 hex chars (see workspaceIdForLocal in
+        // packages/orchestrator/src/cli.ts); they are URL-safe, no encoding needed.
+        let proxy_base_url = daemon_port
+            .map(|port| format!("http://127.0.0.1:{port}/workspace/{ws_id}/opencode"));
+        let running = engine
+            .map(|e| matches!(e.state.as_str(), "ready" | "idle"))
+            .unwrap_or(false);
+        return EngineInfo {
+            running,
+            runtime: EngineRuntime::Orchestrator,
+            base_url: if running { proxy_base_url } else { None },
+            project_dir: workspace_path,
+            hostname: Some("127.0.0.1".to_string()),
+            port: engine.map(|e| e.port),
+            opencode_username,
+            opencode_password,
+            pid: engine.map(|e| e.pid),
+            last_stdout: orchestrator_stdout,
+            last_stderr: orchestrator_stderr,
+        };
+    }
+
     let opencode = status.opencode.clone();
     let base_url = opencode
         .as_ref()
