@@ -226,7 +226,10 @@ type RouterSidecarState = {
 type RouterState = {
   version: number;
   daemon?: RouterDaemonState;
-  /** @deprecated VSLO-171 fáze 2 — single-engine state. Lazy-spawned engines žijí v `engines`. */
+  /**
+   * @deprecated VSLO-171 fáze 2 F2Ú3 — singleton engine path smazán.
+   * Field zachován pro deserializaci starých state files; nikdy se nezapisuje.
+   */
   opencode?: RouterOpencodeState;
   engines?: Record<string, SerializedEngineState>;
   cliVersion?: string;
@@ -4068,10 +4071,13 @@ async function runRouterDaemon(args: ParsedArgs) {
   const authHeaders = opencodePassword
     ? { Authorization: `Basic ${encodeBasicAuth(opencodeUsername, opencodePassword)}` }
     : undefined;
+  // VSLO-171 fáze 2 F2Ú3: singleton engine smazán. Tento port byl pro legacy
+  // singleton; pool si spawne engines na vlastních volných portech přes findFreePort.
+  // Necháváme proměnnou pro CLI flag kompat (--opencode-port), ale fallback na
+  // state.opencode (deprecated field) je pryč.
   const opencodePort = await resolvePort(
-    readNumber(args.flags, "opencode-port", state.opencode?.port, "VESLO_OPENCODE_PORT"),
+    readNumber(args.flags, "opencode-port", undefined, "VESLO_OPENCODE_PORT"),
     "127.0.0.1",
-    state.opencode?.port,
   );
   const opencodeHotReload = readOpencodeHotReload(
     args.flags,
@@ -4091,33 +4097,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     process.env.VESLO_OPENCODE_CORS ??
     "http://localhost:5173,tauri://localhost,http://tauri.localhost";
   const corsOrigins = parseList(corsValue);
-  const opencodeWorkdirFlag =
-    readFlag(args.flags, "opencode-workdir") ?? process.env.VESLO_OPENCODE_WORKDIR;
-  const activeWorkspace = state.workspaces.find((entry) => entry.id === state.activeId && entry.workspaceType === "local");
-  const opencodeWorkdir = opencodeWorkdirFlag ?? activeWorkspace?.path ?? process.cwd();
-  let currentWorkdir = await ensureWorkspace(opencodeWorkdir);
-  let currentConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(currentWorkdir));
-  await ensureOpencodeManagedTools(currentConfigDir);
-  logger.info(
-    "Daemon starting",
-    { runId, logFormat, workdir: currentWorkdir, host, port },
-    "veslo-orchestrator",
-  );
-
-  const switchWorkdir = async (newPath: string): Promise<boolean> => {
-    const resolved = await ensureWorkspace(newPath);
-    if (resolved === currentWorkdir) return false;
-    if (opencodeChild) {
-      logger.info("Stopping engine for workspace switch", { from: currentWorkdir, to: resolved }, "opencode");
-      await stopChild(opencodeChild);
-      opencodeChild = null;
-      state.opencode = undefined;
-    }
-    currentWorkdir = resolved;
-    currentConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(currentWorkdir));
-    await ensureOpencodeManagedTools(currentConfigDir);
-    return true;
-  };
+  logger.info("Daemon starting", { runId, logFormat, host, port }, "veslo-orchestrator");
 
   const sidecar = resolveSidecarConfig(args.flags, cliVersion);
   const allowExternal = readBool(args.flags, "allow-external", false, "VESLO_ALLOW_EXTERNAL");
@@ -4142,8 +4122,6 @@ async function runRouterDaemon(args: ParsedArgs) {
   });
   logVerbose(`opencode bin: ${opencodeBinary.bin} (${opencodeBinary.source})`);
 
-  let opencodeChild: ReturnType<typeof spawn> | null = null;
-
   const updateDiagnostics = (actualVersion?: string) => {
     state.cliVersion = cliVersion;
     state.sidecar = {
@@ -4165,67 +4143,18 @@ async function runRouterDaemon(args: ParsedArgs) {
     };
   };
 
-  const ensureOpencode = async () => {
-    const existing = state.opencode;
-    if (existing && isProcessAlive(existing.pid)) {
-      const client = createOpencodeClient({
-        baseUrl: existing.baseUrl,
-        directory: currentWorkdir,
-        headers: authHeaders,
-      });
-      try {
-        await waitForOpencodeHealthy(client, 2000, 200);
-        if (!state.sidecar || !state.cliVersion || !state.binaries?.opencode) {
-          updateDiagnostics(state.binaries?.opencode?.actualVersion);
-          await saveRouterState(statePath, state);
-        }
-        return { baseUrl: existing.baseUrl, client };
-      } catch {
-        // restart
-      }
-    }
-
-    if (opencodeChild) {
-      await stopChild(opencodeChild);
-    }
-
-    const opencodeActualVersion = await verifyOpencodeVersion(opencodeBinary);
-    logVerbose(`opencode version: ${opencodeActualVersion ?? "unknown"}`);
-    const child = await startOpencode({
-      bin: opencodeBinary.bin,
-      workspace: currentWorkdir,
-      configDir: currentConfigDir,
-      hotReload: opencodeHotReload,
-      bindHost: opencodeHost,
-      port: opencodePort,
-      username: opencodePassword ? opencodeUsername : undefined,
-      password: opencodePassword,
-      corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
-      logger,
-      runId,
-      logFormat,
-    });
-    opencodeChild = child;
-    logger.info("Process spawned", { pid: child.pid ?? 0 }, "opencode");
-    const baseUrl = `http://${opencodeClientHost}:${opencodePort}`;
-    const client = createOpencodeClient({
-      baseUrl,
-      directory: currentWorkdir,
-      headers: authHeaders,
-    });
-    logger.info("Waiting for health", { url: baseUrl }, "opencode");
-    await waitForOpencodeHealthy(client);
-    logger.info("Healthy", { url: baseUrl }, "opencode");
-    state.opencode = {
-      pid: child.pid ?? 0,
-      port: opencodePort,
-      baseUrl,
-      startedAt: nowMs(),
-    };
-    updateDiagnostics(opencodeActualVersion);
+  // VSLO-171 fáze 2 F2Ú3: opencode version je dnes diagnostika-only; pool si
+  // verzi neověřuje, OpenCode binary stačí spawnnout per workspace lazy.
+  // updateDiagnostics() se volá při prvním pool.ensure (nebo přes /health
+  // poll), ale tady ji už neaktualizujeme z initial check.
+  try {
+    const initialOpencodeVersion = await verifyOpencodeVersion(opencodeBinary);
+    logVerbose(`opencode version: ${initialOpencodeVersion ?? "unknown"}`);
+    updateDiagnostics(initialOpencodeVersion);
     await saveRouterState(statePath, state);
-    return { baseUrl, client };
-  };
+  } catch (err) {
+    logger.warn("opencode version probe failed", { error: String(err) }, "veslo-orchestrator");
+  }
 
   const pool = new EnginePool({
     resolveWorkspace: async (ws) => {
@@ -4267,8 +4196,6 @@ async function runRouterDaemon(args: ParsedArgs) {
     );
     persistDebounced(statePath, state);
   };
-
-  await ensureOpencode();
 
   const server = createHttpServer(async (req, res) => {
     const startedAt = Date.now();
@@ -4317,10 +4244,12 @@ async function runRouterDaemon(args: ParsedArgs) {
 
     try {
         if (req.method === "GET" && url.pathname === "/health") {
+          // VSLO-171 fáze 2 F2Ú3: `opencode` field (legacy singleton) smazán
+          // z /health. Tauri Rust `OrchestratorHealth.opencode: Option<...>`
+          // deserializuje missing field jako None — backward-safe.
           send(200, {
             ok: true,
             daemon: state.daemon ?? null,
-            opencode: state.opencode ?? null,
             engines: pool.snapshot(),
             activeId: state.activeId,
             workspaceCount: state.workspaces.length,
@@ -4410,50 +4339,18 @@ async function runRouterDaemon(args: ParsedArgs) {
           send(404, { error: "workspace not found" });
           return;
         }
+        // VSLO-171 fáze 2 F2Ú3: activate jen update activeId. Žádný kill+spawn
+        // singleton engine — pool spawne lazy na první proxy request.
         state.activeId = workspace.id;
         workspace.lastUsedAt = nowMs();
         await saveRouterState(statePath, state);
-        if (workspace.workspaceType === "local" && workspace.path) {
-          const didSwitch = await switchWorkdir(workspace.path);
-          if (didSwitch) {
-            try {
-              await ensureOpencode();
-              logger.info("Engine restarted for workspace switch", { workspaceId: workspace.id, workdir: currentWorkdir }, "opencode");
-            } catch (err) {
-              logger.error("Engine restart failed after workspace switch", { workspaceId: workspace.id, error: String(err) }, "opencode");
-              send(500, { error: "engine restart failed", activeId: state.activeId });
-              return;
-            }
-          }
-        }
         send(200, { activeId: state.activeId, workspace });
         return;
       }
 
-      if (parts[0] === "workspaces" && parts.length === 3 && parts[2] === "path" && req.method === "GET") {
-        const workspace = findWorkspace(state, decodeURIComponent(parts[1] ?? ""));
-        if (!workspace) {
-          send(404, { error: "workspace not found" });
-          return;
-        }
-        const isRemote = workspace.workspaceType === "remote";
-        const baseUrl = isRemote ? workspace.baseUrl ?? "" : (await ensureOpencode()).baseUrl;
-        if (!baseUrl) {
-          send(400, { error: "workspace baseUrl missing" });
-          return;
-        }
-        const directory = isRemote ? workspace.directory ?? "" : workspace.path;
-        const client = createOpencodeClient({
-          baseUrl,
-          directory: directory ? directory : undefined,
-          headers: authHeaders,
-        });
-        const pathInfo = unwrap(await client.path.get());
-        workspace.lastUsedAt = nowMs();
-        await saveRouterState(statePath, state);
-        send(200, { workspace, path: pathInfo });
-        return;
-      }
+      // VSLO-171 fáze 2 F2Ú3: GET /workspaces/:id/path endpoint smazán.
+      // Tauri Rust orchestrator_workspace_activate dnes response ignoruje
+      // (`let _ = ureq::get(...)`), jiný callsite není.
 
       if (parts[0] === "instances" && parts.length === 3 && parts[2] === "dispose" && req.method === "POST") {
         const workspace = findWorkspace(state, decodeURIComponent(parts[1] ?? ""));
@@ -4461,21 +4358,16 @@ async function runRouterDaemon(args: ParsedArgs) {
           send(404, { error: "workspace not found" });
           return;
         }
-        const isRemote = workspace.workspaceType === "remote";
-        const baseUrl = isRemote ? workspace.baseUrl ?? "" : (await ensureOpencode()).baseUrl;
-        if (!baseUrl) {
-          send(400, { error: "workspace baseUrl missing" });
-          return;
+        // VSLO-171 fáze 2 F2Ú3: dispose mapuje na pool.suspend. Engine je
+        // killnut, lazy respawn na další proxy request. Pro remote workspaces
+        // dispose je no-op (vzdálený server si engine spravuje sám).
+        if (workspace.workspaceType === "local") {
+          await pool.suspend(workspace.id);
+          persistEnginesSnapshot();
         }
-        const directory = isRemote ? workspace.directory ?? "" : workspace.path;
-        const response = await fetch(
-          `${baseUrl.replace(/\/$/, "")}/instance/dispose?directory=${encodeURIComponent(directory)}`,
-          { method: "POST", headers: authHeaders },
-        );
-        const ok = response.ok ? await response.json() : false;
         workspace.lastUsedAt = nowMs();
         await saveRouterState(statePath, state);
-        send(200, { disposed: ok });
+        send(200, { disposed: true });
         return;
       }
 
@@ -4570,17 +4462,9 @@ async function runRouterDaemon(args: ParsedArgs) {
       // ignore
     }
 
-    if (opencodeChild) {
-      await stopChild(opencodeChild);
-      opencodeChild = null;
-    }
-
     await pool.killAll();
 
     state.daemon = undefined;
-    if (state.opencode && !isProcessAlive(state.opencode.pid)) {
-      state.opencode = undefined;
-    }
     state.engines = {};
     await flushPersist();
     await saveRouterState(statePath, state);
