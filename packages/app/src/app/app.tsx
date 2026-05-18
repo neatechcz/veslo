@@ -272,6 +272,10 @@ import { useGlobalSync } from "./context/global-sync";
 import { createWorkspaceStore } from "./context/workspace";
 import { WorkspaceServerSync } from "./context/workspace-server-sync";
 import {
+  createWorkspaceRouting,
+  WorkspaceRoutingProvider,
+} from "./context/workspace-routing";
+import {
   updaterEnvironment,
   pendingSessionDraftsDelete,
   pendingSessionDraftsGet,
@@ -3055,6 +3059,14 @@ export default function App() {
       // with the user's session selection and caused race conditions.
       sessionStore.hydrateTranscriptSnapshot(snapshot);
     },
+  });
+
+  // VSLO-171 F3Ú1 — single-active adapter over the existing global `client()`
+  // signal. Behaves as a no-op proxy until multi mode is wired (F3Ú5/F3Ú6).
+  const workspaceRouting = createWorkspaceRouting({
+    mode: () => "single-active",
+    clientSource: client,
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId().trim(),
   });
 
   let lastLocalVesloEnsureKey = "";
@@ -9194,7 +9206,7 @@ export default function App() {
   });
 
   return (
-    <>
+    <WorkspaceRoutingProvider value={workspaceRouting}>
       <WorkspaceServerSync workspaceStore={workspaceStore} />
       <Switch>
         <Match when={currentView() === "proto"}>
@@ -9429,6 +9441,6 @@ export default function App() {
         onConfirm={() => resolveCrossWorkspaceConfirm(true)}
         onCancel={() => resolveCrossWorkspaceConfirm(false)}
       />
-    </>
+    </WorkspaceRoutingProvider>
   );
 }
