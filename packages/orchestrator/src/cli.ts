@@ -18,6 +18,8 @@ import { sanitizeRuntimePayloadForLogs } from "./security.js";
 import { readVersionManifestFromDirs, type VersionInfo, type VersionManifest } from "./version-manifest.js";
 import type { SerializedEngineState } from "./engine-pool.js";
 import { atomicWriteJson, createDebouncedPersister } from "./persistence.js";
+import { EnginePool, type EngineProcess } from "./engine-pool.js";
+import { proxyToEngine } from "./router-proxy.js";
 
 type ApprovalMode = "manual" | "auto";
 
@@ -4213,6 +4215,47 @@ async function runRouterDaemon(args: ParsedArgs) {
     return { baseUrl, client };
   };
 
+  const pool = new EnginePool({
+    resolveWorkspace: async (ws) => {
+      const workdir = await ensureWorkspace(ws.path ?? "");
+      const configDir = join(dataDir, "opencode-config", workspaceIdForLocal(workdir));
+      await ensureOpencodeManagedTools(configDir);
+      return { workdir, configDir };
+    },
+    spawnEngine: async ({ workspaceId, workdir, configDir, port }) => {
+      const child = await startOpencode({
+        bin: opencodeBinary.bin,
+        workspace: workdir,
+        configDir,
+        hotReload: opencodeHotReload,
+        bindHost: opencodeHost,
+        port,
+        username: opencodePassword ? opencodeUsername : undefined,
+        password: opencodePassword,
+        corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+        logger,
+        runId: `${runId}-${workspaceId.slice(-8)}`,
+        logFormat,
+      });
+      return { child, baseUrl: `http://${opencodeHost}:${port}` };
+    },
+    waitForHealthy: async (baseUrl) => {
+      const client = createOpencodeClient({ baseUrl, headers: authHeaders });
+      await waitForOpencodeHealthy(client);
+    },
+    stopChild,
+    findFreePort: () => findFreePort(opencodeHost),
+    isProcessAlive,
+    log: (msg, attrs) => logger.info(msg, attrs, "engine-pool"),
+  });
+
+  const persistEnginesSnapshot = (): void => {
+    state.engines = Object.fromEntries(
+      pool.snapshot().map((entry) => [entry.workspaceId, entry]),
+    );
+    persistDebounced(statePath, state);
+  };
+
   await ensureOpencode();
 
   const server = createHttpServer(async (req, res) => {
@@ -4266,6 +4309,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             ok: true,
             daemon: state.daemon ?? null,
             opencode: state.opencode ?? null,
+            engines: pool.snapshot(),
             activeId: state.activeId,
             workspaceCount: state.workspaces.length,
             cliVersion: state.cliVersion ?? null,
@@ -4423,6 +4467,77 @@ async function runRouterDaemon(args: ParsedArgs) {
         return;
       }
 
+      if (parts[0] === "workspace" && parts.length >= 3 && parts[2] === "opencode") {
+        const ws = findWorkspace(state, decodeURIComponent(parts[1] ?? ""));
+        if (!ws) {
+          send(404, { error: "workspace not found" });
+          return;
+        }
+        if (ws.workspaceType === "remote") {
+          send(501, {
+            error: "remote engines are proxied by veslo-server, not orchestrator pool",
+          });
+          return;
+        }
+        if (!ws.path) {
+          send(400, { error: "local workspace missing path" });
+          return;
+        }
+
+        let engine: EngineProcess;
+        try {
+          engine = await pool.ensure({ id: ws.id, path: ws.path });
+        } catch (err) {
+          send(502, {
+            error: "engine spawn failed",
+            detail: err instanceof Error ? err.message : String(err),
+          });
+          return;
+        }
+
+        const restPath = "/" + parts.slice(3).join("/");
+        const injectHeaders: Record<string, string> = {
+          "x-opencode-directory": ws.path,
+          "x-veslo-workspace-id": ws.id,
+        };
+        if (opencodePassword) {
+          injectHeaders["authorization"] = `Basic ${encodeBasicAuth(
+            opencodeUsername,
+            opencodePassword,
+          )}`;
+        }
+
+        ws.lastUsedAt = nowMs();
+        persistEnginesSnapshot();
+
+        proxyToEngine({
+          clientReq: req,
+          clientRes: res,
+          targetBaseUrl: engine.baseUrl,
+          targetPath: restPath,
+          targetSearch: url.search,
+          injectHeaders,
+          stripIncomingHeaders: [
+            "authorization",
+            "x-forwarded-for",
+            "x-forwarded-host",
+            "x-forwarded-proto",
+          ],
+          onSuccess: () => {
+            pool.touch(ws.id);
+            persistEnginesSnapshot();
+          },
+          onError: (err) => {
+            logger.warn(
+              "engine proxy error",
+              { workspaceId: ws.id, error: err.message },
+              "engine-pool",
+            );
+          },
+        });
+        return;
+      }
+
       if (req.method === "POST" && url.pathname === "/shutdown") {
         send(200, { ok: true });
         await shutdown();
@@ -4448,10 +4563,13 @@ async function runRouterDaemon(args: ParsedArgs) {
       opencodeChild = null;
     }
 
+    await pool.killAll();
+
     state.daemon = undefined;
     if (state.opencode && !isProcessAlive(state.opencode.pid)) {
       state.opencode = undefined;
     }
+    state.engines = {};
     await flushPersist();
     await saveRouterState(statePath, state);
     process.exit(0);
