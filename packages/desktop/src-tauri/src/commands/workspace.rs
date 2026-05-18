@@ -294,6 +294,9 @@ pub fn workspace_forget(
     let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
     update_workspace_watch(&app, watch_state, active_workspace)?;
 
+    // Mirror the deletion into the server registry (best-effort).
+    crate::workspace::server_client::delete_workspace(&app, id);
+
     // Cleanup OpenCode sessions and local files only for explicit destructive forget mode.
     if let Some(ref ws) = forgotten_workspace {
         if ws.workspace_type == WorkspaceType::Local
@@ -367,6 +370,15 @@ pub fn workspace_update_display_name(
     }
 
     save_workspace_state(&app, &state)?;
+
+    // Mirror the rename into the server registry. We send the effective name
+    // (display_name if set, otherwise the existing entry.name) so the server
+    // sees what the user sees in the sidebar.
+    if let Some(ws) = state.workspaces.iter().find(|w| w.id == id) {
+        let effective_name = ws.display_name.as_deref().unwrap_or(&ws.name);
+        crate::workspace::server_client::patch_workspace(&app, &ws.id, effective_name);
+    }
+
     println!("[workspace] update display name complete: {id}");
 
     Ok(WorkspaceList {
@@ -489,6 +501,13 @@ pub fn workspace_create(
     save_workspace_state(&app, &state)?;
     let active_workspace = state.workspaces.iter().find(|w| w.id == state.active_id);
     update_workspace_watch(&app, watch_state, active_workspace)?;
+
+    // Mirror the new workspace into the server registry (hybrid C —
+    // server is the future single-source-of-truth, ignored if not running).
+    if let Some(ws) = state.workspaces.iter().find(|w| w.id == id) {
+        crate::workspace::server_client::post_local_workspace(&app, &ws.path, &ws.name);
+    }
+
     println!("[workspace] create local complete: {id}");
 
     Ok(WorkspaceList {
