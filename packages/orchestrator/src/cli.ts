@@ -17,6 +17,7 @@ import { reconcileOpencodeVersion } from "./opencode-version.js";
 import { sanitizeRuntimePayloadForLogs } from "./security.js";
 import { readVersionManifestFromDirs, type VersionInfo, type VersionManifest } from "./version-manifest.js";
 import type { SerializedEngineState } from "./engine-pool.js";
+import { atomicWriteJson, createDebouncedPersister } from "./persistence.js";
 
 type ApprovalMode = "manual" | "auto";
 
@@ -1940,9 +1941,19 @@ async function loadRouterState(path: string): Promise<RouterState> {
 }
 
 async function saveRouterState(path: string, state: RouterState): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const payload = JSON.stringify(state, null, 2);
-  await writeFile(path, `${payload}\n`, "utf8");
+  await atomicWriteJson(path, state);
+}
+
+const routerStatePersister = createDebouncedPersister<RouterState>({
+  write: saveRouterState,
+});
+
+function persistDebounced(path: string, state: RouterState): void {
+  routerStatePersister.schedule(path, state);
+}
+
+async function flushPersist(): Promise<void> {
+  await routerStatePersister.flush();
 }
 
 function normalizeWorkspacePath(input: string): string {
@@ -4453,6 +4464,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     if (state.opencode && !isProcessAlive(state.opencode.pid)) {
       state.opencode = undefined;
     }
+    await flushPersist();
     await saveRouterState(statePath, state);
     process.exit(0);
   };
