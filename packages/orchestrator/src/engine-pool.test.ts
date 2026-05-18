@@ -2,7 +2,72 @@ import { describe, expect, test } from "bun:test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 
-import { EnginePool, type EnginePoolDeps } from "./engine-pool.js";
+import {
+  EnginePool,
+  type EnginePoolConfig,
+  type EnginePoolDeps,
+  type ScheduleApi,
+  type ScheduleHandle,
+} from "./engine-pool.js";
+
+/**
+ * Minimal fake timer queue for F2Ú4/F2Ú5 tests. Supports setInterval and
+ * (later for F2Ú5) setTimeout. `advance(ms)` fires all callbacks whose
+ * scheduled time falls within the elapsed window, re-scheduling intervals.
+ */
+class FakeTimers {
+  now = 1000;
+  private nextId = 1;
+  private queue: Array<{
+    id: number;
+    fireAt: number;
+    cb: () => void;
+    intervalMs?: number;
+  }> = [];
+
+  setInterval = (cb: () => void, ms: number): ScheduleHandle => {
+    const id = this.nextId++;
+    this.queue.push({ id, fireAt: this.now + ms, cb, intervalMs: ms });
+    return id;
+  };
+
+  clearInterval = (handle: ScheduleHandle): void => {
+    this.queue = this.queue.filter((entry) => entry.id !== handle);
+  };
+
+  schedule(): ScheduleApi {
+    return { setInterval: this.setInterval, clearInterval: this.clearInterval };
+  }
+
+  /** Advance virtual time and fire all callbacks scheduled within the window. */
+  advance(ms: number): void {
+    const targetTime = this.now + ms;
+    while (true) {
+      const due = this.queue
+        .filter((entry) => entry.fireAt <= targetTime)
+        .sort((a, b) => a.fireAt - b.fireAt);
+      if (due.length === 0) break;
+      const next = due[0]!;
+      this.now = next.fireAt;
+      if (next.intervalMs !== undefined) {
+        next.fireAt = this.now + next.intervalMs;
+      } else {
+        this.queue = this.queue.filter((entry) => entry.id !== next.id);
+      }
+      try {
+        next.cb();
+      } catch {
+        // swallow — tests assert on side effects
+      }
+    }
+    this.now = targetTime;
+  }
+
+  /** Number of pending entries (intervals + timeouts). */
+  pending(): number {
+    return this.queue.length;
+  }
+}
 
 function isProcessAlive(pid: number): boolean {
   if (!pid || pid <= 0) return false;
@@ -52,7 +117,11 @@ type TestHarness = {
   cleanup: () => Promise<void>;
 };
 
-function harness(overrides: Partial<EnginePoolDeps> = {}): TestHarness {
+function harness(
+  overrides: Partial<EnginePoolDeps> = {},
+  config?: Partial<EnginePoolConfig>,
+  timers?: FakeTimers,
+): TestHarness {
   const counters: Counters = { spawns: 0, nextPort: 51000 };
   const registry: ChildProcess[] = [];
 
@@ -73,7 +142,17 @@ function harness(overrides: Partial<EnginePoolDeps> = {}): TestHarness {
     isProcessAlive,
   };
 
-  const pool = new EnginePool({ ...baseDeps, ...overrides });
+  const deps: EnginePoolDeps = { ...baseDeps, ...overrides };
+  if (timers) {
+    deps.schedule = timers.schedule();
+    deps.now = () => timers.now;
+    // Use synthetic immediate sleep so LRU retry doesn't wait real 1s.
+    deps.sleep = async (ms: number) => {
+      timers.advance(ms);
+    };
+  }
+
+  const pool = new EnginePool({ deps, config });
   return {
     pool,
     counters,
@@ -268,6 +347,94 @@ describe("EnginePool", () => {
       expect(second.pid).not.toBe(first.pid);
       expect(second.state).toBe("ready");
       expect(h.counters.spawns).toBe(2);
+    } finally {
+      await h.cleanup();
+    }
+  });
+});
+
+describe("EnginePool — F2Ú4 LRU + idle suspend", () => {
+  test("LRU eviction suspends oldest engine when pool reaches maxEngines", async () => {
+    const timers = new FakeTimers();
+    const h = harness(
+      {},
+      { maxEngines: 2, lruActivityGuardMs: 100, idleSuspendMs: 999_999, idleSweepIntervalMs: 999_999 },
+      timers,
+    );
+    try {
+      await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      timers.advance(50);
+      await h.pool.ensure({ id: "b", path: "/tmp/b" });
+      // Both engines active (< guard) — let them age past the guard window.
+      timers.advance(200);
+      // activeSize === 2 (cap reached); ensure c → LRU eviction triggers.
+      await h.pool.ensure({ id: "c", path: "/tmp/c" });
+      // engine "a" (oldest) is now suspended; "b" still ready; "c" newly ready.
+      expect(h.pool.get("a")?.state).toBe("suspended");
+      expect(h.pool.get("b")?.state).toBe("ready");
+      expect(h.pool.get("c")?.state).toBe("ready");
+      expect(h.pool.activeSize()).toBe(2);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("LRU race — all engines recently active throws capacity exceeded", async () => {
+    const timers = new FakeTimers();
+    const h = harness(
+      {},
+      { maxEngines: 1, lruActivityGuardMs: 5_000, idleSuspendMs: 999_999, idleSweepIntervalMs: 999_999 },
+      timers,
+    );
+    try {
+      await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      // a's lastActivityAt is timers.now (1000). Advance only 1000ms < guard.
+      timers.advance(1000);
+      // ensure b → LRU search picks no candidate (a is "active"). Retry after
+      // 1s (synthetic sleep advances clock 1s) still < guard (total 2000ms <
+      // 5000ms guard) — throw.
+      await expect(h.pool.ensure({ id: "b", path: "/tmp/b" })).rejects.toThrow(
+        "engine pool capacity exceeded",
+      );
+      expect(h.pool.get("a")?.state).toBe("ready");
+      expect(h.pool.get("b")).toBeUndefined();
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("idle sweep suspends ready engine past threshold", async () => {
+    const timers = new FakeTimers();
+    const h = harness(
+      {},
+      { idleSuspendMs: 1_000, idleSweepIntervalMs: 500, lruActivityGuardMs: 50 },
+      timers,
+    );
+    try {
+      await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      // Engine ready, lastActivityAt = 1000 (timers.now). Advance past threshold.
+      timers.advance(1_500); // now = 2500, > 1000 + 1000 threshold; sweep tick at 1500 fires
+      // Idle sweep is async (uses void Promise.all internally) — give microtasks a tick.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(h.pool.get("a")?.state).toBe("suspended");
+      expect(h.pool.activeSize()).toBe(0);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("idle sweep does not suspend recently active engine", async () => {
+    const timers = new FakeTimers();
+    const h = harness(
+      {},
+      { idleSuspendMs: 5_000, idleSweepIntervalMs: 500, lruActivityGuardMs: 50 },
+      timers,
+    );
+    try {
+      await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      timers.advance(1_500); // 1500 < 5000 idle threshold; sweep tick fires but doesn't suspend
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(h.pool.get("a")?.state).toBe("ready");
     } finally {
       await h.cleanup();
     }

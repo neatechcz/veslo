@@ -120,26 +120,28 @@ async function makeOrchestrator(opts: {
   const childRegistry: ChildProcess[] = [];
 
   const pool = new EnginePool({
-    resolveWorkspace: async (ws) => ({
-      workdir: ws.path ?? `/tmp/${ws.id}`,
-      configDir: `/tmp/cfg/${ws.id}`,
-    }),
-    spawnEngine: async ({ port }) => {
-      counters.spawns++;
-      // Spawn long-lived child; baseUrl points to the SHARED fake echo server,
-      // not to this child. The child only exists so that `isProcessAlive(pid)`
-      // returns true and stopChild has something to kill.
-      const child = spawn("node", ["-e", "process.stdin.resume()"], {
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      childRegistry.push(child);
-      void port;
-      return { child, baseUrl: opts.echoBaseUrl };
+    deps: {
+      resolveWorkspace: async (ws) => ({
+        workdir: ws.path ?? `/tmp/${ws.id}`,
+        configDir: `/tmp/cfg/${ws.id}`,
+      }),
+      spawnEngine: async ({ port }) => {
+        counters.spawns++;
+        // Spawn long-lived child; baseUrl points to the SHARED fake echo server,
+        // not to this child. The child only exists so that `isProcessAlive(pid)`
+        // returns true and stopChild has something to kill.
+        const child = spawn("node", ["-e", "process.stdin.resume()"], {
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        childRegistry.push(child);
+        void port;
+        return { child, baseUrl: opts.echoBaseUrl };
+      },
+      waitForHealthy: async () => {},
+      stopChild,
+      findFreePort: async () => counters.nextPort++,
+      isProcessAlive,
     },
-    waitForHealthy: async () => {},
-    stopChild,
-    findFreePort: async () => counters.nextPort++,
-    isProcessAlive,
   });
 
   const server = createServer(async (req, res) => {
