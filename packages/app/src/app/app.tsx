@@ -304,6 +304,7 @@ import type { ReconnectNotice } from "./context/session-reconnect";
 import { createExtensionsStore } from "./context/extensions";
 import { useGlobalSync } from "./context/global-sync";
 import { createWorkspaceStore } from "./context/workspace";
+import { WorkspaceServerSync } from "./context/workspace-server-sync";
 import {
   updaterEnvironment,
   pendingSessionDraftsDelete,
@@ -11135,6 +11136,7 @@ export default function App() {
 
   return (
     <>
+      <WorkspaceServerSync workspaceStore={workspaceStore} />
       <Switch>
         <Match when={currentView() === "proto"}>
           <Switch>

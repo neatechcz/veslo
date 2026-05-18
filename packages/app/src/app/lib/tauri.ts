@@ -767,8 +767,24 @@ export async function vesloServerRestart(): Promise<VesloServerInfo> {
   return invoke<VesloServerInfo>("veslo_server_restart");
 }
 
-export async function engineInfo(): Promise<EngineInfo> {
-  return invoke<EngineInfo>("engine_info");
+export async function engineInfo(workspaceId?: string): Promise<EngineInfo> {
+  return invoke<EngineInfo>("engine_info", { workspaceId: workspaceId ?? null });
+}
+
+export type OrchestratorEngineSnapshot = {
+  workspaceId: string;
+  pid: number;
+  port: number;
+  baseUrl: string;
+  workdir: string;
+  configDir: string;
+  state: "spawning" | "ready" | "idle" | "suspended" | "crashed" | string;
+  spawnedAt: number;
+  lastActivityAt: number;
+};
+
+export async function orchestratorEnginesList(): Promise<OrchestratorEngineSnapshot[]> {
+  return invoke<OrchestratorEngineSnapshot[]>("orchestrator_engines_list");
 }
 
 export async function engineDoctor(options?: {
