@@ -158,8 +158,13 @@ fn kill_stale_veslo_server_process(pid: u32) -> Result<(), String> {
 
 #[cfg(windows)]
 fn terminate_stale_veslo_server_process(pid: u32) -> Result<(), String> {
+    use std::process::Stdio;
+
+    use crate::platform::configure_hidden;
+
     let pid_arg = pid.to_string();
-    let status = std::process::Command::new("taskkill")
+    let mut command = std::process::Command::new("taskkill");
+    command
         .args([
             "/PID",
             pid_arg.as_str(),
@@ -168,6 +173,11 @@ fn terminate_stale_veslo_server_process(pid: u32) -> Result<(), String> {
             "/FI",
             "IMAGENAME eq veslo-server.exe",
         ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    configure_hidden(&mut command);
+
+    let status = command
         .status()
         .map_err(|e| format!("failed to launch taskkill: {e}"))?;
 

@@ -108,6 +108,8 @@ These control which Veslo server URL the app connects to and which bearer token 
 
 Invite-link and bundle-link parsing also lives in `veslo-server.ts`. Incoming query parameters can override the stored connection state for a launch flow.
 
+The desktop shell also persists the managed local `veslo-server` process snapshot in the app-local data directory so a new app process can recover a still-running server. For the live managed child, native `veslo_server_info` reports process ownership and keeps the recorded URL/token/PID while the child is alive; HTTP health is polled separately by the frontend. Persisted snapshots from a previous app process still require a successful `/health` check before recovery and are cleaned up when stale.
+
 ## Desktop Debug Log Forwarder
 
 The Tauri shell forwards stdout/stderr from every supervised sidecar (`veslo-server`, `opencode-router`, `veslo-orchestrator`, `engine`) into the veslo-server debug log pipeline. Implementation lives in `packages/desktop/src-tauri/src/debug_logs_forwarder.rs`.

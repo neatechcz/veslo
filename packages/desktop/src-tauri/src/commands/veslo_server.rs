@@ -8,7 +8,6 @@ use crate::veslo_server::{
     start_veslo_server,
 };
 use crate::types::{VesloServerInfo, WorkspaceState, WorkspaceType};
-use crate::utils::truncate_output;
 use crate::workspace::state::load_workspace_state;
 
 fn active_local_workspace_path(state: &WorkspaceState) -> Option<String> {
@@ -29,38 +28,14 @@ fn active_local_workspace_path(state: &WorkspaceState) -> Option<String> {
 }
 
 fn sanitize_live_info_with_health(
-    mut info: VesloServerInfo,
-    health_check: impl Fn(&str) -> bool,
+    info: VesloServerInfo,
+    _health_check: impl Fn(&str) -> bool,
 ) -> (VesloServerInfo, bool) {
-    if !info.running {
-        return (info, false);
-    }
-
-    let base_url = info.base_url.clone().unwrap_or_default();
-    if !base_url.trim().is_empty() && health_check(&base_url) {
-        return (info, false);
-    }
-
-    let label = if base_url.trim().is_empty() {
-        "the recorded host".to_string()
-    } else {
-        base_url
-    };
-
-    info.running = false;
-    info.base_url = None;
-    info.connect_url = None;
-    info.mdns_url = None;
-    info.lan_url = None;
-    info.client_token = None;
-    info.host_token = None;
-    info.pid = None;
-    info.last_stderr = Some(truncate_output(
-        &format!("Veslo server on {label} is no longer responding."),
-        8000,
-    ));
-
-    (info, true)
+    // For the managed child, this command reports process ownership. HTTP
+    // health is polled separately by the frontend; using it here turns one
+    // transient probe failure into a lost token/PID snapshot and can trigger
+    // a restart loop for an otherwise live sidecar.
+    (info, false)
 }
 
 #[tauri::command]
@@ -236,22 +211,17 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_live_info_with_health_drops_stale_connection_details_when_health_fails() {
+    fn sanitize_live_info_with_health_preserves_live_child_when_health_fails() {
         let info = sample_live_info();
-        let (sanitized, stale) = sanitize_live_info_with_health(info, |_| false);
-        assert!(stale);
-        assert!(!sanitized.running);
-        assert_eq!(sanitized.base_url, None);
-        assert_eq!(sanitized.connect_url, None);
-        assert_eq!(sanitized.mdns_url, None);
-        assert_eq!(sanitized.lan_url, None);
-        assert_eq!(sanitized.client_token, None);
-        assert_eq!(sanitized.host_token, None);
-        assert_eq!(sanitized.pid, None);
-        assert!(sanitized
-            .last_stderr
-            .as_deref()
-            .unwrap_or_default()
-            .contains("no longer responding"));
+        let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| false);
+        assert!(!stale);
+        assert!(sanitized.running);
+        assert_eq!(sanitized.base_url, info.base_url);
+        assert_eq!(sanitized.connect_url, info.connect_url);
+        assert_eq!(sanitized.mdns_url, info.mdns_url);
+        assert_eq!(sanitized.lan_url, info.lan_url);
+        assert_eq!(sanitized.client_token, info.client_token);
+        assert_eq!(sanitized.host_token, info.host_token);
+        assert_eq!(sanitized.pid, info.pid);
     }
 }
