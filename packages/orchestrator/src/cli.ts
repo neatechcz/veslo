@@ -2455,6 +2455,8 @@ function printHelp(): void {
     "  --opencode-hot-reload     Enable OpenCode hot reload (default: true)",
     "  --opencode-hot-reload-debounce-ms <ms>  Debounce window for hot reload triggers (default: 700)",
     "  --opencode-hot-reload-cooldown-ms <ms>  Minimum interval between hot reloads (default: 1500)",
+    "  --max-engines <N>         Max concurrent engines in pool (1-16, default: 8) [VSLO-171]",
+    "  --idle-suspend-ms <ms>    Idle threshold for engine suspend (default: 900000 = 15 min)",
     "  --opencode-username <u>   OpenCode basic auth username",
     "  --opencode-password <p>   OpenCode basic auth password",
     "  --veslo-host <host>    Bind host for veslo-server (default: 0.0.0.0)",
@@ -4044,6 +4046,18 @@ async function runRouterDaemon(args: ParsedArgs) {
     "127.0.0.1",
   );
 
+  // VSLO-171 fáze 2 F2Ú4 — engine pool capacity + idle suspend.
+  const maxEngines = readNumber(args.flags, "max-engines", 8, "VESLO_MAX_ENGINES") ?? 8;
+  if (!Number.isFinite(maxEngines) || maxEngines < 1 || maxEngines > 16) {
+    throw new Error("--max-engines must be between 1 and 16");
+  }
+  const idleSuspendMs =
+    readNumber(args.flags, "idle-suspend-ms", 15 * 60_000, "VESLO_IDLE_SUSPEND_MS") ??
+    15 * 60_000;
+  if (!Number.isFinite(idleSuspendMs) || idleSuspendMs < 0) {
+    throw new Error("--idle-suspend-ms must be >= 0");
+  }
+
   const opencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.VESLO_OPENCODE_BIN;
   const opencodeHost =
     readFlag(args.flags, "opencode-host") ?? process.env.VESLO_OPENCODE_HOST ?? "127.0.0.1";
@@ -4145,37 +4159,40 @@ async function runRouterDaemon(args: ParsedArgs) {
   }
 
   const pool = new EnginePool({
-    resolveWorkspace: async (ws) => {
-      const workdir = await ensureWorkspace(ws.path ?? "");
-      const configDir = join(dataDir, "opencode-config", workspaceIdForLocal(workdir));
-      await ensureOpencodeManagedTools(configDir);
-      return { workdir, configDir };
+    deps: {
+      resolveWorkspace: async (ws) => {
+        const workdir = await ensureWorkspace(ws.path ?? "");
+        const configDir = join(dataDir, "opencode-config", workspaceIdForLocal(workdir));
+        await ensureOpencodeManagedTools(configDir);
+        return { workdir, configDir };
+      },
+      spawnEngine: async ({ workspaceId, workdir, configDir, port }) => {
+        const child = await startOpencode({
+          bin: opencodeBinary.bin,
+          workspace: workdir,
+          configDir,
+          hotReload: opencodeHotReload,
+          bindHost: opencodeHost,
+          port,
+          username: opencodePassword ? opencodeUsername : undefined,
+          password: opencodePassword,
+          corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+          logger,
+          runId: `${runId}-${workspaceId.slice(-8)}`,
+          logFormat,
+        });
+        return { child, baseUrl: `http://${opencodeHost}:${port}` };
+      },
+      waitForHealthy: async (baseUrl) => {
+        const client = createOpencodeClient({ baseUrl, headers: authHeaders });
+        await waitForOpencodeHealthy(client);
+      },
+      stopChild,
+      findFreePort: () => findFreePort(opencodeHost),
+      isProcessAlive,
+      log: (msg, attrs) => logger.info(msg, attrs, "engine-pool"),
     },
-    spawnEngine: async ({ workspaceId, workdir, configDir, port }) => {
-      const child = await startOpencode({
-        bin: opencodeBinary.bin,
-        workspace: workdir,
-        configDir,
-        hotReload: opencodeHotReload,
-        bindHost: opencodeHost,
-        port,
-        username: opencodePassword ? opencodeUsername : undefined,
-        password: opencodePassword,
-        corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
-        logger,
-        runId: `${runId}-${workspaceId.slice(-8)}`,
-        logFormat,
-      });
-      return { child, baseUrl: `http://${opencodeHost}:${port}` };
-    },
-    waitForHealthy: async (baseUrl) => {
-      const client = createOpencodeClient({ baseUrl, headers: authHeaders });
-      await waitForOpencodeHealthy(client);
-    },
-    stopChild,
-    findFreePort: () => findFreePort(opencodeHost),
-    isProcessAlive,
-    log: (msg, attrs) => logger.info(msg, attrs, "engine-pool"),
+    config: { maxEngines, idleSuspendMs },
   });
 
   const persistEnginesSnapshot = (): void => {
@@ -4380,10 +4397,10 @@ async function runRouterDaemon(args: ParsedArgs) {
         try {
           engine = await pool.ensure({ id: ws.id, path: ws.path });
         } catch (err) {
-          send(502, {
-            error: "engine spawn failed",
-            detail: err instanceof Error ? err.message : String(err),
-          });
+          const detail = err instanceof Error ? err.message : String(err);
+          // F2Ú4 — capacity exceeded je 503 (retry-able), spawn/health fail je 502.
+          const status = detail.includes("capacity exceeded") ? 503 : 502;
+          send(status, { error: "engine spawn failed", detail });
           return;
         }
 
