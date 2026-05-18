@@ -69,7 +69,24 @@ export type ScheduleHandle = unknown;
 export type ScheduleApi = {
   setInterval: (cb: () => void, ms: number) => ScheduleHandle;
   clearInterval: (handle: ScheduleHandle) => void;
+  setTimeout: (cb: () => void, ms: number) => ScheduleHandle;
+  clearTimeout: (handle: ScheduleHandle) => void;
 };
+
+/**
+ * F2Ú5 — events emitted from the pool for callsite observability (logging,
+ * persistence, Tauri event bus). Pool itself doesn't subscribe; just calls
+ * `deps.onEngineChange`.
+ */
+export type EngineEvent =
+  | "spawned"
+  | "suspended"
+  | "crashed"
+  | "restart-scheduled"
+  | "restart-attempt"
+  | "permanently-failed"
+  | "healthy"
+  | "unhealthy";
 
 export type EnginePoolDeps = {
   resolveWorkspace: (workspace: EngineWorkspace) => Promise<{
@@ -83,10 +100,14 @@ export type EnginePoolDeps = {
   isProcessAlive: (pid: number) => boolean;
   now?: () => number;
   log?: EnginePoolLogger;
-  /** F2Ú4 — injectable timer API for fake-timer tests. Default uses global setInterval. */
+  /** F2Ú4 — injectable timer API for fake-timer tests. Default uses global setInterval/setTimeout. */
   schedule?: ScheduleApi;
   /** F2Ú4 — sleep used by LRU eviction retry. Default `setTimeout(resolve, ms)`. */
   sleep?: (ms: number) => Promise<void>;
+  /** F2Ú5 — health probe for one engine. Throw = unhealthy. Default no-op (no health checks). */
+  healthCheck?: (baseUrl: string) => Promise<void>;
+  /** F2Ú5 — observability callback. Pool calls after every state transition. */
+  onEngineChange?: (workspaceId: string, event: EngineEvent) => void;
 };
 
 export type EnginePoolConfig = {
@@ -98,6 +119,20 @@ export type EnginePoolConfig = {
   idleSweepIntervalMs: number;
   /** F2Ú4 — engines with lastActivityAt within this window are considered active and skipped by LRU. */
   lruActivityGuardMs: number;
+  /** F2Ú5 — how often the health monitor runs (one global tick per pool). */
+  healthIntervalMs: number;
+  /** F2Ú5 — timeout for one health probe; failure includes timeout. */
+  healthCheckTimeoutMs: number;
+  /** F2Ú5 — consecutive health failures before treating engine as crashed. */
+  healthFailureThreshold: number;
+  /** F2Ú5 — max restart attempts after a crash before giving up. */
+  maxRestarts: number;
+  /** F2Ú5 — initial backoff for restart (next attempts: `base * 2 ^ (attempt - 1)`). */
+  restartBackoffBaseMs: number;
+  /** F2Ú5 — backoff cap; never wait longer than this between restarts. */
+  restartBackoffMaxMs: number;
+  /** F2Ú5 — if engine ran longer than this without crashing, restart counter resets. */
+  restartCountResetMs: number;
 };
 
 export const DEFAULT_ENGINE_POOL_CONFIG: EnginePoolConfig = {
@@ -105,6 +140,13 @@ export const DEFAULT_ENGINE_POOL_CONFIG: EnginePoolConfig = {
   idleSuspendMs: 15 * 60_000,
   idleSweepIntervalMs: 60_000,
   lruActivityGuardMs: 5_000,
+  healthIntervalMs: 5_000,
+  healthCheckTimeoutMs: 2_000,
+  healthFailureThreshold: 3,
+  maxRestarts: 3,
+  restartBackoffBaseMs: 1_000,
+  restartBackoffMaxMs: 30_000,
+  restartCountResetMs: 5 * 60_000,
 };
 
 type ResolvedDeps = Omit<EnginePoolDeps, "now" | "log" | "schedule" | "sleep"> & {
@@ -119,12 +161,26 @@ export type EnginePoolInput = {
   config?: Partial<EnginePoolConfig>;
 };
 
+type ResolvedDepsWithEvents = ResolvedDeps & {
+  healthCheck?: (baseUrl: string) => Promise<void>;
+  onEngineChange?: (workspaceId: string, event: EngineEvent) => void;
+};
+
 export class EnginePool {
   private readonly engines = new Map<string, EngineProcess>();
   private readonly pending = new Map<string, Promise<EngineProcess>>();
-  private readonly deps: ResolvedDeps;
+  private readonly deps: ResolvedDepsWithEvents;
   private readonly config: EnginePoolConfig;
   private idleSweepHandle: ScheduleHandle | null = null;
+  /** F2Ú5 — globální health probe tick handle. */
+  private healthMonitorHandle: ScheduleHandle | null = null;
+  /**
+   * F2Ú5 — workspaceIds that are being killed intentionally (suspend/killAll/respawn).
+   * `child.on('exit')` checks this set to distinguish real crashes from intentional kills.
+   */
+  private readonly intentionallyStopping = new Set<string>();
+  /** F2Ú5 — pending restart timeouts by workspaceId (for cleanup on suspend/killAll). */
+  private readonly restartTimers = new Map<string, ScheduleHandle>();
 
   constructor(input: EnginePoolInput) {
     const deps = input.deps;
@@ -140,12 +196,28 @@ export class EnginePool {
       schedule: deps.schedule ?? {
         setInterval: (cb, ms) => setInterval(cb, ms),
         clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
+        setTimeout: (cb, ms) => setTimeout(cb, ms),
+        clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
       },
       sleep:
         deps.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms))),
+      healthCheck: deps.healthCheck,
+      onEngineChange: deps.onEngineChange,
     };
     this.config = { ...DEFAULT_ENGINE_POOL_CONFIG, ...input.config };
     this.startBackgroundLoops();
+  }
+
+  private emit(workspaceId: string, event: EngineEvent): void {
+    try {
+      this.deps.onEngineChange?.(workspaceId, event);
+    } catch (err) {
+      this.deps.log?.("engine event listener threw", {
+        workspaceId,
+        event,
+        error: String(err),
+      });
+    }
   }
 
   private startBackgroundLoops(): void {
@@ -153,6 +225,14 @@ export class EnginePool {
       () => this.runIdleSweep(),
       this.config.idleSweepIntervalMs,
     );
+    if (this.deps.healthCheck) {
+      this.healthMonitorHandle = this.deps.schedule.setInterval(
+        () => {
+          void this.runHealthChecks();
+        },
+        this.config.healthIntervalMs,
+      );
+    }
   }
 
   size(): number {
@@ -236,17 +316,30 @@ export class EnginePool {
   async suspend(workspaceId: string): Promise<void> {
     const engine = this.engines.get(workspaceId);
     if (!engine) return;
-    if (this.deps.isProcessAlive(engine.pid)) {
-      try {
-        await this.deps.stopChild(engine.child);
-      } catch (err) {
-        this.deps.log?.("engine suspend failed", {
-          workspaceId,
-          error: String(err),
-        });
+    // F2Ú5 — cancel any pending restart so suspend wins races against backoff.
+    const pendingRestart = this.restartTimers.get(workspaceId);
+    if (pendingRestart !== undefined) {
+      this.deps.schedule.clearTimeout(pendingRestart);
+      this.restartTimers.delete(workspaceId);
+    }
+    // F2Ú5 — mark before stopChild so child.on('exit') handler treats this as intentional.
+    this.intentionallyStopping.add(workspaceId);
+    try {
+      if (this.deps.isProcessAlive(engine.pid)) {
+        try {
+          await this.deps.stopChild(engine.child);
+        } catch (err) {
+          this.deps.log?.("engine suspend failed", {
+            workspaceId,
+            error: String(err),
+          });
+        }
       }
+    } finally {
+      this.intentionallyStopping.delete(workspaceId);
     }
     engine.state = "suspended";
+    this.emit(workspaceId, "suspended");
   }
 
   async killAll(): Promise<void> {
@@ -254,18 +347,33 @@ export class EnginePool {
       this.deps.schedule.clearInterval(this.idleSweepHandle);
       this.idleSweepHandle = null;
     }
+    if (this.healthMonitorHandle !== null) {
+      this.deps.schedule.clearInterval(this.healthMonitorHandle);
+      this.healthMonitorHandle = null;
+    }
+    // F2Ú5 — cancel all pending restart timeouts.
+    for (const handle of this.restartTimers.values()) {
+      this.deps.schedule.clearTimeout(handle);
+    }
+    this.restartTimers.clear();
     const entries = Array.from(this.engines.values());
+    // F2Ú5 — mark every engine as intentionally stopping BEFORE killing.
+    for (const engine of entries) this.intentionallyStopping.add(engine.workspaceId);
     this.engines.clear();
     await Promise.all(
       entries.map(async (engine) => {
-        if (!this.deps.isProcessAlive(engine.pid)) return;
         try {
-          await this.deps.stopChild(engine.child);
-        } catch (err) {
-          this.deps.log?.("engine killAll failed", {
-            workspaceId: engine.workspaceId,
-            error: String(err),
-          });
+          if (!this.deps.isProcessAlive(engine.pid)) return;
+          try {
+            await this.deps.stopChild(engine.child);
+          } catch (err) {
+            this.deps.log?.("engine killAll failed", {
+              workspaceId: engine.workspaceId,
+              error: String(err),
+            });
+          }
+        } finally {
+          this.intentionallyStopping.delete(engine.workspaceId);
         }
       }),
     );
@@ -360,6 +468,7 @@ export class EnginePool {
       port,
     });
 
+    const existing = this.engines.get(workspace.id);
     const engine: EngineProcess = {
       workspaceId: workspace.id,
       pid: child.pid ?? 0,
@@ -372,16 +481,26 @@ export class EnginePool {
       lastActivityAt: spawnedAt,
       child,
       healthStrikes: 0,
-      restartCount: 0,
+      // F2Ú5 — preserve restart counter across crash-driven respawns; first-time
+      // spawn starts at 0. Caller (respawn) resets when restartCountResetMs elapses.
+      restartCount: existing?.restartCount ?? 0,
       lastSuccessfulRunStartedAt: 0,
     };
     this.engines.set(workspace.id, engine);
+
+    // F2Ú5 — register exit handler. Fires for both intentional kill (SIGTERM
+    // from stopChild) and real crashes; handleExit distinguishes via
+    // `intentionallyStopping` Set.
+    child.on("exit", (code, signal) => this.handleExit(workspace.id, code, signal));
 
     try {
       await this.deps.waitForHealthy(baseUrl);
     } catch (err) {
       engine.state = "crashed";
       this.engines.delete(workspace.id);
+      // F2Ú5 — spawn-time fail (engine never reached ready). Mark intentional
+      // before stopChild so the exit handler doesn't trigger restart logic.
+      this.intentionallyStopping.add(workspace.id);
       try {
         await this.deps.stopChild(child);
       } catch (cleanupErr) {
@@ -389,6 +508,8 @@ export class EnginePool {
           workspaceId: workspace.id,
           error: String(cleanupErr),
         });
+      } finally {
+        this.intentionallyStopping.delete(workspace.id);
       }
       throw err;
     }
@@ -401,6 +522,189 @@ export class EnginePool {
       baseUrl,
       pid: engine.pid,
     });
+    this.emit(workspace.id, "spawned");
     return engine;
+  }
+
+  /**
+   * F2Ú5 — `child.on('exit')` callback. Distinguishes intentional kills
+   * (via `intentionallyStopping` Set, populated by suspend/killAll/spawn-fail)
+   * from real crashes. Crashes schedule a restart with exponential backoff
+   * (capped at `maxRestarts` attempts).
+   */
+  private handleExit(
+    workspaceId: string,
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ): void {
+    if (this.intentionallyStopping.has(workspaceId)) {
+      // Intentional kill (suspend, killAll, spawn cleanup) — Set is cleared by caller.
+      return;
+    }
+    const engine = this.engines.get(workspaceId);
+    if (!engine) return;
+    // Engine never reached "ready" (waitForHealthy threw earlier in spawn).
+    // Don't treat as crash; ensure() callsite already got the throw.
+    if (engine.lastSuccessfulRunStartedAt === 0) return;
+
+    this.deps.log?.("engine crashed", { workspaceId, code, signal });
+    engine.state = "crashed";
+
+    // F2Ú5 — reset restart counter if the engine ran stably for long enough.
+    const stableRunDuration = this.deps.now() - engine.lastSuccessfulRunStartedAt;
+    if (stableRunDuration > this.config.restartCountResetMs) {
+      engine.restartCount = 0;
+    }
+    engine.restartCount += 1;
+
+    if (engine.restartCount > this.config.maxRestarts) {
+      this.deps.log?.("engine permanently failed", {
+        workspaceId,
+        restartCount: engine.restartCount,
+      });
+      this.emit(workspaceId, "permanently-failed");
+      return;
+    }
+
+    this.emit(workspaceId, "crashed");
+
+    // Exponential backoff: base * 2^(attempt-1), capped at max.
+    const backoff = Math.min(
+      this.config.restartBackoffBaseMs * 2 ** (engine.restartCount - 1),
+      this.config.restartBackoffMaxMs,
+    );
+    this.deps.log?.("engine restart scheduled", {
+      workspaceId,
+      attempt: engine.restartCount,
+      backoffMs: backoff,
+    });
+    this.emit(workspaceId, "restart-scheduled");
+
+    const handle = this.deps.schedule.setTimeout(() => {
+      this.restartTimers.delete(workspaceId);
+      void this.respawn(workspaceId);
+    }, backoff);
+    this.restartTimers.set(workspaceId, handle);
+  }
+
+  /**
+   * F2Ú5 — re-spawn an engine after crash backoff. Preserves the original
+   * workspace (workdir/path) by reading from the existing crashed engine.
+   * Failure to respawn (spawn throws) is treated as another exit event,
+   * incrementing restartCount until maxRestarts is reached.
+   */
+  private async respawn(workspaceId: string): Promise<void> {
+    const engine = this.engines.get(workspaceId);
+    if (!engine) return;
+    this.emit(workspaceId, "restart-attempt");
+    // Reconstruct EngineWorkspace from saved fields. workdir was set by
+    // resolveWorkspace; we don't have original path here, but workdir IS the
+    // resolved path so passing it as path is correct for re-resolution.
+    const workspace: EngineWorkspace = { id: workspaceId, path: engine.workdir };
+    try {
+      await this.spawn(workspace);
+    } catch (err) {
+      // spawn throws when waitForHealthy fails. Manually trigger handleExit
+      // semantics — but `lastSuccessfulRunStartedAt` was reset to 0 inside
+      // spawn for the new attempt, so simple handleExit early-returns. Bump
+      // restartCount manually and schedule another attempt or give up.
+      this.deps.log?.("engine respawn failed", {
+        workspaceId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      // Re-fetch — spawn may have left engine in deleted state on health fail.
+      const current = this.engines.get(workspaceId);
+      // Replicate handleExit decision branch but without intentionallyStopping check.
+      const carriedRestartCount = (current?.restartCount ?? engine.restartCount) + 1;
+      if (carriedRestartCount > this.config.maxRestarts) {
+        this.deps.log?.("engine permanently failed after respawn", {
+          workspaceId,
+          restartCount: carriedRestartCount,
+        });
+        this.emit(workspaceId, "permanently-failed");
+        return;
+      }
+      // Re-insert a placeholder so we can schedule next attempt with counter.
+      this.engines.set(workspaceId, {
+        ...engine,
+        state: "crashed",
+        restartCount: carriedRestartCount,
+        lastSuccessfulRunStartedAt: 0,
+      });
+      const backoff = Math.min(
+        this.config.restartBackoffBaseMs * 2 ** (carriedRestartCount - 1),
+        this.config.restartBackoffMaxMs,
+      );
+      this.emit(workspaceId, "restart-scheduled");
+      const handle = this.deps.schedule.setTimeout(() => {
+        this.restartTimers.delete(workspaceId);
+        void this.respawn(workspaceId);
+      }, backoff);
+      this.restartTimers.set(workspaceId, handle);
+    }
+  }
+
+  /**
+   * F2Ú5 — global health monitor tick. For each `ready` engine: race
+   * `deps.healthCheck(baseUrl)` against `healthCheckTimeoutMs`. Failures
+   * accumulate in `engine.healthStrikes`; reaching `healthFailureThreshold`
+   * simulates a crash (kill + restart via handleExit). One engine's failure
+   * never breaks the loop.
+   */
+  private async runHealthChecks(): Promise<void> {
+    if (!this.deps.healthCheck) return;
+    const targets = Array.from(this.engines.values()).filter(
+      (engine) => engine.state === "ready",
+    );
+    await Promise.all(
+      targets.map(async (engine) => {
+        if (this.intentionallyStopping.has(engine.workspaceId)) return;
+        try {
+          await Promise.race([
+            this.deps.healthCheck!(engine.baseUrl),
+            new Promise<void>((_, reject) =>
+              setTimeout(
+                () => reject(new Error("health probe timeout")),
+                this.config.healthCheckTimeoutMs,
+              ),
+            ),
+          ]);
+          // Probe succeeded — reset strikes (and emit recovery edge only).
+          if (engine.healthStrikes > 0) {
+            engine.healthStrikes = 0;
+            this.emit(engine.workspaceId, "healthy");
+          }
+        } catch (err) {
+          engine.healthStrikes += 1;
+          this.deps.log?.("engine health probe failed", {
+            workspaceId: engine.workspaceId,
+            strike: engine.healthStrikes,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          if (engine.healthStrikes === 1) {
+            this.emit(engine.workspaceId, "unhealthy");
+          }
+          if (engine.healthStrikes >= this.config.healthFailureThreshold) {
+            // Treat as crash: kill child (un-intentional so handleExit triggers
+            // restart logic), then handleExit picks it up via child.on('exit').
+            // If process is already dead, manually call handleExit.
+            engine.healthStrikes = 0;
+            if (this.deps.isProcessAlive(engine.pid)) {
+              try {
+                await this.deps.stopChild(engine.child);
+              } catch (killErr) {
+                this.deps.log?.("engine health-driven kill failed", {
+                  workspaceId: engine.workspaceId,
+                  error: String(killErr),
+                });
+              }
+            } else {
+              // Process already dead — exit handler may not fire. Trigger manually.
+              this.handleExit(engine.workspaceId, -1, null);
+            }
+          }
+        }
+      }),
+    );
   }
 }

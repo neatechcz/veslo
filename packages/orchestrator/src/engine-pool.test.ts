@@ -35,8 +35,23 @@ class FakeTimers {
     this.queue = this.queue.filter((entry) => entry.id !== handle);
   };
 
+  setTimeout = (cb: () => void, ms: number): ScheduleHandle => {
+    const id = this.nextId++;
+    this.queue.push({ id, fireAt: this.now + ms, cb });
+    return id;
+  };
+
+  clearTimeout = (handle: ScheduleHandle): void => {
+    this.queue = this.queue.filter((entry) => entry.id !== handle);
+  };
+
   schedule(): ScheduleApi {
-    return { setInterval: this.setInterval, clearInterval: this.clearInterval };
+    return {
+      setInterval: this.setInterval,
+      clearInterval: this.clearInterval,
+      setTimeout: this.setTimeout,
+      clearTimeout: this.clearTimeout,
+    };
   }
 
   /** Advance virtual time and fire all callbacks scheduled within the window. */
@@ -435,6 +450,395 @@ describe("EnginePool — F2Ú4 LRU + idle suspend", () => {
       timers.advance(1_500); // 1500 < 5000 idle threshold; sweep tick fires but doesn't suspend
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(h.pool.get("a")?.state).toBe("ready");
+    } finally {
+      await h.cleanup();
+    }
+  });
+});
+
+describe("EnginePool — F2Ú5 crash recovery + health monitor", () => {
+  /** Helper: wait for microtasks (event loop tick) so child.on('exit') handlers fire. */
+  const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+  test("health monitor — single failure does not trigger crash", async () => {
+    const timers = new FakeTimers();
+    let failOnce = true;
+    const h = harness(
+      {
+        healthCheck: async () => {
+          if (failOnce) {
+            failOnce = false;
+            throw new Error("blip");
+          }
+        },
+      },
+      { healthIntervalMs: 100, healthFailureThreshold: 3, idleSweepIntervalMs: 999_999 },
+      timers,
+    );
+    try {
+      await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      timers.advance(100);
+      await tick();
+      expect(h.pool.get("a")?.state).toBe("ready");
+      expect(h.pool.get("a")?.healthStrikes).toBe(1);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("health monitor — 3 strikes triggers crash + scheduled restart", async () => {
+    const timers = new FakeTimers();
+    const h = harness(
+      {
+        healthCheck: async () => {
+          throw new Error("always fail");
+        },
+      },
+      {
+        healthIntervalMs: 100,
+        healthFailureThreshold: 3,
+        restartBackoffBaseMs: 50,
+        idleSweepIntervalMs: 999_999,
+      },
+      timers,
+    );
+    try {
+      const first = await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      const firstPid = first.pid;
+      // 3 health ticks → 3 strikes → trigger crash.
+      timers.advance(100);
+      await tick();
+      timers.advance(100);
+      await tick();
+      timers.advance(100);
+      await tick();
+      // After kill, exit handler fires → restart scheduled.
+      // Real child.kill triggers async exit → wait for it.
+      await tick();
+      await tick();
+      // Restart timer fires after backoff (50ms).
+      timers.advance(50);
+      // Respawn is async (calls spawn) — wait.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const after = h.pool.get("a");
+      expect(after?.state).toBe("ready");
+      expect(after?.pid).not.toBe(firstPid);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("health monitor — strike count resets after success", async () => {
+    const timers = new FakeTimers();
+    const sequence = [false, false, true, false, false]; // F, F, OK, F, F
+    let idx = 0;
+    const h = harness(
+      {
+        healthCheck: async () => {
+          const ok = sequence[idx++] ?? true;
+          if (!ok) throw new Error("fail");
+        },
+      },
+      { healthIntervalMs: 100, healthFailureThreshold: 3, idleSweepIntervalMs: 999_999 },
+      timers,
+    );
+    try {
+      await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      for (let i = 0; i < 5; i++) {
+        timers.advance(100);
+        await tick();
+      }
+      // 2 fails, 1 success (reset to 0), 2 fails → strikes=2, not crashed.
+      expect(h.pool.get("a")?.state).toBe("ready");
+      expect(h.pool.get("a")?.healthStrikes).toBe(2);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("crash recovery — child exit triggers restart", async () => {
+    const timers = new FakeTimers();
+    const h = harness(
+      {},
+      {
+        restartBackoffBaseMs: 50,
+        idleSweepIntervalMs: 999_999,
+        healthIntervalMs: 999_999,
+      },
+      timers,
+    );
+    try {
+      const first = await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      const firstPid = first.pid;
+      // Kill child externally — simulates crash.
+      await stopChild(first.child);
+      await tick();
+      await tick();
+      // Restart scheduled after backoff.
+      timers.advance(50);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const after = h.pool.get("a");
+      expect(after?.state).toBe("ready");
+      expect(after?.pid).not.toBe(firstPid);
+      expect(h.counters.spawns).toBe(2);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("intentional suspend does NOT trigger restart", async () => {
+    const timers = new FakeTimers();
+    const h = harness(
+      {},
+      {
+        restartBackoffBaseMs: 50,
+        idleSweepIntervalMs: 999_999,
+        healthIntervalMs: 999_999,
+      },
+      timers,
+    );
+    try {
+      await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      await h.pool.suspend("a");
+      // Child exit fires asynchronously after suspend's stopChild. Wait.
+      await tick();
+      await tick();
+      // Advance well past any backoff.
+      timers.advance(10_000);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(h.counters.spawns).toBe(1); // no respawn
+      expect(h.pool.get("a")?.state).toBe("suspended");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("exponential backoff sequence: 1000, 2000, 4000ms", async () => {
+    const timers = new FakeTimers();
+    const events: Array<{ event: string; at: number }> = [];
+    const h = harness(
+      {
+        onEngineChange: (id, event) => {
+          if (id === "a" && event === "restart-scheduled") {
+            events.push({ event, at: timers.now });
+          }
+        },
+      },
+      {
+        restartBackoffBaseMs: 1000,
+        restartBackoffMaxMs: 30_000,
+        maxRestarts: 5,
+        idleSweepIntervalMs: 999_999,
+        healthIntervalMs: 999_999,
+        restartCountResetMs: 999_999_999, // disable reset for sequence test
+      },
+      timers,
+    );
+    try {
+      const first = await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      // Crash 1
+      await stopChild(first.child);
+      await tick();
+      await tick();
+      const scheduledAt1 = events[0]?.at;
+      // Wait for backoff + respawn
+      timers.advance(1000);
+      await new Promise((r) => setTimeout(r, 100));
+      // Crash 2
+      const second = h.pool.get("a")!;
+      await stopChild(second.child);
+      await tick();
+      await tick();
+      const scheduledAt2 = events[1]?.at;
+      timers.advance(2000);
+      await new Promise((r) => setTimeout(r, 100));
+      // Crash 3
+      const third = h.pool.get("a")!;
+      await stopChild(third.child);
+      await tick();
+      await tick();
+      const scheduledAt3 = events[2]?.at;
+      // Expect backoff increments: 1s, 2s, 4s between scheduled events
+      expect(scheduledAt2! - scheduledAt1!).toBeGreaterThanOrEqual(1000);
+      expect(scheduledAt3! - scheduledAt2!).toBeGreaterThanOrEqual(2000);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("max restarts reached then permanently failed", async () => {
+    const timers = new FakeTimers();
+    const events: string[] = [];
+    const h = harness(
+      {
+        onEngineChange: (id, event) => {
+          if (id === "a") events.push(event);
+        },
+      },
+      {
+        maxRestarts: 2,
+        restartBackoffBaseMs: 50,
+        idleSweepIntervalMs: 999_999,
+        healthIntervalMs: 999_999,
+        restartCountResetMs: 999_999_999,
+      },
+      timers,
+    );
+    try {
+      const first = await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      // Crash 1
+      await stopChild(first.child);
+      await tick();
+      await tick();
+      timers.advance(50);
+      await new Promise((r) => setTimeout(r, 100));
+      // Crash 2
+      const second = h.pool.get("a")!;
+      await stopChild(second.child);
+      await tick();
+      await tick();
+      timers.advance(100);
+      await new Promise((r) => setTimeout(r, 100));
+      // Crash 3 → exceeds maxRestarts → permanently-failed.
+      const third = h.pool.get("a")!;
+      await stopChild(third.child);
+      await tick();
+      await tick();
+      // Permanently failed: no further restart attempt.
+      expect(events).toContain("permanently-failed");
+      timers.advance(10_000);
+      await new Promise((r) => setTimeout(r, 50));
+      // No more spawns after permanent failure (we had 3 spawns: initial + 2 restarts).
+      expect(h.counters.spawns).toBe(3);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("restartCount resets after stable run beyond restartCountResetMs", async () => {
+    const timers = new FakeTimers();
+    const h = harness(
+      {},
+      {
+        maxRestarts: 1,
+        restartBackoffBaseMs: 50,
+        restartCountResetMs: 500,
+        idleSweepIntervalMs: 999_999,
+        healthIntervalMs: 999_999,
+      },
+      timers,
+    );
+    try {
+      const first = await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      // Crash 1
+      await stopChild(first.child);
+      await tick();
+      await tick();
+      timers.advance(50);
+      await new Promise((r) => setTimeout(r, 100));
+      const second = h.pool.get("a");
+      expect(second?.state).toBe("ready");
+      expect(second?.restartCount).toBe(1);
+      // Advance past resetMs so engine is "stable" — next crash will reset counter.
+      timers.advance(1000);
+      // Crash 2 — should reset to 1 (not 2), so within maxRestarts=1.
+      await stopChild(second!.child);
+      await tick();
+      await tick();
+      timers.advance(50);
+      await new Promise((r) => setTimeout(r, 100));
+      const third = h.pool.get("a");
+      expect(third?.state).toBe("ready");
+      expect(third?.restartCount).toBe(1);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("spawn fail (waitForHealthy throw) does NOT count toward restartCount", async () => {
+    const timers = new FakeTimers();
+    let healthShouldFail = true;
+    const h = harness(
+      {
+        waitForHealthy: async () => {
+          if (healthShouldFail) throw new Error("initial health fail");
+        },
+      },
+      {
+        maxRestarts: 1,
+        restartBackoffBaseMs: 50,
+        idleSweepIntervalMs: 999_999,
+        healthIntervalMs: 999_999,
+      },
+      timers,
+    );
+    try {
+      // First ensure throws (waitForHealthy fail). No engine registered.
+      await expect(h.pool.ensure({ id: "a", path: "/tmp/a" })).rejects.toThrow(
+        "initial health fail",
+      );
+      expect(h.pool.get("a")).toBeUndefined();
+      // Second ensure also throws. Counter is not bumped.
+      await expect(h.pool.ensure({ id: "a", path: "/tmp/a" })).rejects.toThrow();
+      // Now allow health pass — spawn succeeds.
+      healthShouldFail = false;
+      const engine = await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      expect(engine.state).toBe("ready");
+      expect(engine.restartCount).toBe(0);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("onEngineChange callback fires for state transitions", async () => {
+    const timers = new FakeTimers();
+    const events: string[] = [];
+    const h = harness(
+      {
+        onEngineChange: (id, event) => {
+          if (id === "a") events.push(event);
+        },
+      },
+      {
+        restartBackoffBaseMs: 50,
+        idleSweepIntervalMs: 999_999,
+        healthIntervalMs: 999_999,
+      },
+      timers,
+    );
+    try {
+      await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      expect(events).toContain("spawned");
+      await h.pool.suspend("a");
+      expect(events).toContain("suspended");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("killAll cancels pending restart timer", async () => {
+    const timers = new FakeTimers();
+    const h = harness(
+      {},
+      {
+        restartBackoffBaseMs: 5_000, // long backoff so restart not yet fired
+        idleSweepIntervalMs: 999_999,
+        healthIntervalMs: 999_999,
+      },
+      timers,
+    );
+    try {
+      const first = await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      // Crash → restart scheduled.
+      await stopChild(first.child);
+      await tick();
+      await tick();
+      // killAll before restart timer fires.
+      await h.pool.killAll();
+      // Advance past backoff — should NOT spawn (timer was cleared).
+      timers.advance(10_000);
+      await new Promise((r) => setTimeout(r, 100));
+      expect(h.counters.spawns).toBe(1); // no respawn after killAll
     } finally {
       await h.cleanup();
     }
