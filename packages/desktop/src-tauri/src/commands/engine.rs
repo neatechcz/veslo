@@ -110,6 +110,73 @@ fn should_retry_orchestrator_start(
     child_exited && attempt < max_attempts && max_attempts > 1
 }
 
+/// VSLO-171 F2Ú7 (dev only): auto-spawn orchestrator daemon shortly after app
+/// boot so the UI can use per-workspace `engine_info(workspaceId)` without
+/// requiring an explicit user action. Runs on a dedicated OS thread because
+/// `engine_start` does blocking I/O (spawns binaries, waits for health).
+///
+/// No-op when:
+/// - the engine is already running (frontend onboarding got there first), or
+/// - the home directory can't be resolved, or
+/// - directory creation/spawning fails (logged to stderr, not surfaced).
+#[cfg(debug_assertions)]
+pub fn spawn_orchestrator_dev_autostart(app: AppHandle) {
+    use std::thread;
+    use std::time::Duration;
+    use tauri::Manager;
+
+    thread::spawn(move || {
+        // Let UI mount and onboarding flow finish first; if the user picks a
+        // real workspace within this window, that engine_start wins and ours
+        // becomes a no-op (see check below).
+        thread::sleep(Duration::from_millis(1500));
+
+        let engine_manager = app.state::<EngineManager>();
+        let already_running = engine_manager
+            .inner
+            .lock()
+            .ok()
+            .map(|state| state.base_url.is_some())
+            .unwrap_or(false);
+        if already_running {
+            eprintln!("[dev-autostart] engine already running — skipping");
+            return;
+        }
+
+        let Some(home) = crate::paths::home_dir() else {
+            eprintln!("[dev-autostart] HOME not found — skipping");
+            return;
+        };
+        let scratch = home.join(".veslo").join("scratch");
+        if let Err(e) = std::fs::create_dir_all(&scratch) {
+            eprintln!("[dev-autostart] mkdir {:?} failed: {}", scratch, e);
+            return;
+        }
+
+        let project_dir = scratch.to_string_lossy().to_string();
+        eprintln!("[dev-autostart] starting orchestrator at {}", project_dir);
+        let result = engine_start(
+            app.clone(),
+            app.state::<EngineManager>(),
+            app.state::<OrchestratorManager>(),
+            app.state::<VesloServerManager>(),
+            app.state::<OpenCodeRouterManager>(),
+            project_dir,
+            None,
+            None,
+            Some(EngineRuntime::Orchestrator),
+            None,
+        );
+        match result {
+            Ok(info) => eprintln!(
+                "[dev-autostart] orchestrator ready, base_url={:?}",
+                info.base_url
+            ),
+            Err(e) => eprintln!("[dev-autostart] failed: {}", e),
+        }
+    });
+}
+
 #[tauri::command]
 pub fn engine_info(
     manager: State<EngineManager>,
