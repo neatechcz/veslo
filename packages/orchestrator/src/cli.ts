@@ -16,6 +16,7 @@ import type { TuiHandle } from "./tui/app.js";
 import { reconcileOpencodeVersion } from "./opencode-version.js";
 import { sanitizeRuntimePayloadForLogs } from "./security.js";
 import { readVersionManifestFromDirs, type VersionInfo, type VersionManifest } from "./version-manifest.js";
+import type { SerializedEngineState } from "./engine-pool.js";
 
 type ApprovalMode = "manual" | "auto";
 
@@ -222,7 +223,9 @@ type RouterSidecarState = {
 type RouterState = {
   version: number;
   daemon?: RouterDaemonState;
+  /** @deprecated VSLO-171 fáze 2 — single-engine state. Lazy-spawned engines žijí v `engines`. */
   opencode?: RouterOpencodeState;
+  engines?: Record<string, SerializedEngineState>;
   cliVersion?: string;
   sidecar?: RouterSidecarState;
   binaries?: RouterBinaryState;
@@ -1919,12 +1922,14 @@ async function loadRouterState(path: string): Promise<RouterState> {
     if (!parsed.workspaces) parsed.workspaces = [];
     if (!parsed.activeId) parsed.activeId = "";
     if (!parsed.version) parsed.version = 1;
+    if (!parsed.engines) parsed.engines = {};
     return parsed;
   } catch {
     return {
       version: 1,
       daemon: undefined,
       opencode: undefined,
+      engines: {},
       cliVersion: undefined,
       sidecar: undefined,
       binaries: undefined,
