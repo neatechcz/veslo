@@ -256,6 +256,7 @@ export type SessionViewProps = {
   lastPromptSent: string;
   retryLastPrompt: () => void;
   newTaskDisabled: boolean;
+  pendingPermissionCountByWs?: Record<string, number>;
   workspaceSessionGroups: WorkspaceSessionGroup[];
   unreadSessionIds: Record<string, true>;
   workspaceSessionPagingById: Record<string, { hasMore: boolean; loadingMore: boolean }>;
@@ -3956,6 +3957,7 @@ export default function SessionView(props: SessionViewProps) {
             activeWorkspaceId={props.activeWorkspaceId}
             selectedSessionId={props.selectedSessionId}
             allowSelectedParentExpansion={true}
+            pendingPermissionCountByWs={props.pendingPermissionCountByWs}
             pendingSelectedSessionId={props.pendingSessionLoad?.sessionId ?? null}
             pendingSelectedWorkspaceId={props.pendingSessionLoad?.workspaceId ?? null}
             suspendProjectReorder={Boolean(props.pendingSessionLoad)}

@@ -130,6 +130,7 @@ export type DashboardViewProps = {
   busyHint: string | null;
   busyLabel: string | null;
   newTaskDisabled: boolean;
+  pendingPermissionCountByWs?: Record<string, number>;
   headerStatus: string;
   error: string | null;
   vesloServerStatus: VesloServerStatus;
@@ -1428,6 +1429,7 @@ export default function DashboardView(props: DashboardViewProps) {
               selectedSessionId={props.selectedSessionId}
               allowSelectedParentExpansion={false}
               connectingWorkspaceId={props.connectingWorkspaceId}
+              pendingPermissionCountByWs={props.pendingPermissionCountByWs}
               workspaceConnectionStateById={props.workspaceConnectionStateById}
               newTaskDisabled={props.newTaskDisabled}
               importingWorkspaceConfig={props.importingWorkspaceConfig}
