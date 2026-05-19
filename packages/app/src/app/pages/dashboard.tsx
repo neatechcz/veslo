@@ -281,6 +281,10 @@ export type DashboardViewProps = {
   toggleHideTitlebar: () => void;
   multiClientEnabled: boolean;
   toggleMultiClient: () => void;
+  maxEngines: number;
+  setMaxEngines: (n: number) => void;
+  idleSuspendMs: number;
+  setIdleSuspendMs: (ms: number) => void;
   modelVariantLabel: string;
   modelVariant: string;
   setModelVariant: (value: string) => void;
@@ -1661,6 +1665,10 @@ export default function DashboardView(props: DashboardViewProps) {
                   toggleHideTitlebar={props.toggleHideTitlebar}
                   multiClientEnabled={props.multiClientEnabled}
                   toggleMultiClient={props.toggleMultiClient}
+                  maxEngines={props.maxEngines}
+                  setMaxEngines={props.setMaxEngines}
+                  idleSuspendMs={props.idleSuspendMs}
+                  setIdleSuspendMs={props.setIdleSuspendMs}
                   modelVariantLabel={props.modelVariantLabel}
                   modelVariant={props.modelVariant}
                   setModelVariant={props.setModelVariant}

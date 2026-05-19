@@ -167,6 +167,8 @@ import {
   SUGGESTED_PLUGINS,
   THINKING_PREF_KEY,
   ROUTING_MULTI_CLIENT_PREF_KEY,
+  MAX_ENGINES_PREF_KEY,
+  IDLE_SUSPEND_MS_PREF_KEY,
   VARIANT_PREF_KEY,
   type McpDirectoryInfo,
 } from "./constants";
@@ -2967,6 +2969,11 @@ export default function App() {
   // at createWorkspaceRouting init). Default false; multi mode itself is wired
   // in F3Ú5/F3Ú6 — until then this is "armed but inert".
   const [multiClientEnabled, setMultiClientEnabled] = createSignal(false);
+  // VSLO-171 F3Ú9 — Performance pool settings forwarded to orchestrator on
+  // engine spawn. Restart-required (orchestrator reads from CLI args).
+  // Defaults mirror orchestrator's own defaults (8 engines, 15 min idle).
+  const [maxEngines, setMaxEngines] = createSignal(8);
+  const [idleSuspendMs, setIdleSuspendMs] = createSignal(15 * 60_000);
   const [autoCompactContext, setAutoCompactContext] = createSignal(true);
   const [modelVariant, setModelVariant] = createSignal<string | null>(DEFAULT_MODEL_VARIANT);
   const [modelVariantPreferenceReady, setModelVariantPreferenceReady] = createSignal(false);
@@ -2994,6 +3001,8 @@ export default function App() {
     client,
     setClient,
     routing: workspaceRouting,
+    maxEngines: () => maxEngines(),
+    idleSuspendMs: () => idleSuspendMs(),
     setConnectedVersion,
     setSseConnected,
     setProviders,
@@ -7549,6 +7558,30 @@ export default function App() {
         }
         console.info("[veslo.routing] mode=", multiClientEnabled() ? "multi" : "single-active");
 
+        // VSLO-171 F3Ú9 — Performance settings.
+        const storedMax = window.localStorage.getItem(MAX_ENGINES_PREF_KEY);
+        if (storedMax != null) {
+          try {
+            const parsed = JSON.parse(storedMax);
+            if (typeof parsed === "number" && parsed >= 1 && parsed <= 16) {
+              setMaxEngines(parsed);
+            }
+          } catch {
+            // ignore
+          }
+        }
+        const storedIdle = window.localStorage.getItem(IDLE_SUSPEND_MS_PREF_KEY);
+        if (storedIdle != null) {
+          try {
+            const parsed = JSON.parse(storedIdle);
+            if (typeof parsed === "number" && parsed >= 0) {
+              setIdleSuspendMs(parsed);
+            }
+          } catch {
+            // ignore
+          }
+        }
+
         const storedHideTitlebar = window.localStorage.getItem(HIDE_TITLEBAR_PREF_KEY);
         if (storedHideTitlebar != null) {
           try {
@@ -8209,6 +8242,24 @@ export default function App() {
     }
   });
 
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(MAX_ENGINES_PREF_KEY, JSON.stringify(maxEngines()));
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(IDLE_SUSPEND_MS_PREF_KEY, JSON.stringify(idleSuspendMs()));
+    } catch {
+      // ignore
+    }
+  });
+
   // Persist and apply hideTitlebar setting
   createEffect(() => {
     if (typeof window === "undefined") return;
@@ -8765,6 +8816,10 @@ export default function App() {
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
       multiClientEnabled: multiClientEnabled(),
       toggleMultiClient: () => setMultiClientEnabled((v) => !v),
+      maxEngines: maxEngines(),
+      setMaxEngines: (n: number) => setMaxEngines(Math.max(1, Math.min(16, Math.floor(n)))),
+      idleSuspendMs: idleSuspendMs(),
+      setIdleSuspendMs: (ms: number) => setIdleSuspendMs(Math.max(0, Math.floor(ms))),
       modelVariantLabel: formatModelVariantLabel(modelVariant()),
       modelVariant: normalizeModelVariant(modelVariant()) ?? "none",
       setModelVariant: (value: string) => setModelVariant(value),

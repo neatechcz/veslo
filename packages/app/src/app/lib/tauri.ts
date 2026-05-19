@@ -378,6 +378,9 @@ export async function engineStart(
     runtime?: "direct" | "veslo-orchestrator";
     workspacePaths?: string[];
     opencodeBinPath?: string | null;
+    // VSLO-171 F3Ú9: Performance settings forwarded to orchestrator daemon.
+    maxEngines?: number | null;
+    idleSuspendMs?: number | null;
   },
 ): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_start", {
@@ -386,6 +389,8 @@ export async function engineStart(
     opencodeBinPath: options?.opencodeBinPath ?? null,
     runtime: options?.runtime ?? null,
     workspacePaths: options?.workspacePaths ?? null,
+    maxEngines: options?.maxEngines ?? null,
+    idleSuspendMs: options?.idleSuspendMs ?? null,
   });
 }
 

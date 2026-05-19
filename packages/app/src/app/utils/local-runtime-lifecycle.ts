@@ -11,6 +11,9 @@ export type LocalRuntimeStartOptions = {
   opencodeBinPath: string | null;
   runtime: EngineInfo["runtime"];
   workspacePaths: string[];
+  // VSLO-171 F3Ú9: pool tuning forwarded to orchestrator daemon.
+  maxEngines?: number | null;
+  idleSuspendMs?: number | null;
 };
 
 export type LocalRuntimeConnectMode = "server" | "quiet";
@@ -31,6 +34,9 @@ export interface LocalRuntimeLifecycleDeps {
   engineCustomBinPath?: () => string;
   resolveEngineRuntime: () => EngineInfo["runtime"];
   resolveWorkspacePaths: () => string[];
+  // VSLO-171 F3Ú9: pool tuning accessors from Settings preferences.
+  maxEngines?: () => number | null;
+  idleSuspendMs?: () => number | null;
   setEngine: (info: EngineInfo) => void;
   setEngineAuth: (auth: OpencodeAuth | null) => void;
   startEngine: (workspacePath: string, options: LocalRuntimeStartOptions) => Promise<EngineInfo>;
@@ -70,6 +76,8 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
     opencodeBinPath: deps.engineSource() === "custom" ? deps.engineCustomBinPath?.().trim() || null : null,
     runtime,
     workspacePaths: deps.resolveWorkspacePaths(),
+    maxEngines: deps.maxEngines?.() ?? null,
+    idleSuspendMs: deps.idleSuspendMs?.() ?? null,
   });
 
   const syncEngineSnapshot = (info: EngineInfo): OpencodeAuth | undefined => {

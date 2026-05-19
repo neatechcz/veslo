@@ -90,6 +90,10 @@ export type SettingsViewProps = {
   toggleHideTitlebar: () => void;
   multiClientEnabled: boolean;
   toggleMultiClient: () => void;
+  maxEngines: number;
+  setMaxEngines: (n: number) => void;
+  idleSuspendMs: number;
+  setIdleSuspendMs: (ms: number) => void;
   modelVariantLabel: string;
   modelVariant: string;
   setModelVariant: (value: string) => void;
@@ -1449,6 +1453,53 @@ export default function SettingsView(props: SettingsViewProps) {
                 >
                   {props.multiClientEnabled ? translate("settings.on") : translate("settings.off")}
                 </Button>
+              </div>
+            </div>
+
+            <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+              <div>
+                <div class="text-sm font-medium text-gray-12">Performance</div>
+                <div class="text-xs text-gray-10">Engine pool tuning (multi-workspace routing). Restart engine to apply.</div>
+              </div>
+
+              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                <div class="min-w-0 flex-1">
+                  <div class="text-sm text-gray-12">Max concurrent engines</div>
+                  <div class="text-xs text-gray-7">Upper bound for the per-workspace engine pool (1–16, default 8).</div>
+                </div>
+                <input
+                  type="number"
+                  min={1}
+                  max={16}
+                  step={1}
+                  class="w-20 text-xs h-8 px-2 rounded border border-gray-6 bg-gray-1 text-gray-12 shrink-0"
+                  value={props.maxEngines}
+                  disabled={props.busy}
+                  onChange={(event) => {
+                    const v = Number(event.currentTarget.value);
+                    if (Number.isFinite(v)) props.setMaxEngines(v);
+                  }}
+                />
+              </div>
+
+              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                <div class="min-w-0 flex-1">
+                  <div class="text-sm text-gray-12">Idle suspend (minutes)</div>
+                  <div class="text-xs text-gray-7">Suspend an engine after this many minutes of inactivity (0 = never, default 15).</div>
+                </div>
+                <input
+                  type="number"
+                  min={0}
+                  max={120}
+                  step={1}
+                  class="w-20 text-xs h-8 px-2 rounded border border-gray-6 bg-gray-1 text-gray-12 shrink-0"
+                  value={Math.round(props.idleSuspendMs / 60_000)}
+                  disabled={props.busy}
+                  onChange={(event) => {
+                    const minutes = Number(event.currentTarget.value);
+                    if (Number.isFinite(minutes)) props.setIdleSuspendMs(Math.max(0, minutes) * 60_000);
+                  }}
+                />
               </div>
             </div>
 

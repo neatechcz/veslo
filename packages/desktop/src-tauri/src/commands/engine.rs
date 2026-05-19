@@ -160,6 +160,8 @@ pub fn spawn_orchestrator_dev_autostart(app: AppHandle) {
             None,
             Some(EngineRuntime::Orchestrator),
             None,
+            None,
+            None,
         );
         match result {
             Ok(info) => eprintln!(
@@ -381,6 +383,8 @@ pub fn engine_restart(
         None,
         Some(runtime),
         Some(workspace_paths),
+        None,
+        None,
     )
 }
 
@@ -481,6 +485,9 @@ pub fn engine_start(
     opencode_bin_path: Option<String>,
     runtime: Option<EngineRuntime>,
     workspace_paths: Option<Vec<String>>,
+    // VSLO-171 F3Ú9: Settings Performance panel passes pool tuning.
+    max_engines: Option<u32>,
+    idle_suspend_ms: Option<u64>,
 ) -> Result<EngineInfo, String> {
     let project_dir = project_dir.trim().to_string();
     if project_dir.is_empty() {
@@ -605,6 +612,8 @@ pub fn engine_start(
                 opencode_username: opencode_username.clone(),
                 opencode_password: opencode_password.clone(),
                 cors: Some("*".to_string()),
+                max_engines,
+                idle_suspend_ms,
             };
 
             let (mut rx, child) = orchestrator::spawn_orchestrator_daemon(&app, &spawn_options)?;

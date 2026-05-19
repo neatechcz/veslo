@@ -41,6 +41,9 @@ export interface EngineStoreDeps {
   // Engine source / bin path
   engineSource: () => "path" | "sidecar" | "custom";
   engineCustomBinPath?: () => string;
+  // VSLO-171 F3Ú9: pool tuning passed down to orchestrator on spawn.
+  maxEngines?: () => number | null;
+  idleSuspendMs?: () => number | null;
   isWindowsPlatform: () => boolean;
 
   // UI state setters
@@ -106,6 +109,8 @@ export function createEngineStore(deps: EngineStoreDeps) {
     engineCustomBinPath: deps.engineCustomBinPath,
     resolveEngineRuntime: deps.resolveEngineRuntime,
     resolveWorkspacePaths: deps.resolveWorkspacePaths,
+    maxEngines: deps.maxEngines,
+    idleSuspendMs: deps.idleSuspendMs,
     setEngine,
     setEngineAuth,
     startEngine: engineStart,
