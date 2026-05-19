@@ -41,7 +41,7 @@ export interface LocalRuntimeLifecycleDeps {
   setEngineAuth: (auth: OpencodeAuth | null) => void;
   startEngine: (workspacePath: string, options: LocalRuntimeStartOptions) => Promise<EngineInfo>;
   stopEngine: () => Promise<EngineInfo>;
-  readEngineInfo: () => Promise<EngineInfo>;
+  readEngineInfo: (workspaceId?: string) => Promise<EngineInfo>;
   activateOrchestratorWorkspace: (input: {
     workspacePath: string;
     name?: string | null;
@@ -98,23 +98,40 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
     info: EngineInfo,
     options: LocalRuntimeReconnectOptions,
   ) => {
-    const auth = syncEngineSnapshot(info);
-    const baseUrl = info.baseUrl?.trim() ?? "";
-    console.log("[veslo.reconnectFromEngineSnapshot]", {
-      hasBaseUrl: Boolean(baseUrl),
-      baseUrl,
-      workspaceId: options.workspaceId,
-      workspacePath: options.workspacePath,
-      connectMode: options.connectMode ?? "server",
-      reason: options.reason,
-    });
+    let activeInfo = info;
+    let auth = syncEngineSnapshot(activeInfo);
+    let baseUrl = activeInfo.baseUrl?.trim() ?? "";
+
+    // VSLO-171 — orchestrator F2Ú7 spawn-on-demand: engine_info returns an
+    // empty baseUrl when the per-workspace engine hasn't been spawned yet.
+    // Poll engine_info (with workspaceId) until baseUrl is populated so
+    // connectToServer can run instead of being silently skipped.
+    if (!baseUrl && options.workspaceId) {
+      const pollStart = Date.now();
+      const timeoutMs = 10_000;
+      const pollIntervalMs = 200;
+      while (Date.now() - pollStart < timeoutMs) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        try {
+          activeInfo = await deps.readEngineInfo(options.workspaceId);
+        } catch {
+          continue;
+        }
+        baseUrl = activeInfo.baseUrl?.trim() ?? "";
+        if (baseUrl) {
+          auth = syncEngineSnapshot(activeInfo);
+          break;
+        }
+      }
+    }
+
     if (!baseUrl) {
-      console.warn("[veslo.reconnectFromEngineSnapshot] empty baseUrl — skipping connectToServer (this leaves client unset, sendPrompt will fail)");
+      console.warn("[veslo.reconnectFromEngineSnapshot] baseUrl still empty after polling — skipping connectToServer");
       return true;
     }
 
     if ((options.connectMode ?? "server") === "quiet") {
-      return await deps.connectQuiet(baseUrl, options.workspacePath, auth);
+      return await deps.connectQuiet(baseUrl, options.workspacePath, auth ?? undefined);
     }
 
     return await deps.connectToServer(
