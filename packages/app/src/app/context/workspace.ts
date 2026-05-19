@@ -1412,18 +1412,22 @@ export function createWorkspaceStore(options: {
       return true;
     }
 
-    // VSLO-171 F3Ú6c — multi-routing mode delegates to routing.ensure so the
-    // per-workspace Client cached in workspace-routing.ts is reused on
-    // subsequent switches (no kill-restart, no Managed AI bootstrap timeout
-    // when returning to a previously-visited workspace). State RESET is
-    // skipped here because the per-workspace cache effect in app.tsx
-    // (F3Ú6a) handles save/load on activeWorkspaceId change. Single-active
-    // mode keeps the original kill-restart path below unchanged.
-    const multiWorkspaceId = context?.workspaceId;
-    if (
-      options.routing.mode() === "multi" &&
-      multiWorkspaceId
-    ) {
+    // VSLO-171 — connectToServer delegates to routing.ensure so the per-WS
+    // Client cached in workspace-routing.ts is reused on subsequent switches
+    // (no kill-restart, no Managed AI bootstrap timeout when returning to a
+    // previously-visited workspace). State RESET is handled by the
+    // per-workspace cache effect in app.tsx (save/load on activeWorkspaceId).
+    const multiWorkspaceId =
+      context?.workspaceId ?? activeWorkspaceId().trim() ?? "";
+    if (!multiWorkspaceId) {
+      wsDebug("connect:no-workspace-id", {
+        baseUrl: nextBaseUrl,
+        directory: directory ?? null,
+      });
+      options.setError("Connect requires a workspace id");
+      return false;
+    }
+    {
       const multiRun = (async () => {
         const connectStart = Date.now();
         const quiet = connectOptions?.quiet ?? false;
@@ -1468,18 +1472,19 @@ export function createWorkspaceStore(options: {
             });
             return false;
           }
-          // Backwards-compat publish on the global client signal so legacy
-          // callsites that still read client() (rather than routedClient())
-          // see the active workspace's client. routedClient() in multi mode
-          // prefers routing.client(activeWorkspaceId) → entries Map.
+          // Publish on the global client signal so callsites that still read
+          // `client()` directly (rather than `routedClient()`) see the active
+          // workspace's client. `routedClient()` prefers
+          // routing.client(activeWorkspaceId) which hits the entries Map.
           options.setClient(entry.client);
+          options.setConnectedVersion(null);
           options.setBaseUrl(nextBaseUrl);
           options.setClientDirectory(entry.directory ?? incomingDirectory);
-          wsDebug("connect:multi:ensured", {
+          wsDebug("connect:ensured", {
             workspaceId: multiWorkspaceId,
             ms: Date.now() - connectStart,
           });
-          // Per-workspace cache effect (F3Ú6a) already restored sessions/
+          // Per-workspace cache effect in app.tsx already restored sessions/
           // messages/todos on activeWorkspaceId change. We still refresh
           // sessions to catch updates the cache didn't have, but the cache
           // hit means UI is responsive immediately.
@@ -1531,6 +1536,10 @@ export function createWorkspaceStore(options: {
       }
     }
 
+    // Unreachable — single-active fallback was removed along with the flag.
+    // The early `if (!multiWorkspaceId)` above is the only exit besides the
+    // multiRun result. Leaving this dead block deliberately empty so the
+    // diff stays small; future cleanup can drop the labeled scope above.
     const run = (async () => {
       console.log("[workspace] connect", {
         baseUrl: nextBaseUrl,

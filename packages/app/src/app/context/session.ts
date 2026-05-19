@@ -739,49 +739,54 @@ export function createSessionStore(options: {
   }
 
   async function refreshPendingPermissions() {
-    // VSLO-171 F3Ú7a — in multi mode iterate every per-workspace client and
-    // refresh each workspace's permissions independently. The active
-    // workspace's list is also mirrored into the global store so legacy UI
-    // codes (Dialog, activePermission memo) keep working.
-    if (options.routing.mode() === "multi") {
-      const activeWs = options.routing.activeWorkspaceId();
-      const nextByWs: Record<string, PendingPermission[]> = {};
-      const now = Date.now();
-      const prevByWs = pendingPermissionsByWs();
-      const clientsToProbe: Array<{ wsId: string; client: RoutingClient }> = [];
-      options.routing.forEach((wsId, client) => {
-        clientsToProbe.push({ wsId, client });
-      });
-      await Promise.all(
-        clientsToProbe.map(async ({ wsId, client }) => {
-          try {
-            const list = unwrap(await client.permission.list()) as Array<PendingPermission>;
-            const prev = prevByWs[wsId] ?? [];
-            const byId = new Map(prev.map((p) => [p.id, p] as const));
-            nextByWs[wsId] = list.map((perm) => ({
-              ...perm,
-              workspaceId: wsId,
-              receivedAt: byId.get(perm.id)?.receivedAt ?? now,
-            }));
-          } catch {
-            nextByWs[wsId] = prevByWs[wsId] ?? [];
-          }
-        })
-      );
-      setPendingPermissionsByWs(nextByWs);
-      // Mirror active workspace into global store for backwards compat.
-      const activeList = activeWs ? nextByWs[activeWs] ?? [] : [];
-      setStore("pendingPermissions", activeList);
+    // VSLO-171 — iterate every per-workspace client and refresh each
+    // workspace's permissions independently. The active workspace's list is
+    // also mirrored into the global store so callers that read
+    // store.pendingPermissions directly (Dialog, activePermission memo) keep
+    // working.
+    const activeWs = options.routing.activeWorkspaceId();
+    const nextByWs: Record<string, PendingPermission[]> = {};
+    const now = Date.now();
+    const prevByWs = pendingPermissionsByWs();
+    const clientsToProbe: Array<{ wsId: string; client: RoutingClient }> = [];
+    options.routing.forEach((wsId, client) => {
+      clientsToProbe.push({ wsId, client });
+    });
+    // If no per-WS clients have been ensured yet, fall back to the global
+    // active client so the very first prompt still surfaces permissions.
+    if (clientsToProbe.length === 0) {
+      const c = options.routing.active();
+      if (!c) return;
+      const list = unwrap(await c.permission.list()) as Array<PendingPermission>;
+      const byId = new Map(store.pendingPermissions.map((p) => [p.id, p] as const));
+      const next = list.map((perm) => ({
+        ...perm,
+        workspaceId: activeWs || undefined,
+        receivedAt: byId.get(perm.id)?.receivedAt ?? now,
+      }));
+      setStore("pendingPermissions", next);
+      if (activeWs) setPendingPermissionsByWs({ [activeWs]: next });
       return;
     }
-    // Single-active mode — original behavior.
-    const c = options.routing.active();
-    if (!c) return;
-    const list = unwrap(await c.permission.list());
-    const now = Date.now();
-    const byId = new Map(store.pendingPermissions.map((perm) => [perm.id, perm] as const));
-    const next = list.map((perm) => ({ ...perm, receivedAt: byId.get(perm.id)?.receivedAt ?? now }));
-    setStore("pendingPermissions", next);
+    await Promise.all(
+      clientsToProbe.map(async ({ wsId, client }) => {
+        try {
+          const list = unwrap(await client.permission.list()) as Array<PendingPermission>;
+          const prev = prevByWs[wsId] ?? [];
+          const byId = new Map(prev.map((p) => [p.id, p] as const));
+          nextByWs[wsId] = list.map((perm) => ({
+            ...perm,
+            workspaceId: wsId,
+            receivedAt: byId.get(perm.id)?.receivedAt ?? now,
+          }));
+        } catch {
+          nextByWs[wsId] = prevByWs[wsId] ?? [];
+        }
+      })
+    );
+    setPendingPermissionsByWs(nextByWs);
+    const activeList = activeWs ? nextByWs[activeWs] ?? [] : [];
+    setStore("pendingPermissions", activeList);
   }
 
   async function refreshPendingQuestions() {
@@ -1118,12 +1123,11 @@ export function createSessionStore(options: {
       const scoped = store.pendingPermissions.find((perm) => perm.sessionID === id) ?? null;
       if (scoped) return scoped;
     }
-    // VSLO-171 F3Ú7b — in multi mode the dialog must surface permissions from
-    // any workspace, not just the active one. Prefer active workspace first
-    // (less surprising for the user) then fall back to any pending permission.
-    if (options.routing.mode() === "multi") {
-      const all = allPendingPermissions();
-      if (all.length === 0) return null;
+    // VSLO-171 — surface permissions from any workspace, preferring the
+    // active one so the dialog isn't surprising. Falls back to global store
+    // when no per-WS entries exist yet (first prompt).
+    const all = allPendingPermissions();
+    if (all.length > 0) {
       const activeWsId = options.routing.activeWorkspaceId();
       const fromActive = all.find((p) => p.workspaceId === activeWsId);
       return fromActive ?? all[0];

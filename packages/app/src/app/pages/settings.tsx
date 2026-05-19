@@ -95,8 +95,6 @@ export type SettingsViewProps = {
   toggleShowThinking: () => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
-  multiClientEnabled: boolean;
-  toggleMultiClient: () => void;
   maxEngines: number;
   setMaxEngines: (n: number) => void;
   idleSuspendMs: number;
@@ -1443,28 +1441,6 @@ export default function SettingsView(props: SettingsViewProps) {
                 </div>
               </div>
             </Show>
-
-            <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
-              <div>
-                <div class="text-sm font-medium text-gray-12">Experimental</div>
-                <div class="text-xs text-gray-10">Preview features. May change or be removed without notice.</div>
-              </div>
-
-              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-                <div class="min-w-0">
-                  <div class="text-sm text-gray-12">Multi-workspace routing (preview)</div>
-                  <div class="text-xs text-gray-7">VSLO-171: per-workspace SDK clients. Restart app to apply.</div>
-                </div>
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3 shrink-0"
-                  onClick={props.toggleMultiClient}
-                  disabled={props.busy}
-                >
-                  {props.multiClientEnabled ? translate("settings.on") : translate("settings.off")}
-                </Button>
-              </div>
-            </div>
 
             <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
               <div>

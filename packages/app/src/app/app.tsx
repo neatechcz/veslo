@@ -173,7 +173,6 @@ import {
   MODEL_PREF_KEY,
   SUGGESTED_PLUGINS,
   THINKING_PREF_KEY,
-  ROUTING_MULTI_CLIENT_PREF_KEY,
   MAX_ENGINES_PREF_KEY,
   IDLE_SUSPEND_MS_PREF_KEY,
   VARIANT_PREF_KEY,
@@ -1160,27 +1159,17 @@ export default function App() {
 
   const [client, setClient] = createSignal<Client | null>(null);
 
-  // VSLO-171 F3Ú2 — feature flag for multi-workspace routing. Declared BEFORE
-  // workspaceRouting so closures (mode, activeWorkspaceId) can resolve at
-  // creation. activePermission memo in session.ts evaluates routing.mode()
-  // eagerly at createSessionStore init — that's why this can't live further
-  // down with other UI prefs.
-  const [multiClientEnabled, setMultiClientEnabled] = createSignal(false);
   // VSLO-171 F3Ú9 — Performance pool settings forwarded to orchestrator.
   const [maxEngines, setMaxEngines] = createSignal(8);
   const [idleSuspendMs, setIdleSuspendMs] = createSignal(15 * 60_000);
 
-  // VSLO-171 F3Ú1/Ú2/Ú3/Ú4 — single-active workspace routing adapter.
-  // Instantiated early so it can be injected into createSessionStore (~1379)
-  // and createWorkspaceStore (~2988) as an option. `mode` and `activeWorkspaceId`
-  // are closures that reference signals declared later in App() — safe because
-  // they're only called after full app init.
+  // VSLO-171 — workspace routing service. Multi mode is the only mode (no
+  // single-active fallback, no feature flag). Instantiated before
+  // createSessionStore so memos that read routing.mode() at init can resolve.
   let workspaceStoreRef: ReturnType<typeof createWorkspaceStore> | null = null;
   const workspaceRouting = createWorkspaceRouting({
-    mode: () => (multiClientEnabled() ? "multi" : "single-active"),
     clientSource: client,
     activeWorkspaceId: () => workspaceStoreRef?.activeWorkspaceId().trim() ?? "",
-    // F3Ú6b — wired for multi mode; single-active mode never calls these.
     createClient: (baseUrl, directory, auth) => createClient(baseUrl, directory, auth),
     waitForHealthy: (c, opts) => waitForHealthy(c, opts),
   });
@@ -3919,9 +3908,9 @@ export default function App() {
 
   const [showThinking, setShowThinking] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
-  // VSLO-171 F3Ú2/Ú9 — multiClientEnabled, maxEngines, idleSuspendMs were
-  // moved up to ~ř.1097 so workspaceRouting closures (and downstream session
-  // store memos) can access them without TDZ at createSessionStore init.
+  // VSLO-171 F3Ú9 — maxEngines, idleSuspendMs were moved up to ~ř.1097 so
+  // workspaceRouting closures (and downstream session store memos) can
+  // access them without TDZ at createSessionStore init.
   const [autoCompactContext, setAutoCompactContext] = createSignal(true);
   const [modelVariant, setModelVariant] = createSignal<string | null>(DEFAULT_MODEL_VARIANT);
   const [modelVariantPreferenceReady, setModelVariantPreferenceReady] = createSignal(false);
@@ -4028,8 +4017,9 @@ export default function App() {
   // multiplex (F3Ú6d push) we refresh every 5 s in multi mode so background
   // workspaces show up-to-date badge counts. Single-active mode skips polling
   // (one client, SSE already covers it).
+  // VSLO-171 — per-workspace pending permissions polling. Refresh every 5 s
+  // so background workspaces show up-to-date sidebar badge counts.
   createEffect(() => {
-    if (!multiClientEnabled()) return;
     const id = setInterval(() => {
       void sessionStore.refreshPendingPermissions();
     }, 5000);
@@ -4042,20 +4032,20 @@ export default function App() {
   // one so sessions/messages/permissions don't get wiped between switches.
   // connectToServer (F3Ú6c) will skip its own state RESET when running in
   // multi so the cache is the single source of truth across switches.
+  // VSLO-171 — per-workspace session cache save/load. Each workspace switch
+  // saves the outgoing snapshot and restores the incoming one so sessions/
+  // messages/permissions don't get wiped between switches. connectToServer
+  // skips its own state RESET — this cache is the source of truth.
   let previousActiveWsId: string | null = null;
   createEffect(() => {
     const wsId = workspaceStore.activeWorkspaceId().trim();
-    if (!multiClientEnabled()) {
-      previousActiveWsId = wsId || null;
-      return;
-    }
     if (previousActiveWsId && previousActiveWsId !== wsId) {
       sessionStore.saveWorkspaceSnapshot(previousActiveWsId);
     }
     if (wsId) {
       sessionStore.loadWorkspaceSnapshot(wsId);
-      // Cache miss is fine — connectToServer multi path (F3Ú6c) will trigger
-      // loadSessions to populate fresh state.
+      // Cache miss is fine — connectToServer will trigger loadSessions to
+      // populate fresh state.
     }
     previousActiveWsId = wsId || null;
   });
@@ -9418,19 +9408,6 @@ export default function App() {
           }
         }
 
-        const storedMultiClient = window.localStorage.getItem(ROUTING_MULTI_CLIENT_PREF_KEY);
-        if (storedMultiClient != null) {
-          try {
-            const parsed = JSON.parse(storedMultiClient);
-            if (typeof parsed === "boolean") {
-              setMultiClientEnabled(parsed);
-            }
-          } catch {
-            // ignore
-          }
-        }
-        console.info("[veslo.routing] mode=", multiClientEnabled() ? "multi" : "single-active");
-
         // VSLO-171 F3Ú9 — Performance settings.
         const storedMax = window.localStorage.getItem(MAX_ENGINES_PREF_KEY);
         if (storedMax != null) {
@@ -10106,18 +10083,6 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem(
-        ROUTING_MULTI_CLIENT_PREF_KEY,
-        JSON.stringify(multiClientEnabled())
-      );
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
       window.localStorage.setItem(MAX_ENGINES_PREF_KEY, JSON.stringify(maxEngines()));
     } catch {
       // ignore
@@ -10743,8 +10708,6 @@ export default function App() {
       toggleShowThinking: () => setShowThinking((v) => !v),
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
-      multiClientEnabled: multiClientEnabled(),
-      toggleMultiClient: () => setMultiClientEnabled((v) => !v),
       maxEngines: maxEngines(),
       setMaxEngines: (n: number) => setMaxEngines(Math.max(1, Math.min(16, Math.floor(n)))),
       idleSuspendMs: idleSuspendMs(),

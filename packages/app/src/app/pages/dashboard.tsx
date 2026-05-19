@@ -318,8 +318,6 @@ export type DashboardViewProps = {
   toggleShowThinking: () => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
-  multiClientEnabled: boolean;
-  toggleMultiClient: () => void;
   maxEngines: number;
   setMaxEngines: (n: number) => void;
   idleSuspendMs: number;
@@ -1746,8 +1744,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   toggleShowThinking={props.toggleShowThinking}
                   hideTitlebar={props.hideTitlebar}
                   toggleHideTitlebar={props.toggleHideTitlebar}
-                  multiClientEnabled={props.multiClientEnabled}
-                  toggleMultiClient={props.toggleMultiClient}
                   maxEngines={props.maxEngines}
                   setMaxEngines={props.setMaxEngines}
                   idleSuspendMs={props.idleSuspendMs}
