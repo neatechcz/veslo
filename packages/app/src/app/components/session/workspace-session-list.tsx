@@ -88,6 +88,8 @@ type Props = {
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
+  /** VSLO-171 F3Ú7c — per-workspace pending permission counts for sidebar badges. */
+  pendingPermissionCountByWs?: Record<string, number>;
   importingWorkspaceConfig: boolean;
   showRemoteActions?: boolean;
   soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
@@ -1729,6 +1731,14 @@ export default function WorkspaceSessionList(props: Props) {
                             </Show>
                             <Show when={isConnecting()}>
                               <Loader2 size={11} class="animate-spin text-gray-10" />
+                            </Show>
+                            <Show when={(props.pendingPermissionCountByWs?.[workspace().id] ?? 0) > 0}>
+                              <span
+                                class="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-9 text-white text-[10px] font-semibold"
+                                title="Pending permission request"
+                              >
+                                {props.pendingPermissionCountByWs![workspace().id]}
+                              </span>
                             </Show>
                             <Show when={project.status === "error"}>
                               <span
