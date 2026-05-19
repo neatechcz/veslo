@@ -1189,24 +1189,8 @@ export default function App() {
   const [booting, setBooting] = createSignal(true);
   const [engineReady, setEngineReady] = createSignal(true);
 
-  // VSLO-171: imperative confirm dialog used when sendPrompt is about to
-  // tear down an engine that is still running in another workspace.
-  type CrossWorkspaceConfirmState = {
-    workspaceName: string;
-    resolve: (proceed: boolean) => void;
-  } | null;
-  const [crossWorkspaceConfirm, setCrossWorkspaceConfirm] =
-    createSignal<CrossWorkspaceConfirmState>(null);
-  const confirmCrossWorkspaceTakeover = (workspaceName: string): Promise<boolean> =>
-    new Promise<boolean>((resolve) => {
-      setCrossWorkspaceConfirm({ workspaceName, resolve });
-    });
-  const resolveCrossWorkspaceConfirm = (proceed: boolean) => {
-    const state = crossWorkspaceConfirm();
-    if (!state) return;
-    setCrossWorkspaceConfirm(null);
-    state.resolve(proceed);
-  };
+  // VSLO-171 F3Ú8: cross-workspace takeover confirmation dialog removed.
+  // See comment in sendPrompt about replacement strategy.
 
   const mountTime = Date.now();
   // Per-workspace deduplication of opencode.jsonc patches. Key is the Veslo
@@ -2672,19 +2656,10 @@ export default function App() {
 
     // In browsing mode, engine is not connected. Start it before sending.
     if (!engineReady()) {
-      // VSLO-171: warn before we tear down a still-running engine in another worker.
-      const otherBusy = workspaceStore.isAnyOtherWorkspaceBusy();
-      if (otherBusy) {
-        if (crossWorkspaceConfirm()) {
-          recordSendTrace("sendPrompt:blocked-confirm-already-open");
-          return false;
-        }
-        const proceed = await confirmCrossWorkspaceTakeover(otherBusy.displayName);
-        if (!proceed) {
-          recordSendTrace("sendPrompt:cancelled-other-workspace-busy", { other: otherBusy.workspaceId });
-          return false;
-        }
-      }
+      // VSLO-171 F3Ú8: cross-workspace takeover dialog removed.
+      // Multi mode (F3Ú6) keeps per-WS clients alive in parallel; single-active
+      // fallback may interrupt another worker silently but that's the legacy
+      // behavior the multi flag is meant to replace.
 
       startSendPromptBusy("status.connecting");
       // Yield to the browser's macro task queue so it paints the spinner
@@ -11458,19 +11433,6 @@ export default function App() {
         confirmLabel={t("dashboard.edit_remote_workspace_confirm", currentLocale())}
       />
 
-      <ConfirmModal
-        open={!!crossWorkspaceConfirm()}
-        title={t("workspace.busy_takeover_title", currentLocale())}
-        message={t("workspace.busy_takeover_message", currentLocale()).replaceAll(
-          "{name}",
-          crossWorkspaceConfirm()?.workspaceName ?? "",
-        )}
-        confirmLabel={t("workspace.busy_takeover_confirm", currentLocale())}
-        cancelLabel={t("common.cancel", currentLocale())}
-        variant="danger"
-        onConfirm={() => resolveCrossWorkspaceConfirm(true)}
-        onCancel={() => resolveCrossWorkspaceConfirm(false)}
-      />
     </WorkspaceRoutingProvider>
   );
 }

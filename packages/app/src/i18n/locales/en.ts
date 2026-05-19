@@ -102,9 +102,6 @@ export default {
   "workspace.rename_description": "Update the name shown in the sidebar.",
   "workspace.rename_label": "Worker name",
   "workspace.rename_placeholder": "Design team worker",
-  "workspace.busy_takeover_title": "Another worker is running",
-  "workspace.busy_takeover_message": "Worker \"{name}\" has a task in progress. Sending this message will stop it. Continue?",
-  "workspace.busy_takeover_confirm": "Send & stop",
 
   // ==================== Feedback ====================
   "feedback.button": "Feedback",

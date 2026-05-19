@@ -350,23 +350,9 @@ export function createWorkspaceStore(options: {
     });
   }
 
-  function isAnyOtherWorkspaceBusy(): { workspaceId: string; displayName: string } | null {
-    const activeId = activeWorkspaceId();
-    const busy = workspaceBusy();
-    for (const [wsId, entry] of Object.entries(busy)) {
-      if (wsId === activeId) continue;
-      if (!entry) continue;
-      const ws = workspaces().find((w) => w.id === wsId);
-      const displayName =
-        ws?.displayName?.trim() ||
-        ws?.vesloWorkspaceName?.trim() ||
-        ws?.name?.trim() ||
-        ws?.path ||
-        wsId;
-      return { workspaceId: wsId, displayName };
-    }
-    return null;
-  }
+  // VSLO-171 F3Ú8: isAnyOtherWorkspaceBusy() byla smazána — multi mode
+  // garantuje paralelní engine pool, single-active fallback ztratí task
+  // tiše (žádný dialog). workspaceBusy mapa zůstává pro sidebar dot.
 
   const [workspaceConfig, setWorkspaceConfig] = createSignal<WorkspaceVesloConfig | null>(null);
   const [workspaceConfigLoaded, setWorkspaceConfigLoaded] = createSignal(false);
@@ -2905,6 +2891,5 @@ export function createWorkspaceStore(options: {
     workspaceBusy,
     markWorkspaceBusy,
     clearWorkspaceBusy,
-    isAnyOtherWorkspaceBusy,
   };
 }
