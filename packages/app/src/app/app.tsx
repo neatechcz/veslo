@@ -2832,6 +2832,7 @@ export default function App() {
 
   const extensionsStore = createExtensionsStore({
     client,
+    routing: workspaceRouting,
     projectDir: () => workspaceProjectDir(),
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
     workspaceType: () => workspaceStore.activeWorkspaceDisplay().workspaceType,
@@ -5450,6 +5451,7 @@ export default function App() {
 
   const systemState = createSystemState({
     client,
+    routing: workspaceRouting,
     sessions,
     sessionStatusById,
     refreshPlugins,

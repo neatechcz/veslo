@@ -1852,6 +1852,7 @@ export function createWorkspaceStore(options: {
     hasPersistedLanguagePreference() ? "welcome" : "language";
 
   const engineStore = createEngineStore({
+    routing: options.routing,
     activeWorkspacePath: () => activeWorkspacePath(),
     activeWorkspaceRoot: () => activeWorkspaceRoot(),
     activeWorkspaceInfo: () => activeWorkspaceInfo(),

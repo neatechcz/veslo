@@ -25,6 +25,7 @@ import {
   sandboxCleanupVesloContainers,
 } from "./lib/tauri";
 import { unwrap, waitForHealthy } from "./lib/opencode";
+import type { WorkspaceRouting } from "./context/workspace-routing";
 
 function throttle<T extends (...args: any[]) => any>(
   fn: T,
@@ -62,6 +63,7 @@ export type NotionState = {
 
 export function createSystemState(options: {
   client: Accessor<Client | null>;
+  routing: WorkspaceRouting;
   sessions: Accessor<Session[]>;
   sessionStatusById: Accessor<Record<string, string>>;
   refreshPlugins: (scopeOverride?: PluginScope) => Promise<void>;
@@ -252,7 +254,7 @@ export function createSystemState(options: {
     const override = options.canReloadWorkspaceEngine?.();
     if (override === true) return true;
     if (override === false) return false;
-    if (!options.client()) return false;
+    if (!options.routing.active()) return false;
     return true;
   });
 
@@ -262,7 +264,7 @@ export function createSystemState(options: {
   });
 
   async function reloadEngineInstance() {
-    const initialClient = options.client();
+    const initialClient = options.routing.active();
     if (!initialClient) return false;
 
     const override = options.canReloadWorkspaceEngine?.();
@@ -290,7 +292,7 @@ export function createSystemState(options: {
         unwrap(await initialClient.instance.dispose());
       }
 
-      const nextClient = options.client();
+      const nextClient = options.routing.active();
       if (!nextClient) {
         throw new Error("OpenCode client unavailable after reload.");
       }
