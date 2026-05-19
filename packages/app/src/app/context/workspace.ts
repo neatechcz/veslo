@@ -153,6 +153,9 @@ export function createWorkspaceStore(options: {
   refreshPlugins: () => Promise<void>;
   engineSource: () => "path" | "sidecar" | "custom";
   engineCustomBinPath?: () => string;
+  // VSLO-171 F3Ú9: pool tuning forwarded into engine-store / spawn args.
+  maxEngines?: () => number | null;
+  idleSuspendMs?: () => number | null;
   setEngineSource: (value: "path" | "sidecar" | "custom") => void;
   setView: (value: any) => void;
   setTab: (value: any) => void;
@@ -2138,6 +2141,8 @@ export function createWorkspaceStore(options: {
     setAuthorizedDirs,
     engineSource: options.engineSource,
     engineCustomBinPath: options.engineCustomBinPath,
+    maxEngines: options.maxEngines,
+    idleSuspendMs: options.idleSuspendMs,
     isWindowsPlatform: options.isWindowsPlatform,
     setError: options.setError,
     setBusy: options.setBusy,
@@ -2687,6 +2692,8 @@ export function createWorkspaceStore(options: {
   const localRuntimeLifecycle = createLocalRuntimeLifecycle({
     engineSource: options.engineSource,
     engineCustomBinPath: options.engineCustomBinPath,
+    maxEngines: options.maxEngines,
+    idleSuspendMs: options.idleSuspendMs,
     resolveEngineRuntime,
     resolveWorkspacePaths,
     setEngine: engineStore.setEngine,

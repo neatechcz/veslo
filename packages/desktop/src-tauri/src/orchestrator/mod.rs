@@ -75,6 +75,10 @@ pub struct OrchestratorSpawnOptions {
     pub opencode_password: Option<String>,
     pub cors: Option<String>,
     pub veslo_server_state_path: Option<String>,
+    /// VSLO-171 F3Ú9: max concurrent engines in pool (1-16). None = orchestrator default.
+    pub max_engines: Option<u32>,
+    /// VSLO-171 F3Ú9: idle suspend threshold in ms. None = orchestrator default.
+    pub idle_suspend_ms: Option<u64>,
 }
 
 pub fn resolve_orchestrator_data_dir() -> String {
@@ -271,6 +275,17 @@ pub fn spawn_orchestrator_daemon(
             args.push("--cors".to_string());
             args.push(cors.to_string());
         }
+    }
+
+    // VSLO-171 F3Ú9: pool tuning from Settings → Performance.
+    if let Some(max) = options.max_engines {
+        args.push("--max-engines".to_string());
+        args.push(max.to_string());
+    }
+
+    if let Some(idle) = options.idle_suspend_ms {
+        args.push("--idle-suspend-ms".to_string());
+        args.push(idle.to_string());
     }
 
     let mut command = command.args(args);
