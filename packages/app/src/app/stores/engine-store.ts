@@ -11,6 +11,7 @@ import { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecycle";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { t, currentLocale } from "../../i18n";
 import type { OpencodeAuth } from "../lib/opencode";
+import type { WorkspaceRouting } from "../context/workspace-routing";
 import {
   engineDoctor,
   engineInfo,
@@ -61,6 +62,7 @@ export interface EngineStoreDeps {
   setOnboardingStep: (step: OnboardingStep) => void;
   setView: (value: any) => void;
   client: () => any;
+  routing: WorkspaceRouting;
   onEngineStable?: () => void;
 
   // Server connection
@@ -141,7 +143,7 @@ export function createEngineStore(deps: EngineStoreDeps) {
       const engineProjectDir = normalizeDirectoryPath(info.projectDir?.trim() ?? "");
       const browsingDifferentLocalWorkspace =
         syncLocalState &&
-        !deps.client() &&
+        !deps.routing.active() &&
         activeWorkspaceRoot.length > 0 &&
         engineProjectDir.length > 0 &&
         activeWorkspaceRoot !== engineProjectDir;

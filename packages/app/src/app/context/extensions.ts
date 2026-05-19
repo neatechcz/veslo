@@ -107,8 +107,11 @@ async function loadSkillCreatorTemplate() {
   return mod.default;
 }
 
+import type { WorkspaceRouting } from "./workspace-routing";
+
 export function createExtensionsStore(options: {
   client: () => Client | null;
+  routing: WorkspaceRouting;
   projectDir: () => string;
   activeWorkspaceId: () => string;
   activeWorkspaceRoot: () => string;
@@ -1162,7 +1165,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    const c = options.client();
+    const c = options.routing.active();
     if (!c) {
       setSkills([]);
       markLocalSkillsSourceChanged();
