@@ -125,10 +125,7 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
       }
     }
 
-    if (!baseUrl) {
-      console.warn("[veslo.reconnectFromEngineSnapshot] baseUrl still empty after polling — skipping connectToServer");
-      return true;
-    }
+    if (!baseUrl) return true;
 
     if ((options.connectMode ?? "server") === "quiet") {
       return await deps.connectQuiet(baseUrl, options.workspacePath, auth ?? undefined);
