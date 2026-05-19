@@ -2590,7 +2590,7 @@ export default function App() {
       engineReady: engineReady(),
       selectedSessionId: selectedSessionId(),
       targetSessionId: options.targetSessionId ?? null,
-      hasClient: Boolean(client()),
+      hasClient: Boolean(routedClient()),
       busy: busy(),
       busyLabel: busyLabel(),
     });
@@ -2714,7 +2714,7 @@ export default function App() {
       return false;
     }
 
-    const c = client();
+    const c = routedClient();
     if (!c) {
       recordSendTrace("sendPrompt:blocked-no-client");
       stopSendPromptBusy();
@@ -3758,7 +3758,7 @@ export default function App() {
         hasManagedProfile: Boolean(managedAiAccess()) || managedAiBootstrapBusy(),
         isBootstrapBusy: managedAiBootstrapBusy,
         isReloadBusy: reloadBusy,
-        hasClient: () => Boolean(client()),
+        hasClient: () => Boolean(routedClient()),
       });
       return true;
     } catch (error) {
