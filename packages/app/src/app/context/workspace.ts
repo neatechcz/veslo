@@ -1423,6 +1423,125 @@ export function createWorkspaceStore(options: {
       return true;
     }
 
+    // VSLO-171 F3Ú6c — multi-routing mode delegates to routing.ensure so the
+    // per-workspace Client cached in workspace-routing.ts is reused on
+    // subsequent switches (no kill-restart, no Managed AI bootstrap timeout
+    // when returning to a previously-visited workspace). State RESET is
+    // skipped here because the per-workspace cache effect in app.tsx
+    // (F3Ú6a) handles save/load on activeWorkspaceId change. Single-active
+    // mode keeps the original kill-restart path below unchanged.
+    const multiWorkspaceId = context?.workspaceId;
+    if (
+      options.routing.mode() === "multi" &&
+      multiWorkspaceId
+    ) {
+      const multiRun = (async () => {
+        const connectStart = Date.now();
+        const quiet = connectOptions?.quiet ?? false;
+        const navigate = connectOptions?.navigate ?? true;
+        options.setError(null);
+        if (!quiet) {
+          options.setBusy(true);
+          options.setBusyLabel("status.connecting");
+          options.setBusyStartedAt(Date.now());
+        }
+        options.setSseConnected(false);
+        wsDebug("connect:multi:start", {
+          workspaceId: multiWorkspaceId,
+          baseUrl: nextBaseUrl,
+          directory: incomingDirectory || null,
+          reason: context?.reason ?? null,
+        });
+        try {
+          const entry = await options.routing.ensure(
+            multiWorkspaceId,
+            nextBaseUrl,
+            {
+              directory: incomingDirectory || undefined,
+              auth,
+              context: {
+                workspaceType: context?.workspaceType,
+                targetRoot: context?.targetRoot,
+                reason: context?.reason,
+              },
+            }
+          );
+          if (!entry) {
+            const message = "Failed to ensure workspace client";
+            options.setError(message);
+            options.setOpencodeConnectStatus?.({
+              at: Date.now(),
+              baseUrl: nextBaseUrl,
+              directory: directory ?? null,
+              reason: context?.reason ?? null,
+              status: "error",
+              error: message,
+            });
+            return false;
+          }
+          // Backwards-compat publish on the global client signal so legacy
+          // callsites that still read client() (rather than routedClient())
+          // see the active workspace's client. routedClient() in multi mode
+          // prefers routing.client(activeWorkspaceId) → entries Map.
+          options.setClient(entry.client);
+          options.setBaseUrl(nextBaseUrl);
+          options.setClientDirectory(entry.directory ?? incomingDirectory);
+          wsDebug("connect:multi:ensured", {
+            workspaceId: multiWorkspaceId,
+            ms: Date.now() - connectStart,
+          });
+          // Per-workspace cache effect (F3Ú6a) already restored sessions/
+          // messages/todos on activeWorkspaceId change. We still refresh
+          // sessions to catch updates the cache didn't have, but the cache
+          // hit means UI is responsive immediately.
+          try {
+            await options.loadSessions(context?.targetRoot);
+          } catch (e) {
+            console.warn("[workspace] multi loadSessions failed", e);
+          }
+          try {
+            await options.refreshPendingPermissions();
+          } catch (e) {
+            console.warn("[workspace] multi refreshPendingPermissions failed", e);
+          }
+          if (navigate && !options.selectedSessionId()) {
+            options.setTab("scheduled");
+            options.setView("session");
+          }
+          options.onEngineStable?.();
+          options.setOpencodeConnectStatus?.({
+            at: Date.now(),
+            baseUrl: nextBaseUrl,
+            directory: directory ?? null,
+            reason: context?.reason ?? null,
+            status: "connected",
+            error: null,
+          });
+          return true;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown connect error";
+          options.setError(message);
+          options.setOpencodeConnectStatus?.({
+            at: Date.now(),
+            baseUrl: nextBaseUrl,
+            directory: directory ?? null,
+            reason: context?.reason ?? null,
+            status: "error",
+            error: message,
+          });
+          return false;
+        } finally {
+          if (!connectOptions?.quiet) options.setBusy(false);
+        }
+      })();
+      connectInFlightByKey.set(requestKey, multiRun);
+      try {
+        return await multiRun;
+      } finally {
+        connectInFlightByKey.delete(requestKey);
+      }
+    }
+
     const run = (async () => {
       console.log("[workspace] connect", {
         baseUrl: nextBaseUrl,
