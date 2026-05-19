@@ -3089,6 +3089,18 @@ export default function App() {
   });
   workspaceStoreRef = workspaceStore;
 
+  // VSLO-171 F3Ú7a — per-workspace pending permissions polling. Without SSE
+  // multiplex (F3Ú6d push) we refresh every 5 s in multi mode so background
+  // workspaces show up-to-date badge counts. Single-active mode skips polling
+  // (one client, SSE already covers it).
+  createEffect(() => {
+    if (!multiClientEnabled()) return;
+    const id = setInterval(() => {
+      void sessionStore.refreshPendingPermissions();
+    }, 5000);
+    onCleanup(() => clearInterval(id));
+  });
+
   // VSLO-171 F3Ú6a — per-workspace session cache save/load. In single-active
   // mode this effect is a no-op (cache stays empty). In multi mode each
   // workspace switch saves the outgoing snapshot and restores the incoming

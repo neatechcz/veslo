@@ -28,7 +28,7 @@ import {
   safeStringify,
 } from "../utils";
 import { unwrap } from "../lib/opencode";
-import type { WorkspaceRouting } from "./workspace-routing";
+import type { WorkspaceRouting, RoutingClient } from "./workspace-routing";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { formatSessionError, truncateErrorField } from "../lib/session-error";
 import { detectChromeMcpCompletedError } from "../lib/chrome-mcp-error";
@@ -250,6 +250,13 @@ export function createSessionStore(options: {
   // VSLO-171 F3Ú6a — per-workspace cache for save/load on workspace switch.
   // Only populated in multi-routing mode (caller decides via options.routing.mode()).
   const perWorkspaceCache = new Map<string, WorkspaceSessionCache>();
+  // VSLO-171 F3Ú7a — per-workspace pending permissions. In multi mode the
+  // polling effect (in app.tsx) iterates routing.forEach() and refreshes each
+  // workspace's permissions independently. Sidebar badge reads aggregate
+  // counts via pendingPermissionCountByWs memo.
+  const [pendingPermissionsByWs, setPendingPermissionsByWs] = createSignal<
+    Record<string, PendingPermission[]>
+  >({});
 
   const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
   const skillNamePattern = /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
@@ -729,6 +736,42 @@ export function createSessionStore(options: {
   }
 
   async function refreshPendingPermissions() {
+    // VSLO-171 F3Ú7a — in multi mode iterate every per-workspace client and
+    // refresh each workspace's permissions independently. The active
+    // workspace's list is also mirrored into the global store so legacy UI
+    // codes (Dialog, activePermission memo) keep working.
+    if (options.routing.mode() === "multi") {
+      const activeWs = options.routing.activeWorkspaceId();
+      const nextByWs: Record<string, PendingPermission[]> = {};
+      const now = Date.now();
+      const prevByWs = pendingPermissionsByWs();
+      const clientsToProbe: Array<{ wsId: string; client: RoutingClient }> = [];
+      options.routing.forEach((wsId, client) => {
+        clientsToProbe.push({ wsId, client });
+      });
+      await Promise.all(
+        clientsToProbe.map(async ({ wsId, client }) => {
+          try {
+            const list = unwrap(await client.permission.list()) as Array<PendingPermission>;
+            const prev = prevByWs[wsId] ?? [];
+            const byId = new Map(prev.map((p) => [p.id, p] as const));
+            nextByWs[wsId] = list.map((perm) => ({
+              ...perm,
+              workspaceId: wsId,
+              receivedAt: byId.get(perm.id)?.receivedAt ?? now,
+            }));
+          } catch {
+            nextByWs[wsId] = prevByWs[wsId] ?? [];
+          }
+        })
+      );
+      setPendingPermissionsByWs(nextByWs);
+      // Mirror active workspace into global store for backwards compat.
+      const activeList = activeWs ? nextByWs[activeWs] ?? [] : [];
+      setStore("pendingPermissions", activeList);
+      return;
+    }
+    // Single-active mode — original behavior.
     const c = options.routing.active();
     if (!c) return;
     const list = unwrap(await c.permission.list());
@@ -1754,6 +1797,21 @@ export function createSessionStore(options: {
     });
   });
 
+  // VSLO-171 F3Ú7a — flattened view of all per-workspace permissions for the
+  // cross-workspace UI (sidebar badges, activePermission fallback).
+  const allPendingPermissions = createMemo(() => {
+    const byWs = pendingPermissionsByWs();
+    const result: PendingPermission[] = [];
+    for (const list of Object.values(byWs)) result.push(...list);
+    return result;
+  });
+  const pendingPermissionCountByWs = createMemo(() => {
+    const byWs = pendingPermissionsByWs();
+    const counts: Record<string, number> = {};
+    for (const [wsId, list] of Object.entries(byWs)) counts[wsId] = list.length;
+    return counts;
+  });
+
   // VSLO-171 F3Ú6a — per-workspace cache snapshot/restore helpers. In single-
   // active routing mode these are no-ops; in multi mode app.tsx wires them to
   // a createEffect on activeWorkspaceId so each switch saves the outgoing
@@ -1856,5 +1914,8 @@ export function createSessionStore(options: {
     saveWorkspaceSnapshot,
     loadWorkspaceSnapshot,
     clearWorkspaceSnapshot,
+    allPendingPermissions,
+    pendingPermissionCountByWs,
+    pendingPermissionsByWs,
   };
 }
