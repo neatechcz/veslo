@@ -53,6 +53,7 @@ import {
   type WorkspaceInfo,
 } from "../lib/tauri";
 import { waitForHealthy, createClient, type OpencodeAuth } from "../lib/opencode";
+import type { WorkspaceRouting } from "./workspace-routing";
 import type { OpencodeConnectStatus, ProviderListItem } from "../types";
 import { t, currentLocale, isLanguage } from "../../i18n";
 import { mapConfigProvidersToList } from "../utils/providers";
@@ -124,6 +125,10 @@ export function createWorkspaceStore(options: {
   setClientDirectory: (value: string) => void;
   client: () => Client | null;
   setClient: (value: Client | null) => void;
+  // VSLO-171 F3Ú4 — workspace routing service (single-active adapter today).
+  // Use `options.routing.active()` or `options.routing.client(workspaceId)`
+  // instead of `options.client()`.
+  routing: WorkspaceRouting;
   setConnectedVersion: (value: string | null) => void;
   setSseConnected: (value: boolean) => void;
   setProviders: (value: ProviderListItem[]) => void;
@@ -768,7 +773,7 @@ export function createWorkspaceStore(options: {
       prevActiveId: activeWorkspaceId(),
       prevProjectDir: projectDir(),
       startupPref: options.startupPreference(),
-      hasClient: Boolean(options.client()),
+      hasClient: Boolean(options.routing.active()),
     });
 
     const remoteType = isRemote ? normalizeRemoteType(next.remoteType) : "opencode";
@@ -1051,7 +1056,7 @@ export function createWorkspaceStore(options: {
         return true;
       }
 
-    const wasLocalConnection = options.startupPreference() === "local" && options.client();
+    const wasLocalConnection = options.startupPreference() === "local" && options.routing.active();
     options.setStartupPreference("local");
     const nextRoot = isRemote ? next.directory?.trim() ?? "" : next.path;
     const oldWorkspacePath = projectDir();
@@ -1143,12 +1148,12 @@ export function createWorkspaceStore(options: {
     // "local", and subsequent session/file actions behave inconsistently.
     _wsLog("[workspace:activate] STEP 4 — branch decision", {
       isRemote,
-      hasClient: Boolean(options.client()),
+      hasClient: Boolean(options.routing.active()),
       wasLocalConnection,
       workspaceChanged,
     });
 
-    if (!isRemote && options.client() && !wasLocalConnection) {
+    if (!isRemote && options.routing.active() && !wasLocalConnection) {
       if (isSuperseded()) {
         wsDebug("activate:superseded:before-remote-to-local", { id });
         return false;
@@ -1231,7 +1236,7 @@ export function createWorkspaceStore(options: {
     // preference has already been set to "local" by this function).
     const canBrowseOffline =
       !isRemote && workspaceChanged && isTauriRuntime() && options.populateSidebarFromDb;
-    const isColdBoot = !options.client() && options.startupPreference() === "local";
+    const isColdBoot = !options.routing.active() && options.startupPreference() === "local";
     if (canBrowseOffline && (wasLocalConnection || isColdBoot)) {
       _wsLog("[workspace:activate] STEP 5-BROWSE — browsing mode, loading from SQLite", { id, path: next.path });
       wsDebug("activate:local->local:browsingMode", { id, nextPath: next.path });
@@ -1398,6 +1403,8 @@ export function createWorkspaceStore(options: {
     // messages and todos, so a redundant call (e.g. delayed auth-hydration
     // retry firing bootstrapOnboarding a second time) would race the user's
     // current session view and force a re-fetch.
+    // VSLO-171.F3Ú5: idempotent-skip check stays on options.client() inside
+    // connectToServer; will be replaced by routing.ensure cached-match.
     if (
       options.client() &&
       (options.baseUrl()?.trim() ?? "") === nextBaseUrl &&
@@ -1500,6 +1507,8 @@ export function createWorkspaceStore(options: {
         // a fresh client + baseUrl — the session/messages on disk are still
         // valid, and clearing them forces a redundant re-fetch and visibly
         // blanks the UI for ~300ms.
+        // VSLO-171.F3Ú5: directory-changed check inside connectToServer; will
+        // be subsumed by routing.ensure lifecycle in multi mode.
         const previousDirectory = (options.clientDirectory()?.trim() ?? "");
         const directoryChanged =
           !options.client() || previousDirectory !== (resolvedDirectory ?? "");
@@ -1657,7 +1666,7 @@ export function createWorkspaceStore(options: {
 
   const openEmptySession = async (scopeRoot?: string) => {
     const root = (scopeRoot ?? activeWorkspaceRoot().trim()).trim();
-    if (options.client()) {
+    if (options.routing.active()) {
       try {
         await options.loadSessions(root || undefined);
       } catch {
@@ -1677,7 +1686,7 @@ export function createWorkspaceStore(options: {
       await openEmptySession(workspacePath);
       return true;
     }
-    const hasClient = Boolean(options.client());
+    const hasClient = Boolean(options.routing.client(workspaceId));
     const ok = hasClient
       ? await activateWorkspace(workspaceId)
       : await engineStore.startHost({ workspacePath, navigate: false });
@@ -1840,7 +1849,7 @@ export function createWorkspaceStore(options: {
     if (!id) return false;
     const activated = await activateWorkspace(id);
     if (activated === false) return false;
-    if (options.client()) return true;
+    if (options.routing.client(id)) return true;
 
     const workspace = workspaces().find((entry) => entry.id === id) ?? null;
     if (!workspace || workspace.workspaceType !== "local") {
@@ -1850,7 +1859,7 @@ export function createWorkspaceStore(options: {
 
     const started = await engineStore.startHost({ workspacePath: workspace.path, navigate: false });
     if (!started) return false;
-    return Boolean(options.client());
+    return Boolean(options.routing.client(id));
   }
 
   async function forgetWorkspace(
