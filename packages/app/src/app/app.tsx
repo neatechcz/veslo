@@ -1592,7 +1592,7 @@ export default function App() {
   };
 
   createEffect(() => {
-    if (!client()) {
+    if (!routedClient()) {
       setSessionsLoaded(false);
     }
   });
@@ -2262,7 +2262,7 @@ export default function App() {
   }
 
   async function abortSession(sessionID?: string) {
-    const c = client();
+    const c = routedClient();
     if (!c) return;
     const id = (sessionID ?? selectedSessionId() ?? "").trim();
     if (!id) return;
@@ -2284,7 +2284,7 @@ export default function App() {
   }
 
   async function compactCurrentSession(sessionIdOverride?: string) {
-    const c = client();
+    const c = routedClient();
     if (!c) {
       throw new Error("Not connected to a server");
     }
@@ -2523,7 +2523,7 @@ export default function App() {
   };
 
   async function undoLastUserMessage() {
-    const c = client();
+    const c = routedClient();
     const sessionID = (selectedSessionId() ?? "").trim();
     if (!c || !sessionID) return;
 
@@ -2559,7 +2559,7 @@ export default function App() {
   }
 
   async function redoLastUserMessage() {
-    const c = client();
+    const c = routedClient();
     const sessionID = (selectedSessionId() ?? "").trim();
     if (!c || !sessionID) return;
 
@@ -2622,7 +2622,7 @@ export default function App() {
   async function deleteSessionById(sessionID: string, workspaceID?: string) {
     const trimmed = sessionID.trim();
     if (!trimmed) return;
-    const c = client();
+    const c = routedClient();
     if (!c) {
       throw new Error("Not connected to a server");
     }
@@ -2728,7 +2728,7 @@ export default function App() {
   }
 
   async function saveSessionExport(sessionID: string) {
-    const c = client();
+    const c = routedClient();
     if (!c) {
       throw new Error("Not connected to a server");
     }
@@ -3076,12 +3076,16 @@ export default function App() {
     clientSource: client,
     activeWorkspaceId: () => workspaceStore.activeWorkspaceId().trim(),
   });
+  // VSLO-171 F3Ú3 — shorthand for `workspaceRouting.client(workspaceId?)`.
+  // In single-active mode this is identity over the global `client()` signal.
+  const routedClient = (workspaceId?: string) =>
+    workspaceRouting.client(workspaceId);
 
   let lastLocalVesloEnsureKey = "";
   createEffect(() => {
     if (!isTauriRuntime()) return;
     if (startupPreference() === "server") return;
-    if (!client()) return;
+    if (!routedClient()) return;
     if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") return;
 
     const nextKey = [
@@ -4186,7 +4190,7 @@ export default function App() {
     if (currentView() !== "session") return;
     const normalizedPath = location.pathname.toLowerCase().replace(/\/+$/, "");
     if (normalizedPath !== "/session") return;
-    if (!client()) return;
+    if (!routedClient()) return;
     if (!sessionsLoaded()) return;
     if (creatingSession()) return;
     if (selectedSessionId()) return;
@@ -4208,7 +4212,7 @@ export default function App() {
 
     const connectionKey = [
       id,
-      client() ? "live" : "offline",
+      routedClient() ? "live" : "offline",
       clientDirectory() || workspaceStore.activeWorkspaceRoot().trim(),
       connectedVersion() ?? "",
     ].join("::");
@@ -5245,7 +5249,7 @@ export default function App() {
     const ok = result.status === "connected" || result.status === "limited";
     if (ok && !isTauriRuntime()) {
       const active = workspaceStore.activeWorkspaceDisplay();
-      const shouldAttach = !client() || active.workspaceType !== "remote" || active.remoteType !== "veslo";
+      const shouldAttach = !routedClient() || active.workspaceType !== "remote" || active.remoteType !== "veslo";
       if (shouldAttach) {
         await workspaceStore
           .createRemoteWorkspaceFlow({
@@ -6704,7 +6708,7 @@ export default function App() {
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
       activeWorkspaceId: workspaceStore.activeWorkspaceId(),
       activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
-      hasClient: Boolean(client()),
+      hasClient: Boolean(routedClient()),
     });
     // Block session creation while a workspace switch is in progress.
     // Without this gate, activeWorkspaceRoot() can return a stale or empty
@@ -7700,7 +7704,7 @@ export default function App() {
             // the time the delayed hydration finishes, the retry bootstrap
             // is redundant — and would race the user's current session
             // view through bootstrapOnboarding → connectToServer.
-            if (client()) {
+            if (routedClient()) {
               return;
             }
             setOnboardingStep("connecting");
