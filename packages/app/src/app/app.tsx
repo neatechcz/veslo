@@ -1974,7 +1974,7 @@ export default function App() {
     recordSendTrace("sendPrompt:start", {
       engineReady: engineReady(),
       selectedSessionId: selectedSessionId(),
-      hasClient: Boolean(client()),
+      hasClient: Boolean(routedClient()),
       busy: busy(),
       busyLabel: busyLabel(),
     });
@@ -2040,7 +2040,7 @@ export default function App() {
 
     await ensureManagedAiBootstrapReady();
 
-    const c = client();
+    const c = routedClient();
     if (!c) {
       recordSendTrace("sendPrompt:blocked-no-client");
       return false;
@@ -2958,7 +2958,7 @@ export default function App() {
         hasManagedProfile: Boolean(managedAiAccess()) || managedAiBootstrapBusy(),
         isBootstrapBusy: managedAiBootstrapBusy,
         isReloadBusy: reloadBusy,
-        hasClient: () => Boolean(client()),
+        hasClient: () => Boolean(routedClient()),
       });
     } catch (error) {
       setError(error instanceof Error ? error.message : safeStringify(error));
