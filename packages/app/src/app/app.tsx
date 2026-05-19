@@ -4034,6 +4034,30 @@ export default function App() {
   });
   workspaceStoreRef = workspaceStore;
 
+  // VSLO-171 F3Ú6a — per-workspace session cache save/load. In single-active
+  // mode this effect is a no-op (cache stays empty). In multi mode each
+  // workspace switch saves the outgoing snapshot and restores the incoming
+  // one so sessions/messages/permissions don't get wiped between switches.
+  // connectToServer (F3Ú6c) will skip its own state RESET when running in
+  // multi so the cache is the single source of truth across switches.
+  let previousActiveWsId: string | null = null;
+  createEffect(() => {
+    const wsId = workspaceStore.activeWorkspaceId().trim();
+    if (!multiClientEnabled()) {
+      previousActiveWsId = wsId || null;
+      return;
+    }
+    if (previousActiveWsId && previousActiveWsId !== wsId) {
+      sessionStore.saveWorkspaceSnapshot(previousActiveWsId);
+    }
+    if (wsId) {
+      sessionStore.loadWorkspaceSnapshot(wsId);
+      // Cache miss is fine — connectToServer multi path (F3Ú6c) will trigger
+      // loadSessions to populate fresh state.
+    }
+    previousActiveWsId = wsId || null;
+  });
+
   const activeAutomationWorkspace = createMemo(() => {
     const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
     if (!activeWorkspaceId) return null;
@@ -4062,10 +4086,10 @@ export default function App() {
             directory: draft.directory ?? null,
             privateWorkspaceId: draft.privateWorkspaceId ?? null,
           }) === key;
-        } catch {
-          return false;
-        }
-      });
+      } catch {
+        return false;
+      }
+    });
 
     const chatId = resolvePendingDraftKey({ kind: "new-private" });
     const options: ComposerTargetOption[] = [{

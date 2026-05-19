@@ -63,6 +63,26 @@ type StoreState = {
   events: OpencodeEvent[];
 };
 
+/**
+ * VSLO-171 F3Ú6a — per-workspace snapshot of session state cached when the
+ * user switches away from a workspace, restored when they come back.
+ * Only multi-routing mode populates this; single-active keeps the global
+ * store as the single source of truth.
+ */
+export type WorkspaceSessionCache = {
+  workspaceId: string;
+  sessions: Session[];
+  sessionStatus: Record<string, string>;
+  sessionErrorTurns: Record<string, SessionErrorTurn[]>;
+  messages: Record<string, MessageInfo[]>;
+  parts: Record<string, Part[]>;
+  todos: Record<string, TodoItem[]>;
+  pendingPermissions: PendingPermission[];
+  pendingQuestions: PendingQuestion[];
+  selectedSessionId: string | null;
+  lastUsed: number;
+};
+
 const sortById = <T extends { id: string }>(list: T[]) =>
   list.slice().sort((a, b) => a.id.localeCompare(b.id));
 
@@ -230,6 +250,9 @@ export function createSessionStore(options: {
   const syntheticContinueEventTimesBySession = new Map<string, number[]>();
   const syntheticContinueLoopLastWarnAtBySession = new Map<string, number>();
   const workspaceSessionIds = new Set<string>();
+  // VSLO-171 F3Ú6a — per-workspace cache for save/load on workspace switch.
+  // Only populated in multi-routing mode (caller decides via options.routing.mode()).
+  const perWorkspaceCache = new Map<string, WorkspaceSessionCache>();
 
   const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
   const skillNamePattern = /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
@@ -1743,6 +1766,62 @@ export function createSessionStore(options: {
     });
   });
 
+  // VSLO-171 F3Ú6a — per-workspace cache snapshot/restore helpers. In single-
+  // active routing mode these are no-ops; in multi mode app.tsx wires them to
+  // a createEffect on activeWorkspaceId so each switch saves the outgoing
+  // workspace state and loads the incoming one.
+  const saveWorkspaceSnapshot = (workspaceId: string) => {
+    if (!workspaceId) return;
+    perWorkspaceCache.set(workspaceId, {
+      workspaceId,
+      sessions: store.sessions.slice(),
+      sessionStatus: { ...store.sessionStatus },
+      sessionErrorTurns: { ...store.sessionErrorTurns },
+      messages: { ...store.messages },
+      parts: { ...store.parts },
+      todos: { ...store.todos },
+      pendingPermissions: store.pendingPermissions.slice(),
+      pendingQuestions: store.pendingQuestions.slice(),
+      selectedSessionId: options.selectedSessionId(),
+      lastUsed: Date.now(),
+    });
+  };
+
+  const loadWorkspaceSnapshot = (workspaceId: string): boolean => {
+    if (!workspaceId) return false;
+    const snapshot = perWorkspaceCache.get(workspaceId);
+    if (!snapshot) return false;
+    setStore(
+      reconcile(
+        {
+          sessions: snapshot.sessions,
+          sessionStatus: snapshot.sessionStatus,
+          sessionErrorTurns: snapshot.sessionErrorTurns,
+          messages: snapshot.messages,
+          parts: snapshot.parts,
+          // commandDisplay + events are session-debug surfaces, not cached.
+          commandDisplayByMessageID: {},
+          todos: snapshot.todos,
+          pendingPermissions: snapshot.pendingPermissions,
+          pendingQuestions: snapshot.pendingQuestions,
+          events: [],
+        },
+        { merge: false }
+      )
+    );
+    workspaceSessionIds.clear();
+    for (const s of snapshot.sessions) workspaceSessionIds.add(s.id);
+    if (snapshot.selectedSessionId) {
+      options.setSelectedSessionId(snapshot.selectedSessionId);
+    }
+    snapshot.lastUsed = Date.now();
+    return true;
+  };
+
+  const clearWorkspaceSnapshot = (workspaceId: string) => {
+    perWorkspaceCache.delete(workspaceId);
+  };
+
   return {
     sessions,
     sessionErrorTurnsById: (sessionID: string | null) => (sessionID ? store.sessionErrorTurns[sessionID] ?? [] : []),
@@ -1786,5 +1865,8 @@ export function createSessionStore(options: {
     hasWarmTranscript,
     getCachedTranscriptMessageCount,
     getTranscriptFreshness,
+    saveWorkspaceSnapshot,
+    loadWorkspaceSnapshot,
+    clearWorkspaceSnapshot,
   };
 }
