@@ -99,9 +99,6 @@ export default {
   "workspace.rename_description": "Aktualizujte název zobrazený v postranním panelu.",
   "workspace.rename_label": "Název pracovního prostoru",
   "workspace.rename_placeholder": "Pracovní prostor design týmu",
-  "workspace.busy_takeover_title": "V jiném pracovním prostoru běží akce",
-  "workspace.busy_takeover_message": "V pracovním prostoru „{name}\" běží akce. Odesláním této zprávy se ukončí. Pokračovat?",
-  "workspace.busy_takeover_confirm": "Odeslat a ukončit",
 
   // ==================== Feedback ====================
   "feedback.button": "Feedback",
