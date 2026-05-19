@@ -1098,6 +1098,16 @@ export default function App() {
 
   const [client, setClient] = createSignal<Client | null>(null);
 
+  // VSLO-171 F3Ú2 — feature flag for multi-workspace routing. Declared BEFORE
+  // workspaceRouting so closures (mode, activeWorkspaceId) can resolve at
+  // creation. activePermission memo in session.ts evaluates routing.mode()
+  // eagerly at createSessionStore init — that's why this can't live further
+  // down with other UI prefs.
+  const [multiClientEnabled, setMultiClientEnabled] = createSignal(false);
+  // VSLO-171 F3Ú9 — Performance pool settings forwarded to orchestrator.
+  const [maxEngines, setMaxEngines] = createSignal(8);
+  const [idleSuspendMs, setIdleSuspendMs] = createSignal(15 * 60_000);
+
   // VSLO-171 F3Ú1/Ú2/Ú3/Ú4 — single-active workspace routing adapter.
   // Instantiated early so it can be injected into createSessionStore (~1379)
   // and createWorkspaceStore (~2988) as an option. `mode` and `activeWorkspaceId`
@@ -2964,16 +2974,9 @@ export default function App() {
 
   const [showThinking, setShowThinking] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
-  // VSLO-171 F3Ú2 — feature flag for multi-workspace routing.
-  // Read at startup, requires app restart to apply (routing.mode is captured
-  // at createWorkspaceRouting init). Default false; multi mode itself is wired
-  // in F3Ú5/F3Ú6 — until then this is "armed but inert".
-  const [multiClientEnabled, setMultiClientEnabled] = createSignal(false);
-  // VSLO-171 F3Ú9 — Performance pool settings forwarded to orchestrator on
-  // engine spawn. Restart-required (orchestrator reads from CLI args).
-  // Defaults mirror orchestrator's own defaults (8 engines, 15 min idle).
-  const [maxEngines, setMaxEngines] = createSignal(8);
-  const [idleSuspendMs, setIdleSuspendMs] = createSignal(15 * 60_000);
+  // VSLO-171 F3Ú2/Ú9 — multiClientEnabled, maxEngines, idleSuspendMs were
+  // moved up to ~ř.1097 so workspaceRouting closures (and downstream session
+  // store memos) can access them without TDZ at createSessionStore init.
   const [autoCompactContext, setAutoCompactContext] = createSignal(true);
   const [modelVariant, setModelVariant] = createSignal<string | null>(DEFAULT_MODEL_VARIANT);
   const [modelVariantPreferenceReady, setModelVariantPreferenceReady] = createSignal(false);
