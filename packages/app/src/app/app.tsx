@@ -3437,7 +3437,7 @@ export default function App() {
 
 
   async function listAgents(): Promise<Agent[]> {
-    const c = client();
+    const c = routedClient();
     if (!c) return [];
     const list = unwrap(await c.app.agents());
     return list.filter((agent) => !agent.hidden && agent.mode !== "subagent");
@@ -3472,7 +3472,7 @@ export default function App() {
   );
 
   async function listCommands(): Promise<{ id: string; name: string; description?: string; source?: "command" | "mcp" | "skill" }[]> {
-    const c = client();
+    const c = routedClient();
     if (!c) return [];
     const list = await listCommandsTyped(c, workspaceStore.activeWorkspaceRoot().trim() || undefined);
     if (list.some((entry) => entry.name === "compact")) {
@@ -7788,7 +7788,7 @@ export default function App() {
   });
 
   const newTaskDisabled = createMemo(() => {
-    if (!client()) {
+    if (!routedClient()) {
       return true;
     }
 
@@ -7812,7 +7812,7 @@ export default function App() {
   createEffect(() => {
     if (isTauriRuntime()) return;
     if (autoConnectAttempted()) return;
-    if (client()) return;
+    if (routedClient()) return;
     if (vesloServerStatus() !== "connected") return;
 
     const settings = vesloServerSettings();
@@ -7984,7 +7984,7 @@ export default function App() {
         setMcpServers(next);
         setMcpLastUpdatedAt(Date.now());
 
-        const activeClient = client();
+        const activeClient = routedClient();
         if (activeClient && projectDir) {
           try {
             const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
@@ -8020,7 +8020,7 @@ export default function App() {
         setMcpServers(next);
         setMcpLastUpdatedAt(Date.now());
 
-        const activeClient = client();
+        const activeClient = routedClient();
         if (activeClient && projectDir) {
           try {
             const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
@@ -8063,7 +8063,7 @@ export default function App() {
       setMcpServers(next);
       setMcpLastUpdatedAt(Date.now());
 
-      const activeClient = client();
+      const activeClient = routedClient();
       if (activeClient) {
         try {
           const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
@@ -8086,7 +8086,7 @@ export default function App() {
   async function ensureMcpRuntimeContext() {
     const projectDir = workspaceProjectDir().trim();
 
-    let activeClient = client();
+    let activeClient = routedClient();
     if (!activeClient) {
       const vesloBaseUrl = vesloServerBaseUrl().trim();
       const auth = vesloServerAuth();
@@ -8414,7 +8414,7 @@ export default function App() {
       return;
     }
 
-    let activeClient = client();
+    let activeClient = routedClient();
     if (!activeClient) {
       const vesloBaseUrl = vesloServerBaseUrl().trim();
       const auth = vesloServerAuth();
@@ -8556,7 +8556,7 @@ export default function App() {
       return undefined;
     }
 
-    const c = client();
+    const c = routedClient();
     if (!c) {
       recordSendTrace("createSessionAndOpen:blocked-no-client");
       setError("Local runtime is not ready yet.");
@@ -9621,7 +9621,7 @@ export default function App() {
     setWorkspaceDefaultModelReady(false);
     const workspaceType = workspaceStore.activeWorkspaceDisplay().workspaceType;
     const workspaceRoot = workspaceStore.activeWorkspacePath().trim();
-    const activeClient = client();
+    const activeClient = routedClient();
     const vesloClient = vesloServerClient();
     const vesloWorkspaceId = vesloServerWorkspaceId();
     const vesloCapabilities = resolvedVesloCapabilities();
@@ -10224,7 +10224,7 @@ export default function App() {
   });
 
   const headerStatus = createMemo(() => {
-    if (!client() || !headerConnectedVersion()) return t("status.disconnected", currentLocale());
+    if (!routedClient() || !headerConnectedVersion()) return t("status.disconnected", currentLocale());
     const bits = [`${t("status.connected", currentLocale())} · ${headerConnectedVersion()}`];
     if (sseConnected()) bits.push(t("status.live", currentLocale()));
     return bits.join(" · ");
@@ -10482,7 +10482,7 @@ export default function App() {
       setSessionBrowseScope,
       startupPreference: startupPreference(),
       baseUrl: baseUrl(),
-      clientConnected: Boolean(client()),
+      clientConnected: Boolean(routedClient()),
       authenticatedUser: authenticatedUser(),
       onLogout: logoutLocalDenAuth,
       onSignIn: startDesktopBrowserSignIn,
@@ -10770,7 +10770,7 @@ export default function App() {
   const searchWorkspaceFiles = async (query: string) => {
     const trimmed = query.trim();
     if (!trimmed) return [];
-    const activeClient = client();
+    const activeClient = routedClient();
     if (!activeClient) return [];
     try {
       const directory = workspaceProjectDir().trim();
@@ -10850,7 +10850,7 @@ export default function App() {
     exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
     exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
     engineReady: engineReady(),
-    clientConnected: Boolean(client()),
+    clientConnected: Boolean(routedClient()),
     authenticatedUser: authenticatedUser(),
     onLogout: logoutLocalDenAuth,
     onSignIn: startDesktopBrowserSignIn,
@@ -11246,7 +11246,7 @@ export default function App() {
 
       <McpAuthModal
         open={mcpAuthModalOpen()}
-        client={client()}
+        client={routedClient()}
         entry={mcpAuthEntry()}
         projectDir={workspaceProjectDir()}
         language={currentLocale()}
