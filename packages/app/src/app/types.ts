@@ -603,6 +603,8 @@ export type ReloadTrigger = {
 
 export type PendingPermission = ApiPermissionRequest & {
   receivedAt: number;
+  /** VSLO-171 F3Ú7 — workspace origin (multi mode). Undefined in single-active. */
+  workspaceId?: string;
 };
 
 export type PendingQuestion = QuestionRequest & {
