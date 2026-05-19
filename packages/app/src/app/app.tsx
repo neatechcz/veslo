@@ -2710,9 +2710,15 @@ export default function App() {
     }
 
     const c = routedClient();
+    console.log("[veslo.sendPrompt] after-bootstrap", {
+      hasClient: Boolean(c),
+      activeWorkspaceId: workspaceStore.activeWorkspaceId(),
+      activeRoot: workspaceStore.activeWorkspaceRoot(),
+    });
     if (!c) {
       recordSendTrace("sendPrompt:blocked-no-client");
       stopSendPromptBusy();
+      console.warn("[veslo.sendPrompt] blocked — no client; engine started but routing.ensure was never called");
       return false;
     }
 
