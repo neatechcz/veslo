@@ -258,6 +258,23 @@ export function createSessionStore(options: {
     Record<string, PendingPermission[]>
   >({});
 
+  // VSLO-171 — flattened view of all per-workspace permissions for the
+  // cross-workspace UI (sidebar badges, activePermission fallback).
+  // Declared near the signal so callers (activePermission memo, respondPermission)
+  // can reference it without TDZ at createSessionStore init.
+  const allPendingPermissions = createMemo(() => {
+    const byWs = pendingPermissionsByWs();
+    const result: PendingPermission[] = [];
+    for (const list of Object.values(byWs)) result.push(...list);
+    return result;
+  });
+  const pendingPermissionCountByWs = createMemo(() => {
+    const byWs = pendingPermissionsByWs();
+    const counts: Record<string, number> = {};
+    for (const [wsId, list] of Object.entries(byWs)) counts[wsId] = list.length;
+    return counts;
+  });
+
   const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
   const skillNamePattern = /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
   const commandPathPattern = /[\\/]\.opencode[\\/](command|commands)[\\/]/i;
@@ -1816,21 +1833,6 @@ export function createSessionStore(options: {
       if (reconnectTimer) clearTimeout(reconnectTimer);
       flush();
     });
-  });
-
-  // VSLO-171 F3Ú7a — flattened view of all per-workspace permissions for the
-  // cross-workspace UI (sidebar badges, activePermission fallback).
-  const allPendingPermissions = createMemo(() => {
-    const byWs = pendingPermissionsByWs();
-    const result: PendingPermission[] = [];
-    for (const list of Object.values(byWs)) result.push(...list);
-    return result;
-  });
-  const pendingPermissionCountByWs = createMemo(() => {
-    const byWs = pendingPermissionsByWs();
-    const counts: Record<string, number> = {};
-    for (const [wsId, list] of Object.entries(byWs)) counts[wsId] = list.length;
-    return counts;
   });
 
   // VSLO-171 F3Ú6a — per-workspace cache snapshot/restore helpers. In single-
