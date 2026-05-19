@@ -261,10 +261,15 @@ pub fn engine_info(
         let running = engine
             .map(|e| matches!(e.state.as_str(), "ready" | "idle"))
             .unwrap_or(false);
+        // VSLO-171 — always return the orchestrator proxy URL when daemon is
+        // up. Engines are lazy-spawned by the proxy on the first request, so
+        // gating base_url on the engine being "ready" prevented connectToServer
+        // from running for a workspace the user just clicked into for the
+        // first time (sendPrompt would block with no client).
         return EngineInfo {
             running,
             runtime: EngineRuntime::Orchestrator,
-            base_url: if running { proxy_base_url } else { None },
+            base_url: proxy_base_url,
             project_dir: workspace_path,
             hostname: Some("127.0.0.1".to_string()),
             port: engine.map(|e| e.port),
