@@ -6,6 +6,15 @@ import { createRoot, createSignal } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 
 import { createSessionStore } from "./session.js";
+import { createWorkspaceRouting } from "./workspace-routing.js";
+
+function makeTestRouting(client: () => any) {
+  return createWorkspaceRouting({
+    mode: () => "single-active",
+    clientSource: client,
+    activeWorkspaceId: () => "test-workspace",
+  });
+}
 
 const makeTextPart = (): Part => ({
   id: "part-1",
@@ -39,6 +48,7 @@ test("hydrateTranscriptSnapshot stores messages and keeps the current selection 
 
       const store = createSessionStore({
         client: () => null,
+        routing: makeTestRouting(() => null),
         activeWorkspaceRoot: () => "",
         selectedSessionId,
         setSelectedSessionId,

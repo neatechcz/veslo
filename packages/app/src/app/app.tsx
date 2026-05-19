@@ -1157,6 +1157,21 @@ export default function App() {
   });
 
   const [client, setClient] = createSignal<Client | null>(null);
+
+  // VSLO-171 F3Ú1/Ú2/Ú3/Ú4 — single-active workspace routing adapter.
+  // Instantiated early so it can be injected into createSessionStore (~1379)
+  // and createWorkspaceStore (~2988) as an option. `mode` and `activeWorkspaceId`
+  // are closures that reference signals declared later in App() — safe because
+  // they're only called after full app init.
+  let workspaceStoreRef: ReturnType<typeof createWorkspaceStore> | null = null;
+  const workspaceRouting = createWorkspaceRouting({
+    mode: () => (multiClientEnabled() ? "multi" : "single-active"),
+    clientSource: client,
+    activeWorkspaceId: () => workspaceStoreRef?.activeWorkspaceId().trim() ?? "",
+  });
+  const routedClient = (workspaceId?: string) =>
+    workspaceRouting.client(workspaceId);
+
   const [connectedVersion, setConnectedVersion] = createSignal<string | null>(
     null
   );
@@ -1487,6 +1502,7 @@ export default function App() {
 
   const sessionStore = createSessionStore({
     client,
+    routing: workspaceRouting,
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot().trim(),
     selectedSessionId,
     setSelectedSessionId,
@@ -3922,24 +3938,6 @@ export default function App() {
   const [modelVariantPreferenceReady, setModelVariantPreferenceReady] = createSignal(false);
   const [updatePreferencesReady, setUpdatePreferencesReady] = createSignal(false);
   const [autoCompactingSessionId, setAutoCompactingSessionId] = createSignal<string | null>(null);
-
-  // VSLO-171 F3Ú1 — single-active adapter over the existing global `client()`
-  // signal. Behaves as a no-op proxy until multi mode is wired (F3Ú5/F3Ú6).
-  // F3Ú2: `mode` is reactive on multiClientEnabled() so toggling the
-  // veslo.routing.multiClient pref + restart flips the reported mode.
-  // F3Ú4: instantiated BEFORE createWorkspaceStore so it can be injected as
-  // an option. `activeWorkspaceId` uses a forward-ref to workspaceStore
-  // (resolved at call time, not at routing init).
-  let workspaceStoreRef: ReturnType<typeof createWorkspaceStore> | null = null;
-  const workspaceRouting = createWorkspaceRouting({
-    mode: () => (multiClientEnabled() ? "multi" : "single-active"),
-    clientSource: client,
-    activeWorkspaceId: () => workspaceStoreRef?.activeWorkspaceId().trim() ?? "",
-  });
-  // VSLO-171 F3Ú3 — shorthand for `workspaceRouting.client(workspaceId?)`.
-  // In single-active mode this is identity over the global `client()` signal.
-  const routedClient = (workspaceId?: string) =>
-    workspaceRouting.client(workspaceId);
 
   const formatModelVariantLabel = (value: string | null) => {
     const normalized = normalizeModelVariant(value) ?? "none";
