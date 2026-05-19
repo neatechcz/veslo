@@ -10,9 +10,10 @@ import { createWorkspaceRouting } from "./workspace-routing.js";
 
 function makeTestRouting(client: () => any) {
   return createWorkspaceRouting({
-    mode: () => "single-active",
     clientSource: client,
     activeWorkspaceId: () => "test-workspace",
+    createClient: () => client() as any,
+    waitForHealthy: async () => ({ healthy: true }),
   });
 }
 
