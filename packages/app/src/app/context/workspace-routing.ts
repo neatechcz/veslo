@@ -61,6 +61,19 @@ export type CreateWorkspaceRoutingOptions = {
   mode: () => WorkspaceRoutingMode;
   clientSource: () => RoutingClient | null;
   activeWorkspaceId: () => string;
+  /**
+   * VSLO-171 F3Ú6b — client lifecycle dependencies for multi mode. Single-
+   * active mode doesn't use these (returns wrap over clientSource).
+   */
+  createClient?: (
+    baseUrl: string,
+    directory?: string,
+    auth?: OpencodeAuth
+  ) => RoutingClient;
+  waitForHealthy?: (
+    client: RoutingClient,
+    options?: { timeoutMs?: number }
+  ) => Promise<{ healthy: boolean; version?: string }>;
 };
 
 export function createWorkspaceRouting(
@@ -93,15 +106,47 @@ export function createWorkspaceRouting(
       baseUrl: string,
       options?: EnsureOptions
     ) {
-      const c = opts.clientSource();
-      if (!c) return null;
       if (opts.mode() === "multi") {
-        // Skeleton: record entry so forEach/client(wsId) can find it. Real
-        // per-workspace client creation lands in F3Ú6 (today still hands back
-        // the active client — no behavior change).
+        // VSLO-171 F3Ú6b — real per-workspace client creation. Idempotent on
+        // (baseUrl, directory); cache hit returns instantly with no health
+        // probe, miss creates a fresh Client + waitForHealthy.
+        const cached = entries.get(workspaceId);
+        if (
+          cached &&
+          cached.baseUrl === baseUrl &&
+          cached.directory === options?.directory
+        ) {
+          cached.lastUsed = Date.now();
+          return cached;
+        }
+        if (!opts.createClient || !opts.waitForHealthy) {
+          // Misconfigured factory — multi mode without lifecycle deps.
+          // Fall through to single-active behavior so the app still functions.
+          const c = opts.clientSource();
+          if (!c) return null;
+          const fallback: ClientEntry = {
+            workspaceId,
+            client: c,
+            baseUrl,
+            directory: options?.directory,
+            lastUsed: Date.now(),
+          };
+          entries.set(workspaceId, fallback);
+          return fallback;
+        }
+        const client = opts.createClient(
+          baseUrl,
+          options?.directory,
+          options?.auth
+        );
+        try {
+          await opts.waitForHealthy(client, { timeoutMs: 10_000 });
+        } catch {
+          return null;
+        }
         const entry: ClientEntry = {
           workspaceId,
-          client: c,
+          client,
           baseUrl,
           directory: options?.directory,
           lastUsed: Date.now(),
@@ -109,6 +154,9 @@ export function createWorkspaceRouting(
         entries.set(workspaceId, entry);
         return entry;
       }
+      // Single-active mode: wrap over global client.
+      const c = opts.clientSource();
+      if (!c) return null;
       return {
         workspaceId: opts.activeWorkspaceId(),
         client: c,

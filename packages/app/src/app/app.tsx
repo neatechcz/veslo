@@ -1168,6 +1168,9 @@ export default function App() {
     mode: () => (multiClientEnabled() ? "multi" : "single-active"),
     clientSource: client,
     activeWorkspaceId: () => workspaceStoreRef?.activeWorkspaceId().trim() ?? "",
+    // F3Ú6b — wired for multi mode; single-active mode never calls these.
+    createClient: (baseUrl, directory, auth) => createClient(baseUrl, directory, auth),
+    waitForHealthy: (c, opts) => waitForHealthy(c, opts),
   });
   const routedClient = (workspaceId?: string) =>
     workspaceRouting.client(workspaceId);
