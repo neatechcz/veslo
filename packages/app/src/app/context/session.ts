@@ -28,6 +28,7 @@ import {
   safeStringify,
 } from "../utils";
 import { unwrap } from "../lib/opencode";
+import type { WorkspaceRouting } from "./workspace-routing";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { formatSessionError, truncateErrorField } from "../lib/session-error";
 import { detectChromeMcpCompletedError } from "../lib/chrome-mcp-error";
@@ -139,6 +140,9 @@ const removePartInfo = (list: Part[], partID: string) => list.filter((part) => p
 
 export function createSessionStore(options: {
   client: () => Client | null;
+  // VSLO-171 F3Ú4 — workspace routing service. Prefer
+  // `options.routing.active()` over `options.client()` for new code.
+  routing: WorkspaceRouting;
   activeWorkspaceRoot: () => string;
   selectedSessionId: () => string | null;
   setSelectedSessionId: (id: string | null) => void;
@@ -632,7 +636,7 @@ export function createSessionStore(options: {
   });
 
   async function loadSessions(scopeRoot?: string) {
-    const c = options.client();
+    const c = options.routing.active();
     if (!c) return;
 
     // IMPORTANT: OpenCode's session.list() supports server-side filtering by directory.
@@ -691,7 +695,7 @@ export function createSessionStore(options: {
   }
 
   async function renameSession(sessionID: string, title: string) {
-    const c = options.client();
+    const c = options.routing.active();
     if (!c) return;
     const trimmed = title.trim();
     if (!trimmed) {
@@ -702,7 +706,7 @@ export function createSessionStore(options: {
   }
 
   async function refreshPendingPermissions() {
-    const c = options.client();
+    const c = options.routing.active();
     if (!c) return;
     const list = unwrap(await c.permission.list());
     const now = Date.now();
@@ -712,7 +716,7 @@ export function createSessionStore(options: {
   }
 
   async function refreshPendingQuestions() {
-    const c = options.client();
+    const c = options.routing.active();
     if (!c) return;
     const list = unwrap(await c.question.list());
     const now = Date.now();
@@ -798,7 +802,7 @@ export function createSessionStore(options: {
   }
 
   async function selectSession(sessionID: string) {
-    const c = options.client();
+    const c = options.routing.active();
 
     const perfEnabled = options.developerMode();
     options.setSelectedSessionId(sessionID);
@@ -925,7 +929,7 @@ export function createSessionStore(options: {
   }
 
   async function loadEarlierMessages(sessionID: string, chunk = SESSION_MESSAGE_LOAD_CHUNK) {
-    const c = options.client();
+    const c = options.routing.active();
     if (!c) return;
     if (!sessionID) return;
     if (messageLoadBusyBySession()[sessionID]) return;
@@ -948,7 +952,7 @@ export function createSessionStore(options: {
   }
 
   async function respondPermission(requestID: string, reply: "once" | "always" | "reject") {
-    const c = options.client();
+    const c = options.routing.active();
     if (!c || permissionReplyBusy()) return;
 
     setPermissionReplyBusy(true);
@@ -965,7 +969,7 @@ export function createSessionStore(options: {
   }
 
   async function respondQuestion(requestID: string, answers: string[][]) {
-    const c = options.client();
+    const c = options.routing.active();
     if (!c || questionReplyBusy()) return;
 
     setQuestionReplyBusy(true);
@@ -982,7 +986,7 @@ export function createSessionStore(options: {
   }
 
   async function rejectQuestion(requestID: string) {
-    const c = options.client();
+    const c = options.routing.active();
     if (!c || questionReplyBusy()) return;
 
     setQuestionReplyBusy(true);
@@ -1214,6 +1218,8 @@ export function createSessionStore(options: {
         if (sessionID && isKnownSessionId(sessionID)) {
           setStore("sessionStatus", sessionID, "idle");
           notifySessionBusy(sessionID, "idle");
+          // VSLO-171.F3Ú6: SSE event handler will dispatch on per-workspace
+          // client (from event payload workspaceId) once SSE multiplex lands.
           const c = options.client();
           if (c) {
             try {
@@ -1419,6 +1425,9 @@ export function createSessionStore(options: {
   };
 
   createEffect(() => {
+    // VSLO-171.F3Ú6: SSE subscription will iterate routing.forEach() per
+    // workspace once multiplex lands. Keep tracking the global client signal
+    // for now so single-active path is unchanged.
     const c = options.client();
     if (!c) return;
 

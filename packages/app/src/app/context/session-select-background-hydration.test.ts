@@ -5,6 +5,15 @@ import { createRoot, createSignal } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 
 import { createSessionStore } from "./session.js";
+import { createWorkspaceRouting } from "./workspace-routing.js";
+
+function makeTestRouting(client: () => any) {
+  return createWorkspaceRouting({
+    mode: () => "single-active",
+    clientSource: client,
+    activeWorkspaceId: () => "test-workspace",
+  });
+}
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -65,32 +74,34 @@ test("selectSession completes initial transcript load without waiting for health
       const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
       let loadCompleteCount = 0;
 
+      const clientFn = () =>
+        ({
+          global: {
+            health: () => {
+              healthCalls += 1;
+              return healthGate.promise;
+            },
+          },
+          session: {
+            messages: () => {
+              messageCalls += 1;
+              return messagesGate.promise;
+            },
+            todo: () => {
+              todoCalls += 1;
+              return todoGate.promise;
+            },
+          },
+          permission: {
+            list: () => {
+              permissionCalls += 1;
+              return permissionsGate.promise;
+            },
+          },
+        }) as any;
       const store = createSessionStore({
-        client: () =>
-          ({
-            global: {
-              health: () => {
-                healthCalls += 1;
-                return healthGate.promise;
-              },
-            },
-            session: {
-              messages: () => {
-                messageCalls += 1;
-                return messagesGate.promise;
-              },
-              todo: () => {
-                todoCalls += 1;
-                return todoGate.promise;
-              },
-            },
-            permission: {
-              list: () => {
-                permissionCalls += 1;
-                return permissionsGate.promise;
-              },
-            },
-          }) as any,
+        client: clientFn,
+        routing: makeTestRouting(clientFn),
         activeWorkspaceRoot: () => "",
         selectedSessionId,
         setSelectedSessionId,
@@ -141,6 +152,7 @@ test("selectSession still completes the load lifecycle when no client is availab
 
       const store = createSessionStore({
         client: () => null,
+        routing: makeTestRouting(() => null),
         activeWorkspaceRoot: () => "",
         selectedSessionId,
         setSelectedSessionId,
@@ -171,6 +183,7 @@ test("selectSession hydrates transcript from offline fallback when no client is 
 
       const store = createSessionStore({
         client: () => null,
+        routing: makeTestRouting(() => null),
         activeWorkspaceRoot: () => "/tmp/prometheus",
         selectedSessionId,
         setSelectedSessionId,
@@ -217,20 +230,22 @@ test("re-selecting the same session while the first load is in flight still appl
     try {
       const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
 
+      const clientFn = () =>
+        ({
+          session: {
+            messages: () => {
+              messageCalls += 1;
+              return messagesGate.promise;
+            },
+            todo: async () => ok([]),
+          },
+          permission: {
+            list: async () => ok([]),
+          },
+        }) as any;
       const store = createSessionStore({
-        client: () =>
-          ({
-            session: {
-              messages: () => {
-                messageCalls += 1;
-                return messagesGate.promise;
-              },
-              todo: async () => ok([]),
-            },
-            permission: {
-              list: async () => ok([]),
-            },
-          }) as any,
+        client: clientFn,
+        routing: makeTestRouting(clientFn),
         activeWorkspaceRoot: () => "/Users/vaclavsoukup/ai discussion projects/Client data and offer descriptions/Prometheus",
         selectedSessionId,
         setSelectedSessionId,
