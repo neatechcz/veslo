@@ -1250,11 +1250,15 @@ export function createWorkspaceStore(options: {
     // per-workspace cache effect in app.tsx (save/load on activeWorkspaceId).
     const multiWorkspaceId =
       context?.workspaceId ?? activeWorkspaceId().trim() ?? "";
+    console.log("[veslo.connectToServer] entry", {
+      multiWorkspaceId,
+      nextBaseUrl,
+      directory: directory ?? null,
+      contextReason: context?.reason ?? null,
+      activeRoot: activeWorkspaceRoot().trim(),
+    });
     if (!multiWorkspaceId) {
-      wsDebug("connect:no-workspace-id", {
-        baseUrl: nextBaseUrl,
-        directory: directory ?? null,
-      });
+      console.warn("[veslo.connectToServer] no-workspace-id, aborting");
       options.setError("Connect requires a workspace id");
       return false;
     }
@@ -1291,6 +1295,10 @@ export function createWorkspaceStore(options: {
             }
           );
           if (!entry) {
+            console.warn("[veslo.connectToServer] ensure returned null", {
+              workspaceId: multiWorkspaceId,
+              baseUrl: nextBaseUrl,
+            });
             const message = "Failed to ensure workspace client";
             options.setError(message);
             options.setOpencodeConnectStatus?.({
@@ -1307,6 +1315,10 @@ export function createWorkspaceStore(options: {
           // `client()` directly (rather than `routedClient()`) see the active
           // workspace's client. `routedClient()` prefers
           // routing.client(activeWorkspaceId) which hits the entries Map.
+          console.log("[veslo.connectToServer] ensured client OK", {
+            workspaceId: multiWorkspaceId,
+            ms: Date.now() - connectStart,
+          });
           options.setClient(entry.client);
           options.setConnectedVersion(null);
           options.setBaseUrl(nextBaseUrl);

@@ -100,7 +100,18 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
   ) => {
     const auth = syncEngineSnapshot(info);
     const baseUrl = info.baseUrl?.trim() ?? "";
-    if (!baseUrl) return true;
+    console.log("[veslo.reconnectFromEngineSnapshot]", {
+      hasBaseUrl: Boolean(baseUrl),
+      baseUrl,
+      workspaceId: options.workspaceId,
+      workspacePath: options.workspacePath,
+      connectMode: options.connectMode ?? "server",
+      reason: options.reason,
+    });
+    if (!baseUrl) {
+      console.warn("[veslo.reconnectFromEngineSnapshot] empty baseUrl — skipping connectToServer (this leaves client unset, sendPrompt will fail)");
+      return true;
+    }
 
     if ((options.connectMode ?? "server") === "quiet") {
       return await deps.connectQuiet(baseUrl, options.workspacePath, auth);
