@@ -1018,7 +1018,14 @@ export function createSessionStore(options: {
   }
 
   async function respondPermission(requestID: string, reply: "once" | "always" | "reject") {
-    const c = options.routing.active();
+    // VSLO-171 F3Ú7b — route the reply to the per-workspace client that owns
+    // this permission. Falls back to active() if the permission has no
+    // workspaceId (single-active mode or pre-F3Ú7a state).
+    const perm = allPendingPermissions().find((p) => p.id === requestID)
+      ?? store.pendingPermissions.find((p) => p.id === requestID);
+    const c = perm?.workspaceId
+      ? options.routing.client(perm.workspaceId) ?? options.routing.active()
+      : options.routing.active();
     if (!c || permissionReplyBusy()) return;
 
     setPermissionReplyBusy(true);
@@ -1101,6 +1108,16 @@ export function createSessionStore(options: {
     if (id) {
       const scoped = store.pendingPermissions.find((perm) => perm.sessionID === id) ?? null;
       if (scoped) return scoped;
+    }
+    // VSLO-171 F3Ú7b — in multi mode the dialog must surface permissions from
+    // any workspace, not just the active one. Prefer active workspace first
+    // (less surprising for the user) then fall back to any pending permission.
+    if (options.routing.mode() === "multi") {
+      const all = allPendingPermissions();
+      if (all.length === 0) return null;
+      const activeWsId = options.routing.activeWorkspaceId();
+      const fromActive = all.find((p) => p.workspaceId === activeWsId);
+      return fromActive ?? all[0];
     }
     return store.pendingPermissions[0] ?? null;
   });
