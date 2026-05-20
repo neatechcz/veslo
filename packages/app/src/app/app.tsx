@@ -3974,6 +3974,7 @@ export default function App() {
     preferServerByDefault: () => Boolean(cloudEnvironment.vesloUrl),
     vesloServerClient,
     ensureLocalVesloServerRunning: () => ensureLocalVesloServerRunning({ ignoreStartupPreference: true }),
+    vesloServerHostInfo: () => vesloServerHostInfo(),
     onEngineStable: () => {
       setEngineReady(true);
       void ensureLocalVesloServerRunning().catch((error) => {

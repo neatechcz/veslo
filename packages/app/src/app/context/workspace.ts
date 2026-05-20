@@ -165,6 +165,7 @@ export function createWorkspaceStore(options: {
   preferServerByDefault?: () => boolean;
   vesloServerClient?: () => VesloServerClient | null;
   ensureLocalVesloServerRunning?: () => Promise<boolean>;
+  vesloServerHostInfo?: () => { baseUrl?: string | null; clientToken?: string | null } | null;
   setOpencodeConnectStatus?: (status: OpencodeConnectStatus | null) => void;
   onEngineStable?: () => void;
   engineRuntime?: () => EngineRuntime;
@@ -572,6 +573,71 @@ export function createWorkspaceStore(options: {
     for (const w of missing) {
       if (!w.path) continue;
       await addLocalWorkspaceOnServer(w.path, w.displayName?.trim() || w.name?.trim());
+    }
+    await reconcileManagedAiApiKeys();
+  };
+
+  // VSLO-171 — every workspace's opencode.jsonc stores the veslo-server bearer
+  // token in provider.<id>.options.apiKey (plus baseURL with the server's
+  // port). When the server respawns/relocates these values become stale and
+  // the embedded engine starts returning 401 "Invalid bearer token". The
+  // active-workspace effect in app.tsx patches the on-disk file when the user
+  // visits a workspace; this reconciliation extends the same fix to every
+  // local workspace at boot so the user doesn't need to "warm up" each one.
+  const reconcileManagedAiApiKeys = async () => {
+    const client = options.vesloServerClient?.();
+    const hostInfo = options.vesloServerHostInfo?.();
+    const currentToken = hostInfo?.clientToken?.trim() ?? "";
+    const currentBaseUrl = hostInfo?.baseUrl?.trim().replace(/\/+$/, "") ?? "";
+    if (!client || !currentToken) return;
+    let serverItems: Array<{ id: string; workspaceType?: string; path?: string }> = [];
+    try {
+      const response = await client.listWorkspaces();
+      serverItems = Array.isArray(response.items) ? response.items : [];
+    } catch {
+      return;
+    }
+    for (const ws of serverItems) {
+      if (ws.workspaceType !== "local" || !ws.id) continue;
+      try {
+        const config = await client.getConfig(ws.id);
+        const opencode = (config.opencode ?? {}) as Record<string, unknown>;
+        const provider = opencode.provider;
+        if (!provider || typeof provider !== "object") continue;
+        let changed = false;
+        for (const entry of Object.values(provider as Record<string, unknown>)) {
+          if (!entry || typeof entry !== "object") continue;
+          const opts = (entry as Record<string, unknown>).options;
+          if (!opts || typeof opts !== "object") continue;
+          const optsRecord = opts as Record<string, unknown>;
+          if (
+            typeof optsRecord.apiKey === "string" &&
+            optsRecord.apiKey !== currentToken
+          ) {
+            optsRecord.apiKey = currentToken;
+            changed = true;
+          }
+          if (
+            currentBaseUrl &&
+            typeof optsRecord.baseURL === "string"
+          ) {
+            const rest = optsRecord.baseURL.replace(/^https?:\/\/[^/]+/, "");
+            const next = `${currentBaseUrl}${rest}`;
+            if (optsRecord.baseURL !== next) {
+              optsRecord.baseURL = next;
+              changed = true;
+            }
+          }
+        }
+        if (changed) {
+          await client.patchConfig(ws.id, { opencode });
+        }
+      } catch (err) {
+        wsDebug("reconcileManagedAiApiKeys:skip", {
+          workspaceId: ws.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
   };
 
