@@ -4202,7 +4202,16 @@ async function runRouterDaemon(args: ParsedArgs) {
       },
       waitForHealthy: async (baseUrl) => {
         const client = createOpencodeClient({ baseUrl, headers: authHeaders });
-        await waitForOpencodeHealthy(client);
+        // VSLO-171 — opencode cold-start (SQLite migration) routinely exceeds
+        // 10s; pool then returns 502 "engine spawn failed" to the SDK even
+        // though the engine reaches ready shortly after. Use a longer default
+        // and allow env override.
+        const timeoutMs = (() => {
+          const raw = process.env.VESLO_OPENCODE_HEALTH_TIMEOUT_MS;
+          const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+          return Number.isFinite(parsed) && parsed >= 1_000 ? parsed : 30_000;
+        })();
+        await waitForOpencodeHealthy(client, timeoutMs);
       },
       stopChild,
       findFreePort: () => findFreePort(opencodeHost),
