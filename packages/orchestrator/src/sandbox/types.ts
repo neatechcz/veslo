@@ -21,6 +21,9 @@ export type SandboxSpawnOptions = {
   workspacePath: string;
   /** Secondary mounts (reference folders from F5). Default RO. */
   extraMounts?: SandboxMount[];
+  /** Engine-specific extra writable paths (config dir, cache dir, /tmp area).
+   *  Not user-controlled — orchestrator picks them. RO mounts go via extraMounts. */
+  additionalWritePaths?: string[];
   /** Paths denied for read (defaults from `blocked_defaults.ts`). */
   blockedReadPaths?: string[];
   /** Allow local-only HTTP bind (orchestrator ↔ engine). Default true. */
