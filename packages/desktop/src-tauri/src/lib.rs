@@ -43,8 +43,7 @@ use commands::opencode_router::{
 use commands::opkg::{import_skill, opkg_install};
 use commands::orchestrator::{
     orchestrator_engines_list, orchestrator_instance_dispose, orchestrator_start_detached,
-    orchestrator_status, orchestrator_workspace_activate, sandbox_cleanup_veslo_containers,
-    sandbox_debug_probe, sandbox_doctor, sandbox_stop, spawn_engine_event_poller,
+    orchestrator_status, orchestrator_workspace_activate, spawn_engine_event_poller,
 };
 use commands::pending_session_drafts::{
     pending_session_drafts_delete, pending_session_drafts_get, pending_session_drafts_list,
@@ -214,10 +213,8 @@ pub fn run() {
             orchestrator_workspace_activate,
             orchestrator_instance_dispose,
             orchestrator_start_detached,
-            sandbox_doctor,
-            sandbox_debug_probe,
-            sandbox_stop,
-            sandbox_cleanup_veslo_containers,
+            // F4Ú8b — sandbox_doctor, sandbox_debug_probe, sandbox_stop,
+            // sandbox_cleanup_veslo_containers IPC commands SMAZÁNY.
             veslo_server_info,
             veslo_server_restart,
             opencodeRouter_info,
