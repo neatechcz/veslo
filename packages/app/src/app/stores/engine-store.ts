@@ -19,13 +19,30 @@ import {
   engineStart,
   engineStop,
   orchestratorInstanceDispose,
-  sandboxDoctor,
   type EngineDoctorResult,
   type EngineInfo,
-  type SandboxDoctorResult,
   type WorkspaceInfo,
 } from "../lib/tauri";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
+
+// F4Ú8c — local stub for legacy sandbox doctor result (Docker odstraněn).
+// Pole zachována kvůli compat se settings/app UI bindings, vždy null/false.
+type SandboxDoctorResult = {
+  installed: boolean;
+  daemonRunning: boolean;
+  permissionOk: boolean;
+  ready: boolean;
+  clientVersion?: string | null;
+  serverVersion?: string | null;
+  error?: string | null;
+  debug?: {
+    candidates: string[];
+    selectedBin?: string | null;
+    versionCommand?: { status: number; stdout: string; stderr: string } | null;
+    infoCommand?: { status: number; stdout: string; stderr: string } | null;
+  } | null;
+};
+export type { SandboxDoctorResult };
 
 export interface EngineStoreDeps {
   // Workspace path / info accessors
@@ -186,33 +203,13 @@ export function createEngineStore(deps: EngineStoreDeps) {
     }
   }
 
-  async function refreshSandboxDoctor() {
-    if (!isTauriRuntime()) {
-      setSandboxDoctorResult(null);
-      setSandboxDoctorCheckedAt(Date.now());
-      return null;
-    }
-    if (sandboxDoctorBusy()) return sandboxDoctorResult();
-    setSandboxDoctorBusy(true);
-    try {
-      const result = await sandboxDoctor();
-      setSandboxDoctorResult(result);
-      return result;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      const fallback: SandboxDoctorResult = {
-        installed: false,
-        daemonRunning: false,
-        permissionOk: false,
-        ready: false,
-        error: message,
-      };
-      setSandboxDoctorResult(fallback);
-      return fallback;
-    } finally {
-      setSandboxDoctorCheckedAt(Date.now());
-      setSandboxDoctorBusy(false);
-    }
+  // F4Ú8c — refreshSandboxDoctor no-op (Docker doctor Rust IPC odstraněn).
+  // Konzumenti dostávají null result + busy=false. Ponecháno aby UI bindings
+  // (Create sandbox modal retry, settings) nevyhazovaly.
+  async function refreshSandboxDoctor(): Promise<SandboxDoctorResult | null> {
+    setSandboxDoctorResult(null);
+    setSandboxDoctorCheckedAt(Date.now());
+    return null;
   }
 
   async function startHost(optionsOverride?: { workspacePath?: string; navigate?: boolean }) {

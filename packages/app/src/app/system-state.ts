@@ -27,7 +27,6 @@ import {
 import {
   resetVesloState,
   resetOpencodeCache,
-  sandboxCleanupVesloContainers,
   updaterPrepareInstall,
 } from "./lib/tauri";
 import { unwrap, waitForHealthy } from "./lib/opencode";
@@ -100,8 +99,9 @@ export function createSystemState(options: {
 
   const [cacheRepairBusy, setCacheRepairBusy] = createSignal(false);
   const [cacheRepairResult, setCacheRepairResult] = createSignal<string | null>(null);
-  const [dockerCleanupBusy, setDockerCleanupBusy] = createSignal(false);
-  const [dockerCleanupResult, setDockerCleanupResult] = createSignal<string | null>(null);
+  // F4Ú8c — Docker cleanup state odebráno (sandbox runs OS-level, žádné containery).
+  const dockerCleanupBusy = () => false;
+  const dockerCleanupResult = () => null as string | null;
 
   const updater = createUpdaterState();
   const {
@@ -436,40 +436,10 @@ export function createSystemState(options: {
     }
   }
 
+  // F4Ú8c — cleanupVesloDockerContainers() no-op. Docker sandbox backend
+  // odstraněn ve F4Ú8a/Ú8b; settings UI handler ponecháme jako stub.
   async function cleanupVesloDockerContainers() {
-    if (!isTauriRuntime()) {
-      setDockerCleanupResult("Docker cleanup requires the desktop app.");
-      return;
-    }
-
-    if (dockerCleanupBusy()) return;
-
-    setDockerCleanupBusy(true);
-    setDockerCleanupResult(null);
-    options.setError(null);
-
-    try {
-      const result = await sandboxCleanupVesloContainers();
-      if (!result.candidates.length) {
-        setDockerCleanupResult("No Veslo Docker containers found.");
-        return;
-      }
-
-      const removedCount = result.removed.length;
-      if (result.errors.length) {
-        const first = result.errors[0];
-        setDockerCleanupResult(
-          `Removed ${removedCount}/${result.candidates.length} containers. ${first}`,
-        );
-        return;
-      }
-
-      setDockerCleanupResult(`Removed ${removedCount} Veslo Docker container(s).`);
-    } catch (e) {
-      setDockerCleanupResult(e instanceof Error ? e.message : safeStringify(e));
-    } finally {
-      setDockerCleanupBusy(false);
-    }
+    // intentional no-op
   }
 
   async function checkForUpdates(optionsCheck?: { quiet?: boolean }) {

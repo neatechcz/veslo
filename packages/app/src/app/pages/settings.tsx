@@ -20,7 +20,7 @@ import type {
   VesloServerInfo,
   AppBuildInfo,
   OpenCodeRouterInfo,
-  SandboxDebugProbeResult,
+  WorkspaceInfo,
 } from "../lib/tauri";
 import {
   appBuildInfo,
@@ -29,8 +29,21 @@ import {
   opencodeRouterStop,
   vesloServerRestart,
   pickFile,
-  sandboxDebugProbe,
 } from "../lib/tauri";
+
+// F4Ú8c — local stub pro legacy debug probe (Rust IPC odstraněn ve F4Ú8b).
+type SandboxDebugProbeResult = {
+  startedAt?: number;
+  finishedAt?: number;
+  runId?: string;
+  workspacePath?: string;
+  ready: boolean;
+  error?: string | null;
+  doctor?: { ready: boolean; error?: string | null } | null;
+  dockerInspect?: { stdout: string; stderr: string; status: number } | null;
+  dockerLogs?: { stdout: string; stderr: string; status: number } | null;
+  cleanup?: { containerName?: string | null; containerRemoved: boolean; errors: string[] };
+};
 import {
   getDefaultDenApiBase,
   getDenApiBase,
@@ -859,23 +872,9 @@ export default function SettingsView(props: SettingsViewProps) {
     }
   };
 
+  // F4Ú8c — runSandboxDebugProbe no-op (Docker debug probe Rust IPC odstraněn).
   const runSandboxDebugProbe = async () => {
-    if (!isTauriRuntime() || sandboxProbeBusy()) return;
-    setSandboxProbeBusy(true);
-    setSandboxProbeStatus(null);
-    try {
-      const report = await sandboxDebugProbe();
-      setSandboxProbeResult(report);
-      if (report.ready) {
-        setSandboxProbeStatus(translate("settings.sandbox_probe_succeeded"));
-      } else {
-        setSandboxProbeStatus(report.error?.trim() || translate("settings.sandbox_probe_completed_errors"));
-      }
-    } catch (error) {
-      setSandboxProbeStatus(error instanceof Error ? error.message : translate("settings.sandbox_probe_failed"));
-    } finally {
-      setSandboxProbeBusy(false);
-    }
+    setSandboxProbeStatus("Sandbox debug probe is no longer available — Docker backend was removed.");
   };
 
   const compactOutlineActionClass =
