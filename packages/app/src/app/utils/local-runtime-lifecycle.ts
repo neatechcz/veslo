@@ -41,7 +41,7 @@ export interface LocalRuntimeLifecycleDeps {
   setEngineAuth: (auth: OpencodeAuth | null) => void;
   startEngine: (workspacePath: string, options: LocalRuntimeStartOptions) => Promise<EngineInfo>;
   stopEngine: () => Promise<EngineInfo>;
-  readEngineInfo: (workspaceId?: string) => Promise<EngineInfo>;
+  readEngineInfo: (workspaceId?: string, workspacePath?: string) => Promise<EngineInfo>;
   activateOrchestratorWorkspace: (input: {
     workspacePath: string;
     name?: string | null;
@@ -118,7 +118,7 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
       while (Date.now() - pollStart < timeoutMs) {
         await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
         try {
-          activeInfo = await deps.readEngineInfo(options.workspaceId);
+          activeInfo = await deps.readEngineInfo(options.workspaceId, options.workspacePath);
         } catch {
           continue;
         }
@@ -182,7 +182,7 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
       }
       await activateOrchestratorWorkspace(options);
       const nextInfo = await withTimeoutOrThrow(
-        deps.readEngineInfo(),
+        deps.readEngineInfo(options.workspaceId, options.workspacePath),
         { timeoutMs: 12_000, label: "engine_info" },
       );
       return await reconnectFromEngineSnapshot(nextInfo, options);
@@ -204,7 +204,7 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
   ) {
     await activateOrchestratorWorkspace(options);
     const nextInfo = await withTimeoutOrThrow(
-      deps.readEngineInfo(),
+      deps.readEngineInfo(options.workspaceId, options.workspacePath),
       { timeoutMs: 12_000, label: "engine_info" },
     );
     return await reconnectFromEngineSnapshot(nextInfo, options);

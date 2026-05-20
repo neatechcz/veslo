@@ -184,6 +184,7 @@ pub fn engine_info(
     manager: State<EngineManager>,
     orchestrator_manager: State<OrchestratorManager>,
     workspace_id: Option<String>,
+    workspace_path: Option<String>,
 ) -> EngineInfo {
     let (
         direct_snapshot,
@@ -253,17 +254,34 @@ pub fn engine_info(
     // basic auth on the way to the upstream engine.
     if let Some(ref ws_id) = workspace_id {
         let daemon_port = status.daemon.as_ref().map(|d| d.port);
-        let engine = status.engines.iter().find(|e| &e.workspace_id == ws_id);
-        let workspace_path = status
-            .workspaces
+        // VSLO-171 F3 fix — frontend and orchestrator maintain independent
+        // workspace ID stores; the frontend ID may not match the orchestrator's
+        // ID even though both refer to the same path. If the caller-provided
+        // ws_id doesn't resolve in orchestrator state, fall back to a
+        // path-based lookup using workspace_path. The proxy URL must use the
+        // *orchestrator's* ID — otherwise the proxy returns 404 "workspace not
+        // found" on the first request and the engine never starts.
+        let by_id = status.workspaces.iter().find(|ws| &ws.id == ws_id);
+        let by_path = workspace_path.as_ref().and_then(|path| {
+            let normalized = path.trim_end_matches('/');
+            status
+                .workspaces
+                .iter()
+                .find(|ws| ws.path.trim_end_matches('/') == normalized)
+        });
+        let resolved_ws = by_id.or(by_path);
+        let resolved_ws_id = resolved_ws.map(|ws| ws.id.clone()).unwrap_or_else(|| ws_id.clone());
+        let engine = status
+            .engines
             .iter()
-            .find(|ws| &ws.id == ws_id)
+            .find(|e| e.workspace_id == resolved_ws_id);
+        let workspace_path = resolved_ws
             .map(|ws| ws.path.clone())
             .or_else(|| engine.map(|e| e.workdir.clone()));
         // Workspace IDs are `ws-` + 12 hex chars (see workspaceIdForLocal in
         // packages/orchestrator/src/cli.ts); they are URL-safe, no encoding needed.
         let proxy_base_url = daemon_port
-            .map(|port| format!("http://127.0.0.1:{port}/workspace/{ws_id}/opencode"));
+            .map(|port| format!("http://127.0.0.1:{port}/workspace/{resolved_ws_id}/opencode"));
         let running = engine
             .map(|e| matches!(e.state.as_str(), "ready" | "idle"))
             .unwrap_or(false);
