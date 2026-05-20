@@ -45,12 +45,13 @@
     "access": "public"
   },
   "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.52",
     "@opencode-ai/sdk": "^1.1.31",
     "@opentui/core": "0.1.77",
     "@opentui/solid": "0.1.77",
+    "solid-js": "1.9.9",
     "veslo-code-router": "2026.6.2",
-    "veslo-server": "2026.6.2",
-    "solid-js": "1.9.9"
+    "veslo-server": "2026.6.2"
   },
   "devDependencies": {
     "@opentui/core-darwin-arm64": "0.1.77",
