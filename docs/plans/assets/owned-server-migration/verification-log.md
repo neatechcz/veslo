@@ -93,3 +93,17 @@ This log records sanitized verification evidence for the VSLO-185 owned-server m
 - Server check: `sudo -n docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'` on `62.109.146.43` showed no running containers.
 - Result: Phase 4 Task 7 is blocked until a dark-launch stack is started with a real env file, restored data, and a proxy/TLS path. Do not start public `proxy` against synthetic data because these hostnames are already public Veslo names and Phase 5 cutover has not been approved.
 - Next prerequisite: provide or create the owned-server env file, restore a real non-production or production dump copy, start the stack without switching live traffic unexpectedly, then rerun Task 7 health checks.
+
+## 2026-05-20 - Phase 4 dark-launch blocker recheck
+
+- Server recheck: `sudo -n docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'` on `62.109.146.43` showed no running containers.
+- Server port recheck: no listeners were found for ports 80, 443, 8788, 4034, or 3005.
+- Server env recheck: no production env file was found under the checked `/srv/veslo` or `/home/neatech` paths; the only env artifact found was the previous synthetic staging rehearsal env.
+- Server dump recheck: only synthetic rehearsal dumps, rehearsal backups, and repo migration SQL files were found under the checked paths. No real Den or AI Gateway dump copy was present.
+- Local artifact recheck: the migration worktree search found only env examples and Drizzle migration SQL files. No real `.env`, `.sql.gz`, or production dump artifact was found in the migration worktree.
+- Local artifact recheck: the main checkout contains an ignored Den `.env`; key-only inspection showed Den/Render-oriented variables but not the full owned-server production env, AI Gateway env, web env, Lettr keys, managed-AI keys, debug-log keys, or dump artifacts. No secret values were printed or copied.
+- Server path prep: general sudo for creating `/srv/veslo` is still unavailable through this account, so the default `/srv/veslo` paths remain a maintainer task.
+- Server path prep: created user-owned dark-launch input directories under `/home/neatech/veslo-owned-server-dark-launch-inputs` for env, dumps, and backups with mode `700`.
+- Safety decision: did not start `proxy` or public TLS because Phase 4 requires production-equivalent env values and real restored data, not synthetic rehearsal data.
+- Scope update: added a Phase 4 dark-launch entry gate and runbook so the remaining work is explicit before the health, auth, managed-AI, feedback, debug-log, and backup checks are rerun.
+- Result: Phase 4 still cannot pass until the production-equivalent env file and real Den plus AI Gateway dump copies are provided on the server, then restored and migrated through the dark-launch runbook.

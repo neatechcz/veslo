@@ -39,6 +39,10 @@ The web app reads public `NEXT_PUBLIC_*` values at image build time. Rebuild the
 
 For database restore rehearsals, use `env.staging.example` and `rehearsal/README.md`. The rehearsal commands use a separate Compose project name and start only `den`, `ai-gateway`, and their database dependencies. They do not start `proxy` or bind public ports 80/443.
 
+For Phase 4 dark launch, use `dark-launch/README.md`. The dark-launch path
+requires production-equivalent env values and real Den plus AI Gateway dumps.
+Do not start `proxy` for Phase 4 with synthetic data.
+
 ## Persistent Volumes
 
 Compose creates these named volumes:

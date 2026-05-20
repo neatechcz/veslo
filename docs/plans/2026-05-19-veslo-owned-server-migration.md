@@ -493,6 +493,22 @@ git commit -m "docs: record owned server database rehearsal"
 
 Dark launch means the owned server is fully running but production DNS and production clients still use the old deployment.
 
+### Phase 4 Entry Gate
+
+Use `packaging/owned-server/dark-launch/README.md` before starting the Phase 4 checks.
+
+Do not start the public `proxy` service until all of these are true:
+
+- The server checkout is at the intended release commit.
+- The owned-server env file exists outside the repo and contains production-equivalent values.
+- Real Den and AI Gateway dumps are available on the server.
+- Continuity secrets from current production have been reviewed and mapped, including auth/session, worker-token encryption, managed-AI, debug-log, OAuth, YouTrack, and Lettr values.
+- Database restore and migration have completed against the dark-launch volumes.
+- `den`, `ai-gateway`, and `web` are healthy without the public proxy.
+- DNS for `api.veslo.work`, `ai.veslo.work`, and `app.veslo.work` points at the owned server, and inbound 80/443 are open.
+
+Synthetic data is not acceptable for Phase 4. If the production-equivalent env file or real dumps are missing, record the blocker in the verification log and stop.
+
 ### Task 7: Verify Service Health
 
 **Files:**
