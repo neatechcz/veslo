@@ -78,6 +78,20 @@
       "when": 1777507200000,
       "tag": "0010_managed_ai_usage_accounting",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1778006847000,
+      "tag": "0011_user_ai_access_assignment_origin",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1778322549000,
+      "tag": "0012_debug_logs",
+      "breakpoints": true
     }
   ]
 }

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url"
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url))
 const migrationsDir = path.resolve(currentDir, "../drizzle")
+const journalPath = path.resolve(migrationsDir, "meta/_journal.json")
 
 function stripLineComments(sql: string) {
   return sql
@@ -30,4 +31,21 @@ test("Den Drizzle migrations split multiple SQL statements with statement breakp
       )
     })
   }
+})
+
+test("Den Drizzle migration journal lists every SQL migration", async () => {
+  const entries = await readdir(migrationsDir)
+  const migrationTags = entries
+    .filter((entry) => entry.endsWith(".sql"))
+    .map((entry) => entry.replace(/\.sql$/, ""))
+    .sort()
+  const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
+    entries?: Array<{ tag?: unknown }>
+  }
+  const journalTags = (journal.entries ?? [])
+    .map((entry) => entry.tag)
+    .filter((tag): tag is string => typeof tag === "string")
+    .sort()
+
+  assert.deepEqual(journalTags, migrationTags)
 })

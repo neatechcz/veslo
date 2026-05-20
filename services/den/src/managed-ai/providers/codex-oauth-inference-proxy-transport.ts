@@ -23,9 +23,9 @@ export class CodexOAuthInferenceProxyTransport implements CodexOAuthProviderTran
 
   constructor(deps: CodexOAuthInferenceProxyTransportDeps = {}) {
     this.baseUrl = (
-      deps.baseUrl ??
-      process.env.MANAGED_AI_CODEX_OAUTH_INFERENCE_BASE_URL ??
-      process.env.MANAGED_AI_CODEX_OAUTH_BASE_URL ??
+      readOptionalBaseUrl(deps.baseUrl) ??
+      readOptionalBaseUrl(process.env.MANAGED_AI_CODEX_OAUTH_INFERENCE_BASE_URL) ??
+      readOptionalBaseUrl(process.env.MANAGED_AI_CODEX_OAUTH_BASE_URL) ??
       DEFAULT_CODEX_BASE_URL
     ).replace(/\/+$/, "")
     this.fetchImpl = deps.fetchImpl ?? fetch
@@ -71,6 +71,11 @@ export class CodexOAuthInferenceProxyTransport implements CodexOAuthProviderTran
       usage: parsedResponse.usage ?? undefined,
     }
   }
+}
+
+function readOptionalBaseUrl(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : undefined
 }
 
 type CodexResponsesParsed = {

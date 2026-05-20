@@ -291,6 +291,76 @@ test("codex oauth inference proxy fails before upstream when auth json has no ac
   );
 });
 
+test("codex oauth inference proxy treats blank base URL env values as unset", async () => {
+  const previousInferenceBase = process.env.AI_GATEWAY_CODEX_OAUTH_INFERENCE_BASE_URL;
+  const previousBase = process.env.AI_GATEWAY_CODEX_OAUTH_BASE_URL;
+  process.env.AI_GATEWAY_CODEX_OAUTH_INFERENCE_BASE_URL = "";
+  process.env.AI_GATEWAY_CODEX_OAUTH_BASE_URL = "";
+
+  const fetchCalls: Array<{ url: string; init: RequestInit }> = [];
+  try {
+    const transport = new CodexOAuthInferenceProxyTransport({
+      fetchImpl: async (url, init) => {
+        fetchCalls.push({ url: String(url), init: init ?? {} });
+        return new Response(
+          makeResponsesSse([
+            {
+              event: "response.created",
+              data: {
+                type: "response.created",
+                response: { id: "resp_default_base", created_at: 1777908000, model: "gpt-5.5" },
+              },
+            },
+            {
+              event: "response.output_text.delta",
+              data: {
+                type: "response.output_text.delta",
+                output_index: 0,
+                delta: "ok",
+              },
+            },
+            {
+              event: "response.completed",
+              data: {
+                type: "response.completed",
+                response: { id: "resp_default_base", created_at: 1777908000, model: "gpt-5.5" },
+              },
+            },
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      },
+    });
+
+    await transport.chatCompletions({
+      body: {
+        model: "gpt-5.5",
+        messages: [{ role: "user", content: "hello" }],
+      },
+      authJson: JSON.stringify({
+        auth_mode: "chatgpt",
+        tokens: {
+          access_token: "codex-access-token",
+          account_id: "acct_1",
+        },
+      }),
+    });
+  } finally {
+    if (previousInferenceBase === undefined) {
+      delete process.env.AI_GATEWAY_CODEX_OAUTH_INFERENCE_BASE_URL;
+    } else {
+      process.env.AI_GATEWAY_CODEX_OAUTH_INFERENCE_BASE_URL = previousInferenceBase;
+    }
+    if (previousBase === undefined) {
+      delete process.env.AI_GATEWAY_CODEX_OAUTH_BASE_URL;
+    } else {
+      process.env.AI_GATEWAY_CODEX_OAUTH_BASE_URL = previousBase;
+    }
+  }
+
+  assert.equal(fetchCalls[0]?.url, "https://chatgpt.com/backend-api/codex/responses");
+});
+
 function makeResponsesSse(events: Array<{ event: string; data: unknown }>): string {
   return events.map((entry) => `event: ${entry.event}\ndata: ${JSON.stringify(entry.data)}\n\n`).join("");
 }

@@ -107,3 +107,26 @@ This log records sanitized verification evidence for the VSLO-185 owned-server m
 - Safety decision: did not start `proxy` or public TLS because Phase 4 requires production-equivalent env values and real restored data, not synthetic rehearsal data.
 - Scope update: added a Phase 4 dark-launch entry gate and runbook so the remaining work is explicit before the health, auth, managed-AI, feedback, debug-log, and backup checks are rerun.
 - Result: Phase 4 still cannot pass until the production-equivalent env file and real Den plus AI Gateway dump copies are provided on the server, then restored and migrated through the dark-launch runbook.
+
+## 2026-05-20 - Phase 4 real-data dark launch
+
+- Scope: completed the owned-server production-equivalent env, acquired real Render MySQL data through an AI Gateway Render one-off job, restored Den and AI Gateway databases, migrated/reconciled schemas, started app services and proxy, and ran health/auth/AI/feedback/debug-log checks.
+- Deployment source: built and ran commit `20176997` from the owned-server dark-launch checkout on `62.109.146.43`.
+- Env completion: generated the server production env from Render service env values plus owned-server database passwords; Lettr SMTP remains the email provider; Den-managed OpenAI OAuth keys stayed fully unset because the source values were blank.
+- Dump acquisition: the Den Render service could not run one-off jobs on its free tier, so the dump ran from the starter-plan AI Gateway service against the shared Render MySQL database. Corrected JSON serialization in the temporary dump job before restore.
+- Dump evidence: Den and AI Gateway restored from the same corrected real shared dump copy. Sanitized checksum for the restored `.sql.gz` inputs: `768d1e15a1799bb30c89b60008d20a224c6631f107b0d4a8a77f4fd374176938`.
+- Restore/migration issue: the shared Render database contained mixed Drizzle migration metadata. Den required controlled migration metadata reconciliation and `worker_token.token` widening to `varchar(512)` before `migrations applied successfully`.
+- Restore/migration issue: AI Gateway restored with Den migration metadata in the shared database. AI Gateway migration metadata was reconciled to the gateway journal, then `migrations applied successfully`.
+- Additional issue found during Phase 4 smoke: Den debug-log tables were present with an older schema while the `0012_debug_logs` SQL file was missing from Den Drizzle's journal. Added a regression test, updated the journal, reconciled the live dark-launch debug-log schema, and recorded the `0012_debug_logs` hash in `__drizzle_migrations`.
+- Additional issue found during Phase 4 smoke: blank Codex OAuth base URL env values were passed as real empty strings, causing AI Gateway to call `/backend-api/codex/responses` as a relative URL. Added Den and AI Gateway regression tests and set the live dark-launch Codex OAuth base values to `https://chatgpt.com`.
+- Public health verification from the local machine with normal TLS validation: `https://api.veslo.work/health` returned `{"ok":true}`, `https://ai.veslo.work/health` returned `{"ok":true,"service":"ai-gateway"}`, and `https://app.veslo.work` returned HTTP 200 via Caddy.
+- Full Phase 4 smoke run at `2026-05-20T19:06:47.824Z`: API health, AI health, web root, existing bearer auth, desktop auth start/handoff/exchange, exchanged-token `/v1/me`, managed-AI access, Codex OAuth chat completion, feedback projection, debug-log ingest, and debug-log admin lookup all returned `ok: true`.
+- Managed-AI evidence: AI access returned enabled `codex_oauth` access with default model `gpt-5.5`; a Codex OAuth chat completion returned HTTP 200 with a response id, model `gpt-5.5`, choices, and usage keys. The AI Gateway database recorded `1` usage row for the smoke session.
+- Feedback evidence: feedback projection returned HTTP 201, status `projected`, and YouTrack issue `VSLO-188`. An earlier pre-fix feedback smoke also projected `VSLO-187`.
+- Debug-log evidence: ingest returned HTTP 202 with one accepted batch, admin lookup returned HTTP 200 and found the ingested event, and database checks returned `1` matching debug batch plus `1` matching debug event.
+- Service status after the passing run: Den, AI Gateway, web, Den DB, and AI Gateway DB were healthy; proxy stayed up on ports 80/443. A recent Den/AI Gateway log scan after the passing smoke run found no matching error lines.
+- Local focused regression verification: `pnpm --dir .worktrees/vslo-185-owned-server-migration --filter @neatech/den exec tsx --test test/drizzle-migration-format.test.ts test/managed-ai-codex-oauth-inference-proxy-transport.test.ts` passed with 6 passing tests.
+- Local focused regression verification: `pnpm --dir .worktrees/vslo-185-owned-server-migration --filter @neatech/ai-gateway exec tsx --test test/codex-oauth-inference-proxy-transport.test.ts` passed with 4 passing tests.
+- Local suite verification: `pnpm --dir .worktrees/vslo-185-owned-server-migration --filter @neatech/den test` passed with 251 passing and 1 skipped.
+- Local suite verification: `pnpm --dir .worktrees/vslo-185-owned-server-migration --filter @neatech/ai-gateway test` passed with 200 passing.
+- Whitespace verification: `git diff --check` exited 0.
