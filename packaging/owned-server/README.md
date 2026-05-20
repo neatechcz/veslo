@@ -50,6 +50,8 @@ Compose creates these named volumes:
 
 Backups must be copied off-server. Database dump and restore automation is added in the later backup phase; until then, treat these volumes as stateful production data.
 
+Database backup and restore commands live in `packaging/owned-server/backup/`. Run a manual backup before cutover, copy encrypted backups off-server, and rehearse restore against staging before touching production traffic.
+
 ## Start
 
 From a checked-out release on the server:

@@ -32,3 +32,12 @@ This log records sanitized verification evidence for the VSLO-185 owned-server m
 - Template update: `packaging/owned-server/env.example` now points operators to the inventory and flags continuity secrets plus build-time `NEXT_PUBLIC_*` values.
 - Verification: `rg -n "DATABASE_URL|BETTER_AUTH|MANAGED_AI|AI_GATEWAY|YOUTRACK|POLAR|RENDER|VERCEL|DEN_LOG|DEN_API_BASE|DEN_AUTH_ORIGIN" docs/plans/assets/owned-server-migration/env-inventory.md packaging/owned-server/env.example` listed the expected migration env families in both files.
 - Additional verification: `rg -n "LETTR_API_KEY|AUTH_EMAIL_ADDRESS|AUTH_EMAIL_FROM_NAME|NEXT_PUBLIC_OPENWORK|NEXT_PUBLIC_VESLO|LOOPS_API_KEY|WORKER_TOKEN_ENCRYPTION_KEY|GITHUB_CLIENT" docs/plans/assets/owned-server-migration/env-inventory.md packaging/owned-server/env.example` listed the expected auth-email, web-public, worker-token, and GitHub OAuth keys.
+
+## 2026-05-20 - Phase 3 Task 5 database backup runbook
+
+- Scope: added owned-server MySQL backup and restore runbook plus `backup-mysql.sh` and `restore-mysql.sh`.
+- Backup policy: runbook documents daily automated backups, before-cutover manual backups, off-server copies, encryption before long-term storage or transfer, and restore test cadence.
+- Restore safety: `restore-mysql.sh` refuses to run without `--apply` and prints a destructive restore warning before piping the dump to MySQL.
+- Syntax validation: `bash -n packaging/owned-server/backup/backup-mysql.sh` exited 0.
+- Syntax validation: `bash -n packaging/owned-server/backup/restore-mysql.sh` exited 0.
+- Runbook validation: `rg -n "daily|before production cutover|off-server|Encrypt|restore|--apply|backup-mysql|restore-mysql|sudo docker compose" packaging/owned-server/backup/README.md packaging/owned-server/README.md packaging/owned-server/backup/*.sh` listed the expected policy and command language.
