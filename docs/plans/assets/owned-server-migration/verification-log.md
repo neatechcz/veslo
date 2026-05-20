@@ -13,5 +13,15 @@ This log records sanitized verification evidence for the VSLO-185 owned-server m
 ## 2026-05-20 - Phase 1 Task 2 Compose skeleton
 
 - Scope: added the repo-owned owned-server Compose skeleton, Caddy routes, env template, and operator README.
-- Local validation: `env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/tmp docker compose --env-file packaging/owned-server/env.example -f packaging/owned-server/compose.yml config --quiet` exited 0.
+- Local validation: `docker compose -f packaging/owned-server/compose.yml config` exited 0. No containers were started.
 - Server validation: copied the skeleton to `/home/neatech/veslo-owned-server-config-check` on `62.109.146.43`; `sudo docker compose --env-file packaging/owned-server/env.example -f packaging/owned-server/compose.yml config --quiet` exited 0. No containers were started.
+
+## 2026-05-20 - Phase 1 Task 3 production builds
+
+- Build validation: `pnpm --filter @neatech/den build` exited 0.
+- Build validation: `pnpm --filter @neatech/ai-gateway build` exited 0.
+- Build validation: `pnpm --filter @neatech/veslo-web build` exited 0.
+- Scope: wired owned-server app services to Docker image build targets that enable Corepack, prepare `pnpm@10.27.0`, install from `pnpm-lock.yaml`, run each service build, and start with the existing package start script.
+- Health checks: Compose defines Den `/health`, AI Gateway `/health`, and web `/` checks.
+- Local validation: `/usr/bin/env -u YOUTRACK_MCP_TOKEN -u YOUTRACK_MCP_URL -u YOUTRACK_MCP_ARGS -u RENDER_API_KEY -u VERCEL_TOKEN -u POLAR_ACCESS_TOKEN -u LETTR_API_KEY docker compose --env-file packaging/owned-server/env.example -f packaging/owned-server/compose.yml config --quiet` exited 0.
+- Server validation: copied the updated deployment files to `/home/neatech/veslo-owned-server-config-check` on `62.109.146.43`; `sudo docker compose --env-file packaging/owned-server/env.example -f packaging/owned-server/compose.yml config --quiet` exited 0. No containers were started.

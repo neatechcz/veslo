@@ -1,13 +1,9 @@
 name: veslo-owned-server
 
 x-node-app: &node-app
-  image: node:22-bookworm-slim
   working_dir: /app
   restart: unless-stopped
   init: true
-  volumes:
-    - ../..:/app
-    - pnpm-store:/root/.local/share/pnpm/store
   environment:
     CI: "true"
     NODE_ENV: production
@@ -49,16 +45,16 @@ services:
 
   den:
     <<: *node-app
+    image: veslo-owned-server-den:local
+    build:
+      context: ../..
+      dockerfile: packaging/owned-server/Dockerfile
+      target: den
     depends_on:
       den-db:
         condition: service_healthy
-    command:
-      - sh
-      - -lc
-      - |
-        corepack enable
-        corepack prepare pnpm@10.27.0 --activate
-        exec pnpm --filter @neatech/den start
+    volumes:
+      - den-codex-data:/var/lib/veslo-den/codex
     environment:
       CI: "true"
       NODE_ENV: production
@@ -128,21 +124,29 @@ services:
       MANAGED_AI_CODEX_AUTH_JSON: ${MANAGED_AI_CODEX_AUTH_JSON:-}
       MANAGED_AI_CODEX_OAUTH_INFERENCE_BASE_URL: ${MANAGED_AI_CODEX_OAUTH_INFERENCE_BASE_URL:-}
       MANAGED_AI_CODEX_OAUTH_BASE_URL: ${MANAGED_AI_CODEX_OAUTH_BASE_URL:-}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'node -e "fetch(''http://127.0.0.1:8788/health'').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"'
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
 
   ai-gateway:
     <<: *node-app
+    image: veslo-owned-server-ai-gateway:local
+    build:
+      context: ../..
+      dockerfile: packaging/owned-server/Dockerfile
+      target: ai-gateway
     depends_on:
       ai-gateway-db:
         condition: service_healthy
       den:
-        condition: service_started
-    command:
-      - sh
-      - -lc
-      - |
-        corepack enable
-        corepack prepare pnpm@10.27.0 --activate
-        exec pnpm --filter @neatech/ai-gateway start
+        condition: service_healthy
+    volumes:
+      - ai-gateway-codex-data:/var/lib/veslo-ai-gateway/codex
     environment:
       CI: "true"
       NODE_ENV: production
@@ -163,19 +167,35 @@ services:
       AI_GATEWAY_CODEX_AUTH_JSON: ${AI_GATEWAY_CODEX_AUTH_JSON:-}
       AI_GATEWAY_CODEX_OAUTH_INFERENCE_BASE_URL: ${AI_GATEWAY_CODEX_OAUTH_INFERENCE_BASE_URL:-}
       AI_GATEWAY_CODEX_OAUTH_BASE_URL: ${AI_GATEWAY_CODEX_OAUTH_BASE_URL:-}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'node -e "fetch(''http://127.0.0.1:4034/health'').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"'
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
 
   web:
     <<: *node-app
+    image: veslo-owned-server-web:local
+    build:
+      context: ../..
+      dockerfile: packaging/owned-server/Dockerfile
+      target: web
+      args:
+        DEN_API_BASE: ${DEN_API_BASE:-https://api.veslo.work}
+        DEN_AUTH_ORIGIN: ${DEN_AUTH_ORIGIN:-https://api.veslo.work}
+        NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL: ${NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL:-}
+        NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL: ${NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL:-https://app.veslo.work}
+        NEXT_PUBLIC_VESLO_APP_CONNECT_URL: ${NEXT_PUBLIC_VESLO_APP_CONNECT_URL:-}
+        NEXT_PUBLIC_VESLO_AUTH_CALLBACK_URL: ${NEXT_PUBLIC_VESLO_AUTH_CALLBACK_URL:-https://app.veslo.work}
+        NEXT_PUBLIC_POSTHOG_KEY: ${NEXT_PUBLIC_POSTHOG_KEY:-}
+        NEXT_PUBLIC_POSTHOG_API_KEY: ${NEXT_PUBLIC_POSTHOG_API_KEY:-}
+        NEXT_PUBLIC_POSTHOG_HOST: ${NEXT_PUBLIC_POSTHOG_HOST:-https://us.i.posthog.com}
     depends_on:
       den:
-        condition: service_started
-    command:
-      - sh
-      - -lc
-      - |
-        corepack enable
-        corepack prepare pnpm@10.27.0 --activate
-        exec pnpm --filter @neatech/veslo-web start
+        condition: service_healthy
     environment:
       CI: "true"
       NODE_ENV: production
@@ -190,17 +210,25 @@ services:
       NEXT_PUBLIC_POSTHOG_API_KEY: ${NEXT_PUBLIC_POSTHOG_API_KEY:-}
       NEXT_PUBLIC_POSTHOG_HOST: ${NEXT_PUBLIC_POSTHOG_HOST:-https://us.i.posthog.com}
       LOOPS_API_KEY: ${LOOPS_API_KEY:-}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'node -e "fetch(''http://127.0.0.1:3005/'').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"'
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
 
   proxy:
     image: caddy:2.10-alpine
     restart: unless-stopped
     depends_on:
       den:
-        condition: service_started
+        condition: service_healthy
       ai-gateway:
-        condition: service_started
+        condition: service_healthy
       web:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "80:80"
       - "443:443"
@@ -215,6 +243,7 @@ services:
 volumes:
   den-db-data:
   ai-gateway-db-data:
+  den-codex-data:
+  ai-gateway-codex-data:
   caddy-data:
   caddy-config:
-  pnpm-store:

@@ -35,15 +35,18 @@ Fill `/srv/veslo/env/production.env` with production values. The template covers
 
 Auth email uses Lettr over HTTPS via `LETTR_API_KEY`, `AUTH_EMAIL_ADDRESS`, and `AUTH_EMAIL_FROM_NAME`. Direct SMTP is not required.
 
+The web app reads public `NEXT_PUBLIC_*` values at image build time. Rebuild the `web` image after changing those values.
+
 ## Persistent Volumes
 
 Compose creates these named volumes:
 
 - `den-db-data` for Den MySQL data.
 - `ai-gateway-db-data` for AI Gateway MySQL data.
+- `den-codex-data` for Den-managed Codex runtime state.
+- `ai-gateway-codex-data` for AI Gateway Codex runtime state.
 - `caddy-data` for certificates and Caddy state.
 - `caddy-config` for Caddy runtime config.
-- `pnpm-store` for container-side pnpm cache.
 
 Backups must be copied off-server. Database dump and restore automation is added in the later backup phase; until then, treat these volumes as stateful production data.
 
@@ -53,10 +56,16 @@ From a checked-out release on the server:
 
 ```bash
 sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env config
-sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env up -d
+sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env up -d --build
 ```
 
 Use `sudo docker compose` because the initial server check confirmed `sudo docker ps` works while direct Docker socket access for `neatech` does not.
+
+The app images use `node:22-bookworm-slim`, enable Corepack, prepare `pnpm@10.27.0`, install the workspace with the lockfile, run the service-specific build command, then start through the package start script:
+
+- `pnpm --filter @neatech/den build` then `pnpm --filter @neatech/den start`.
+- `pnpm --filter @neatech/ai-gateway build` then `pnpm --filter @neatech/ai-gateway start`.
+- `pnpm --filter @neatech/veslo-web build` then `pnpm --filter @neatech/veslo-web start`.
 
 ## Health Check
 
@@ -69,7 +78,7 @@ curl -I https://app.veslo.work
 sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env ps
 ```
 
-Application health checks are wired in the next task. Until that task is complete, the proxy and service commands are the skeleton contract and the Compose config check is the local validation gate.
+Compose also defines container health checks for Den `/health`, AI Gateway `/health`, and the web app `/`.
 
 ## Logs
 
