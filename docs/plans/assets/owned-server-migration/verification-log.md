@@ -41,3 +41,11 @@ This log records sanitized verification evidence for the VSLO-185 owned-server m
 - Syntax validation: `bash -n packaging/owned-server/backup/backup-mysql.sh` exited 0.
 - Syntax validation: `bash -n packaging/owned-server/backup/restore-mysql.sh` exited 0.
 - Runbook validation: `rg -n "daily|before production cutover|off-server|Encrypt|restore|--apply|backup-mysql|restore-mysql|sudo docker compose" packaging/owned-server/backup/README.md packaging/owned-server/README.md packaging/owned-server/backup/*.sh` listed the expected policy and command language.
+
+## 2026-05-20 - Phase 3 Task 6 rehearsal prerequisite check
+
+- Direct Docker check: `docker ps` on `neatech@62.109.146.43` failed with Docker socket permission denied.
+- Sudo Docker check: `sudo docker ps` on `neatech@62.109.146.43` exited 0 and showed no running containers.
+- Staging env check: `/srv/veslo/env/staging.env` was not present.
+- Dump check: no `.sql`, `.dump`, or `.sql.gz` files were found under the checked `/home/neatech` and `/srv/veslo` paths.
+- Result: restore rehearsal was not run. Next prerequisite is to provide a staging env file and a non-production Den/AI Gateway dump copy, or explicitly approve creating a synthetic staging dataset for the rehearsal.
