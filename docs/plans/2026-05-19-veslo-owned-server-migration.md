@@ -76,6 +76,8 @@ Ask the server maintainers to confirm:
 - Backup, firewall, OS patching, and monitoring ownership is clear.
 - No-swap operation is acceptable, or maintainers approve adding swap.
 
+The durable prerequisites record lives in `docs/dev/cloud-deployments.md` under "Owned server production host prerequisites". Keep that section synchronized with this migration plan before each production infrastructure phase.
+
 Proceed only after these answers are known.
 
 ### Task 1: Record Server Access Requirements
@@ -83,6 +85,7 @@ Proceed only after these answers are known.
 **Files:**
 - Modify: `docs/dev/cloud-deployments.md`
 - Modify: `docs/plans/2026-05-19-veslo-owned-server-migration.md`
+- Modify: `docs/plans/assets/owned-server-migration/verification-log.md`
 
 **Step 1: Add an owned-server prerequisites section**
 
@@ -111,7 +114,7 @@ Expected: both docs include the prerequisite language.
 Run:
 
 ```bash
-git add docs/dev/cloud-deployments.md docs/plans/2026-05-19-veslo-owned-server-migration.md
+git add docs/dev/cloud-deployments.md docs/plans/2026-05-19-veslo-owned-server-migration.md docs/plans/assets/owned-server-migration/verification-log.md
 git commit -m "docs: record owned server migration prerequisites"
 ```
 

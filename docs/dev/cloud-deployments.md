@@ -4,6 +4,23 @@ This document defines the operational deploy policy for Veslo cloud services.
 
 Veslo is local-first. Cloud services are data, sync, auth, and provisioning infrastructure. They must not be treated as the default application runtime under test.
 
+## Owned server production host prerequisites
+
+Owned-server production deployments must be defined from repo-owned deployment artifacts, not hand-edited containers. The minimum supported host profile is:
+
+- Ubuntu 24.04 or a compatible Linux host supported by Docker Engine.
+- Docker Compose for all long-running Veslo cloud services.
+- A deployment account with either direct Docker socket access or validated `sudo docker` and `sudo docker compose` access.
+- Public inbound ports 80 and 443 for HTTP validation, TLS issuance, and HTTPS service traffic.
+- DNS control for the production app, Den API, AI Gateway, and later worker hostnames.
+- Persistent disk for MySQL data, Caddy state, logs, and deployment releases, with a documented path for expansion.
+- Off-server backup storage for database dumps and configuration recovery material.
+- Outbound HTTPS access for GitHub, npm/pnpm registry traffic, Render and Vercel APIs during transition, OpenAI and other model-provider APIs, Polar, YouTrack, and Lettr.
+
+Auth email delivery uses Lettr over HTTPS. Direct SMTP access is not required for Veslo production auth email.
+
+Before live traffic moves to an owned server, operators must confirm firewall ownership, OS patching ownership, backup ownership, restore testing cadence, monitoring/alerting ownership, and whether the host should run with swap or remain no-swap by policy.
+
 ## Managed-AI routing and admin visibility
 
 Signed-in app identity and desktop handoff can come from DEN, but managed-AI assignment and admin truth follow the service that receives the routed managed-AI request. The inference base URL is separate from DEN auth: desktop and orchestrator development defaults can still route managed-AI requests to the standalone AI Gateway, including `https://veslo-ai-gateway-dev.onrender.com`.
