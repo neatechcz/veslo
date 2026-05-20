@@ -2627,9 +2627,31 @@ async function startOpencode(options: {
   let child: ChildProcess;
   if (sandbox && sandbox.isAvailable()) {
     const baseCommand = [options.bin, ...args].map(shellQuote).join(" ");
+    // F4Ú4 — engine needs write access beyond workspace:
+    //   - OPENCODE_CONFIG_DIR (SQLite migrations, logs, telemetry, auth cache)
+    //   - /tmp + /private/tmp + /var/folders (SQLite WAL/SHM, scratch files)
+    //   - XDG dirs opencode uses: ~/.local/state/opencode, ~/.local/share/opencode,
+    //     ~/.cache/opencode, ~/.config/opencode (sessions DB, model cache, settings)
+    //   These will move to per-workspace dirs in a later fáze.
+    const home = process.env.HOME ?? "";
+    const extraWrites: string[] = [
+      "/tmp",
+      "/private/tmp",
+      "/var/folders",
+    ];
+    if (options.configDir) extraWrites.push(options.configDir);
+    if (home) {
+      extraWrites.push(
+        `${home}/.local/state/opencode`,
+        `${home}/.local/share/opencode`,
+        `${home}/.cache/opencode`,
+        `${home}/.config/opencode`,
+      );
+    }
     const wrapped = await sandbox.wrap({
       command: baseCommand,
       workspacePath: options.workspace,
+      additionalWritePaths: extraWrites,
     });
     options.logger.info(
       "engine spawn (sandboxed)",

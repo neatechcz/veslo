@@ -47,7 +47,7 @@ function gitDirIfPresent(workspacePath: string): string | null {
 }
 
 function buildConfig(opts: SandboxSpawnOptions): SandboxRuntimeConfig {
-  const allowWrite: string[] = [opts.workspacePath];
+  const allowWrite: string[] = [opts.workspacePath, ...(opts.additionalWritePaths ?? [])];
   const denyWrite: string[] = [];
   const denyRead: string[] = [
     ...defaultBlockedReadPaths(),
