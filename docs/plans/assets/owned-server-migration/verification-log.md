@@ -83,3 +83,13 @@ This log records sanitized verification evidence for the VSLO-185 owned-server m
 - Whitespace validation: `git diff --check` exited 0.
 - Secret scan: checked migration docs, packaging, and service files for the provided sudo password and real-looking service secrets; no matches were found.
 - Limitation: this proves restore, migration, startup, backup, and teardown mechanics with synthetic data only. A real non-production or production dump rehearsal is still required before Phase 5 live traffic cutover.
+
+## 2026-05-20 - Phase 4 Task 7 health verification blocker
+
+- Scope: started dark-launch health verification for `api.veslo.work`, `ai.veslo.work`, and `app.veslo.work`.
+- Den health: `curl -fsS --max-time 10 https://api.veslo.work/health` reached DNS but failed to connect to port 443.
+- AI Gateway health: `curl -fsS --max-time 10 https://ai.veslo.work/health` reached DNS but failed to connect to port 443.
+- Web health: `curl -I --max-time 10 https://app.veslo.work` reached DNS but failed to connect to port 443.
+- Server check: `sudo -n docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'` on `62.109.146.43` showed no running containers.
+- Result: Phase 4 Task 7 is blocked until a dark-launch stack is started with a real env file, restored data, and a proxy/TLS path. Do not start public `proxy` against synthetic data because these hostnames are already public Veslo names and Phase 5 cutover has not been approved.
+- Next prerequisite: provide or create the owned-server env file, restore a real non-production or production dump copy, start the stack without switching live traffic unexpectedly, then rerun Task 7 health checks.
