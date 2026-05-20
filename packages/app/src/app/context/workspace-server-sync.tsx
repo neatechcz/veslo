@@ -26,8 +26,13 @@ export function WorkspaceServerSync(props: { workspaceStore: WorkspaceStore }) {
     if (!isTauriRuntime()) return;
     const workspaceId = props.workspaceStore.activeWorkspaceId().trim();
     if (!workspaceId) return;
+    // Pass path so Rust engine_info can fall back to path-based lookup when
+    // the frontend workspace ID doesn't match the orchestrator's (independent
+    // ID stores). Without it the proxy URL embeds the frontend ID and the
+    // orchestrator returns 404.
+    const workspacePath = props.workspaceStore.activeWorkspacePath().trim();
 
-    void engineInfo(workspaceId)
+    void engineInfo(workspaceId, workspacePath || undefined)
       .then((info) => {
         const nextUrl = info.baseUrl?.trim();
         if (!nextUrl) return;

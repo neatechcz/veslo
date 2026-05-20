@@ -772,8 +772,14 @@ export async function vesloServerRestart(): Promise<VesloServerInfo> {
   return invoke<VesloServerInfo>("veslo_server_restart");
 }
 
-export async function engineInfo(workspaceId?: string): Promise<EngineInfo> {
-  return invoke<EngineInfo>("engine_info", { workspaceId: workspaceId ?? null });
+export async function engineInfo(
+  workspaceId?: string,
+  workspacePath?: string,
+): Promise<EngineInfo> {
+  return invoke<EngineInfo>("engine_info", {
+    workspaceId: workspaceId ?? null,
+    workspacePath: workspacePath ?? null,
+  });
 }
 
 export type OrchestratorEngineSnapshot = {
