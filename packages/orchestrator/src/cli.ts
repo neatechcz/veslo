@@ -2511,10 +2511,6 @@ function printHelp(): void {
     "  --tui                     Force interactive dashboard (TTY only)",
     "  --no-tui                  Disable interactive dashboard",
     "  --detach                  Detach after start and keep services running",
-    "  --sandbox <mode>          none | auto | docker | container (default: none)",
-    "  --sandbox-image <ref>     Container image for sandbox mode",
-    "  --sandbox-persist-dir <p> Persist dir mounted into sandbox (default: per-workspace)",
-    "  --sandbox-mount <specs>   Extra mounts (validated): hostPath:subpath[:ro|rw] (requires allowlist)",
     "  --json                    Output JSON when applicable",
     "  --verbose                 Print additional diagnostics",
     "  --log-format <format>     Log output format: pretty | json",
@@ -5031,12 +5027,14 @@ async function runStart(args: ParsedArgs) {
   const resolvedWorkspace = await ensureWorkspace(workspace);
   logger.info("Run starting", { workspace: resolvedWorkspace, logFormat, runId }, "veslo-orchestrator");
 
-  const sandboxRequested = readSandboxMode(args.flags, "sandbox", "none", "VESLO_SANDBOX");
-  const sandboxMode = await resolveSandboxMode(sandboxRequested);
-  const sandboxImage =
-    readFlag(args.flags, "sandbox-image") ?? process.env.VESLO_SANDBOX_IMAGE ?? "debian:bookworm-slim";
-  const sandboxPersistOverride =
-    readFlag(args.flags, "sandbox-persist-dir") ?? process.env.VESLO_SANDBOX_PERSIST_DIR;
+  // F4Ú8a — Docker/container sandbox modes deprekované. Veslo používá výhradně
+  // OS-level sandbox přes WorkerSandbox abstrakci v daemon spawnEngine callbacku.
+  // Hardcoded "none" zde znamená: legacy `start` command path nesahá na Docker.
+  // CLI flagy `--sandbox`, `--sandbox-image`, `--sandbox-persist-dir`, `--sandbox-mount`
+  // odebrány z help textu. Dead Docker funkce ve cli.ts budou vakuované v F4Ú8 follow-up.
+  const sandboxMode: ResolvedSandboxMode = "none";
+  const sandboxImage = "debian:bookworm-slim";
+  const sandboxPersistOverride: string | undefined = undefined;
   const dataDir = resolveRouterDataDir(args.flags);
   const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkspace));
   await ensureOpencodeManagedTools(opencodeConfigDir);
@@ -5045,19 +5043,12 @@ async function runStart(args: ParsedArgs) {
   if (opencodeRouterDataDir) {
     await mkdir(opencodeRouterDataDir, { recursive: true });
   }
-  const sandboxPersistDir = resolve(
-    sandboxPersistOverride?.trim()
-      ? sandboxPersistOverride.trim()
-      : join(dataDir, "sandbox", workspaceIdForLocal(resolvedWorkspace)),
-  );
-  if (sandboxMode !== "none") {
-    await mkdir(sandboxPersistDir, { recursive: true });
-  }
+  // F4Ú8a — sandbox persist dir není potřeba v "none" mode, branchčka mrtvá.
+  const sandboxPersistDir = resolve(join(dataDir, "sandbox", workspaceIdForLocal(resolvedWorkspace)));
 
-  const sandboxMountValue =
-    readFlag(args.flags, "sandbox-mount") ??
-    process.env.VESLO_SANDBOX_MOUNT;
-  const sandboxMountSpecs = parseList(sandboxMountValue);
+  // F4Ú8a — sandbox-mount CLI flag deprekovaný; vždy prázdné. F5 multi-mount UI
+  // bude číst per-workspace JSON config, ne CLI flag.
+  const sandboxMountSpecs: string[] = [];
   const sandboxExtraMounts =
     sandboxMode !== "none" && sandboxMountSpecs.length
       ? await resolveSandboxExtraMounts(sandboxMountSpecs, sandboxMode)
