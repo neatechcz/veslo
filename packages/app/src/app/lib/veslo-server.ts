@@ -1440,6 +1440,7 @@ export function createVesloServerClient(options: {
     capabilities: 6_000,
     listWorkspaces: 8_000,
     activateWorkspace: 10_000,
+    addLocalWorkspace: 10_000,
     deleteWorkspace: 10_000,
     deleteSession: 12_000,
     sessionArtifacts: 10_000,
@@ -1518,6 +1519,21 @@ export function createVesloServerClient(options: {
         `/workspaces/${encodeURIComponent(workspaceId)}/activate`,
         { token, hostToken, method: "POST", timeoutMs: timeouts.activateWorkspace },
       ),
+    // Hot-register a local workspace path without respawning the server
+    // (VSLO-171). Server endpoint persists into config.workspaces at runtime;
+    // returns 409 if the workspace already exists (caller can treat as success).
+    addLocalWorkspace: (input: { path: string; name?: string }) =>
+      requestJson<{
+        activeId: string;
+        items: VesloWorkspaceInfo[];
+        persisted: boolean;
+      }>(baseUrl, `/workspaces/local`, {
+        token,
+        hostToken,
+        method: "POST",
+        body: { path: input.path, name: input.name },
+        timeoutMs: timeouts.addLocalWorkspace,
+      }),
     deleteWorkspace: (workspaceId: string) =>
       requestJson<{ ok: boolean; deleted: boolean; persisted: boolean; activeId: string | null; items: VesloWorkspaceInfo[] }>(
         baseUrl,

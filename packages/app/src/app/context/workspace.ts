@@ -204,6 +204,11 @@ export function createWorkspaceStore(options: {
   const connectInFlightByKey = new Map<string, Promise<boolean>>();
   const ensureEngineForWorkspaceSingleFlight = createSingleFlight<boolean>();
 
+  // VSLO-171 — flip to true once workspaceBootstrap() has populated workspaces()
+  // (or skipped on non-Tauri). Callers that need the full workspace set (engine
+  // start, veslo-server hot-register reconciliation) should wait on this.
+  const [workspacesHydrated, setWorkspacesHydrated] = createSignal(false);
+
   // Late-bound reference for the remote store — populated after createRemoteStore().
   const remoteStoreRef: {
     resolveVesloHost: (...args: any[]) => Promise<any>;
@@ -484,12 +489,72 @@ export function createWorkspaceStore(options: {
     try {
       const response = await client.listWorkspaces();
       const items = Array.isArray(response.items) ? response.items : [];
-      const match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
+      let match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
+      // VSLO-171 — workspace may not be registered with veslo-server yet (race
+      // with workspaceBootstrap / lazily added after spawn). Hot-register it.
+      if (!match) {
+        const local = workspaces().find(
+          (w) =>
+            w.workspaceType === "local" &&
+            normalizeDirectoryPath(w.path?.trim() ?? "") === targetPath,
+        );
+        if (local?.path) {
+          await addLocalWorkspaceOnServer(local.path, local.displayName?.trim() || local.name?.trim());
+          const refreshed = await client.listWorkspaces();
+          const refreshedItems = Array.isArray(refreshed.items) ? refreshed.items : [];
+          match = refreshedItems.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
+          if (refreshed.activeId === match?.id) return;
+        }
+      }
       if (!match?.id) return;
       if (response.activeId === match.id) return;
       await client.activateWorkspace(match.id);
     } catch {
       // ignore
+    }
+  };
+
+  // POST /workspaces/local to veslo-server. 409 (workspace already exists) is
+  // treated as success — the server already knows about this path.
+  const addLocalWorkspaceOnServer = async (path: string, name?: string) => {
+    const client = options.vesloServerClient?.();
+    if (!client) return;
+    const trimmed = path.trim();
+    if (!trimmed) return;
+    try {
+      await client.addLocalWorkspace({ path: trimmed, name: name?.trim() || undefined });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // 409 Conflict from POST /workspaces/local means the workspace is
+      // already registered — that's the desired end state, swallow silently.
+      if (!/workspace_exists|409/i.test(message)) {
+        wsDebug("addLocalWorkspaceOnServer:failed", { path: trimmed, error: message });
+      }
+    }
+  };
+
+  // VSLO-171 — bring veslo-server's workspace set in sync with the local
+  // store. Called after workspaceBootstrap so the server knows about every
+  // local workspace even if engine_start was issued before bootstrap completed.
+  const reconcileVesloServerWorkspaces = async () => {
+    const client = options.vesloServerClient?.();
+    if (!client) return;
+    let knownPaths = new Set<string>();
+    try {
+      const response = await client.listWorkspaces();
+      const items = Array.isArray(response.items) ? response.items : [];
+      knownPaths = new Set(items.map((entry) => normalizeDirectoryPath(entry.path)));
+    } catch {
+      return;
+    }
+    const missing = workspaces().filter((w) => {
+      if (w.workspaceType !== "local") return false;
+      const path = normalizeDirectoryPath(w.path?.trim() ?? "");
+      return path.length > 0 && !knownPaths.has(path);
+    });
+    for (const w of missing) {
+      if (!w.path) continue;
+      await addLocalWorkspaceOnServer(w.path, w.displayName?.trim() || w.name?.trim());
     }
   };
 
@@ -2209,7 +2274,16 @@ export function createWorkspaceStore(options: {
         }
       } catch {
         bootTrace("workspaceBootstrap FAILED (ignored)");
+      } finally {
+        setWorkspacesHydrated(true);
       }
+      // Reconcile veslo-server's workspace registry with the local store. The
+      // server is spawned with --workspace arguments captured at engine_start
+      // time, which can race with workspaceBootstrap. Hot-register any locals
+      // the server doesn't know about so workspace switches don't 404.
+      void reconcileVesloServerWorkspaces();
+    } else {
+      setWorkspacesHydrated(true);
     }
 
     bootTrace("refreshEngine + refreshEngineDoctor → background");
@@ -2560,6 +2634,18 @@ export function createWorkspaceStore(options: {
     return await ensureEngineForWorkspaceSingleFlight(workspace.id || workspace.path, async () => {
       _wsLog("[workspace:ensureEngine] starting engine for browsing mode", { id, path: workspace.path });
 
+      // VSLO-171 — wait for workspaces() to be fully hydrated before any
+      // engine_start call. The Rust side reads resolveWorkspacePaths() to
+      // build --workspace args for veslo-server; if bootstrap is still in
+      // flight we'd spawn the server with only the active path and later
+      // workspace switches would 404.
+      if (!workspacesHydrated()) {
+        const start = Date.now();
+        while (!workspacesHydrated() && Date.now() - start < 5_000) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+
       // Any engine that was running for another workspace is about to be torn
       // down by restartWorkspaceRuntime/startHost — clear stale busy entries
       // so we don't show false "another workspace is running" warnings later.
@@ -2651,6 +2737,9 @@ export function createWorkspaceStore(options: {
     refreshEngineDoctor: engineStore.refreshEngineDoctor,
     activateWorkspace,
     ensureEngineForWorkspace,
+    workspacesHydrated,
+    reconcileVesloServerWorkspaces,
+    addLocalWorkspaceOnServer,
     testWorkspaceConnection,
     connectToServer,
     createWorkspaceFlow,
