@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import type { WorkerSandbox } from "./sandbox/index.js";
+import { resolveSandbox } from "./sandbox/index.js";
 import { randomUUID, createHash } from "node:crypto";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile, realpath } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
@@ -2537,6 +2539,15 @@ async function stopChild(child: ReturnType<typeof spawn>, timeoutMs = 2500): Pro
   ]);
 }
 
+/**
+ * F4Ú4 — shell-quote a single argument (bash-safe single-quoting).
+ * Used to compose a shell command string for sandbox wrapping.
+ */
+function shellQuote(arg: string): string {
+  if (/^[A-Za-z0-9_./:=+-]+$/.test(arg)) return arg;
+  return "'" + arg.replace(/'/g, "'\\''") + "'";
+}
+
 async function startOpencode(options: {
   bin: string;
   workspace: string;
@@ -2551,38 +2562,92 @@ async function startOpencode(options: {
   runId: string;
   logFormat: LogFormat;
   opencodeRouterHealthPort?: number;
+  /** F4Ú4 — wrap engine spawn in OS-level sandbox. When omitted, sandbox is
+   *  resolved automatically per platform unless `VESLO_DISABLE_SANDBOX=1`. */
+  sandbox?: WorkerSandbox | null;
 }) {
   const args = ["serve", "--hostname", options.bindHost, "--port", String(options.port)];
   for (const origin of options.corsOrigins) {
     args.push("--cors", origin);
   }
 
-  const child = spawnProcess(options.bin, args, {
-    cwd: options.workspace,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: {
-      ...process.env,
-      OPENCODE_CLIENT: "veslo-orchestrator",
-      OPENCODE_DISABLE_CLAUDE_CODE: "1",
-      VESLO: "1",
-      VESLO_RUN_ID: options.runId,
-      VESLO_LOG_FORMAT: options.logFormat,
-      OTEL_RESOURCE_ATTRIBUTES: mergeResourceAttributes(
-        {
-          "service.name": "opencode",
-          "service.instance.id": options.runId,
-        },
-        process.env.OTEL_RESOURCE_ATTRIBUTES,
-      ),
-      ...(options.username ? { OPENCODE_SERVER_USERNAME: options.username } : {}),
-      ...(options.password ? { OPENCODE_SERVER_PASSWORD: options.password } : {}),
-      ...(options.configDir ? { OPENCODE_CONFIG_DIR: options.configDir } : {}),
-      OPENCODE_HOT_RELOAD: options.hotReload.enabled ? "1" : "0",
-      OPENCODE_HOT_RELOAD_DEBOUNCE_MS: String(options.hotReload.debounceMs),
-      OPENCODE_HOT_RELOAD_COOLDOWN_MS: String(options.hotReload.cooldownMs),
-      ...(options.opencodeRouterHealthPort ? { OPENCODE_ROUTER_HEALTH_PORT: String(options.opencodeRouterHealthPort) } : {}),
-    },
-  });
+  const env = {
+    ...process.env,
+    OPENCODE_CLIENT: "veslo-orchestrator",
+    OPENCODE_DISABLE_CLAUDE_CODE: "1",
+    VESLO: "1",
+    VESLO_RUN_ID: options.runId,
+    VESLO_LOG_FORMAT: options.logFormat,
+    OTEL_RESOURCE_ATTRIBUTES: mergeResourceAttributes(
+      {
+        "service.name": "opencode",
+        "service.instance.id": options.runId,
+      },
+      process.env.OTEL_RESOURCE_ATTRIBUTES,
+    ),
+    ...(options.username ? { OPENCODE_SERVER_USERNAME: options.username } : {}),
+    ...(options.password ? { OPENCODE_SERVER_PASSWORD: options.password } : {}),
+    ...(options.configDir ? { OPENCODE_CONFIG_DIR: options.configDir } : {}),
+    OPENCODE_HOT_RELOAD: options.hotReload.enabled ? "1" : "0",
+    OPENCODE_HOT_RELOAD_DEBOUNCE_MS: String(options.hotReload.debounceMs),
+    OPENCODE_HOT_RELOAD_COOLDOWN_MS: String(options.hotReload.cooldownMs),
+    ...(options.opencodeRouterHealthPort
+      ? { OPENCODE_ROUTER_HEALTH_PORT: String(options.opencodeRouterHealthPort) }
+      : {}),
+  };
+
+  // F4Ú4 — resolve sandbox: explicit `null` disables; explicit object wraps;
+  // omitted -> platform default unless VESLO_DISABLE_SANDBOX=1 (escape hatch
+  // for headless tests, never for prod).
+  let sandbox: WorkerSandbox | null;
+  if (options.sandbox === null) {
+    sandbox = null;
+  } else if (options.sandbox) {
+    sandbox = options.sandbox;
+  } else if (process.env.VESLO_DISABLE_SANDBOX === "1") {
+    sandbox = null;
+    options.logger.warn(
+      "engine spawn unsandboxed (VESLO_DISABLE_SANDBOX=1)",
+      { workspace: options.workspace },
+      "sandbox",
+    );
+  } else {
+    try {
+      sandbox = resolveSandbox();
+    } catch (err) {
+      options.logger.warn(
+        "sandbox unavailable, spawning unsandboxed",
+        { workspace: options.workspace, error: err instanceof Error ? err.message : String(err) },
+        "sandbox",
+      );
+      sandbox = null;
+    }
+  }
+
+  let child: ChildProcess;
+  if (sandbox && sandbox.isAvailable()) {
+    const baseCommand = [options.bin, ...args].map(shellQuote).join(" ");
+    const wrapped = await sandbox.wrap({
+      command: baseCommand,
+      workspacePath: options.workspace,
+    });
+    options.logger.info(
+      "engine spawn (sandboxed)",
+      { workspace: options.workspace, backend: sandbox.name },
+      "sandbox",
+    );
+    child = spawnProcess("/bin/sh", ["-c", wrapped], {
+      cwd: options.workspace,
+      stdio: ["ignore", "pipe", "pipe"],
+      env,
+    });
+  } else {
+    child = spawnProcess(options.bin, args, {
+      cwd: options.workspace,
+      stdio: ["ignore", "pipe", "pipe"],
+      env,
+    });
+  }
 
   prefixStream(child.stdout, "opencode", "stdout", options.logger, child.pid ?? undefined);
   prefixStream(child.stderr, "opencode", "stderr", options.logger, child.pid ?? undefined);
