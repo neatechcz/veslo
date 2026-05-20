@@ -120,12 +120,56 @@ async function partTwo_workerSandbox() {
   if (!r5.stdout.includes("hello")) fails.push("part2: workspace write outside .git should work");
 }
 
+async function partThree_subprocessInheritance() {
+  console.log("\n--- Part 3: Subprocess inheritance (F4Ú10 pen-test analog) ---");
+  // Per fáze-0 Test 6: when a wrapped process forks a child, that child inherits
+  // FS restrictions. This mirrors the production scenario: engine = opencode is
+  // sandboxed -> shell tool spawned by agent inherits same restrictions.
+  if (!MacSandboxExec.isAvailable()) {
+    fails.push("part3: MacSandboxExec unavailable on this platform");
+    return;
+  }
+
+  // Outer shell (sandboxed) spawns inner shell that tries to read blocked paths.
+  // Subprocess MUST also fail.
+  const wrappedNested = await MacSandboxExec.wrap({
+    command:
+      `/bin/sh -c "ls ${homedir()}/.ssh 2>&1 || true; ` +
+      `cat ${homedir()}/.aws/credentials 2>&1 || true; ` +
+      `echo escape > ${homedir()}/nested-escape.txt 2>&1 || true"`,
+    workspacePath: WORKDIR,
+  });
+  const r = await runWrapped("p3-nested-shell", wrappedNested);
+  const output = r.stdout + r.stderr;
+  const blockers = [/permitted|denied|EPERM|EACCES/i];
+  const failedCount = blockers.reduce((acc, rx) => acc + (rx.test(output) ? 1 : 0), 0);
+  if (failedCount === 0) {
+    fails.push("part3: nested shell escape was NOT blocked (subprocess inheritance failed)");
+  } else {
+    // Verify the escape file wasn't created (sanity).
+    if (existsSync(join(homedir(), "nested-escape.txt"))) {
+      fails.push("part3: escape file was created (sandbox bypass)");
+    }
+  }
+
+  // Ensure the inner shell still gets workspace access.
+  const wrappedNestedAllow = await MacSandboxExec.wrap({
+    command: `/bin/sh -c "cat ${SECRET}"`,
+    workspacePath: WORKDIR,
+  });
+  const r2 = await runWrapped("p3-nested-allow", wrappedNestedAllow);
+  if (!r2.stdout.includes(SECRET_CONTENT)) {
+    fails.push("part3: nested shell could not read workspace file");
+  }
+}
+
 async function main() {
   setup();
   console.log(`workdir=${WORKDIR}`);
 
   await partOne_rawManager();
   await partTwo_workerSandbox();
+  await partThree_subprocessInheritance();
 
   console.log("\n=== Result ===");
   if (fails.length) {
