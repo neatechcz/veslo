@@ -436,17 +436,17 @@ sudo docker ps
 
 Expected: `sudo docker ps` works. Continue with `sudo docker ...` and `sudo docker compose ...` unless maintainers later grant direct Docker access.
 
-**Step 2: Deploy an isolated staging Compose stack**
+**Step 2: Deploy isolated staging databases**
 
-Use staging env values and a separate Compose project so rehearsal volumes cannot collide with production volumes. Do not start the public reverse proxy during the database rehearsal.
+Use staging env values and a separate Compose project so rehearsal volumes cannot collide with production volumes. Start only databases before restore and migration. Do not start the public reverse proxy during the database rehearsal. If `/srv/veslo` cannot be created with general sudo, use a user-owned rehearsal directory and pass that env path consistently to `--env-file` and `ENV_FILE`.
 
 Run on the server:
 
 ```bash
-sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env up -d --build den ai-gateway
+sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env up -d den-db ai-gateway-db
 ```
 
-Expected: `den-db`, `ai-gateway-db`, `den`, and `ai-gateway` start. `proxy` is not started and ports 80/443 are not bound.
+Expected: `den-db` and `ai-gateway-db` start and become healthy. `den`, `ai-gateway`, `web`, and `proxy` are not started yet, and ports 80/443 are not bound.
 
 **Step 3: Restore a non-production dump copy or approved synthetic dump**
 
@@ -456,20 +456,31 @@ Expected: Den and AI Gateway databases contain copied rows. If no real non-produ
 
 **Step 4: Run migrations**
 
-Run:
+Build the app images, then run migrations in one-off app containers before starting the long-lived app services:
 
 ```bash
-sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env exec -T den pnpm --filter @neatech/den db:migrate
-sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env exec -T ai-gateway pnpm --filter @neatech/ai-gateway db:migrate
+sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env build den ai-gateway
+sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env run --rm --no-deps den pnpm --filter @neatech/den db:migrate
+sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env run --rm --no-deps ai-gateway pnpm --filter @neatech/ai-gateway db:migrate
 ```
 
 Expected: migrations complete without schema errors.
 
-**Step 5: Record rehearsal result**
+**Step 5: Start staging app services**
+
+Run:
+
+```bash
+sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env up -d den ai-gateway
+```
+
+Expected: `den`, `ai-gateway`, and both databases are healthy. `web` and `proxy` are not started, and ports 80/443 are not bound.
+
+**Step 6: Record rehearsal result**
 
 Write the date, dump source, restore target, migration result, backup result, teardown result, and any issues into `docs/plans/assets/owned-server-migration/verification-log.md`.
 
-**Step 6: Commit**
+**Step 7: Commit**
 
 Run:
 

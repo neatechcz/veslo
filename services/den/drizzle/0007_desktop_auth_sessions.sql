@@ -16,10 +16,14 @@ CREATE TABLE `desktop_auth_session` (
 	CONSTRAINT `desktop_auth_session_id` PRIMARY KEY(`id`)
 );
 
+--> statement-breakpoint
 CREATE INDEX `desktop_auth_session_status_expires` ON `desktop_auth_session` (`status`,`expires_at`);
+--> statement-breakpoint
 CREATE INDEX `desktop_auth_session_user_id` ON `desktop_auth_session` (`user_id`);
 
+--> statement-breakpoint
 ALTER TABLE `desktop_auth_handoff`
 	ADD COLUMN `session_id` varchar(64) NULL;
 
+--> statement-breakpoint
 CREATE INDEX `desktop_auth_handoff_session_id` ON `desktop_auth_handoff` (`session_id`);

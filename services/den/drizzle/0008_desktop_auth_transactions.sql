@@ -22,6 +22,9 @@ CREATE TABLE `desktop_auth_transaction` (
 	CONSTRAINT `desktop_auth_transaction_transaction_id` UNIQUE(`transaction_id`)
 );
 
+--> statement-breakpoint
 CREATE INDEX `desktop_auth_transaction_status_expires` ON `desktop_auth_transaction` (`status`,`expires_at`);
+--> statement-breakpoint
 CREATE INDEX `desktop_auth_transaction_authorization_code_hash` ON `desktop_auth_transaction` (`authorization_code_hash`);
+--> statement-breakpoint
 CREATE INDEX `desktop_auth_transaction_manual_code_hash` ON `desktop_auth_transaction` (`manual_code_hash`);

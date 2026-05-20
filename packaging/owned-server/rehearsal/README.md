@@ -28,22 +28,27 @@ sudo chmod 600 /srv/veslo/env/staging.env
 Edit `/srv/veslo/env/staging.env` if the rehearsal uses a real non-production
 dump that depends on preserved continuity secrets. Keep the file out of git.
 
+If the operator cannot create `/srv/veslo` with general sudo, use a user-owned
+rehearsal directory instead and pass that path consistently to `--env-file` and
+`ENV_FILE`.
+
 Validate Compose with the isolated project name:
 
 ```bash
 sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env config --quiet
 ```
 
-## Start Staging Services
+## Start Staging Databases
 
-Start the app and database services only:
+Start the database services only:
 
 ```bash
-sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env up -d --build den ai-gateway
+sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env up -d den-db ai-gateway-db
 ```
 
-This command starts `den-db`, `ai-gateway-db`, `den`, and `ai-gateway`. It does
-not start `web` or `proxy`, so it does not bind host ports 80 or 443.
+This command starts only `den-db` and `ai-gateway-db`. Run migrations before
+starting the long-lived app containers because Den and AI Gateway perform
+boot-time schema reconciliation.
 
 Check service state:
 
@@ -101,6 +106,10 @@ INSERT INTO migration_rehearsal_probe (id, source) VALUES (1, 'synthetic-ai-gate
 SQL
 ```
 
+If `/srv/veslo/rehearsal` cannot be created, put the dump files under the
+user-owned rehearsal directory and substitute those paths in the restore
+commands.
+
 Restore the synthetic dumps:
 
 ```bash
@@ -125,15 +134,36 @@ Expected: each command prints `1`.
 
 ## Run Migrations
 
-Run the service migrations against the staging project:
+Build the app images, then run the service migrations in one-off containers
+against the staging project:
 
 ```bash
-sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env exec -T den pnpm --filter @neatech/den db:migrate
+sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env build den ai-gateway
 
-sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env exec -T ai-gateway pnpm --filter @neatech/ai-gateway db:migrate
+sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env run --rm --no-deps den pnpm --filter @neatech/den db:migrate
+
+sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env run --rm --no-deps ai-gateway pnpm --filter @neatech/ai-gateway db:migrate
 ```
 
 Record the migration result in the verification log.
+
+## Start Staging App Services
+
+Start the app services after restore and migrations pass:
+
+```bash
+sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env up -d den ai-gateway
+```
+
+This command starts `den`, `ai-gateway`, and their already-running database
+dependencies. It does not start `web` or `proxy`, so it does not bind host ports
+80 or 443.
+
+Check service state:
+
+```bash
+sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env ps
+```
 
 ## Back Up The Rehearsed Databases
 
@@ -152,6 +182,9 @@ DOCKER_COMPOSE="sudo docker compose -p veslo-owned-server-staging" \
 
 sha256sum /srv/veslo/backups/rehearsal/*.sql
 ```
+
+If `/srv/veslo/backups` cannot be created, write the rehearsal backups under
+the user-owned rehearsal directory and record those sanitized paths.
 
 Record sanitized checksums in the verification log. Do not commit dump files.
 

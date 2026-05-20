@@ -59,3 +59,27 @@ This log records sanitized verification evidence for the VSLO-185 owned-server m
 - Local validation: `/usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/home/michal docker compose -p veslo-owned-server-staging --env-file packaging/owned-server/env.staging.example -f packaging/owned-server/compose.yml config --quiet` exited 0. No containers were started.
 - Runbook validation: `rg -n "veslo-owned-server-staging|env.staging.example|Synthetic Fallback|sudo docker ps|80/443|proxy" docs/plans/2026-05-19-veslo-owned-server-migration.md packaging/owned-server/README.md packaging/owned-server/backup/README.md packaging/owned-server/rehearsal/README.md` listed the expected staging, sudo Docker, synthetic fallback, and proxy safety language.
 - Whitespace validation: `git diff --check` exited 0.
+
+## 2026-05-20 - Phase 3 Task 6 synthetic staging rehearsal
+
+- Scope: ran an approved synthetic restore rehearsal on `62.109.146.43` using Compose project `veslo-owned-server-staging`.
+- Server path: used `/home/neatech/veslo-owned-server-staging-rehearsal-8b75cf07` because general sudo for creating `/srv/veslo` was unavailable; `sudo -n docker ...` remained available and was used for all Docker commands.
+- Compose validation: `sudo -n docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file <home-rehearsal-env> config --quiet` exited 0.
+- Initial issue: starting long-lived app containers before running migrations caused boot-time schema reconciliation to create tables first, then Den migration failed on an already-existing table. Runbook was corrected to start database services only, restore dumps, run one-off migrations, then start app services.
+- Initial issue: Den migration files contained multiple SQL statements without Drizzle statement breakpoints. Added a focused regression test and statement breakpoints in Den migration SQL files.
+- Initial issue: Den main migrations targeted managed-AI tables owned by the AI Gateway database. Added a focused ownership regression test and changed the Den managed-AI migration entries to no-op statements so Den `DATABASE_URL` migrations do not mutate AI Gateway tables.
+- Synthetic restore: `den-db` and `ai-gateway-db` became healthy, both synthetic dumps restored through `restore-mysql.sh --apply`, and both sentinel row checks returned `1`.
+- Build validation: `sudo -n docker compose -p veslo-owned-server-staging ... build den ai-gateway` built both images successfully.
+- Migration validation: one-off Den migration exited with `migrations applied successfully`.
+- Migration validation: one-off AI Gateway migration exited with `migrations applied successfully`.
+- App validation: `sudo -n docker compose -p veslo-owned-server-staging ... up -d den ai-gateway` started both app services; `ps` showed Den, AI Gateway, and both MySQL containers healthy.
+- Port safety: `sudo -n docker ps --format 'table {{.Names}}\t{{.Ports}}'` showed only internal container ports `8788/tcp`, `4034/tcp`, `3306/tcp`, and `33060/tcp`; `web` and `proxy` were not started and host ports 80/443 were not bound.
+- Backup validation: `backup-mysql.sh` wrote staged Den and AI Gateway dumps under the home rehearsal directory.
+- Backup checksums: AI Gateway rehearsal dump `3835720f340076d8c098a90ad57cfee21899010dbba19ea3d55fdafaf9267dfa`; Den rehearsal dump `834a253ab704927f65fba226db533c23a33f3ececef25fa332c12fb288c609ed`.
+- Teardown: `sudo -n docker compose -p veslo-owned-server-staging ... down -v` removed staging containers, volumes, and network. Final `sudo -n docker ps` showed no running containers.
+- Local regression validation: `pnpm --filter @neatech/den exec tsx --test test/drizzle-migration-format.test.ts test/drizzle-migration-ownership.test.ts` passed with 2 passing tests.
+- Local suite validation: `pnpm --filter @neatech/den test` passed with 249 passing, 1 skipped.
+- Local Compose validation: `/usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/home/michal docker compose -p veslo-owned-server-staging --env-file packaging/owned-server/env.staging.example -f packaging/owned-server/compose.yml config --quiet` exited 0.
+- Whitespace validation: `git diff --check` exited 0.
+- Secret scan: checked migration docs, packaging, and service files for the provided sudo password and real-looking service secrets; no matches were found.
+- Limitation: this proves restore, migration, startup, backup, and teardown mechanics with synthetic data only. A real non-production or production dump rehearsal is still required before Phase 5 live traffic cutover.

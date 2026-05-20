@@ -37,11 +37,16 @@ CREATE TABLE `feedback_report` (
 	CONSTRAINT `feedback_report_id` PRIMARY KEY(`id`)
 );
 
+--> statement-breakpoint
 CREATE INDEX `feedback_report_org_id` ON `feedback_report` (`org_id`);
+--> statement-breakpoint
 CREATE INDEX `feedback_report_user_id` ON `feedback_report` (`user_id`);
+--> statement-breakpoint
 CREATE INDEX `feedback_report_status` ON `feedback_report` (`status`);
+--> statement-breakpoint
 CREATE INDEX `feedback_report_next_projector_attempt_at` ON `feedback_report` (`next_projector_attempt_at`);
 
+--> statement-breakpoint
 CREATE TABLE `feedback_projector_attempt` (
 	`id` varchar(64) NOT NULL,
 	`feedback_id` varchar(64) NOT NULL,
@@ -52,4 +57,5 @@ CREATE TABLE `feedback_projector_attempt` (
 	CONSTRAINT `feedback_projector_attempt_id` PRIMARY KEY(`id`)
 );
 
+--> statement-breakpoint
 CREATE INDEX `feedback_projector_attempt_feedback_id` ON `feedback_projector_attempt` (`feedback_id`);

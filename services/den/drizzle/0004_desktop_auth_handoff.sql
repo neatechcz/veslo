@@ -10,4 +10,5 @@ CREATE TABLE `desktop_auth_handoff` (
 	CONSTRAINT `desktop_auth_handoff_code` UNIQUE(`code`)
 );
 
+--> statement-breakpoint
 CREATE INDEX `desktop_auth_handoff_user_id` ON `desktop_auth_handoff` (`user_id`);
