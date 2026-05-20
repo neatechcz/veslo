@@ -37,6 +37,8 @@ Auth email uses Lettr over HTTPS via `LETTR_API_KEY`, `AUTH_EMAIL_ADDRESS`, and 
 
 The web app reads public `NEXT_PUBLIC_*` values at image build time. Rebuild the `web` image after changing those values.
 
+For database restore rehearsals, use `env.staging.example` and `rehearsal/README.md`. The rehearsal commands use a separate Compose project name and start only `den`, `ai-gateway`, and their database dependencies. They do not start `proxy` or bind public ports 80/443.
+
 ## Persistent Volumes
 
 Compose creates these named volumes:

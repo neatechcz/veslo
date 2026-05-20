@@ -49,3 +49,13 @@ This log records sanitized verification evidence for the VSLO-185 owned-server m
 - Staging env check: `/srv/veslo/env/staging.env` was not present.
 - Dump check: no `.sql`, `.dump`, or `.sql.gz` files were found under the checked `/home/neatech` and `/srv/veslo` paths.
 - Result: restore rehearsal was not run. Next prerequisite is to provide a staging env file and a non-production Den/AI Gateway dump copy, or explicitly approve creating a synthetic staging dataset for the rehearsal.
+
+## 2026-05-20 - Phase 3 Task 6 isolated staging rehearsal path
+
+- Scope: added a staging env template and runbook for restore rehearsal using Compose project `veslo-owned-server-staging`.
+- Safety: the rehearsal path starts only `den`, `ai-gateway`, and database dependencies; `proxy` is not started and public ports 80/443 are not bound.
+- Sudo Docker path: Task 6 now treats `sudo docker ps` and `sudo docker compose ...` as the approved server path when direct Docker socket access fails.
+- Synthetic fallback: documented an explicit synthetic-dump path for cases where no real non-production dump is available; this validates restore mechanics and migration commands, not production-data compatibility.
+- Local validation: `/usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/home/michal docker compose -p veslo-owned-server-staging --env-file packaging/owned-server/env.staging.example -f packaging/owned-server/compose.yml config --quiet` exited 0. No containers were started.
+- Runbook validation: `rg -n "veslo-owned-server-staging|env.staging.example|Synthetic Fallback|sudo docker ps|80/443|proxy" docs/plans/2026-05-19-veslo-owned-server-migration.md packaging/owned-server/README.md packaging/owned-server/backup/README.md packaging/owned-server/rehearsal/README.md` listed the expected staging, sudo Docker, synthetic fallback, and proxy safety language.
+- Whitespace validation: `git diff --check` exited 0.

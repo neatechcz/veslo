@@ -417,8 +417,10 @@ git commit -m "infra: add owned server database backup runbook"
 
 **Files:**
 - Modify: `docs/plans/assets/owned-server-migration/verification-log.md`
+- Create or modify: `packaging/owned-server/env.staging.example`
+- Create or modify: `packaging/owned-server/rehearsal/README.md`
 
-**Step 1: Confirm server Docker access**
+**Step 1: Confirm server Docker access through the approved path**
 
 Run on the server:
 
@@ -426,47 +428,53 @@ Run on the server:
 docker ps
 ```
 
-Expected: command works for the runtime user. If it fails with Docker socket permission denied, stop and get maintainer support.
+Expected: direct Docker access may fail for `neatech`. When it fails with Docker socket permission denied, run:
 
-**Step 2: Deploy staging Compose stack**
+```bash
+sudo docker ps
+```
 
-Use staging env values and staging domains or VPN-only hostnames.
+Expected: `sudo docker ps` works. Continue with `sudo docker ...` and `sudo docker compose ...` unless maintainers later grant direct Docker access.
+
+**Step 2: Deploy an isolated staging Compose stack**
+
+Use staging env values and a separate Compose project so rehearsal volumes cannot collide with production volumes. Do not start the public reverse proxy during the database rehearsal.
 
 Run on the server:
 
 ```bash
-sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env up -d
+sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env up -d --build den ai-gateway
 ```
 
-Expected: containers start.
+Expected: `den-db`, `ai-gateway-db`, `den`, and `ai-gateway` start. `proxy` is not started and ports 80/443 are not bound.
 
-**Step 3: Restore non-production dump copy**
+**Step 3: Restore a non-production dump copy or approved synthetic dump**
 
 Run the restore script with `--apply` against staging DB volumes.
 
-Expected: Den and AI Gateway databases contain copied rows.
+Expected: Den and AI Gateway databases contain copied rows. If no real non-production dump is available, use the synthetic fallback in `packaging/owned-server/rehearsal/README.md` only after recording that the result validates restore mechanics but not production-data compatibility.
 
 **Step 4: Run migrations**
 
 Run:
 
 ```bash
-sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env exec den pnpm --filter @neatech/den db:migrate
-sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env exec ai-gateway pnpm --filter @neatech/ai-gateway db:migrate
+sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env exec -T den pnpm --filter @neatech/den db:migrate
+sudo docker compose -p veslo-owned-server-staging -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/staging.env exec -T ai-gateway pnpm --filter @neatech/ai-gateway db:migrate
 ```
 
 Expected: migrations complete without schema errors.
 
 **Step 5: Record rehearsal result**
 
-Write the date, dump source, restore target, migration result, and any issues into `docs/plans/assets/owned-server-migration/verification-log.md`.
+Write the date, dump source, restore target, migration result, backup result, teardown result, and any issues into `docs/plans/assets/owned-server-migration/verification-log.md`.
 
 **Step 6: Commit**
 
 Run:
 
 ```bash
-git add docs/plans/assets/owned-server-migration/verification-log.md
+git add docs/plans/assets/owned-server-migration/verification-log.md packaging/owned-server/env.staging.example packaging/owned-server/rehearsal/README.md packaging/owned-server/README.md packaging/owned-server/backup/README.md docs/plans/2026-05-19-veslo-owned-server-migration.md
 git commit -m "docs: record owned server database rehearsal"
 ```
 
