@@ -1,0 +1,18 @@
+{
+	email {$ACME_EMAIL}
+}
+
+api.veslo.work {
+	encode zstd gzip
+	reverse_proxy den:8788
+}
+
+ai.veslo.work {
+	encode zstd gzip
+	reverse_proxy ai-gateway:4034
+}
+
+app.veslo.work {
+	encode zstd gzip
+	reverse_proxy web:3005
+}
