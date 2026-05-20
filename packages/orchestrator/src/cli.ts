@@ -736,13 +736,9 @@ function resolveSidecarTarget(): SidecarTarget | null {
   return null;
 }
 
-function resolveSandboxSidecarTarget(mode: ResolvedSandboxMode): SidecarTarget | null {
-  if (mode === "none") return resolveSidecarTarget();
-  // Sandbox runs inside Linux (docker / container).
-  if (process.arch === "arm64") return "linux-arm64";
-  if (process.arch === "x64") return "linux-x64";
-  return null;
-}
+// F4Ú8a chunk 2 — resolveSandboxSidecarTarget SMAZÁNO. Veslo používá native
+// host architekturu (mac arm64/x64), Linux sidecary jen pro budoucí Docker
+// sandbox cesty nepotřebné.
 
 function resolveSidecarConfigForTarget(
   flags: Map<string, string | boolean>,
@@ -787,24 +783,8 @@ async function probeCommand(command: string, args: string[], timeoutMs = 2500): 
   });
 }
 
-async function resolveSandboxMode(mode: SandboxMode): Promise<ResolvedSandboxMode> {
-  if (mode === "none") return "none";
-  if (mode === "docker") return "docker";
-  if (mode === "container") return "container";
-
-  // auto
-  if (process.platform === "darwin" && process.arch === "arm64") {
-    const containerOk = await probeCommand("container", ["--version"]);
-    if (containerOk) return "container";
-  }
-
-  const dockerOk = await probeCommand("docker", ["version"]);
-  if (dockerOk) return "docker";
-
-  const containerOk = await probeCommand("container", ["--version"]);
-  if (containerOk) return "container";
-  return "none";
-}
+// F4Ú8a chunk 2 — resolveSandboxMode SMAZÁNO. Mode je vždy "none" v
+// `start` command, daemon mode používá WorkerSandbox automaticky.
 
 function shQuote(value: string): string {
   if (!value) return "''";
@@ -1319,23 +1299,8 @@ function isPathLikeBinary(bin: string): boolean {
   return bin.includes("/") || bin.startsWith(".");
 }
 
-async function assertSandboxBinaryFile(name: string, bin: string): Promise<void> {
-  const lower = bin.toLowerCase();
-  if (lower.endsWith(".js") || lower.endsWith(".ts")) {
-    throw new Error(
-      `Sandbox mode requires ${name} to be a native binary (got ${bin}). Use downloaded sidecars or pass a Linux binary path.`,
-    );
-  }
-  if (!isPathLikeBinary(bin)) {
-    throw new Error(
-      `Sandbox mode requires ${name} to be a file path (got ${bin}). Use downloaded sidecars or pass --${name}-bin with a Linux binary path.`,
-    );
-  }
-  const resolved = resolve(process.cwd(), bin);
-  if (!(await fileExists(resolved))) {
-    throw new Error(`Sandbox mode could not find ${name} binary at ${resolved}.`);
-  }
-}
+// F4Ú8a chunk 2 — assertSandboxBinaryFile SMAZÁNO (vyžadovalo Linux native
+// binary uvnitř Docker containeru — irrelevant pro OS-level sandbox).
 
 async function resolveVesloServerBin(options: {
   explicit?: string;
@@ -2573,23 +2538,7 @@ async function opencodeRouterSupportsOpencodeUrl(bin: string): Promise<boolean> 
   });
 }
 
-async function stopDockerContainer(name: string): Promise<void> {
-  if (!name.trim()) return;
-  await new Promise<void>((resolve) => {
-    const child = spawnProcess("docker", ["stop", name], { stdio: ["ignore", "ignore", "ignore"] });
-    child.on("error", () => resolve());
-    child.on("exit", () => resolve());
-  });
-}
-
-async function stopAppleContainer(name: string): Promise<void> {
-  if (!name.trim()) return;
-  await new Promise<void>((resolve) => {
-    const child = spawnProcess("container", ["stop", name], { stdio: ["ignore", "ignore", "ignore"] });
-    child.on("error", () => resolve());
-    child.on("exit", () => resolve());
-  });
-}
+// F4Ú8a chunk 2 — stopDockerContainer + stopAppleContainer SMAZÁNY.
 
 async function runQuiet(command: string, args: string[], timeoutMs = 60_000): Promise<void> {
   const child = spawnProcess(command, args, { stdio: ["ignore", "ignore", "ignore"] });
@@ -4562,7 +4511,8 @@ async function runStart(args: ParsedArgs) {
 
   const manifest = await readVersionManifest();
   const allowExternal = readBool(args.flags, "allow-external", false, "VESLO_ALLOW_EXTERNAL");
-  const sidecarTarget = resolveSandboxSidecarTarget(sandboxMode);
+  // F4Ú8a chunk 2 — sandbox-specific sidecar target removed; vždy host target.
+  const sidecarTarget = resolveSidecarTarget();
   const sidecar = resolveSidecarConfigForTarget(args.flags, cliVersion, sidecarTarget);
 
   let sidecarSource = sidecarSourceInput;
@@ -4655,14 +4605,8 @@ async function runStart(args: ParsedArgs) {
       })
     : null;
 
-  if (sandboxMode !== "none") {
-    // Ensure the binaries we stage into the container are actual files.
-    await assertSandboxBinaryFile("opencode", opencodeBinary.bin);
-    await assertSandboxBinaryFile("veslo-server", vesloServerBinary.bin);
-    if (opencodeRouterBinary) {
-      await assertSandboxBinaryFile("veslo-code-router", opencodeRouterBinary.bin);
-    }
-  }
+  // F4Ú8a chunk 2 — assertSandboxBinaryFile staging check removed (was for
+  // Linux binary inside Docker container).
   let opencodeRouterActualVersion: string | undefined;
   logVerbose(`opencode bin: ${opencodeBinary.bin} (${opencodeBinary.source})`);
   logVerbose(`veslo-server bin: ${vesloServerBinary.bin} (${vesloServerBinary.source})`);
