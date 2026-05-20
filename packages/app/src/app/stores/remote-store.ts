@@ -23,14 +23,29 @@ import {
 import { createClient, waitForHealthy } from "../lib/opencode";
 import {
   orchestratorStartDetached,
-  sandboxStop,
   workspaceCreate,
   workspaceCreateRemote,
   workspaceForget,
   workspaceUpdateRemote,
   type WorkspaceInfo,
 } from "../lib/tauri";
-import type { SandboxDoctorResult } from "../lib/tauri";
+
+// F4Ú8c — local stub pro legacy sandbox doctor result type (Docker odstraněn).
+type SandboxDoctorResult = {
+  installed: boolean;
+  daemonRunning: boolean;
+  permissionOk: boolean;
+  ready: boolean;
+  clientVersion?: string | null;
+  serverVersion?: string | null;
+  error?: string | null;
+  debug?: {
+    candidates: string[];
+    selectedBin?: string | null;
+    versionCommand?: { status: number; stdout: string; stderr: string } | null;
+    infoCommand?: { status: number; stdout: string; stderr: string } | null;
+  } | null;
+};
 
 import type {
   SandboxCreatePhase,
@@ -1071,22 +1086,14 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
     deps.setError(null);
 
     try {
-      const result = await sandboxStop(containerName);
-      if (!result.ok) {
-        const details = [result.stderr?.trim(), result.stdout?.trim()]
-          .filter(Boolean)
-          .join("\n")
-          .trim();
-        throw new Error(details || `Failed to stop sandbox (status ${result.status})`);
-      }
-
-      // If the user stopped the active workspace, proactively disconnect the client.
+      // F4Ú8c — sandboxStop IPC odstraněn (Docker backend nahrazen OS-level
+      // sandbox). Stop button v UI bude smazán v chunk 3, tato větev je dead.
+      void containerName;
       if (deps.getActiveWorkspaceId() === id) {
         deps.setClient(null);
         deps.setConnectedVersion(null);
         deps.setSseConnected(false);
       }
-
       deps.updateWorkspaceConnectionState(id, { status: "error", message: "Sandbox stopped." });
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);

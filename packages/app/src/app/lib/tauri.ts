@@ -686,83 +686,8 @@ export async function orchestratorStartDetached(input: {
   });
 }
 
-export type SandboxDoctorResult = {
-  installed: boolean;
-  daemonRunning: boolean;
-  permissionOk: boolean;
-  ready: boolean;
-  clientVersion?: string | null;
-  serverVersion?: string | null;
-  error?: string | null;
-  debug?: {
-    candidates: string[];
-    selectedBin?: string | null;
-    versionCommand?: {
-      status: number;
-      stdout: string;
-      stderr: string;
-    } | null;
-    infoCommand?: {
-      status: number;
-      stdout: string;
-      stderr: string;
-    } | null;
-  } | null;
-};
-
-export async function sandboxDoctor(): Promise<SandboxDoctorResult> {
-  return invoke<SandboxDoctorResult>("sandbox_doctor");
-}
-
-export async function sandboxStop(containerName: string): Promise<ExecResult> {
-  return invoke<ExecResult>("sandbox_stop", { containerName });
-}
-
-export type VesloDockerCleanupResult = {
-  candidates: string[];
-  removed: string[];
-  errors: string[];
-};
-
-export async function sandboxCleanupVesloContainers(): Promise<VesloDockerCleanupResult> {
-  return invoke<VesloDockerCleanupResult>("sandbox_cleanup_veslo_containers");
-}
-
-export type SandboxDebugProbeResult = {
-  startedAt: number;
-  finishedAt: number;
-  runId: string;
-  workspacePath: string;
-  ready: boolean;
-  doctor: SandboxDoctorResult;
-  detachedHost?: OrchestratorDetachedHost | null;
-  dockerInspect?: {
-    status: number;
-    stdout: string;
-    stderr: string;
-  } | null;
-  dockerLogs?: {
-    status: number;
-    stdout: string;
-    stderr: string;
-  } | null;
-  cleanup: {
-    containerName?: string | null;
-    containerRemoved: boolean;
-    removeResult?: {
-      status: number;
-      stdout: string;
-      stderr: string;
-    } | null;
-    workspaceRemoved: boolean;
-    errors: string[];
-  };
-  error?: string | null;
-};
-
-export async function sandboxDebugProbe(): Promise<SandboxDebugProbeResult> {
-  return invoke<SandboxDebugProbeResult>("sandbox_debug_probe");
-}
+// F4Ú8c chunk 1 — sandboxDoctor, sandboxStop, sandboxCleanupVesloContainers,
+// sandboxDebugProbe IPC wrappers + types SMAZÁNY. Rust IPC commands smazány v F4Ú8b.
 
 export async function vesloServerInfo(): Promise<VesloServerInfo> {
   return invoke<VesloServerInfo>("veslo_server_info");
