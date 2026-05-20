@@ -430,71 +430,10 @@ function readLogFormat(
   throw new Error(`Invalid ${key} value: ${raw}. Use pretty|json.`);
 }
 
-function readSandboxMode(
-  flags: Map<string, string | boolean>,
-  key: string,
-  fallback: SandboxMode,
-  envKey?: string,
-): SandboxMode {
-  const raw = readFlag(flags, key) ?? (envKey ? process.env[envKey] : undefined);
-  if (!raw) return fallback;
-  const normalized = String(raw).trim().toLowerCase();
-  if (
-    normalized === "none" ||
-    normalized === "auto" ||
-    normalized === "docker" ||
-    normalized === "container"
-  ) {
-    return normalized as SandboxMode;
-  }
-  throw new Error(`Invalid ${key} value: ${raw}. Use none|auto|docker|container.`);
-}
-
-type SandboxAllowedRoot = {
-  path: string;
-  allowReadWrite?: boolean;
-  description?: string;
-};
-
-type SandboxMountAllowlist = {
-  allowedRoots: SandboxAllowedRoot[];
-  blockedPatterns?: string[];
-};
-
-type SandboxMount = {
-  hostPath: string;
-  containerPath: string;
-  readonly: boolean;
-};
-
-const DEFAULT_SANDBOX_BLOCKED_PATTERNS = [
-  ".ssh",
-  ".gnupg",
-  ".gpg",
-  ".aws",
-  ".azure",
-  ".gcloud",
-  ".kube",
-  ".docker",
-  "credentials",
-  ".env",
-  ".netrc",
-  ".npmrc",
-  ".pypirc",
-  "id_rsa",
-  "id_ed25519",
-  "private_key",
-  ".secret",
-];
-
-let cachedSandboxAllowlist: SandboxMountAllowlist | null | undefined;
-let cachedSandboxAllowlistError: string | null = null;
-
-function resolveSandboxAllowlistPath(): string {
-  const override = process.env.VESLO_SANDBOX_MOUNT_ALLOWLIST?.trim();
-  if (override) return resolve(override);
-  return join(homedir(), ".config", "veslo", "sandbox-mount-allowlist.json");
-}
+// F4Ú8a chunk 2 — legacy Docker sandbox readSandboxMode, types
+// (SandboxAllowedRoot, SandboxMountAllowlist, SandboxMount), DEFAULT_SANDBOX_BLOCKED_PATTERNS,
+// cached allowlist state, resolveSandboxAllowlistPath — VŠECHNO SMAZÁNO.
+// Sandbox jde dnes přes WorkerSandbox abstrakci v `src/sandbox/`.
 
 function expandTildePath(input: string): string {
   const trimmed = input.trim();
@@ -512,70 +451,9 @@ async function isDir(input: string): Promise<boolean> {
   }
 }
 
-async function resolveHostOpencodeGlobalConfigDir(): Promise<string | null> {
-  const enabled = (process.env.VESLO_SANDBOX_MOUNT_OPENCODE_CONFIG ?? "1").trim() !== "0";
-  if (!enabled) return null;
-
-  const candidates: string[] = [];
-  const xdg = process.env.XDG_CONFIG_HOME?.trim();
-  if (xdg) candidates.push(join(xdg, "opencode"));
-  candidates.push(join(homedir(), ".config", "opencode"));
-  if (process.platform === "darwin") {
-    candidates.push(join(homedir(), "Library", "Application Support", "opencode"));
-  }
-
-  const files = ["opencode.jsonc", "opencode.json", "config.json", "AGENTS.md"];
-  for (const candidate of Array.from(new Set(candidates.map((item) => resolve(expandTildePath(item)))))) {
-    if (!(await isDir(candidate))) continue;
-    for (const file of files) {
-      try {
-        await access(join(candidate, file));
-        return candidate;
-      } catch {
-        // keep looking
-      }
-    }
-
-    // Fall back to any non-empty config directory. Some setups keep
-    // provider/auth material in files that are not part of the strict list above.
-    try {
-      const entries = await readdir(candidate);
-      if (entries.length > 0) return candidate;
-    } catch {
-      // keep looking
-    }
-  }
-
-  return null;
-}
-
-async function resolveHostOpencodeGlobalDataDir(): Promise<string | null> {
-  const enabled = (process.env.VESLO_SANDBOX_MOUNT_OPENCODE_CONFIG ?? "1").trim() !== "0";
-  if (!enabled) return null;
-
-  const candidates: string[] = [];
-  const xdgData = process.env.XDG_DATA_HOME?.trim();
-  if (xdgData) candidates.push(join(xdgData, "opencode"));
-  candidates.push(join(homedir(), ".local", "share", "opencode"));
-  if (process.platform === "darwin") {
-    candidates.push(join(homedir(), "Library", "Application Support", "opencode"));
-  }
-
-  const files = ["auth.json", "mcp-auth.json"];
-  for (const candidate of Array.from(new Set(candidates.map((item) => resolve(expandTildePath(item)))))) {
-    if (!(await isDir(candidate))) continue;
-    for (const file of files) {
-      try {
-        await access(join(candidate, file));
-        return candidate;
-      } catch {
-        // keep looking
-      }
-    }
-  }
-
-  return null;
-}
+// F4Ú8a chunk 2 — resolveHostOpencodeGlobalConfigDir + resolveHostOpencodeGlobalDataDir
+// (Docker mount staging) smazány. WorkerSandbox má per-engine ~/.config/opencode
+// v additionalWritePaths.
 
 async function realpathOrNull(input: string): Promise<string | null> {
   try {
@@ -585,175 +463,11 @@ async function realpathOrNull(input: string): Promise<string | null> {
   }
 }
 
-function matchesBlockedPattern(real: string, patterns: string[]): string | null {
-  const parts = real.split(sep);
-  for (const pattern of patterns) {
-    for (const part of parts) {
-      if (part === pattern || part.includes(pattern)) return pattern;
-    }
-    if (real.includes(pattern)) return pattern;
-  }
-  return null;
-}
-
-async function findAllowedRoot(real: string, roots: SandboxAllowedRoot[]): Promise<SandboxAllowedRoot | null> {
-  for (const root of roots) {
-    const expanded = resolve(expandTildePath(root.path));
-    const realRoot = await realpathOrNull(expanded);
-    if (!realRoot) continue;
-    const rel = relative(realRoot, real);
-    if (!rel.startsWith("..") && !isAbsolute(rel)) {
-      return root;
-    }
-  }
-  return null;
-}
-
-async function loadSandboxAllowlist(): Promise<SandboxMountAllowlist | null> {
-  if (cachedSandboxAllowlist !== undefined) return cachedSandboxAllowlist;
-  if (cachedSandboxAllowlistError) return null;
-
-  const path = resolveSandboxAllowlistPath();
-  try {
-    if (!(await fileExists(path))) {
-      cachedSandboxAllowlistError = `Mount allowlist not found at ${path}`;
-      cachedSandboxAllowlist = null;
-      return null;
-    }
-    const raw = await readFile(path, "utf8");
-    const parsed = JSON.parse(raw) as SandboxMountAllowlist;
-    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.allowedRoots)) {
-      throw new Error("allowedRoots must be an array");
-    }
-    const blocked = Array.isArray(parsed.blockedPatterns) ? parsed.blockedPatterns : [];
-    parsed.blockedPatterns = [...new Set([...DEFAULT_SANDBOX_BLOCKED_PATTERNS, ...blocked])];
-    cachedSandboxAllowlist = parsed;
-    return parsed;
-  } catch (error) {
-    cachedSandboxAllowlistError = error instanceof Error ? error.message : String(error);
-    cachedSandboxAllowlist = null;
-    return null;
-  }
-}
-
-function isValidSandboxContainerSubPath(value: string): boolean {
-  const trimmed = value.trim();
-  if (!trimmed) return false;
-  if (trimmed.includes("..")) return false;
-  if (trimmed.startsWith("/")) return false;
-  if (trimmed.includes("\\")) return false;
-  const parts = trimmed.split("/").filter(Boolean);
-  if (!parts.length) return false;
-  if (parts.some((part) => part === "." || part === "..")) return false;
-  return true;
-}
-
-function parseSandboxMountSpec(spec: string): {
-  hostPath: string;
-  containerSubPath: string;
-  requestedReadWrite: boolean;
-} {
-  const trimmed = spec.trim();
-  if (!trimmed) {
-    throw new Error("Empty --sandbox-mount entry");
-  }
-
-  let requestedReadWrite = true;
-  let base = trimmed;
-  if (trimmed.endsWith(":ro")) {
-    requestedReadWrite = false;
-    base = trimmed.slice(0, -3);
-  } else if (trimmed.endsWith(":rw")) {
-    requestedReadWrite = true;
-    base = trimmed.slice(0, -3);
-  }
-
-  const idx = base.indexOf(":");
-  if (idx <= 0 || idx >= base.length - 1) {
-    throw new Error(`Invalid --sandbox-mount value: ${spec}. Use hostPath:subpath[:ro|rw].`);
-  }
-
-  const hostPath = base.slice(0, idx).trim();
-  const containerSubPath = base.slice(idx + 1).trim();
-  if (!hostPath) throw new Error(`Invalid --sandbox-mount value: ${spec}. Host path is empty.`);
-  if (!containerSubPath) throw new Error(`Invalid --sandbox-mount value: ${spec}. Container subpath is empty.`);
-
-  return { hostPath, containerSubPath, requestedReadWrite };
-}
-
-function generateSandboxAllowlistTemplate(): string {
-  const template: SandboxMountAllowlist = {
-    allowedRoots: [
-      {
-        path: "~/projects",
-        allowReadWrite: true,
-        description: "Development projects",
-      },
-      {
-        path: "~/Documents",
-        allowReadWrite: false,
-        description: "Documents (read-only)",
-      },
-    ],
-    blockedPatterns: ["password", "secret", "token"],
-  };
-  return JSON.stringify(template, null, 2);
-}
-
-async function resolveSandboxExtraMounts(
-  specs: string[],
-  sandboxMode: ResolvedSandboxMode,
-): Promise<SandboxMount[]> {
-  if (!specs.length) return [];
-  const allowlistPath = resolveSandboxAllowlistPath();
-  const allowlist = await loadSandboxAllowlist();
-  if (!allowlist) {
-    const template = generateSandboxAllowlistTemplate();
-    throw new Error(
-      `Additional sandbox mounts are blocked. Create ${allowlistPath} to enable.\n\nExample:\n${template}`,
-    );
-  }
-  const blocked = allowlist.blockedPatterns ?? DEFAULT_SANDBOX_BLOCKED_PATTERNS;
-  const roots = allowlist.allowedRoots;
-
-  const mounts: SandboxMount[] = [];
-  for (const spec of specs) {
-    const parsed = parseSandboxMountSpec(spec);
-    if (!isValidSandboxContainerSubPath(parsed.containerSubPath)) {
-      throw new Error(
-        `Invalid sandbox container subpath: "${parsed.containerSubPath}". Use a relative path without "/" prefix or "..".`,
-      );
-    }
-    const expanded = resolve(expandTildePath(parsed.hostPath));
-    const real = await realpathOrNull(expanded);
-    if (!real) {
-      throw new Error(`Sandbox mount host path does not exist: ${parsed.hostPath} (expanded: ${expanded})`);
-    }
-    const blockedMatch = matchesBlockedPattern(real, blocked);
-    if (blockedMatch) {
-      throw new Error(`Sandbox mount rejected (blocked pattern "${blockedMatch}"): ${real}`);
-    }
-    const allowedRoot = await findAllowedRoot(real, roots);
-    if (!allowedRoot) {
-      const allowedList = roots.map((root) => resolve(expandTildePath(root.path))).join(", ");
-      throw new Error(`Sandbox mount rejected: ${real} is not under any allowed root. Allowed: ${allowedList}`);
-    }
-    const allowReadWrite = allowedRoot.allowReadWrite === true;
-    const readonly = parsed.requestedReadWrite ? !allowReadWrite : true;
-    if (sandboxMode === "container") {
-      const info = await stat(real);
-      if (!info.isDirectory()) {
-        throw new Error(`Apple container sandbox mounts must be directories: ${real}`);
-      }
-    }
-    mounts.push({
-      hostPath: real,
-      containerPath: `/workspace/extra/${parsed.containerSubPath}`,
-      readonly,
-    });
-  }
-  return mounts;
-}
+// F4Ú8a chunk 2 — Docker mount allowlist machinery (matchesBlockedPattern,
+// findAllowedRoot, loadSandboxAllowlist, isValidSandboxContainerSubPath,
+// parseSandboxMountSpec, generateSandboxAllowlistTemplate, resolveSandboxExtraMounts)
+// SMAZÁNO. F5 multi-mount UI dostane novou centralizovanou allowlist v
+// `packages/server/src/sandbox/mount-allowlist.ts`.
 
 async function fileExists(path: string): Promise<boolean> {
   try {
@@ -3098,260 +2812,9 @@ async function writeSandboxEntrypoint(options: {
   await writeFile(options.entrypointHostPath, `${script}\n`, "utf8");
 }
 
-async function startDockerSandbox(options: {
-  image: string;
-  containerName: string;
-  workspace: string;
-  persistDir: string;
-  opencodeConfigDir: string;
-  extraMounts: SandboxMount[];
-  sidecars: { opencode: string; vesloServer: string; opencodeRouter?: string | null };
-  ports: { veslo: number; opencodeRouterHealth?: number | null };
-  opencode: {
-    corsOrigins: string[];
-    username?: string;
-    password?: string;
-    hotReload: OpencodeHotReload;
-  };
-  veslo: {
-    token: string;
-    hostToken: string;
-    approvalMode: ApprovalMode;
-    approvalTimeoutMs: number;
-    readOnly: boolean;
-    corsOrigins: string[];
-    opencodeUsername?: string;
-    opencodePassword?: string;
-    logFormat: LogFormat;
-  };
-  runId: string;
-  logFormat: LogFormat;
-  detach: boolean;
-  logger: Logger;
-}): Promise<{ child: ReturnType<typeof spawn>; cleanup: () => Promise<void> }> {
-  const staged = await stageSandboxRuntime({
-    persistDir: options.persistDir,
-    containerName: options.containerName,
-    sidecars: options.sidecars,
-    detach: options.detach,
-  });
-
-  await writeSandboxEntrypoint({
-    entrypointHostPath: staged.entrypointHostPath,
-    rootInContainer: staged.rootInContainer,
-    opencodeConfigDirInContainer: "/opencode-config",
-    backend: "docker",
-    opencode: options.opencode,
-    veslo: {
-      token: options.veslo.token,
-      hostToken: options.veslo.hostToken,
-      approvalMode: options.veslo.approvalMode,
-      approvalTimeoutMs: options.veslo.approvalTimeoutMs,
-      readOnly: options.veslo.readOnly,
-      corsOrigins: options.veslo.corsOrigins,
-      opencodeUsername: options.veslo.opencodeUsername,
-      opencodePassword: options.veslo.opencodePassword,
-      logFormat: options.veslo.logFormat,
-      opencodeRouterEnabled: !!options.sidecars.opencodeRouter,
-    },
-    runId: options.runId,
-    logFormat: options.logFormat,
-  });
-
-  const args: string[] = [
-    "run",
-    "--rm",
-    "--name",
-    options.containerName,
-    "-p",
-    `${options.ports.veslo}:${SANDBOX_INTERNAL_VESLO_PORT}`,
-    "-v",
-    `${options.workspace}:/workspace`,
-    "-v",
-    `${options.persistDir}:/persist`,
-    "-v",
-    `${options.opencodeConfigDir}:/opencode-config`,
-  ];
-
-  const hostOpencodeConfig = await resolveHostOpencodeGlobalConfigDir();
-  const hasOpencodeConfigMount = options.extraMounts.some(
-    (mount) => mount.containerPath === SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH,
-  );
-  if (hostOpencodeConfig && !hasOpencodeConfigMount) {
-    args.push("-v", `${hostOpencodeConfig}:${SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH}:ro`);
-    options.logger.debug("sandbox: mounted host opencode config", {
-      hostPath: hostOpencodeConfig,
-      containerPath: SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH,
-    });
-  }
-
-  const hostOpencodeData = await resolveHostOpencodeGlobalDataDir();
-  const hasOpencodeDataMount = options.extraMounts.some(
-    (mount) => mount.containerPath === SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH,
-  );
-  if (hostOpencodeData && !hasOpencodeDataMount) {
-    args.push("-v", `${hostOpencodeData}:${SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH}:ro`);
-    options.logger.debug("sandbox: mounted host opencode data", {
-      hostPath: hostOpencodeData,
-      containerPath: SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH,
-    });
-  }
-
-  if (options.sidecars.opencodeRouter && options.ports.opencodeRouterHealth) {
-    args.push("-p", `${options.ports.opencodeRouterHealth}:${SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT}`);
-  }
-
-  for (const mount of options.extraMounts) {
-    const suffix = mount.readonly ? ":ro" : "";
-    args.push("-v", `${mount.hostPath}:${mount.containerPath}${suffix}`);
-  }
-
-  if (options.detach) {
-    args.push("-d");
-  }
-
-  const scriptInContainer = `${staged.rootInContainer}/entrypoint.sh`;
-  args.push(options.image, "sh", scriptInContainer);
-
-  const child = spawnProcess("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
-  prefixStream(child.stdout, "sandbox", "stdout", options.logger, child.pid ?? undefined);
-  prefixStream(child.stderr, "sandbox", "stderr", options.logger, child.pid ?? undefined);
-
-  return { child, cleanup: staged.cleanup };
-}
-
-async function startAppleContainerSandbox(options: {
-  image: string;
-  containerName: string;
-  workspace: string;
-  persistDir: string;
-  opencodeConfigDir: string;
-  extraMounts: SandboxMount[];
-  sidecars: { opencode: string; vesloServer: string; opencodeRouter?: string | null };
-  ports: { veslo: number; opencodeRouterHealth?: number | null };
-  opencode: {
-    corsOrigins: string[];
-    username?: string;
-    password?: string;
-    hotReload: OpencodeHotReload;
-  };
-  veslo: {
-    token: string;
-    hostToken: string;
-    approvalMode: ApprovalMode;
-    approvalTimeoutMs: number;
-    readOnly: boolean;
-    corsOrigins: string[];
-    opencodeUsername?: string;
-    opencodePassword?: string;
-    logFormat: LogFormat;
-  };
-  runId: string;
-  logFormat: LogFormat;
-  detach: boolean;
-  logger: Logger;
-}): Promise<{ child: ReturnType<typeof spawn>; cleanup: () => Promise<void> }> {
-  await ensureAppleContainerSystemReady();
-
-  const staged = await stageSandboxRuntime({
-    persistDir: options.persistDir,
-    containerName: options.containerName,
-    sidecars: options.sidecars,
-    detach: options.detach,
-  });
-
-  await writeSandboxEntrypoint({
-    entrypointHostPath: staged.entrypointHostPath,
-    rootInContainer: staged.rootInContainer,
-    opencodeConfigDirInContainer: "/opencode-config",
-    backend: "container",
-    opencode: options.opencode,
-    veslo: {
-      token: options.veslo.token,
-      hostToken: options.veslo.hostToken,
-      approvalMode: options.veslo.approvalMode,
-      approvalTimeoutMs: options.veslo.approvalTimeoutMs,
-      readOnly: options.veslo.readOnly,
-      corsOrigins: options.veslo.corsOrigins,
-      opencodeUsername: options.veslo.opencodeUsername,
-      opencodePassword: options.veslo.opencodePassword,
-      logFormat: options.veslo.logFormat,
-      opencodeRouterEnabled: !!options.sidecars.opencodeRouter,
-    },
-    runId: options.runId,
-    logFormat: options.logFormat,
-  });
-
-  const args: string[] = [
-    "run",
-    "--rm",
-    "--name",
-    options.containerName,
-    "-p",
-    `${options.ports.veslo}:${SANDBOX_INTERNAL_VESLO_PORT}`,
-    "-v",
-    `${options.workspace}:/workspace`,
-    "-v",
-    `${options.persistDir}:/persist`,
-    "-v",
-    `${options.opencodeConfigDir}:/opencode-config`,
-  ];
-
-  const hostOpencodeConfig = await resolveHostOpencodeGlobalConfigDir();
-  const hasOpencodeConfigMount = options.extraMounts.some(
-    (mount) => mount.containerPath === SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH,
-  );
-  if (hostOpencodeConfig && !hasOpencodeConfigMount) {
-    args.push(
-      "--mount",
-      `type=bind,source=${hostOpencodeConfig},target=${SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH},readonly`,
-    );
-    options.logger.debug("sandbox: mounted host opencode config", {
-      hostPath: hostOpencodeConfig,
-      containerPath: SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH,
-    });
-  }
-
-  const hostOpencodeData = await resolveHostOpencodeGlobalDataDir();
-  const hasOpencodeDataMount = options.extraMounts.some(
-    (mount) => mount.containerPath === SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH,
-  );
-  if (hostOpencodeData && !hasOpencodeDataMount) {
-    args.push(
-      "--mount",
-      `type=bind,source=${hostOpencodeData},target=${SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH},readonly`,
-    );
-    options.logger.debug("sandbox: mounted host opencode data", {
-      hostPath: hostOpencodeData,
-      containerPath: SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH,
-    });
-  }
-
-  if (options.sidecars.opencodeRouter && options.ports.opencodeRouterHealth) {
-    args.push("-p", `${options.ports.opencodeRouterHealth}:${SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT}`);
-  }
-
-  for (const mount of options.extraMounts) {
-    if (mount.readonly) {
-      args.push("--mount", `type=bind,source=${mount.hostPath},target=${mount.containerPath},readonly`);
-    } else {
-      args.push("-v", `${mount.hostPath}:${mount.containerPath}`);
-    }
-  }
-
-  if (options.detach) {
-    args.push("-d");
-  }
-
-  const scriptInContainer = `${staged.rootInContainer}/entrypoint.sh`;
-  args.push(options.image, "sh", scriptInContainer);
-
-  const child = spawnProcess("container", args, { stdio: ["ignore", "pipe", "pipe"] });
-  prefixStream(child.stdout, "sandbox", "stdout", options.logger, child.pid ?? undefined);
-  prefixStream(child.stderr, "sandbox", "stderr", options.logger, child.pid ?? undefined);
-
-  return { child, cleanup: staged.cleanup };
-}
+// F4Ú8a chunk 2 — startDockerSandbox + startAppleContainerSandbox SMAZÁNY.
+// Sandbox dnes jde přes WorkerSandbox/MacSandboxExec ve spawnEngine callbacku,
+// ne přes Docker/Apple-Container externí runtime.
 
 async function verifyOpenCodeRouterVersion(binary: ResolvedBinary): Promise<string | undefined> {
   if (binary.source !== "external") {
@@ -5046,13 +4509,8 @@ async function runStart(args: ParsedArgs) {
   // F4Ú8a — sandbox persist dir není potřeba v "none" mode, branchčka mrtvá.
   const sandboxPersistDir = resolve(join(dataDir, "sandbox", workspaceIdForLocal(resolvedWorkspace)));
 
-  // F4Ú8a — sandbox-mount CLI flag deprekovaný; vždy prázdné. F5 multi-mount UI
-  // bude číst per-workspace JSON config, ne CLI flag.
-  const sandboxMountSpecs: string[] = [];
-  const sandboxExtraMounts =
-    sandboxMode !== "none" && sandboxMountSpecs.length
-      ? await resolveSandboxExtraMounts(sandboxMountSpecs, sandboxMode)
-      : [];
+  // F4Ú8a — sandbox extra mounts removed. F5 multi-mount UI bude per-workspace.
+  const sandboxExtraMounts: never[] = [];
 
   const explicitOpencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.VESLO_OPENCODE_BIN;
   const explicitVesloServerBin = readFlag(args.flags, "veslo-server-bin") ?? process.env.VESLO_SERVER_BIN;
@@ -5258,9 +4716,11 @@ async function runStart(args: ParsedArgs) {
   const children: ChildHandle[] = [];
   let shuttingDown = false;
   let detached = false;
-  let sandboxContainerName: string | null = null;
-  let sandboxStop: ((name: string) => Promise<void>) | null = null;
-  let sandboxStopCommand: string | null = null;
+  // F4Ú8a chunk 2 — sandbox tracking state pro legacy Docker mode SMAZÁNO,
+  // ponecháno jako `null` constants pro shutdown/detach compatibility.
+  const sandboxContainerName: string | null = null;
+  const sandboxStop: ((name: string) => Promise<void>) | null = null;
+  const sandboxStopCommand: string | null = null;
   let sandboxCleanup: (() => Promise<void>) | null = null;
   const startedAt = Date.now();
   let opencodeRouterHealthInterval: NodeJS.Timeout | null = null;
@@ -5278,9 +4738,8 @@ async function runStart(args: ParsedArgs) {
       { children: children.map((handle) => handle.name) },
       "veslo-orchestrator",
     );
-    if (sandboxContainerName && sandboxStop) {
-      await sandboxStop(sandboxContainerName);
-    }
+    // F4Ú8a chunk 2 — sandbox container stop no-op (legacy Docker mode removed).
+    void sandboxContainerName; void sandboxStop;
     await Promise.all(children.map((handle) => stopChild(handle.child)));
     if (sandboxCleanup) {
       await sandboxCleanup();
@@ -5322,12 +4781,7 @@ async function runStart(args: ParsedArgs) {
     const summary = [
       "Detached. Services still running:",
       ...children.map((handle) => `- ${handle.name} (pid ${handle.child.pid ?? "unknown"})`),
-      ...(sandboxContainerName && sandboxStopCommand
-        ? [
-            `- sandbox (${sandboxStopCommand.split(" ")[0]} container ${sandboxContainerName})`,
-            `Stop: ${sandboxStopCommand} ${sandboxContainerName}`,
-          ]
-        : []),
+      // F4Ú8a chunk 2 — sandbox container detach summary removed.
       `Veslo URL: ${vesloConnectUrl}`,
       `Veslo Token: ${vesloToken}`,
       `OpenCode URL: ${opencodeConnectUrl}`,
@@ -5498,114 +4952,11 @@ async function runStart(args: ParsedArgs) {
     let vesloActualVersion: string | undefined;
     let opencodeClient: ReturnType<typeof createOpencodeClient>;
 
-    if (sandboxMode !== "none") {
-      const containerName = `veslo-orchestrator-${runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 24)}`;
-      sandboxContainerName = containerName;
-
-      sandboxStop = sandboxMode === "container" ? stopAppleContainer : stopDockerContainer;
-      sandboxStopCommand = sandboxMode === "container" ? "container stop" : "docker stop";
-      const opencodeInternalBaseUrl = `http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`;
-
-      const runner = sandboxMode === "container" ? startAppleContainerSandbox : startDockerSandbox;
-      const sandboxChild = await runner({
-        image: sandboxImage,
-        containerName,
-        workspace: resolvedWorkspace,
-        persistDir: sandboxPersistDir,
-        opencodeConfigDir,
-        extraMounts: sandboxExtraMounts,
-        sidecars: {
-          opencode: opencodeBinary.bin,
-          vesloServer: vesloServerBinary.bin,
-          opencodeRouter: opencodeRouterEnabled ? (opencodeRouterBinary?.bin ?? null) : null,
-        },
-        ports: {
-          veslo: vesloPort,
-          // In sandbox mode, opencodeRouter is only reachable via veslo-server
-          // proxy (/veslo-code-router/*). Do not publish a separate host port.
-          opencodeRouterHealth: null,
-        },
-        opencode: {
-          corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
-          username: opencodeUsername,
-          password: opencodePassword,
-          hotReload: opencodeHotReload,
-        },
-        veslo: {
-          token: vesloToken,
-          hostToken: vesloHostToken,
-          approvalMode: approvalMode === "auto" ? "auto" : "manual",
-          approvalTimeoutMs,
-          readOnly,
-          corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
-          opencodeUsername,
-          opencodePassword,
-          logFormat,
-        },
-        runId,
-        logFormat,
-        detach: detachRequested,
-        logger,
-      });
-
-      sandboxCleanup = sandboxChild.cleanup;
-      tui?.updateService("opencode", { status: "running", port: SANDBOX_INTERNAL_OPENCODE_PORT });
-      tui?.updateService("veslo-server", { status: "running", port: vesloPort });
-      if (opencodeRouterEnabled) {
-        tui?.updateService("router", { status: "running", port: undefined });
-      }
-
-      if (!detachRequested) {
-        children.push({ name: "sandbox", child: sandboxChild.child });
-        logger.info("Process spawned", { pid: sandboxChild.child.pid ?? 0, containerName }, "sandbox");
-        sandboxChild.child.on("exit", (code, signal) => handleExit("sandbox", code, signal));
-        sandboxChild.child.on("error", (error) => handleSpawnError("sandbox", error));
-      } else {
-        // docker run -d exits quickly; the container continues to run.
-        logger.info("Sandbox detached", { containerName }, "sandbox");
-      }
-
-      logger.info("Waiting for health", { url: vesloBaseUrl }, "veslo-server");
-      await waitForHealthy(vesloBaseUrl);
-      logger.info("Healthy", { url: vesloBaseUrl }, "veslo-server");
-      tui?.updateService("veslo-server", { status: "healthy" });
-
-      opencodeClient = createOpencodeClient({
-        baseUrl: `${vesloBaseUrl.replace(/\/$/, "")}/opencode`,
-        headers: { Authorization: `Bearer ${vesloToken}` },
-      });
-
-      // In sandbox mode, the released veslo-server binary may not have our
-      // latest proxy/auth changes yet.  Instead of using the OpenCode SDK client
-      // (which relies on the proxy handling Bearer tokens), do a direct health
-      // check against the veslo-server's own /opencode proxy path.  If the
-      // server is healthy *and* is proxying to a healthy opencode, we're good.
-      logger.info("Waiting for health (proxy)", { url: `${vesloBaseUrl}/opencode` }, "opencode");
-      await waitForHealthyViaProxy(`${vesloBaseUrl.replace(/\/$/, "")}/opencode`, vesloToken);
-      logger.info("Healthy (proxy)", { url: `${vesloBaseUrl}/opencode` }, "opencode");
-      tui?.updateService("opencode", { status: "healthy" });
-
-      try {
-        vesloActualVersion = await verifyVesloServer({
-          baseUrl: vesloBaseUrl,
-          token: vesloToken,
-          hostToken: vesloHostToken,
-          expectedVersion: vesloServerBinary.expectedVersion,
-          expectedWorkspace: "/workspace",
-          expectedOpencodeBaseUrl: opencodeInternalBaseUrl,
-          expectedOpencodeDirectory: "/workspace",
-          expectedOpencodeUsername: opencodeUsername,
-          expectedOpencodePassword: opencodePassword,
-        });
-      } catch (verifyError) {
-        // In sandbox mode the released server binary may differ from the
-        // expected version or lack capabilities we just added locally.  Log
-        // the mismatch but don't abort — the health checks above already
-        // proved the server is running and proxying correctly.
-        logger.warn("Sandbox server verification warning (non-fatal)", { error: String(verifyError) }, "veslo-server");
-      }
-      logVerbose(`veslo-server version: ${vesloActualVersion ?? "unknown"}`);
-    } else {
+    // F4Ú8a chunk 2 — legacy sandbox branch (Docker/Apple-Container start path)
+    // odstraněna. `start` command teď spouští host opencode přímo přes
+    // startOpencode (které samo wrap engine v OS-level sandboxu pres WorkerSandbox).
+    void sandboxExtraMounts; void sandboxPersistDir; void sandboxImage;
+    {
       const opencodeChild = await startOpencode({
         bin: opencodeBinary.bin,
         workspace: resolvedWorkspace,
