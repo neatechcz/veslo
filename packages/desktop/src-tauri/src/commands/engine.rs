@@ -788,11 +788,35 @@ pub fn engine_start(
             "Failed to start orchestrator: retry loop exhausted without a successful health check."
                 .to_string()
         })?;
-        let opencode = health
+
+        // VSLO-171 F2Ú3 removed the legacy singleton `opencode` field from
+        // /health — in multi-mode the orchestrator spawns per-workspace engines
+        // lazily through its proxy. Route via the daemon proxy URL when no
+        // singleton is reported; fall back to the singleton path for backward
+        // compatibility if `opencode` is still present.
+        let daemon_port = health
+            .daemon
+            .as_ref()
+            .map(|d| d.port)
+            .unwrap_or_else(|| {
+                health
+                    .opencode
+                    .as_ref()
+                    .map(|o| o.port)
+                    .unwrap_or(0)
+            });
+        let active_ws_id = health.active_id.clone();
+        let opencode_port = health
             .opencode
-            .ok_or_else(|| "Orchestrator did not report OpenCode status".to_string())?;
-        let opencode_port = opencode.port;
-        let opencode_base_url = format!("http://127.0.0.1:{opencode_port}");
+            .as_ref()
+            .map(|o| o.port)
+            .unwrap_or(daemon_port);
+        let opencode_pid = health.opencode.as_ref().map(|o| o.pid);
+        let opencode_base_url = if let Some(ref ws_id) = active_ws_id {
+            format!("http://127.0.0.1:{daemon_port}/workspace/{ws_id}/opencode")
+        } else {
+            format!("http://127.0.0.1:{daemon_port}")
+        };
         let opencode_connect_url =
             resolve_connect_url(opencode_port).unwrap_or_else(|| opencode_base_url.clone());
 
@@ -861,7 +885,7 @@ pub fn engine_start(
             port: Some(opencode_port),
             opencode_username,
             opencode_password,
-            pid: Some(opencode.pid),
+            pid: opencode_pid,
             last_stdout: None,
             last_stderr: None,
         });
