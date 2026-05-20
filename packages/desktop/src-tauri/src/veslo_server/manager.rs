@@ -23,6 +23,12 @@ pub struct VesloServerState {
     pub host_token: Option<String>,
     pub last_stdout: Option<String>,
     pub last_stderr: Option<String>,
+    // Set of workspace paths the running child was spawned with. Used to:
+    // (a) skip respawn when start_veslo_server is called with an equivalent
+    //     set (idempotent — preserves the running child + tokens), and
+    // (b) carry tokens across an unavoidable respawn so the frontend's cached
+    //     bearer keeps working (VSLO-171: token rotation was causing 401s).
+    pub workspace_paths: Vec<String>,
 }
 
 impl SupervisedChild for VesloServerState {
@@ -80,7 +86,9 @@ impl VesloServerManager {
         state.connect_url = None;
         state.mdns_url = None;
         state.lan_url = None;
-        state.client_token = None;
-        state.host_token = None;
+        // Intentionally keep client_token / host_token / workspace_paths so a
+        // subsequent start_veslo_server can decide whether to skip respawn or
+        // reuse the existing tokens (avoids the 401 "Invalid bearer token"
+        // race documented in docs/handoffs/vslo-171-auth-and-switch.md).
     }
 }

@@ -361,12 +361,44 @@ pub fn start_veslo_server(
         .inner
         .lock()
         .map_err(|_| "veslo server mutex poisoned".to_string())?;
+
+    // VSLO-171 — idempotent skip: if a healthy child is already running with
+    // an equivalent workspace set, reuse it instead of kill+respawn. Avoids
+    // rotating the bearer token under an active frontend session.
+    let normalize_paths = |paths: &[String]| -> Vec<String> {
+        let mut normalized: Vec<String> = paths
+            .iter()
+            .map(|path| path.trim().trim_end_matches('/').to_string())
+            .filter(|path| !path.is_empty())
+            .collect();
+        normalized.sort();
+        normalized.dedup();
+        normalized
+    };
+    let requested_paths = normalize_paths(workspace_paths);
+    let existing_paths = normalize_paths(&state.workspace_paths);
+    if state.child.is_some()
+        && !state.child_exited
+        && state.client_token.is_some()
+        && state.host_token.is_some()
+        && state.port.is_some()
+        && requested_paths == existing_paths
+    {
+        let info = VesloServerManager::snapshot_locked(&mut state);
+        drop(state);
+        return Ok(info);
+    }
+
+    // Need to (re)spawn; keep tokens (if any) so the frontend's cached bearer
+    // remains valid across the respawn.
+    let previous_client_token = state.client_token.clone();
+    let previous_host_token = state.host_token.clone();
     VesloServerManager::stop_locked(&mut state);
 
     let host = "0.0.0.0".to_string();
     let port = resolve_veslo_port_after_restart()?;
-    let client_token = generate_token();
-    let host_token = generate_token();
+    let client_token = previous_client_token.unwrap_or_else(generate_token);
+    let host_token = previous_host_token.unwrap_or_else(generate_token);
     let active_workspace = workspace_paths
         .first()
         .map(|path| path.as_str())
@@ -403,6 +435,7 @@ pub fn start_veslo_server(
     state.lan_url = lan_url;
     state.client_token = Some(client_token);
     state.host_token = Some(host_token);
+    state.workspace_paths = workspace_paths.to_vec();
     state.last_stdout = None;
     state.last_stderr = None;
 
