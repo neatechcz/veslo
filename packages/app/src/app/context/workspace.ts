@@ -2511,6 +2511,10 @@ export function createWorkspaceStore(options: {
         bootTrace("workspaceBootstrap FAILED (ignored)");
       } finally {
         setWorkspacesHydrated(true);
+        // Stale connection states (e.g. "error") from a previous orchestrator
+        // run survive soft UI restarts because the signal lives in module
+        // memory and is not persisted. Clear on every boot.
+        setWorkspaceConnectionStateById({});
       }
       // Reconcile veslo-server's workspace registry with the local store. The
       // server is spawned with --workspace arguments captured at engine_start
@@ -2519,6 +2523,7 @@ export function createWorkspaceStore(options: {
       void reconcileVesloServerWorkspaces();
     } else {
       setWorkspacesHydrated(true);
+      setWorkspaceConnectionStateById({});
     }
 
     bootTrace("refreshEngine + refreshEngineDoctor → background");
