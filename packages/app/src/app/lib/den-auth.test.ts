@@ -155,7 +155,7 @@ test("startDesktopBrowserAuth uses v2 start and stores exchange proof by transac
     return new Response(
       JSON.stringify({
         transactionId: "dat_123",
-        authorizeUrl: "https://den-control-plane-veslo.onrender.com/?desktopOnboarding=1&tid=dat_123&state=abc",
+        authorizeUrl: "https://api.veslo.work/?desktopOnboarding=1&tid=dat_123&state=abc",
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
       }),
       {
@@ -170,7 +170,7 @@ test("startDesktopBrowserAuth uses v2 start and stores exchange proof by transac
 
     assert.deepEqual(result, {
       ok: true,
-      authorizeUrl: "https://den-control-plane-veslo.onrender.com/?desktopOnboarding=1&tid=dat_123&state=abc",
+      authorizeUrl: "https://api.veslo.work/?desktopOnboarding=1&tid=dat_123&state=abc",
       sessionId: "dat_123",
     });
     assert.equal(calls.length, 1);
@@ -186,7 +186,7 @@ test("startDesktopBrowserAuth uses v2 start and stores exchange proof by transac
     const storedPending = storage.localStorage.getItem("veslo.den.desktopAuthPending");
     assert.equal(storedPending?.includes("\"authorizeUrl\":"), true);
     assert.equal(
-      storedPending?.includes("https://den-control-plane-veslo.onrender.com/?desktopOnboarding=1&tid=dat_123&state=abc"),
+      storedPending?.includes("https://api.veslo.work/?desktopOnboarding=1&tid=dat_123&state=abc"),
       true,
     );
   } finally {
@@ -231,7 +231,7 @@ test("getDesktopBrowserAuthStatus reads v2 polling state", async () => {
     assert.equal(calls.length, 1);
     assert.equal(
       calls[0],
-      "https://den-control-plane-veslo.onrender.com/v2/desktop-auth/status?transactionId=dat_456",
+      "https://api.veslo.work/v2/desktop-auth/status?transactionId=dat_456",
     );
   } finally {
     globalThis.fetch = previousFetch;
@@ -284,7 +284,7 @@ test("exchangeHandoffCode uses legacy v1 exchange when no PKCE proof is availabl
     assert.deepEqual(result, {
       ok: true,
       state: {
-        denApiBase: "https://den-control-plane-veslo.onrender.com",
+        denApiBase: "https://api.veslo.work",
         token: "legacy-token",
         orgId: "org_456",
         user: { id: "user_123", name: "Legacy User", email: "legacy@example.com" },
@@ -292,9 +292,9 @@ test("exchangeHandoffCode uses legacy v1 exchange when no PKCE proof is availabl
       },
     });
     assert.equal(calls.length, 2);
-    assert.equal(calls[0]?.url, "https://den-control-plane-veslo.onrender.com/v1/desktop-auth/exchange");
+    assert.equal(calls[0]?.url, "https://api.veslo.work/v1/desktop-auth/exchange");
     assert.deepEqual(calls[0]?.body, { code: "legacy-code-1" });
-    assert.equal(calls[1]?.url, "https://den-control-plane-veslo.onrender.com/v1/me");
+    assert.equal(calls[1]?.url, "https://api.veslo.work/v1/me");
   } finally {
     globalThis.fetch = previousFetch;
     storage.restore();
@@ -356,14 +356,14 @@ test("exchangeHandoffCode uses v2 exchange with transaction proof when PKCE proo
       });
     }
     assert.equal(calls.length, 2);
-    assert.equal(calls[0]?.url, "https://den-control-plane-veslo.onrender.com/v2/desktop-auth/exchange");
+    assert.equal(calls[0]?.url, "https://api.veslo.work/v2/desktop-auth/exchange");
     assert.deepEqual(calls[0]?.body, {
       code: "v2-code-1",
       transactionId: "dat_123",
       state: "state_123456789012",
       codeVerifier: "verifier_123",
     });
-    assert.equal(calls[1]?.url, "https://den-control-plane-veslo.onrender.com/v1/me");
+    assert.equal(calls[1]?.url, "https://api.veslo.work/v1/me");
   } finally {
     globalThis.fetch = previousFetch;
     storage.restore();
@@ -418,7 +418,7 @@ test("exchangeHandoffCode accepts accessToken from the v2 exchange contract", as
     assert.deepEqual(result, {
       ok: true,
       state: {
-        denApiBase: "https://den-control-plane-veslo.onrender.com",
+        denApiBase: "https://api.veslo.work",
         token: "pkce-access-token",
         orgId: "org_v2_contract",
         user: { id: "user_v2_contract", name: "Contract User", email: "contract@example.com" },
@@ -523,7 +523,7 @@ test("exchangeHandoffCode enriches the returned auth state with /v1/me email det
     assert.deepEqual(result, {
       ok: true,
       state: {
-        denApiBase: "https://den-control-plane-veslo.onrender.com",
+        denApiBase: "https://api.veslo.work",
         token: "legacy-token",
         orgId: "org_456",
         user: { id: "user_123", name: "Michal", email: "michal@example.com" },
@@ -531,8 +531,8 @@ test("exchangeHandoffCode enriches the returned auth state with /v1/me email det
       },
     });
     assert.equal(calls.length, 2);
-    assert.equal(calls[0]?.url, "https://den-control-plane-veslo.onrender.com/v1/desktop-auth/exchange");
-    assert.equal(calls[1]?.url, "https://den-control-plane-veslo.onrender.com/v1/me");
+    assert.equal(calls[0]?.url, "https://api.veslo.work/v1/desktop-auth/exchange");
+    assert.equal(calls[1]?.url, "https://api.veslo.work/v1/me");
   } finally {
     globalThis.fetch = previousFetch;
     storage.restore();
@@ -548,7 +548,7 @@ test("parseAuthCompleteDeepLink accepts transactionId callbacks from v2 redirect
 
 test("hydrateDenAuthFromDesktopSnapshot imports persisted auth before onboarding", async () => {
   const authState = {
-    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    denApiBase: "https://api.veslo.work",
     token: "token_from_snapshot",
     orgId: "org_123",
     user: { id: "user_123", email: "snapshot@example.com" },
@@ -592,7 +592,7 @@ test("hydrateDenAuthFromDesktopSnapshot imports persisted auth before onboarding
 
 test("writeDenAuth skips desktop snapshot writes during WebDriver sessions", async () => {
   const authState = {
-    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    denApiBase: "https://api.veslo.work",
     token: "token_from_webdriver",
     orgId: "org_webdriver",
     user: { id: "user_webdriver", email: "webdriver@example.com" },
@@ -621,7 +621,7 @@ test("writeDenAuth skips desktop snapshot writes during WebDriver sessions", asy
 
 test("hydrateDenAuthFromDesktopSnapshot treats keepSignedIn false with auth as a session-only sign-in", async () => {
   const authState = {
-    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    denApiBase: "https://api.veslo.work",
     token: "token_from_snapshot",
     orgId: "org_456",
     user: { id: "user_456" },
@@ -655,7 +655,7 @@ test("hydrateDenAuthFromDesktopSnapshot treats keepSignedIn false with auth as a
 
 test("hydrateDenAuthFromDesktopSnapshot imports auth into session storage when snapshot disables keep signed in", async () => {
   const authState = {
-    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    denApiBase: "https://api.veslo.work",
     token: "token_from_snapshot_session_only",
     orgId: "org_session_only",
     user: { id: "user_session_only", email: "session-only@example.com" },
@@ -696,14 +696,14 @@ test("hydrateDenAuthFromDesktopSnapshot imports auth into session storage when s
 
 test("hydrateDenAuthFromDesktopSnapshot replaces stale browser auth when desktop snapshot user differs", async () => {
   const staleAuth = {
-    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    denApiBase: "https://api.veslo.work",
     token: "token_stale_browser",
     orgId: "org_stale",
     user: { id: "user_stale", email: "stale@example.com" },
     org: { id: "org_stale" },
   };
   const snapshotAuth = {
-    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    denApiBase: "https://api.veslo.work",
     token: "token_snapshot_newer",
     orgId: "org_snapshot",
     user: { id: "user_snapshot", email: "snapshot@example.com" },
@@ -746,14 +746,14 @@ test("hydrateDenAuthFromDesktopSnapshot replaces stale browser auth when desktop
 
 test("hydrateDenAuthFromDesktopSnapshot preserves browser auth when snapshot matches the current user", async () => {
   const currentAuth = {
-    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    denApiBase: "https://api.veslo.work",
     token: "token_current_browser",
     orgId: "org_current",
     user: { id: "user_same", email: "same@example.com" },
     org: { id: "org_current" },
   };
   const snapshotAuth = {
-    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    denApiBase: "https://api.veslo.work",
     token: "token_snapshot_older",
     orgId: "org_snapshot",
     user: { id: "user_same", email: "same@example.com" },
@@ -797,14 +797,14 @@ test("hydrateDenAuthFromDesktopSnapshot preserves browser auth when snapshot mat
 
 test("hydrateDenAuthFromDesktopSnapshot preserves an existing browser language preference", async () => {
   const currentAuth = {
-    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    denApiBase: "https://api.veslo.work",
     token: "token_current_browser",
     orgId: "org_current",
     user: { id: "user_same", email: "same@example.com" },
     org: { id: "org_current" },
   };
   const snapshotAuth = {
-    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    denApiBase: "https://api.veslo.work",
     token: "token_snapshot_older",
     orgId: "org_snapshot",
     user: { id: "user_same", email: "same@example.com" },
@@ -854,14 +854,14 @@ test("hydrateDenAuthFromDesktopSnapshot preserves an existing browser language p
 
 test("hydrateDenAuthFromDesktopSnapshot replaces stale browser auth with a session-only snapshot sign-in", async () => {
   const staleAuth = {
-    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    denApiBase: "https://api.veslo.work",
     token: "token_stale_browser",
     orgId: "org_stale",
     user: { id: "user_stale", email: "stale@example.com" },
     org: { id: "org_stale" },
   };
   const snapshotAuth = {
-    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    denApiBase: "https://api.veslo.work",
     token: "token_snapshot_signed_out",
     orgId: "org_snapshot",
     user: { id: "user_snapshot", email: "snapshot@example.com" },
@@ -900,7 +900,7 @@ test("hydrateDenAuthFromDesktopSnapshot replaces stale browser auth with a sessi
 
 test("hydrateDenAuthFromDesktopSnapshot clears stale browser auth when snapshot is explicitly signed out", async () => {
   const staleAuth = {
-    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    denApiBase: "https://api.veslo.work",
     token: "token_stale_browser",
     orgId: "org_stale",
     user: { id: "user_stale", email: "stale@example.com" },
@@ -939,7 +939,7 @@ test("hydrateDenAuthFromDesktopSnapshot clears stale browser auth when snapshot 
 
 test("hydrateDenAuthFromDesktopSnapshot restores language and onboarding completion flags", async () => {
   const authState = {
-    denApiBase: "https://den-control-plane-veslo.onrender.com",
+    denApiBase: "https://api.veslo.work",
     token: "token_from_snapshot",
     orgId: "org_789",
     user: { id: "user_789", email: "seeded@example.com" },
@@ -995,7 +995,7 @@ test("writeDenAuth syncs desktop snapshot with language and onboarding metadata"
     storage.localStorage.setItem("veslo.onboardingComplete", "1");
 
     const authState = {
-      denApiBase: "https://den-control-plane-veslo.onrender.com",
+      denApiBase: "https://api.veslo.work",
       token: "token_for_snapshot_sync",
       orgId: "org_sync",
       user: { id: "user_sync", email: "sync@example.com" },
@@ -1035,7 +1035,7 @@ test("flushPendingDesktopSnapshotWrite waits for the queued desktop snapshot wri
 
   try {
     const authState = {
-      denApiBase: "https://den-control-plane-veslo.onrender.com",
+      denApiBase: "https://api.veslo.work",
       token: "token_for_flush",
       orgId: "org_flush",
       user: { id: "user_flush", email: "flush@example.com" },
@@ -1073,7 +1073,7 @@ test("subscribeDenAuthChanges fires when auth state changes", () => {
 
   try {
     writeDenAuth({
-      denApiBase: "https://den-control-plane-veslo.onrender.com",
+      denApiBase: "https://api.veslo.work",
       token: "token_for_subscription",
       orgId: "org_subscription",
       user: { id: "user_subscription", email: "subscription@example.com" },

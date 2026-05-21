@@ -43,3 +43,11 @@ test("parseEnv resolves gateway database, secret key, and OpenAI OAuth settings"
   });
   assert.equal(parsed.denApiBase, "http://127.0.0.1:8788");
 });
+
+test("parseEnv production fallback uses the owned Den API base", () => {
+  const parsed = parseEnv({
+    NODE_ENV: "production",
+  });
+
+  assert.equal(parsed.denApiBase, "https://api.veslo.work");
+});

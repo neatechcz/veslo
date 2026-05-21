@@ -7,7 +7,7 @@ Frontend for `app.veslo.neatech.com`.
 - Signs up / signs in users against Den service auth.
 - Launches cloud workers via `POST /v1/workers`.
 - Handles paywall responses (`402 payment_required`) and shows Polar checkout links.
-- Uses a Next.js proxy route (`/api/den/*`) to reach `api.veslo.neatech.com` without browser CORS issues.
+- Uses a Next.js proxy route (`/api/den/*`) to reach `api.veslo.work` without browser CORS issues.
 
 ## Local development
 
@@ -21,9 +21,9 @@ Frontend for `app.veslo.neatech.com`.
 ### Optional env vars
 
 - `DEN_API_BASE` (server-only): upstream API base used by proxy route.
-  - default: `https://api.veslo.neatech.com`
+  - default: `https://api.veslo.work`
 - `DEN_AUTH_ORIGIN` (server-only): Origin header sent to Better Auth endpoints.
-  - default: `https://den-control-plane-veslo.onrender.com`
+  - default: `https://api.veslo.work`
 - `NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL` (client): Base URL for "Open in App" links.
   - Example: `https://veslo.neatech.com/app`
   - The web panel appends `/connect-remote` and injects worker URL/token params automatically.

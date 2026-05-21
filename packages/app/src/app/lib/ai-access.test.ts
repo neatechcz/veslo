@@ -28,6 +28,10 @@ const managedCodexProfile: ManagedAiAccessProfile = {
   updatedAt: null,
 };
 
+test("desktop managed AI defaults to the owned server gateway", () => {
+  assert.equal(DEFAULT_MANAGED_AI_GATEWAY_BASE_URL, "https://ai.veslo.work");
+});
+
 test("resolveManagedAiAccess returns a configured profile for valid admin policy", () => {
   const result = resolveManagedAiAccess({
     id: "ai_access_123",

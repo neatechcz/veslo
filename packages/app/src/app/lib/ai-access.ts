@@ -13,7 +13,7 @@ export const AI_ACCESS_NOT_CONFIGURED_MESSAGE =
   "Your AI access has not been configured by the platform admin yet.";
 export const AI_ACCESS_INVALID_MESSAGE =
   "Assigned AI access is incomplete. Ask your platform admin to update it.";
-export const DEFAULT_MANAGED_AI_GATEWAY_BASE_URL = "https://veslo-ai-gateway-dev.onrender.com";
+export const DEFAULT_MANAGED_AI_GATEWAY_BASE_URL = "https://ai.veslo.work";
 const REDACTED_SECRET_VALUE = "[REDACTED]";
 
 export type ManagedAiAccessProfile = {

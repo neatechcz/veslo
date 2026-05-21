@@ -177,7 +177,7 @@ This backend-first slice is platform-admin-only. A narrower `debug-logs-reader` 
 
 ## Managed-AI Routing and Accounting
 
-Managed-AI inference routing is configured separately from signed-in app identity. Desktop and orchestrator development defaults use the standalone AI Gateway at `https://veslo-ai-gateway-dev.onrender.com`; `VESLO_MANAGED_AI_BASE_URL` overrides it, with `VESLO_AI_GATEWAY_BASE_URL` retained as the legacy fallback.
+Managed-AI inference routing is configured separately from signed-in app identity. Desktop and orchestrator defaults use the owned standalone AI Gateway at `https://ai.veslo.work`; `VESLO_MANAGED_AI_BASE_URL` overrides it, with `VESLO_AI_GATEWAY_BASE_URL` retained as the legacy fallback. The previous Render AI Gateway remains a transition and rollback surface, not the default for new builds.
 
 Desktop local workspaces separate the managed-AI access-policy source from the OpenCode provider routing target. The app may load the user's policy and gateway token from DEN or standalone AI Gateway, but the generated provider `baseURL` in `opencode.json` points at the active local Veslo server so prompts keep flowing through the local-first runtime.
 

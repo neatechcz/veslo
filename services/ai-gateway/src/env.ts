@@ -29,7 +29,7 @@ export function parseEnv(source: NodeJS.ProcessEnv) {
       clientSecret: parsed.AI_GATEWAY_OPENAI_CLIENT_SECRET,
       redirectBase: parsed.AI_GATEWAY_OPENAI_REDIRECT_BASE.replace(/\/+$/, ""),
     },
-    denApiBase: (parsed.AI_GATEWAY_DEN_API_BASE ?? (parsed.NODE_ENV === "production" ? "https://den-control-plane-veslo.onrender.com" : "http://127.0.0.1:8788")).replace(/\/+$/, ""),
+    denApiBase: (parsed.AI_GATEWAY_DEN_API_BASE ?? (parsed.NODE_ENV === "production" ? "https://api.veslo.work" : "http://127.0.0.1:8788")).replace(/\/+$/, ""),
   };
 }
 

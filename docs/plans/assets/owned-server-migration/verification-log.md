@@ -130,3 +130,24 @@ This log records sanitized verification evidence for the VSLO-185 owned-server m
 - Local suite verification: `pnpm --dir .worktrees/vslo-185-owned-server-migration --filter @neatech/den test` passed with 251 passing and 1 skipped.
 - Local suite verification: `pnpm --dir .worktrees/vslo-185-owned-server-migration --filter @neatech/ai-gateway test` passed with 200 passing.
 - Whitespace verification: `git diff --check` exited 0.
+
+## 2026-05-21 - Phase 5 production cutover
+
+- Scope: executed the owned-domain production cutover checks and changed new-build defaults away from Render toward the owned server.
+- Current routing: `dig +short app.veslo.work` returned `62.109.146.43`; `dig +short api.veslo.work` and `dig +short ai.veslo.work` returned `app.veslo.work.` then `62.109.146.43`.
+- Owned-server stack: Den, AI Gateway, web, Den DB, and AI Gateway DB were healthy; proxy stayed up on public ports 80 and 443.
+- Public health verification: `https://api.veslo.work/health` returned `{"ok":true}`, `https://ai.veslo.work/health` returned `{"ok":true,"service":"ai-gateway"}`, and `https://app.veslo.work` returned HTTP 200 via Caddy.
+- Phase 5 owned-server backup: Den and AI Gateway MySQL dumps were written under the server backup area at `20260521T150108Z`.
+- Backup checksums: AI Gateway dump `b1cee8b9c85b1869fbf0e495de5c0604f11abcfa02714de3a68b1e6c56b7158b`; Den dump `7141b292c494fa98dc8c59115de5e22340a21d2535c3550e097cf73e0486a915`.
+- Backup script issue: the server checkout had backup scripts without executable mode, so the successful backup used `bash packaging/owned-server/backup/backup-mysql.sh`. The migration branch now tracks the backup and restore scripts as executable so the documented direct invocation works in future checkouts.
+- Render rollback target check: `https://den-control-plane-veslo.onrender.com/health` and `https://veslo-ai-gateway-dev.onrender.com/health` both returned HTTP 200 with Render headers.
+- Phase 5 smoke run at `2026-05-21T15:02:50.971Z`: API health, AI health, web root, existing bearer auth, desktop auth start/handoff/exchange, exchanged-token `/v1/me`, managed-AI access, Codex OAuth chat completion, feedback projection, debug-log ingest, and debug-log admin lookup all returned `ok: true`.
+- Managed-AI evidence: AI access returned enabled `codex_oauth` access with default model `gpt-5.5`; a Codex OAuth chat completion returned HTTP 200 with response id `resp_069897f265ed0a33016a0f1e99d4cc8191a400bb6fd80b7b74`, model `gpt-5.5`, choices, and usage keys.
+- Feedback evidence: feedback projection returned HTTP 201, status `projected`, and YouTrack issue `VSLO-189`.
+- Debug-log evidence: ingest returned HTTP 202 with one accepted batch, admin lookup returned HTTP 200, and the ingested event was found.
+- Post-smoke logs: recent Den and AI Gateway logs had no matching `error`, `exception`, `unhandled`, or `fatal` lines.
+- New-build default routing: desktop Den auth defaults to `https://api.veslo.work`; desktop managed AI and orchestrator managed AI default to `https://ai.veslo.work`; the web Den proxy defaults to `https://api.veslo.work`; AI Gateway production Den fallback defaults to `https://api.veslo.work`.
+- Local focused default verification: app Den/AI tests passed with 48 passing; AI Gateway env test passed with 4 passing; orchestrator owned-server default test passed with 1 passing; web owned-server default test passed with 1 passing.
+- Local broader verification: app unit suite passed with 744 passing; AI Gateway suite passed with 201 passing; orchestrator suite passed with 7 passing; web proxy tests passed with 2 passing.
+- Whitespace verification: `git diff --check` exited 0 after the final documentation update.
+- Cutover deviation: because the owned domains were already live on the owned server, no destructive final Render restore was run during Phase 5. Restoring a fresh Render dump after owned-server writes could overwrite owned-server production writes. Render remains available as rollback and as a transition surface for old released desktop clients until client defaults are rolled out or a forwarding strategy is chosen.
