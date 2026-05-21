@@ -101,6 +101,12 @@ function _wsLog(msg: string, data?: unknown) {
   const line = `[${new Date().toISOString()}] ${msg}${data !== undefined ? " " + (typeof data === "string" ? data : JSON.stringify(data)) : ""}`;
   console.log(line);
   try { (window as any).__wsActivateLog = ((window as any).__wsActivateLog || "") + line + "\n"; } catch {}
+  // VSLO-86 — forward to Tauri stderr (/tmp/veslo.log) so ensureEngine /
+  // workspace:activate diagnostics survive without DevTools. Lazy import so
+  // module load order is preserved (workspace.ts imports tauri.ts already).
+  try {
+    void import("../lib/tauri").then((mod) => mod.logUiEvent("workspace", msg, data)).catch(() => {});
+  } catch {}
 }
 
 function isSkillRegistryMaterializationError(error: unknown): boolean {
