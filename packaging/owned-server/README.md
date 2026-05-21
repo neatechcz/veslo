@@ -9,6 +9,8 @@ This directory is the source of truth for the owned-server deployment template f
 - `den`: Den control plane on internal port 8788.
 - `ai-gateway`: standalone AI Gateway on internal port 4034.
 - `web`: Next.js cloud app on internal port 3005.
+- `worker-manager`: internal worker container manager on port 8790.
+- `worker-runtime-image`: build-only Compose profile for the owned worker runtime image.
 - `proxy`: Caddy reverse proxy and TLS endpoint on public ports 80 and 443.
 
 Only the proxy publishes host ports. MySQL and app containers stay on the Compose network.
@@ -18,8 +20,9 @@ Only the proxy publishes host ports. MySQL and app containers stay on the Compos
 - `https://api.veslo.work` routes to Den.
 - `https://ai.veslo.work` routes to AI Gateway.
 - `https://app.veslo.work` routes to the web app.
+- `https://<worker-id>.workers.veslo.work` routes to owned-server cloud workers through the worker manager.
 
-DNS for these names must point at the owned server before public TLS issuance can succeed. Production live traffic must not be redirected until the Phase 5 cutover gate in the migration plan.
+DNS for these names must point at the owned server before public TLS issuance can succeed. Worker routing additionally requires a wildcard DNS record for `*.workers.veslo.work`. Production live traffic must not be redirected until the Phase 5 cutover gate in the migration plan.
 
 ## Environment
 
@@ -31,7 +34,7 @@ sudo cp packaging/owned-server/env.example /srv/veslo/env/production.env
 sudo chmod 600 /srv/veslo/env/production.env
 ```
 
-Fill `/srv/veslo/env/production.env` with production values. The template covers Den, AI Gateway, web, Lettr, Render worker provisioning, Vercel worker-domain integration, Polar, YouTrack, debug-log ingest, and managed-AI settings.
+Fill `/srv/veslo/env/production.env` with production values. The template covers Den, AI Gateway, web, Lettr, owned-server worker provisioning, temporary Render worker provisioning, Vercel worker-domain integration, Polar, YouTrack, debug-log ingest, and managed-AI settings.
 
 Auth email uses Lettr over HTTPS via `LETTR_API_KEY`, `AUTH_EMAIL_ADDRESS`, and `AUTH_EMAIL_FROM_NAME`. Direct SMTP is not required.
 
@@ -56,6 +59,8 @@ Compose creates these named volumes:
 
 Backups must be copied off-server. Database dump and restore automation is added in the later backup phase; until then, treat these volumes as stateful production data.
 
+Owned cloud worker workspace volumes are created dynamically with names like `veslo-worker-<worker-id>-workspace`. Worker deletion through Den removes the matching worker container and volume.
+
 Database backup and restore commands live in `packaging/owned-server/backup/`. Run a manual backup before cutover, copy encrypted backups off-server, and rehearse restore against staging before touching production traffic.
 
 ## Start
@@ -64,6 +69,7 @@ From a checked-out release on the server:
 
 ```bash
 sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env config
+sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env build worker-runtime-image
 sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env up -d --build
 ```
 
@@ -73,7 +79,10 @@ The app images use `node:22-bookworm-slim`, enable Corepack, prepare `pnpm@10.27
 
 - `pnpm --filter @neatech/den build` then `pnpm --filter @neatech/den start`.
 - `pnpm --filter @neatech/ai-gateway build` then `pnpm --filter @neatech/ai-gateway start`.
+- `pnpm --filter @neatech/worker-manager build` then `pnpm --filter @neatech/worker-manager start`.
 - `pnpm --filter @neatech/veslo-web build` then `pnpm --filter @neatech/veslo-web start`.
+
+The worker manager is the only long-running service that mounts `/var/run/docker.sock`. Den talks to it over the internal Compose network using `OWNED_WORKER_MANAGER_TOKEN`.
 
 ## Health Check
 
@@ -83,16 +92,18 @@ After startup:
 curl -fsS https://api.veslo.work/health
 curl -fsS https://ai.veslo.work/health
 curl -I https://app.veslo.work
+curl -fsS http://127.0.0.1:8790/health
 sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env ps
 ```
 
-Compose also defines container health checks for Den `/health`, AI Gateway `/health`, and the web app `/`.
+Compose also defines container health checks for Den `/health`, AI Gateway `/health`, worker manager `/health`, and the web app `/`.
 
 ## Logs
 
 ```bash
 sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env logs -f den
 sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env logs -f ai-gateway
+sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env logs -f worker-manager
 sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env logs -f web
 sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env logs -f proxy
 ```

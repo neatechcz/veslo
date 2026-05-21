@@ -35,6 +35,15 @@ type RenderDeploy = {
   status: string
 }
 
+type OwnedWorkerManagerResponse = {
+  worker?: {
+    provider?: string
+    url?: string
+    status?: "provisioning" | "healthy"
+    region?: string
+  }
+}
+
 const terminalDeployStates = new Set(["live", "update_failed", "build_failed", "canceled"])
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -75,6 +84,34 @@ async function renderRequest<T>(path: string, init: RequestInit = {}): Promise<T
 
   if (!response.ok) {
     throw new Error(`Render API ${path} failed (${response.status}): ${text.slice(0, 400)}`)
+  }
+
+  if (!text) {
+    return null as T
+  }
+
+  return JSON.parse(text) as T
+}
+
+async function ownedWorkerManagerRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  assertOwnedWorkerManagerConfig()
+
+  const headers = new Headers(init.headers)
+  headers.set("Authorization", `Bearer ${env.ownedWorkerManager.token}`)
+  headers.set("Accept", "application/json")
+
+  if (init.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json")
+  }
+
+  const response = await fetch(`${env.ownedWorkerManager.url}${path}`, {
+    ...init,
+    headers,
+  })
+  const text = await response.text()
+
+  if (!response.ok) {
+    throw new Error(`Owned worker manager ${path} failed (${response.status}): ${text.slice(0, 400)}`)
   }
 
   if (!text) {
@@ -198,6 +235,40 @@ function assertRenderConfig() {
   }
 }
 
+function assertOwnedWorkerManagerConfig() {
+  if (!env.ownedWorkerManager.url) {
+    throw new Error("OWNED_WORKER_MANAGER_URL is required for owned-server provisioner")
+  }
+  if (!env.ownedWorkerManager.token) {
+    throw new Error("OWNED_WORKER_MANAGER_TOKEN is required for owned-server provisioner")
+  }
+}
+
+async function provisionWorkerOnOwnedServer(input: ProvisionInput): Promise<ProvisionedInstance> {
+  const response = await ownedWorkerManagerRequest<OwnedWorkerManagerResponse>("/workers", {
+    method: "POST",
+    body: JSON.stringify({
+      workerId: input.workerId,
+      name: input.name,
+      hostToken: input.hostToken,
+      clientToken: input.clientToken,
+      publicDomainSuffix: env.ownedWorkerManager.publicDomainSuffix,
+    }),
+  })
+
+  const worker = response.worker
+  if (!worker?.url || !worker.provider || !worker.status) {
+    throw new Error("Owned worker manager response did not include worker provider, url, and status")
+  }
+
+  return {
+    provider: worker.provider,
+    url: worker.url,
+    status: worker.status,
+    region: worker.region ?? "owned-server",
+  }
+}
+
 async function provisionWorkerOnRender(input: ProvisionInput): Promise<ProvisionedInstance> {
   assertRenderConfig()
 
@@ -273,6 +344,10 @@ async function provisionWorkerOnRender(input: ProvisionInput): Promise<Provision
 }
 
 export async function provisionWorker(input: ProvisionInput): Promise<ProvisionedInstance> {
+  if (env.provisionerMode === "owned-server") {
+    return provisionWorkerOnOwnedServer(input)
+  }
+
   if (env.provisionerMode === "render") {
     return provisionWorkerOnRender(input)
   }
@@ -287,6 +362,13 @@ export async function provisionWorker(input: ProvisionInput): Promise<Provisione
 }
 
 export async function deprovisionWorker(input: { workerId: string; instanceUrl: string | null }) {
+  if (env.provisionerMode === "owned-server") {
+    await ownedWorkerManagerRequest(`/workers/${encodeURIComponent(input.workerId)}`, {
+      method: "DELETE",
+    })
+    return
+  }
+
   if (env.provisionerMode !== "render") {
     return
   }

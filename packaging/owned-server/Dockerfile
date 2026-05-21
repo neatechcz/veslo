@@ -38,6 +38,36 @@ EXPOSE 4034
 
 CMD ["pnpm", "--filter", "@neatech/ai-gateway", "start"]
 
+FROM base AS worker-manager
+
+RUN pnpm --filter @neatech/worker-manager build
+
+ENV NODE_ENV=production
+EXPOSE 8790
+
+CMD ["pnpm", "--filter", "@neatech/worker-manager", "start"]
+
+FROM base AS worker-runtime
+
+ARG BUN_VERSION=1.3.6
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssh-client \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g bun@${BUN_VERSION}
+
+RUN pnpm --filter veslo-server build \
+  && pnpm --filter veslo-orchestrator build
+
+RUN printf '%s\n' '#!/bin/sh' 'exec bun /app/packages/orchestrator/dist/cli.js "$@"' > /usr/local/bin/veslo \
+  && chmod +x /usr/local/bin/veslo
+
+ENV NODE_ENV=production
+EXPOSE 8787
+
+CMD ["sh", "-lc", "mkdir -p /workspace && veslo serve --workspace /workspace --veslo-host 0.0.0.0 --veslo-port 8787 --opencode-host 127.0.0.1 --opencode-port 4096 --connect-host 127.0.0.1 --cors '*' --approval manual --allow-external --veslo-server-bin /app/packages/server/dist/cli.js --no-veslo-code-router --verbose"]
+
 FROM base AS web
 
 ARG DEN_API_BASE=https://api.veslo.work

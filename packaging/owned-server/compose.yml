@@ -43,6 +43,49 @@ services:
       retries: 30
       start_period: 60s
 
+  worker-manager:
+    <<: *node-app
+    image: veslo-owned-server-worker-manager:local
+    build:
+      context: ../..
+      dockerfile: packaging/owned-server/Dockerfile
+      target: worker-manager
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      CI: "true"
+      NODE_ENV: production
+      PORT: "8790"
+      OWNED_WORKER_MANAGER_TOKEN: ${OWNED_WORKER_MANAGER_TOKEN:-replace_with_owned_worker_manager_token}
+      OWNED_WORKER_PUBLIC_DOMAIN_SUFFIX: ${OWNED_WORKER_PUBLIC_DOMAIN_SUFFIX:-workers.veslo.work}
+      WORKER_IMAGE: ${WORKER_IMAGE:-veslo-owned-server-worker-runtime:local}
+      WORKER_DOCKER_NETWORK: ${VESLO_DOCKER_NETWORK:-veslo-owned-server-runtime}
+      WORKER_PROVISION_TIMEOUT_MS: ${WORKER_PROVISION_TIMEOUT_MS:-180000}
+      WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS:-2000}
+      WORKER_HEALTHCHECK_TIMEOUT_MS: ${WORKER_HEALTHCHECK_TIMEOUT_MS:-2000}
+      WORKER_RESOURCE_MEMORY_BYTES: ${WORKER_RESOURCE_MEMORY_BYTES:-1073741824}
+      WORKER_RESOURCE_CPUS: ${WORKER_RESOURCE_CPUS:-1}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'node -e "fetch(''http://127.0.0.1:8790/health'').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"'
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  worker-runtime-image:
+    image: ${WORKER_IMAGE:-veslo-owned-server-worker-runtime:local}
+    build:
+      context: ../..
+      dockerfile: packaging/owned-server/Dockerfile
+      target: worker-runtime
+      args:
+        BUN_VERSION: ${WORKER_BUN_VERSION:-1.3.6}
+    profiles:
+      - worker-image
+    command: ["true"]
+
   den:
     <<: *node-app
     image: veslo-owned-server-den:local
@@ -52,6 +95,8 @@ services:
       target: den
     depends_on:
       den-db:
+        condition: service_healthy
+      worker-manager:
         condition: service_healthy
     volumes:
       - den-codex-data:/var/lib/veslo-den/codex
@@ -72,6 +117,9 @@ services:
       DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: ${DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED:-true}
       PROVISIONER_MODE: ${PROVISIONER_MODE:-render}
       WORKER_URL_TEMPLATE: ${WORKER_URL_TEMPLATE:-}
+      OWNED_WORKER_MANAGER_URL: ${OWNED_WORKER_MANAGER_URL:-http://worker-manager:8790}
+      OWNED_WORKER_MANAGER_TOKEN: ${OWNED_WORKER_MANAGER_TOKEN:-replace_with_owned_worker_manager_token}
+      OWNED_WORKER_PUBLIC_DOMAIN_SUFFIX: ${OWNED_WORKER_PUBLIC_DOMAIN_SUFFIX:-workers.veslo.work}
       RENDER_API_BASE: ${RENDER_API_BASE:-https://api.render.com/v1}
       RENDER_API_KEY: ${RENDER_API_KEY:-}
       RENDER_OWNER_ID: ${RENDER_OWNER_ID:-}
@@ -229,6 +277,8 @@ services:
         condition: service_healthy
       web:
         condition: service_healthy
+      worker-manager:
+        condition: service_healthy
     ports:
       - "80:80"
       - "443:443"
@@ -247,3 +297,7 @@ volumes:
   ai-gateway-codex-data:
   caddy-data:
   caddy-config:
+
+networks:
+  default:
+    name: ${VESLO_DOCKER_NETWORK:-veslo-owned-server-runtime}

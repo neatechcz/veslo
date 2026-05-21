@@ -39,8 +39,11 @@ cp .env.development .env
 - `AUTH_EMAIL_FROM_NAME` optional sender display name for auth emails, for example `Veslo`.
 - `PORT` server port
 - `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS). In production, wildcard `*` is rejected. Desktop CORS origins (`tauri://localhost`, `http://localhost:1420`, `http://localhost:1421`) are appended server-side to the Express CORS allowlist.
-- `PROVISIONER_MODE` `stub` or `render`
+- `PROVISIONER_MODE` `stub`, `render`, or `owned-server`
 - `WORKER_URL_TEMPLATE` template string with `{workerId}`
+- `OWNED_WORKER_MANAGER_URL` internal worker-manager base URL when `PROVISIONER_MODE=owned-server`
+- `OWNED_WORKER_MANAGER_TOKEN` bearer token shared with the owned-server worker manager
+- `OWNED_WORKER_PUBLIC_DOMAIN_SUFFIX` public worker domain suffix for owned-server workers (e.g. `workers.veslo.work` -> `<worker-id>.workers.veslo.work`)
 - `RENDER_API_BASE` Render API base URL (default `https://api.render.com/v1`)
 - `RENDER_API_KEY` Render API key (required for `PROVISIONER_MODE=render`)
 - `RENDER_OWNER_ID` Render workspace owner id (required for `PROVISIONER_MODE=render`)

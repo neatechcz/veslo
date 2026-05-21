@@ -423,6 +423,28 @@ importers:
         specifier: ^2.3.0
         version: 2.4.0
 
+  services/worker-manager:
+    dependencies:
+      express:
+        specifier: ^4.19.2
+        version: 4.22.1
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/express':
+        specifier: ^4.17.21
+        version: 4.17.25
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      tsx:
+        specifier: ^4.15.7
+        version: 4.21.0
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+
 packages:
 
   '@alloc/quick-lru@5.2.0':

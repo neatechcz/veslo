@@ -135,8 +135,10 @@ Environment:
 Runtime command:
 
 ```bash
-veslo serve --workspace /workspace --veslo-host 0.0.0.0 --veslo-port 8787 --opencode-host 127.0.0.1 --opencode-port 4096 --connect-host 127.0.0.1 --cors '*' --approval manual --no-veslo-code-router --verbose
+veslo serve --workspace /workspace --veslo-host 0.0.0.0 --veslo-port 8787 --opencode-host 127.0.0.1 --opencode-port 4096 --connect-host 127.0.0.1 --cors '*' --approval manual --allow-external --veslo-server-bin /app/packages/server/dist/cli.js --no-veslo-code-router --verbose
 ```
+
+The owned-server worker runtime image is built from the checked-out repository sources. It builds `veslo-server` and `veslo-orchestrator`, installs Bun for the compiled server/orchestrator runtime path, and exposes a local `veslo` wrapper inside the image. It does not depend on a published `veslo-orchestrator` npm package.
 
 The worker container exposes port `8787` on the internal Docker network. It does not publish a host port.
 
