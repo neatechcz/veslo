@@ -1219,3 +1219,22 @@ export async function startWindowDragging(): Promise<void> {
     throw new Error(`[tauri.startWindowDragging] Failed to start drag: ${message}`);
   }
 }
+
+/**
+ * VSLO-86 — forward a webview log line to the Tauri stderr (and thus to
+ * /tmp/veslo.log) so workspace activation, ensureEngine, SSE, and message-send
+ * diagnostics survive without opening DevTools. Fire-and-forget; silently
+ * drops outside the Tauri runtime.
+ */
+export function logUiEvent(scope: string, message: string, payload?: unknown): void {
+  if (!isTauriRuntime()) return;
+  let serialized: string | undefined;
+  if (payload !== undefined) {
+    try {
+      serialized = typeof payload === "string" ? payload : JSON.stringify(payload);
+    } catch {
+      serialized = String(payload);
+    }
+  }
+  void invoke("log_ui_event", { scope, message, payload: serialized }).catch(() => {});
+}

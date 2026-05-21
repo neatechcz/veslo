@@ -318,6 +318,18 @@ pub fn reset_veslo_state(
     Ok(())
 }
 
+/// VSLO-86 — webview console events forwarded to Tauri stderr so they land
+/// in /tmp/veslo.log alongside Rust-side logs. Used by `_wsLog`, `wsDebug`,
+/// and the SSE/session loggers when running inside the Tauri runtime, so
+/// production diagnostics don't require opening DevTools.
+#[tauri::command]
+pub fn log_ui_event(scope: String, message: String, payload: Option<String>) {
+    match payload {
+        Some(p) if !p.is_empty() => eprintln!("[ui:{}] {} {}", scope, message, p),
+        _ => eprintln!("[ui:{}] {}", scope, message),
+    }
+}
+
 #[tauri::command]
 pub fn app_build_info(app: AppHandle) -> AppBuildInfo {
     let version = app.package_info().version.to_string();

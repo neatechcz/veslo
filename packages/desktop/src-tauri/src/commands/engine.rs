@@ -356,6 +356,7 @@ pub fn engine_info(
 
 #[tauri::command]
 pub fn engine_stop(
+    app: AppHandle,
     manager: State<EngineManager>,
     orchestrator_manager: State<OrchestratorManager>,
     veslo_manager: State<VesloServerManager>,
@@ -369,6 +370,8 @@ pub fn engine_stop(
     if let Ok(mut veslo_state) = veslo_manager.inner.lock() {
         VesloServerManager::stop_locked(&mut veslo_state);
     }
+    // VSLO-86 — keep disk state.json in sync with the actually-stopped server.
+    let _ = crate::veslo_server::clear_persisted_veslo_server_info(&app);
     if let Ok(mut opencode_router_state) = opencode_router_manager.inner.lock() {
         OpenCodeRouterManager::stop_locked(&mut opencode_router_state);
     }

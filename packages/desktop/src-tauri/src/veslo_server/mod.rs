@@ -266,6 +266,13 @@ pub fn start_veslo_server(
     {
         let info = VesloServerManager::snapshot_locked(&mut state);
         drop(state);
+        // VSLO-86 — re-persist on every idempotent reuse so the on-disk
+        // state.json stays in sync with the live in-memory state across
+        // long-running sessions (port/token rotations from previous boots
+        // would otherwise linger forever, fooling external readers).
+        if let Err(error) = persist_veslo_server_info(app, &info) {
+            eprintln!("[veslo-server] Failed to re-persist on idempotent reuse: {error}");
+        }
         return Ok(info);
     }
 

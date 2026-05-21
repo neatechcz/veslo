@@ -29,7 +29,7 @@ use commands::engine::{
     engine_doctor, engine_info, engine_install, engine_restart, engine_start, engine_stop,
 };
 use commands::misc::{
-    app_build_info, obsidian_is_available, open_in_obsidian, opencode_db_migrate,
+    app_build_info, log_ui_event, obsidian_is_available, open_in_obsidian, opencode_db_migrate,
     opencode_db_update_session_directory, opencode_mcp_auth, read_obsidian_mirror_file,
     reset_opencode_cache, reset_veslo_state, write_obsidian_mirror_file,
 };
@@ -103,6 +103,9 @@ fn stop_managed_services(app_handle: &tauri::AppHandle) {
     if let Ok(mut veslo_server) = app_handle.state::<VesloServerManager>().inner.lock() {
         VesloServerManager::stop_locked(&mut veslo_server);
     }
+    // VSLO-86 — clear persisted state.json on shutdown so the next boot
+    // doesn't try to attach to dead port/token from this run.
+    let _ = crate::veslo_server::clear_persisted_veslo_server_info(app_handle);
     if let Ok(mut opencode_router) = app_handle.state::<OpenCodeRouterManager>().inner.lock() {
         OpenCodeRouterManager::stop_locked(&mut opencode_router);
     }
@@ -209,6 +212,7 @@ pub fn run() {
             write_opencode_config,
             updater_environment,
             app_build_info,
+            log_ui_event,
             obsidian_is_available,
             open_in_obsidian,
             write_obsidian_mirror_file,
