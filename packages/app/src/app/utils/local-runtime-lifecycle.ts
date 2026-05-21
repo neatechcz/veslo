@@ -183,7 +183,11 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
       await activateOrchestratorWorkspace(options);
       const nextInfo = await withTimeoutOrThrow(
         deps.readEngineInfo(options.workspaceId, options.workspacePath),
-        { timeoutMs: 12_000, label: "engine_info" },
+        // VSLO-86 — widened from 12s to 30s. After the orchestrator HTTP
+        // POSTs return, the engine itself still has to finish spawning
+        // (sandbox-exec + opencode serve), and the polling for the per-
+        // workspace baseUrl can run past 12s on cold start.
+        { timeoutMs: 30_000, label: "engine_info" },
       );
       return await reconnectFromEngineSnapshot(nextInfo, options);
     }
