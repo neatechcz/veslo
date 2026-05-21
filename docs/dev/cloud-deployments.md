@@ -72,6 +72,16 @@ Manual deploys remain allowed through the GitHub Actions workflow. Do not use na
 
 Den-provisioned worker services are created with Render auto-deploy disabled. Worker service creation is part of the Den provisioning flow, not the control-plane release flow.
 
+During the owned-server migration, Den must keep Render worker provisioning available as rollback until the owned-server worker manager has been verified. The supported migration modes are:
+
+- `stub` for local/dev placeholder workers.
+- `render` for the existing Render worker provisioning path.
+- `owned-server` for worker containers created on the owned server by the internal worker manager.
+
+In `owned-server` mode, Den calls an internal authenticated worker-manager API. Den must not mount or use the Docker socket directly. The worker manager owns Docker container creation, health checks, lifecycle labels, per-worker workspace volumes, and public wildcard worker routing under `*.workers.veslo.work`.
+
+The production cutover from Render workers to owned-server workers requires one successful staging create/delete cycle before changing production `PROVISIONER_MODE` to `owned-server`. Render worker configuration must remain present until Phase 7 decommissions Render.
+
 ## Verification
 
 For changes to Den deployment behavior:
