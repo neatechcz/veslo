@@ -1,12 +1,13 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import fuzzysort from "fuzzysort";
-import { ArrowUp, File as FileIcon, Loader2, Paperclip, Square, Terminal, X, Zap } from "lucide-solid";
+import { ArrowUp, File as FileIcon, Loader2, Mic, MicOff, Paperclip, Square, Terminal, X, Zap } from "lucide-solid";
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
-import { readClipboardFilePaths } from "../../lib/tauri";
+import { readClipboardFilePaths, transcribeDictationAudio } from "../../lib/tauri";
 import { useTranslate } from "../../../i18n";
+import { isTauriRuntime } from "../../utils";
 import { extractFileReferencePathsFromDataTransfer, extractFilesFromDataTransfer, isFileDragTransfer } from "../../utils/data-transfer-files";
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
 
@@ -402,6 +403,9 @@ export default function Composer(props: ComposerProps) {
   let draftScheduledAt = 0;
   let lastInputAt = 0;
   let fileDragDepth = 0;
+  let dictationRecorder: MediaRecorder | null = null;
+  let dictationStream: MediaStream | null = null;
+  let dictationChunks: BlobPart[] = [];
   const pasteTextById = new Map<string, string>();
   // Track IME composition state so we can combine it with keyCode === 229 to
   // reliably suppress Enter during CJK input across Chrome, Safari, and WebKit.
@@ -443,6 +447,8 @@ export default function Composer(props: ComposerProps) {
   const [slashIndex, setSlashIndex] = createSignal(0);
   const [slashCommands, setSlashCommands] = createSignal<SlashCommandOption[]>([]);
   const [slashLoading, setSlashLoading] = createSignal(false);
+  const [dictationRecording, setDictationRecording] = createSignal(false);
+  const [dictationBusy, setDictationBusy] = createSignal(false);
 
   onMount(() => {
     queueMicrotask(() => focusEditorEnd());
@@ -731,6 +737,133 @@ export default function Composer(props: ComposerProps) {
     selection.removeAllRanges();
     selection.addRange(range);
     editorRef.focus();
+  };
+
+  const insertDictationText = (value: string) => {
+    if (!editorRef) return;
+    const trimmed = sanitizePastedPlainText(value).trim();
+    if (!trimmed) return;
+
+    let selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || !editorRef.contains(selection.getRangeAt(0).commonAncestorContainer)) {
+      focusEditorEnd();
+      selection = window.getSelection();
+    }
+    if (!selection || selection.rangeCount === 0) return;
+
+    const offsets = getSelectionOffsets(editorRef);
+    const currentText = readEditorText(editorRef);
+    const prefix =
+      offsets && offsets.start > 0 && currentText[offsets.start - 1] && !/\s/.test(currentText[offsets.start - 1])
+        ? " "
+        : "";
+    const suffix =
+      offsets && offsets.end < currentText.length && currentText[offsets.end] && !/\s/.test(currentText[offsets.end])
+        ? " "
+        : "";
+    const text = `${prefix}${trimmed}${suffix}`;
+
+    const range = selection.getRangeAt(0);
+    range.deleteContents();
+    const marker = document.createTextNode("");
+    const fragment = textToFragment(text);
+    fragment.appendChild(marker);
+    range.insertNode(fragment);
+
+    const cursor = document.createRange();
+    cursor.setStartAfter(marker);
+    cursor.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(cursor);
+    marker.remove();
+
+    setDraftText(readEditorText(editorRef));
+    updateMentionQuery();
+    updateSlashQuery();
+    emitDraftChange();
+    editorRef.focus();
+  };
+
+  const cleanupDictationStream = () => {
+    dictationStream?.getTracks().forEach((track) => track.stop());
+    dictationStream = null;
+    dictationRecorder = null;
+    dictationChunks = [];
+    setDictationRecording(false);
+  };
+
+  const pickDictationMimeType = () => {
+    const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+    return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? "";
+  };
+
+  const transcribeDictationBlob = async (blob: Blob) => {
+    setDictationBusy(true);
+    try {
+      const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+      const result = await transcribeDictationAudio({
+        audioBytes: bytes,
+        mimeType: blob.type || null,
+        language: "auto",
+      });
+      if (!result.text.trim()) {
+        props.onToast("Dictation heard no speech.");
+        return;
+      }
+      insertDictationText(result.text);
+    } catch (error) {
+      props.onToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDictationBusy(false);
+    }
+  };
+
+  const stopDictation = () => {
+    if (!dictationRecorder || dictationRecorder.state === "inactive") {
+      cleanupDictationStream();
+      return;
+    }
+    dictationRecorder.stop();
+  };
+
+  const startDictation = async () => {
+    if (dictationRecording()) {
+      stopDictation();
+      return;
+    }
+    if (dictationBusy()) return;
+    if (!isTauriRuntime()) {
+      props.onToast("Local dictation needs the Veslo desktop app.");
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      props.onToast("Microphone recording is not available in this webview.");
+      return;
+    }
+
+    try {
+      dictationChunks = [];
+      dictationStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = pickDictationMimeType();
+      dictationRecorder = new MediaRecorder(dictationStream, mimeType ? { mimeType } : undefined);
+      dictationRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) dictationChunks.push(event.data);
+      };
+      dictationRecorder.onerror = () => {
+        props.onToast("Microphone recording failed.");
+        cleanupDictationStream();
+      };
+      dictationRecorder.onstop = () => {
+        const blob = new Blob(dictationChunks, { type: dictationRecorder?.mimeType || mimeType || "audio/webm" });
+        cleanupDictationStream();
+        if (blob.size > 0) void transcribeDictationBlob(blob);
+      };
+      dictationRecorder.start();
+      setDictationRecording(true);
+    } catch (error) {
+      cleanupDictationStream();
+      props.onToast(error instanceof Error ? error.message : String(error));
+    }
   };
 
   const renderParts = (parts: ComposerPart[], keepSelection = true) => {
@@ -1570,6 +1703,7 @@ export default function Composer(props: ComposerProps) {
       window.clearTimeout(emitTimer);
       emitTimer = null;
     }
+    cleanupDictationStream();
   });
 
   return (
@@ -1843,6 +1977,32 @@ export default function Composer(props: ComposerProps) {
                       </div>
 
                       <div class="flex shrink-0 items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={dictationBusy()}
+                          onClick={() => void startDictation()}
+                          class={`shrink-0 p-1.5 rounded-full transition-colors ${
+                            dictationRecording()
+                              ? "bg-red-9 text-white hover:bg-red-10"
+                              : dictationBusy()
+                                ? "bg-gray-4 text-gray-10 pointer-events-none"
+                                : "bg-gray-3 text-gray-11 hover:bg-gray-4"
+                          }`}
+                          title={
+                            dictationRecording()
+                              ? "Stop local dictation"
+                              : dictationBusy()
+                                ? "Transcribing locally..."
+                                : "Start local dictation"
+                          }
+                        >
+                          {dictationBusy()
+                            ? <Loader2 size={18} class="animate-spin" />
+                            : dictationRecording()
+                              ? <MicOff size={18} />
+                              : <Mic size={18} />
+                          }
+                        </button>
                         <Show
                           when={props.isStreaming}
                           fallback={

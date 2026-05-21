@@ -25,6 +25,7 @@ use commands::command_files::{
 use commands::clipboard::clipboard_file_paths;
 use commands::config::{read_opencode_config, write_opencode_config};
 use commands::den_auth::{den_auth_snapshot_read, den_auth_snapshot_write};
+use commands::dictation::dictation_transcribe;
 use commands::engine::{
     engine_doctor, engine_info, engine_install, engine_restart, engine_start, engine_stop,
 };
@@ -217,6 +218,7 @@ pub fn run() {
             read_obsidian_mirror_file,
             den_auth_snapshot_read,
             den_auth_snapshot_write,
+            dictation_transcribe,
             reset_veslo_state,
             reset_opencode_cache,
             opencode_db_migrate,
