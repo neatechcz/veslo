@@ -31,7 +31,15 @@ const GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS = new Set([
   "xveslogatewaytoken",
   "xveslosessionid",
 ]);
+const SERVER_PATCH_COMPARISON_SECRET_VALUE = "__veslo_secret__";
 const SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE = "__veslo_gateway_token__";
+// VSLO-86 — a literal "[REDACTED]" sitting in opencode.jsonc on disk is a
+// broken state from an earlier patch round-trip where the server returned
+// the redacted value and the app patched it back through formatConfig. The
+// comparison normalizer must distinguish this from a real token so the
+// boot-time effect forces a re-patch with the in-memory gateway token.
+const SERVER_PATCH_COMPARISON_REDACTED_LITERAL = "__veslo_broken_redacted_token__";
+const REDACTED_LITERAL = "[REDACTED]";
 
 export const OPENCODE_SESSION_ID_TEMPLATE = "${OPENCODE_SESSION_ID}";
 
@@ -246,10 +254,22 @@ function normalizeConfigForServerPatchComparison(value: unknown): unknown {
     // Server reads redact the gateway access token; local server bearer
     // credentials must remain value-sensitive so token rotation patches config.
     if (normalizedKey === "xveslogatewaytoken") {
-      output[key] =
-        typeof rawValue === "string" && rawValue.trim()
-          ? SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE
-          : rawValue;
+      const trimmed = typeof rawValue === "string" ? rawValue.trim() : "";
+      if (trimmed === REDACTED_LITERAL) {
+        output[key] = SERVER_PATCH_COMPARISON_REDACTED_LITERAL;
+        continue;
+      }
+      output[key] = trimmed ? SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE : rawValue;
+      continue;
+    }
+
+    if (isGatewayProviderSecretKey(normalizedKey)) {
+      const trimmed = typeof rawValue === "string" ? rawValue.trim() : "";
+      if (trimmed === REDACTED_LITERAL) {
+        output[key] = SERVER_PATCH_COMPARISON_REDACTED_LITERAL;
+        continue;
+      }
+      output[key] = trimmed ? SERVER_PATCH_COMPARISON_SECRET_VALUE : rawValue;
       continue;
     }
 
