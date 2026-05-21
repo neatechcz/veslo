@@ -1,4 +1,4 @@
-import { createContext, useContext } from "solid-js";
+import { createContext, createSignal, useContext } from "solid-js";
 
 import type { createClient, OpencodeAuth } from "../lib/opencode";
 
@@ -46,6 +46,12 @@ export interface WorkspaceRouting {
   ): Promise<ClientEntry | null>;
   release(workspaceId: string): void;
   forEach(cb: (workspaceId: string, client: RoutingClient) => void): void;
+  /**
+   * VSLO-86 F4Ú12 — reactive snapshot of currently-ensured workspace IDs.
+   * Subscribers (SSE multiplex effect in session.ts) read this to spawn one
+   * per-workspace SSE stream and tear them down on release.
+   */
+  entryIds(): string[];
 }
 
 export type CreateWorkspaceRoutingOptions = {
@@ -71,6 +77,12 @@ export function createWorkspaceRouting(
   opts: CreateWorkspaceRoutingOptions
 ): WorkspaceRouting {
   const entries = new Map<string, ClientEntry>();
+  // VSLO-86 F4Ú12 — reactive trigger so consumers (SSE multiplex) re-run
+  // when workspaces are ensured/released.
+  const [entryIdsSignal, setEntryIdsSignal] = createSignal<string[]>([], {
+    equals: false,
+  });
+  const bumpEntryIds = () => setEntryIdsSignal(Array.from(entries.keys()));
 
   return {
     client(workspaceId?: string) {
@@ -123,13 +135,17 @@ export function createWorkspaceRouting(
         lastUsed: Date.now(),
       };
       entries.set(workspaceId, entry);
+      bumpEntryIds();
       return entry;
     },
     release(workspaceId: string) {
-      entries.delete(workspaceId);
+      if (entries.delete(workspaceId)) bumpEntryIds();
     },
     forEach(cb) {
       for (const [id, entry] of entries) cb(id, entry.client);
+    },
+    entryIds() {
+      return entryIdsSignal();
     },
   };
 }

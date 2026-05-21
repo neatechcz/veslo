@@ -1215,7 +1215,22 @@ export function createSessionStore(options: {
     return false;
   };
 
-  const applyEvent = async (event: OpencodeEvent) => {
+  const applyEvent = async (event: OpencodeEvent, sourceWsId: string = "") => {
+    // VSLO-86 F4Ú12 — SSE multiplex: each per-workspace stream tags events
+    // with its source workspace id. Background workspaces (source !== active)
+    // skip mutation of the single active-workspace store. The "" source is
+    // the legacy fallback stream (no per-WS routing entries yet) and behaves
+    // like the global stream did before multiplex.
+    if (sourceWsId) {
+      const activeWsId = options.routing.activeWorkspaceId();
+      if (activeWsId && sourceWsId !== activeWsId) {
+        // Background event for a non-active workspace. Skip — the active
+        // store stays consistent. When the user switches back to this
+        // workspace, loadSessions() will re-fetch the latest state.
+        return;
+      }
+    }
+
     if (event.type === "server.connected") {
       options.setSseConnected(true);
     }
@@ -1528,18 +1543,12 @@ export function createSessionStore(options: {
     }
   };
 
-  createEffect(() => {
-    // VSLO-171.F3Ú6: SSE subscription will iterate routing.forEach() per
-    // workspace once multiplex lands. Keep tracking the global client signal
-    // for now so single-active path is unchanged.
-    const c = options.client();
-    if (!c) return;
-
-    // Client changed → workspace likely switched. Clear the known session IDs
-    // so stale events from the old workspace are rejected until loadSessions()
-    // repopulates the set.
-    workspaceSessionIds.clear();
-
+  // VSLO-86 F4Ú12 — SSE multiplex. Each ensured per-workspace client gets its
+  // own SSE stream tagged with `sourceWsId`. The active workspace's stream
+  // mutates the single store as before; background streams' events early-exit
+  // in `applyEvent`. Falls back to a single stream on the legacy global client
+  // signal when no per-WS entries exist yet (boot, single-active path).
+  const setupSseStream = (sourceWsId: string, c: RoutingClient): (() => void) => {
     let cancelled = false;
     let reconnectAttempt = 0;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1604,7 +1613,7 @@ export function createSessionStore(options: {
           if (event.type === "message.part.updated") partUpdates += 1;
           if (event.type === "message.updated") messageUpdates += 1;
           applied += 1;
-          void applyEvent(event);
+          void applyEvent(event, sourceWsId);
         }
       });
 
@@ -1827,11 +1836,46 @@ export function createSessionStore(options: {
     const controller = new AbortController();
     void connectSse(controller);
 
-    onCleanup(() => {
+    return () => {
       cancelled = true;
       controller.abort();
       if (reconnectTimer) clearTimeout(reconnectTimer);
       flush();
+    };
+  };
+
+  createEffect(() => {
+    // VSLO-86 F4Ú12 — outer effect tracks routing.entryIds() so streams
+    // re-fan-out when workspaces are ensured/released. Falls back to the
+    // global client signal so the legacy single-active boot path keeps
+    // working before any workspace has been routing.ensure()'d.
+    const entryIds = options.routing.entryIds();
+    const fallback = options.client();
+
+    const targets: Array<{ wsId: string; client: RoutingClient }> = [];
+    if (entryIds.length > 0) {
+      for (const wsId of entryIds) {
+        const c = options.routing.client(wsId);
+        if (c) targets.push({ wsId, client: c });
+      }
+    } else if (fallback) {
+      targets.push({ wsId: "", client: fallback });
+    }
+
+    // Targets changed → workspace registry shifted (switch, ensure, release).
+    // Clear the active-workspace session ID set so stale events from the
+    // previous active workspace are rejected until loadSessions() repopulates.
+    workspaceSessionIds.clear();
+
+    if (targets.length === 0) return;
+
+    const cleanups: Array<() => void> = [];
+    for (const target of targets) {
+      cleanups.push(setupSseStream(target.wsId, target.client));
+    }
+
+    onCleanup(() => {
+      for (const cleanup of cleanups) cleanup();
     });
   });
 
