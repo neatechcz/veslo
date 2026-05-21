@@ -151,3 +151,14 @@ This log records sanitized verification evidence for the VSLO-185 owned-server m
 - Local broader verification: app unit suite passed with 744 passing; AI Gateway suite passed with 201 passing; orchestrator suite passed with 7 passing; web proxy tests passed with 2 passing.
 - Whitespace verification: `git diff --check` exited 0 after the final documentation update.
 - Cutover deviation: because the owned domains were already live on the owned server, no destructive final Render restore was run during Phase 5. Restoring a fresh Render dump after owned-server writes could overwrite owned-server production writes. Render remains available as rollback and as a transition surface for old released desktop clients until client defaults are rolled out or a forwarding strategy is chosen.
+
+## 2026-05-21 - Phase 5 AI Gateway admin UI verification
+
+- Scope: verified the AI Gateway admin web UI as part of the owned-server migration from the Render admin surface to `https://ai.veslo.work/admin/`.
+- Public browser shell: Chrome loaded `https://ai.veslo.work/admin/` and rendered the AI Gateway Admin navigation, signed-out browser sign-in panel, and admin sections for credentials, sessions, usage, alerts, users, and audit.
+- Public static assets: `https://ai.veslo.work/admin/` returned HTTP 200; `/admin/app.css` and `/admin/app.js` loaded successfully. After the admin shell hygiene fix, the browser network list had no `/favicon.ico` 404 and the console had no errors, warnings, or issues.
+- Admin browser-auth start: `POST https://ai.veslo.work/admin/api/auth/browser/start` returned HTTP 200 and produced an authorize URL under `https://api.veslo.work/`, confirming the owned admin UI starts browser handoff through the owned Den API.
+- Unauthenticated API guard: `GET https://ai.veslo.work/admin/api/session` returned HTTP 401 without a bearer token.
+- Authenticated admin API check: using the server-side platform-admin smoke token without printing the token, `/admin/api/session`, `/admin/api/credentials`, `/admin/api/users`, `/admin/api/usage?groupBy=credential`, `/admin/api/alerts`, and `/admin/api/audit` all returned HTTP 200 with the expected top-level response markers.
+- Live deploy: copied the updated admin shell into the owned-server release directory, rebuilt only the `ai-gateway` Docker image, restarted only the `ai-gateway` service, and waited for the container health check to become healthy.
+- Post-deploy health: `https://ai.veslo.work/health` returned `{"ok":true,"service":"ai-gateway"}`.

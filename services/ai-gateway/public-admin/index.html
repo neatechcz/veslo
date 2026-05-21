@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI Gateway Admin</title>
     <meta name="color-scheme" content="dark light" />
+    <link rel="icon" href="data:," />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="/admin/app.css" />
@@ -114,8 +115,8 @@
               </div>
             </div>
             <div class="toolbar credentials-toolbar">
-              <input class="input" type="search" placeholder="Search provider, state, or secret ref" />
-              <select class="input">
+              <input class="input" type="search" name="credential-search" placeholder="Search provider, state, or secret ref" />
+              <select class="input" name="credential-provider-filter">
                 <option>All providers</option>
                 <option>OpenAI</option>
                 <option>Anthropic</option>
@@ -123,7 +124,7 @@
                 <option>OpenAI-compatible provider</option>
                 <option>Google</option>
               </select>
-              <select class="input">
+              <select class="input" name="credential-state-filter">
                 <option>All states</option>
                 <option>Healthy</option>
                 <option>Degraded</option>
@@ -249,8 +250,8 @@
             <div class="split-layout">
               <div>
                 <div class="toolbar">
-                  <input class="input" type="search" placeholder="Search session, user, or worker" />
-                  <select class="input">
+                  <input class="input" type="search" name="session-search" placeholder="Search session, user, or worker" />
+                  <select class="input" name="session-status-filter">
                     <option>All states</option>
                     <option>Healthy</option>
                     <option>Rebinding</option>

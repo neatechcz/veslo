@@ -41,6 +41,35 @@ test("GET /admin/credentials serves the admin shell with an admin-only platform 
   }
 })
 
+test("GET /admin shell avoids browser favicon and form-field console issues", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin`)
+
+    assert.equal(response.status, 200)
+    const html = await response.text()
+    assert.match(html, /<link rel="icon" href="data:," \/>/)
+
+    const formFieldsMissingIdOrName = Array.from(
+      html.matchAll(/<(input|select|textarea)\b([^>]*)>/gi),
+      ([fullTag, _tagName, attributes]) => ({
+        fullTag,
+        hasId: /\bid=/.test(attributes),
+        hasName: /\bname=/.test(attributes),
+      }),
+    ).filter((field) => !field.hasId && !field.hasName)
+
+    assert.deepEqual(formFieldsMissingIdOrName, [])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin/app.js uses browser handoff auth instead of custom email-password sign-in", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
