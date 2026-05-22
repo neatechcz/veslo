@@ -164,7 +164,7 @@ const RECENT_EMIT_TTL_MS = 30_000;
 const MAX_RECENT_EMITS = 400;
 const DRAFT_FLUSH_DEBOUNCE_MS = 140;
 const DICTATION_MEDIA_TIMESLICE_MS = 1_000;
-const DICTATION_PREVIEW_INTERVAL_MS = 4_000;
+const DICTATION_PREVIEW_INTERVAL_MS = 2_500;
 
 const partsToText = (parts: ComposerPart[]) =>
   parts
@@ -276,6 +276,10 @@ const buildPartsFromEditor = (root: HTMLElement, pasteTextById?: Map<string, str
       } else {
         parts.push({ type: "file", path: el.dataset.mentionValue ?? "", label: el.dataset.mentionLabel ?? undefined });
       }
+      return;
+    }
+    if (el.dataset.dictationPreview) {
+      pushText(el.textContent ?? "");
       return;
     }
     if (el.dataset.pasteId) {
@@ -409,6 +413,7 @@ export default function Composer(props: ComposerProps) {
   let dictationStream: MediaStream | null = null;
   let dictationChunks: BlobPart[] = [];
   let dictationPreviewChunks: BlobPart[] = [];
+  let dictationPreviewNode: HTMLSpanElement | null = null;
   let dictationStartedAt = 0;
   let dictationElapsedTimer: number | null = null;
   let dictationPreviewTimer: number | null = null;
@@ -798,6 +803,88 @@ export default function Composer(props: ComposerProps) {
     editorRef.focus();
   };
 
+  const ensureDictationPreviewNode = () => {
+    if (!editorRef) return null;
+    if (dictationPreviewNode?.isConnected) return dictationPreviewNode;
+
+    let selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || !editorRef.contains(selection.getRangeAt(0).commonAncestorContainer)) {
+      focusEditorEnd();
+      selection = window.getSelection();
+    }
+    if (!selection || selection.rangeCount === 0) return null;
+
+    const offsets = getSelectionOffsets(editorRef);
+    const currentText = readEditorText(editorRef);
+    const prefix =
+      offsets && offsets.start > 0 && currentText[offsets.start - 1] && !/\s/.test(currentText[offsets.start - 1])
+        ? " "
+        : "";
+    const suffix =
+      offsets && offsets.end < currentText.length && currentText[offsets.end] && !/\s/.test(currentText[offsets.end])
+        ? " "
+        : "";
+
+    const node = document.createElement("span");
+    node.contentEditable = "false";
+    node.dataset.dictationPreview = "true";
+    node.className =
+      "rounded bg-blue-3/50 px-0.5 text-gray-12 underline decoration-blue-8/50 decoration-dotted underline-offset-2";
+
+    const range = selection.getRangeAt(0);
+    range.deleteContents();
+    const fragment = document.createDocumentFragment();
+    if (prefix) fragment.appendChild(document.createTextNode(prefix));
+    fragment.appendChild(node);
+    if (suffix) fragment.appendChild(document.createTextNode(suffix));
+    const marker = document.createTextNode("");
+    fragment.appendChild(marker);
+    range.insertNode(fragment);
+
+    const cursor = document.createRange();
+    cursor.setStartAfter(marker);
+    cursor.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(cursor);
+    marker.remove();
+
+    dictationPreviewNode = node;
+    editorRef.focus();
+    return node;
+  };
+
+  const updateDictationInlinePreview = (value: string) => {
+    const node = ensureDictationPreviewNode();
+    if (!node || !editorRef) return;
+    const text = sanitizePastedPlainText(value).trim();
+    if (!text) return;
+    node.textContent = text;
+    setDraftText(readEditorText(editorRef));
+    emitDraftChange();
+  };
+
+  const finalizeDictationInlinePreview = (value: string) => {
+    const text = sanitizePastedPlainText(value).trim();
+    if (!dictationPreviewNode?.isConnected) {
+      insertDictationText(text);
+      return;
+    }
+    const node = dictationPreviewNode;
+    dictationPreviewNode = null;
+    if (!text) {
+      node.remove();
+    } else {
+      node.replaceWith(textToFragment(text));
+    }
+    if (editorRef) {
+      setDraftText(readEditorText(editorRef));
+      updateMentionQuery();
+      updateSlashQuery();
+      emitDraftChange();
+      editorRef.focus();
+    }
+  };
+
   const cleanupDictationStream = () => {
     dictationStream?.getTracks().forEach((track) => track.stop());
     dictationStream = null;
@@ -841,9 +928,10 @@ export default function Composer(props: ComposerProps) {
       });
       if (!result.text.trim()) {
         props.onToast("Dictation heard no speech.");
+        finalizeDictationInlinePreview(dictationPreview());
         return;
       }
-      insertDictationText(result.text);
+      finalizeDictationInlinePreview(result.text);
       setDictationPreview("");
     } catch (error) {
       props.onToast(error instanceof Error ? error.message : String(error));
@@ -863,7 +951,10 @@ export default function Composer(props: ComposerProps) {
         language: "auto",
       });
       const text = result.text.trim();
-      if (text) setDictationPreview(text);
+      if (text) {
+        setDictationPreview(text);
+        updateDictationInlinePreview(text);
+      }
     } catch {
       // Preview is best-effort; final transcription still reports real errors.
     } finally {
@@ -872,9 +963,8 @@ export default function Composer(props: ComposerProps) {
   };
 
   const flushDictationPreview = (mimeType: string) => {
-    if (!dictationPreviewChunks.length || dictationPreviewBusy()) return;
-    const blob = new Blob(dictationPreviewChunks, { type: mimeType || "audio/webm" });
-    dictationPreviewChunks = [];
+    if (!dictationChunks.length || dictationPreviewBusy()) return;
+    const blob = new Blob(dictationChunks, { type: mimeType || "audio/webm" });
     void transcribeDictationPreviewBlob(blob);
   };
 
@@ -938,6 +1028,8 @@ export default function Composer(props: ComposerProps) {
       dictationPreviewChunks = [];
       setDictationPreview("");
       setDictationElapsedMs(0);
+      dictationPreviewNode = null;
+      ensureDictationPreviewNode();
       dictationStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       void startDictationActivityMeter(dictationStream);
       const mimeType = pickDictationMimeType();
@@ -967,6 +1059,7 @@ export default function Composer(props: ComposerProps) {
       setDictationRecording(true);
     } catch (error) {
       cleanupDictationStream();
+      finalizeDictationInlinePreview("");
       props.onToast(error instanceof Error ? error.message : String(error));
     }
   };
@@ -2014,7 +2107,7 @@ export default function Composer(props: ComposerProps) {
                       class="font-reading type-reading-md bg-transparent border-none p-0 pb-2 pr-2 text-gray-12 focus:ring-0 whitespace-pre-wrap break-words resize-none min-h-[24px] max-h-40 overflow-y-auto overflow-x-hidden outline-none"
                     />
 
-                    <Show when={dictationRecording() || dictationBusy() || dictationPreview()}>
+                    <Show when={dictationRecording() || dictationBusy() || dictationPreviewBusy()}>
                       <div class="mt-3 flex items-center gap-3 rounded-lg border border-gray-6/80 bg-gray-2/70 px-3 py-2 text-xs text-gray-11">
                         <div class="flex items-center gap-2 shrink-0">
                           <span
@@ -2033,12 +2126,12 @@ export default function Composer(props: ComposerProps) {
                           />
                         </div>
                         <div class="min-w-0 flex-1 truncate font-reading text-gray-10">
-                          {dictationPreview()
-                            ? dictationPreview()
+                          {dictationBusy()
+                            ? "Finalizing text in the prompt..."
                             : dictationPreviewBusy()
-                              ? "Updating preview..."
+                              ? "Updating text in the prompt..."
                               : dictationRecording()
-                                ? "Listening locally..."
+                                ? "Writing into the prompt..."
                                 : "Preparing transcript..."}
                         </div>
                       </div>

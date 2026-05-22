@@ -33,14 +33,26 @@ test("composer exposes local dictation controls", () => {
 test("composer shows live local dictation feedback while recording", () => {
   assert.match(
     composerSource,
-    /dictationPreview/,
-    "composer should keep an interim dictation preview separate from the final editor draft",
+    /dictationPreviewNode/,
+    "composer should keep an inline interim dictation node in the editor",
   );
 
   assert.match(
     composerSource,
     /AudioContext|webkitAudioContext/,
     "composer should use local audio analysis for an immediate recording activity meter",
+  );
+
+  assert.match(
+    composerSource,
+    /updateDictationInlinePreview/,
+    "composer should update interim transcription directly where the final text will be inserted",
+  );
+
+  assert.match(
+    composerSource,
+    /finalizeDictationInlinePreview/,
+    "composer should turn interim dictation text into normal editor text after stop",
   );
 
   assert.match(
