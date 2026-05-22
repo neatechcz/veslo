@@ -65,6 +65,7 @@ Use these for coding-agent work, implementation changes, and system maintenance.
 - `docs/dev/testing-playbook.md`
 - `docs/dev/build-and-rebuild-matrix.md`
 - `docs/dev/development-startup.md`
+- `docs/dev/local-dictation-prototype.md`
 - `docs/dev/cloud-deployments.md`
 - `docs/dev/release-skill.md`
 - `docs/dev/documentation-promotion.md`
