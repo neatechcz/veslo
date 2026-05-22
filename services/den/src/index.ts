@@ -8,7 +8,7 @@ import { sql } from "drizzle-orm"
 import { auth } from "./auth.js"
 import { db } from "./db/index.js"
 import { createDbDebugLogStore, createDebugLogService } from "./debug-logs/repository.js"
-import { shouldWidenVarcharColumn } from "./db/schema-reconcile.js"
+import { extractMetadataRows, shouldWidenVarcharColumn } from "./db/schema-reconcile.js"
 import { env } from "./env.js"
 import { createDbFeedbackProjectorStore, createFeedbackProjector } from "./feedback/projector.js"
 import { createDebugLogsIngestRouter } from "./http/debug-logs.js"
@@ -207,21 +207,6 @@ function quoteIdentifier(value: string) {
   return `\`${value}\``
 }
 
-function extractRows(value: unknown): Array<Record<string, unknown>> {
-  if (Array.isArray(value)) {
-    return value as Array<Record<string, unknown>>
-  }
-
-  if (value && typeof value === "object") {
-    const maybeRows = (value as { rows?: unknown }).rows
-    if (Array.isArray(maybeRows)) {
-      return maybeRows as Array<Record<string, unknown>>
-    }
-  }
-
-  return []
-}
-
 function readRowValueCaseInsensitive(row: Record<string, unknown>, key: string) {
   const lowered = key.toLowerCase()
   for (const [rowKey, rowValue] of Object.entries(row)) {
@@ -253,7 +238,7 @@ async function ensureIndex(table: string, indexName: string, columns: string[], 
     LIMIT 1
   `)
 
-  if (extractRows(existing).length > 0) {
+  if (extractMetadataRows(existing).length > 0) {
     return
   }
 
@@ -274,7 +259,7 @@ async function ensureColumn(table: string, columnName: string, columnDefinition:
     LIMIT 1
   `)
 
-  if (extractRows(existing).length > 0) {
+  if (extractMetadataRows(existing).length > 0) {
     return
   }
 
@@ -300,7 +285,7 @@ async function ensureVarcharColumnMinimumLength(
     LIMIT 1
   `)
 
-  const metadataRow = extractRows(metadataResult)[0]
+  const metadataRow = extractMetadataRows(metadataResult)[0]
   if (!metadataRow) {
     return
   }

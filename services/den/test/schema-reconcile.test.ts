@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { shouldWidenVarcharColumn } from "../src/db/schema-reconcile.js"
+import { extractMetadataRows, shouldWidenVarcharColumn } from "../src/db/schema-reconcile.js"
 
 test("schema-reconcile - widens legacy varchar token columns", () => {
   assert.equal(
@@ -30,4 +30,14 @@ test("schema-reconcile - skips non-varchar columns", () => {
     }, 512),
     false,
   )
+})
+
+test("schema-reconcile - treats mysql2 empty row tuples as zero rows", () => {
+  assert.deepEqual(extractMetadataRows([[], [{ name: "COLUMN_NAME" }]]), [])
+})
+
+test("schema-reconcile - extracts rows from mysql2 row tuples", () => {
+  assert.deepEqual(extractMetadataRows([[{ COLUMN_NAME: "failure_reason" }], [{ name: "COLUMN_NAME" }]]), [
+    { COLUMN_NAME: "failure_reason" },
+  ])
 })
