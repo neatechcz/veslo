@@ -163,6 +163,8 @@ const readEditorText = (editor: HTMLElement | undefined) => normalizeText(editor
 const RECENT_EMIT_TTL_MS = 30_000;
 const MAX_RECENT_EMITS = 400;
 const DRAFT_FLUSH_DEBOUNCE_MS = 140;
+const DICTATION_MEDIA_TIMESLICE_MS = 1_000;
+const DICTATION_PREVIEW_INTERVAL_MS = 4_000;
 
 const partsToText = (parts: ComposerPart[]) =>
   parts
@@ -406,6 +408,14 @@ export default function Composer(props: ComposerProps) {
   let dictationRecorder: MediaRecorder | null = null;
   let dictationStream: MediaStream | null = null;
   let dictationChunks: BlobPart[] = [];
+  let dictationPreviewChunks: BlobPart[] = [];
+  let dictationStartedAt = 0;
+  let dictationElapsedTimer: number | null = null;
+  let dictationPreviewTimer: number | null = null;
+  let dictationAnimationFrame: number | null = null;
+  let dictationAudioContext: AudioContext | null = null;
+  let dictationAnalyser: AnalyserNode | null = null;
+  let dictationLevelData: Uint8Array<ArrayBuffer> | null = null;
   const pasteTextById = new Map<string, string>();
   // Track IME composition state so we can combine it with keyCode === 229 to
   // reliably suppress Enter during CJK input across Chrome, Safari, and WebKit.
@@ -449,6 +459,10 @@ export default function Composer(props: ComposerProps) {
   const [slashLoading, setSlashLoading] = createSignal(false);
   const [dictationRecording, setDictationRecording] = createSignal(false);
   const [dictationBusy, setDictationBusy] = createSignal(false);
+  const [dictationPreviewBusy, setDictationPreviewBusy] = createSignal(false);
+  const [dictationPreview, setDictationPreview] = createSignal("");
+  const [dictationLevel, setDictationLevel] = createSignal(0);
+  const [dictationElapsedMs, setDictationElapsedMs] = createSignal(0);
 
   onMount(() => {
     queueMicrotask(() => focusEditorEnd());
@@ -789,7 +803,25 @@ export default function Composer(props: ComposerProps) {
     dictationStream = null;
     dictationRecorder = null;
     dictationChunks = [];
+    dictationPreviewChunks = [];
+    if (dictationElapsedTimer !== null) {
+      window.clearInterval(dictationElapsedTimer);
+      dictationElapsedTimer = null;
+    }
+    if (dictationPreviewTimer !== null) {
+      window.clearInterval(dictationPreviewTimer);
+      dictationPreviewTimer = null;
+    }
+    if (dictationAnimationFrame !== null) {
+      window.cancelAnimationFrame(dictationAnimationFrame);
+      dictationAnimationFrame = null;
+    }
+    void dictationAudioContext?.close().catch(() => undefined);
+    dictationAudioContext = null;
+    dictationAnalyser = null;
+    dictationLevelData = null;
     setDictationRecording(false);
+    setDictationLevel(0);
   };
 
   const pickDictationMimeType = () => {
@@ -799,6 +831,7 @@ export default function Composer(props: ComposerProps) {
 
   const transcribeDictationBlob = async (blob: Blob) => {
     setDictationBusy(true);
+    setDictationPreview((current) => current || "Finalizing local transcript...");
     try {
       const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
       const result = await transcribeDictationAudio({
@@ -811,11 +844,70 @@ export default function Composer(props: ComposerProps) {
         return;
       }
       insertDictationText(result.text);
+      setDictationPreview("");
     } catch (error) {
       props.onToast(error instanceof Error ? error.message : String(error));
     } finally {
       setDictationBusy(false);
     }
+  };
+
+  const transcribeDictationPreviewBlob = async (blob: Blob) => {
+    if (blob.size === 0 || dictationPreviewBusy()) return;
+    setDictationPreviewBusy(true);
+    try {
+      const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+      const result = await transcribeDictationAudio({
+        audioBytes: bytes,
+        mimeType: blob.type || null,
+        language: "auto",
+      });
+      const text = result.text.trim();
+      if (text) setDictationPreview(text);
+    } catch {
+      // Preview is best-effort; final transcription still reports real errors.
+    } finally {
+      setDictationPreviewBusy(false);
+    }
+  };
+
+  const flushDictationPreview = (mimeType: string) => {
+    if (!dictationPreviewChunks.length || dictationPreviewBusy()) return;
+    const blob = new Blob(dictationPreviewChunks, { type: mimeType || "audio/webm" });
+    dictationPreviewChunks = [];
+    void transcribeDictationPreviewBlob(blob);
+  };
+
+  const formatDictationElapsed = () => {
+    const totalSeconds = Math.floor(dictationElapsedMs() / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  };
+
+  const startDictationActivityMeter = async (stream: MediaStream) => {
+    const AudioContextCtor =
+      window.AudioContext ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextCtor) return;
+    dictationAudioContext = new AudioContextCtor();
+    await dictationAudioContext.resume().catch(() => undefined);
+    const source = dictationAudioContext.createMediaStreamSource(stream);
+    dictationAnalyser = dictationAudioContext.createAnalyser();
+    dictationAnalyser.fftSize = 256;
+    dictationLevelData = new Uint8Array(new ArrayBuffer(dictationAnalyser.fftSize));
+    source.connect(dictationAnalyser);
+
+    const tick = () => {
+      if (!dictationAnalyser || !dictationLevelData) return;
+      dictationAnalyser.getByteTimeDomainData(dictationLevelData);
+      let peak = 0;
+      for (const value of dictationLevelData) {
+        peak = Math.max(peak, Math.abs(value - 128));
+      }
+      setDictationLevel(Math.min(1, peak / 72));
+      dictationAnimationFrame = window.requestAnimationFrame(tick);
+    };
+    tick();
   };
 
   const stopDictation = () => {
@@ -843,11 +935,17 @@ export default function Composer(props: ComposerProps) {
 
     try {
       dictationChunks = [];
+      dictationPreviewChunks = [];
+      setDictationPreview("");
+      setDictationElapsedMs(0);
       dictationStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      void startDictationActivityMeter(dictationStream);
       const mimeType = pickDictationMimeType();
       dictationRecorder = new MediaRecorder(dictationStream, mimeType ? { mimeType } : undefined);
       dictationRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) dictationChunks.push(event.data);
+        if (event.data.size <= 0) return;
+        dictationChunks.push(event.data);
+        dictationPreviewChunks.push(event.data);
       };
       dictationRecorder.onerror = () => {
         props.onToast("Microphone recording failed.");
@@ -858,7 +956,14 @@ export default function Composer(props: ComposerProps) {
         cleanupDictationStream();
         if (blob.size > 0) void transcribeDictationBlob(blob);
       };
-      dictationRecorder.start();
+      dictationStartedAt = Date.now();
+      dictationElapsedTimer = window.setInterval(() => {
+        setDictationElapsedMs(Date.now() - dictationStartedAt);
+      }, 250);
+      dictationPreviewTimer = window.setInterval(() => {
+        flushDictationPreview(dictationRecorder?.mimeType || mimeType || "audio/webm");
+      }, DICTATION_PREVIEW_INTERVAL_MS);
+      dictationRecorder.start(DICTATION_MEDIA_TIMESLICE_MS);
       setDictationRecording(true);
     } catch (error) {
       cleanupDictationStream();
@@ -1908,6 +2013,36 @@ export default function Composer(props: ComposerProps) {
                       onClick={handleEditorClick}
                       class="font-reading type-reading-md bg-transparent border-none p-0 pb-2 pr-2 text-gray-12 focus:ring-0 whitespace-pre-wrap break-words resize-none min-h-[24px] max-h-40 overflow-y-auto overflow-x-hidden outline-none"
                     />
+
+                    <Show when={dictationRecording() || dictationBusy() || dictationPreview()}>
+                      <div class="mt-3 flex items-center gap-3 rounded-lg border border-gray-6/80 bg-gray-2/70 px-3 py-2 text-xs text-gray-11">
+                        <div class="flex items-center gap-2 shrink-0">
+                          <span
+                            class={`h-2 w-2 rounded-full ${
+                              dictationRecording() ? "bg-red-9 animate-pulse" : "bg-blue-9"
+                            }`}
+                          />
+                          <span class="font-product font-medium">
+                            {dictationRecording() ? `Recording ${formatDictationElapsed()}` : "Transcribing locally"}
+                          </span>
+                        </div>
+                        <div class="h-1.5 w-20 overflow-hidden rounded-full bg-gray-5 shrink-0">
+                          <div
+                            class="h-full rounded-full bg-red-9 transition-[width] duration-100"
+                            style={{ width: `${Math.round(dictationLevel() * 100)}%` }}
+                          />
+                        </div>
+                        <div class="min-w-0 flex-1 truncate font-reading text-gray-10">
+                          {dictationPreview()
+                            ? dictationPreview()
+                            : dictationPreviewBusy()
+                              ? "Updating preview..."
+                              : dictationRecording()
+                                ? "Listening locally..."
+                                : "Preparing transcript..."}
+                        </div>
+                      </div>
+                    </Show>
 
                     <div class="mt-3 flex items-center justify-between gap-3 pt-2">
                       <div class="flex min-w-0 flex-wrap items-center gap-2">

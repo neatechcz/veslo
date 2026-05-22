@@ -29,3 +29,29 @@ test("composer exposes local dictation controls", () => {
     "composer should insert transcribed text into the current editor draft",
   );
 });
+
+test("composer shows live local dictation feedback while recording", () => {
+  assert.match(
+    composerSource,
+    /dictationPreview/,
+    "composer should keep an interim dictation preview separate from the final editor draft",
+  );
+
+  assert.match(
+    composerSource,
+    /AudioContext|webkitAudioContext/,
+    "composer should use local audio analysis for an immediate recording activity meter",
+  );
+
+  assert.match(
+    composerSource,
+    /transcribeDictationPreviewBlob/,
+    "composer should attempt local interim transcription while recording",
+  );
+
+  assert.match(
+    composerSource,
+    /dictationLevel/,
+    "composer should expose microphone activity feedback so recording does not look dead",
+  );
+});
