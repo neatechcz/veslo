@@ -59,6 +59,11 @@ import json
 import os
 import sys
 
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 audio_path = sys.argv[1]
 language = sys.argv[2].strip() if len(sys.argv) > 2 and sys.argv[2].strip() else None
 model_name = os.environ.get("VESLO_DICTATION_MODEL", "Systran/faster-whisper-small")
@@ -92,7 +97,7 @@ try:
         "text": text,
         "language": getattr(info, "language", None),
         "languageProbability": getattr(info, "language_probability", None),
-    }, ensure_ascii=False))
+    }))
 except Exception as exc:
     print(json.dumps({
         "ok": False,
@@ -117,6 +122,7 @@ fn run_python_transcription(audio_path: &str, language: Option<&str>) -> Result<
             .arg(audio_path)
             .arg(language.unwrap_or(""))
             .env("HF_HUB_OFFLINE", "1")
+            .env("PYTHONUTF8", "1")
             .env("TRANSFORMERS_OFFLINE", "1");
 
         match command.output() {
@@ -220,5 +226,12 @@ mod tests {
         assert_eq!(audio_extension_for_mime(Some("audio/mp4")), "m4a");
         assert_eq!(audio_extension_for_mime(Some("audio/wav")), "wav");
         assert_eq!(audio_extension_for_mime(None), "webm");
+    }
+
+    #[test]
+    fn dictation_python_script_avoids_non_ascii_stdout_json() {
+        let script = super::dictation_python_script();
+        assert!(script.contains("sys.stdout.reconfigure"));
+        assert!(!script.contains("ensure_ascii=False"));
     }
 }
