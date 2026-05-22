@@ -66,4 +66,10 @@ test("composer shows live local dictation feedback while recording", () => {
     /dictationLevel/,
     "composer should expose microphone activity feedback so recording does not look dead",
   );
+
+  assert.match(
+    composerSource,
+    /Local dictation activity/,
+    "composer should keep the activity meter as a compact control next to the microphone",
+  );
 });

@@ -2107,36 +2107,6 @@ export default function Composer(props: ComposerProps) {
                       class="font-reading type-reading-md bg-transparent border-none p-0 pb-2 pr-2 text-gray-12 focus:ring-0 whitespace-pre-wrap break-words resize-none min-h-[24px] max-h-40 overflow-y-auto overflow-x-hidden outline-none"
                     />
 
-                    <Show when={dictationRecording() || dictationBusy() || dictationPreviewBusy()}>
-                      <div class="mt-3 flex items-center gap-3 rounded-lg border border-gray-6/80 bg-gray-2/70 px-3 py-2 text-xs text-gray-11">
-                        <div class="flex items-center gap-2 shrink-0">
-                          <span
-                            class={`h-2 w-2 rounded-full ${
-                              dictationRecording() ? "bg-red-9 animate-pulse" : "bg-blue-9"
-                            }`}
-                          />
-                          <span class="font-product font-medium">
-                            {dictationRecording() ? `Recording ${formatDictationElapsed()}` : "Transcribing locally"}
-                          </span>
-                        </div>
-                        <div class="h-1.5 w-20 overflow-hidden rounded-full bg-gray-5 shrink-0">
-                          <div
-                            class="h-full rounded-full bg-red-9 transition-[width] duration-100"
-                            style={{ width: `${Math.round(dictationLevel() * 100)}%` }}
-                          />
-                        </div>
-                        <div class="min-w-0 flex-1 truncate font-reading text-gray-10">
-                          {dictationBusy()
-                            ? "Finalizing text in the prompt..."
-                            : dictationPreviewBusy()
-                              ? "Updating text in the prompt..."
-                              : dictationRecording()
-                                ? "Writing into the prompt..."
-                                : "Preparing transcript..."}
-                        </div>
-                      </div>
-                    </Show>
-
                     <div class="mt-3 flex items-center justify-between gap-3 pt-2">
                       <div class="flex min-w-0 flex-wrap items-center gap-2">
                         <div class="flex items-center gap-1.5">
@@ -2205,6 +2175,34 @@ export default function Composer(props: ComposerProps) {
                       </div>
 
                       <div class="flex shrink-0 items-center gap-2">
+                        <Show when={dictationRecording() || dictationBusy() || dictationPreviewBusy()}>
+                          <div
+                            aria-label="Local dictation activity"
+                            title={
+                              dictationBusy()
+                                ? "Finalizing local dictation"
+                                : dictationPreviewBusy()
+                                  ? "Updating local dictation preview"
+                                  : "Recording local dictation"
+                            }
+                            class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full bg-gray-2/70 px-1.5 text-[11px] text-gray-10"
+                          >
+                            <span
+                              class={`h-1.5 w-1.5 rounded-full ${
+                                dictationRecording() ? "bg-red-9 animate-pulse" : "bg-blue-9"
+                              }`}
+                            />
+                            <span class="font-product tabular-nums">
+                              {dictationRecording() ? formatDictationElapsed() : "local"}
+                            </span>
+                            <span class="h-1 w-10 overflow-hidden rounded-full bg-gray-5">
+                              <span
+                                class="block h-full rounded-full bg-red-9 transition-[width] duration-100"
+                                style={{ width: `${Math.round(dictationLevel() * 100)}%` }}
+                              />
+                            </span>
+                          </div>
+                        </Show>
                         <button
                           type="button"
                           disabled={dictationBusy()}
