@@ -2,6 +2,8 @@
 
 This is an experimental side-branch prototype for local-only dictation in the Veslo desktop composer.
 
+Related YouTrack task: `VSLO-192`
+
 Status:
 
 - Verified on Windows in local development.
