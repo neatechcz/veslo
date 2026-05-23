@@ -320,6 +320,24 @@ export async function readClipboardFilePaths(): Promise<string[]> {
   }
 }
 
+export type DictationTranscribeResult = {
+  text: string;
+  language?: string | null;
+  languageProbability?: number | null;
+};
+
+export async function transcribeDictationAudio(input: {
+  audioBytes: number[];
+  mimeType?: string | null;
+  language?: "auto" | "cs" | "en" | null;
+}): Promise<DictationTranscribeResult> {
+  return invoke<DictationTranscribeResult>("dictation_transcribe", {
+    audioBytes: input.audioBytes,
+    mimeType: input.mimeType ?? null,
+    language: input.language ?? "auto",
+  });
+}
+
 export async function pendingSessionDraftsList(): Promise<PendingSessionDraftSummary[]> {
   return invoke<RawPendingSessionDraftSummary[]>("pending_session_drafts_list");
 }
