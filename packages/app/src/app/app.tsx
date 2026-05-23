@@ -6899,18 +6899,29 @@ export default function App() {
               setError(restoreError);
             }
             const pendingWorkspaceId = (existingPendingDraft.privateWorkspaceId ?? existingPendingDraft.workspaceId).trim();
-            if (!pendingWorkspaceId) return;
-            const activatedPendingWorkspace = await workspaceStore.activateWorkspace(pendingWorkspaceId);
-            if (!activatedPendingWorkspace) return;
-            setActivePendingDraftKey(newPrivatePendingDraftKey);
-            setActivePendingDraftMeta(existingPendingDraft);
-            setComposerDraftBySessionId((current) => setSessionComposerDraft(
-              current,
-              { storageKey: newPrivatePendingDraftKey },
-              pendingDraft.draft.composer,
-            ));
-            setView("session");
-            return;
+            if (!pendingWorkspaceId) {
+              await pendingSessionDraftsDelete(existingPendingDraft.id);
+              markPendingDraftConsumed(existingPendingDraft.id);
+            } else {
+              const activatedPendingWorkspace = await workspaceStore.activateWorkspace(pendingWorkspaceId);
+              if (!activatedPendingWorkspace) {
+                await pendingSessionDraftsDelete(existingPendingDraft.id);
+                markPendingDraftConsumed(existingPendingDraft.id);
+              } else {
+                setActivePendingDraftKey(newPrivatePendingDraftKey);
+                setActivePendingDraftMeta(existingPendingDraft);
+                setComposerDraftBySessionId((current) => setSessionComposerDraft(
+                  current,
+                  { storageKey: newPrivatePendingDraftKey },
+                  pendingDraft.draft.composer,
+                ));
+                setView("session");
+                return;
+              }
+            }
+          } else {
+            await pendingSessionDraftsDelete(existingPendingDraft.id);
+            markPendingDraftConsumed(existingPendingDraft.id);
           }
         }
 

@@ -8,7 +8,7 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 const DEFAULT_VESLO_PORT: u16 = 8787;
-const DEFAULT_MANAGED_AI_BASE_URL: &str = "https://veslo-ai-gateway-dev.onrender.com";
+const DEFAULT_MANAGED_AI_BASE_URL: &str = "https://ai.veslo.work";
 const VESLO_SERVER_DEV_WATCH_ENV: &str = "VESLO_SERVER_DEV_WATCH";
 const VESLO_SERVER_DEV_DIR_ENV: &str = "VESLO_SERVER_DEV_DIR";
 
@@ -244,9 +244,9 @@ mod tests {
     }
 
     #[test]
-    fn managed_ai_base_url_defaults_to_hosted_den() {
+    fn managed_ai_base_url_defaults_to_owned_gateway() {
         let resolved = resolve_managed_ai_base_url_from_env(None, None);
 
-        assert_eq!(resolved, DEFAULT_MANAGED_AI_BASE_URL);
+        assert_eq!(resolved, "https://ai.veslo.work");
     }
 }
