@@ -138,7 +138,9 @@ fn read_persisted_veslo_server_info_with_cleanup(
     let info = persisted_state_to_info_with_health(&state, health_check);
     if info.is_none() {
         if let Some(pid) = state.pid.filter(|pid| *pid > 0) {
-            cleanup_stale_pid(pid)?;
+            if let Err(error) = cleanup_stale_pid(pid) {
+                eprintln!("[veslo-server] Failed to terminate stale persisted PID {pid}: {error}");
+            }
         }
         let _ = fs::remove_file(&path);
     }
@@ -435,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn read_persisted_server_info_keeps_state_when_pid_recycle_fails() {
+    fn read_persisted_server_info_removes_stale_state_when_pid_recycle_fails() {
         let dir =
             std::env::temp_dir().join(format!("veslo-server-state-stale-fail-{}", Uuid::new_v4()));
         fs::create_dir_all(&dir).expect("create test dir");
@@ -456,15 +458,15 @@ mod tests {
         )
         .expect("write state file");
 
-        let error = read_persisted_veslo_server_info_with_cleanup(
+        let recovered = read_persisted_veslo_server_info_with_cleanup(
             &dir,
             |_| false,
             |_| Err("taskkill failed".to_string()),
         )
-        .expect_err("cleanup failure should stop recovery");
+        .expect("cleanup failure should not stop stale state recovery");
 
-        assert!(error.contains("taskkill failed"));
-        assert!(dir.join("veslo-server-state.json").exists());
+        assert!(recovered.is_none());
+        assert!(!dir.join("veslo-server-state.json").exists());
 
         let _ = fs::remove_dir_all(dir);
     }

@@ -21,6 +21,7 @@ The skill must resolve beta vs production, generate public-safe release notes fr
 2. Re-run `pnpm release:review`.
 3. Build sidecars for the desktop bundle:
    - `pnpm --filter @neatech/veslo prepare:sidecar`
+   - Windows x64 sidecars must use Bun's `bun-windows-x64-baseline` target so packaged apps run on older supported x64 CPUs.
 4. Commit the version bump.
 5. Tag and push:
    - `git tag vYYYY.M.P`
@@ -43,7 +44,7 @@ Each Windows `signtool` invocation is bounded by `VESLO_WINDOWS_SIGNING_TIMEOUT_
    - `pnpm bump:calver`
 2. Build sidecar assets and manifest:
    - `pnpm --filter veslo-orchestrator build:sidecars`
-   - Release sidecars are built for macOS and Windows only.
+   - Release sidecars are built for macOS and Windows only. Windows x64 sidecars must use Bun's `bun-windows-x64-baseline` target.
 3. Create the GitHub release for sidecars:
    - `gh release create veslo-orchestrator-vYYYY.M.P packages/orchestrator/dist/sidecars/* --repo neatechcz/veslo`
 4. Publish the package:

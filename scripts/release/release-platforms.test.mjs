@@ -54,13 +54,14 @@ test("orchestrator release packaging only builds macOS and Windows sidecars", ()
   ]) {
     assert.match(command, /bun-darwin-arm64/);
     assert.match(command, /bun-darwin-x64/);
-    assert.match(command, /bun-windows-x64/);
+    assert.match(command, /bun-windows-x64-baseline/);
     assert.doesNotMatch(command, /bun-linux/);
   }
 
   for (const source of [buildSidecars, publishNpm]) {
     assert.match(source, /darwin/);
     assert.match(source, /windows/);
+    assert.match(source, /bun-windows-x64-baseline/);
     assert.doesNotMatch(source, /linux-x64/);
     assert.doesNotMatch(source, /linux-arm64/);
     assert.doesNotMatch(source, /bun-linux/);

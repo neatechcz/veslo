@@ -48,7 +48,7 @@ run("pnpm", ["--filter", "veslo-code-router", "build:bin:all"], repoRoot);
 const targets = [
   { id: "darwin-arm64", bun: "bun-darwin-arm64" },
   { id: "darwin-x64", bun: "bun-darwin-x64" },
-  { id: "windows-x64", bun: "bun-windows-x64" },
+  { id: "windows-x64", bun: "bun-windows-x64-baseline" },
 ];
 
 const sha256File = (path) => {
