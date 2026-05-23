@@ -288,6 +288,11 @@ const findVesloCodeRouterBinary = (dir) => {
   );
 };
 
+const findBunBinary = (dir) => {
+  const candidates = readDirectory(dir);
+  return candidates.find((file) => file.endsWith("/bun.exe") || file.endsWith("\\bun.exe")) ?? null;
+};
+
 const readBinaryVersion = (filePath) => {
   try {
     const result = spawnSync(filePath, ["--version"], { encoding: "utf8" });
@@ -296,6 +301,59 @@ const readBinaryVersion = (filePath) => {
     // ignore
   }
   return null;
+};
+
+const currentBunVersion = () => {
+  const result = spawnSync("bun", ["--version"], { encoding: "utf8" });
+  if (result.status === 0 && result.stdout.trim()) return result.stdout.trim();
+  return null;
+};
+
+const ensureWindowsBaselineBunExecutable = () => {
+  if (process.platform !== "win32" || bunTarget !== "bun-windows-x64-baseline") {
+    return null;
+  }
+
+  const override = process.env.BUN_WINDOWS_X64_BASELINE_EXECUTABLE?.trim();
+  if (override && existsSync(override)) {
+    return override;
+  }
+
+  const version = process.env.BUN_VERSION?.trim() || currentBunVersion();
+  if (!version) {
+    console.error("Unable to resolve Bun version for Windows baseline compile runtime.");
+    process.exit(1);
+  }
+
+  const targetDir = join(tmpdir(), `veslo-bun-windows-x64-baseline-${version}`);
+  const existing = findBunBinary(targetDir);
+  if (existing) {
+    return existing;
+  }
+
+  mkdirSync(targetDir, { recursive: true });
+  const archivePath = join(tmpdir(), `bun-windows-x64-baseline-${version}.zip`);
+  const url = `https://github.com/oven-sh/bun/releases/download/bun-v${version}/bun-windows-x64-baseline.zip`;
+  const psQuote = (value) => `'${value.replace(/'/g, "''")}'`;
+  const psScript = [
+    "$ErrorActionPreference = 'Stop'",
+    `Invoke-WebRequest -Uri ${psQuote(url)} -OutFile ${psQuote(archivePath)}`,
+    `Expand-Archive -Path ${psQuote(archivePath)} -DestinationPath ${psQuote(targetDir)} -Force`,
+  ].join("; ");
+
+  const result = spawnSync("powershell", ["-NoProfile", "-Command", psScript], {
+    stdio: "inherit",
+  });
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
+
+  const executable = findBunBinary(targetDir);
+  if (!executable) {
+    console.error(`Bun Windows baseline executable not found after extracting ${archivePath}.`);
+    process.exit(1);
+  }
+  return executable;
 };
 
 const sha256File = (filePath) => {
@@ -321,6 +379,10 @@ const parseChecksum = (content, assetName) => {
 let didBuildVesloServer = false;
 const shouldBuildVesloServer =
   forceBuild || !existsSync(vesloServerBuildPath) || isStubBinary(vesloServerBuildPath);
+const bunWindowsBaselineExecutable = ensureWindowsBaselineBunExecutable();
+const buildEnv = bunWindowsBaselineExecutable
+  ? { ...process.env, BUN_WINDOWS_X64_BASELINE_EXECUTABLE: bunWindowsBaselineExecutable }
+  : process.env;
 
 if (shouldBuildVesloServer) {
   mkdirSync(sidecarDir, { recursive: true });
@@ -343,6 +405,7 @@ if (shouldBuildVesloServer) {
   const buildResult = spawnSync("bun", vesloServerArgs, {
     cwd: vesloServerDir,
     stdio: "inherit",
+    env: buildEnv,
   });
 
   if (buildResult.status !== 0) {
@@ -586,7 +649,7 @@ if (shouldBuildOpenCodeRouter) {
   if (bunTarget) {
     opencodeRouterArgs.push("--target", bunTarget);
   }
-  const result = spawnSync("bun", opencodeRouterArgs, { cwd: opencodeRouterDir, stdio: "inherit" });
+  const result = spawnSync("bun", opencodeRouterArgs, { cwd: opencodeRouterDir, stdio: "inherit", env: buildEnv });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
@@ -650,7 +713,7 @@ if (shouldBuildOrchestrator) {
     cwd: orchestratorDir,
     stdio: "inherit",
     env: {
-      ...process.env,
+      ...buildEnv,
       NODE_ENV: "production",
       BUN_ENV: "production",
     },
@@ -719,12 +782,15 @@ if (shouldBuildChromeDevtools) {
   if (bunTarget) {
     chromeDevtoolsArgs.push("--target", bunTarget);
   }
+  if (bunWindowsBaselineExecutable) {
+    chromeDevtoolsArgs.push("--compile-executable-path", bunWindowsBaselineExecutable);
+  }
 
   const result = spawnSync("bun", chromeDevtoolsArgs, {
     cwd: __dirname,
     stdio: "inherit",
     env: {
-      ...process.env,
+      ...buildEnv,
       NODE_ENV: "production",
       BUN_ENV: "production",
     },

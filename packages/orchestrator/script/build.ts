@@ -97,6 +97,7 @@ async function buildOnce(entrypoint: string, outdir: string, filename: string, t
   mkdirSync(outdir, { recursive: true });
   const outfile = join(outdir, outputName(filename, target));
   const define: Record<string, string> = {};
+  const compileExecutablePath = process.env.BUN_WINDOWS_X64_BASELINE_EXECUTABLE?.trim();
   const pkgPath = resolve("package.json");
   try {
     const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
@@ -108,15 +109,19 @@ async function buildOnce(entrypoint: string, outdir: string, filename: string, t
   }
 
   const resolvedTarget = target ?? defaultTarget();
+  const compileOptions: Record<string, string> = {
+    target: resolvedTarget,
+    outfile,
+  };
+  if (resolvedTarget === "bun-windows-x64-baseline" && compileExecutablePath) {
+    compileOptions.executablePath = compileExecutablePath;
+  }
   const result = await bun.build({
     tsconfig: "./tsconfig.json",
     plugins: [solidPlugin],
     entrypoints: [entrypoint],
     define,
-    compile: {
-      target: resolvedTarget,
-      outfile,
-    },
+    compile: compileOptions,
   });
   if (!result.success) {
     for (const log of result.logs) {

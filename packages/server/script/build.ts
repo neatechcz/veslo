@@ -93,6 +93,10 @@ async function buildOnce(entrypoint: string, outdir: string, filename: string, t
   const outfile = join(outdir, outputName(filename, target));
 
   const args = ["build", entrypoint, "--compile", "--outfile", outfile];
+  const compileExecutablePath = process.env.BUN_WINDOWS_X64_BASELINE_EXECUTABLE?.trim();
+  if (target === "bun-windows-x64-baseline" && compileExecutablePath) {
+    args.push("--compile-executable-path", compileExecutablePath);
+  }
   if (target) {
     args.push("--target", target);
   }

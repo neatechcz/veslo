@@ -51,8 +51,17 @@ test("orchestrator release packaging only builds macOS and Windows sidecars", ()
   const buildSidecars = readRepoFile("packages/orchestrator/scripts/build-sidecars.mjs");
   const publishNpm = readRepoFile("packages/orchestrator/scripts/publish-npm.mjs");
   const productionWorkflow = readRepoFile(".github/workflows/release-macos-aarch64.yml");
+  const prepareSidecar = readRepoFile("packages/desktop/scripts/prepare-sidecar.mjs");
+  const serverBuild = readRepoFile("packages/server/script/build.ts");
+  const routerBuild = readRepoFile("packages/opencode-router/script/build.ts");
+  const orchestratorBuild = readRepoFile("packages/orchestrator/script/build.ts");
 
   assert.match(productionWorkflow, /bun-version:\s+"?1\.3\.11"?/);
+  assert.match(prepareSidecar, /bun-windows-x64-baseline\.zip/);
+  assert.match(prepareSidecar, /BUN_WINDOWS_X64_BASELINE_EXECUTABLE/);
+  assert.match(serverBuild, /--compile-executable-path/);
+  assert.match(routerBuild, /--compile-executable-path/);
+  assert.match(orchestratorBuild, /executablePath/);
 
   for (const command of [
     orchestratorPackage.scripts["build:bin:all"],
