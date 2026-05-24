@@ -1542,6 +1542,8 @@ export default function DashboardView(props: DashboardViewProps) {
             <Match when={props.tab === "skills"}>
               <SkillsView
                 workspaceName={props.activeWorkspaceDisplay.name}
+                activeWorkspaceId={props.activeWorkspaceId}
+                isRemoteWorkspace={props.isRemoteWorkspace}
                 busy={props.busy}
                 canInstallSkillCreator={props.canInstallSkillCreator}
                 canUseDesktopTools={props.canUseDesktopTools}

@@ -66,6 +66,34 @@ test("workspace-specific rows come from workspaceInstances without expanding glo
   assert.doesNotMatch(source, /props\.workspaces\.map\([\s\S]{0,500}globalInstance/);
 });
 
+test("local skill import refreshes the app-wide installed inventory", () => {
+  assert.match(source, /const importLocalSkillAndRefreshInventory = \(\) =>\s*Promise\.resolve\(props\.importLocalSkill\(\)\)\s*\.finally\(\(\) => props\.refreshSkillInventory\(\{ force: true \}\)\)/);
+  assert.match(source, /id: "import-local"[\s\S]*onClick: importLocalSkillAndRefreshInventory/);
+  assert.doesNotMatch(source, /id: "import-local"[\s\S]{0,300}onClick: props\.importLocalSkill/);
+});
+
+test("ambiguous inventory uninstalls are guarded to active workspace-only rows", () => {
+  assert.match(source, /activeWorkspaceId: string/);
+  assert.match(source, /const canUninstallInventoryInstance = \(input: \{ item: SkillInventoryItem; instance: SkillInstance \}\) =>/);
+  assert.match(source, /if \(input\.item\.globalInstance\) return false/);
+  assert.match(source, /input\.item\.status === "workspace-only"/);
+  assert.match(source, /input\.instance\.workspaceId === props\.activeWorkspaceId/);
+  assert.match(source, /const uninstallDisabledReason = \(input: \{ item: SkillInventoryItem; instance: SkillInstance \}\)/);
+  assert.match(source, /aria-label=\{uninstallTitle\(\)\}/);
+  assert.match(source, /disabled=\{props\.busy \|\| !canUninstall\(\)\}/);
+});
+
+test("active remote workspace skills fall back into the workspace-specific inventory section", () => {
+  assert.match(source, /isRemoteWorkspace: boolean/);
+  assert.match(source, /const inventoryHasActiveWorkspaceRows = createMemo\(\(\) =>/);
+  assert.match(source, /item\.workspaceInstances\.some\(\(instance\) => instance\.workspaceId === props\.activeWorkspaceId\)/);
+  assert.match(source, /const activeRemoteInventoryItems = createMemo<SkillInventoryItem\[\]>\(\(\) =>/);
+  assert.match(source, /if \(!props\.isRemoteWorkspace \|\| inventoryHasActiveWorkspaceRows\(\)\) return \[\]/);
+  assert.match(source, /props\.skills\.map\(\(skill\) => \(/);
+  assert.match(source, /status: "workspace-only"/);
+  assert.match(source, /workspaceLabel: props\.workspaceName/);
+});
+
 test("skills page does not duplicate org catalog placeholder when hub status is shown", () => {
   assert.match(
     source,

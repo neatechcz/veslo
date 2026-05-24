@@ -28,6 +28,8 @@ const SKILLS_TOAST_DISMISS_DELAY_MS = 4_000;
 
 export type SkillsViewProps = {
   workspaceName: string;
+  activeWorkspaceId: string;
+  isRemoteWorkspace: boolean;
   busy: boolean;
   canInstallSkillCreator: boolean;
   canUseDesktopTools: boolean;
@@ -64,8 +66,41 @@ export default function SkillsView(props: SkillsViewProps) {
     return value;
   };
 
+  const inventoryHasActiveWorkspaceRows = createMemo(() =>
+    props.skillInventory.some((item) =>
+      item.workspaceInstances.some((instance) => instance.workspaceId === props.activeWorkspaceId)
+    )
+  );
+
+  const activeRemoteInventoryItems = createMemo<SkillInventoryItem[]>(() => {
+    if (!props.isRemoteWorkspace || inventoryHasActiveWorkspaceRows()) return [];
+    return props.skills.map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      trigger: skill.trigger,
+      status: "workspace-only",
+      workspaceInstances: [
+        {
+          id: `workspace:${props.activeWorkspaceId}:${skill.name}:${skill.path}`,
+          name: skill.name,
+          scope: "workspace",
+          workspaceId: props.activeWorkspaceId,
+          workspaceLabel: props.workspaceName,
+          path: skill.path,
+          description: skill.description,
+          trigger: skill.trigger,
+          source: "unknown",
+          readable: true,
+          writable: true,
+        },
+      ],
+    }));
+  });
+
   const installedInventoryItems = createMemo(() =>
-    props.skillInventory.filter((item) => item.status !== "hub-only")
+    props.skillInventory
+      .filter((item) => item.status !== "hub-only")
+      .concat(activeRemoteInventoryItems())
   );
   const installedSkillCount = createMemo(() => installedInventoryItems().length);
   const installedInventoryNames = createMemo(() => new Set(installedInventoryItems().map((item) => item.name)));
@@ -154,6 +189,26 @@ export default function SkillsView(props: SkillsViewProps) {
     return props.skills.find((skill) =>
       skill.name === instance.name && normalizeSkillPath(skill.path) === instancePath
     ) ?? null;
+  };
+
+  const canUninstallInventoryInstance = (input: { item: SkillInventoryItem; instance: SkillInstance }) => {
+    if (input.item.globalInstance) return false;
+    return (
+      props.canUseDesktopTools &&
+      input.item.status === "workspace-only" &&
+      input.instance.workspaceId === props.activeWorkspaceId &&
+      Boolean(actionSkillForInstance(input.instance))
+    );
+  };
+
+  const uninstallDisabledReason = (input: { item: SkillInventoryItem; instance: SkillInstance }) => {
+    if (!props.canUseDesktopTools) return translate("skills.uninstall_desktop_required");
+    if (input.item.globalInstance) return translate("skills.uninstall_scope_ambiguous");
+    if (input.instance.workspaceId !== props.activeWorkspaceId) {
+      return translate("skills.uninstall_not_active_workspace");
+    }
+    if (input.item.status !== "workspace-only") return translate("skills.uninstall_scope_ambiguous");
+    return null;
   };
 
   const filteredInstalledInventoryItems = createMemo(() => {
@@ -254,6 +309,10 @@ export default function SkillsView(props: SkillsViewProps) {
     }
   };
 
+  const importLocalSkillAndRefreshInventory = () =>
+    Promise.resolve(props.importLocalSkill())
+      .finally(() => props.refreshSkillInventory({ force: true }));
+
   const recommendedSkills = createMemo(() => {
     const items: Array<{
       id: string;
@@ -268,7 +327,7 @@ export default function SkillsView(props: SkillsViewProps) {
         title: translate("skills.import_local"),
         description: translate("skills.import_local_hint"),
         icon: Upload,
-        onClick: props.importLocalSkill,
+        onClick: importLocalSkillAndRefreshInventory,
         disabled: props.busy || !props.canUseDesktopTools,
       },
       {
@@ -545,6 +604,9 @@ export default function SkillsView(props: SkillsViewProps) {
     const actionSkill = createMemo(() => actionSkillForInstance(input.instance));
     const displayDescription = () => input.instance.description ?? input.item.description ?? "";
     const canUseActions = () => Boolean(actionSkill());
+    const canUninstall = () => canUninstallInventoryInstance({ item: input.item, instance: input.instance });
+    const uninstallTitle = () =>
+      uninstallDisabledReason({ item: input.item, instance: input.instance }) ?? translate("skills.uninstall");
     const openActionSkill = () => {
       const skill = actionSkill();
       if (!skill) return;
@@ -614,6 +676,7 @@ export default function SkillsView(props: SkillsViewProps) {
             }}
             disabled={props.busy || !canUseActions()}
             title={translate("skills.share_action")}
+            aria-label={translate("skills.share_action")}
           >
             <Share2 size={14} />
           </button>
@@ -632,13 +695,14 @@ export default function SkillsView(props: SkillsViewProps) {
             }}
             disabled={props.busy || !canUseActions()}
             title={translate("common.edit")}
+            aria-label={translate("common.edit")}
           >
             <Edit2 size={14} />
           </button>
           <button
             type="button"
             class={`p-1.5 rounded-md transition-colors ${
-              props.busy || !props.canUseDesktopTools || !canUseActions()
+              props.busy || !canUninstall()
                 ? "text-dls-secondary opacity-40"
                 : "text-dls-secondary hover:text-red-11 hover:bg-red-3/10"
             }`}
@@ -646,11 +710,12 @@ export default function SkillsView(props: SkillsViewProps) {
               e.preventDefault();
               e.stopPropagation();
               const skill = actionSkill();
-              if (props.busy || !props.canUseDesktopTools || !skill) return;
+              if (props.busy || !canUninstall() || !skill) return;
               setUninstallTarget(skill);
             }}
-            disabled={props.busy || !props.canUseDesktopTools || !canUseActions()}
-            title={translate("skills.uninstall")}
+            disabled={props.busy || !canUninstall()}
+            title={uninstallTitle()}
+            aria-label={uninstallTitle()}
           >
             <Trash2 size={14} />
           </button>
@@ -976,6 +1041,7 @@ export default function SkillsView(props: SkillsViewProps) {
                   }}
                   disabled={item.disabled}
                   title={item.title}
+                  aria-label={item.title}
                 >
                   <Plus size={16} />
                 </button>
