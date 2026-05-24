@@ -371,107 +371,114 @@ export function createExtensionsStore(options: {
     workspace.id;
 
   async function refreshSkillInventory(optionsOverride?: { force?: boolean }) {
-    if (refreshSkillInventoryInFlight) {
+    let forceRefresh = optionsOverride?.force === true;
+
+    for (;;) {
+      if (refreshSkillInventoryInFlight) {
+        await refreshSkillInventoryPromise;
+        forceRefresh = false;
+        continue;
+      }
+
+      const localWorkspaces = (options.workspaces?.() ?? [])
+        .filter((workspace) => workspace.workspaceType === "local")
+        .map((workspace) => ({
+          id: workspace.id.trim(),
+          label: localWorkspaceLabel(workspace),
+          path: workspace.path.trim(),
+        }))
+        .filter((workspace) => workspace.id && workspace.path);
+
+      const getSkillInventoryContextKey = (hubContextKey: string) =>
+        JSON.stringify({
+          hub: {
+            contextKey: hubContextKey,
+            revision: hubSkillsRevision,
+          },
+          localRevision: localSkillsRevision,
+          workspaces: localWorkspaces.map((workspace) => ({
+            id: workspace.id,
+            label: workspace.label,
+            path: workspace.path,
+          })),
+        });
+
+      const hubContext = resolveHubSkillsRefreshContext();
+      const nextContextKey = getSkillInventoryContextKey(hubContext.contextKey);
+      const hubRefreshInFlightForCurrentContext =
+        refreshHubSkillsInFlight && refreshHubSkillsInFlightContextKey === hubContext.contextKey;
+
+      if (nextContextKey !== skillInventoryContextKey) {
+        skillInventoryLoaded = false;
+      }
+
+      if (!forceRefresh && skillInventoryLoaded && !hubRefreshInFlightForCurrentContext) return;
+
+      const refreshOptions = forceRefresh ? { force: true } : undefined;
+      refreshSkillInventoryInFlight = true;
+      refreshSkillInventoryAborted = false;
+      refreshSkillInventoryPromise = (async () => {
+        try {
+          setSkillInventoryStatus(null);
+          await refreshHubSkills(refreshOptions);
+          if (refreshSkillInventoryAborted) return;
+
+          const refreshedHubContext = resolveHubSkillsRefreshContext();
+          if (hubSkillsContextKey !== refreshedHubContext.contextKey) {
+            await refreshHubSkills({ force: true });
+            if (refreshSkillInventoryAborted) return;
+          }
+
+          const inventoryHubContext = resolveHubSkillsRefreshContext();
+          const hasMatchingHubSkills = hubSkillsLoaded && hubSkillsContextKey === inventoryHubContext.contextKey;
+
+          const listScopedSkills = options.listLocalSkillsScoped ?? listLocalSkillsScopedCommand;
+          const globalSkills = await listScopedSkills("", "global");
+          if (refreshSkillInventoryAborted) return;
+
+          const workspaceSkillsByWorkspaceId: BuildSkillInventoryInput["workspaceSkillsByWorkspaceId"] = {};
+
+          for (const workspace of localWorkspaces) {
+            const skills = await listScopedSkills(workspace.path, "workspace");
+            if (refreshSkillInventoryAborted) return;
+            workspaceSkillsByWorkspaceId[workspace.id] = {
+              workspace: {
+                id: workspace.id,
+                label: workspace.label,
+                path: workspace.path,
+                kind: "local",
+              },
+              skills,
+            };
+          }
+
+          const next = buildSkillInventory({
+            globalSkills,
+            workspaceSkillsByWorkspaceId,
+            hubSkills: hasMatchingHubSkills ? hubSkills() : [],
+          });
+          if (refreshSkillInventoryAborted) return;
+
+          setSkillInventory(next);
+          if (!next.length) {
+            setSkillInventoryStatus(translate("skills.no_skills_found"));
+          }
+          skillInventoryLoaded = hasMatchingHubSkills;
+          skillInventoryContextKey = getSkillInventoryContextKey(inventoryHubContext.contextKey);
+        } catch (e) {
+          if (refreshSkillInventoryAborted) return;
+          skillInventoryLoaded = false;
+          setSkillInventory([]);
+          setSkillInventoryStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+        } finally {
+          refreshSkillInventoryInFlight = false;
+          refreshSkillInventoryPromise = null;
+        }
+      })();
+
       await refreshSkillInventoryPromise;
       return;
     }
-
-    const localWorkspaces = (options.workspaces?.() ?? [])
-      .filter((workspace) => workspace.workspaceType === "local")
-      .map((workspace) => ({
-        id: workspace.id.trim(),
-        label: localWorkspaceLabel(workspace),
-        path: workspace.path.trim(),
-      }))
-      .filter((workspace) => workspace.id && workspace.path);
-
-    const getSkillInventoryContextKey = (hubContextKey: string) =>
-      JSON.stringify({
-        hub: {
-          contextKey: hubContextKey,
-          revision: hubSkillsRevision,
-        },
-        localRevision: localSkillsRevision,
-        workspaces: localWorkspaces.map((workspace) => ({
-          id: workspace.id,
-          label: workspace.label,
-          path: workspace.path,
-        })),
-      });
-
-    const hubContext = resolveHubSkillsRefreshContext();
-    const nextContextKey = getSkillInventoryContextKey(hubContext.contextKey);
-    const hubRefreshInFlightForCurrentContext =
-      refreshHubSkillsInFlight && refreshHubSkillsInFlightContextKey === hubContext.contextKey;
-
-    if (nextContextKey !== skillInventoryContextKey) {
-      skillInventoryLoaded = false;
-    }
-
-    if (!optionsOverride?.force && skillInventoryLoaded && !hubRefreshInFlightForCurrentContext) return;
-
-    refreshSkillInventoryInFlight = true;
-    refreshSkillInventoryAborted = false;
-    refreshSkillInventoryPromise = (async () => {
-      try {
-        setSkillInventoryStatus(null);
-        await refreshHubSkills(optionsOverride);
-        if (refreshSkillInventoryAborted) return;
-
-        const refreshedHubContext = resolveHubSkillsRefreshContext();
-        if (hubSkillsContextKey !== refreshedHubContext.contextKey) {
-          await refreshHubSkills({ force: true });
-          if (refreshSkillInventoryAborted) return;
-        }
-
-        const inventoryHubContext = resolveHubSkillsRefreshContext();
-        const hasMatchingHubSkills = hubSkillsLoaded && hubSkillsContextKey === inventoryHubContext.contextKey;
-
-        const listScopedSkills = options.listLocalSkillsScoped ?? listLocalSkillsScopedCommand;
-        const globalSkills = await listScopedSkills("", "global");
-        if (refreshSkillInventoryAborted) return;
-
-        const workspaceSkillsByWorkspaceId: BuildSkillInventoryInput["workspaceSkillsByWorkspaceId"] = {};
-
-        for (const workspace of localWorkspaces) {
-          const skills = await listScopedSkills(workspace.path, "workspace");
-          if (refreshSkillInventoryAborted) return;
-          workspaceSkillsByWorkspaceId[workspace.id] = {
-            workspace: {
-              id: workspace.id,
-              label: workspace.label,
-              path: workspace.path,
-              kind: "local",
-            },
-            skills,
-          };
-        }
-
-        const next = buildSkillInventory({
-          globalSkills,
-          workspaceSkillsByWorkspaceId,
-          hubSkills: hasMatchingHubSkills ? hubSkills() : [],
-        });
-        if (refreshSkillInventoryAborted) return;
-
-        setSkillInventory(next);
-        if (!next.length) {
-          setSkillInventoryStatus(translate("skills.no_skills_found"));
-        }
-        skillInventoryLoaded = hasMatchingHubSkills;
-        skillInventoryContextKey = getSkillInventoryContextKey(inventoryHubContext.contextKey);
-      } catch (e) {
-        if (refreshSkillInventoryAborted) return;
-        skillInventoryLoaded = false;
-        setSkillInventory([]);
-        setSkillInventoryStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
-      } finally {
-        refreshSkillInventoryInFlight = false;
-        refreshSkillInventoryPromise = null;
-      }
-    })();
-
-    await refreshSkillInventoryPromise;
   }
 
   async function installHubSkill(name: string): Promise<{ ok: boolean; message: string }> {

@@ -635,6 +635,97 @@ test("concurrent skill inventory refresh callers await the in-flight refresh", a
   });
 });
 
+test("skill inventory reruns after Den auth changes while an inventory refresh is in flight", async () => {
+  await withDenAuthStorage(async ({ localStorage, sessionStorage }) => {
+    await createRoot(async (dispose) => {
+      const initialAuth = createDenAuthJson({ orgId: "org-1", token: "token-a" });
+      localStorage.setItem("veslo.den.auth", initialAuth);
+      sessionStorage.setItem("veslo.den.auth", initialAuth);
+
+      const hubCalls: Array<{ orgId: string; token: string }> = [];
+      const globalSkillsRelease: { current?: () => void } = {};
+      let globalReadCount = 0;
+      let markGlobalSkillsStarted: (() => void) | null = null;
+      const globalSkillsStarted = new Promise<void>((resolve) => {
+        markGlobalSkillsStarted = resolve;
+      });
+      const vesloServerClient = {
+        async listHubSkills(input: { denToken: string; denOrgId: string }) {
+          hubCalls.push({ orgId: input.denOrgId, token: input.denToken });
+          return { items: [hubSkill(`planning-${input.denOrgId}`)] };
+        },
+      };
+      const listLocalSkillsScoped = async (
+        projectDir: string,
+        scope: LocalSkillListScope,
+      ): Promise<LocalSkillCard[]> => {
+        if (scope === "global") {
+          globalReadCount += 1;
+          if (globalReadCount === 1) {
+            assert.ok(markGlobalSkillsStarted);
+            markGlobalSkillsStarted();
+            await new Promise<void>((release) => {
+              globalSkillsRelease.current = release;
+            });
+          }
+          return [];
+        }
+        return projectDir ? [] : [];
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped,
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      const firstRefresh = store.refreshSkillInventory({ force: true });
+      try {
+        await globalSkillsStarted;
+
+        const nextAuth = createDenAuthJson({ orgId: "org-2", token: "token-b" });
+        localStorage.setItem("veslo.den.auth", nextAuth);
+        sessionStorage.setItem("veslo.den.auth", nextAuth);
+
+        let secondResolved = false;
+        const secondRefresh = store.refreshSkillInventory().then(() => {
+          secondResolved = true;
+        });
+
+        await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+        assert.equal(secondResolved, false, "second inventory refresh should wait for current context");
+
+        const releaseGlobalSkills = globalSkillsRelease.current;
+        assert.ok(releaseGlobalSkills);
+        releaseGlobalSkills();
+        await Promise.all([firstRefresh, secondRefresh]);
+
+        assert.deepEqual(hubCalls, [
+          { orgId: "org-1", token: "token-a" },
+          { orgId: "org-2", token: "token-b" },
+        ]);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-org-1"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-org-2"), true);
+      } finally {
+        globalSkillsRelease.current?.();
+        await firstRefresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
 test("skill inventory does not cache hub skills from an in-flight refresh after Den auth changes", async () => {
   await withDenAuthStorage(async ({ localStorage, sessionStorage }) => {
     await createRoot(async (dispose) => {
