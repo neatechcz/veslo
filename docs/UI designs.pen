@@ -1,5 +1,5 @@
 {
-  "version": "2.9",
+  "version": "2.11",
   "children": [
     {
       "type": "frame",
@@ -6451,6 +6451,3752 @@
                                   ]
                                 }
                               ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "jTIi3",
+      "x": 6920,
+      "y": 0,
+      "name": "Extension Registry Overview",
+      "width": 2200,
+      "height": 1500,
+      "fill": "#F6F8FB",
+      "cornerRadius": 20,
+      "stroke": {
+        "thickness": 1,
+        "fill": "#D9DEE8"
+      },
+      "layout": "vertical",
+      "gap": 28,
+      "padding": 40,
+      "children": [
+        {
+          "type": "frame",
+          "id": "W5CE3L",
+          "name": "Header",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 10,
+          "children": [
+            {
+              "type": "text",
+              "id": "qbppf",
+              "name": "overviewTitle",
+              "fill": "#111827",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Extension Registry + Organization Governance",
+              "lineHeight": 1.1,
+              "fontFamily": "Inter",
+              "fontSize": 40,
+              "fontWeight": "700"
+            },
+            {
+              "type": "text",
+              "id": "gTVXc",
+              "name": "overviewSub",
+              "fill": "#4B5563",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Platform-wide registry model for Skills, MCP servers, plugins and future extension types. Workspace is a target scope, not the menu boundary.",
+              "lineHeight": 1.35,
+              "fontFamily": "Inter",
+              "fontSize": 18,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "igu5t",
+          "name": "Scope Stack",
+          "width": "fill_container",
+          "height": 230,
+          "gap": 18,
+          "children": [
+            {
+              "type": "frame",
+              "id": "AKsgh",
+              "name": "Workspace scope",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#D7DCE5"
+              },
+              "layout": "vertical",
+              "gap": 10,
+              "padding": 20,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "KPfYc",
+                  "name": "wsK",
+                  "fill": "#2563EB",
+                  "content": "WORKSPACE",
+                  "fontFamily": "Inter",
+                  "fontSize": 12,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "wlVGR",
+                  "name": "wsT",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Installed for one workspace",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 22,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "PdCuz",
+                  "name": "wsB",
+                  "fill": "#4B5563",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Runtime target. Can pin, override or disable extension for this workspace only.",
+                  "lineHeight": 1.35,
+                  "fontFamily": "Inter",
+                  "fontSize": 15,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "SDV6I",
+              "name": "User scope",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#D7DCE5"
+              },
+              "layout": "vertical",
+              "gap": 10,
+              "padding": 20,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "U8W58",
+                  "name": "userK",
+                  "fill": "#059669",
+                  "content": "USER",
+                  "fontFamily": "Inter",
+                  "fontSize": 12,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "zLx4d",
+                  "name": "userT",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Available in all user workspaces",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 22,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "b7Df0w",
+                  "name": "userB",
+                  "fill": "#4B5563",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Private global defaults. Never becomes org or platform visible without explicit publish.",
+                  "lineHeight": 1.35,
+                  "fontFamily": "Inter",
+                  "fontSize": 15,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "a4v9en",
+              "name": "Org scope",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#EEF6FF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#A8C7F7"
+              },
+              "layout": "vertical",
+              "gap": 10,
+              "padding": 20,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "OFQIZ",
+                  "name": "orgK",
+                  "fill": "#1D4ED8",
+                  "content": "ORGANIZATION",
+                  "fontFamily": "Inter",
+                  "fontSize": 12,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "OtqXp",
+                  "name": "orgT",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Shared by org owner",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 22,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "QTeGa",
+                  "name": "orgB",
+                  "fill": "#374151",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Tenant catalog. Members consume approved releases. Owners approve org sharing and set defaults/blocks.",
+                  "lineHeight": 1.35,
+                  "fontFamily": "Inter",
+                  "fontSize": 15,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "C2NytP",
+              "name": "Platform scope",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#F5F0FF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#C7B5F7"
+              },
+              "layout": "vertical",
+              "gap": 10,
+              "padding": 20,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "XoQlC",
+                  "name": "platK",
+                  "fill": "#7C3AED",
+                  "content": "PLATFORM",
+                  "fontFamily": "Inter",
+                  "fontSize": 12,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "uZW1f",
+                  "name": "platT",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Available across Veslo",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 22,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "kgR7C",
+                  "name": "platB",
+                  "fill": "#4B5563",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Global marketplace. Only platform admins approve, publish, quarantine or revoke.",
+                  "lineHeight": 1.35,
+                  "fontFamily": "Inter",
+                  "fontSize": 15,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "T7HPr",
+          "name": "Promotion Flow",
+          "width": "fill_container",
+          "height": 360,
+          "fill": "#111827",
+          "cornerRadius": 18,
+          "layout": "vertical",
+          "gap": 18,
+          "padding": 24,
+          "children": [
+            {
+              "type": "text",
+              "id": "DrDXM",
+              "name": "flowTitleA",
+              "fill": "#FFFFFF",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Promotion and approval flow",
+              "fontFamily": "Inter",
+              "fontSize": 24,
+              "fontWeight": "700"
+            },
+            {
+              "type": "frame",
+              "id": "aX2Ng",
+              "name": "Flow Steps",
+              "width": "fill_container",
+              "height": "fill_container",
+              "gap": 14,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "d5aWG",
+                  "name": "st1",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 12,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "padding": 16,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "pmEE9",
+                      "name": "st1t",
+                      "fill": "#111827",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "1. Draft",
+                      "fontFamily": "Inter",
+                      "fontSize": 18,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "e4Z6E2",
+                      "name": "st1b",
+                      "fill": "#4B5563",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Workspace or user asset",
+                      "lineHeight": 1.25,
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ky1Ke",
+                  "name": "st2",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 12,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "padding": 16,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "PubnV",
+                      "name": "st2t",
+                      "fill": "#111827",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "2. Package",
+                      "fontFamily": "Inter",
+                      "fontSize": 18,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "ZQes3",
+                      "name": "st2b",
+                      "fill": "#4B5563",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Manifest, version, permissions",
+                      "lineHeight": 1.25,
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "t66Ude",
+                  "name": "st3",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "#EFF6FF",
+                  "cornerRadius": 12,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "padding": 16,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "X2p3O",
+                      "name": "st3t",
+                      "fill": "#111827",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "3. Submit to org",
+                      "fontFamily": "Inter",
+                      "fontSize": 18,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "IEOwx",
+                      "name": "st3b",
+                      "fill": "#374151",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Member proposes; owner can publish",
+                      "lineHeight": 1.25,
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "UJuwY",
+                  "name": "st4",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "#DBEAFE",
+                  "cornerRadius": 12,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "padding": 16,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "PPcpQ",
+                      "name": "st4t",
+                      "fill": "#111827",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "4. Owner approval",
+                      "fontFamily": "Inter",
+                      "fontSize": 18,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "DIByF",
+                      "name": "st4b",
+                      "fill": "#374151",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Org catalog and policies",
+                      "lineHeight": 1.25,
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "bBJpj",
+                  "name": "st5",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "#F5F3FF",
+                  "cornerRadius": 12,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "padding": 16,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "uxXDf",
+                      "name": "st5t",
+                      "fill": "#111827",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "5. Request platform",
+                      "fontFamily": "Inter",
+                      "fontSize": 18,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "nt3Ng",
+                      "name": "st5b",
+                      "fill": "#4B5563",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Owner submits candidate",
+                      "lineHeight": 1.25,
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "RIYt1",
+                  "name": "st6",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "#EDE9FE",
+                  "cornerRadius": 12,
+                  "layout": "vertical",
+                  "gap": 8,
+                  "padding": 16,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "WrtHU",
+                      "name": "st6t",
+                      "fill": "#111827",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "6. Admin release",
+                      "fontFamily": "Inter",
+                      "fontSize": 18,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "WBCpF",
+                      "name": "st6b",
+                      "fill": "#4B5563",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Approve, revoke, audit",
+                      "lineHeight": 1.25,
+                      "fontFamily": "Inter",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "IwQUI",
+          "name": "Model Row",
+          "width": "fill_container",
+          "height": "fill_container",
+          "gap": 18,
+          "children": [
+            {
+              "type": "frame",
+              "id": "fjdqy",
+              "name": "Registry data model",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#D7DCE5"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "f0KbZ",
+                  "name": "modelTitle",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Registry data model",
+                  "fontFamily": "Inter",
+                  "fontSize": 24,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "UOgls",
+                  "name": "modelText",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "extension_package -> extension_release -> extension_distribution -> extension_installation. Releases are immutable; distributions say who can see/install/use them.",
+                  "lineHeight": 1.4,
+                  "fontFamily": "Inter",
+                  "fontSize": 16,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "T0arH",
+              "name": "Organization model",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#D7DCE5"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "SXuas",
+                  "name": "orgTitleB",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Organization model",
+                  "fontFamily": "Inter",
+                  "fontSize": 24,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "PhG1l",
+                  "name": "orgTextB",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Keep roles simple: member creates and submits; owner approves org sharing; platform_admin handles platform-wide approval and emergency overrides.",
+                  "lineHeight": 1.4,
+                  "fontFamily": "Inter",
+                  "fontSize": 16,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "r5hENA",
+              "name": "Pitfalls index",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFF7ED",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#FDBA74"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "V4GyEF",
+                  "name": "riskTitleB",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Pitfalls index",
+                  "fontFamily": "Inter",
+                  "fontSize": 24,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "k4mbWS",
+                  "name": "riskTextB",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Deep dive board expands: secrets, local runtime assumptions, version drift, shadowing, revocation, reload timing, org ambiguity and audit gaps.",
+                  "lineHeight": 1.4,
+                  "fontFamily": "Inter",
+                  "fontSize": 16,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "qQk3r",
+      "x": 6920,
+      "y": 1660,
+      "name": "Extension Registry Pitfalls Deep Dive",
+      "width": 3300,
+      "height": 2500,
+      "fill": "#FFFDF8",
+      "cornerRadius": 20,
+      "stroke": {
+        "thickness": 1,
+        "fill": "#F2D9B5"
+      },
+      "layout": "vertical",
+      "gap": 28,
+      "padding": 44,
+      "children": [
+        {
+          "type": "frame",
+          "id": "y5cxwc",
+          "name": "Header",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 10,
+          "children": [
+            {
+              "type": "text",
+              "id": "n9pz8F",
+              "name": "pitTitle",
+              "fill": "#111827",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Pitfalls Deep Dive",
+              "lineHeight": 1.1,
+              "fontFamily": "Inter",
+              "fontSize": 42,
+              "fontWeight": "700"
+            },
+            {
+              "type": "text",
+              "id": "b0TuW",
+              "name": "pitSub",
+              "fill": "#4B5563",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Failure modes that must be designed into the registry, org governance, runtime installation and UI before implementation.",
+              "lineHeight": 1.35,
+              "fontFamily": "Inter",
+              "fontSize": 18,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "r0Zpq",
+          "name": "Pitfalls Row 1",
+          "width": "fill_container",
+          "height": 420,
+          "gap": 20,
+          "children": [
+            {
+              "type": "frame",
+              "id": "H4T4Z",
+              "name": "Secrets and OAuth leakage",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#F3C99D"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "P5bVu",
+                  "name": "secTitle",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "1. Secrets and OAuth leakage",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 21,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "DYbML",
+                  "name": "secBody",
+                  "fill": "#374151",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Problem: MCP catalog entries can accidentally include OAuth client secrets, bearer tokens, tenant-specific URLs or local auth-store paths. A platform item copied from one org could leak credentials to every org.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "bxBIY",
+                  "name": "secControls",
+                  "fill": "#92400E",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Controls: manifest stores only required secret names and auth method; tokens live in OS keychain or Den secret store; publish review redacts config; remote MCP OAuth registrations are per org unless explicitly platform-owned.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "pgWkw",
+              "name": "Local runtime assumptions",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#F3C99D"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "gWk2n",
+                  "name": "locTitle",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "2. Local runtime assumptions",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 21,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "PnmMi",
+                  "name": "locBody",
+                  "fill": "#374151",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Problem: local MCP commands and plugins may depend on macOS paths, shell profile PATH, installed binaries, private folders or architecture-specific packages. They work for the author and fail everywhere else.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "bjqAX",
+                  "name": "locControls",
+                  "fill": "#92400E",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Controls: declare runtime requirements, supported OS, binary probes and setup commands; distinguish remote MCP, local MCP and hosted service; show installability per device/workspace before enabling.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "J8HdYI",
+              "name": "Version drift and pinning",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#F3C99D"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "zq1Zp",
+                  "name": "verTitle",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "3. Version drift and pinning",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 21,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "seZsW",
+                  "name": "verBody",
+                  "fill": "#374151",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Problem: platform publishes v3, org approves v2, user installed v1, workspace pins a fork. Without explicit precedence, the UI cannot explain what will run.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "rNCR9",
+                  "name": "verControls",
+                  "fill": "#92400E",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Controls: immutable releases, semantic version metadata, effective-state resolver, visible pin/override badges, migration notes, and update channels: manual, recommended, required, blocked.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "wL89S",
+          "name": "Pitfalls Row 2",
+          "width": "fill_container",
+          "height": 420,
+          "gap": 20,
+          "children": [
+            {
+              "type": "frame",
+              "id": "qq4m7",
+              "name": "Name shadowing and precedence",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#F3C99D"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "O1wYcb",
+                  "name": "shaTitle",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "4. Name shadowing and precedence",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 21,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "k9eHb",
+                  "name": "shaBody",
+                  "fill": "#374151",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Problem: same extension name exists in workspace, user, org and platform scopes. A malicious local item can impersonate an approved org/platform package.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "w7EWFo",
+                  "name": "shaControls",
+                  "fill": "#92400E",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Controls: stable package IDs separate from display names; show source and trust tier; resolver never matches by name alone; workspace override is explicit and auditable; collision warnings are blocking for platform/org names.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "omklN",
+              "name": "Revocation and stale installs",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#F3C99D"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "knqUR",
+                  "name": "revTitle",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "5. Revocation and stale installs",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 21,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "YvDqh",
+                  "name": "revBody",
+                  "fill": "#374151",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Problem: removed or compromised releases can remain copied into old workspaces. A user may keep running a package that the org or platform has revoked.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "REPCN",
+                  "name": "revControls",
+                  "fill": "#92400E",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Controls: global deny/quarantine list, install records checked at runtime, explicit disabled reason, stale local file detection, cleanup action, emergency revoke path and offline grace policy.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "V3mXyJ",
+              "name": "Reload timing",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#F3C99D"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "oTcS8",
+                  "name": "relTitle",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "6. Reload timing and active sessions",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 21,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "tpGor",
+                  "name": "relBody",
+                  "fill": "#374151",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Problem: Skills, plugins and MCP are startup-time runtime inputs. Changing them while a session runs can interrupt work or make UI state disagree with OpenCode state.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "CkWa6",
+                  "name": "relControls",
+                  "fill": "#92400E",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Controls: separate save/install from activate; per-workspace reload queue; idle-only auto-reload; resume-after-reload rules; visible pending activation state; never silently reload active work.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "C1zi2P",
+          "name": "Pitfalls Row 3",
+          "width": "fill_container",
+          "height": 420,
+          "gap": 20,
+          "children": [
+            {
+              "type": "frame",
+              "id": "Uaf2o",
+              "name": "Audit and accountability",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#F3C99D"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "xtxny",
+                  "name": "audTitle",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "7. Audit and accountability gaps",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 21,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "zswHv",
+                  "name": "audBody",
+                  "fill": "#374151",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Problem: when an extension reaches org or platform scope, it affects many users. If approval, update, revoke and install actions are not attributed, incidents cannot be reconstructed.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "TzhqN",
+                  "name": "audControls",
+                  "fill": "#92400E",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Controls: audit every publish request, review decision, release, install, enable, disable, pin, override and revoke. Keep actor, scope, org, release hash, reason and before/after diff.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "gvf7V",
+              "name": "Org identity ambiguity",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#F3C99D"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "AOUzq",
+                  "name": "orgAmbTitle",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "8. Active org ambiguity",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 21,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "FzXy5",
+                  "name": "orgAmbBody",
+                  "fill": "#374151",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Problem: users can belong to several orgs, while local workspaces are on one device. Catalog visibility and sharing target can be wrong if active org is only an implicit UI choice.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "p6meZ3",
+                  "name": "orgAmbControls",
+                  "fill": "#92400E",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Controls: every cloud catalog call carries explicit org ID; publishing modals show target org; workspace can remember last org association; personal org is clearly labeled and not treated as company org.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Ozq11",
+              "name": "Effective policy complexity",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#F3C99D"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "kaVji",
+                  "name": "polTitle",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "9. Effective policy complexity",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 21,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "OZclH",
+                  "name": "polBody",
+                  "fill": "#374151",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Problem: platform may require/block, org may default/block, user may disable, workspace may pin. Without one resolver, each page will compute different truth.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "oBp10",
+                  "name": "polControls",
+                  "fill": "#92400E",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Controls: central effective-state endpoint returns available, installed, enabled, blocked, required, updateAvailable and reason chain. UI renders the reason chain instead of re-deriving policy.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "gVU3k",
+          "name": "Pitfalls Row 4",
+          "width": "fill_container",
+          "height": 420,
+          "gap": 20,
+          "children": [
+            {
+              "type": "frame",
+              "id": "YiR4y",
+              "name": "Skill prompt hazards",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#F3C99D"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "kfLBy",
+                  "name": "skillTitle",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "10. Skill prompt hazards",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 21,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "d1gQ8",
+                  "name": "skillBody",
+                  "fill": "#374151",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Problem: a skill is prompt/control text. It can smuggle hidden instructions, disable expected behavior, over-broaden file access or teach unsafe workflows without looking like code.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "VbH6w",
+                  "name": "skillControls",
+                  "fill": "#92400E",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Controls: review rendered skill content, frontmatter, aliases, user-invocable flags and paths. Show what triggers it, what it asks the agent to do and whether it changes model/tool behavior.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "bDJre",
+              "name": "MCP trust boundary",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#F3C99D"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "JgJz5",
+                  "name": "mcpTitle",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "11. MCP trust boundary",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 21,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "BJQmX",
+                  "name": "mcpBody",
+                  "fill": "#374151",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Problem: remote MCPs expose third-party capabilities; local MCPs execute commands. OAuth consent, tool list, network target and local command surface are all security boundaries.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "xVpVJ",
+                  "name": "mcpControls",
+                  "fill": "#92400E",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Controls: validate URLs, separate remote/local install flows, show tool inventory, OAuth owner, scopes and callback type. Local MCP commands require device readiness checks and explicit activation.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "s8S89",
+              "name": "Plugin code execution",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#F3C99D"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "LXnQK",
+                  "name": "plugTitle",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "12. Plugin code execution",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 21,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "ggFAG",
+                  "name": "plugBody",
+                  "fill": "#374151",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Problem: plugins are executable code and can add tools. A platform plugin is much higher risk than a skill because review must consider code, dependencies and runtime permissions.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "KxLub",
+                  "name": "plugControls",
+                  "fill": "#92400E",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Controls: package signing, source URL, dependency lock, static checks, permission manifest, sandbox expectations, update review and emergency quarantine. Plugin review is never only metadata review.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "Mg6vY",
+          "name": "Pitfalls Row 5",
+          "width": "fill_container",
+          "height": 420,
+          "gap": 20,
+          "children": [
+            {
+              "type": "frame",
+              "id": "m3OqAy",
+              "name": "Offline and cache behavior",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#F3C99D"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "Ud4yb",
+                  "name": "offTitle",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "13. Offline and cache behavior",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 21,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "iFYoP",
+                  "name": "offBody",
+                  "fill": "#374151",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Problem: Veslo is local-first. Users can be offline while platform/org policy changed. A cached catalog may claim an extension is allowed when the cloud has revoked it.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "vDPyo",
+                  "name": "offControls",
+                  "fill": "#92400E",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Controls: cache TTL, last-policy-check timestamp, offline grace categories, mandatory online check for new install, and local denylist snapshot synced with the desktop runtime.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "g9vQGW",
+              "name": "User meaning and labels",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#F3C99D"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "X6KjA1",
+                  "name": "uxTitle",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "14. User meaning and labels",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 21,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "JLqcW",
+                  "name": "uxBody",
+                  "fill": "#374151",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Problem: install, enable, activate, share, publish, approve and pin are different actions. If the UI compresses them into one Add button, users will misunderstand scope and blast radius.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "w2PHrz",
+                  "name": "uxControls",
+                  "fill": "#92400E",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Controls: action labels include target scope; detail page shows effective state and next required step; publishing flows are separate from local installation; dangerous scope changes require confirmation.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "LkzU9",
+              "name": "Review quality gates",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 14,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#F3C99D"
+              },
+              "layout": "vertical",
+              "gap": 12,
+              "padding": 22,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "Mi0GR",
+                  "name": "revqTitle",
+                  "fill": "#111827",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "15. Review quality gates",
+                  "lineHeight": 1.15,
+                  "fontFamily": "Inter",
+                  "fontSize": 21,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "qOWjB",
+                  "name": "revqBody",
+                  "fill": "#374151",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Problem: platform-wide approval cannot be a binary approve/reject button. Different extension types need different evidence before trust is reasonable.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "t8YNp",
+                  "name": "revqControls",
+                  "fill": "#92400E",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Controls: required manifest, screenshots/docs, permissions, runtime probes, source provenance, maintainer identity, support owner, changelog and rollback plan before platform release.",
+                  "lineHeight": 1.38,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "PJ5Wo",
+      "x": 10400,
+      "y": 0,
+      "name": "Extension Registry Product Screens",
+      "width": 4600,
+      "height": 2600,
+      "fill": "#F5F7FA",
+      "cornerRadius": 20,
+      "stroke": {
+        "thickness": 1,
+        "fill": "#D9DEE8"
+      },
+      "layout": "vertical",
+      "gap": 28,
+      "padding": 44,
+      "children": [
+        {
+          "type": "frame",
+          "id": "ndnGH",
+          "name": "Header",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 10,
+          "children": [
+            {
+              "type": "text",
+              "id": "YGDFX",
+              "name": "screensTitle",
+              "fill": "#111827",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "In-system UI Proposal",
+              "lineHeight": 1.1,
+              "fontFamily": "Inter",
+              "fontSize": 42,
+              "fontWeight": "700"
+            },
+            {
+              "type": "text",
+              "id": "qpeAk",
+              "name": "screensSub",
+              "fill": "#4B5563",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "No analysis inside the app. The product screens show effective state, scope, review queues and safe next actions.",
+              "lineHeight": 1.35,
+              "fontFamily": "Inter",
+              "fontSize": 18,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "j3K6Z3",
+          "name": "Screens Row 1",
+          "width": "fill_container",
+          "height": 1080,
+          "gap": 28,
+          "children": [
+            {
+              "type": "frame",
+              "id": "YwAHd",
+              "name": "Screen: Registry catalog",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 18,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#CBD5E1"
+              },
+              "layout": "vertical",
+              "gap": 18,
+              "padding": 24,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "DWOHi",
+                  "name": "Catalog top",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "x8k4k",
+                      "name": "catTitle",
+                      "fill": "#111827",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Skills & Extensions",
+                      "fontFamily": "Inter",
+                      "fontSize": 30,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "rVdrH",
+                      "name": "catSubtitle",
+                      "fill": "#64748B",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Manage what is available, installed and active across workspace, user, organization and platform.",
+                      "lineHeight": 1.35,
+                      "fontFamily": "Inter",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "mRLuK",
+                  "name": "Catalog tabs",
+                  "width": "fill_container",
+                  "height": 48,
+                  "fill": "#EEF2F7",
+                  "cornerRadius": 12,
+                  "gap": 8,
+                  "padding": 4,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "tbZ0w",
+                      "name": "tabAll",
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "#FFFFFF",
+                      "cornerRadius": 9,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "zAI1q",
+                          "name": "tabAllText",
+                          "fill": "#111827",
+                          "content": "All",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "700"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "cdOeg",
+                      "name": "tabSkills",
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "cornerRadius": 9,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "I9a47d",
+                          "name": "tabSkillsText",
+                          "fill": "#64748B",
+                          "content": "Skills",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "IAHEj",
+                      "name": "tabMcp",
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "cornerRadius": 9,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "j7NUQ",
+                          "name": "tabMcpText",
+                          "fill": "#64748B",
+                          "content": "MCP",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ed0t7",
+                      "name": "tabPlugins",
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "cornerRadius": 9,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "BnQ64",
+                          "name": "tabPluginsText",
+                          "fill": "#64748B",
+                          "content": "Plugins",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "N4Hrbm",
+                  "name": "Catalog filters",
+                  "width": "fill_container",
+                  "height": 44,
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "b09cU",
+                      "name": "searchBox",
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "#F8FAFC",
+                      "cornerRadius": 10,
+                      "stroke": {
+                        "thickness": 1,
+                        "fill": "#D6DEE9"
+                      },
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        14
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "jypYG",
+                          "name": "searchText",
+                          "fill": "#94A3B8",
+                          "content": "Search skills, MCP servers, plugins...",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Dumas",
+                      "name": "scopeFilter",
+                      "width": 220,
+                      "height": "fill_container",
+                      "fill": "#F8FAFC",
+                      "cornerRadius": 10,
+                      "stroke": {
+                        "thickness": 1,
+                        "fill": "#D6DEE9"
+                      },
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "xpKsl",
+                          "name": "scopeFilterText",
+                          "fill": "#334155",
+                          "content": "Scope: all",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "HqMeD",
+                      "name": "stateFilter",
+                      "width": 220,
+                      "height": "fill_container",
+                      "fill": "#F8FAFC",
+                      "cornerRadius": 10,
+                      "stroke": {
+                        "thickness": 1,
+                        "fill": "#D6DEE9"
+                      },
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "P4mSR",
+                          "name": "stateFilterText",
+                          "fill": "#334155",
+                          "content": "State: all",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "DTAnx",
+                  "name": "Catalog list",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "layout": "vertical",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "roVKU",
+                      "name": "Catalog item approved skill",
+                      "width": "fill_container",
+                      "height": 128,
+                      "fill": "#F8FAFC",
+                      "cornerRadius": 12,
+                      "stroke": {
+                        "thickness": 1,
+                        "fill": "#D6DEE9"
+                      },
+                      "gap": 18,
+                      "padding": 18,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "r4jIh",
+                          "name": "item1Icon",
+                          "width": 54,
+                          "height": 54,
+                          "fill": "#DBEAFE",
+                          "cornerRadius": 12,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "D05Dxr",
+                              "name": "item1IconText",
+                              "fill": "#1D4ED8",
+                              "content": "S",
+                              "fontFamily": "Inter",
+                              "fontSize": 22,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "JDhfZ",
+                          "name": "item1Text",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "layout": "vertical",
+                          "gap": 6,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "VQWil",
+                              "name": "item1Title",
+                              "fill": "#111827",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Invoice Reconciliation Skill",
+                              "fontFamily": "Inter",
+                              "fontSize": 18,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "S3Kxb",
+                              "name": "item1Meta",
+                              "fill": "#64748B",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Skill · Org approved · v2.1 · active in 4 workspaces",
+                              "lineHeight": 1.25,
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "F1yUJ",
+                              "name": "item1Reason",
+                              "fill": "#475569",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Effective state: enabled by organization default; workspace can disable unless marked required.",
+                              "lineHeight": 1.25,
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ODncL",
+                          "name": "item1Action",
+                          "width": 190,
+                          "height": "fill_container",
+                          "layout": "vertical",
+                          "gap": 8,
+                          "justifyContent": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "Q95kW",
+                              "name": "item1Badge",
+                              "width": "fill_container",
+                              "height": 30,
+                              "fill": "#DCFCE7",
+                              "cornerRadius": 8,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Mg2GY",
+                                  "name": "item1BadgeText",
+                                  "fill": "#166534",
+                                  "content": "Enabled",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 13,
+                                  "fontWeight": "700"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "RhpLA",
+                              "name": "item1Button",
+                              "width": "fill_container",
+                              "height": 38,
+                              "fill": "#FFFFFF",
+                              "cornerRadius": 9,
+                              "stroke": {
+                                "thickness": 1,
+                                "fill": "#CBD5E1"
+                              },
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Ly8Sp",
+                                  "name": "item1ButtonText",
+                                  "fill": "#334155",
+                                  "content": "Open detail",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 13,
+                                  "fontWeight": "700"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "i10VcF",
+                      "name": "Catalog item pending MCP",
+                      "width": "fill_container",
+                      "height": 128,
+                      "fill": "#FFFBEB",
+                      "cornerRadius": 12,
+                      "stroke": {
+                        "thickness": 1,
+                        "fill": "#FCD34D"
+                      },
+                      "gap": 18,
+                      "padding": 18,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "VNj6D",
+                          "name": "item2Icon",
+                          "width": 54,
+                          "height": 54,
+                          "fill": "#FEF3C7",
+                          "cornerRadius": 12,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "fhIYS",
+                              "name": "item2IconText",
+                              "fill": "#92400E",
+                              "content": "M",
+                              "fontFamily": "Inter",
+                              "fontSize": 22,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "R7Ukhn",
+                          "name": "item2Text",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "layout": "vertical",
+                          "gap": 6,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "R1BIE",
+                              "name": "item2Title",
+                              "fill": "#111827",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Acme Finance MCP",
+                              "fontFamily": "Inter",
+                              "fontSize": 18,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "YQ1Q1",
+                              "name": "item2Meta",
+                              "fill": "#92400E",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "MCP · submitted to org · OAuth remote · waiting for owner",
+                              "lineHeight": 1.25,
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "woHTM",
+                              "name": "item2Reason",
+                              "fill": "#475569",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Cannot be installed org-wide until owner approves OAuth scopes and tenant URL.",
+                              "lineHeight": 1.25,
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pk63U",
+                          "name": "item2Action",
+                          "width": 190,
+                          "height": "fill_container",
+                          "layout": "vertical",
+                          "gap": 8,
+                          "justifyContent": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "BwWR5",
+                              "name": "item2Badge",
+                              "width": "fill_container",
+                              "height": 30,
+                              "fill": "#FEF3C7",
+                              "cornerRadius": 8,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Fd5dJ",
+                                  "name": "item2BadgeText",
+                                  "fill": "#92400E",
+                                  "content": "Pending review",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 13,
+                                  "fontWeight": "700"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "R4h2b",
+                              "name": "item2Button",
+                              "width": "fill_container",
+                              "height": 38,
+                              "fill": "#FFFFFF",
+                              "cornerRadius": 9,
+                              "stroke": {
+                                "thickness": 1,
+                                "fill": "#FCD34D"
+                              },
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "hXB44",
+                                  "name": "item2ButtonText",
+                                  "fill": "#92400E",
+                                  "content": "Review",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 13,
+                                  "fontWeight": "700"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "PoTra",
+                      "name": "Catalog item blocked plugin",
+                      "width": "fill_container",
+                      "height": 128,
+                      "fill": "#FEF2F2",
+                      "cornerRadius": 12,
+                      "stroke": {
+                        "thickness": 1,
+                        "fill": "#FCA5A5"
+                      },
+                      "gap": 18,
+                      "padding": 18,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "hy4y9",
+                          "name": "item3Icon",
+                          "width": 54,
+                          "height": 54,
+                          "fill": "#FEE2E2",
+                          "cornerRadius": 12,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "M4TwH",
+                              "name": "item3IconText",
+                              "fill": "#991B1B",
+                              "content": "P",
+                              "fontFamily": "Inter",
+                              "fontSize": 22,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "s6F4Yw",
+                          "name": "item3Text",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "layout": "vertical",
+                          "gap": 6,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "gnflY",
+                              "name": "item3Title",
+                              "fill": "#111827",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Legacy Browser Plugin",
+                              "fontFamily": "Inter",
+                              "fontSize": 18,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ufzXm",
+                              "name": "item3Meta",
+                              "fill": "#991B1B",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Plugin · platform revoked · installed in 2 old workspaces",
+                              "lineHeight": 1.25,
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "gfrhO",
+                              "name": "item3Reason",
+                              "fill": "#475569",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Blocked by platform security policy. Existing local copies require cleanup before activation.",
+                              "lineHeight": 1.25,
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "t4xMB",
+                          "name": "item3Action",
+                          "width": 190,
+                          "height": "fill_container",
+                          "layout": "vertical",
+                          "gap": 8,
+                          "justifyContent": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "RXKKO",
+                              "name": "item3Badge",
+                              "width": "fill_container",
+                              "height": 30,
+                              "fill": "#FEE2E2",
+                              "cornerRadius": 8,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "AHOMr",
+                                  "name": "item3BadgeText",
+                                  "fill": "#991B1B",
+                                  "content": "Blocked",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 13,
+                                  "fontWeight": "700"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "Y6Q8YW",
+                              "name": "item3Button",
+                              "width": "fill_container",
+                              "height": 38,
+                              "fill": "#FFFFFF",
+                              "cornerRadius": 9,
+                              "stroke": {
+                                "thickness": 1,
+                                "fill": "#FCA5A5"
+                              },
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Vzd5T",
+                                  "name": "item3ButtonText",
+                                  "fill": "#991B1B",
+                                  "content": "Clean up",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 13,
+                                  "fontWeight": "700"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "KCfIy",
+              "name": "Screen: Extension detail",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 18,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#CBD5E1"
+              },
+              "layout": "vertical",
+              "gap": 18,
+              "padding": 24,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "ELh8E",
+                  "name": "Detail header",
+                  "width": "fill_container",
+                  "height": 120,
+                  "gap": 18,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "C17P5",
+                      "name": "detailIcon",
+                      "width": 72,
+                      "height": 72,
+                      "fill": "#DBEAFE",
+                      "cornerRadius": 16,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "QwbsJ",
+                          "name": "detailIconText",
+                          "fill": "#1D4ED8",
+                          "content": "S",
+                          "fontFamily": "Inter",
+                          "fontSize": 30,
+                          "fontWeight": "700"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "swXf7",
+                      "name": "detailTitleBox",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "y1SMVJ",
+                          "name": "detailTitle",
+                          "fill": "#111827",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Invoice Reconciliation Skill",
+                          "fontFamily": "Inter",
+                          "fontSize": 30,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "TrEvC",
+                          "name": "detailMeta",
+                          "fill": "#64748B",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "skill · org.neatech.invoice-reconciliation · v2.1 · approved by owner",
+                          "lineHeight": 1.35,
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "w0Ey7B",
+                      "name": "detailPrimary",
+                      "width": 190,
+                      "height": 44,
+                      "fill": "#111827",
+                      "cornerRadius": 10,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ev7Rm",
+                          "name": "detailPrimaryText",
+                          "fill": "#FFFFFF",
+                          "content": "Manage install",
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "700"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "KKywl",
+                  "name": "Detail body",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "gap": 18,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "yiyVd",
+                      "name": "detailMain",
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "layout": "vertical",
+                      "gap": 16,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ncEcI",
+                          "name": "summaryCard",
+                          "width": "fill_container",
+                          "height": 160,
+                          "fill": "#F8FAFC",
+                          "cornerRadius": 12,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#D6DEE9"
+                          },
+                          "layout": "vertical",
+                          "gap": 8,
+                          "padding": 18,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "cw21m",
+                              "name": "summaryTitle",
+                              "fill": "#111827",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "What it does",
+                              "fontFamily": "Inter",
+                              "fontSize": 18,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "Q0iYg",
+                              "name": "summaryText",
+                              "fill": "#475569",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Guides the agent through comparing invoice exports, finding unmatched payments and preparing a reconciliation report. Uses no external tools by default.",
+                              "lineHeight": 1.4,
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "R6TFeV",
+                          "name": "stateCard",
+                          "width": "fill_container",
+                          "height": 250,
+                          "fill": "#F0FDF4",
+                          "cornerRadius": 12,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#86EFAC"
+                          },
+                          "layout": "vertical",
+                          "gap": 10,
+                          "padding": 18,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "lWL2A",
+                              "name": "stateTitle",
+                              "fill": "#14532D",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Effective state for current workspace",
+                              "fontFamily": "Inter",
+                              "fontSize": 18,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "f3MzG",
+                              "name": "stateChain",
+                              "fill": "#14532D",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Enabled because:\n1. Platform release v2.1 is approved\n2. Organization default enables it for Finance workspaces\n3. User has not disabled it\n4. Workspace has no override",
+                              "lineHeight": 1.45,
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "SJvje",
+                              "name": "stateActions",
+                              "width": "fill_container",
+                              "height": 44,
+                              "gap": 10,
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "rZ5pX",
+                                  "name": "disableButton",
+                                  "width": "fill_container",
+                                  "height": "fill_container",
+                                  "fill": "#FFFFFF",
+                                  "cornerRadius": 9,
+                                  "stroke": {
+                                    "thickness": 1,
+                                    "fill": "#86EFAC"
+                                  },
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "WLnCv",
+                                      "name": "disableText",
+                                      "fill": "#166534",
+                                      "content": "Disable in this workspace",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "700"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "QgMJd",
+                                  "name": "pinButton",
+                                  "width": "fill_container",
+                                  "height": "fill_container",
+                                  "fill": "#FFFFFF",
+                                  "cornerRadius": 9,
+                                  "stroke": {
+                                    "thickness": 1,
+                                    "fill": "#86EFAC"
+                                  },
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "JfwcH",
+                                      "name": "pinText",
+                                      "fill": "#166534",
+                                      "content": "Pin version",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "700"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "a00jTZ",
+                          "name": "manifestCard",
+                          "width": "fill_container",
+                          "height": 260,
+                          "fill": "#F8FAFC",
+                          "cornerRadius": 12,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#D6DEE9"
+                          },
+                          "layout": "vertical",
+                          "gap": 10,
+                          "padding": 18,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "S1Nju",
+                              "name": "manifestTitle",
+                              "fill": "#111827",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Manifest review",
+                              "fontFamily": "Inter",
+                              "fontSize": 18,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "LLl5F",
+                              "name": "manifestText",
+                              "fill": "#475569",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Triggers: /invoice-reconcile, finance csv, bank export\nPaths requested: current workspace only\nSecrets: none\nRuntime: skill prompt only\nLast review: owner@org on 2026-05-03",
+                              "lineHeight": 1.45,
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ELsFn",
+                      "name": "detailSide",
+                      "width": 360,
+                      "height": "fill_container",
+                      "layout": "vertical",
+                      "gap": 16,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "I3QrY",
+                          "name": "sideState",
+                          "width": "fill_container",
+                          "height": 150,
+                          "fill": "#EEF6FF",
+                          "cornerRadius": 12,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#BFDBFE"
+                          },
+                          "layout": "vertical",
+                          "gap": 8,
+                          "padding": 16,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "nM9p6",
+                              "name": "sideStateTitle",
+                              "fill": "#1E3A8A",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Scope",
+                              "fontFamily": "Inter",
+                              "fontSize": 16,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "XcoKB",
+                              "name": "sideStateText",
+                              "fill": "#1E3A8A",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Visible to: Neatech org\nInstalled: workspace + user\nPlatform: not requested",
+                              "lineHeight": 1.4,
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ik4J6",
+                          "name": "sideAudit",
+                          "width": "fill_container",
+                          "height": 220,
+                          "fill": "#F8FAFC",
+                          "cornerRadius": 12,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#D6DEE9"
+                          },
+                          "layout": "vertical",
+                          "gap": 8,
+                          "padding": 16,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "DJkCM",
+                              "name": "sideAuditTitle",
+                              "fill": "#111827",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Recent audit",
+                              "fontFamily": "Inter",
+                              "fontSize": 16,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "kUZIN",
+                              "name": "sideAuditText",
+                              "fill": "#475569",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "May 3 Owner approved v2.1\nMay 3 Member submitted update\nApr 29 Workspace pinned v2.0\nApr 26 Initial org release",
+                              "lineHeight": 1.45,
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "Ne5Oy",
+          "name": "Screens Row 2",
+          "width": "fill_container",
+          "height": 1080,
+          "gap": 28,
+          "children": [
+            {
+              "type": "frame",
+              "id": "gnyFx",
+              "name": "Screen: Org approval",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 18,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#CBD5E1"
+              },
+              "layout": "vertical",
+              "gap": 18,
+              "padding": 24,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "i5qr3W",
+                  "name": "orgHeader",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "GqDW7",
+                      "name": "orgScreenTitle",
+                      "fill": "#111827",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Organization Review",
+                      "fontFamily": "Inter",
+                      "fontSize": 30,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "MWGeE",
+                      "name": "orgScreenSub",
+                      "fill": "#64748B",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Owner queue for submissions that can become available to the whole organization.",
+                      "lineHeight": 1.35,
+                      "fontFamily": "Inter",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "HICVs",
+                  "name": "orgStats",
+                  "width": "fill_container",
+                  "height": 90,
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "l6iS8",
+                      "name": "orgStat1",
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "#EFF6FF",
+                      "cornerRadius": 12,
+                      "layout": "vertical",
+                      "gap": 4,
+                      "padding": 14,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "X6qmb",
+                          "name": "orgStat1Num",
+                          "fill": "#1D4ED8",
+                          "content": "3",
+                          "fontFamily": "Inter",
+                          "fontSize": 28,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "J8SHt",
+                          "name": "orgStat1Lab",
+                          "fill": "#1E3A8A",
+                          "content": "pending review",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "M9cDn",
+                      "name": "orgStat2",
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "#F0FDF4",
+                      "cornerRadius": 12,
+                      "layout": "vertical",
+                      "gap": 4,
+                      "padding": 14,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "gJ83h",
+                          "name": "orgStat2Num",
+                          "fill": "#166534",
+                          "content": "18",
+                          "fontFamily": "Inter",
+                          "fontSize": 28,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "cD7zm",
+                          "name": "orgStat2Lab",
+                          "fill": "#166534",
+                          "content": "org approved",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "w2qyL1",
+                  "name": "orgQueue",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "layout": "vertical",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "fvGGH",
+                      "name": "reviewItem",
+                      "width": "fill_container",
+                      "height": 180,
+                      "fill": "#FFFBEB",
+                      "cornerRadius": 12,
+                      "stroke": {
+                        "thickness": 1,
+                        "fill": "#FCD34D"
+                      },
+                      "gap": 18,
+                      "padding": 18,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "sycWp",
+                          "name": "reviewMain",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "layout": "vertical",
+                          "gap": 8,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "CiMmb",
+                              "name": "reviewTitle",
+                              "fill": "#111827",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Acme Finance MCP",
+                              "fontFamily": "Inter",
+                              "fontSize": 20,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "Rbgdt",
+                              "name": "reviewMeta",
+                              "fill": "#92400E",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Submitted by hana@neatech.cz · remote OAuth MCP · requested org availability",
+                              "lineHeight": 1.3,
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "text",
+                              "id": "J0PO0",
+                              "name": "reviewChecks",
+                              "fill": "#475569",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Checks needed: OAuth scopes, tenant URL, tool inventory, support owner, rollback plan.",
+                              "lineHeight": 1.35,
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pdwYS",
+                          "name": "reviewActions",
+                          "width": 220,
+                          "height": "fill_container",
+                          "layout": "vertical",
+                          "gap": 10,
+                          "justifyContent": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "Cj7pi",
+                              "name": "approveBtn",
+                              "width": "fill_container",
+                              "height": 42,
+                              "fill": "#111827",
+                              "cornerRadius": 9,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "rpNjk",
+                                  "name": "approveText",
+                                  "fill": "#FFFFFF",
+                                  "content": "Approve for org",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 14,
+                                  "fontWeight": "700"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "wBqND",
+                              "name": "rejectBtn",
+                              "width": "fill_container",
+                              "height": 42,
+                              "fill": "#FFFFFF",
+                              "cornerRadius": 9,
+                              "stroke": {
+                                "thickness": 1,
+                                "fill": "#FCD34D"
+                              },
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Uvwuz",
+                                  "name": "rejectText",
+                                  "fill": "#92400E",
+                                  "content": "Request changes",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 14,
+                                  "fontWeight": "700"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ZF0no",
+                              "name": "platformReqBtn",
+                              "width": "fill_container",
+                              "height": 42,
+                              "fill": "#F5F3FF",
+                              "cornerRadius": 9,
+                              "stroke": {
+                                "thickness": 1,
+                                "fill": "#C4B5FD"
+                              },
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "r1DbWJ",
+                                  "name": "platformReqText",
+                                  "fill": "#6D28D9",
+                                  "content": "Submit to platform",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 14,
+                                  "fontWeight": "700"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "VPUaU",
+                      "name": "policyPanel",
+                      "width": "fill_container",
+                      "height": 210,
+                      "fill": "#F8FAFC",
+                      "cornerRadius": 12,
+                      "stroke": {
+                        "thickness": 1,
+                        "fill": "#D6DEE9"
+                      },
+                      "layout": "vertical",
+                      "gap": 10,
+                      "padding": 18,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "RigcJ",
+                          "name": "policyPanelTitle",
+                          "fill": "#111827",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Org policy controls",
+                          "fontFamily": "Inter",
+                          "fontSize": 18,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "gQ6ND",
+                          "name": "policyPanelText",
+                          "fill": "#475569",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Owners can set an extension as optional, default-on, required, blocked, or available only to selected workspace groups. Every change writes an org audit event.",
+                          "lineHeight": 1.4,
+                          "fontFamily": "Inter",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "g5voum",
+                          "name": "policyButtons",
+                          "width": "fill_container",
+                          "height": 44,
+                          "gap": 10,
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "VYUuC",
+                              "name": "optionalChip",
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "fill": "#FFFFFF",
+                              "cornerRadius": 9,
+                              "stroke": {
+                                "thickness": 1,
+                                "fill": "#CBD5E1"
+                              },
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "yOd1C",
+                                  "name": "optionalText",
+                                  "fill": "#475569",
+                                  "content": "Optional",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 13,
+                                  "fontWeight": "700"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "d3s9ua",
+                              "name": "defaultChip",
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "fill": "#DBEAFE",
+                              "cornerRadius": 9,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "DyYjj",
+                                  "name": "defaultText",
+                                  "fill": "#1D4ED8",
+                                  "content": "Default-on",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 13,
+                                  "fontWeight": "700"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "W8kHn",
+                              "name": "requiredChip",
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "fill": "#FFFFFF",
+                              "cornerRadius": 9,
+                              "stroke": {
+                                "thickness": 1,
+                                "fill": "#CBD5E1"
+                              },
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "x88gVn",
+                                  "name": "requiredText",
+                                  "fill": "#475569",
+                                  "content": "Required",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 13,
+                                  "fontWeight": "700"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "PvT7l",
+              "name": "Screen: Platform admin",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "#FFFFFF",
+              "cornerRadius": 18,
+              "stroke": {
+                "thickness": 1,
+                "fill": "#CBD5E1"
+              },
+              "layout": "vertical",
+              "gap": 18,
+              "padding": 24,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "cVFGO",
+                  "name": "adminHeader",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "Zw1Zj",
+                      "name": "adminTitle",
+                      "fill": "#111827",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Platform Extension Review",
+                      "fontFamily": "Inter",
+                      "fontSize": 30,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "HkpcP",
+                      "name": "adminSub",
+                      "fill": "#64748B",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Admin-only queue for releases that may become available across all Veslo organizations.",
+                      "lineHeight": 1.35,
+                      "fontFamily": "Inter",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "eSUGd",
+                  "name": "adminBody",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "gap": 18,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "Ux1KP",
+                      "name": "adminQueue",
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "layout": "vertical",
+                      "gap": 12,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "IZalD",
+                          "name": "adminItem",
+                          "width": "fill_container",
+                          "height": 300,
+                          "fill": "#F5F3FF",
+                          "cornerRadius": 12,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#C4B5FD"
+                          },
+                          "layout": "vertical",
+                          "gap": 12,
+                          "padding": 18,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "bo1Wk",
+                              "name": "adminItemTitle",
+                              "fill": "#111827",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Acme Finance MCP · org.neatech.acme-finance-mcp",
+                              "fontFamily": "Inter",
+                              "fontSize": 20,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "twyMQ",
+                              "name": "adminItemMeta",
+                              "fill": "#6D28D9",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Requested by Neatech owner · remote OAuth MCP · candidate for platform marketplace",
+                              "lineHeight": 1.3,
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "j5rBA",
+                              "name": "adminEvidence",
+                              "width": "fill_container",
+                              "height": 112,
+                              "gap": 10,
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "zhW2X",
+                                  "name": "ev1",
+                                  "width": "fill_container",
+                                  "height": "fill_container",
+                                  "fill": "#FFFFFF",
+                                  "cornerRadius": 9,
+                                  "layout": "vertical",
+                                  "gap": 4,
+                                  "padding": 10,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ErNgQ",
+                                      "name": "ev1T",
+                                      "fill": "#111827",
+                                      "content": "Manifest",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "700"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "Pd4wo",
+                                      "name": "ev1B",
+                                      "fill": "#166534",
+                                      "content": "complete",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "VA8aE",
+                                  "name": "ev2",
+                                  "width": "fill_container",
+                                  "height": "fill_container",
+                                  "fill": "#FFFFFF",
+                                  "cornerRadius": 9,
+                                  "layout": "vertical",
+                                  "gap": 4,
+                                  "padding": 10,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "e36AI",
+                                      "name": "ev2T",
+                                      "fill": "#111827",
+                                      "content": "Runtime probe",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "700"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "EvXO0",
+                                      "name": "ev2B",
+                                      "fill": "#92400E",
+                                      "content": "needs hosted check",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "PXz99",
+                                  "name": "ev3",
+                                  "width": "fill_container",
+                                  "height": "fill_container",
+                                  "fill": "#FFFFFF",
+                                  "cornerRadius": 9,
+                                  "layout": "vertical",
+                                  "gap": 4,
+                                  "padding": 10,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "y3MTH",
+                                      "name": "ev3T",
+                                      "fill": "#111827",
+                                      "content": "Secrets",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "700"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "u6OHk",
+                                      "name": "ev3B",
+                                      "fill": "#166534",
+                                      "content": "no tokens stored",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "r8kW7",
+                              "name": "adminActions",
+                              "width": "fill_container",
+                              "height": 46,
+                              "gap": 10,
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "C1ksm5",
+                                  "name": "adminApprove",
+                                  "width": "fill_container",
+                                  "height": "fill_container",
+                                  "fill": "#111827",
+                                  "cornerRadius": 9,
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "PpESw",
+                                      "name": "adminApproveText",
+                                      "fill": "#FFFFFF",
+                                      "content": "Approve platform release",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "700"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "DkQ0E",
+                                  "name": "adminQuarantine",
+                                  "width": "fill_container",
+                                  "height": "fill_container",
+                                  "fill": "#FFFFFF",
+                                  "cornerRadius": 9,
+                                  "stroke": {
+                                    "thickness": 1,
+                                    "fill": "#C4B5FD"
+                                  },
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "SohIX",
+                                      "name": "adminQuarantineText",
+                                      "fill": "#6D28D9",
+                                      "content": "Quarantine",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "700"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "x8GAR",
+                                  "name": "adminChanges",
+                                  "width": "fill_container",
+                                  "height": "fill_container",
+                                  "fill": "#FFFFFF",
+                                  "cornerRadius": 9,
+                                  "stroke": {
+                                    "thickness": 1,
+                                    "fill": "#C4B5FD"
+                                  },
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "LB2n2",
+                                      "name": "adminChangesText",
+                                      "fill": "#6D28D9",
+                                      "content": "Request changes",
+                                      "fontFamily": "Inter",
+                                      "fontSize": 13,
+                                      "fontWeight": "700"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "B9HCs",
+                      "name": "adminSide",
+                      "width": 390,
+                      "height": "fill_container",
+                      "layout": "vertical",
+                      "gap": 14,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "YFTuS",
+                          "name": "adminPolicy",
+                          "width": "fill_container",
+                          "height": 230,
+                          "fill": "#F8FAFC",
+                          "cornerRadius": 12,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#D6DEE9"
+                          },
+                          "layout": "vertical",
+                          "gap": 10,
+                          "padding": 16,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "XEgcb",
+                              "name": "adminPolicyTitle",
+                              "fill": "#111827",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Platform policy",
+                              "fontFamily": "Inter",
+                              "fontSize": 17,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "rmqLG",
+                              "name": "adminPolicyText",
+                              "fill": "#475569",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Approval creates a platform distribution, not automatic installation. Organizations can opt in unless platform marks a release required or blocked.",
+                              "lineHeight": 1.45,
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "TyxNx",
+                          "name": "adminAudit",
+                          "width": "fill_container",
+                          "height": 240,
+                          "fill": "#FEF2F2",
+                          "cornerRadius": 12,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#FCA5A5"
+                          },
+                          "layout": "vertical",
+                          "gap": 10,
+                          "padding": 16,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "sqT4j",
+                              "name": "adminAuditTitle",
+                              "fill": "#991B1B",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Admin audit requirements",
+                              "fontFamily": "Inter",
+                              "fontSize": 17,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "MWC6r",
+                              "name": "adminAuditText",
+                              "fill": "#7F1D1D",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Every decision requires reason, affected scope, release hash and reviewer identity. Quarantine creates a denylist entry consumed by desktop runtimes.",
+                              "lineHeight": 1.45,
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "a0Wk7x",
+                          "name": "adminRollout",
+                          "width": "fill_container",
+                          "height": 220,
+                          "fill": "#F0FDF4",
+                          "cornerRadius": 12,
+                          "stroke": {
+                            "thickness": 1,
+                            "fill": "#86EFAC"
+                          },
+                          "layout": "vertical",
+                          "gap": 10,
+                          "padding": 16,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "CE5Do",
+                              "name": "adminRolloutTitle",
+                              "fill": "#14532D",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Release modes",
+                              "fontFamily": "Inter",
+                              "fontSize": 17,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "O6nwGm",
+                              "name": "adminRolloutText",
+                              "fill": "#14532D",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Available · Recommended · Required · Blocked · Quarantined. These states feed the effective-state resolver shown in app.",
+                              "lineHeight": 1.45,
+                              "fontFamily": "Inter",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
                             }
                           ]
                         }
