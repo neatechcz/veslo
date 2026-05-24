@@ -1032,6 +1032,7 @@ export default {
   "session.search_no_matches": "Žádné shody",
   "session.select_session_to_manage": "Vyberte relaci, kterou chcete spravovat",
   "session.queue_message_label": "Zařadit zprávu",
+  "session.reorder_queued_message": "Přesunout zprávu ve frontě",
   "session.send_label": "Odeslat",
   "session.send_now_label": "Poslat hned",
   "session.send_now_title": "Nasměrovat agenta teď",

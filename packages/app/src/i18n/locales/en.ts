@@ -1036,6 +1036,7 @@ export default {
   "session.search_no_matches": "No matches",
   "session.select_session_to_manage": "Select a session to manage it",
   "session.queue_message_label": "Queue message",
+  "session.reorder_queued_message": "Move queued message",
   "session.send_label": "Send",
   "session.send_now_label": "Send now",
   "session.send_now_title": "Steer agent now",

@@ -2,8 +2,28 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
+import type { ComposerDraft } from "../../types";
+import type { QueuedDraft } from "./session-queue-model.js";
+import { isQueuedMessageMovable, movableQueueTargetIndex } from "./queued-message-list-model.js";
+
 const componentUrl = new URL("./queued-message-list.tsx", import.meta.url);
 const source = existsSync(componentUrl) ? readFileSync(componentUrl, "utf8") : "";
+
+const draft = (text: string): ComposerDraft => ({
+  mode: "prompt",
+  parts: [{ type: "text", text }],
+  attachments: [],
+  text,
+  resolvedText: text,
+});
+
+const item = (id: string, state: QueuedDraft["state"], text = id): QueuedDraft => ({
+  id,
+  draft: draft(text),
+  createdAt: 100,
+  updatedAt: 100,
+  state,
+});
 
 test("queued message list exposes the queue component contract and visible draft preview", () => {
   assert.match(
@@ -75,13 +95,13 @@ test("queued message list guards sending items and wires drag/drop callbacks", (
 
   assert.match(
     source,
-    /const isMovable = \(item: QueuedDraft\) => item\.state === "queued" \|\| item\.state === "error";/,
+    /import \{ isQueuedMessageMovable, movableQueueTargetIndex \} from "\.\/queued-message-list-model\.js";/,
     "component should align movable rows with the queue model's drain-eligible states",
   );
 
   assert.match(
     source,
-    /draggable=\{isMovable\(item\)\}/,
+    /draggable=\{isQueuedMessageMovable\(item\)\}/,
     "only movable rows should be draggable",
   );
 
@@ -119,5 +139,49 @@ test("queued message list guards sending items and wires drag/drop callbacks", (
     source,
     /const targetIndex = movableTargetIndex\(target\);[\s\S]*if \(targetIndex === -1\) return;[\s\S]*props\.onMove\(draggedId, targetIndex\);/,
     "drop handler should convert the visual target row into a movable subset target index",
+  );
+});
+
+test("queued message list computes drop target index in the movable subset", () => {
+  const items = [
+    item("sending", "sending"),
+    item("first", "queued"),
+    item("editing", "editing"),
+    item("second", "queued"),
+    item("failed", "error"),
+  ];
+
+  assert.equal(movableQueueTargetIndex(items, "first"), 0);
+  assert.equal(movableQueueTargetIndex(items, "second"), 1);
+  assert.equal(movableQueueTargetIndex(items, "failed"), 2);
+  assert.equal(movableQueueTargetIndex(items, "sending"), -1);
+  assert.equal(movableQueueTargetIndex(items, "editing"), -1);
+  assert.equal(isQueuedMessageMovable(items[1]!), true);
+  assert.equal(isQueuedMessageMovable(items[2]!), false);
+});
+
+test("queued message list exposes keyboard reordering on the drag handle", () => {
+  assert.match(
+    source,
+    /const handleMoveKeyDown = \(event: KeyboardEvent, item: QueuedDraft\) => \{/,
+    "component should handle keyboard reordering from the drag handle",
+  );
+
+  assert.match(
+    source,
+    /event\.key !== "ArrowUp" && event\.key !== "ArrowDown"/,
+    "keyboard reordering should use arrow keys",
+  );
+
+  assert.match(
+    source,
+    /const targetIndex = currentIndex \+ \(event\.key === "ArrowUp" \? -1 : 1\);[\s\S]*props\.onMove\(item\.id, targetIndex\);/,
+    "keyboard reordering should move within the movable subset",
+  );
+
+  assert.match(
+    source,
+    /<button[\s\S]*onKeyDown=\{\(event\) => handleMoveKeyDown\(event, item\)\}[\s\S]*aria-label=\{tr\("session\.reorder_queued_message"\)\}/,
+    "drag handle should be keyboard-focusable and labelled",
   );
 });

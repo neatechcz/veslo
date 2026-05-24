@@ -186,6 +186,7 @@ export default {
   "session.readonly_mode_inactive_title": "点击进入只读模式。",
   "session.run": "运行",
   "session.queue_message_label": "加入队列",
+  "session.reorder_queued_message": "移动队列消息",
   "session.send_now_label": "立即发送",
   "session.send_now_title": "立即引导代理",
   "session.permission_required": "需要权限",

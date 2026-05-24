@@ -8,6 +8,7 @@ import {
 
 import { t as tr } from "../../../i18n";
 import type { QueuedDraft } from "./session-queue-model.js";
+import { isQueuedMessageMovable, movableQueueTargetIndex } from "./queued-message-list-model.js";
 
 export type QueuedMessageListProps = {
   items: QueuedDraft[];
@@ -17,7 +18,6 @@ export type QueuedMessageListProps = {
 };
 
 const isSending = (item: QueuedDraft) => item.state === "sending";
-const isMovable = (item: QueuedDraft) => item.state === "queued" || item.state === "error";
 
 const draftPreview = (item: QueuedDraft) => {
   const text = item.draft.text.trim();
@@ -27,15 +27,26 @@ const draftPreview = (item: QueuedDraft) => {
 export default function QueuedMessageList(props: QueuedMessageListProps) {
   const [draggedItemId, setDraggedItemId] = createSignal<string | null>(null);
   const hasItems = createMemo(() => props.items.length > 0);
-  const movableItems = createMemo(() => props.items.filter(isMovable));
+  const movableItems = createMemo(() => props.items.filter(isQueuedMessageMovable));
 
   const movableTargetIndex = (target: QueuedDraft) => {
-    if (!isMovable(target)) return -1;
-    return movableItems().findIndex((item) => item.id === target.id);
+    return movableQueueTargetIndex(props.items, target.id);
+  };
+
+  const handleMoveKeyDown = (event: KeyboardEvent, item: QueuedDraft) => {
+    if (!isQueuedMessageMovable(item)) return;
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+
+    event.preventDefault();
+    const currentIndex = movableQueueTargetIndex(props.items, item.id);
+    if (currentIndex === -1) return;
+    const targetIndex = currentIndex + (event.key === "ArrowUp" ? -1 : 1);
+    if (targetIndex < 0 || targetIndex >= movableItems().length) return;
+    props.onMove(item.id, targetIndex);
   };
 
   const handleDragStart = (event: DragEvent, item: QueuedDraft) => {
-    if (!isMovable(item)) {
+    if (!isQueuedMessageMovable(item)) {
       event.preventDefault();
       return;
     }
@@ -71,21 +82,24 @@ export default function QueuedMessageList(props: QueuedMessageListProps) {
               class={`group flex items-center gap-2 rounded-lg border border-gray-5/70 bg-gray-2/60 px-2 py-1.5 text-gray-11 transition-colors ${
                 isSending(item) ? "opacity-80" : "hover:border-gray-6 hover:bg-gray-2"
               }`}
-              draggable={isMovable(item)}
+              draggable={isQueuedMessageMovable(item)}
               onDragStart={(event) => handleDragStart(event, item)}
               onDragOver={handleDragOver}
               onDrop={(event) => handleDrop(event, item)}
               onDragEnd={() => setDraggedItemId(null)}
             >
-              <div
+              <button
+                type="button"
+                disabled={!isQueuedMessageMovable(item)}
+                onKeyDown={(event) => handleMoveKeyDown(event, item)}
                 class={`shrink-0 rounded-md p-1 text-gray-9 ${
-                  isMovable(item) ? "cursor-grab active:cursor-grabbing" : "cursor-default"
+                  isQueuedMessageMovable(item) ? "cursor-grab active:cursor-grabbing" : "cursor-default"
                 }`}
-                title={tr("session.queue_message_label")}
-                aria-label={tr("session.queue_message_label")}
+                title={tr("session.reorder_queued_message")}
+                aria-label={tr("session.reorder_queued_message")}
               >
                 <GripVertical size={14} />
-              </div>
+              </button>
 
               <div class="min-w-0 flex-1 truncate text-xs leading-5 text-gray-11" title={draftPreview(item)}>
                 {draftPreview(item)}
