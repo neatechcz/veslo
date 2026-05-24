@@ -176,7 +176,6 @@ export type DashboardViewProps = {
   openRenameWorkspace: (workspaceId: string) => void;
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
-  stopSandbox: (workspaceId: string) => void;
   scheduledJobs: ScheduledJob[];
   scheduledJobsSource: "local" | "remote";
   scheduledJobsSourceReady: boolean;
@@ -328,7 +327,6 @@ export type DashboardViewProps = {
   pendingPermissions: unknown;
   events: unknown;
   workspaceDebugEvents: unknown;
-  sandboxCreateProgress: unknown;
   clearWorkspaceDebugEvents: () => void;
   safeStringify: (value: unknown) => string;
   repairOpencodeMigration: () => void;
@@ -460,13 +458,7 @@ export default function DashboardView(props: DashboardViewProps) {
     workspace.path?.trim() ||
     "Worker";
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
-    workspace.workspaceType === "remote"
-      ? workspace.sandboxBackend === "docker" ||
-        Boolean(workspace.sandboxRunId?.trim()) ||
-        Boolean(workspace.sandboxContainerName?.trim())
-        ? "Sandbox"
-        : "Remote"
-      : "Local";
+    workspace.workspaceType === "remote" ? "Remote" : "Local";
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
     void openSessionWithWorkspaceActivation({
@@ -1691,7 +1683,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   pendingPermissions={props.pendingPermissions}
                   events={props.events}
                   workspaceDebugEvents={props.workspaceDebugEvents}
-                  sandboxCreateProgress={props.sandboxCreateProgress}
                   clearWorkspaceDebugEvents={props.clearWorkspaceDebugEvents}
                   safeStringify={props.safeStringify}
                   repairOpencodeMigration={props.repairOpencodeMigration}

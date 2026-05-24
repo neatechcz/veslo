@@ -185,9 +185,6 @@ mod tests {
             veslo_token: None,
             veslo_workspace_id: None,
             veslo_workspace_name: None,
-            sandbox_backend: None,
-            sandbox_run_id: None,
-            sandbox_container_name: None,
         }
     }
 

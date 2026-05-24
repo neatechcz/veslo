@@ -119,11 +119,6 @@ export type WorkspaceInfo = {
   vesloToken?: string | null;
   vesloWorkspaceId?: string | null;
   vesloWorkspaceName?: string | null;
-
-  // Sandbox lifecycle metadata (desktop-managed)
-  sandboxBackend?: "docker" | null;
-  sandboxRunId?: string | null;
-  sandboxContainerName?: string | null;
 };
 
 export type WorkspaceList = {
@@ -445,11 +440,6 @@ export async function workspaceCreateRemote(input: {
   vesloToken?: string | null;
   vesloWorkspaceId?: string | null;
   vesloWorkspaceName?: string | null;
-
-  // Sandbox lifecycle metadata (desktop-managed)
-  sandboxBackend?: "docker" | null;
-  sandboxRunId?: string | null;
-  sandboxContainerName?: string | null;
 }): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_create_remote", {
     baseUrl: input.baseUrl,
@@ -460,9 +450,6 @@ export async function workspaceCreateRemote(input: {
     vesloToken: input.vesloToken ?? null,
     vesloWorkspaceId: input.vesloWorkspaceId ?? null,
     vesloWorkspaceName: input.vesloWorkspaceName ?? null,
-    sandboxBackend: input.sandboxBackend ?? null,
-    sandboxRunId: input.sandboxRunId ?? null,
-    sandboxContainerName: input.sandboxContainerName ?? null,
   });
 }
 
@@ -476,11 +463,6 @@ export async function workspaceUpdateRemote(input: {
   vesloToken?: string | null;
   vesloWorkspaceId?: string | null;
   vesloWorkspaceName?: string | null;
-
-  // Sandbox lifecycle metadata (desktop-managed)
-  sandboxBackend?: "docker" | null;
-  sandboxRunId?: string | null;
-  sandboxContainerName?: string | null;
 }): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_update_remote", {
     workspaceId: input.workspaceId,
@@ -492,9 +474,6 @@ export async function workspaceUpdateRemote(input: {
     vesloToken: input.vesloToken ?? null,
     vesloWorkspaceId: input.vesloWorkspaceId ?? null,
     vesloWorkspaceName: input.vesloWorkspaceName ?? null,
-    sandboxBackend: input.sandboxBackend ?? null,
-    sandboxRunId: input.sandboxRunId ?? null,
-    sandboxContainerName: input.sandboxContainerName ?? null,
   });
 }
 
@@ -665,29 +644,21 @@ export type OrchestratorDetachedHost = {
   token: string;
   hostToken: string;
   port: number;
-  sandboxBackend?: "docker" | null;
-  sandboxRunId?: string | null;
-  sandboxContainerName?: string | null;
 };
 
 export async function orchestratorStartDetached(input: {
   workspacePath: string;
-  sandboxBackend?: "none" | "docker" | null;
   runId?: string | null;
   vesloToken?: string | null;
   vesloHostToken?: string | null;
 }): Promise<OrchestratorDetachedHost> {
   return invoke<OrchestratorDetachedHost>("orchestrator_start_detached", {
     workspacePath: input.workspacePath,
-    sandboxBackend: input.sandboxBackend ?? null,
     runId: input.runId ?? null,
     vesloToken: input.vesloToken ?? null,
     vesloHostToken: input.vesloHostToken ?? null,
   });
 }
-
-// F4Ú8c chunk 1 — sandboxDoctor, sandboxStop, sandboxCleanupVesloContainers,
-// sandboxDebugProbe IPC wrappers + types SMAZÁNY. Rust IPC commands smazány v F4Ú8b.
 
 export async function vesloServerInfo(): Promise<VesloServerInfo> {
   return invoke<VesloServerInfo>("veslo_server_info");

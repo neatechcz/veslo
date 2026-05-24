@@ -368,8 +368,6 @@ export const TOY_UI_HTML = `<!doctype html>
               <div><a class="mono" id="workspace-url" href="#" target="_blank" rel="noreferrer">-</a></div>
               <div class="k">server</div>
               <div class="mono" id="server-version">-</div>
-              <div class="k">sandbox</div>
-              <div class="mono" id="sandbox">-</div>
               <div class="k">file injection</div>
               <div class="mono" id="file-injection">-</div>
             </div>
@@ -546,7 +544,6 @@ const statusEl = qs("#status");
 const sessionIdEl = qs("#session-id");
 const workspaceIdEl = qs("#workspace-id");
 const serverVersionEl = qs("#server-version");
-const sandboxEl = qs("#sandbox");
 const fileInjectionEl = qs("#file-injection");
 const artifactsEl = qs("#artifacts");
 const approvalsEl = qs("#approvals");
@@ -823,8 +820,6 @@ async function refreshHost(workspaceId) {
     const caps = await apiFetch("/capabilities");
     hostIdEl.textContent = location.origin;
     serverVersionEl.textContent = caps && caps.serverVersion ? caps.serverVersion : (status && status.version ? status.version : "-");
-    const sandbox = caps && caps.sandbox ? caps.sandbox : null;
-    sandboxEl.textContent = sandbox ? (sandbox.backend + " (" + (sandbox.enabled ? "on" : "off") + ")") : "-";
     const files = caps && caps.toolProviders && caps.toolProviders.files ? caps.toolProviders.files : null;
     fileInjectionEl.textContent = files ? ((files.injection ? "upload" : "no upload") + " / " + (files.outbox ? "download" : "no download")) : "-";
     workspaceIdEl.textContent = workspaceId || "-";

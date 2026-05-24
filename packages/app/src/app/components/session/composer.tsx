@@ -46,7 +46,6 @@ type ComposerProps = {
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
   isRemoteWorkspace: boolean;
-  isSandboxWorkspace: boolean;
   localWorkspacePath?: string | null;
   canChooseSessionFolder: boolean;
   onChooseSessionFolder: () => Promise<void> | void;
@@ -1237,7 +1236,7 @@ export default function Composer(props: ComposerProps) {
 
     const plainForCheck = clipboard.getData("text/plain") ?? "";
     const trimmedForCheck = plainForCheck.trim();
-    if (trimmedForCheck && (props.isSandboxWorkspace || props.isRemoteWorkspace)) {
+    if (trimmedForCheck && props.isRemoteWorkspace) {
       const hasFileUrl = /file:\/\//i.test(trimmedForCheck);
       const hasAbsolutePosix = /(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(trimmedForCheck);
       const hasAbsoluteWindows = /(^|\s)[a-zA-Z]:\\/.test(trimmedForCheck);

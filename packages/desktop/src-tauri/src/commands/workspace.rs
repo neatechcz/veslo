@@ -492,9 +492,6 @@ pub fn workspace_create(
             veslo_token: None,
             veslo_workspace_id: None,
             veslo_workspace_name: None,
-            sandbox_backend: None,
-            sandbox_run_id: None,
-            sandbox_container_name: None,
         },
     );
     state.active_id = id.clone();
@@ -527,9 +524,6 @@ pub fn workspace_create_remote(
     veslo_token: Option<String>,
     veslo_workspace_id: Option<String>,
     veslo_workspace_name: Option<String>,
-    sandbox_backend: Option<String>,
-    sandbox_run_id: Option<String>,
-    sandbox_container_name: Option<String>,
     watch_state: State<WorkspaceWatchState>,
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] create remote request");
@@ -605,15 +599,6 @@ pub fn workspace_create_remote(
             veslo_token,
             veslo_workspace_id,
             veslo_workspace_name,
-            sandbox_backend: sandbox_backend
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty()),
-            sandbox_run_id: sandbox_run_id
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty()),
-            sandbox_container_name: sandbox_container_name
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty()),
         },
     );
     state.active_id = id.clone();
@@ -640,9 +625,6 @@ pub fn workspace_update_remote(
     veslo_token: Option<String>,
     veslo_workspace_id: Option<String>,
     veslo_workspace_name: Option<String>,
-    sandbox_backend: Option<String>,
-    sandbox_run_id: Option<String>,
-    sandbox_container_name: Option<String>,
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] update remote request: {workspace_id}");
     let mut state = load_workspace_state(&app)?;
@@ -721,27 +703,6 @@ pub fn workspace_update_remote(
         if entry.display_name.is_none() {
             entry.name = next_name;
         }
-    }
-
-    if let Some(next_backend) = sandbox_backend
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        entry.sandbox_backend = Some(next_backend);
-    }
-
-    if let Some(next_run_id) = sandbox_run_id
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        entry.sandbox_run_id = Some(next_run_id);
-    }
-
-    if let Some(next_container) = sandbox_container_name
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        entry.sandbox_container_name = Some(next_container);
     }
 
     save_workspace_state(&app, &state)?;
@@ -1261,9 +1222,6 @@ pub fn workspace_import_config(
             veslo_token: None,
             veslo_workspace_id: None,
             veslo_workspace_name: None,
-            sandbox_backend: None,
-            sandbox_run_id: None,
-            sandbox_container_name: None,
         },
     );
     state.active_id = id.clone();
@@ -1300,9 +1258,6 @@ mod tests {
             veslo_token: None,
             veslo_workspace_id: None,
             veslo_workspace_name: None,
-            sandbox_backend: None,
-            sandbox_run_id: None,
-            sandbox_container_name: None,
         }
     }
 

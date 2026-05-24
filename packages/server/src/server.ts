@@ -1209,8 +1209,6 @@ export function resolveArchiveOwnerKey(request: Request): string {
 function buildCapabilities(config: ServerConfig): Capabilities {
   const writeEnabled = !config.readOnly;
   const schemaVersion = 1;
-  const sandboxBackend = resolveSandboxBackend();
-  const sandboxEnabled = resolveSandboxEnabled(sandboxBackend);
   const inboxEnabled = resolveInboxEnabled();
   const outboxEnabled = resolveOutboxEnabled();
   const maxBytes = resolveInboxMaxBytes();
@@ -1238,7 +1236,6 @@ function buildCapabilities(config: ServerConfig): Capabilities {
     config: { read: true, write: writeEnabled },
 
     approvals: { mode: config.approval.mode, timeoutMs: config.approval.timeoutMs },
-    sandbox: { enabled: sandboxEnabled, backend: sandboxBackend },
     ui: { toy: toyUiEnabled },
     tokens: { scoped: true, scopes: ["owner", "collaborator", "viewer"] },
     proxy: {
@@ -1256,20 +1253,6 @@ function buildCapabilities(config: ServerConfig): Capabilities {
       },
     },
   };
-}
-
-function resolveSandboxBackend(): Capabilities["sandbox"]["backend"] {
-  const raw = (process.env.VESLO_SANDBOX_BACKEND ?? "").trim().toLowerCase();
-  if (raw === "docker") return "docker";
-  if (raw === "container") return "container";
-  return "none";
-}
-
-function resolveSandboxEnabled(backend: Capabilities["sandbox"]["backend"]): boolean {
-  const raw = (process.env.VESLO_SANDBOX_ENABLED ?? "").trim().toLowerCase();
-  if (["1", "true", "yes", "on"].includes(raw)) return true;
-  if (["0", "false", "no", "off"].includes(raw)) return false;
-  return backend !== "none";
 }
 
 function resolveInboxEnabled(): boolean {
