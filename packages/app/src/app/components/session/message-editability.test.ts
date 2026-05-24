@@ -195,13 +195,34 @@ test("reconstructs agents and file references into composer parts", () => {
     composerEmpty: true,
   });
 
-  assert.equal(result?.draft.text, "ask @reviewer about @app.ts");
+  assert.equal(result?.draft.text, "ask @reviewer about @src/app.ts");
   assert.equal(result?.draft.resolvedText, "ask @reviewer about @src/app.ts");
   assert.deepEqual(result?.draft.parts, [
     { type: "text", text: "ask " },
     { type: "agent", name: "reviewer" },
     { type: "text", text: " about " },
     { type: "file", path: "src/app.ts", label: "app.ts" },
+  ]);
+});
+
+test("replaces matching resolved agent tokens instead of duplicating sent agent parts", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [
+        textPart("m1", "ask @reviewer"),
+        agentPart("m1", "reviewer"),
+      ]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result?.draft.text, "ask @reviewer");
+  assert.equal(result?.draft.resolvedText, "ask @reviewer");
+  assert.deepEqual(result?.draft.parts, [
+    { type: "text", text: "ask " },
+    { type: "agent", name: "reviewer" },
   ]);
 });
 
@@ -218,7 +239,7 @@ test("reconstructs file URL references from sent composer file parts", () => {
     composerEmpty: true,
   });
 
-  assert.equal(result?.draft.text, "read @hello world.md");
+  assert.equal(result?.draft.text, "read @/Users/me/project/docs/hello world.md");
   assert.equal(result?.draft.resolvedText, "read @/Users/me/project/docs/hello world.md");
   assert.deepEqual(result?.draft.parts, [
     { type: "text", text: "read " },
@@ -239,7 +260,7 @@ test("replaces matching resolved file path tokens instead of duplicating sent fi
     composerEmpty: true,
   });
 
-  assert.equal(result?.draft.text, "compare @hello world.md and continue");
+  assert.equal(result?.draft.text, "compare @/Users/me/project/docs/hello world.md and continue");
   assert.equal(result?.draft.resolvedText, "compare @/Users/me/project/docs/hello world.md and continue");
   assert.deepEqual(result?.draft.parts, [
     { type: "text", text: "compare " },
@@ -261,7 +282,7 @@ test("dedupes relative file mentions against absolute sent file parts", () => {
     composerEmpty: true,
   });
 
-  assert.equal(result?.draft.text, "read @app.ts");
+  assert.equal(result?.draft.text, "read @src/app.ts");
   assert.equal(result?.draft.resolvedText, "read @src/app.ts");
   assert.deepEqual(result?.draft.parts, [
     { type: "text", text: "read " },
@@ -282,7 +303,7 @@ test("does not replace exact file tokens with path-continuation suffixes", () =>
     composerEmpty: true,
   });
 
-  assert.equal(result?.draft.text, "read @/tmp/abc@a");
+  assert.equal(result?.draft.text, "read @/tmp/abc@/tmp/a");
   assert.equal(result?.draft.resolvedText, "read @/tmp/abc@/tmp/a");
   assert.deepEqual(result?.draft.parts, [
     { type: "text", text: "read @/tmp/abc" },
@@ -303,7 +324,7 @@ test("dedupes relative file mentions that contain spaces", () => {
     composerEmpty: true,
   });
 
-  assert.equal(result?.draft.text, "read @hello world.md");
+  assert.equal(result?.draft.text, "read @docs/hello world.md");
   assert.equal(result?.draft.resolvedText, "read @docs/hello world.md");
   assert.deepEqual(result?.draft.parts, [
     { type: "text", text: "read " },

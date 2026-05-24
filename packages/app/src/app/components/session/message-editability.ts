@@ -56,6 +56,7 @@ const fileUrlPath = (part: Part): string | null => {
 };
 
 type FileReference = Extract<ComposerPart, { type: "file" }>;
+type AgentReference = Extract<ComposerPart, { type: "agent" }>;
 
 type FileTokenMatch = {
   token: string;
@@ -139,6 +140,31 @@ const replaceFileToken = (parts: ComposerPart[], file: FileReference): { parts: 
   return { parts, replaced: false };
 };
 
+const replaceAgentToken = (parts: ComposerPart[], agent: AgentReference): { parts: ComposerPart[]; replaced: boolean } => {
+  const token = `@${agent.name}`;
+
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index]!;
+    if (part.type !== "text") continue;
+
+    const tokenIndex = findBoundaryTokenIndex(part.text, token);
+    if (tokenIndex === -1) continue;
+
+    return {
+      parts: [
+        ...parts.slice(0, index),
+        ...textPart(part.text.slice(0, tokenIndex)),
+        agent,
+        ...textPart(part.text.slice(tokenIndex + token.length)),
+        ...parts.slice(index + 1),
+      ],
+      replaced: true,
+    };
+  }
+
+  return { parts, replaced: false };
+};
+
 const insertFileReferences = (parts: ComposerPart[], files: FileReference[]): ComposerPart[] => {
   let nextParts = parts;
 
@@ -155,7 +181,7 @@ const partsToText = (parts: ComposerPart[]): string =>
     .map((part) => {
       if (part.type === "text") return part.text;
       if (part.type === "agent") return `@${part.name}`;
-      if (part.type === "file") return `@${part.label ?? part.path}`;
+      if (part.type === "file") return `@${part.path}`;
       return part.label;
     })
     .join("");
@@ -171,7 +197,7 @@ const partsToResolvedText = (parts: ComposerPart[]): string =>
     .join("");
 
 const reconstructComposerDraft = (message: MessageWithParts): ComposerDraft | null => {
-  const parts: ComposerPart[] = [];
+  let parts: ComposerPart[] = [];
   const files: FileReference[] = [];
 
   for (const part of message.parts.filter(isUserVisiblePart)) {
@@ -184,7 +210,9 @@ const reconstructComposerDraft = (message: MessageWithParts): ComposerDraft | nu
     if (part.type === "agent") {
       const name = partString(part, "name");
       if (!name) return null;
-      parts.push({ type: "agent", name });
+      const agent = { type: "agent", name } as const;
+      const result = replaceAgentToken(parts, agent);
+      parts = result.replaced ? result.parts : [...parts, agent];
       continue;
     }
 
