@@ -46,6 +46,10 @@ const fileUrlPath = (part: Part): string | null => {
     return decodedPath.slice(1);
   }
 
+  if (decodedPath.startsWith("localhost/")) {
+    return decodedPath.slice("localhost".length);
+  }
+
   if (decodedPath.startsWith("/")) return decodedPath;
 
   return `//${decodedPath}`;
@@ -68,33 +72,47 @@ const fileReferenceFromPart = (part: Part): FileReference | null => {
   return { type: "file", path, label };
 };
 
-const filePathSuffixMatches = (filePath: string, candidatePath: string): boolean =>
-  filePath.endsWith(`/${candidatePath}`) || filePath.endsWith(`\\${candidatePath}`);
+const isMentionBoundary = (value: string | undefined): boolean => !value || !/[A-Za-z0-9_.\\/:-]/.test(value);
+
+const findBoundaryTokenIndex = (text: string, token: string): number => {
+  let index = text.indexOf(token);
+  while (index !== -1) {
+    if (isMentionBoundary(text[index + token.length])) return index;
+    index = text.indexOf(token, index + 1);
+  }
+
+  return -1;
+};
+
+const pathSuffixCandidates = (path: string): string[] => {
+  const normalized = path.replace(/\\/g, "/");
+  const segments = normalized.split("/").filter(Boolean);
+  const candidates: string[] = [];
+
+  for (let index = 0; index < segments.length; index += 1) {
+    candidates.push(segments.slice(index).join("/"));
+  }
+
+  return candidates.sort((a, b) => b.length - a.length);
+};
 
 const findBestFileTokenMatch = (text: string, filePath: string): FileTokenMatch | null => {
   const exactToken = `@${filePath}`;
-  const exactIndex = text.indexOf(exactToken);
+  const exactIndex = findBoundaryTokenIndex(text, exactToken);
   if (exactIndex !== -1) {
     return { token: exactToken, path: filePath, index: exactIndex };
   }
 
-  let bestMatch: FileTokenMatch | null = null;
-  const tokenPattern = /@([^\s]+)/g;
-  let match: RegExpExecArray | null;
-  while ((match = tokenPattern.exec(text))) {
-    const candidatePath = match[1];
-    if (!candidatePath || !filePathSuffixMatches(filePath, candidatePath)) continue;
-
-    if (!bestMatch || candidatePath.length > bestMatch.path.length) {
-      bestMatch = {
-        token: match[0],
-        path: candidatePath,
-        index: match.index,
-      };
+  for (const candidatePath of pathSuffixCandidates(filePath)) {
+    if (candidatePath === filePath) continue;
+    const token = `@${candidatePath}`;
+    const index = findBoundaryTokenIndex(text, token);
+    if (index !== -1) {
+      return { token, path: candidatePath, index };
     }
   }
 
-  return bestMatch;
+  return null;
 };
 
 const replaceFileToken = (parts: ComposerPart[], file: FileReference): { parts: ComposerPart[]; replaced: boolean } => {

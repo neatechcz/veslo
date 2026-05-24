@@ -269,10 +269,53 @@ test("dedupes relative file mentions against absolute sent file parts", () => {
   ]);
 });
 
+test("does not replace exact file tokens with path-continuation suffixes", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [
+        textPart("m1", "read @/tmp/abc"),
+        fileUrlPart("m1", "file:///tmp/a", "a"),
+      ]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result?.draft.text, "read @/tmp/abc@a");
+  assert.equal(result?.draft.resolvedText, "read @/tmp/abc@/tmp/a");
+  assert.deepEqual(result?.draft.parts, [
+    { type: "text", text: "read @/tmp/abc" },
+    { type: "file", path: "/tmp/a", label: "a" },
+  ]);
+});
+
+test("dedupes relative file mentions that contain spaces", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [
+        textPart("m1", "read @docs/hello world.md"),
+        fileUrlPart("m1", "file:///Users/me/project/docs/hello%20world.md", "hello world.md"),
+      ]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result?.draft.text, "read @hello world.md");
+  assert.equal(result?.draft.resolvedText, "read @docs/hello world.md");
+  assert.deepEqual(result?.draft.parts, [
+    { type: "text", text: "read " },
+    { type: "file", path: "docs/hello world.md", label: "hello world.md" },
+  ]);
+});
+
 test("reconstructs safe file URL edge cases without URL parser loss", () => {
   const cases = [
     ["file:///tmp/100%/note.md", "/tmp/100%/note.md"],
     ["file://server/share/note.md", "//server/share/note.md"],
+    ["file://localhost/tmp/a.txt", "/tmp/a.txt"],
     ["file:///C:/Users/x/note.md", "C:/Users/x/note.md"],
     ["file://C:/Users/x/note.md", "C:/Users/x/note.md"],
     ["file://C:\\Users\\x\\note.md", "C:\\Users\\x\\note.md"],
