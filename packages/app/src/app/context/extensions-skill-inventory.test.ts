@@ -326,6 +326,63 @@ test("skill inventory retries after a failed forced refresh", async () => {
   });
 });
 
+test("skill inventory settles with local-only inventory when hub refresh fails", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      let hubCallCount = 0;
+      const vesloServerClient = {
+        async listHubSkills() {
+          hubCallCount += 1;
+          await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+          throw new Error("Hub unavailable");
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async (_projectDir, scope) =>
+          scope === "global"
+            ? [{ name: "research", path: "/Users/example/.opencode/skills/research/SKILL.md" }]
+            : [],
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      const refresh = store.refreshSkillInventory({ force: true });
+      try {
+        const result = await Promise.race([
+          refresh.then(() => "settled" as const),
+          new Promise<"timeout">((resolve) => setTimeout(resolve, 100, "timeout")),
+        ]);
+
+        if (result === "timeout") {
+          store.abortRefreshes();
+          await refresh.catch(() => undefined);
+          assert.fail(`skill inventory refresh did not settle after ${hubCallCount} hub calls`);
+        }
+
+        assert.equal(hubCallCount, 1);
+        assert.equal(store.skillInventory().some((item) => item.name === "research"), true);
+        assert.match(store.skillInventoryStatus() ?? "", /Hub unavailable/);
+      } finally {
+        store.abortRefreshes();
+        await refresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
 test("skill inventory waits for an in-flight hub skill refresh before caching", async () => {
   await withDenAuthStorage(async () => {
     await createRoot(async (dispose) => {

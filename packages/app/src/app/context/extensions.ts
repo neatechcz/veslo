@@ -352,6 +352,8 @@ export function createExtensionsStore(options: {
         if (refreshHubSkillsAborted) return;
         hubSkillsLoaded = false;
         setHubSkills([]);
+        hubSkillsRoot = root;
+        hubSkillsContextKey = contextKey;
         markHubSkillsSourceChanged();
         setHubSkillsStatus(e instanceof Error ? e.message : "Failed to load hub skills.");
       } finally {
@@ -374,45 +376,52 @@ export function createExtensionsStore(options: {
   async function refreshSkillInventory(optionsOverride?: { force?: boolean }) {
     let forceRefresh = optionsOverride?.force === true;
 
+    const getLocalSkillInventoryWorkspaces = () =>
+      (options.workspaces?.() ?? [])
+        .filter((workspace) => workspace.workspaceType === "local")
+        .map((workspace) => ({
+          id: workspace.id.trim(),
+          label: localWorkspaceLabel(workspace),
+          path: workspace.path.trim(),
+        }))
+        .filter((workspace) => workspace.id && workspace.path);
+
+    const getSkillInventoryContextKey = (
+      workspacesForContext: ReturnType<typeof getLocalSkillInventoryWorkspaces>,
+      hubContextKey: string,
+      revisions = {
+        hubSkillsRevision,
+        localSkillsRevision,
+      },
+    ) =>
+      JSON.stringify({
+        hub: {
+          contextKey: hubContextKey,
+          revision: revisions.hubSkillsRevision,
+        },
+        localRevision: revisions.localSkillsRevision,
+        workspaces: workspacesForContext.map((workspace) => ({
+          id: workspace.id,
+          label: workspace.label,
+          path: workspace.path,
+        })),
+      });
+
+    const getCurrentSkillInventoryContextKey = () => {
+      const localWorkspaces = getLocalSkillInventoryWorkspaces();
+      const hubContext = resolveHubSkillsRefreshContext();
+      return getSkillInventoryContextKey(localWorkspaces, hubContext.contextKey);
+    };
+
     for (;;) {
       if (refreshSkillInventoryInFlight) {
         const inFlightRefresh = refreshSkillInventoryPromise;
         const result = inFlightRefresh ? await inFlightRefresh : "stale";
         forceRefresh = false;
         if (result === "failed" || result === "aborted") return;
+        if (result === "published" && getCurrentSkillInventoryContextKey() === skillInventoryContextKey) return;
         continue;
       }
-
-      const getLocalSkillInventoryWorkspaces = () =>
-        (options.workspaces?.() ?? [])
-          .filter((workspace) => workspace.workspaceType === "local")
-          .map((workspace) => ({
-            id: workspace.id.trim(),
-            label: localWorkspaceLabel(workspace),
-            path: workspace.path.trim(),
-          }))
-          .filter((workspace) => workspace.id && workspace.path);
-
-      const getSkillInventoryContextKey = (
-        workspacesForContext: ReturnType<typeof getLocalSkillInventoryWorkspaces>,
-        hubContextKey: string,
-        revisions = {
-          hubSkillsRevision,
-          localSkillsRevision,
-        },
-      ) =>
-        JSON.stringify({
-          hub: {
-            contextKey: hubContextKey,
-            revision: revisions.hubSkillsRevision,
-          },
-          localRevision: revisions.localSkillsRevision,
-          workspaces: workspacesForContext.map((workspace) => ({
-            id: workspace.id,
-            label: workspace.label,
-            path: workspace.path,
-          })),
-        });
 
       const localWorkspaces = getLocalSkillInventoryWorkspaces();
       const hubContext = resolveHubSkillsRefreshContext();
@@ -485,6 +494,8 @@ export function createExtensionsStore(options: {
           setSkillInventory(next);
           if (!next.length) {
             setSkillInventoryStatus(translate("skills.no_skills_found"));
+          } else if (!hasMatchingHubSkills && hubSkillsStatus()) {
+            setSkillInventoryStatus(hubSkillsStatus());
           }
           skillInventoryLoaded = hasMatchingHubSkills;
           skillInventoryContextKey = inventoryContextAtStart;
@@ -504,6 +515,7 @@ export function createExtensionsStore(options: {
       const result = await refreshSkillInventoryPromise;
       forceRefresh = false;
       if (result === "failed" || result === "aborted") return;
+      if (result === "published") return;
       continue;
     }
   }
