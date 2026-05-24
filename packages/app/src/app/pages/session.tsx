@@ -99,6 +99,20 @@ import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
 
 import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
+import type { ComposerSendOptions } from "../components/session/composer";
+import QueuedMessageList from "../components/session/queued-message-list";
+import {
+  appendQueuedDraft,
+  firstQueuedDraft,
+  markQueuedDraftEditing,
+  markQueuedDraftError,
+  markQueuedDraftQueued,
+  markQueuedDraftSending,
+  moveQueuedDraft,
+  removeQueuedDraft,
+  updateQueuedDraft,
+  type QueuedDraft,
+} from "../components/session/session-queue-model.js";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import { shouldShowSessionLoadingState } from "../components/session/session-loading-state-model";
 import type { SidebarSectionState } from "../components/session/sidebar";
@@ -1983,8 +1997,50 @@ export default function SessionView(props: SessionViewProps) {
     assistantId: null,
     partCount: 0,
   });
+  const [queuedDraftsBySessionKey, setQueuedDraftsBySessionKey] = createSignal<Record<string, QueuedDraft[]>>({});
+  const [queuePausedAfterStopBySessionKey, setQueuePausedAfterStopBySessionKey] = createSignal<Record<string, boolean>>({});
+  const [editingQueuedDraftId, setEditingQueuedDraftId] = createSignal<string | null>(null);
   const [abortBusy, setAbortBusy] = createSignal(false);
   const [todoExpanded, setTodoExpanded] = createSignal(false);
+  let queueDrainAttemptInFlight = false;
+
+  const currentSessionQueueKey = createMemo(
+    () => props.selectedSessionId ?? `pending:${props.activeWorkspaceId || "default"}`,
+  );
+  const queuedDrafts = createMemo(() => queuedDraftsBySessionKey()[currentSessionQueueKey()] ?? []);
+  const queuePaused = createMemo(() => Boolean(queuePausedAfterStopBySessionKey()[currentSessionQueueKey()]));
+  const emptyComposerDraft = (mode: ComposerDraft["mode"] = "prompt"): ComposerDraft => ({
+    mode,
+    parts: [],
+    attachments: [],
+    text: "",
+    resolvedText: "",
+  });
+
+  const updateQueueForSessionKey = (sessionKey: string, updater: (queue: QueuedDraft[]) => QueuedDraft[]) => {
+    setQueuedDraftsBySessionKey((current) => {
+      const existing = current[sessionKey] ?? [];
+      const next = updater(existing);
+      if (next === existing) return current;
+      return { ...current, [sessionKey]: next };
+    });
+  };
+
+  const updateCurrentQueue = (updater: (queue: QueuedDraft[]) => QueuedDraft[]) => {
+    updateQueueForSessionKey(currentSessionQueueKey(), updater);
+  };
+
+  const setQueuePausedForCurrentSession = (paused: boolean) => {
+    const sessionKey = currentSessionQueueKey();
+    setQueuePausedAfterStopBySessionKey((current) => {
+      if (Boolean(current[sessionKey]) === paused) return current;
+      return { ...current, [sessionKey]: paused };
+    });
+  };
+
+  const appendDraftToCurrentQueue = (draft: ComposerDraft) => {
+    updateCurrentQueue((queue) => appendQueuedDraft(queue, draft));
+  };
 
   const lastAssistantSnapshot = createMemo(() => {
     for (let i = props.messages.length - 1; i >= 0; i -= 1) {
@@ -2253,6 +2309,7 @@ export default function SessionView(props: SessionViewProps) {
         setRunHasBegun(false);
         setRunLastProgressAt(null);
         setRunBaseline({ assistantId: null, partCount: 0 });
+        setEditingQueuedDraftId(null);
 
         if (!sessionId) return;
         const firstVisit = !topInitializedSessionIds.has(sessionId);
@@ -2434,6 +2491,17 @@ export default function SessionView(props: SessionViewProps) {
     }
   });
 
+  createEffect(
+    on(
+      () => props.sessionStatus,
+      (status, previousStatus) => {
+        if (previousStatus === undefined || previousStatus === "idle" || status !== "idle") return;
+        if (queuePaused()) return;
+        void drainNextQueuedDraft("queue-drain");
+      },
+    ),
+  );
+
   createEffect(() => {
     if (responseStarted()) {
       setRunHasBegun(true);
@@ -2582,6 +2650,8 @@ export default function SessionView(props: SessionViewProps) {
 
   const cancelRun = async () => {
     if (abortBusy()) return;
+
+    setQueuePausedForCurrentSession(true);
 
     // If the run is already in error state (e.g. model failed before responding),
     // the session is already idle server-side. Just dismiss the stuck indicator locally.
@@ -3371,15 +3441,20 @@ export default function SessionView(props: SessionViewProps) {
     return null;
   });
 
-  const handleSendPrompt = async (draft: ComposerDraft) => {
-    recordSendTrace("handleSendPrompt:start", {
+  const sendPromptImmediate = async (
+    draft: ComposerDraft,
+    options: { reason?: "normal" | "queue-drain" | "send-now" | "replacement" } = {},
+  ) => {
+    recordSendTrace("sendPromptImmediate:start", {
       aiAccessBlockedReason: props.aiAccessBlockedReason,
       busyHint: props.busyHint ?? null,
       busyLabel: props.busyLabel ?? null,
+      reason: options.reason ?? "normal",
     });
     if (props.aiAccessBlockedReason) {
-      recordSendTrace("handleSendPrompt:blocked-ai-access", {
+      recordSendTrace("sendPromptImmediate:blocked-ai-access", {
         aiAccessBlockedReason: props.aiAccessBlockedReason,
+        reason: options.reason ?? "normal",
       });
       setToastMessage(props.aiAccessBlockedReason);
       return false;
@@ -3387,9 +3462,10 @@ export default function SessionView(props: SessionViewProps) {
 
     try {
       const accepted = await props.sendPromptAsync(draft);
-      recordSendTrace("handleSendPrompt:result", {
+      recordSendTrace("sendPromptImmediate:result", {
         accepted,
         error: props.error ?? null,
+        reason: options.reason ?? "normal",
       });
       if (!accepted) {
         setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
@@ -3404,6 +3480,103 @@ export default function SessionView(props: SessionViewProps) {
       setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
       return false;
     }
+  };
+
+  const drainNextQueuedDraft = async (reason: "normal" | "queue-drain") => {
+    if (queueDrainAttemptInFlight) return;
+    if (queuePaused()) return;
+
+    const sessionKey = currentSessionQueueKey();
+    const item = firstQueuedDraft(queuedDraftsBySessionKey()[sessionKey] ?? []);
+    if (!item) return;
+
+    queueDrainAttemptInFlight = true;
+    updateQueueForSessionKey(sessionKey, (queue) => markQueuedDraftSending(queue, item.id));
+    try {
+      const accepted = await sendPromptImmediate(item.draft, { reason });
+      if (accepted) {
+        updateQueueForSessionKey(sessionKey, (queue) => removeQueuedDraft(queue, item.id));
+        return;
+      }
+      updateQueueForSessionKey(sessionKey, (queue) =>
+        markQueuedDraftError(queue, item.id, props.error ?? tr("session.connect_server_to_attach")),
+      );
+    } finally {
+      queueDrainAttemptInFlight = false;
+    }
+  };
+
+  const handleEditQueuedDraft = (id: string) => {
+    const item = queuedDrafts().find((draft) => draft.id === id);
+    if (!item || item.state === "sending") return;
+    setEditingQueuedDraftId(id);
+    updateCurrentQueue((queue) => markQueuedDraftEditing(queue, id));
+    props.setComposerDraft(item.draft);
+  };
+
+  const handleCancelQueuedDraft = (id: string) => {
+    const item = queuedDrafts().find((draft) => draft.id === id);
+    if (!item || item.state === "sending") return;
+    updateCurrentQueue((queue) => removeQueuedDraft(queue, id));
+    if (editingQueuedDraftId() === id) {
+      setEditingQueuedDraftId(null);
+      props.setComposerDraft(emptyComposerDraft(props.composerDraft.mode));
+    }
+  };
+
+  const handleMoveQueuedDraft = (id: string, targetIndex: number) => {
+    updateCurrentQueue((queue) => moveQueuedDraft(queue, id, targetIndex));
+  };
+
+  const handleSendPrompt = async (draft: ComposerDraft, options: ComposerSendOptions = {}) => {
+    recordSendTrace("handleSendPrompt:start", {
+      sendNow: options.sendNow,
+      source: options.source,
+      editingQueuedDraftId: editingQueuedDraftId(),
+      queuePaused: queuePaused(),
+      showRunIndicator: showRunIndicator(),
+    });
+
+    const sendNow = Boolean(options.sendNow);
+    const editingId = editingQueuedDraftId();
+    if (editingId) {
+      if (!sendNow) {
+        updateCurrentQueue((queue) => markQueuedDraftQueued(updateQueuedDraft(queue, editingId, draft), editingId));
+        setEditingQueuedDraftId(null);
+        props.setComposerDraft(emptyComposerDraft(draft.mode));
+        return true;
+      }
+
+      const accepted = await sendPromptImmediate(draft, { reason: "replacement" });
+      if (!accepted) return false;
+      updateCurrentQueue((queue) => removeQueuedDraft(queue, editingId));
+      setEditingQueuedDraftId(null);
+      props.setComposerDraft(emptyComposerDraft(draft.mode));
+      return true;
+    }
+
+    if (queuePaused() && !sendNow) {
+      appendDraftToCurrentQueue(draft);
+      setQueuePausedForCurrentSession(false);
+      void drainNextQueuedDraft("normal");
+      return true;
+    }
+
+    if (showRunIndicator() && !sendNow) {
+      appendDraftToCurrentQueue(draft);
+      return true;
+    }
+
+    if (sendNow) {
+      const wasPaused = queuePaused();
+      const accepted = await sendPromptImmediate(draft, { reason: "send-now" });
+      if (accepted && wasPaused) {
+        setQueuePausedForCurrentSession(false);
+      }
+      return accepted;
+    }
+
+    return sendPromptImmediate(draft, { reason: "normal" });
   };
 
   const handleBrowserAutomationQuickstart = () => {
@@ -4322,6 +4495,16 @@ export default function SessionView(props: SessionViewProps) {
               <Show when={props.aiAccessBlockedReason}>
                 <div class="mx-auto mb-3 w-full max-w-[min(100%,72rem)] rounded-2xl border border-amber-7/30 bg-amber-2/30 px-4 py-3 text-sm text-amber-12">
                   {props.aiAccessBlockedReason}
+                </div>
+              </Show>
+              <Show when={queuedDrafts().length > 0}>
+                <div class={`mx-auto mb-2 w-full ${railWidthClass()}`}>
+                  <QueuedMessageList
+                    items={queuedDrafts()}
+                    onEdit={handleEditQueuedDraft}
+                    onCancel={handleCancelQueuedDraft}
+                    onMove={handleMoveQueuedDraft}
+                  />
                 </div>
               </Show>
               <Composer

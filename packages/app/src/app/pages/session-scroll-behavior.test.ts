@@ -6,7 +6,7 @@ const source = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
 const appStyles = readFileSync(new URL("../index.css", import.meta.url), "utf8");
 
 test("session send flow starts run UI only after the send is accepted", () => {
-  const handlerStart = source.indexOf("const handleSendPrompt = async (draft: ComposerDraft) => {");
+  const handlerStart = source.indexOf("const sendPromptImmediate = async (");
   const sendCall = source.indexOf("const accepted = await props.sendPromptAsync(draft);", handlerStart);
   const rejectedBranch = source.indexOf("if (!accepted) {", sendCall);
   const stickToBottom = source.indexOf("setStickToBottom(true);", rejectedBranch);
