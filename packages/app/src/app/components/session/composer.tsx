@@ -25,6 +25,11 @@ type MentionGroup = {
   items: MentionOption[];
 };
 
+export type ComposerSendOptions = {
+  sendNow?: boolean;
+  source?: "button" | "enter" | "ctrl-enter";
+};
+
 type ComposerProps = {
   initialDraft: ComposerDraft;
   prompt: string;
@@ -33,7 +38,7 @@ type ComposerProps = {
   isStreaming: boolean;
   compactTopSpacing?: boolean;
   compactWidth?: boolean;
-  onSend: (draft: ComposerDraft) => Promise<boolean>;
+  onSend: (draft: ComposerDraft, options?: ComposerSendOptions) => Promise<boolean>;
   onStop: () => void;
   onDraftChange: (draft: ComposerDraft) => void;
   selectedAgent: string | null;
@@ -964,10 +969,12 @@ export default function Composer(props: ComposerProps) {
   });
   const sendDisabled = createMemo(() => !hasDraftContent() || props.busy);
 
-  const sendDraft = async () => {
+  const sendDraft = async (options: ComposerSendOptions = {}) => {
     recordSendTrace("sendDraft:start", {
       busy: props.busy,
       streaming: props.isStreaming,
+      sendNow: options.sendNow,
+      source: options.source,
     });
     // Ensure any pending debounce updates are committed before sending
     flushDraftChange();
@@ -995,12 +1002,16 @@ export default function Composer(props: ComposerProps) {
     recordSendTrace("sendDraft:onSend", {
       textLength: text.length,
       attachmentCount: draft.attachments.length,
+      sendNow: options.sendNow,
+      source: options.source,
     });
-    const sent = await props.onSend(draft);
+    const sent = await props.onSend(draft, options);
     recordSendTrace("sendDraft:onSend:result", {
       sent,
       busy: props.busy,
       streaming: props.isStreaming,
+      sendNow: options.sendNow,
+      source: options.source,
     });
     if (!sent) {
       setSending(false);
@@ -1512,8 +1523,13 @@ export default function Composer(props: ComposerProps) {
 
     if (event.key === "Enter") {
       event.preventDefault();
-      if (sending() || props.busy) return;
-      void sendDraft();
+      if (sending()) return;
+      if (event.ctrlKey || event.metaKey) {
+        void sendDraft({ sendNow: true, source: "ctrl-enter" });
+        return;
+      }
+      if (props.busy) return;
+      void sendDraft({ sendNow: false, source: "enter" });
     }
   };
 
@@ -1862,7 +1878,7 @@ export default function Composer(props: ComposerProps) {
                                   });
                                   return;
                                 }
-                                void sendDraft();
+                                void sendDraft({ sendNow: false, source: "button" });
                               }}
                               class={`shrink-0 p-1.5 rounded-full ${
                                 sending()
@@ -1871,7 +1887,8 @@ export default function Composer(props: ComposerProps) {
                                     ? "bg-gray-4 text-gray-10"
                                     : "bg-[#1B29FF] text-white hover:bg-blue-10"}`
                               }`}
-                              title={translate("session.send_label")}
+                              title={translate("session.queue_message_label")}
+                              aria-label={translate("session.queue_message_label")}
                             >
                               {sending()
                                 ? <Loader2 size={18} class="animate-spin" />
@@ -1888,6 +1905,20 @@ export default function Composer(props: ComposerProps) {
                           >
                             <Square size={14} fill="currentColor" />
                           </button>
+                          <Show when={hasDraftContent()}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (sending()) return;
+                                void sendDraft({ sendNow: true, source: "button" });
+                              }}
+                              class="shrink-0 p-1.5 rounded-full bg-[#1B29FF] text-white transition-colors hover:bg-blue-10"
+                              title={translate("session.send_now_title")}
+                              aria-label={translate("session.send_now_label")}
+                            >
+                              <Zap size={16} />
+                            </button>
+                          </Show>
                         </Show>
                       </div>
                     </div>

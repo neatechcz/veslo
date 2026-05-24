@@ -53,13 +53,13 @@ test("composer keeps dropped files as attachment chips", () => {
 test("composer awaits send confirmation before clearing draft and attachments", () => {
   assert.match(
     composerSource,
-    /onSend: \(draft: ComposerDraft\) => Promise<boolean>;/,
+    /onSend: \(draft: ComposerDraft, options\?: ComposerSendOptions\) => Promise<boolean>;/,
     "composer onSend contract should expose send success/failure",
   );
 
   assert.match(
     composerSource,
-    /const sent = await props\.onSend\(draft\);[\s\S]*if \(!sent\) \{\s*setSending\(false\);\s*return;\s*\}\s*\/\/ Don't reset sending here[\s\S]*setSlashOpen\(false\);\s*setSlashQuery\(""\);\s*setAttachments\(\[\]\);\s*setEditorText\(""\);/s,
+    /const sent = await props\.onSend\(draft, options\);[\s\S]*if \(!sent\) \{\s*setSending\(false\);\s*return;\s*\}\s*\/\/ Don't reset sending here[\s\S]*setSlashOpen\(false\);\s*setSlashQuery\(""\);\s*setAttachments\(\[\]\);\s*setEditorText\(""\);/s,
     "composer should clear draft state only after send succeeds",
   );
 });
