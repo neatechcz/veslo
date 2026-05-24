@@ -33,11 +33,10 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
     }`;
   const leftLabel = () => props.leftLabel ?? "Toggle left menu";
 
-  const handleDragStripMouseDown = (event: MouseEvent) => {
+  const handleTitlebarDragMouseDown = (event: MouseEvent) => {
     if (event.button !== 0) return;
-    if (!props.hideTitlebar) return;
-    // Keep explicit startDragging fallback to avoid drag regressions if
-    // browser hit-testing around data-tauri-drag-region changes.
+    // Keep explicit startDragging fallback for titlebar text and drag strip
+    // hit-testing while data-tauri-drag-region remains the primary drag path.
     void startWindowDragging().catch(() => {
       // Ignore: data-tauri-drag-region remains the primary drag path.
     });
@@ -49,7 +48,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
         <div
           data-tauri-drag-region
           class={layout.dragRegionClass}
-          onMouseDown={handleDragStripMouseDown}
+          onMouseDown={handleTitlebarDragMouseDown}
         />
       ) : null}
       <div class={layout.rootClass}>
@@ -65,7 +64,11 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
               <LeftSidebarToggleIcon size={18} />
             </button>
             {props.leftContent ?? (props.showBrand !== false ? (
-              <span class="select-none truncate text-[13px] font-medium leading-6 text-gray-12">
+              <span
+                data-tauri-drag-region
+                onMouseDown={handleTitlebarDragMouseDown}
+                class="select-none truncate text-[13px] font-medium leading-6 text-gray-12"
+              >
                 Veslo by Neatech
               </span>
             ) : null)}
@@ -74,7 +77,11 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
 
         <Show when={props.centerContent}>
           <div class={layout.centerContentClass}>
-            <div class="pointer-events-auto min-w-0 max-w-full select-none truncate text-[12px] leading-6 text-gray-10">
+            <div
+              data-tauri-drag-region
+              onMouseDown={handleTitlebarDragMouseDown}
+              class="pointer-events-auto min-w-0 max-w-full select-none truncate text-[12px] leading-6 text-gray-10"
+            >
               {props.centerContent}
             </div>
           </div>

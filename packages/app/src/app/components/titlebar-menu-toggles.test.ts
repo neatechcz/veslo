@@ -104,14 +104,28 @@ test("titlebar menu toggles keep macOS-sized icon controls", () => {
 test("titlebar text labels are not selectable while dragging the window", () => {
   assert.match(
     source,
-    /<span class="[^"]*\bselect-none\b[^"]*">[\s\S]*Veslo by Neatech/,
+    /<span[\s\S]*class="[^"]*\bselect-none\b[^"]*"[\s\S]*>\s*Veslo by Neatech/,
     "fallback app name should not be selectable in the draggable titlebar area",
   );
 
   assert.match(
     source,
-    /<div class="[^"]*\bselect-none\b[^"]*">\s*\{props\.centerContent\}/,
+    /<div[\s\S]*class="[^"]*\bselect-none\b[^"]*"[\s\S]*>\s*\{props\.centerContent\}/,
     "centered session and project titlebar labels should not be selectable",
+  );
+});
+
+test("titlebar text labels participate in window dragging", () => {
+  assert.match(
+    source,
+    /<span[\s\S]*data-tauri-drag-region[\s\S]*onMouseDown=\{handleTitlebarDragMouseDown\}[\s\S]*class="[^"]*\bselect-none\b[^"]*"[\s\S]*>\s*Veslo by Neatech/,
+    "fallback app name should be a Tauri drag region instead of blocking the titlebar drag strip",
+  );
+
+  assert.match(
+    source,
+    /<div[\s\S]*data-tauri-drag-region[\s\S]*onMouseDown=\{handleTitlebarDragMouseDown\}[\s\S]*class="[^"]*\bselect-none\b[^"]*"[\s\S]*>\s*\{props\.centerContent\}/,
+    "centered session and project titlebar labels should be Tauri drag regions",
   );
 });
 
