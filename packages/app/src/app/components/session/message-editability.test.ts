@@ -209,7 +209,7 @@ test("replaces matching resolved agent tokens instead of duplicating sent agent 
   const result = getEditableUserMessageDraft({
     messages: [
       message("m1", "user", [
-        textPart("m1", "ask @reviewer"),
+        textPart("m1", "ask @reviewer to check"),
         agentPart("m1", "reviewer"),
       ]),
     ],
@@ -218,11 +218,12 @@ test("replaces matching resolved agent tokens instead of duplicating sent agent 
     composerEmpty: true,
   });
 
-  assert.equal(result?.draft.text, "ask @reviewer");
-  assert.equal(result?.draft.resolvedText, "ask @reviewer");
+  assert.equal(result?.draft.text, "ask @reviewer to check");
+  assert.equal(result?.draft.resolvedText, "ask @reviewer to check");
   assert.deepEqual(result?.draft.parts, [
     { type: "text", text: "ask " },
     { type: "agent", name: "reviewer" },
+    { type: "text", text: " to check" },
   ]);
 });
 
