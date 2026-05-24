@@ -22,7 +22,7 @@ test("composer exports send intent options and passes them to onSend", () => {
 
   assert.match(
     composerSource,
-    /const sendDraft = async \(options: ComposerSendOptions = \{\}\) => \{[\s\S]*const sent = await props\.onSend\(draft, options\);/s,
+    /const sendDraft = async \(options: ComposerSendOptions = \{\}\) => \{[\s\S]*sent = await props\.onSend\(draft, options\);/s,
     "sendDraft should pass the send intent through to onSend",
   );
 });
@@ -46,6 +46,12 @@ test("composer distinguishes queued Enter sends from immediate Ctrl+Enter sends"
     /if \(event\.key === "Enter"\) \{[\s\S]*?void sendDraft\(\{ sendNow: false, source: "enter" \}\);[\s\S]*?\}/s,
     "plain Enter should queue the message rather than interrupting immediately",
   );
+
+  assert.match(
+    composerSource,
+    /if \(props\.busy && !props\.isStreaming\) return;/,
+    "plain Enter should still reach onSend while streaming so the parent can queue it",
+  );
 });
 
 test("composer exposes button intents for queue and streaming send-now", () => {
@@ -65,6 +71,24 @@ test("composer exposes button intents for queue and streaming send-now", () => {
     composerSource,
     /when=\{props\.isStreaming\}[\s\S]*props\.onStop\(\)[\s\S]*translate\("session\.stop_label"\)[\s\S]*<Show when=\{hasDraftContent\(\)\}>[\s\S]*void sendDraft\(\{ sendNow: true, source: "button" \}\);[\s\S]*translate\("session\.send_now_title"\)[\s\S]*translate\("session\.send_now_label"\)/s,
     "streaming UI should keep Stop and add a localized send-now affordance when draft content exists",
+  );
+
+  assert.match(
+    composerSource,
+    /const \[sendNowPending, setSendNowPending\] = createSignal\(false\);/,
+    "send-now should have scoped pending state separate from streaming send state",
+  );
+
+  assert.match(
+    composerSource,
+    /if \(options\.sendNow && sendNowPending\(\)\) return;/,
+    "send-now submissions should debounce while the previous send-now call is pending",
+  );
+
+  assert.match(
+    composerSource,
+    /finally \{\s*if \(options\.sendNow\) setSendNowPending\(false\);\s*\}/,
+    "send-now pending state should reset after the onSend promise settles",
   );
 });
 

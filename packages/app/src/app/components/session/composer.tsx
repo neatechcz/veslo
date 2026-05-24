@@ -964,12 +964,15 @@ export default function Composer(props: ComposerProps) {
   };
 
   const [sending, setSending] = createSignal(false);
+  const [sendNowPending, setSendNowPending] = createSignal(false);
   createEffect(() => {
     if (props.isStreaming && sending()) setSending(false);
   });
   const sendDisabled = createMemo(() => !hasDraftContent() || props.busy);
 
   const sendDraft = async (options: ComposerSendOptions = {}) => {
+    if (options.sendNow && sendNowPending()) return;
+
     recordSendTrace("sendDraft:start", {
       busy: props.busy,
       streaming: props.isStreaming,
@@ -999,13 +1002,19 @@ export default function Composer(props: ComposerProps) {
 
     recordHistory(draft);
     setSending(true);
+    if (options.sendNow) setSendNowPending(true);
     recordSendTrace("sendDraft:onSend", {
       textLength: text.length,
       attachmentCount: draft.attachments.length,
       sendNow: options.sendNow,
       source: options.source,
     });
-    const sent = await props.onSend(draft, options);
+    let sent = false;
+    try {
+      sent = await props.onSend(draft, options);
+    } finally {
+      if (options.sendNow) setSendNowPending(false);
+    }
     recordSendTrace("sendDraft:onSend:result", {
       sent,
       busy: props.busy,
@@ -1528,7 +1537,7 @@ export default function Composer(props: ComposerProps) {
         void sendDraft({ sendNow: true, source: "ctrl-enter" });
         return;
       }
-      if (props.busy) return;
+      if (props.busy && !props.isStreaming) return;
       void sendDraft({ sendNow: false, source: "enter" });
     }
   };
@@ -1909,10 +1918,13 @@ export default function Composer(props: ComposerProps) {
                             <button
                               type="button"
                               onClick={() => {
-                                if (sending()) return;
+                                if (sending() || sendNowPending()) return;
                                 void sendDraft({ sendNow: true, source: "button" });
                               }}
-                              class="shrink-0 p-1.5 rounded-full bg-[#1B29FF] text-white transition-colors hover:bg-blue-10"
+                              disabled={sendNowPending()}
+                              class={`shrink-0 p-1.5 rounded-full bg-[#1B29FF] text-white transition-colors ${
+                                sendNowPending() ? "opacity-70" : "hover:bg-blue-10"
+                              }`}
                               title={translate("session.send_now_title")}
                               aria-label={translate("session.send_now_label")}
                             >
