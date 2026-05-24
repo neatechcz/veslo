@@ -4,12 +4,14 @@ export type SessionTitlebarWorkspaceType = "local" | "remote";
 
 export type SessionTitlebarContextInput = {
   selectedSessionId: string | null | undefined;
+  selectedSessionTitle?: string | null;
   messageCount: number;
   workspaceType: SessionTitlebarWorkspaceType;
   activeWorkspaceRoot: string | null | undefined;
   localWorkspaceLabel: string;
   remoteWorkspaceLabel: string;
   newSessionLabel: string;
+  chatFallbackLabel: string;
   isPrivateWorkspacePath?: boolean;
 };
 
@@ -25,11 +27,22 @@ export const resolveSessionTitlebarContext = (
 ): SessionTitlebarContext | null => {
   const selectedSessionId = input.selectedSessionId?.trim() ?? "";
   const isNewSession = selectedSessionId.length === 0 && input.messageCount === 0;
-  const stateLabel = isNewSession ? input.newSessionLabel.trim() || null : null;
   const rootPath = input.activeWorkspaceRoot?.trim() ?? "";
   const isRemoteWorkspace = input.workspaceType === "remote";
-  const hideLocalLocation =
-    !isRemoteWorkspace && (!rootPath || (isNewSession && input.isPrivateWorkspacePath === true));
+  const isPrivateWorkspace = !isRemoteWorkspace && input.isPrivateWorkspacePath === true;
+  const privateChatLabel =
+    input.selectedSessionTitle?.trim() ||
+    input.chatFallbackLabel.trim() ||
+    input.newSessionLabel.trim() ||
+    null;
+  const stateLabel = isPrivateWorkspace
+    ? isNewSession
+      ? input.newSessionLabel.trim() || privateChatLabel
+      : privateChatLabel
+    : isNewSession
+      ? input.newSessionLabel.trim() || null
+      : null;
+  const hideLocalLocation = !isRemoteWorkspace && (!rootPath || isPrivateWorkspace);
 
   let locationLabel: string | null = null;
   let locationTitle: string | null = null;

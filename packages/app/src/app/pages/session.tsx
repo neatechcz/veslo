@@ -453,16 +453,27 @@ export default function SessionView(props: SessionViewProps) {
   const [sidebarLayoutState, setSidebarLayoutState] = createSignal<SidebarLayoutState>(
     createInitialSidebarLayoutState(readSidebarDockedVisibility()),
   );
+  const selectedSessionSidebarItem = createMemo(() => {
+    const id = props.selectedSessionId?.trim() ?? "";
+    if (!id) return null;
+    for (const group of props.workspaceSessionGroups) {
+      const match = group.sessions.find((session) => session.id === id);
+      if (match) return match;
+    }
+    return null;
+  });
   const sessionTitlebarContextModel = createMemo(() => {
     const rootPath = props.activeWorkspaceRoot.trim();
     return resolveSessionTitlebarContext({
       selectedSessionId: props.selectedSessionId,
+      selectedSessionTitle: selectedSessionSidebarItem()?.title ?? null,
       messageCount: props.messages.length,
       workspaceType: props.activeWorkspaceDisplay.workspaceType,
       activeWorkspaceRoot: rootPath,
       localWorkspaceLabel: tr("session.local_workspace_label"),
       remoteWorkspaceLabel: tr("session.remote_workspace_label"),
       newSessionLabel: tr("session.new_session_label"),
+      chatFallbackLabel: tr("session.new_session_label"),
       isPrivateWorkspacePath: props.isPrivateWorkspacePath(rootPath),
     });
   });
@@ -2825,6 +2836,9 @@ export default function SessionView(props: SessionViewProps) {
   const sessionTitleById = (sessionId: string | null | undefined) => {
     const id = (sessionId ?? "").trim();
     if (!id) return "";
+    if (id === (props.selectedSessionId?.trim() ?? "")) {
+      return selectedSessionSidebarItem()?.title ?? "";
+    }
     for (const group of props.workspaceSessionGroups) {
       const match = group.sessions.find((session) => session.id === id);
       if (match) return match.title ?? "";
@@ -2832,7 +2846,7 @@ export default function SessionView(props: SessionViewProps) {
     return "";
   };
 
-  const selectedSessionTitle = createMemo(() => sessionTitleById(props.selectedSessionId));
+  const selectedSessionTitle = createMemo(() => selectedSessionSidebarItem()?.title ?? "");
   const deleteSessionTargetId = createMemo(() => deleteSessionTarget()?.sessionId ?? props.selectedSessionId ?? null);
   const deleteSessionTargetTitle = createMemo(() => sessionTitleById(deleteSessionTargetId()));
 

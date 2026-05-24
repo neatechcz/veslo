@@ -12,6 +12,7 @@ test("empty local chat shows new-session state and directory", () => {
     localWorkspaceLabel: "Local workspace",
     remoteWorkspaceLabel: "Remote workspace",
     newSessionLabel: "New session",
+    chatFallbackLabel: "Chat",
     isPrivateWorkspacePath: false,
   });
 
@@ -32,6 +33,7 @@ test("private new-session draft hides generated workspace directory", () => {
     localWorkspaceLabel: "Private workspace",
     remoteWorkspaceLabel: "Remote workspace",
     newSessionLabel: "New session",
+    chatFallbackLabel: "Chat",
     isPrivateWorkspacePath: true,
   });
 
@@ -43,6 +45,46 @@ test("private new-session draft hides generated workspace directory", () => {
   });
 });
 
+test("selected private chat shows chat title instead of private directory", () => {
+  const context = resolveSessionTitlebarContext({
+    selectedSessionId: "ses_chat",
+    selectedSessionTitle: "Plan weekend",
+    messageCount: 2,
+    workspaceType: "local",
+    activeWorkspaceRoot: "/Users/example/.veslo/private-workspaces/chat-a",
+    localWorkspaceLabel: "Local workspace",
+    remoteWorkspaceLabel: "Remote workspace",
+    newSessionLabel: "Chat",
+    chatFallbackLabel: "Chat",
+    isPrivateWorkspacePath: true,
+  });
+
+  assert.deepEqual(context, {
+    stateLabel: "Plan weekend",
+    locationLabel: null,
+    locationTitle: null,
+    locationUsePathStyle: false,
+  });
+});
+
+test("selected private chat falls back to Chat label", () => {
+  const context = resolveSessionTitlebarContext({
+    selectedSessionId: "ses_chat",
+    selectedSessionTitle: "",
+    messageCount: 1,
+    workspaceType: "local",
+    activeWorkspaceRoot: "/Users/example/.veslo/private-workspaces/chat-a",
+    localWorkspaceLabel: "Local workspace",
+    remoteWorkspaceLabel: "Remote workspace",
+    newSessionLabel: "Chat",
+    chatFallbackLabel: "Chat",
+    isPrivateWorkspacePath: true,
+  });
+
+  assert.equal(context?.stateLabel, "Chat");
+  assert.equal(context?.locationLabel, null);
+});
+
 test("existing chat with messages keeps directory-only context", () => {
   const context = resolveSessionTitlebarContext({
     selectedSessionId: "ses_123",
@@ -52,6 +94,7 @@ test("existing chat with messages keeps directory-only context", () => {
     localWorkspaceLabel: "Local workspace",
     remoteWorkspaceLabel: "Remote workspace",
     newSessionLabel: "New session",
+    chatFallbackLabel: "Chat",
     isPrivateWorkspacePath: false,
   });
 
@@ -72,6 +115,7 @@ test("message-bearing chat without a selected id does not use new-session state"
     localWorkspaceLabel: "Local workspace",
     remoteWorkspaceLabel: "Remote workspace",
     newSessionLabel: "New session",
+    chatFallbackLabel: "Chat",
     isPrivateWorkspacePath: false,
   });
 
@@ -92,6 +136,7 @@ test("new chat without a known local directory still shows the state", () => {
     localWorkspaceLabel: "Local workspace",
     remoteWorkspaceLabel: "Remote workspace",
     newSessionLabel: "New session",
+    chatFallbackLabel: "Chat",
     isPrivateWorkspacePath: false,
   });
 
