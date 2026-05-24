@@ -91,8 +91,10 @@ const hasVisiblePathEndingWithFilename = (text: string, filename: string): boole
     if (segment === filename) return true;
     if (!segment.endsWith(filename)) continue;
 
-    const before = segment[segment.length - filename.length - 1];
-    if (before === "/" || before === "\\") return true;
+    const prefix = segment.slice(0, segment.length - filename.length);
+    if (!prefix.endsWith("/") && !prefix.endsWith("\\")) continue;
+    if (!prefix.slice(0, -1) || /\s/.test(prefix.slice(0, -1))) continue;
+    return true;
   }
 
   return false;
