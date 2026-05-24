@@ -49,6 +49,20 @@ import { readDenAuth } from "../lib/den-auth";
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
 type ListLocalSkillsScoped = (projectDir: string, scope: LocalSkillListScope) => Promise<LocalSkillCard[]>;
 
+const vesloServerClientIdentities = new WeakMap<object, string>();
+let nextVesloServerClientIdentity = 1;
+
+function resolveVesloServerClientIdentity(client: VesloServerClient | null) {
+  if (!client || (typeof client !== "object" && typeof client !== "function")) return "none";
+  const key = client as object;
+  const existing = vesloServerClientIdentities.get(key);
+  if (existing) return existing;
+  const next = `client-${nextVesloServerClientIdentity}`;
+  nextVesloServerClientIdentity += 1;
+  vesloServerClientIdentities.set(key, next);
+  return next;
+}
+
 async function loadSkillCreatorTemplate() {
   const mod = await import("../data/skill-creator.md?raw");
   return mod.default;
@@ -216,9 +230,11 @@ export function createExtensionsStore(options: {
     const denAuth = readDenAuth();
     const denToken = denAuth?.token?.trim() ?? "";
     const denOrgId = denAuth?.orgId?.trim() ?? "";
+    const vesloServerClientIdentity = canUseVesloServer ? resolveVesloServerClientIdentity(vesloClient) : "none";
     const contextKey = JSON.stringify({
       root,
       canUseVesloServer,
+      vesloServerClientIdentity,
       denOrgId,
       hasDenToken: denToken.length > 0,
     });
@@ -244,6 +260,10 @@ export function createExtensionsStore(options: {
     if (!optionsOverride?.force && hubSkillsLoaded) return;
     if (refreshHubSkillsInFlight) {
       await refreshHubSkillsPromise;
+      const latestContext = resolveHubSkillsRefreshContext();
+      if (hubSkillsContextKey !== latestContext.contextKey) {
+        await refreshHubSkills(optionsOverride);
+      }
       return;
     }
 
@@ -324,14 +344,17 @@ export function createExtensionsStore(options: {
       }))
       .filter((workspace) => workspace.id && workspace.path);
 
-    const nextContextKey = JSON.stringify({
-      hub: resolveHubSkillsRefreshContext().contextKey,
-      workspaces: localWorkspaces.map((workspace) => ({
-        id: workspace.id,
-        label: workspace.label,
-        path: workspace.path,
-      })),
-    });
+    const getSkillInventoryContextKey = (hubContextKey: string) =>
+      JSON.stringify({
+        hub: hubContextKey,
+        workspaces: localWorkspaces.map((workspace) => ({
+          id: workspace.id,
+          label: workspace.label,
+          path: workspace.path,
+        })),
+      });
+
+    const nextContextKey = getSkillInventoryContextKey(resolveHubSkillsRefreshContext().contextKey);
 
     if (nextContextKey !== skillInventoryContextKey) {
       skillInventoryLoaded = false;
@@ -347,6 +370,15 @@ export function createExtensionsStore(options: {
       setSkillInventoryStatus(null);
       await refreshHubSkills(optionsOverride);
       if (refreshSkillInventoryAborted) return;
+
+      const refreshedHubContext = resolveHubSkillsRefreshContext();
+      if (hubSkillsContextKey !== refreshedHubContext.contextKey) {
+        await refreshHubSkills({ force: true });
+        if (refreshSkillInventoryAborted) return;
+      }
+
+      const inventoryHubContext = resolveHubSkillsRefreshContext();
+      const hasMatchingHubSkills = hubSkillsLoaded && hubSkillsContextKey === inventoryHubContext.contextKey;
 
       const listScopedSkills = options.listLocalSkillsScoped ?? listLocalSkillsScopedCommand;
       const globalSkills = await listScopedSkills("", "global");
@@ -371,7 +403,7 @@ export function createExtensionsStore(options: {
       const next = buildSkillInventory({
         globalSkills,
         workspaceSkillsByWorkspaceId,
-        hubSkills: hubSkills(),
+        hubSkills: hasMatchingHubSkills ? hubSkills() : [],
       });
       if (refreshSkillInventoryAborted) return;
 
@@ -379,8 +411,8 @@ export function createExtensionsStore(options: {
       if (!next.length) {
         setSkillInventoryStatus(translate("skills.no_skills_found"));
       }
-      skillInventoryLoaded = hubSkillsLoaded;
-      skillInventoryContextKey = nextContextKey;
+      skillInventoryLoaded = hasMatchingHubSkills;
+      skillInventoryContextKey = getSkillInventoryContextKey(inventoryHubContext.contextKey);
     } catch (e) {
       if (refreshSkillInventoryAborted) return;
       skillInventoryLoaded = false;

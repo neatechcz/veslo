@@ -84,6 +84,15 @@ const workspaces: WorkspaceInfo[] = [
   },
 ];
 
+const remoteWorkspace: WorkspaceInfo = {
+  id: "ws-remote",
+  name: "Remote Workspace",
+  displayName: "Remote Label",
+  path: "/workspaces/remote",
+  preset: "server",
+  workspaceType: "remote",
+};
+
 const hubSkill = (name: string) => ({
   name,
   description: `${name} from hub`,
@@ -153,7 +162,7 @@ test("extensions store exposes an app-wide skill inventory from global, workspac
           projectDir: () => "/workspaces/alpha",
           activeWorkspaceRoot: () => "/workspaces/alpha",
           workspaceType: () => "local",
-          workspaces: () => workspaces,
+          workspaces: () => [...workspaces, remoteWorkspace],
           vesloServerClient: () => vesloServerClient as never,
           vesloServerStatus: () => "connected",
           vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
@@ -197,6 +206,58 @@ test("extensions store exposes an app-wide skill inventory from global, workspac
         assert.equal(hubSkill?.hubItem?.description, "Planning from hub");
         assert.equal(hubSkill?.hubItem?.source.path, "skills/planning");
         assert.equal(store.skillInventoryStatus(), null);
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory refreshes hub entries when the Veslo server client changes", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const hubCalls: string[] = [];
+      const clientA = {
+        async listHubSkills() {
+          hubCalls.push("client-a");
+          return { items: [hubSkill("planning-client-a")] };
+        },
+      };
+      const clientB = {
+        async listHubSkills() {
+          hubCalls.push("client-b");
+          return { items: [hubSkill("planning-client-b")] };
+        },
+      };
+      let activeClient: typeof clientA | typeof clientB = clientA;
+
+      try {
+        const store = createExtensionsStore({
+          client: () => null,
+          projectDir: () => "/workspaces/alpha",
+          activeWorkspaceRoot: () => "/workspaces/alpha",
+          workspaceType: () => "local",
+          workspaces: () => [],
+          vesloServerClient: () => activeClient as never,
+          vesloServerStatus: () => "connected",
+          vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+          vesloServerWorkspaceId: () => "ws-alpha",
+          listLocalSkillsScoped: async () => [],
+          setBusy: () => undefined,
+          setBusyLabel: () => undefined,
+          setBusyStartedAt: () => undefined,
+          setError: () => undefined,
+        });
+
+        await store.refreshSkillInventory({ force: true });
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-client-a"), true);
+
+        activeClient = clientB;
+        await store.refreshSkillInventory();
+
+        assert.deepEqual(hubCalls, ["client-a", "client-b"]);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-client-a"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-client-b"), true);
       } finally {
         dispose();
       }
@@ -310,6 +371,74 @@ test("skill inventory waits for an in-flight hub skill refresh before caching", 
         await Promise.all([hubRefresh, inventoryRefresh]);
 
         assert.equal(store.skillInventory().some((item) => item.name === "planning"), true);
+      } finally {
+        hubSkillsRelease.current?.();
+        await hubRefresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
+test("skill inventory does not cache hub skills from an in-flight refresh after Den auth changes", async () => {
+  await withDenAuthStorage(async ({ localStorage, sessionStorage }) => {
+    await createRoot(async (dispose) => {
+      const hubCalls: string[] = [];
+      const hubSkillsRelease: { current?: () => void } = {};
+      let markHubSkillsStarted: (() => void) | null = null;
+      const hubSkillsStarted = new Promise<void>((resolve) => {
+        markHubSkillsStarted = resolve;
+      });
+      const vesloServerClient = {
+        async listHubSkills(input: { denOrgId: string }) {
+          hubCalls.push(input.denOrgId);
+          if (input.denOrgId === "org-1") {
+            assert.ok(markHubSkillsStarted);
+            markHubSkillsStarted();
+            await new Promise<void>((release) => {
+              hubSkillsRelease.current = release;
+            });
+          }
+          return { items: [hubSkill(`planning-${input.denOrgId}`)] };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async () => [],
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      const hubRefresh = store.refreshHubSkills({ force: true });
+      try {
+        await hubSkillsStarted;
+
+        const nextAuth = createDenAuthJson({ orgId: "org-2" });
+        localStorage.setItem("veslo.den.auth", nextAuth);
+        sessionStorage.setItem("veslo.den.auth", nextAuth);
+
+        const inventoryRefresh = store.refreshSkillInventory();
+        await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+
+        const releaseHubSkills = hubSkillsRelease.current;
+        assert.ok(releaseHubSkills);
+        releaseHubSkills();
+        await Promise.all([hubRefresh, inventoryRefresh]);
+
+        assert.deepEqual(hubCalls, ["org-1", "org-2"]);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-org-1"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-org-2"), true);
       } finally {
         hubSkillsRelease.current?.();
         await hubRefresh.catch(() => undefined);
