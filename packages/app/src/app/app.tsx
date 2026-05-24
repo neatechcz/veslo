@@ -1972,6 +1972,9 @@ export default function App() {
       busy: busy(),
       busyLabel: busyLabel(),
     });
+    let sessionID = selectedSessionId();
+    const sendModel = selectedSessionModel();
+    const sendAgent = selectedSessionAgent();
     const hasExplicitDraft = Boolean(draft);
     const fallbackDraft = composerDraft();
     const fallbackText = fallbackDraft.text.trim();
@@ -2043,12 +2046,11 @@ export default function App() {
     const compactShortcut = /^\/compact(?:\s+.*)?$/i.test(initialContent);
     const compactCommand = resolvedDraft.command?.name === "compact" || compactShortcut;
     const commandName = compactCommand ? "compact" : (resolvedDraft.command?.name ?? null);
-    if (compactCommand && !selectedSessionId()) {
+    if (compactCommand && !sessionID) {
       setError("Select a session with messages before running /compact.");
       return false;
     }
 
-    let sessionID = selectedSessionId();
     const pendingDraftSendState = (() => {
       const pendingDraftKey = (activePendingDraftKey() ?? "").trim();
       if (sessionID) return null;
@@ -2068,7 +2070,7 @@ export default function App() {
       return false;
     }
 
-    const model = selectedSessionModel();
+    const model = sendModel;
     let promptSystem: string | undefined;
     const restorePendingDraftAfterSendFailure = () => {
       if (pendingDraftSendState) {
@@ -2130,7 +2132,7 @@ export default function App() {
         setPrompt("");
       }
 
-      const agent = selectedSessionAgent();
+      const agent = sendAgent;
       const parts = buildPromptParts(resolvedDraft);
       const selectedVariant = modelVariant() ?? undefined;
       const reasoningEffort = resolveCodexReasoningEffort(model.modelID, selectedVariant ?? null);

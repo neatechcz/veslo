@@ -2004,9 +2004,9 @@ export default function SessionView(props: SessionViewProps) {
   const [todoExpanded, setTodoExpanded] = createSignal(false);
   let queueDrainAttemptInFlight = false;
 
-  const currentSessionQueueKey = createMemo(
-    () => props.selectedSessionId ?? `pending:${props.activeWorkspaceId || "default"}`,
-  );
+  const sessionQueueKeyForSessionId = (sessionId: string | null | undefined) =>
+    sessionId ?? `pending:${props.activeWorkspaceId || "default"}`;
+  const currentSessionQueueKey = createMemo(() => sessionQueueKeyForSessionId(props.selectedSessionId));
   const queuedDrafts = createMemo(() => queuedDraftsBySessionKey()[currentSessionQueueKey()] ?? []);
   const queuePaused = createMemo(() => Boolean(queuePausedAfterStopBySessionKey()[currentSessionQueueKey()]));
   const emptyComposerDraft = (mode: ComposerDraft["mode"] = "prompt"): ComposerDraft => ({
@@ -2040,6 +2040,11 @@ export default function SessionView(props: SessionViewProps) {
 
   const appendDraftToCurrentQueue = (draft: ComposerDraft) => {
     updateCurrentQueue((queue) => appendQueuedDraft(queue, draft));
+  };
+
+  const restoreEditingQueuedDraft = (sessionKey: string, id: string | null) => {
+    if (!id) return;
+    updateQueueForSessionKey(sessionKey, (queue) => markQueuedDraftQueued(queue, id));
   };
 
   const lastAssistantSnapshot = createMemo(() => {
@@ -2309,6 +2314,7 @@ export default function SessionView(props: SessionViewProps) {
         setRunHasBegun(false);
         setRunLastProgressAt(null);
         setRunBaseline({ assistantId: null, partCount: 0 });
+        restoreEditingQueuedDraft(sessionQueueKeyForSessionId(previousSessionId), editingQueuedDraftId());
         setEditingQueuedDraftId(null);
 
         if (!sessionId) return;
@@ -3443,17 +3449,24 @@ export default function SessionView(props: SessionViewProps) {
 
   const sendPromptImmediate = async (
     draft: ComposerDraft,
-    options: { reason?: "normal" | "queue-drain" | "send-now" | "replacement" } = {},
+    options: {
+      reason?: "normal" | "queue-drain" | "send-now" | "replacement";
+      expectedSessionKey?: string;
+    } = {},
   ) => {
+    const expectedSessionKey = options.expectedSessionKey;
     recordSendTrace("sendPromptImmediate:start", {
       aiAccessBlockedReason: props.aiAccessBlockedReason,
       busyHint: props.busyHint ?? null,
       busyLabel: props.busyLabel ?? null,
+      expectedSessionKey: expectedSessionKey ?? null,
       reason: options.reason ?? "normal",
     });
+    if (expectedSessionKey && currentSessionQueueKey() !== expectedSessionKey) return false;
     if (props.aiAccessBlockedReason) {
       recordSendTrace("sendPromptImmediate:blocked-ai-access", {
         aiAccessBlockedReason: props.aiAccessBlockedReason,
+        expectedSessionKey: expectedSessionKey ?? null,
         reason: options.reason ?? "normal",
       });
       setToastMessage(props.aiAccessBlockedReason);
@@ -3465,11 +3478,15 @@ export default function SessionView(props: SessionViewProps) {
       recordSendTrace("sendPromptImmediate:result", {
         accepted,
         error: props.error ?? null,
+        expectedSessionKey: expectedSessionKey ?? null,
         reason: options.reason ?? "normal",
       });
       if (!accepted) {
         setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
         return false;
+      }
+      if (options.expectedSessionKey && currentSessionQueueKey() !== options.expectedSessionKey) {
+        return accepted;
       }
       setStickToBottom(true);
       scheduleScrollToLatest("auto");
@@ -3493,9 +3510,18 @@ export default function SessionView(props: SessionViewProps) {
     queueDrainAttemptInFlight = true;
     updateQueueForSessionKey(sessionKey, (queue) => markQueuedDraftSending(queue, item.id));
     try {
-      const accepted = await sendPromptImmediate(item.draft, { reason });
+      if (currentSessionQueueKey() !== sessionKey) {
+        updateQueueForSessionKey(sessionKey, (queue) => markQueuedDraftQueued(queue, item.id));
+        return;
+      }
+
+      const accepted = await sendPromptImmediate(item.draft, { reason, expectedSessionKey: sessionKey });
       if (accepted) {
         updateQueueForSessionKey(sessionKey, (queue) => removeQueuedDraft(queue, item.id));
+        return;
+      }
+      if (currentSessionQueueKey() !== sessionKey) {
+        updateQueueForSessionKey(sessionKey, (queue) => markQueuedDraftQueued(queue, item.id));
         return;
       }
       updateQueueForSessionKey(sessionKey, (queue) =>
@@ -3509,6 +3535,10 @@ export default function SessionView(props: SessionViewProps) {
   const handleEditQueuedDraft = (id: string) => {
     const item = queuedDrafts().find((draft) => draft.id === id);
     if (!item || item.state === "sending") return;
+    const currentEditingId = editingQueuedDraftId();
+    if (currentEditingId && currentEditingId !== id) {
+      restoreEditingQueuedDraft(currentSessionQueueKey(), currentEditingId);
+    }
     setEditingQueuedDraftId(id);
     updateCurrentQueue((queue) => markQueuedDraftEditing(queue, id));
     props.setComposerDraft(item.draft);
@@ -3544,14 +3574,21 @@ export default function SessionView(props: SessionViewProps) {
         updateCurrentQueue((queue) => markQueuedDraftQueued(updateQueuedDraft(queue, editingId, draft), editingId));
         setEditingQueuedDraftId(null);
         props.setComposerDraft(emptyComposerDraft(draft.mode));
+        if (!showRunIndicator() && !queuePaused()) {
+          void drainNextQueuedDraft("normal");
+        }
         return true;
       }
 
-      const accepted = await sendPromptImmediate(draft, { reason: "replacement" });
+      const wasPaused = queuePaused();
+      const accepted = await sendPromptImmediate(draft, { reason: "send-now" });
       if (!accepted) return false;
       updateCurrentQueue((queue) => removeQueuedDraft(queue, editingId));
       setEditingQueuedDraftId(null);
       props.setComposerDraft(emptyComposerDraft(draft.mode));
+      if (accepted && wasPaused) {
+        setQueuePausedForCurrentSession(false);
+      }
       return true;
     }
 
