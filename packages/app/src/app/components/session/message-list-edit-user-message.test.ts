@@ -1,0 +1,33 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const source = readFileSync(new URL("./message-list.tsx", import.meta.url), "utf8");
+
+test("message list exposes a latest-user-message edit action next to copy", () => {
+  assert.match(
+    source,
+    /import type \{ EditableUserMessageDraft \} from "\.\/message-editability";/,
+    "message list should consume the editability model type",
+  );
+  assert.match(
+    source,
+    /editableUserMessage\?: EditableUserMessageDraft \| null;/,
+    "message list props should receive the currently editable user message",
+  );
+  assert.match(
+    source,
+    /onEditUserMessage\?: \(editable: EditableUserMessageDraft\) => void;/,
+    "message list props should expose an edit callback",
+  );
+  assert.match(
+    source,
+    /const editableMessage = \(\) =>\s*props\.editableUserMessage\?\.messageId === block\.messageId \? props\.editableUserMessage : null;/,
+    "edit affordance should be scoped to the exact editable message id",
+  );
+  assert.match(
+    source,
+    /<Show when=\{editableMessage\(\)\}>[\s\S]*title=\{tr\("session\.edit_message_title"\)\}[\s\S]*aria-label=\{tr\("session\.edit_message_title"\)\}[\s\S]*props\.onEditUserMessage\?\.\(editable\(\)\)[\s\S]*<Pencil size=\{12\}/,
+    "edit button should render a pencil action that calls the edit callback",
+  );
+});

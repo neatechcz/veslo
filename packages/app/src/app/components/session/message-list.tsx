@@ -23,6 +23,7 @@ import {
   toggleTimelineSection,
   type TimelineDetailState,
 } from "./timeline-detail-state.js";
+import type { EditableUserMessageDraft } from "./message-editability";
 
 export type MessageListProps = {
   messages: MessageWithParts[];
@@ -41,6 +42,8 @@ export type MessageListProps = {
   scrollElement?: () => HTMLElement | undefined;
   setScrollToMessageById?: (handler: ((messageId: string, behavior?: ScrollBehavior) => boolean) | null) => void;
   subagentDecorationsBySessionId?: Record<string, SidebarSubagentDecoration>;
+  editableUserMessage?: EditableUserMessageDraft | null;
+  onEditUserMessage?: (editable: EditableUserMessageDraft) => void;
   footer?: JSX.Element;
 };
 
@@ -1287,6 +1290,8 @@ export default function MessageList(props: MessageListProps) {
                 };
                 return { id: stepGroup.id, parts: stepGroup.parts, mode: stepGroup.mode };
               });
+          const editableMessage = () =>
+            props.editableUserMessage?.messageId === block.messageId ? props.editableUserMessage : null;
 
           if (isSyntheticSessionError) {
             const messageText = block.renderableParts
@@ -1388,7 +1393,19 @@ export default function MessageList(props: MessageListProps) {
                     isInline={true}
                   />
                 </Show>
-                <div class="absolute bottom-2 right-2 flex justify-end opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
+                <div class="absolute bottom-2 right-2 flex justify-end gap-1 opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
+                  <Show when={editableMessage()}>
+                    {(editable) => (
+                      <button
+                        class="text-dls-secondary hover:text-dls-text p-1 rounded hover:bg-dls-hover transition-colors"
+                        title={tr("session.edit_message_title")}
+                        aria-label={tr("session.edit_message_title")}
+                        onClick={() => props.onEditUserMessage?.(editable())}
+                      >
+                        <Pencil size={12} />
+                      </button>
+                    )}
+                  </Show>
                   <button
                     class="text-dls-secondary hover:text-dls-text p-1 rounded hover:bg-dls-hover transition-colors"
                     title="Copy message"

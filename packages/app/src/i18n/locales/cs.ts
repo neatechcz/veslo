@@ -959,6 +959,7 @@ export default {
   "session.connection_test_failed": "Test připojení selhal",
   "session.connection_verified": "Připojení ověřeno",
   "session.default_agent": "Výchozí agent",
+  "session.edit_message_title": "Upravit zprávu",
   "session.delete_session_action": "Smazat relaci",
   "session.delete_session_title": "Smazat relaci?",
   "session.delete_session_unnamed": "Tím trvale smažete vybranou relaci a její zprávy.",

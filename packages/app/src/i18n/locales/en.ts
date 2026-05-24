@@ -963,6 +963,7 @@ export default {
   "session.connection_test_failed": "Connection test failed",
   "session.connection_verified": "Connection verified",
   "session.default_agent": "Default agent",
+  "session.edit_message_title": "Edit message",
   "session.delete_session_action": "Delete session",
   "session.delete_session_title": "Delete session?",
   "session.delete_session_unnamed": "This will permanently delete the selected session and its messages.",

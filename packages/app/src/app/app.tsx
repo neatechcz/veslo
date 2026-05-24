@@ -1605,6 +1605,11 @@ export default function App() {
   const setComposerDraft = (draft: ComposerDraft) => {
     setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: currentComposerStorageKey() }, draft));
   };
+  const clearComposerDraftForSession = (sessionId: string | null | undefined) => {
+    const trimmed = sessionId?.trim() ?? "";
+    if (!trimmed) return;
+    setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, { sessionId: trimmed }));
+  };
   const setPrompt = (value: string) => {
     setComposerDraftBySessionId((current) => setSessionComposerPrompt(current, { storageKey: currentComposerStorageKey() }, value));
   };
@@ -1964,17 +1969,19 @@ export default function App() {
     }
   }
 
-  async function sendPrompt(draft?: ComposerDraft): Promise<boolean> {
+  async function sendPrompt(
+    draft?: ComposerDraft,
+    options: { targetSessionId?: string | null } = {},
+  ): Promise<boolean> {
     recordSendTrace("sendPrompt:start", {
       engineReady: engineReady(),
       selectedSessionId: selectedSessionId(),
+      targetSessionId: options.targetSessionId ?? null,
       hasClient: Boolean(client()),
       busy: busy(),
       busyLabel: busyLabel(),
     });
-    let sessionID = selectedSessionId();
-    const sendModel = selectedSessionModel();
-    const sendAgent = selectedSessionAgent();
+    let sessionID = options.targetSessionId?.trim() || selectedSessionId();
     const hasExplicitDraft = Boolean(draft);
     const fallbackDraft = composerDraft();
     const fallbackText = fallbackDraft.text.trim();
@@ -2070,7 +2077,7 @@ export default function App() {
       return false;
     }
 
-    const model = sendModel;
+    const model = modelForSession(sessionID);
     let promptSystem: string | undefined;
     const restorePendingDraftAfterSendFailure = () => {
       if (pendingDraftSendState) {
@@ -2132,7 +2139,7 @@ export default function App() {
         setPrompt("");
       }
 
-      const agent = sendAgent;
+      const agent = agentForSession(sessionID);
       const parts = buildPromptParts(resolvedDraft);
       const selectedVariant = modelVariant() ?? undefined;
       const reasoningEffort = resolveCodexReasoningEffort(model.modelID, selectedVariant ?? null);
@@ -2517,6 +2524,35 @@ export default function App() {
       .join("");
     setPrompt(text);
   };
+
+  async function replaceUserMessage(
+    messageID: string,
+    draft: ComposerDraft,
+    options: { targetSessionId?: string | null } = {},
+  ): Promise<boolean> {
+    const c = client();
+    const sessionID = (options.targetSessionId?.trim() || selectedSessionId() || "").trim();
+    if (!c || !sessionID || !messageID.trim()) return false;
+
+    await abortSessionSafe(c, sessionID);
+
+    const previousRevertMessageID = selectedSession()?.revert?.messageID ?? null;
+    const next = await revertSession(c, sessionID, messageID);
+    upsertLocalSession(next);
+
+    const accepted = await sendPrompt(draft, { targetSessionId: sessionID });
+    if (!accepted) {
+      try {
+        const restored = previousRevertMessageID
+          ? await revertSession(c, sessionID, previousRevertMessageID)
+          : await unrevertSession(c, sessionID);
+        upsertLocalSession(restored);
+      } catch (error) {
+        reportError(error, "session.replaceUserMessage.restore");
+      }
+    }
+    return accepted;
+  }
 
   async function undoLastUserMessage() {
     const c = client();
@@ -6001,11 +6037,21 @@ export default function App() {
   });
 
   const selectedSessionModel = createMemo<ModelRef>(() => {
+    const id = selectedSessionId();
+    return modelForSession(id);
+  });
+
+  const selectedSessionAgent = createMemo(() => {
+    const id = selectedSessionId();
+    return agentForSession(id);
+  });
+
+  function modelForSession(sessionId: string | null | undefined): ModelRef {
     const globalDefault = resolveGlobalRuntimeModel(defaultModel());
     const managedModel = managedAiAccessModel();
     if (managedModel) return managedModel;
 
-    const id = selectedSessionId();
+    const id = sessionId?.trim() ?? "";
     if (!id) return globalDefault;
 
     const override = sessionModelOverrideById()[id];
@@ -6014,17 +6060,19 @@ export default function App() {
     const known = sessionModelById()[id];
     if (known) return known;
 
-    const fromMessages = lastUserModelFromMessages(messages());
-    if (fromMessages) return fromMessages;
+    if (id === selectedSessionId()) {
+      const fromMessages = lastUserModelFromMessages(messages());
+      if (fromMessages) return fromMessages;
+    }
 
     return globalDefault;
-  });
+  }
 
-  const selectedSessionAgent = createMemo(() => {
-    const id = selectedSessionId();
+  function agentForSession(sessionId: string | null | undefined) {
+    const id = sessionId?.trim() ?? "";
     if (!id) return null;
     return sessionAgentById()[id] ?? null;
-  });
+  }
 
   async function connectNotion() {
     if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") {
@@ -8921,6 +8969,8 @@ export default function App() {
     reloadError: reloadError(),
     createSessionAndOpen: createSessionAndOpen,
     sendPromptAsync: sendPrompt,
+    replaceUserMessageAsync: replaceUserMessage,
+    clearComposerDraftForSession,
     abortSession: abortSession,
     sessionRevertMessageId: selectedSession()?.revert?.messageID ?? null,
     undoLastUserMessage: undoLastUserMessage,

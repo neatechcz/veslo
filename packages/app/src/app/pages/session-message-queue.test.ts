@@ -63,7 +63,7 @@ test("running non-sendNow sends append to the queue before any immediate send pa
 test("paused queue Enter append unpauses and starts the first drain-eligible queued draft", () => {
   assert.match(
     source,
-    /if \(queuePaused\(\) && !sendNow\) \{\s*appendDraftToCurrentQueue\(draft\);\s*setQueuePausedForCurrentSession\(false\);\s*void drainNextQueuedDraft\("normal"\);\s*return true;\s*\}/s,
+    /if \(queuePaused\(\) && !sendNow\) \{\s*const sessionKey = currentSessionQueueKey\(\);\s*appendDraftToCurrentQueue\(draft\);\s*setQueuePausedForSessionKey\(sessionKey, false\);\s*void drainNextQueuedDraft\("normal", sessionKey\);\s*return true;\s*\}/s,
     "plain Enter while paused should append, unpause, and start draining the first queued item",
   );
 });
@@ -71,7 +71,7 @@ test("paused queue Enter append unpauses and starts the first drain-eligible que
 test("paused send-now unpauses only after accepted immediate send", () => {
   assert.match(
     source,
-    /const accepted = await sendPromptImmediate\(draft, \{ reason: "send-now" \}\);\s*if \(accepted && wasPaused\) \{\s*setQueuePausedForCurrentSession\(false\);\s*\}\s*return accepted;/s,
+    /const sessionKey = currentSessionQueueKey\(\);\s*const wasPaused = queuePausedForSessionKey\(sessionKey\);\s*const accepted = await sendPromptImmediate\(draft, \{ reason: "send-now", expectedSessionKey: sessionKey \}\);\s*if \(accepted && wasPaused\) \{\s*setQueuePausedForSessionKey\(sessionKey, false\);\s*\}\s*return accepted;/s,
     "send-now while paused should unpause only after the immediate send is accepted",
   );
 });
@@ -79,7 +79,7 @@ test("paused send-now unpauses only after accepted immediate send", () => {
 test("idle transition drains only after a non-idle status and only when queue is not paused", () => {
   assert.match(
     source,
-    /createEffect\(\s*on\(\s*\(\) => props\.sessionStatus,\s*\(status, previousStatus\) => \{\s*if \(previousStatus === undefined \|\| previousStatus === "idle" \|\| status !== "idle"\) return;\s*if \(queuePaused\(\)\) return;\s*void drainNextQueuedDraft\("queue-drain"\);/s,
+    /createEffect\(\s*on\(\s*\(\) => props\.sessionStatus,\s*\(status, previousStatus\) => \{\s*if \(previousStatus === undefined \|\| previousStatus === "idle" \|\| status !== "idle"\) return;\s*const sessionKey = currentSessionQueueKey\(\);\s*if \(queuePausedForSessionKey\(sessionKey\)\) return;\s*void drainNextQueuedDraft\("queue-drain", sessionKey\);/s,
     "idle transitions should drain only after a previous non-idle status and while not paused",
   );
 });
@@ -87,8 +87,8 @@ test("idle transition drains only after a non-idle status and only when queue is
 test("queued drain uses a stable session key and guards stale navigation", () => {
   assert.match(
     source,
-    /const sendPromptImmediate = async \([\s\S]*expectedSessionKey\?: string;[\s\S]*if \(expectedSessionKey && currentSessionQueueKey\(\) !== expectedSessionKey\) return false;/s,
-    "immediate sends for queue drains should refuse stale session keys before calling the parent send path",
+    /const targetSessionId = expectedSessionKey \? sessionIdForQueueKey\(expectedSessionKey\) : null;[\s\S]*if \(expectedSessionKey && currentSessionQueueKey\(\) !== expectedSessionKey && !targetSessionId\) return false;/s,
+    "immediate sends should target stale real sessions but refuse stale pending queues",
   );
 
   assert.match(
@@ -99,22 +99,28 @@ test("queued drain uses a stable session key and guards stale navigation", () =>
 
   assert.match(
     source,
+    /props\.sendPromptAsync\(draft, targetSessionId \? \{ targetSessionId \} : undefined\)/,
+    "queue drains should pass their captured target session to the parent send path",
+  );
+
+  assert.match(
+    source,
     /if \(options\.expectedSessionKey && currentSessionQueueKey\(\) !== options\.expectedSessionKey\) \{\s*return accepted;\s*\}/,
     "stale queue sends should not start run UI for the newly selected session",
   );
 });
 
-test("app prompt send captures the target session before async resolution", () => {
+test("app prompt send accepts an explicit target session without freezing model bootstrap", () => {
   const sendStart = appSource.indexOf("async function sendPrompt");
-  const sessionCapture = appSource.indexOf("let sessionID = selectedSessionId();", sendStart);
-  const modelCapture = appSource.indexOf("const sendModel = selectedSessionModel();", sendStart);
-  const agentCapture = appSource.indexOf("const sendAgent = selectedSessionAgent();", sendStart);
-  const skillResolution = appSource.indexOf("resolvedDraft = await maybeResolveSkillCommand(resolvedDraft);", sendStart);
+  const targetCapture = appSource.indexOf("let sessionID = options.targetSessionId?.trim() || selectedSessionId();", sendStart);
+  const bootstrap = appSource.indexOf("await ensureManagedAiBootstrapReady();", sendStart);
+  const modelResolution = appSource.indexOf("const model = modelForSession(sessionID);", sendStart);
+  const agentResolution = appSource.indexOf("const agent = agentForSession(sessionID);", sendStart);
 
   assert.notEqual(sendStart, -1, "app sendPrompt should exist");
-  assert.ok(sessionCapture > sendStart && sessionCapture < skillResolution, "sendPrompt should capture session id before async skill resolution");
-  assert.ok(modelCapture > sendStart && modelCapture < skillResolution, "sendPrompt should capture model before async skill resolution");
-  assert.ok(agentCapture > sendStart && agentCapture < skillResolution, "sendPrompt should capture agent before async skill resolution");
+  assert.ok(targetCapture > sendStart, "sendPrompt should accept a captured target session id");
+  assert.ok(modelResolution > bootstrap, "model should resolve after managed AI bootstrap");
+  assert.ok(agentResolution > bootstrap, "agent should resolve after managed AI bootstrap");
 });
 
 test("queued edit lifecycle restores editing items and drains idle saves", () => {
@@ -132,13 +138,13 @@ test("queued edit lifecycle restores editing items and drains idle saves", () =>
 
   assert.match(
     source,
-    /restoreEditingQueuedDraft\(sessionQueueKeyForSessionId\(previousSessionId\), editingQueuedDraftId\(\)\);[\s\S]*setEditingQueuedDraftId\(null\);/,
-    "switching sessions should restore the previous queued edit item before clearing editing state",
+    /const previousEditingQueuedDraftId = editingQueuedDraftId\(\);[\s\S]*restoreEditingQueuedDraft\(sessionQueueKeyForSessionId\(previousSessionId\), previousEditingQueuedDraftId\);[\s\S]*props\.clearComposerDraftForSession\(previousSessionId\);[\s\S]*setEditingQueuedDraftId\(null\);/,
+    "switching sessions should restore the previous queued edit item and clear its composer draft",
   );
 
   assert.match(
     source,
-    /if \(!showRunIndicator\(\) && !queuePaused\(\)\) \{\s*void drainNextQueuedDraft\("normal"\);\s*\}/,
+    /if \(!showRunIndicator\(\) && !queuePausedForSessionKey\(sessionKey\)\) \{\s*void drainNextQueuedDraft\("normal", sessionKey\);\s*\}/,
     "saving an edited queued draft while idle should resume draining",
   );
 });
@@ -146,7 +152,7 @@ test("queued edit lifecycle restores editing items and drains idle saves", () =>
 test("edited queued send-now resumes a paused queue after accepted send", () => {
   assert.match(
     source,
-    /const wasPaused = queuePaused\(\);\s*const accepted = await sendPromptImmediate\(draft, \{ reason: "send-now" \}\);[\s\S]*if \(accepted && wasPaused\) \{\s*setQueuePausedForCurrentSession\(false\);\s*\}/,
+    /const sessionKey = currentSessionQueueKey\(\);\s*const wasPaused = queuePausedForSessionKey\(sessionKey\);\s*const accepted = await sendPromptImmediate\(draft, \{ reason: "send-now", expectedSessionKey: sessionKey \}\);[\s\S]*updateQueueForSessionKey\(sessionKey, \(queue\) => removeQueuedDraft\(queue, editingId\)\);[\s\S]*if \(accepted && wasPaused\) \{\s*setQueuePausedForSessionKey\(sessionKey, false\);\s*\}/,
     "edited queued send-now should unpause after an accepted immediate send",
   );
 });
