@@ -170,6 +170,10 @@ test("by-project sidebar renders private chats as a bottom section", () => {
   assert.match(source, /splitProjectGroupsForSidebar/);
   assert.match(source, /data-sidebar-chat-section="true"/);
   assert.match(source, /data-sidebar-chat-resize-handle="true"/);
+  assert.match(source, /cursor-ns-resize/);
+  assert.match(source, /style=\{\{ cursor: "ns-resize" \}\}/);
+  assert.match(source, /document\.documentElement\.style\.cursor = "ns-resize";/);
+  assert.doesNotMatch(source, /cursor-row-resize/);
   assert.match(source, /data-sidebar-chat-collapsed="true"/);
   assert.match(source, /tr\("sidebar\.chats"\)/);
   assert.match(source, /tr\("sidebar\.new_chat"\)/);

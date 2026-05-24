@@ -692,6 +692,7 @@ export default function Composer(props: ComposerProps) {
   };
 
   const handleEditorInput = () => {
+    if (submitLocked()) return;
     const startedAt = perfNow();
     const currentText = readEditorText(editorRef);
     const mentionStartedAt = perfNow();
@@ -853,6 +854,7 @@ export default function Composer(props: ComposerProps) {
   });
 
   const handleSlashSelect = (cmd: SlashCommandOption) => {
+    if (submitLocked()) return;
     if (!editorRef) return;
     setSlashOpen(false);
     setSlashQuery("");
@@ -886,6 +888,7 @@ export default function Composer(props: ComposerProps) {
   };
 
   const insertMention = (option: MentionOption) => {
+    if (submitLocked()) return;
     if (!editorRef) return;
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return;
@@ -965,10 +968,17 @@ export default function Composer(props: ComposerProps) {
 
   const [sending, setSending] = createSignal(false);
   const [sendNowPending, setSendNowPending] = createSignal(false);
-  createEffect(() => {
-    if (props.isStreaming && sending()) setSending(false);
-  });
-  const sendDisabled = createMemo(() => !hasDraftContent() || props.busy);
+  const submitLocked = createMemo(() => sending());
+  const sendDisabled = createMemo(() => !hasDraftContent() || props.busy || submitLocked());
+
+  const restoreSubmittedDraft = (draft: ComposerDraft) => {
+    setMode(draft.mode);
+    renderParts(draft.parts.length ? draft.parts : (draft.text ? [{ type: "text", text: draft.text }] : []), false);
+    setDraftText(draft.text);
+    setAttachments((draft.attachments ?? []).map((attachment) => ({ ...attachment })));
+    props.onDraftChange(draft);
+    queueMicrotask(() => focusEditorEnd());
+  };
 
   const sendDraft = async (options: ComposerSendOptions = {}) => {
     if (options.sendNow && sendNowPending()) return;
@@ -1001,8 +1011,13 @@ export default function Composer(props: ComposerProps) {
     }
 
     recordHistory(draft);
+    const submittedDraft = draft;
     setSending(true);
     if (options.sendNow) setSendNowPending(true);
+    setSlashOpen(false);
+    setSlashQuery("");
+    setAttachments([]);
+    setEditorText("");
     recordSendTrace("sendDraft:onSend", {
       textLength: text.length,
       attachmentCount: draft.attachments.length,
@@ -1011,7 +1026,13 @@ export default function Composer(props: ComposerProps) {
     });
     let sent = false;
     try {
-      sent = await props.onSend(draft, options);
+      sent = await props.onSend(submittedDraft, options);
+    } catch (error) {
+      recordSendTrace("sendDraft:onSend:error", {
+        message: error instanceof Error ? error.message : String(error),
+        sendNow: options.sendNow,
+        source: options.source,
+      });
     } finally {
       if (options.sendNow) setSendNowPending(false);
     }
@@ -1023,15 +1044,12 @@ export default function Composer(props: ComposerProps) {
       source: options.source,
     });
     if (!sent) {
+      restoreSubmittedDraft(submittedDraft);
       setSending(false);
       return;
     }
-    // Don't reset sending here — isStreaming will take over and hide the send button.
-    setSlashOpen(false);
-    setSlashQuery("");
-    setAttachments([]);
-    setEditorText("");
     emitDraftChange();
+    setSending(false);
     queueMicrotask(() => focusEditorEnd());
   };
 
@@ -1086,6 +1104,7 @@ export default function Composer(props: ComposerProps) {
     transfer?: Parameters<typeof extractFileReferencePathsFromDataTransfer>[0],
     nativeFilePaths: string[] = [],
   ) => {
+    if (submitLocked()) return;
     const fileReferencePaths = extractFileReferencePathsFromDataTransfer(transfer, files, nativeFilePaths);
     const largeFileReferences: Array<{ file: File; path: string; size: string; limit: string }> = [];
     const filesToAttach: File[] = [];
@@ -1206,6 +1225,10 @@ export default function Composer(props: ComposerProps) {
   };
 
   const handleEditorClick = (event: MouseEvent) => {
+    if (submitLocked()) {
+      event.preventDefault();
+      return;
+    }
     if (!editorRef) return;
     const target = event.target as HTMLElement | null;
     const span = (target?.closest?.("span[data-paste-id]") as HTMLElement | null) ?? null;
@@ -1243,6 +1266,10 @@ export default function Composer(props: ComposerProps) {
   };
 
   const handlePaste = (event: ClipboardEvent) => {
+    if (submitLocked()) {
+      event.preventDefault();
+      return;
+    }
     if (!event.clipboardData) return;
     const clipboard = event.clipboardData;
     const allFiles = extractFilesFromDataTransfer(clipboard);
@@ -1292,9 +1319,10 @@ export default function Composer(props: ComposerProps) {
 
   const handleDragEnter = (event: DragEvent) => {
     if (!isFileDragTransfer(event.dataTransfer)) return;
-    fileDragDepth += 1;
     event.preventDefault();
+    if (submitLocked()) return;
     if (attachmentsDisabled()) return;
+    fileDragDepth += 1;
     setFileDragOver(true);
   };
 
@@ -1310,11 +1338,16 @@ export default function Composer(props: ComposerProps) {
     if (!event.dataTransfer || !isFileDragTransfer(event.dataTransfer)) return;
     event.preventDefault();
     clearFileDragState();
+    if (submitLocked()) return;
     const files = extractFilesFromDataTransfer(event.dataTransfer);
     if (files.length) void addAttachments(files, event.dataTransfer);
   };
 
   const handleKeyDown = (event: KeyboardEvent) => {
+    if (submitLocked()) {
+      event.preventDefault();
+      return;
+    }
     // Make slash chips behave like single tokens.
     if ((event.key === "Backspace" || event.key === "Delete") && editorRef) {
       const selection = window.getSelection();
@@ -1613,6 +1646,7 @@ export default function Composer(props: ComposerProps) {
           onDragOver={(event: DragEvent) => {
             if (!isFileDragTransfer(event.dataTransfer)) return;
             event.preventDefault();
+            if (submitLocked()) return;
             if (attachmentsDisabled()) return;
             setFileDragOver(true);
           }}
@@ -1759,11 +1793,13 @@ export default function Composer(props: ComposerProps) {
                         type="button"
                         class="ml-1 rounded-full p-1 text-gray-10 hover:text-gray-11 hover:bg-gray-4"
                         onClick={() => {
+                          if (submitLocked()) return;
                           setAttachments((current: ComposerAttachment[]) =>
                             current.filter((item) => item.id !== attachment.id)
                           );
                           emitDraftChange();
                         }}
+                        disabled={submitLocked()}
                       >
                         <X size={12} />
                       </button>
@@ -1790,8 +1826,9 @@ export default function Composer(props: ComposerProps) {
                     </Show>
                     <div
                       ref={editorRef}
-                      contentEditable={true}
+                      contentEditable={!submitLocked()}
                       role="textbox"
+                      aria-disabled={submitLocked() ? "true" : "false"}
                       aria-multiline="true"
                       onInput={handleEditorInput}
                       onKeyDown={handleKeyDown}
@@ -1808,7 +1845,7 @@ export default function Composer(props: ComposerProps) {
                             type="file"
                             multiple
                             class="hidden"
-                            disabled={attachmentsDisabled()}
+                            disabled={attachmentsDisabled() || submitLocked()}
                             onChange={(event: Event) => {
                               const target = event.currentTarget as HTMLInputElement;
                               const files = Array.from(target.files ?? []);
@@ -1818,13 +1855,14 @@ export default function Composer(props: ComposerProps) {
                           />
                           <button
                             type="button"
-                            class={`p-1.5 hover:bg-gray-3 rounded-md text-gray-10 transition-colors ${attachmentsDisabled() ? "cursor-not-allowed" : ""
+                            class={`p-1.5 hover:bg-gray-3 rounded-md text-gray-10 transition-colors ${attachmentsDisabled() || submitLocked() ? "cursor-not-allowed" : ""
                               }`}
                             onClick={() => {
+                              if (submitLocked()) return;
                               if (attachmentsDisabled()) return;
                               fileInputRef?.click();
                             }}
-                            disabled={attachmentsDisabled()}
+                            disabled={attachmentsDisabled() || submitLocked()}
                             title={
                               attachmentsDisabled()
                                 ? props.attachmentsDisabledReason ?? translate("session.attachments_unavailable")
@@ -1837,7 +1875,7 @@ export default function Composer(props: ComposerProps) {
 
                         <button
                           type="button"
-                          disabled={props.busy}
+                          disabled={props.busy || submitLocked()}
                           class={`font-product type-ui-sm inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 font-medium transition-colors ${
                             isReadonly()
                               ? "border-blue-6 bg-blue-3 text-blue-11"
@@ -1858,7 +1896,9 @@ export default function Composer(props: ComposerProps) {
                           <button
                             type="button"
                             class="font-product type-ui-xs inline-flex shrink-0 items-center rounded-md border border-gray-6 bg-gray-2 px-2 py-1 font-bold uppercase tracking-widest text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-11"
+                            disabled={submitLocked()}
                             onClick={() => {
+                              if (submitLocked()) return;
                               void props.onChooseSessionFolder();
                             }}
                           >

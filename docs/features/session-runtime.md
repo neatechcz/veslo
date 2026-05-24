@@ -38,6 +38,13 @@ Current keyboard behavior:
 - unmodified arrow keys can navigate composer history only from an empty live draft or after history navigation is already active
 - typed text or attachments in the live draft keep native cursor movement and must not be replaced by history entries
 
+Submit behavior:
+
+- a submitted draft is rendered immediately as a temporary user message while workspace/session/message handoff is pending
+- the Composer visually clears and locks that submitted draft until the handoff settles
+- if handoff fails before a real message exists, the temporary message is removed and the original draft is restored for correction
+- once a real message exists, later model or run failures stay in the transcript and use the normal message editing, retry, and resend flows
+
 Main source of truth:
 
 - `packages/app/src/app/components/session/composer.tsx`

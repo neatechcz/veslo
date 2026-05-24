@@ -963,16 +963,77 @@ export default function SessionView(props: SessionViewProps) {
     return `${index + 1}/${size}`;
   });
 
+  type OptimisticSubmittedDraft = {
+    id: string;
+    createdAt: number;
+    sessionId: string | null;
+    draft: ComposerDraft;
+  };
+  const [optimisticSubmittedDraft, setOptimisticSubmittedDraft] = createSignal<OptimisticSubmittedDraft | null>(null);
+
+  const optimisticSubmittedMessage = createMemo<MessageWithParts | null>(() => {
+    const submitted = optimisticSubmittedDraft();
+    if (!submitted) return null;
+
+    const sessionID = submitted.sessionId ?? props.selectedSessionId ?? "";
+    const text = (submitted.draft.resolvedText ?? submitted.draft.text).trim();
+    const parts: Part[] = [];
+    if (text) {
+      parts.push({
+        id: `${submitted.id}:text`,
+        sessionID,
+        messageID: submitted.id,
+        type: "text",
+        text,
+      } as Part);
+    }
+    submitted.draft.attachments.forEach((attachment, index) => {
+      parts.push({
+        id: `${submitted.id}:attachment:${index}`,
+        sessionID,
+        messageID: submitted.id,
+        type: "file",
+        url: attachment.dataUrl,
+        filename: attachment.name,
+        mime: attachment.mimeType,
+      } as Part);
+    });
+
+    return {
+      info: {
+        id: submitted.id,
+        sessionID,
+        role: "user",
+        time: { created: submitted.createdAt },
+        parentID: "",
+        model: "",
+        modelID: "",
+        providerID: "",
+        mode: submitted.draft.mode,
+        agent: "",
+        path: {
+          cwd: props.activeWorkspaceRoot,
+          root: props.activeWorkspaceRoot,
+        },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      } as unknown as MessageWithParts["info"],
+      parts,
+    };
+  });
+
   const searchActive = createMemo(() => searchOpen() && searchQuery().trim().length > 0);
   const totalPartCount = createMemo(() => props.messages.reduce((total, message) => total + message.parts.length, 0));
 
   const renderedMessages = createMemo(() => {
-    if (messageWindowExpanded() || searchActive()) return props.messages;
+    const optimisticMessage = optimisticSubmittedMessage();
+    const sourceMessages = optimisticMessage ? [...props.messages, optimisticMessage] : props.messages;
+    if (messageWindowExpanded() || searchActive()) return sourceMessages;
 
     const start = messageWindowStart();
-    if (start <= 0) return props.messages;
-    if (start >= props.messages.length) return [];
-    return props.messages.slice(start);
+    if (start <= 0) return sourceMessages;
+    if (start >= sourceMessages.length) return [];
+    return sourceMessages.slice(start);
   });
 
   const [batchedRenderedMessages, setBatchedRenderedMessages] = createSignal<MessageWithParts[]>(renderedMessages());
@@ -2116,7 +2177,8 @@ export default function SessionView(props: SessionViewProps) {
     const started = runStartedAt() !== null;
     if (status === "idle") {
       if (!started) return "idle";
-      return responseStarted() ? "responding" : "sending";
+      if (responseStarted()) return "responding";
+      return optimisticSubmittedDraft() ? "thinking" : "sending";
     }
     if (status === "retry") return responseStarted() ? "responding" : "retrying";
     if (responseStarted()) return "responding";
@@ -3545,6 +3607,19 @@ export default function SessionView(props: SessionViewProps) {
       return false;
     }
 
+    const showOptimisticSubmit = !options.replaceMessageId && options.reason !== "queue-drain";
+    if (showOptimisticSubmit) {
+      setOptimisticSubmittedDraft({
+        id: `optimistic-submit:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+        createdAt: Date.now(),
+        sessionId: targetSessionId ?? props.selectedSessionId,
+        draft,
+      });
+      setStickToBottom(true);
+      scheduleScrollToLatest("auto");
+      startRun();
+    }
+
     try {
       const accepted = await (options.replaceMessageId
         ? props.replaceUserMessageAsync(options.replaceMessageId, draft, targetSessionId ? { targetSessionId } : undefined)
@@ -3558,17 +3633,31 @@ export default function SessionView(props: SessionViewProps) {
         reason: options.reason ?? "normal",
       });
       if (!accepted) {
+        if (showOptimisticSubmit) {
+          props.setComposerDraft(draft);
+          setOptimisticSubmittedDraft(null);
+        }
         setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
         return false;
       }
       if (options.expectedSessionKey && currentSessionQueueKey() !== options.expectedSessionKey) {
+        if (showOptimisticSubmit) {
+          setOptimisticSubmittedDraft(null);
+        }
         return accepted;
+      }
+      if (accepted) {
+        setOptimisticSubmittedDraft(null);
       }
       setStickToBottom(true);
       scheduleScrollToLatest("auto");
       startRun();
       return true;
     } catch (e) {
+      if (showOptimisticSubmit) {
+        props.setComposerDraft(draft);
+        setOptimisticSubmittedDraft(null);
+      }
       reportError(e, "session.sendPrompt");
       setToastMessage(props.error ?? tr("session.connect_server_to_attach"));
       return false;

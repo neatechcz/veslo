@@ -123,7 +123,7 @@ test("queued drain uses a stable session key and guards stale navigation", () =>
 
   assert.match(
     source,
-    /if \(options\.expectedSessionKey && currentSessionQueueKey\(\) !== options\.expectedSessionKey\) \{\s*return accepted;\s*\}/,
+    /if \(options\.expectedSessionKey && currentSessionQueueKey\(\) !== options\.expectedSessionKey\) \{\s*if \(showOptimisticSubmit\) \{\s*setOptimisticSubmittedDraft\(null\);\s*\}\s*return accepted;\s*\}/,
     "stale queue sends should not start run UI for the newly selected session",
   );
 });

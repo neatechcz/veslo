@@ -1063,6 +1063,8 @@ export default function WorkspaceSessionList(props: Props) {
   createEffect(() => {
     const drag = chatSidebarResizeDrag();
     if (!drag) return;
+    const previousDocumentCursor = document.documentElement.style.cursor;
+    document.documentElement.style.cursor = "ns-resize";
 
     const onPointerMove = (event: PointerEvent) => {
       if (event.pointerId !== drag.pointerId) return;
@@ -1078,6 +1080,7 @@ export default function WorkspaceSessionList(props: Props) {
     window.addEventListener("pointercancel", onPointerCancel);
 
     onCleanup(() => {
+      document.documentElement.style.cursor = previousDocumentCursor;
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("pointercancel", onPointerCancel);
@@ -2029,7 +2032,8 @@ export default function WorkspaceSessionList(props: Props) {
                 <button
                   type="button"
                   data-sidebar-chat-resize-handle="true"
-                  class="group flex h-3 w-full cursor-row-resize items-center px-1.5"
+                  class="group flex h-3 w-full cursor-ns-resize items-center px-1.5"
+                  style={{ cursor: "ns-resize" }}
                   onPointerDown={handleChatSidebarResizeStart}
                   aria-label={tr("sidebar.chats")}
                   title={tr("sidebar.chats")}

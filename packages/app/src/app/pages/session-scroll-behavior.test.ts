@@ -5,18 +5,50 @@ import test from "node:test";
 const source = readFileSync(new URL("./session.tsx", import.meta.url), "utf8");
 const appStyles = readFileSync(new URL("../index.css", import.meta.url), "utf8");
 
-test("session send flow starts run UI only after the send is accepted", () => {
+test("session send flow starts optimistic run UI before prompt handoff resolves", () => {
   const handlerStart = source.indexOf("const sendPromptImmediate = async (");
-  const sendCall = source.indexOf("props.sendPromptAsync(draft, targetSessionId ? { targetSessionId } : undefined)", handlerStart);
+  const optimisticSet = source.indexOf("setOptimisticSubmittedDraft({", handlerStart);
+  const startRun = source.indexOf("startRun();", optimisticSet);
+  const sendCall = source.indexOf("props.sendPromptAsync(draft, targetSessionId ? { targetSessionId } : undefined)", startRun);
   const rejectedBranch = source.indexOf("if (!accepted) {", sendCall);
-  const stickToBottom = source.indexOf("setStickToBottom(true);", rejectedBranch);
-  const startRun = source.indexOf("startRun();", stickToBottom);
+  const restoreDraft = source.indexOf("props.setComposerDraft(draft);", rejectedBranch);
+  const clearAfterFailure = source.indexOf("setOptimisticSubmittedDraft(null);", rejectedBranch);
 
   assert.notEqual(handlerStart, -1, "session send handler should exist");
-  assert.ok(sendCall > handlerStart, "session should await prompt enqueue before send UI starts");
+  assert.ok(optimisticSet > handlerStart, "session should capture an optimistic submitted draft during send");
+  assert.ok(startRun > optimisticSet, "session should start visible run state after the optimistic message is captured");
+  assert.ok(sendCall > startRun, "session should show optimistic waiting UI before prompt handoff resolves");
   assert.ok(rejectedBranch > sendCall, "session should check whether the prompt was accepted");
-  assert.ok(stickToBottom > rejectedBranch, "session should only pin to latest after accepted send");
-  assert.ok(startRun > stickToBottom, "session should only enter sending state after the prompt enqueue succeeds");
+  assert.ok(restoreDraft > rejectedBranch, "failed handoff should restore the draft for correction");
+  assert.ok(clearAfterFailure > rejectedBranch, "failed handoff should remove the optimistic timeline message");
+});
+
+test("session renders a temporary submitted user message until the real transcript takes over", () => {
+  const optimisticIndex = source.indexOf("const optimisticSubmittedMessage = createMemo<MessageWithParts | null>(() => {");
+  const renderedIndex = source.indexOf("const renderedMessages = createMemo(() => {");
+
+  assert.ok(
+    optimisticIndex >= 0 && optimisticIndex < renderedIndex,
+    "the optimistic submitted message memo must be defined before renderedMessages reads it",
+  );
+
+  assert.match(
+    source,
+    /const optimisticSubmittedMessage = createMemo<MessageWithParts \| null>\(\(\) => \{/,
+    "session should derive a synthetic user message from the optimistic submitted draft",
+  );
+
+  assert.match(
+    source,
+    /const optimisticMessage = optimisticSubmittedMessage\(\);\s*const sourceMessages = optimisticMessage \? \[\.\.\.props\.messages, optimisticMessage\] : props\.messages;/,
+    "rendered messages should append the optimistic user message to the transcript source",
+  );
+
+  assert.match(
+    source,
+    /if \(accepted\) \{[\s\S]*setOptimisticSubmittedDraft\(null\);[\s\S]*\}/,
+    "accepted handoff should clear the optimistic placeholder so the server transcript owns display",
+  );
 });
 
 test("message growth keeps bottom pin active when user is already near the latest content", () => {

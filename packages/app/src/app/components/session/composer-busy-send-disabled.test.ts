@@ -7,8 +7,8 @@ const composerSource = readFileSync(new URL("./composer.tsx", import.meta.url), 
 test("composer disables send while the session view is still globally busy", () => {
   assert.match(
     composerSource,
-    /const sendDisabled = createMemo\(\(\) => !hasDraftContent\(\) \|\| props\.busy\);/,
-    "composer should derive a disabled send state from empty drafts and global busy transitions",
+    /const sendDisabled = createMemo\(\(\) => !hasDraftContent\(\) \|\| props\.busy \|\| submitLocked\(\)\);/,
+    "composer should derive a disabled send state from empty drafts, global busy transitions, and local submit locks",
   );
 
   assert.match(

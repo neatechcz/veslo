@@ -22,7 +22,7 @@ test("composer exports send intent options and passes them to onSend", () => {
 
   assert.match(
     composerSource,
-    /const sendDraft = async \(options: ComposerSendOptions = \{\}\) => \{[\s\S]*sent = await props\.onSend\(draft, options\);/s,
+    /const submittedDraft = draft;[\s\S]*sent = await props\.onSend\(submittedDraft, options\);/s,
     "sendDraft should pass the send intent through to onSend",
   );
 });
