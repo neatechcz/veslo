@@ -1,0 +1,196 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import type { Part } from "@opencode-ai/sdk/v2/client";
+import type { MessageWithParts } from "../../types";
+import { getEditableUserMessageDraft } from "./message-editability";
+
+const textPart = (messageID: string, text: string): Part => ({
+  id: `${messageID}:text`,
+  sessionID: "s1",
+  messageID,
+  type: "text",
+  text,
+} as Part);
+
+const agentPart = (messageID: string, name: string): Part => ({
+  id: `${messageID}:agent`,
+  sessionID: "s1",
+  messageID,
+  type: "agent",
+  name,
+} as unknown as Part);
+
+const filePart = (messageID: string, path: string, label?: string): Part => ({
+  id: `${messageID}:file`,
+  sessionID: "s1",
+  messageID,
+  type: "file",
+  path,
+  label,
+} as unknown as Part);
+
+const toolPart = (messageID: string, tool: string): Part => ({
+  id: `${messageID}:${tool}`,
+  sessionID: "s1",
+  messageID,
+  type: "tool",
+  tool,
+} as unknown as Part);
+
+const reasoningPart = (messageID: string): Part => ({
+  id: `${messageID}:reasoning`,
+  sessionID: "s1",
+  messageID,
+  type: "reasoning",
+} as unknown as Part);
+
+const message = (id: string, role: "user" | "assistant", parts: Part[]): MessageWithParts => ({
+  info: { id, role } as any,
+  parts,
+});
+
+test("allows editing latest user message after read-only assistant activity", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [textPart("m1", "original")]),
+      message("m2", "assistant", [
+        reasoningPart("m2"),
+        toolPart("m2", "read"),
+        toolPart("m2", "search"),
+        toolPart("m2", "list"),
+      ]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result?.messageId, "m1");
+  assert.equal(result?.draft.text, "original");
+  assert.equal(result?.draft.resolvedText, "original");
+  assert.deepEqual(result?.draft.parts, [{ type: "text", text: "original" }]);
+  assert.equal(result?.draft.mode, "prompt");
+  assert.deepEqual(result?.draft.attachments, []);
+});
+
+test("visible assistant text blocks editing", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [textPart("m1", "original")]),
+      message("m2", "assistant", [textPart("m2", "visible answer")]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result, null);
+});
+
+test("mutating tools block editing", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [textPart("m1", "original")]),
+      message("m2", "assistant", [toolPart("m2", "write")]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result, null);
+});
+
+test("shell and terminal tools block editing by default", () => {
+  for (const tool of ["shell", "terminal", "bash"]) {
+    const result = getEditableUserMessageDraft({
+      messages: [
+        message("m1", "user", [textPart("m1", "original")]),
+        message("m2", "assistant", [toolPart("m2", tool)]),
+      ],
+      sessionIdle: true,
+      queueEmpty: true,
+      composerEmpty: true,
+    });
+
+    assert.equal(result, null, `${tool} should block editing`);
+  }
+});
+
+test("older user messages are not editable", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [textPart("m1", "older")]),
+      message("m2", "assistant", [reasoningPart("m2")]),
+      message("m3", "user", [textPart("m3", "latest")]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result?.messageId, "m3");
+  assert.equal(result?.draft.text, "latest");
+});
+
+test("unreconstructable attachments block editing", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [
+        textPart("m1", "see image"),
+        {
+          id: "m1:image",
+          sessionID: "s1",
+          messageID: "m1",
+          type: "file",
+          mime: "image/png",
+          url: "data:image/png;base64,abc",
+        } as unknown as Part,
+      ]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result, null);
+});
+
+test("session must be idle, queue must be empty, and composer must be empty", () => {
+  const base = {
+    messages: [message("m1", "user", [textPart("m1", "original")])],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  };
+
+  assert.equal(getEditableUserMessageDraft({ ...base, sessionIdle: false }), null);
+  assert.equal(getEditableUserMessageDraft({ ...base, queueEmpty: false }), null);
+  assert.equal(getEditableUserMessageDraft({ ...base, composerEmpty: false }), null);
+});
+
+test("reconstructs agents and file references into composer parts", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [
+        textPart("m1", "ask "),
+        agentPart("m1", "reviewer"),
+        textPart("m1", " about "),
+        filePart("m1", "src/app.ts", "app.ts"),
+      ]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result?.draft.text, "ask @reviewer about @app.ts");
+  assert.equal(result?.draft.resolvedText, "ask @reviewer about @src/app.ts");
+  assert.deepEqual(result?.draft.parts, [
+    { type: "text", text: "ask " },
+    { type: "agent", name: "reviewer" },
+    { type: "text", text: " about " },
+    { type: "file", path: "src/app.ts", label: "app.ts" },
+  ]);
+});
