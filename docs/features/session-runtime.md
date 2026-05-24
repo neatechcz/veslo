@@ -54,7 +54,7 @@ Current behavior:
 
 - pending drafts are durable local state
 - pending drafts do not appear in the sidebar until the user presses `Run`
-- `New session` reopens the one existing unpublished private draft instead of creating another unpublished private worker
+- `Chat` reopens the one existing unpublished private draft instead of creating another unpublished private workspace
 - project `+` actions reopen the pending draft for that project directory when one already exists
 - a real OpenCode session is materialized only when the pending draft is sent successfully
 
@@ -64,10 +64,11 @@ The centered chat titlebar shows session context before and after a run starts.
 
 Current behavior:
 
-- unsent new chats show a distinct `New session` state label
-- unsent new chats for a concrete directory show `New session` plus the directory label
+- unsent private chats show a distinct `Chat` state label
+- unsent new chats for a concrete directory show `Chat` plus the directory label
 - unsent private drafts hide generated private workspace paths so the state label is not mistaken for a directory
-- existing chats with messages show the directory or remote workspace context without the `New session` prefix
+- existing chats with messages show the directory or remote workspace context without the `Chat` prefix, except private chat sessions use the chat title instead of the generated private workspace path
+- in by-project sidebar mode, private workspace sessions are grouped into a bottom `Chats` section; recent mode keeps them mixed with all other conversations by activity
 - long local paths can be abbreviated in the titlebar, but the full path remains available as the location tooltip
 - titlebar labels are non-selectable and participate in the Tauri drag region so the window can be moved from the text itself
 

@@ -14,7 +14,7 @@ async function ensureSessionComposer() {
   if (await existingTextbox.isExisting()) return existingTextbox;
 
   const newSessionButton = await $(
-    '//button[normalize-space()="New session" or normalize-space()="Nová relace"]',
+    '//button[normalize-space()="Chat" or normalize-space()="聊天"]',
   );
   expect(await newSessionButton.isExisting()).toBe(true);
   await newSessionButton.click();

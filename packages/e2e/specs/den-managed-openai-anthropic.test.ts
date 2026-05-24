@@ -11,7 +11,7 @@ test('live managed AI spec does not create a workspace while waiting for the com
   const waitForComposerSource = source.slice(start, end);
   assert.doesNotMatch(
     waitForComposerSource,
-    /New session|Nová relace|\.click\(\)/,
+    /New session|Nová relace|Chat|聊天|\.click\(\)/,
     'waitForComposer should only wait and diagnose; clicking New can create or switch workspaces before send',
   );
 });

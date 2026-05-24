@@ -311,7 +311,7 @@ async function waitForComposer(timeout = 20000) {
 
 async function openFreshSessionComposer(timeout = 30000): Promise<void> {
   await navigateToHash('/session');
-  await clickButtonWithText(['New session', 'Nová relace'], timeout).catch(() => false);
+  await clickButtonWithText(['Chat', '聊天'], timeout).catch(() => false);
   await waitForComposer(timeout);
 }
 

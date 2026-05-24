@@ -487,18 +487,18 @@ async function installFetchProbe(): Promise<void> {
 
 async function openPrivateWorkspaceComposerIfVisible(timeout = 30000): Promise<void> {
   const text = await readRootText();
-  if (!text.includes('Start a new session') && !text.includes('Spustit novou relaci')) {
+  if (!text.includes('Start a chat') && !text.includes('Začít chat')) {
     return;
   }
 
   const newSessionButton = await $(
-    '//h3[normalize-space()="Start a new session" or normalize-space()="Spustit novou relaci"]/following::button[normalize-space()="New session" or normalize-space()="Nová relace"][1]',
+    '//h3[normalize-space()="Start a chat" or normalize-space()="Začít chat"]/following::button[normalize-space()="Chat" or normalize-space()="聊天"][1]',
   );
   await newSessionButton.waitForDisplayed({ timeout });
   await browser.waitUntil(async () => newSessionButton.isEnabled(), {
     timeout,
     interval: 250,
-    timeoutMsg: 'Private workspace New session button did not become enabled.',
+    timeoutMsg: 'Private workspace Chat button did not become enabled.',
   });
   await newSessionButton.click();
   await waitForComposer(timeout);
