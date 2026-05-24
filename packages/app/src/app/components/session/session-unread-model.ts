@@ -1,55 +1,55 @@
 export type UnreadSessionMap = Record<string, true>;
 
-type MarkUnreadAfterAssistantResponseInput = {
-  responseSessionId: string;
-  selectedSessionId: string | null;
-  appFocused: boolean;
-};
+const normalizeSessionId = (value: string | null | undefined) => (value ?? "").trim();
 
-export const markUnreadAfterAssistantResponse = (
+export function markUnreadAfterAssistantResponse(
   current: UnreadSessionMap,
-  input: MarkUnreadAfterAssistantResponseInput,
-): UnreadSessionMap => {
-  if (input.appFocused && input.responseSessionId === input.selectedSessionId) {
-    return current;
-  }
+  input: {
+    responseSessionId: string | null | undefined;
+    selectedSessionId: string | null | undefined;
+    appFocused: boolean;
+  },
+): UnreadSessionMap {
+  const responseSessionId = normalizeSessionId(input.responseSessionId);
+  if (!responseSessionId) return current;
 
-  if (current[input.responseSessionId]) {
-    return current;
-  }
+  const selectedSessionId = normalizeSessionId(input.selectedSessionId);
+  const activelyReading = input.appFocused && selectedSessionId === responseSessionId;
+  if (activelyReading) return current;
+  if (current[responseSessionId]) return current;
 
   return {
     ...current,
-    [input.responseSessionId]: true,
+    [responseSessionId]: true,
   };
-};
+}
 
-export const clearUnreadSession = (
+export function clearUnreadSession(
   current: UnreadSessionMap,
-  sessionId: string,
-): UnreadSessionMap => {
-  if (!current[sessionId]) {
-    return current;
-  }
+  sessionId: string | null | undefined,
+): UnreadSessionMap {
+  const id = normalizeSessionId(sessionId);
+  if (!id || !current[id]) return current;
 
-  const { [sessionId]: _removed, ...next } = current;
+  const next = { ...current };
+  delete next[id];
   return next;
-};
+}
 
-export const pruneUnreadSessions = (
+export function pruneUnreadSessions(
   current: UnreadSessionMap,
   existingSessionIds: ReadonlySet<string>,
-): UnreadSessionMap => {
+): UnreadSessionMap {
   let changed = false;
   const next: UnreadSessionMap = {};
 
   for (const sessionId of Object.keys(current)) {
-    if (existingSessionIds.has(sessionId)) {
-      next[sessionId] = true;
-    } else {
+    if (!existingSessionIds.has(sessionId)) {
       changed = true;
+      continue;
     }
+    next[sessionId] = true;
   }
 
   return changed ? next : current;
-};
+}

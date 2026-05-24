@@ -38,10 +38,74 @@ test("does not mark the selected session unread while the app is focused", () =>
   assert.equal(next, current);
 });
 
+test("normalizes response ids before marking unread", () => {
+  const next = markUnreadAfterAssistantResponse({}, {
+    responseSessionId: " session-b ",
+    selectedSessionId: " session-a ",
+    appFocused: true,
+  });
+  assert.deepEqual(keys(next), ["session-b"]);
+});
+
+test("normalizes selected session ids before deciding focused unread state", () => {
+  const current = { "session-z": true } satisfies UnreadSessionMap;
+  const next = markUnreadAfterAssistantResponse(current, {
+    responseSessionId: "session-a",
+    selectedSessionId: " session-a ",
+    appFocused: true,
+  });
+  assert.equal(next, current);
+});
+
+test("does not mark empty or missing response ids unread", () => {
+  const current = { "session-z": true } satisfies UnreadSessionMap;
+
+  assert.equal(markUnreadAfterAssistantResponse(current, {
+    responseSessionId: null,
+    selectedSessionId: "session-a",
+    appFocused: false,
+  }), current);
+  assert.equal(markUnreadAfterAssistantResponse(current, {
+    responseSessionId: undefined,
+    selectedSessionId: "session-a",
+    appFocused: false,
+  }), current);
+  assert.equal(markUnreadAfterAssistantResponse(current, {
+    responseSessionId: "",
+    selectedSessionId: "session-a",
+    appFocused: false,
+  }), current);
+  assert.equal(markUnreadAfterAssistantResponse(current, {
+    responseSessionId: "   ",
+    selectedSessionId: "session-a",
+    appFocused: false,
+  }), current);
+});
+
 test("clears only the opened or focused selected session", () => {
   const current = { "session-a": true, "session-b": true } satisfies UnreadSessionMap;
   assert.deepEqual(keys(clearUnreadSession(current, "session-a")), ["session-b"]);
   assert.equal(clearUnreadSession(current, "missing"), current);
+});
+
+test("normalizes session ids before clearing unread", () => {
+  const current = { "session-a": true, "session-b": true } satisfies UnreadSessionMap;
+  assert.deepEqual(keys(clearUnreadSession(current, " session-a ")), ["session-b"]);
+});
+
+test("does not clear empty or missing session ids", () => {
+  const current = {
+    "": true,
+    "   ": true,
+    null: true,
+    "session-a": true,
+    undefined: true,
+  } satisfies UnreadSessionMap;
+
+  assert.equal(clearUnreadSession(current, null), current);
+  assert.equal(clearUnreadSession(current, undefined), current);
+  assert.equal(clearUnreadSession(current, ""), current);
+  assert.equal(clearUnreadSession(current, "   "), current);
 });
 
 test("prunes unread ids that no longer exist", () => {
