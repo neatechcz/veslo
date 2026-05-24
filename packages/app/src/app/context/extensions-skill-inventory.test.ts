@@ -685,3 +685,62 @@ test("skill inventory invalidates cached hub entries when the Den API base chang
     });
   });
 });
+
+test("skill inventory invalidates cached hub entries when the Den user changes for the same org and token", async () => {
+  await withDenAuthStorage(async ({ localStorage, sessionStorage }) => {
+    await createRoot(async (dispose) => {
+      const initialAuth = createDenAuthJson({
+        token: "token-a",
+        userId: "user-a",
+      });
+      localStorage.setItem("veslo.den.auth", initialAuth);
+      sessionStorage.setItem("veslo.den.auth", initialAuth);
+
+      const hubCalls: string[] = [];
+      const vesloServerClient = {
+        async listHubSkills(input: { denToken: string; denOrgId: string }) {
+          assert.deepEqual(input, { denToken: "token-a", denOrgId: "org-1" });
+          const callId = `call-${hubCalls.length + 1}`;
+          hubCalls.push(callId);
+          return { items: [hubSkill(`planning-${callId}`)] };
+        },
+      };
+
+      try {
+        const store = createExtensionsStore({
+          client: () => null,
+          projectDir: () => "/workspaces/alpha",
+          activeWorkspaceRoot: () => "/workspaces/alpha",
+          workspaceType: () => "local",
+          workspaces: () => [],
+          vesloServerClient: () => vesloServerClient as never,
+          vesloServerStatus: () => "connected",
+          vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+          vesloServerWorkspaceId: () => "ws-alpha",
+          listLocalSkillsScoped: async () => [],
+          setBusy: () => undefined,
+          setBusyLabel: () => undefined,
+          setBusyStartedAt: () => undefined,
+          setError: () => undefined,
+        });
+
+        await store.refreshSkillInventory({ force: true });
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-call-1"), true);
+
+        const nextAuth = createDenAuthJson({
+          token: "token-a",
+          userId: "user-b",
+        });
+        localStorage.setItem("veslo.den.auth", nextAuth);
+        sessionStorage.setItem("veslo.den.auth", nextAuth);
+        await store.refreshSkillInventory();
+
+        assert.deepEqual(hubCalls, ["call-1", "call-2"]);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-call-1"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-call-2"), true);
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
