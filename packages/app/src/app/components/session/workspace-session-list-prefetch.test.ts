@@ -31,4 +31,9 @@ test("sidebar session surfaces expose the loaded-interest prefetch callback", ()
     /const currentRows = sidebarMode\(\) === "by-project" \? visibleProjectRows\(\) : recentRowsVisible\(\);/,
   );
   assert.match(listSource, /allProjectModeGroups/);
+  assert.match(
+    listSource,
+    /const visibleProjectRows = createMemo<FlatSessionRow\[]>\(\(\) =>\s*allProjectModeGroups\(\)\.flatMap\(\(group\) => visibleProjectRowsForGroup\(group\)\),\s*\);/s,
+  );
+  assert.match(listSource, /const chatRows = \(\) => visibleProjectRowsForGroup\(chatGroup\(\)\);/);
 });

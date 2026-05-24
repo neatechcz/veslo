@@ -177,4 +177,9 @@ test("by-project sidebar renders private chats as a bottom section", () => {
   assert.match(source, /data-sidebar-chat-section="true"/);
   assert.match(source, /tr\("sidebar\.chats"\)/);
   assert.match(source, /tr\("sidebar\.new_chat"\)/);
+  assert.match(source, /const chatRows = \(\) => visibleProjectRowsForGroup\(chatGroup\(\)\);/);
+  assert.match(source, /const canLoadMoreChatRows = \(\) => hasHiddenChatRows\(\) \|\| chatPaging\(\)\.hasMore;/);
+  assert.match(source, /void loadMoreProjectRowsForGroup\(chatGroup\(\)\);/);
+  assert.match(source, /resetProjectVisibleRowsForGroup\(chatGroup\(\)\)/);
+  assert.match(source, /showWorkspaceMenu: false/);
 });

@@ -299,27 +299,22 @@ export default function WorkspaceSessionList(props: Props) {
   const recentRowsLoaded = createMemo(() => recentRowsTreeVisible());
 
   const recentRowsVisible = createMemo(() => recentRowsTreeVisible().slice(0, recentVisibleCount()));
+  const projectTreeVisibleRowsForGroup = (group: ProjectSessionGroup) => {
+    const projectHierarchy = buildRowHierarchyLookup(group.sessions);
+    return group.sessions.filter((row) =>
+      rowVisibleByExpansion(row, projectHierarchy, expandedParentSessionIds()),
+    );
+  };
+  const projectVisibleCountForGroup = (group: ProjectSessionGroup) =>
+    projectVisibleByKey()[group.key] ?? PROJECT_VISIBLE_DEFAULT;
+  const visibleProjectRowsForGroup = (group: ProjectSessionGroup) =>
+    projectTreeVisibleRowsForGroup(group).slice(0, projectVisibleCountForGroup(group));
   const projectRowsLoaded = createMemo<FlatSessionRow[]>(() => {
-    const expandedParentIds = expandedParentSessionIds();
-    return allProjectModeGroups().flatMap((group) => {
-      const projectHierarchy = buildRowHierarchyLookup(group.sessions);
-      return group.sessions.filter((row) =>
-        rowVisibleByExpansion(row, projectHierarchy, expandedParentIds),
-      );
-    });
+    return allProjectModeGroups().flatMap((group) => projectTreeVisibleRowsForGroup(group));
   });
-  const visibleProjectRows = createMemo<FlatSessionRow[]>(() => {
-    const expandedParentIds = expandedParentSessionIds();
-    const visibleByProject = projectVisibleByKey();
-    return allProjectModeGroups().flatMap((group) => {
-      const projectHierarchy = buildRowHierarchyLookup(group.sessions);
-      const projectTreeVisibleRows = group.sessions.filter((row) =>
-        rowVisibleByExpansion(row, projectHierarchy, expandedParentIds),
-      );
-      const visibleCount = visibleByProject[group.key] ?? PROJECT_VISIBLE_DEFAULT;
-      return projectTreeVisibleRows.slice(0, visibleCount);
-    });
-  });
+  const visibleProjectRows = createMemo<FlatSessionRow[]>(() =>
+    allProjectModeGroups().flatMap((group) => visibleProjectRowsForGroup(group)),
+  );
   const recentHasHiddenRows = createMemo(() => recentRowsTreeVisible().length > recentVisibleCount());
 
   const recentHasMoreServerRows = createMemo(() =>
@@ -392,6 +387,67 @@ export default function WorkspaceSessionList(props: Props) {
 
   const resetRecentVisibleRows = () => {
     setRecentVisibleCount(initialRecentVisibleCount());
+  };
+
+  const projectWorkspaceIds = (group: ProjectSessionGroup) => {
+    const workspaceIds = new Set<string>();
+    const addWorkspaceId = (workspaceId: string | null | undefined) => {
+      const normalized = workspaceId?.trim() ?? "";
+      if (normalized) workspaceIds.add(normalized);
+    };
+    addWorkspaceId(group.workspace.id);
+    for (const row of group.sessions) addWorkspaceId(row.workspace.id);
+    return Array.from(workspaceIds);
+  };
+
+  const projectPagingForGroup = (group: ProjectSessionGroup) => {
+    const paging = props.workspaceSessionPagingById ?? {};
+    let hasMore = false;
+    let loadingMore = false;
+    let nextWorkspaceId: string | null = null;
+
+    for (const workspaceId of projectWorkspaceIds(group)) {
+      const entry = paging[workspaceId];
+      if (!entry) continue;
+      hasMore = hasMore || entry.hasMore;
+      loadingMore = loadingMore || entry.loadingMore;
+      if (entry.hasMore && !entry.loadingMore && !nextWorkspaceId) {
+        nextWorkspaceId = workspaceId;
+      }
+    }
+
+    return { hasMore, loadingMore, nextWorkspaceId };
+  };
+
+  const loadMoreProjectRowsForGroup = async (group: ProjectSessionGroup) => {
+    const paging = projectPagingForGroup(group);
+    const loadMorePlan = planVisibleRowLoadMore(
+      projectTreeVisibleRowsForGroup(group).length,
+      projectVisibleCountForGroup(group),
+      paging.hasMore,
+      VIEW_LOAD_MORE_STEP,
+    );
+    setProjectVisibleByKey((current) => ({
+      ...current,
+      [group.key]: loadMorePlan.nextVisibleCount,
+    }));
+
+    if (!loadMorePlan.shouldFetchServerRows || !props.onLoadMoreWorkspaceSessions || !paging.nextWorkspaceId) {
+      return;
+    }
+
+    await Promise.resolve(props.onLoadMoreWorkspaceSessions(paging.nextWorkspaceId));
+  };
+
+  const resetProjectVisibleRowsForGroup = (group: ProjectSessionGroup) => {
+    setProjectVisibleByKey((current) => {
+      const currentVisible = current[group.key] ?? PROJECT_VISIBLE_DEFAULT;
+      if (currentVisible <= PROJECT_VISIBLE_DEFAULT) return current;
+      return {
+        ...current,
+        [group.key]: PROJECT_VISIBLE_DEFAULT,
+      };
+    });
   };
 
   createEffect(() => {
@@ -1739,17 +1795,13 @@ export default function WorkspaceSessionList(props: Props) {
                 const dropIndicatorPosition = () =>
                   projectDropIndicator()?.key === project.key ? projectDropIndicator()?.position : null;
                 const collapsed = () => isProjectCollapsed(collapsedProjects(), project.key);
-                const projectPaging = () =>
-                  props.workspaceSessionPagingById?.[workspace().id] ?? { hasMore: false, loadingMore: false };
+                const projectPaging = () => projectPagingForGroup(project);
                 const projectHierarchy = () => buildRowHierarchyLookup(project.sessions);
-                const visibleCount = () => projectVisibleByKey()[project.key] ?? PROJECT_VISIBLE_DEFAULT;
-                const projectTreeVisibleRows = () =>
-                  project.sessions.filter((row) =>
-                    rowVisibleByExpansion(row, projectHierarchy(), expandedParentSessionIds()),
-                  );
+                const visibleCount = () => projectVisibleCountForGroup(project);
+                const projectTreeVisibleRows = () => projectTreeVisibleRowsForGroup(project);
                 const hasChildren = (sessionId: string) =>
                   (projectHierarchy().childrenByParentId.get(sessionId)?.length ?? 0) > 0;
-                const visibleRows = () => projectTreeVisibleRows().slice(0, visibleCount());
+                const visibleRows = () => visibleProjectRowsForGroup(project);
                 const hasHiddenRows = () => projectTreeVisibleRows().length > visibleCount();
                 const canLoadMoreProjectRows = () => hasHiddenRows() || projectPaging().hasMore;
                 const projectLoadMoreCount = () =>
@@ -1762,38 +1814,10 @@ export default function WorkspaceSessionList(props: Props) {
                 const canShowLessProjectRows = () =>
                   shouldShowLessVisibleRowsControl(visibleCount(), PROJECT_VISIBLE_DEFAULT);
                 const loadMoreProjectRows = async () => {
-                  const loadMorePlan = planVisibleRowLoadMore(
-                    projectTreeVisibleRows().length,
-                    visibleCount(),
-                    projectPaging().hasMore,
-                    VIEW_LOAD_MORE_STEP,
-                  );
-                  setProjectVisibleByKey((current) => ({
-                    ...current,
-                    [project.key]: loadMorePlan.nextVisibleCount,
-                  }));
-
-                  if (!loadMorePlan.shouldFetchServerRows) {
-                    return;
-                  }
-
-                  if (
-                    props.onLoadMoreWorkspaceSessions &&
-                    projectPaging().hasMore &&
-                    loadMorePlan.nextVisibleCount > project.sessions.length
-                  ) {
-                    await Promise.resolve(props.onLoadMoreWorkspaceSessions(workspace().id));
-                  }
+                  await loadMoreProjectRowsForGroup(project);
                 };
                 const resetProjectVisibleRows = () => {
-                  setProjectVisibleByKey((current) => {
-                    const currentVisible = current[project.key] ?? PROJECT_VISIBLE_DEFAULT;
-                    if (currentVisible <= PROJECT_VISIBLE_DEFAULT) return current;
-                    return {
-                      ...current,
-                      [project.key]: PROJECT_VISIBLE_DEFAULT,
-                    };
-                  });
+                  resetProjectVisibleRowsForGroup(project);
                 };
 
                 return (
@@ -1966,12 +1990,23 @@ export default function WorkspaceSessionList(props: Props) {
       <Show when={sidebarMode() === "by-project" && chatProjectGroup()}>
         {(chatGroup) => {
           const chatHierarchy = () => buildRowHierarchyLookup(chatGroup().sessions);
-          const chatRows = () =>
-            chatGroup().sessions.filter((row) =>
-              rowVisibleByExpansion(row, chatHierarchy(), expandedParentSessionIds()),
-            );
+          const visibleCount = () => projectVisibleCountForGroup(chatGroup());
+          const chatTreeVisibleRows = () => projectTreeVisibleRowsForGroup(chatGroup());
+          const chatRows = () => visibleProjectRowsForGroup(chatGroup());
           const hasChildren = (sessionId: string) =>
             (chatHierarchy().childrenByParentId.get(sessionId)?.length ?? 0) > 0;
+          const chatPaging = () => projectPagingForGroup(chatGroup());
+          const hasHiddenChatRows = () => chatTreeVisibleRows().length > visibleCount();
+          const canLoadMoreChatRows = () => hasHiddenChatRows() || chatPaging().hasMore;
+          const chatLoadMoreCount = () =>
+            computeVisibleRowLoadCount(
+              chatTreeVisibleRows().length,
+              visibleCount(),
+              chatPaging().hasMore,
+              VIEW_LOAD_MORE_STEP,
+            );
+          const canShowLessChatRows = () =>
+            shouldShowLessVisibleRowsControl(visibleCount(), PROJECT_VISIBLE_DEFAULT);
 
           return (
             <div
@@ -2003,6 +2038,32 @@ export default function WorkspaceSessionList(props: Props) {
                       showWorkspaceMenu: false,
                     })}
                 </For>
+                <Show when={canLoadMoreChatRows()}>
+                  <div>
+                    <button
+                      type="button"
+                      class="w-full inline-flex items-center gap-1 rounded-xl px-3 py-1 text-left text-[11px] text-gray-9 transition-colors hover:bg-gray-3/70 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
+                      disabled={chatPaging().loadingMore}
+                      onClick={() => {
+                        void loadMoreProjectRowsForGroup(chatGroup());
+                      }}
+                    >
+                      <span aria-hidden>{tr("sidebar.more_ellipsis")}</span>
+                      <span>{chatPaging().loadingMore ? tr("sidebar.loading_more") : loadMoreLabel(chatLoadMoreCount())}</span>
+                    </button>
+                  </div>
+                </Show>
+                <Show when={canShowLessChatRows()}>
+                  <div>
+                    <button
+                      type="button"
+                      class="w-full inline-flex items-center gap-1 rounded-xl px-3 py-1 text-left text-[11px] text-gray-9 transition-colors hover:bg-gray-3/70 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
+                      onClick={() => resetProjectVisibleRowsForGroup(chatGroup())}
+                    >
+                      <span>{tr("sidebar.show_less")}</span>
+                    </button>
+                  </div>
+                </Show>
               </div>
             </div>
           );

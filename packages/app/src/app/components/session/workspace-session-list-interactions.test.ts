@@ -97,8 +97,8 @@ test("project rows expose drag lifecycle bindings without dedicated grip handle"
 
   assert.match(
     source,
-    /<For each=\{renderProjectGroups\(\)\}>/,
-    "by-project render should iterate through the renderable project group list",
+    /<For each=\{normalProjectGroups\(\)\}>/,
+    "by-project render should iterate through the normal project group list",
   );
 
   assert.match(
@@ -333,8 +333,8 @@ test("session rows use archive action and open submenu on right-click", () => {
 
   assert.match(
     source,
-    /onContextMenu=\{\(event\) => handleSessionRowContextMenu\(event, row\.workspace\.id, rowAnchorKey\)\}/,
-    "by-project session rows should open submenu from right-click",
+    /onContextMenu=\{\(event\) => \{\s*if \(!showWorkspaceMenu\) return;\s*handleSessionRowContextMenu\(event, row\.workspace\.id, options\.anchorKey\);\s*\}\}/s,
+    "by-project session rows should open submenu from right-click through the shared row renderer",
   );
 
   assert.match(

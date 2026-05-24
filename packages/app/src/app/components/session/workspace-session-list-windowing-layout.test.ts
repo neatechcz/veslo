@@ -27,7 +27,7 @@ test("by-project mode uses per-project visible window with default 7 rows", () =
 
   assert.match(
     source,
-    /projectTreeVisibleRows\(\)\.slice\(0, visibleCount\(\)\)/,
+    /projectTreeVisibleRowsForGroup\(group\)\.slice\(0, projectVisibleCountForGroup\(group\)\)/,
     "by-project rows should render only the visible window slice",
   );
 });
@@ -97,7 +97,7 @@ test("expanded lists can reset their visible window back to the baseline", () =>
 
   assert.match(
     source,
-    /\[project\.key\]: PROJECT_VISIBLE_DEFAULT/,
+    /\[group\.key\]: PROJECT_VISIBLE_DEFAULT/,
     "by-project mode should be able to reset back to the default project window",
   );
 });
@@ -113,13 +113,13 @@ test("selecting a session from expanded results does not collapse the visible wi
 test("by-project load-more reveals loaded rows before fetching another server page", () => {
   assert.match(
     source,
-    /const loadMorePlan = planVisibleRowLoadMore\(\s*projectTreeVisibleRows\(\)\.length,\s*visibleCount\(\),\s*projectPaging\(\)\.hasMore,\s*VIEW_LOAD_MORE_STEP,\s*\);/s,
+    /const loadMorePlan = planVisibleRowLoadMore\(\s*projectTreeVisibleRowsForGroup\(group\)\.length,\s*projectVisibleCountForGroup\(group\),\s*paging\.hasMore,\s*VIEW_LOAD_MORE_STEP,\s*\);/s,
     "by-project load-more should derive a single plan from the loaded rows, visible rows, and server paging state",
   );
 
   assert.match(
     source,
-    /if \(!loadMorePlan\.shouldFetchServerRows\) \{\s*return;\s*\}/s,
+    /if \(!loadMorePlan\.shouldFetchServerRows \|\| !props\.onLoadMoreWorkspaceSessions \|\| !paging\.nextWorkspaceId\) \{\s*return;\s*\}/s,
     "by-project load-more should stop after revealing locally loaded rows",
   );
 });
