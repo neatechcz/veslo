@@ -2901,6 +2901,7 @@ export default function App() {
     projectDir: () => workspaceProjectDir(),
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
     workspaceType: () => workspaceStore.activeWorkspaceDisplay().workspaceType,
+    workspaces: () => workspaceStore.workspaces(),
     vesloServerClient,
     vesloServerStatus,
     vesloServerCapabilities,

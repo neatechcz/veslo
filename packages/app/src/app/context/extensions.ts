@@ -13,6 +13,7 @@ import type {
   ReloadReason,
   ReloadTrigger,
   SkillCard,
+  SkillInventoryItem,
 } from "../types";
 import { addOpencodeCacheHint, isTauriRuntime } from "../utils";
 import skillCreatorTemplate from "../data/skill-creator.md?raw";
@@ -22,17 +23,22 @@ import {
   parsePluginListFromContent,
   stripPluginVersion,
 } from "../utils/plugins";
+import { buildSkillInventory, type BuildSkillInventoryInput } from "../lib/skill-inventory";
 import {
   importSkill,
   installSkillTemplate,
   listLocalSkills,
+  listLocalSkillsScoped as listLocalSkillsScopedCommand,
   readLocalSkill,
   uninstallSkill as uninstallSkillCommand,
   writeLocalSkill,
   pickDirectory,
   readOpencodeConfig,
   writeOpencodeConfig,
+  type LocalSkillCard,
+  type LocalSkillListScope,
   type OpencodeConfigFile,
+  type WorkspaceInfo,
 } from "../lib/tauri";
 import type {
   VesloServerCapabilities,
@@ -42,16 +48,19 @@ import type {
 import { readDenAuth } from "../lib/den-auth";
 
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
+type ListLocalSkillsScoped = (projectDir: string, scope: LocalSkillListScope) => Promise<LocalSkillCard[]>;
 
 export function createExtensionsStore(options: {
   client: () => Client | null;
   projectDir: () => string;
   activeWorkspaceRoot: () => string;
   workspaceType: () => "local" | "remote";
+  workspaces?: () => WorkspaceInfo[];
   vesloServerClient: () => VesloServerClient | null;
   vesloServerStatus: () => VesloServerStatus;
   vesloServerCapabilities: () => VesloServerCapabilities | null;
   vesloServerWorkspaceId: () => string | null;
+  listLocalSkillsScoped?: ListLocalSkillsScoped;
   setBusy: (value: boolean) => void;
   setBusyLabel: (value: string | null) => void;
   setBusyStartedAt: (value: number | null) => void;
@@ -64,6 +73,9 @@ export function createExtensionsStore(options: {
 
   const [skills, setSkills] = createSignal<SkillCard[]>([]);
   const [skillsStatus, setSkillsStatus] = createSignal<string | null>(null);
+
+  const [skillInventory, setSkillInventory] = createSignal<SkillInventoryItem[]>([]);
+  const [skillInventoryStatus, setSkillInventoryStatus] = createSignal<string | null>(null);
 
   const [hubSkills, setHubSkills] = createSignal<HubSkillCard[]>([]);
   const [hubSkillsStatus, setHubSkillsStatus] = createSignal<string | null>(null);
@@ -85,17 +97,21 @@ export function createExtensionsStore(options: {
 
   // Track in-flight requests to prevent duplicate calls
   let refreshSkillsInFlight = false;
+  let refreshSkillInventoryInFlight = false;
   let refreshPluginsInFlight = false;
   let refreshHubSkillsInFlight = false;
   let refreshSkillsAborted = false;
+  let refreshSkillInventoryAborted = false;
   let refreshPluginsAborted = false;
   let refreshHubSkillsAborted = false;
   let refreshHubMcpInFlight = false;
   let refreshHubMcpAborted = false;
   let skillsLoaded = false;
   let hubSkillsLoaded = false;
+  let skillInventoryLoaded = false;
   let hubMcpLoaded = false;
   let skillsRoot = "";
+  let skillInventoryContextKey = "";
   let hubSkillsRoot = "";
   let hubMcpRoot = "";
   let hubMcpContextKey = "";
@@ -252,6 +268,88 @@ export function createExtensionsStore(options: {
       setHubSkillsStatus(e instanceof Error ? e.message : "Failed to load hub skills.");
     } finally {
       refreshHubSkillsInFlight = false;
+    }
+  }
+
+  const localWorkspaceLabel = (workspace: WorkspaceInfo) =>
+    workspace.displayName?.trim() ||
+    workspace.vesloWorkspaceName?.trim() ||
+    workspace.name?.trim() ||
+    workspace.path?.trim() ||
+    workspace.id;
+
+  async function refreshSkillInventory(optionsOverride?: { force?: boolean }) {
+    const localWorkspaces = (options.workspaces?.() ?? [])
+      .filter((workspace) => workspace.workspaceType === "local")
+      .map((workspace) => ({
+        id: workspace.id.trim(),
+        label: localWorkspaceLabel(workspace),
+        path: workspace.path.trim(),
+      }))
+      .filter((workspace) => workspace.id && workspace.path);
+
+    const nextContextKey = JSON.stringify(
+      localWorkspaces.map((workspace) => ({
+        id: workspace.id,
+        label: workspace.label,
+        path: workspace.path,
+      })),
+    );
+
+    if (nextContextKey !== skillInventoryContextKey) {
+      skillInventoryLoaded = false;
+    }
+
+    if (!optionsOverride?.force && skillInventoryLoaded) return;
+    if (refreshSkillInventoryInFlight) return;
+
+    refreshSkillInventoryInFlight = true;
+    refreshSkillInventoryAborted = false;
+
+    try {
+      setSkillInventoryStatus(null);
+      await refreshHubSkills(optionsOverride);
+      if (refreshSkillInventoryAborted) return;
+
+      const listScopedSkills = options.listLocalSkillsScoped ?? listLocalSkillsScopedCommand;
+      const globalSkills = await listScopedSkills("", "global");
+      if (refreshSkillInventoryAborted) return;
+
+      const workspaceSkillsByWorkspaceId: BuildSkillInventoryInput["workspaceSkillsByWorkspaceId"] = {};
+
+      for (const workspace of localWorkspaces) {
+        const skills = await listScopedSkills(workspace.path, "workspace");
+        if (refreshSkillInventoryAborted) return;
+        workspaceSkillsByWorkspaceId[workspace.id] = {
+          workspace: {
+            id: workspace.id,
+            label: workspace.label,
+            path: workspace.path,
+            kind: "local",
+          },
+          skills,
+        };
+      }
+
+      const next = buildSkillInventory({
+        globalSkills,
+        workspaceSkillsByWorkspaceId,
+        hubSkills: hubSkills(),
+      });
+      if (refreshSkillInventoryAborted) return;
+
+      setSkillInventory(next);
+      if (!next.length) {
+        setSkillInventoryStatus(translate("skills.no_skills_found"));
+      }
+      skillInventoryLoaded = true;
+      skillInventoryContextKey = nextContextKey;
+    } catch (e) {
+      if (refreshSkillInventoryAborted) return;
+      setSkillInventory([]);
+      setSkillInventoryStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+    } finally {
+      refreshSkillInventoryInFlight = false;
     }
   }
 
@@ -1225,6 +1323,7 @@ export function createExtensionsStore(options: {
 
   function abortRefreshes() {
     refreshSkillsAborted = true;
+    refreshSkillInventoryAborted = true;
     refreshPluginsAborted = true;
     refreshHubSkillsAborted = true;
     refreshHubMcpAborted = true;
@@ -1233,6 +1332,8 @@ export function createExtensionsStore(options: {
   return {
     skills,
     skillsStatus,
+    skillInventory,
+    skillInventoryStatus,
     hubSkills,
     hubSkillsStatus,
     hubMcpCards,
@@ -1251,6 +1352,7 @@ export function createExtensionsStore(options: {
     sidebarPluginStatus,
     isPluginInstalledByName,
     refreshSkills,
+    refreshSkillInventory,
     refreshHubSkills,
     refreshHubMcp,
     refreshPlugins,
