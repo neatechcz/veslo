@@ -57,6 +57,16 @@ test("normalizes selected session ids before deciding focused unread state", () 
   assert.equal(next, current);
 });
 
+test("does not clone when the normalized response session is already unread", () => {
+  const current = { "session-a": true } satisfies UnreadSessionMap;
+  const next = markUnreadAfterAssistantResponse(current, {
+    responseSessionId: " session-a ",
+    selectedSessionId: "session-b",
+    appFocused: true,
+  });
+  assert.equal(next, current);
+});
+
 test("does not mark empty or missing response ids unread", () => {
   const current = { "session-z": true } satisfies UnreadSessionMap;
 
@@ -114,4 +124,10 @@ test("prunes unread ids that no longer exist", () => {
     "session-b",
     "session-c",
   ]);
+});
+
+test("does not clone when no unread ids are pruned", () => {
+  const current = { "session-a": true, "session-b": true } satisfies UnreadSessionMap;
+  const next = pruneUnreadSessions(current, new Set(["session-a", "session-b", "session-c"]));
+  assert.equal(next, current);
 });
