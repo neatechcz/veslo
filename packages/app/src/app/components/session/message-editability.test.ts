@@ -226,6 +226,26 @@ test("reconstructs file URL references from sent composer file parts", () => {
   ]);
 });
 
+test("reconstructs safe file URL edge cases without URL parser loss", () => {
+  const cases = [
+    ["file:///tmp/100%/note.md", "/tmp/100%/note.md"],
+    ["file://server/share/note.md", "//server/share/note.md"],
+    ["file:///C:/Users/x/note.md", "C:/Users/x/note.md"],
+  ] as const;
+
+  for (const [url, path] of cases) {
+    const result = getEditableUserMessageDraft({
+      messages: [message("m1", "user", [fileUrlPart("m1", url, "note.md")])],
+      sessionIdle: true,
+      queueEmpty: true,
+      composerEmpty: true,
+    });
+
+    assert.equal(result?.draft.resolvedText, `@${path}`, url);
+    assert.deepEqual(result?.draft.parts, [{ type: "file", path, label: "note.md" }], url);
+  }
+});
+
 test("skips hidden latest user message in favor of previous visible user message", () => {
   const result = getEditableUserMessageDraft({
     messages: [

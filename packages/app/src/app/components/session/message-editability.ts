@@ -22,18 +22,29 @@ const partString = (part: Part, key: string): string => {
   return typeof value === "string" ? value : "";
 };
 
+const safeDecodeURIComponent = (value: string): string => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
 const fileUrlPath = (part: Part): string | null => {
   const url = partString(part, "url");
   if (!url.startsWith("file://")) return null;
 
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "file:") return null;
-    const path = decodeURIComponent(parsed.pathname);
-    return path || null;
-  } catch {
-    return null;
+  const rawPath = url.slice("file://".length);
+  if (!rawPath) return null;
+
+  const decodedPath = safeDecodeURIComponent(rawPath);
+  if (/^\/[A-Za-z]:\//.test(decodedPath)) {
+    return decodedPath.slice(1);
   }
+
+  if (decodedPath.startsWith("/")) return decodedPath;
+
+  return `//${decodedPath}`;
 };
 
 const reconstructComposerDraft = (message: MessageWithParts): ComposerDraft | null => {
