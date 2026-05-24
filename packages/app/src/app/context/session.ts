@@ -152,6 +152,7 @@ export function createSessionStore(options: {
   onSessionLoadComplete?: () => void;
   loadOfflineTranscript?: (sessionID: string, limit: number) => Promise<VesloSessionTranscriptSnapshot | null>;
   onSessionBusyChange?: (sessionId: string, busy: boolean) => void;
+  onAssistantResponseObserved?: (sessionId: string) => void;
 }) {
 
   const notifySessionBusy = (sessionId: string, status: string) => {
@@ -1274,6 +1275,9 @@ export function createSessionStore(options: {
           const info = record.info as Message;
           if (!isKnownSessionId(info.sessionID)) return;
           setStore("messages", info.sessionID, (current = []) => upsertMessageInfo(current, info));
+          if ((info as { role?: string }).role === "assistant") {
+            options.onAssistantResponseObserved?.(info.sessionID);
+          }
         }
       }
     }
