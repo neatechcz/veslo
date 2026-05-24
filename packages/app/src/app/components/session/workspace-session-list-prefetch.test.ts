@@ -30,4 +30,5 @@ test("sidebar session surfaces expose the loaded-interest prefetch callback", ()
     listSource,
     /const currentRows = sidebarMode\(\) === "by-project" \? visibleProjectRows\(\) : recentRowsVisible\(\);/,
   );
+  assert.match(listSource, /allProjectModeGroups/);
 });

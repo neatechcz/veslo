@@ -171,3 +171,10 @@ test("by-project rows keep the title wrapper without a branch toggle button", ()
     "by-project rows should not keep the circular overlay toggle that steals pointer input from the title",
   );
 });
+
+test("by-project sidebar renders private chats as a bottom section", () => {
+  assert.match(source, /splitProjectGroupsForSidebar/);
+  assert.match(source, /data-sidebar-chat-section="true"/);
+  assert.match(source, /tr\("sidebar\.chats"\)/);
+  assert.match(source, /tr\("sidebar\.new_chat"\)/);
+});

@@ -36,7 +36,9 @@ import {
   resolveSessionRowClickAction,
   requiredVisibleCountForExpandedSession,
   rowVisibleByExpansion,
+  sessionChatLabel,
   shouldShowNewSessionLabelText,
+  splitProjectGroupsForSidebar,
   splitSessionDisplayLabel,
   toggleProjectCollapsed,
   type FlatSessionRow,
@@ -282,6 +284,10 @@ export default function WorkspaceSessionList(props: Props) {
       nextGroups: orderedProjectGroups(),
     }),
   );
+  const allProjectModeGroups = createMemo(() => renderProjectGroups());
+  const projectSidebarSplit = createMemo(() => splitProjectGroupsForSidebar(allProjectModeGroups()));
+  const normalProjectGroups = createMemo(() => projectSidebarSplit().projectGroups);
+  const chatProjectGroup = createMemo(() => projectSidebarSplit().chatGroup);
 
   const recentHierarchy = createMemo(() => buildRowHierarchyLookup(visibleRecentRows()));
 
@@ -295,7 +301,7 @@ export default function WorkspaceSessionList(props: Props) {
   const recentRowsVisible = createMemo(() => recentRowsTreeVisible().slice(0, recentVisibleCount()));
   const projectRowsLoaded = createMemo<FlatSessionRow[]>(() => {
     const expandedParentIds = expandedParentSessionIds();
-    return renderProjectGroups().flatMap((group) => {
+    return allProjectModeGroups().flatMap((group) => {
       const projectHierarchy = buildRowHierarchyLookup(group.sessions);
       return group.sessions.filter((row) =>
         rowVisibleByExpansion(row, projectHierarchy, expandedParentIds),
@@ -305,7 +311,7 @@ export default function WorkspaceSessionList(props: Props) {
   const visibleProjectRows = createMemo<FlatSessionRow[]>(() => {
     const expandedParentIds = expandedParentSessionIds();
     const visibleByProject = projectVisibleByKey();
-    return renderProjectGroups().flatMap((group) => {
+    return allProjectModeGroups().flatMap((group) => {
       const projectHierarchy = buildRowHierarchyLookup(group.sessions);
       const projectTreeVisibleRows = group.sessions.filter((row) =>
         rowVisibleByExpansion(row, projectHierarchy, expandedParentIds),
@@ -314,7 +320,6 @@ export default function WorkspaceSessionList(props: Props) {
       return projectTreeVisibleRows.slice(0, visibleCount);
     });
   });
-
   const recentHasHiddenRows = createMemo(() => recentRowsTreeVisible().length > recentVisibleCount());
 
   const recentHasMoreServerRows = createMemo(() =>
@@ -501,7 +506,9 @@ export default function WorkspaceSessionList(props: Props) {
   );
 
   const hasVisibleRows = createMemo(() =>
-    sidebarMode() === "by-project" ? visibleProjectGroups().length > 0 : recentRowsTreeVisible().length > 0,
+    sidebarMode() === "by-project"
+      ? normalProjectGroups().length > 0 || Boolean(chatProjectGroup())
+      : recentRowsTreeVisible().length > 0,
   );
 
   const sessionDecorationFor = (sessionId: string): SidebarSubagentDecoration | null => {
@@ -552,7 +559,7 @@ export default function WorkspaceSessionList(props: Props) {
       return;
     }
 
-    const groups = renderProjectGroups();
+    const groups = allProjectModeGroups();
     for (const group of groups) {
       if (!group.sessions.some((row) => row.session.id === sessionId)) continue;
       const required = requiredVisibleCountForExpandedSession(
@@ -1184,6 +1191,135 @@ export default function WorkspaceSessionList(props: Props) {
     );
   };
 
+  const projectSessionRow = (
+    row: FlatSessionRow,
+    hasChildren: (sessionId: string) => boolean,
+    options: {
+      anchorKey: string;
+      label?: () => string;
+      showWorkspaceMenu?: boolean;
+      soulEnabled?: () => boolean;
+      canRecover?: () => boolean;
+      isConnectionActionBusy?: () => boolean;
+    },
+  ) => {
+    const workspace = () => row.workspace;
+    const session = () => row.session;
+    const isSelected = () => isRowSelected(workspace().id, session().id);
+    const isSessionActive = () => (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
+    const labelOverride = () => options.label?.().trim() ?? "";
+    const label = () => {
+      const override = labelOverride();
+      return override
+        ? { decoratedName: null, description: override, tooltip: override }
+        : sessionLabelParts(row);
+    };
+    const labelColor = () => labelOverride() ? "" : sessionLabelColor(row);
+    const archiveConfirmationPending = () => isArchiveConfirmationPending(row.session.id);
+    const showWorkspaceMenu = options.showWorkspaceMenu !== false;
+
+    return (
+      <div
+        class="relative group/session-row"
+        onContextMenu={(event) => {
+          if (!showWorkspaceMenu) return;
+          handleSessionRowContextMenu(event, row.workspace.id, options.anchorKey);
+        }}
+      >
+        <button
+          type="button"
+          data-session-sidebar-row="true"
+          class={sessionRowClass(isSelected(), "gap-2 pr-12")}
+          aria-current={isSelected() ? "page" : undefined}
+          style={rowIndentStyle(row)}
+          onMouseUp={(event) => handleSessionRowMouseUp(event, row, hasChildren)}
+          onClick={(event) => handleSessionRowPress(event, row, hasChildren)}
+        >
+          <span class="relative min-w-0 flex-1">
+            <span class="flex items-center gap-1.5 min-w-0">
+              <Show when={isSessionActive()}>
+                <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
+              </Show>
+              <span
+                class="text-[13px] text-gray-12 truncate"
+                title={label().tooltip}
+              >
+                <Show when={label().decoratedName} fallback={label().description ?? ""}>
+                  {(decoratedName) => (
+                    <>
+                      <span style={labelColor() ? { color: labelColor() } : undefined}>
+                        {decoratedName()}
+                      </span>
+                      <Show when={label().description}>
+                        {(description) => <span>{` · ${description()}`}</span>}
+                      </Show>
+                    </>
+                  )}
+                </Show>
+              </span>
+            </span>
+          </span>
+        </button>
+
+        <span
+          class={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-9 whitespace-nowrap transition-opacity ${
+            sessionHoverActionsSuspended()
+              ? ""
+              : "group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
+          }`}
+          title={formatSessionTimestampTooltip(displayTimestamp(session()), currentLocale())}
+        >
+          {formatSessionRelativeAge(displayTimestamp(session()))}
+        </span>
+
+        <div
+          class={`absolute right-2 top-1/2 -translate-y-1/2 transition-opacity ${
+            archiveConfirmationPending()
+              ? "opacity-100"
+              : sessionHoverActionsSuspended()
+              ? "pointer-events-none opacity-0"
+              : "opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100"
+          }`}
+        >
+          <button
+            type="button"
+            class={archiveConfirmationPending()
+              ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
+              : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
+            onClick={(event) => handleSessionArchiveAction(event, row.session.id)}
+            aria-label={archiveConfirmationPending()
+              ? tr("sidebar.archive_confirm")
+              : isSessionArchived(row.session.id)
+              ? tr("sidebar.unarchive_session")
+              : tr("sidebar.archive_session")}
+            title={archiveConfirmationPending()
+              ? tr("sidebar.archive_confirm")
+              : isSessionArchived(row.session.id)
+              ? tr("sidebar.unarchive_session")
+              : tr("sidebar.archive_session")}
+            ref={(el) => {
+              if (archiveConfirmationPending()) pendingArchiveConfirmButtonRef = el;
+            }}
+          >
+            <Show when={archiveConfirmationPending()} fallback={<Archive size={14} />}>
+              {tr("sidebar.archive_confirm")}
+            </Show>
+          </button>
+        </div>
+
+        <Show when={showWorkspaceMenu}>
+          {workspaceMenu(
+            row.workspace,
+            options.anchorKey,
+            options.soulEnabled?.() ?? false,
+            options.canRecover?.() ?? false,
+            options.isConnectionActionBusy?.() ?? false,
+          )}
+        </Show>
+      </div>
+    );
+  };
+
   const emptyState = (
     <Show
       when={anyWorkspaceLoading()}
@@ -1585,7 +1721,7 @@ export default function WorkspaceSessionList(props: Props) {
                 </Show>
               </>
             }>
-              <For each={renderProjectGroups()}>
+              <For each={normalProjectGroups()}>
                 {(project) => {
                 const workspace = () => project.workspace;
                 const isActiveWorkspace = () => props.activeWorkspaceId === workspace().id;
@@ -1783,112 +1919,13 @@ export default function WorkspaceSessionList(props: Props) {
                     <Show when={!collapsed()}>
                       <div class="pl-5 pt-0.5 space-y-0">
                         <For each={visibleRows()}>
-                          {(row) => {
-                            const session = () => row.session;
-                            const isSelected = () => isRowSelected(workspace().id, session().id);
-                            const isSessionActive = () =>
-                              (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
-                            const label = () => sessionLabelParts(row);
-                            const labelColor = () => sessionLabelColor(row);
-                            const archiveConfirmationPending = () => isArchiveConfirmationPending(row.session.id);
-                            const rowAnchorKey = `project-session:${row.rowKey}`;
-
-                            return (
-                              <div
-                                class="relative group/session-row"
-                                onContextMenu={(event) => handleSessionRowContextMenu(event, row.workspace.id, rowAnchorKey)}
-                              >
-                                <button
-                                  type="button"
-                                  data-session-sidebar-row="true"
-                                  class={sessionRowClass(isSelected(), "gap-2 pr-12")}
-                                  aria-current={isSelected() ? "page" : undefined}
-                                  style={rowIndentStyle(row)}
-                                  onMouseUp={(event) => handleSessionRowMouseUp(event, row, hasChildren)}
-                                  onClick={(event) => handleSessionRowPress(event, row, hasChildren)}
-                                >
-                                  <span class="relative min-w-0 flex-1">
-                                    <span class="flex items-center gap-1.5 min-w-0">
-                                      <Show when={isSessionActive()}>
-                                        <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
-                                      </Show>
-                                      <span
-                                        class="text-[13px] text-gray-12 truncate"
-                                        title={sessionLabelTitle(row)}
-                                      >
-                                        <Show when={label().decoratedName} fallback={label().description ?? ""}>
-                                          {(decoratedName) => (
-                                            <>
-                                              <span style={labelColor() ? { color: labelColor() } : undefined}>
-                                                {decoratedName()}
-                                              </span>
-                                              <Show when={label().description}>
-                                                {(description) => <span>{` · ${description()}`}</span>}
-                                              </Show>
-                                            </>
-                                          )}
-                                        </Show>
-                                      </span>
-                                    </span>
-                                  </span>
-                                </button>
-
-                                <span
-                                  class={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-9 whitespace-nowrap transition-opacity ${
-                                    sessionHoverActionsSuspended()
-                                      ? ""
-                                      : "group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
-                                  }`}
-                                  title={formatSessionTimestampTooltip(displayTimestamp(session()), currentLocale())}
-                                >
-                                  {formatSessionRelativeAge(displayTimestamp(session()))}
-                                </span>
-
-                                <div
-                                  class={`absolute right-2 top-1/2 -translate-y-1/2 transition-opacity ${
-                                    archiveConfirmationPending()
-                                      ? "opacity-100"
-                                      : sessionHoverActionsSuspended()
-                                      ? "pointer-events-none opacity-0"
-                                      : "opacity-0 group-hover/session-row:opacity-100 group-focus-within/session-row:opacity-100"
-                                  }`}
-                                >
-                                  <button
-                                    type="button"
-                                    class={archiveConfirmationPending()
-                                      ? "rounded-md border border-amber-7 bg-amber-3 px-2 py-0.5 text-[11px] font-medium text-amber-11 hover:bg-amber-4"
-                                      : "p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"}
-                                    onClick={(event) => handleSessionArchiveAction(event, row.session.id)}
-                                    aria-label={archiveConfirmationPending()
-                                      ? tr("sidebar.archive_confirm")
-                                      : isSessionArchived(row.session.id)
-                                      ? tr("sidebar.unarchive_session")
-                                      : tr("sidebar.archive_session")}
-                                    title={archiveConfirmationPending()
-                                      ? tr("sidebar.archive_confirm")
-                                      : isSessionArchived(row.session.id)
-                                      ? tr("sidebar.unarchive_session")
-                                      : tr("sidebar.archive_session")}
-                                    ref={(el) => {
-                                      if (archiveConfirmationPending()) pendingArchiveConfirmButtonRef = el;
-                                    }}
-                                  >
-                                    <Show when={archiveConfirmationPending()} fallback={<Archive size={14} />}>
-                                      {tr("sidebar.archive_confirm")}
-                                    </Show>
-                                  </button>
-                                </div>
-
-                                {workspaceMenu(
-                                  row.workspace,
-                                  rowAnchorKey,
-                                  soulEnabled(),
-                                  canRecover(),
-                                  isConnectionActionBusy(),
-                                )}
-                              </div>
-                            );
-                          }}
+                          {(row) =>
+                            projectSessionRow(row, hasChildren, {
+                              anchorKey: `project-session:${row.rowKey}`,
+                              soulEnabled,
+                              canRecover,
+                              isConnectionActionBusy,
+                            })}
                         </For>
                         <Show when={canLoadMoreProjectRows()}>
                           <div>
@@ -1926,6 +1963,51 @@ export default function WorkspaceSessionList(props: Props) {
           </Show>
         </div>
       </div>
+      <Show when={sidebarMode() === "by-project" && chatProjectGroup()}>
+        {(chatGroup) => {
+          const chatHierarchy = () => buildRowHierarchyLookup(chatGroup().sessions);
+          const chatRows = () =>
+            chatGroup().sessions.filter((row) =>
+              rowVisibleByExpansion(row, chatHierarchy(), expandedParentSessionIds()),
+            );
+          const hasChildren = (sessionId: string) =>
+            (chatHierarchy().childrenByParentId.get(sessionId)?.length ?? 0) > 0;
+
+          return (
+            <div
+              data-sidebar-chat-section="true"
+              class="mt-2 shrink-0 border-t border-gray-6/70 pt-2"
+            >
+              <div class="mb-1 flex items-center justify-between gap-2 px-1.5">
+                <span class="truncate text-[12px] font-semibold text-gray-10">
+                  {tr("sidebar.chats")}
+                </span>
+                <button
+                  type="button"
+                  class="inline-flex h-7 items-center gap-1 rounded-full border border-gray-6 bg-gray-1 px-2 text-[11px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => props.onQuickNewSession?.()}
+                  disabled={!props.onQuickNewSession || props.newTaskDisabled}
+                  aria-label={tr("sidebar.new_chat")}
+                  title={tr("sidebar.new_chat")}
+                >
+                  <Plus size={12} />
+                  <span>{tr("sidebar.chat")}</span>
+                </button>
+              </div>
+              <div class="max-h-[min(40vh,18rem)] overflow-y-auto pr-1">
+                <For each={chatRows()}>
+                  {(row) =>
+                    projectSessionRow(row, hasChildren, {
+                      anchorKey: `chat-session:${row.rowKey}`,
+                      label: () => sessionChatLabel(row.session, tr("session.chat_label")),
+                      showWorkspaceMenu: false,
+                    })}
+                </For>
+              </div>
+            </div>
+          );
+        }}
+      </Show>
       <Show when={projectDragPreview()}>
         {(preview) => (
           <div
