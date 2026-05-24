@@ -189,6 +189,7 @@ export type SessionViewProps = {
   activeWorkspaceId: string;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
+  readyEngineWorkspaceIds?: Set<string>;
   activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   testWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean;
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
@@ -4007,6 +4008,7 @@ export default function SessionView(props: SessionViewProps) {
             sessionStatusById={props.sessionStatusById}
             connectingWorkspaceId={props.connectingWorkspaceId}
             workspaceConnectionStateById={props.workspaceConnectionStateById}
+            readyEngineWorkspaceIds={props.readyEngineWorkspaceIds}
             newTaskDisabled={props.newTaskDisabled}
             importingWorkspaceConfig={props.importingWorkspaceConfig}
             showRemoteActions={props.showRemoteActions}

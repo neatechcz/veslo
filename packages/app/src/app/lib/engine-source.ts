@@ -43,9 +43,12 @@ export function resolveStoredEngineSourcePreference(options: {
     };
   }
 
-  // Older desktop installs persisted "path" before Veslo bundled a compatible engine.
-  // If there is no explicit opt-in, migrate packaged desktop apps back to the sidecar.
-  if (options.isTauriRuntime && source === "path" && !options.storedSourceExplicit) {
+  // In the Tauri desktop runtime, "path" (= /opt/homebrew/bin/opencode, /usr/local/bin/opencode, etc.)
+  // is no longer supported. Homebrew currently ships opencode 1.3.2 but the bundled orchestrator
+  // requires 1.14.29; spawning against the system binary silently times out. Always migrate to the
+  // bundled sidecar regardless of whether the user explicitly chose "path" in the past — they can
+  // still pick a specific binary via "Custom binary path" in Settings → Advanced.
+  if (options.isTauriRuntime && source === "path") {
     return {
       source: "sidecar",
       explicit: false,

@@ -34,6 +34,18 @@ pgrep -fl "pnpm -w dev:ui|pnpm --filter @neatech/veslo-ui dev|pnpm --filter @nea
 
 If a match looks like a user-launched production/bundled app or otherwise cannot be identified as an internally started dev/test runtime, stop and report what is running instead of force-killing it.
 
+### Convenience script
+
+`scripts/veslo-kill-zombies.sh` automates steps 1–3 above for the sidecar set (veslo-server, veslo-orchestrator, veslo-code-router, veslo-code). It preserves the currently-running `pnpm dev` process group by default and only terminates orphans from earlier sessions:
+
+```bash
+./scripts/veslo-kill-zombies.sh           # dry run (default)
+./scripts/veslo-kill-zombies.sh --kill    # actually terminate orphans
+./scripts/veslo-kill-zombies.sh --all     # terminate everything, including the live dev session
+```
+
+In debug builds (`pnpm dev`), Veslo also runs an equivalent best-effort cleanup at startup — orphan sidecars whose process group differs from the booting Tauri process are SIGTERM'd before the new sidecars spawn. Release builds do not run this cleanup so a shipped Veslo never kills unrelated processes.
+
 Existing `tauri-pilot` app/socket reuse is not the default desktop test flow. Attach to an existing socket only when the user explicitly asks for a debug attach workflow.
 
 The `tauri-pilot` launcher waits for the Tauri process it started to exit during teardown and escalates to a force kill if the process ignores the graceful stop signal. This harness cleanup does not replace the preflight above; clear matching Veslo dev/test processes before each desktop runtime launch.

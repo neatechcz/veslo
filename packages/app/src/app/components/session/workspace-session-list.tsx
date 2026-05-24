@@ -109,6 +109,9 @@ type Props = {
   newTaskDisabled: boolean;
   /** VSLO-171 F3Ú7c — per-workspace pending permission counts for sidebar badges. */
   pendingPermissionCountByWs?: Record<string, number>;
+  /** Workspace IDs whose orchestrator engine is currently in `ready` state.
+   *  Switching into those is instant (no spawn wait). */
+  readyEngineWorkspaceIds?: Set<string>;
   importingWorkspaceConfig: boolean;
   showRemoteActions?: boolean;
   soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
@@ -2479,6 +2482,12 @@ export default function WorkspaceSessionList(props: Props) {
                             <span class="truncate text-[12px] font-semibold text-gray-10">
                               {project.projectLabel}
                             </span>
+                            <Show when={props.readyEngineWorkspaceIds?.has(workspace().id)}>
+                              <span
+                                class="h-1.5 w-1.5 shrink-0 rounded-full bg-green-9"
+                                title="Engine ready — switching is instant"
+                              />
+                            </Show>
                             <Show when={workspace().workspaceType === "remote"}>
                               <span class="shrink-0 text-[10px] text-gray-8 uppercase tracking-[0.12em]">
                                 {workspaceKindLabel(workspace())}

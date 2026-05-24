@@ -2058,7 +2058,7 @@ function printHelp(): void {
     "  --opencode-hot-reload     Enable OpenCode hot reload (default: true)",
     "  --opencode-hot-reload-debounce-ms <ms>  Debounce window for hot reload triggers (default: 700)",
     "  --opencode-hot-reload-cooldown-ms <ms>  Minimum interval between hot reloads (default: 1500)",
-    "  --max-engines <N>         Max concurrent engines in pool (1-16, default: 8) [VSLO-171]",
+    "  --max-engines <N>         Max concurrent engines in pool (1-64, default: 8) [VSLO-171]",
     "  --idle-suspend-ms <ms>    Idle threshold for engine suspend (default: 900000 = 15 min)",
     "  --opencode-username <u>   OpenCode basic auth username",
     "  --opencode-password <p>   OpenCode basic auth password",
@@ -3163,8 +3163,8 @@ async function runRouterDaemon(args: ParsedArgs) {
 
   // VSLO-171 fáze 2 F2Ú4 — engine pool capacity + idle suspend.
   const maxEngines = readNumber(args.flags, "max-engines", 8, "VESLO_MAX_ENGINES") ?? 8;
-  if (!Number.isFinite(maxEngines) || maxEngines < 1 || maxEngines > 16) {
-    throw new Error("--max-engines must be between 1 and 16");
+  if (!Number.isFinite(maxEngines) || maxEngines < 1 || maxEngines > 64) {
+    throw new Error("--max-engines must be between 1 and 64");
   }
   const idleSuspendMs =
     readNumber(args.flags, "idle-suspend-ms", 15 * 60_000, "VESLO_IDLE_SUSPEND_MS") ??
@@ -3306,14 +3306,15 @@ async function runRouterDaemon(args: ParsedArgs) {
       },
       waitForHealthy: async (baseUrl) => {
         const client = createOpencodeClient({ baseUrl, headers: authHeaders });
-        // VSLO-171 — opencode cold-start (SQLite migration) routinely exceeds
-        // 10s; pool then returns 502 "engine spawn failed" to the SDK even
-        // though the engine reaches ready shortly after. Use a longer default
-        // and allow env override.
+        // Opencode cold-start (Bun JIT + SQLite migration + sandbox-runtime
+        // init) routinely exceeds 30s in dev builds. Pool returns 502 to the
+        // SDK if we time out, even though the engine reaches ready shortly
+        // after — the user then sees Error badges and a stuck UI. 60s gives
+        // cold paths room without blocking interactive switches.
         const timeoutMs = (() => {
           const raw = process.env.VESLO_OPENCODE_HEALTH_TIMEOUT_MS;
           const parsed = raw ? Number.parseInt(raw, 10) : NaN;
-          return Number.isFinite(parsed) && parsed >= 1_000 ? parsed : 30_000;
+          return Number.isFinite(parsed) && parsed >= 1_000 ? parsed : 60_000;
         })();
         await waitForOpencodeHealthy(client, timeoutMs);
       },
@@ -3487,11 +3488,27 @@ async function runRouterDaemon(args: ParsedArgs) {
           send(404, { error: "workspace not found" });
           return;
         }
-        // VSLO-171 fáze 2 F2Ú3: activate jen update activeId. Žádný kill+spawn
-        // singleton engine — pool spawne lazy na první proxy request.
+        // Activate updates activeId immediately and triggers a background
+        // engine warm-up. Without the eager spawn the first proxy request
+        // after a workspace switch races a cold-start opencode (Bun JIT +
+        // SQLite migration + sandbox init can take >30s in dev), surfacing as
+        // 502 "engine spawn failed" in the UI. Fire-and-forget so the
+        // response stays snappy.
         state.activeId = workspace.id;
         workspace.lastUsedAt = nowMs();
         await saveRouterState(statePath, state);
+        if (workspace.workspaceType === "local" && workspace.path) {
+          void pool
+            .ensure({ id: workspace.id, path: workspace.path })
+            .then(() => persistEnginesSnapshot())
+            .catch((err) => {
+              logger.warn(
+                "eager engine spawn failed",
+                { workspaceId: workspace.id, error: err instanceof Error ? err.message : String(err) },
+                "engine-pool",
+              );
+            });
+        }
         send(200, { activeId: state.activeId, workspace });
         return;
       }

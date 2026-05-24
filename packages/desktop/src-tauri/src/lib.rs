@@ -141,7 +141,57 @@ pub(crate) fn stop_managed_services(app_handle: &tauri::AppHandle) -> Vec<u32> {
     pids
 }
 
+/// Best-effort dev-mode cleanup: kill veslo-* sidecars whose process group
+/// differs from ours. A `pnpm dev` Ctrl+C does not always reap orchestrator/
+/// veslo-server/veslo-code-router; orphans bind ports and leave a stale
+/// veslo-server-state.json that breaks the next dev session. Release builds
+/// keep the original tauri-plugin-single-instance behavior — we don't want a
+/// shipped Veslo killing unrelated user processes.
+#[cfg(all(debug_assertions, not(windows)))]
+fn kill_orphan_sidecars() {
+    use std::process::Command;
+
+    let my_pid = std::process::id().to_string();
+    let my_pgid = match Command::new("ps").args(["-o", "pgid=", "-p", &my_pid]).output() {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        Err(_) => return,
+    };
+    if my_pgid.is_empty() {
+        return;
+    }
+
+    let output = match Command::new("pgrep")
+        .args(["-f", "veslo-server|veslo-orchestrator|veslo-code-router|veslo-code"])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return,
+    };
+    let pids: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty() && line != &my_pid)
+        .collect();
+
+    for pid in pids {
+        let other_pgid = Command::new("ps")
+            .args(["-o", "pgid=", "-p", &pid])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        if other_pgid.is_empty() || other_pgid == my_pgid {
+            continue;
+        }
+        eprintln!("[veslo] killing orphan sidecar pid={pid} pgid={other_pgid}");
+        let _ = Command::new("kill").arg(&pid).status();
+    }
+}
+
+#[cfg(not(all(debug_assertions, not(windows))))]
+fn kill_orphan_sidecars() {}
+
 pub fn run() {
+    kill_orphan_sidecars();
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             let deep_link_urls: Vec<String> = argv

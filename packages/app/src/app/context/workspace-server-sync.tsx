@@ -19,7 +19,10 @@ import type { WorkspaceStore } from "./workspace";
  *
  * No-op in non-Tauri runtimes — web build keeps using the veslo-server proxy.
  */
-export function WorkspaceServerSync(props: { workspaceStore: WorkspaceStore }) {
+export function WorkspaceServerSync(props: {
+  workspaceStore: WorkspaceStore;
+  orchestratorPort?: () => number | null;
+}) {
   const server = useServer();
 
   createEffect(() => {
@@ -32,17 +35,24 @@ export function WorkspaceServerSync(props: { workspaceStore: WorkspaceStore }) {
     // orchestrator returns 404.
     const workspacePath = props.workspaceStore.activeWorkspacePath().trim();
 
+    // Re-track when the orchestrator daemon port changes (dev-session restart).
+    // Only updates while developer mode is on — that's a known limitation we
+    // accept here. We DO NOT run a background setInterval; previous attempts
+    // leaked timers when the component unmounted under HMR, leading to
+    // hundreds of pending HTTP requests against veslo-server (~500% CPU).
+    props.orchestratorPort?.();
+
     void engineInfo(workspaceId, workspacePath || undefined)
       .then((info) => {
         const nextUrl = info.baseUrl?.trim();
         if (!nextUrl) return;
         if (nextUrl === server.url) return;
         server.setActive(nextUrl);
+        void props.workspaceStore.refreshActiveClient(nextUrl);
       })
       .catch(() => {
         // Engine not yet known to orchestrator (lazy spawn happens on first
-        // proxy request). Server URL stays on previous value; the SDK will
-        // retry on next workspace switch or after manual refresh.
+        // proxy request). SDK will retry on the next workspace switch.
       });
   });
 

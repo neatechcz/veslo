@@ -155,6 +155,12 @@ pub fn spawn_orchestrator_dev_autostart(app: AppHandle) {
 
         let project_dir = scratch.to_string_lossy().to_string();
         eprintln!("[dev-autostart] starting orchestrator at {}", project_dir);
+        // Force `prefer_sidecar = true`: the dev autostart runs before the
+        // frontend has a chance to surface the user's engineSource preference,
+        // so without this override the path resolver falls back to system
+        // PATH and picks /opt/homebrew/bin/opencode (typically 1.3.2),
+        // incompatible with the bundled orchestrator (expects 1.14.29).
+        // Engine spawns then silently time out.
         let result = engine_start(
             app.clone(),
             app.state::<EngineManager>(),
@@ -162,7 +168,7 @@ pub fn spawn_orchestrator_dev_autostart(app: AppHandle) {
             app.state::<VesloServerManager>(),
             app.state::<OpenCodeRouterManager>(),
             project_dir,
-            None,
+            Some(true),
             None,
             Some(EngineRuntime::Orchestrator),
             None,

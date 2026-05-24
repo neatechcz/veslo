@@ -294,7 +294,53 @@ pub fn recover_persisted_veslo_server_info(
     app: &AppHandle,
 ) -> Result<Option<VesloServerInfo>, String> {
     let dir = persisted_state_dir(app)?;
-    read_persisted_veslo_server_info(&dir)
+    let from_disk = read_persisted_veslo_server_info(&dir)?;
+    if from_disk.is_some() {
+        return Ok(from_disk);
+    }
+
+    // Dev fallback: a `pnpm dev` workflow can spawn veslo-server outside of
+    // Rust (via `bun --watch`), in which case Tauri never wrote state.json.
+    // If the dev scripts expose `VESLO_DEV_SERVER_URL` we probe it, adopt
+    // the live token+pid from /health, and persist so subsequent reads stay
+    // consistent. Skipped in release builds (env var unset by default).
+    if let Some(info) = discover_external_veslo_server() {
+        let _ = persist_veslo_server_info(app, &info);
+        return Ok(Some(info));
+    }
+
+    Ok(None)
+}
+
+fn discover_external_veslo_server() -> Option<VesloServerInfo> {
+    let base_url = std::env::var("VESLO_DEV_SERVER_URL").ok()?;
+    let trimmed = base_url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+    let identity = server_health_identity(trimmed)?;
+    let port = trimmed
+        .rsplit_once(':')
+        .and_then(|(_, tail)| tail.split('/').next())
+        .and_then(|p| p.parse::<u16>().ok());
+    let (connect_url, mdns_url, lan_url) = match port {
+        Some(p) => build_urls(p),
+        None => (None, None, None),
+    };
+    Some(VesloServerInfo {
+        running: true,
+        host: Some("0.0.0.0".to_string()),
+        port,
+        base_url: Some(trimmed.to_string()),
+        connect_url,
+        mdns_url,
+        lan_url,
+        client_token: identity.token,
+        host_token: None,
+        pid: identity.pid,
+        last_stdout: None,
+        last_stderr: None,
+    })
 }
 
 pub fn clear_persisted_veslo_server_info(app: &AppHandle) -> Result<(), String> {
