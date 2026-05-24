@@ -86,7 +86,8 @@ test("inventory card uninstall is unavailable until scoped uninstall exists", ()
 });
 
 test("install-from-link overwrite is gated by active workspace conflicts only", () => {
-  assert.match(source, /const activeWorkspaceInstalledNames = createMemo\(\(\) =>\s*new Set\(props\.skills\.map\(\(skill\) => skill\.name\)\)\s*\)/);
+  assert.match(source, /const activeWorkspaceInstalledNames = createMemo\(\(\) =>\s*new Set\(\s*installedInventoryItems\(\)\s*\.flatMap\(\(item\) =>\s*item\.workspaceInstances\.some\(\(instance\) => instance\.workspaceId === props\.activeWorkspaceId\)\s*\? \[item\.name\]\s*: \[\]\s*\)\s*\)\s*\)/);
+  assert.doesNotMatch(source, /const activeWorkspaceInstalledNames = createMemo\(\(\) =>\s*new Set\(props\.skills\.map/);
   assert.match(source, /const canOverwriteInstallLinkBundle = \(name: string\) => activeWorkspaceInstalledNames\(\)\.has\(name\.trim\(\)\)/);
   assert.match(source, /const installLinkShouldRename = \(name: string, mode: "overwrite" \| "keep-both"\) =>\s*mode === "keep-both" \|\| \(installedNames\(\)\.has\(name\.trim\(\)\) && !canOverwriteInstallLinkBundle\(name\)\)/);
   assert.match(source, /const shouldRename = installLinkShouldRename\(desiredName, mode\)/);

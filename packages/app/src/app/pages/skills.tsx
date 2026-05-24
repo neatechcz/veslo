@@ -241,7 +241,14 @@ export default function SkillsView(props: SkillsViewProps) {
 
   const installedNames = createMemo(() => installedInventoryNames());
   const activeWorkspaceInstalledNames = createMemo(() =>
-    new Set(props.skills.map((skill) => skill.name))
+    new Set(
+      installedInventoryItems()
+        .flatMap((item) =>
+          item.workspaceInstances.some((instance) => instance.workspaceId === props.activeWorkspaceId)
+            ? [item.name]
+            : []
+        )
+    )
   );
   const canOverwriteInstallLinkBundle = (name: string) => activeWorkspaceInstalledNames().has(name.trim());
   const installLinkShouldRename = (name: string, mode: "overwrite" | "keep-both") =>
