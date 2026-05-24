@@ -877,6 +877,84 @@ test("skill inventory reruns after local source revision changes while an invent
   });
 });
 
+test("skill inventory reruns after a failed in-flight refresh when workspace context changes", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      let activeWorkspaces: WorkspaceInfo[] = [workspaces[0] as WorkspaceInfo];
+      const reads: string[] = [];
+      const alphaWorkspaceRelease: { current?: () => void } = {};
+      let markAlphaWorkspaceStarted: (() => void) | null = null;
+      const alphaWorkspaceStarted = new Promise<void>((resolve) => {
+        markAlphaWorkspaceStarted = resolve;
+      });
+      const listLocalSkillsScoped = async (
+        projectDir: string,
+        scope: LocalSkillListScope,
+      ): Promise<LocalSkillCard[]> => {
+        reads.push(`${scope}:${projectDir}`);
+        if (scope === "global") {
+          return [];
+        }
+        if (projectDir === "/workspaces/alpha") {
+          assert.ok(markAlphaWorkspaceStarted);
+          markAlphaWorkspaceStarted();
+          await new Promise<void>((release) => {
+            alphaWorkspaceRelease.current = release;
+          });
+          throw new Error("alpha workspace read failed");
+        }
+        if (projectDir === "/workspaces/beta") {
+          return [{ name: "beta-skill", path: "/workspaces/beta/.opencode/skills/beta-skill/SKILL.md" }];
+        }
+        return [];
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => activeWorkspaces,
+        vesloServerClient: () => null,
+        vesloServerStatus: () => "disconnected",
+        vesloServerCapabilities: () => null,
+        vesloServerWorkspaceId: () => null,
+        listLocalSkillsScoped,
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      const firstRefresh = store.refreshSkillInventory({ force: true });
+      try {
+        await alphaWorkspaceStarted;
+
+        activeWorkspaces = [workspaces[1] as WorkspaceInfo];
+        const secondRefresh = store.refreshSkillInventory();
+
+        const releaseAlphaWorkspace = alphaWorkspaceRelease.current;
+        assert.ok(releaseAlphaWorkspace);
+        releaseAlphaWorkspace();
+        await Promise.all([firstRefresh, secondRefresh]);
+
+        assert.deepEqual(reads, [
+          "global:",
+          "workspace:/workspaces/alpha",
+          "global:",
+          "workspace:/workspaces/beta",
+        ]);
+        assert.equal(store.skillInventoryStatus(), null);
+        assert.equal(store.skillInventory().some((item) => item.name === "beta-skill"), true);
+      } finally {
+        alphaWorkspaceRelease.current?.();
+        await firstRefresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
 test("skill inventory does not cache hub skills from an in-flight refresh after Den auth changes", async () => {
   await withDenAuthStorage(async ({ localStorage, sessionStorage }) => {
     await createRoot(async (dispose) => {

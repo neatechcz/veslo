@@ -131,6 +131,7 @@ export function createExtensionsStore(options: {
   let refreshSkillsInFlight = false;
   let refreshSkillInventoryInFlight = false;
   let refreshSkillInventoryPromise: Promise<SkillInventoryRefreshResult> | null = null;
+  let refreshSkillInventoryInFlightContextKey = "";
   let refreshPluginsInFlight = false;
   let refreshHubSkillsInFlight = false;
   let refreshHubSkillsPromise: Promise<void> | null = null;
@@ -415,10 +416,14 @@ export function createExtensionsStore(options: {
 
     for (;;) {
       if (refreshSkillInventoryInFlight) {
+        const inFlightContextKey = refreshSkillInventoryInFlightContextKey;
         const inFlightRefresh = refreshSkillInventoryPromise;
         const result = inFlightRefresh ? await inFlightRefresh : "stale";
         forceRefresh = false;
-        if (result === "failed" || result === "aborted") return;
+        if (result === "failed" || result === "aborted") {
+          if (inFlightContextKey && getCurrentSkillInventoryContextKey() !== inFlightContextKey) continue;
+          return;
+        }
         if (result === "published" && getCurrentSkillInventoryContextKey() === skillInventoryContextKey) return;
         continue;
       }
@@ -437,6 +442,7 @@ export function createExtensionsStore(options: {
 
       const refreshOptions = forceRefresh ? { force: true } : undefined;
       refreshSkillInventoryInFlight = true;
+      refreshSkillInventoryInFlightContextKey = nextContextKey;
       refreshSkillInventoryAborted = false;
       refreshSkillInventoryPromise = (async (): Promise<SkillInventoryRefreshResult> => {
         try {
@@ -508,13 +514,17 @@ export function createExtensionsStore(options: {
           return "failed";
         } finally {
           refreshSkillInventoryInFlight = false;
+          refreshSkillInventoryInFlightContextKey = "";
           refreshSkillInventoryPromise = null;
         }
       })();
 
       const result = await refreshSkillInventoryPromise;
       forceRefresh = false;
-      if (result === "failed" || result === "aborted") return;
+      if (result === "failed" || result === "aborted") {
+        if (getCurrentSkillInventoryContextKey() !== nextContextKey) continue;
+        return;
+      }
       if (result === "published") return;
       continue;
     }
