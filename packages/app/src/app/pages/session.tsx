@@ -237,6 +237,7 @@ export type SessionViewProps = {
   retryLastPrompt: () => void;
   newTaskDisabled: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
+  unreadSessionIds: Record<string, true>;
   workspaceSessionPagingById: Record<string, { hasMore: boolean; loadingMore: boolean }>;
   subagentDecorationsBySessionId: Record<string, SidebarSubagentDecoration>;
   archivedSessionIds: string[];
@@ -4242,6 +4243,7 @@ export default function SessionView(props: SessionViewProps) {
             workspaceSessionGroups={props.workspaceSessionGroups}
             workspaceSessionPagingById={props.workspaceSessionPagingById}
             subagentDecorationsBySessionId={props.subagentDecorationsBySessionId}
+            unreadSessionIds={props.unreadSessionIds}
             archivedSessionIds={props.archivedSessionIds}
             activeWorkspaceId={props.activeWorkspaceId}
             selectedSessionId={props.selectedSessionId}

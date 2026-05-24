@@ -342,6 +342,12 @@ import {
 } from "./lib/attachment-prompt-routing";
 import { resolveArtifactFamilies } from "./components/session/artifact-family-model";
 import {
+  clearUnreadSession,
+  markUnreadAfterAssistantResponse,
+  pruneUnreadSessions,
+  type UnreadSessionMap,
+} from "./components/session/session-unread-model";
+import {
   AI_ACCESS_ADMIN_MANAGED_MESSAGE,
   AI_ACCESS_LOADING_MESSAGE,
   AI_ACCESS_NOT_CONFIGURED_MESSAGE,
@@ -775,6 +781,24 @@ export default function App() {
     onCleanup(() => document.removeEventListener("visibilitychange", update));
   });
 
+  createEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+
+    const updateAppFocused = () => {
+      setAppFocused(document.visibilityState !== "hidden" && document.hasFocus());
+    };
+
+    updateAppFocused();
+    window.addEventListener("focus", updateAppFocused);
+    window.addEventListener("blur", updateAppFocused);
+    document.addEventListener("visibilitychange", updateAppFocused);
+    onCleanup(() => {
+      window.removeEventListener("focus", updateAppFocused);
+      window.removeEventListener("blur", updateAppFocused);
+      document.removeEventListener("visibilitychange", updateAppFocused);
+    });
+  });
+
 
   createEffect(() => {
     if (typeof window === "undefined") return;
@@ -1141,6 +1165,7 @@ export default function App() {
   const [lastReloadedForServerToken, setLastReloadedForServerToken] = createSignal("");
   const developerMode = () => false;
   const [documentVisible, setDocumentVisible] = createSignal(true);
+  const [appFocused, setAppFocused] = createSignal(true);
 
   createEffect(() => {
     if (developerMode()) return;
@@ -1153,6 +1178,7 @@ export default function App() {
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
     null
   );
+  const [unreadSessionIds, setUnreadSessionIds] = createSignal<UnreadSessionMap>({});
   const SESSION_BY_WORKSPACE_KEY = "veslo.workspace-last-session.v1";
   const ACTIVE_PENDING_DRAFT_KEY = "veslo.active-pending-draft.v1";
   const CONSUMED_PENDING_DRAFT_IDS_KEY = "veslo.consumed-pending-draft-ids.v1";
@@ -1386,6 +1412,15 @@ export default function App() {
       onHotReloadAppliedHandler?.();
     },
     onSessionLoadComplete: () => setPendingSessionLoad(null),
+    onAssistantResponseObserved: (sessionId) => {
+      setUnreadSessionIds((current) =>
+        markUnreadAfterAssistantResponse(current, {
+          responseSessionId: sessionId,
+          selectedSessionId: selectedSessionId(),
+          appFocused: appFocused(),
+        }),
+      );
+    },
     loadOfflineTranscript: async (sessionId, limit) => {
       if (!isTauriRuntime()) return null;
       const workspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
@@ -1439,6 +1474,19 @@ export default function App() {
     hydrateTranscriptSnapshot,
     hasWarmTranscript,
   } = sessionStore;
+
+  createEffect(() => {
+    const id = selectedSessionId();
+    if (!id) return;
+    setUnreadSessionIds((current) => clearUnreadSession(current, id));
+  });
+
+  createEffect(() => {
+    if (!appFocused()) return;
+    const id = selectedSessionId();
+    if (!id) return;
+    setUnreadSessionIds((current) => clearUnreadSession(current, id));
+  });
 
   const hydratedVesloServerClient = createMemo<VesloServerClient | null>(() => {
     const client = vesloServerClient();
@@ -3676,6 +3724,13 @@ export default function App() {
         error: errorById[workspace.id] ?? null,
       };
     });
+  });
+
+  createEffect(() => {
+    const liveIds = new Set(
+      sidebarWorkspaceGroups().flatMap((group) => group.sessions.map((session) => session.id)),
+    );
+    setUnreadSessionIds((current) => pruneUnreadSessions(current, liveIds));
   });
 
   const workspaceSessionPagingById = createMemo<Record<string, { hasMore: boolean; loadingMore: boolean }>>(() => {
@@ -8671,6 +8726,7 @@ export default function App() {
       createWorkspaceFlow: workspaceStore.createWorkspaceFlow,
       pickWorkspaceFolder: workspaceStore.pickWorkspaceFolder,
       workspaceSessionGroups: sidebarWorkspaceGroups(),
+      unreadSessionIds: unreadSessionIds(),
       workspaceSessionPagingById: workspaceSessionPagingById(),
       subagentDecorationsBySessionId: subagentDecorationsBySessionId(),
       archivedSessionIds: archivedSessionIds(),
@@ -8988,6 +9044,7 @@ export default function App() {
     retryLastPrompt: retryLastPrompt,
     newTaskDisabled: newTaskDisabled(),
     workspaceSessionGroups: sidebarWorkspaceGroups(),
+    unreadSessionIds: unreadSessionIds(),
     workspaceSessionPagingById: workspaceSessionPagingById(),
     subagentDecorationsBySessionId: subagentDecorationsBySessionId(),
     archivedSessionIds: archivedSessionIds(),

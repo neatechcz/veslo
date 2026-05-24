@@ -88,6 +88,7 @@ type Props = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
   workspaceSessionPagingById?: Record<string, { hasMore: boolean; loadingMore: boolean }>;
   subagentDecorationsBySessionId?: Record<string, SidebarSubagentDecoration>;
+  unreadSessionIds?: Record<string, true>;
   activeWorkspaceId: string;
   selectedSessionId: string | null;
   pendingSelectedSessionId?: string | null;
@@ -600,6 +601,7 @@ export default function WorkspaceSessionList(props: Props) {
     const pendingWorkspaceId = props.pendingSelectedWorkspaceId?.trim() ?? "";
     return !pendingWorkspaceId || pendingWorkspaceId === workspaceId;
   };
+  const isSessionUnread = (sessionId: string) => Boolean(props.unreadSessionIds?.[sessionId]);
 
   const ensureExpandedSessionChildrenVisible = (
     sessionId: string,
@@ -1358,6 +1360,7 @@ export default function WorkspaceSessionList(props: Props) {
     const session = () => row.session;
     const isSelected = () => isRowSelected(workspace().id, session().id);
     const isSessionActive = () => (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
+    const isUnread = () => isSessionUnread(session().id);
     const labelOverride = () => options.label?.().trim() ?? "";
     const label = () => {
       const override = labelOverride();
@@ -1392,7 +1395,7 @@ export default function WorkspaceSessionList(props: Props) {
                 <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
               </Show>
               <span
-                class="text-[13px] text-gray-12 truncate"
+                class={`text-[13px] text-gray-12 truncate ${isUnread() ? "font-bold" : ""}`}
                 title={label().tooltip}
               >
                 <Show when={label().decoratedName} fallback={label().description ?? ""}>
@@ -1632,6 +1635,7 @@ export default function WorkspaceSessionList(props: Props) {
                         (recentHierarchy().childrenByParentId.get(sessionId)?.length ?? 0) > 0;
                       const isSelected = () => isRowSelected(workspace().id, session().id);
                       const isSessionActive = () => (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
+                      const isUnread = () => isSessionUnread(session().id);
                       const isConnecting = () => isConnectingWorkspace(workspace().id);
                       const canRecover = () => canRecoverWorkspace(workspace());
                       const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
@@ -1663,7 +1667,7 @@ export default function WorkspaceSessionList(props: Props) {
                                   <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
                                 </Show>
                                 <span
-                                  class="text-[13px] text-gray-12 truncate"
+                                  class={`text-[13px] text-gray-12 truncate ${isUnread() ? "font-bold" : ""}`}
                                   title={sessionLabelTitle(row)}
                                 >
                                   <Show when={label().decoratedName} fallback={label().description ?? ""}>

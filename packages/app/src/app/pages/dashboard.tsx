@@ -163,6 +163,7 @@ export type DashboardViewProps = {
   exportWorkspaceConfig: (workspaceId?: string) => void;
   exportWorkspaceBusy: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
+  unreadSessionIds: Record<string, true>;
   workspaceSessionPagingById: Record<string, { hasMore: boolean; loadingMore: boolean }>;
   subagentDecorationsBySessionId: Record<string, SidebarSubagentDecoration>;
   archivedSessionIds: string[];
@@ -1359,6 +1360,7 @@ export default function DashboardView(props: DashboardViewProps) {
               workspaceSessionGroups={props.workspaceSessionGroups}
               workspaceSessionPagingById={props.workspaceSessionPagingById}
               subagentDecorationsBySessionId={props.subagentDecorationsBySessionId}
+              unreadSessionIds={props.unreadSessionIds}
               archivedSessionIds={props.archivedSessionIds}
               activeWorkspaceId={props.activeWorkspaceId}
               selectedSessionId={props.selectedSessionId}

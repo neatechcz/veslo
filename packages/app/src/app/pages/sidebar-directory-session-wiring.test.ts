@@ -173,3 +173,35 @@ test("dashboard wires paging props into WorkspaceSessionList", () => {
     "Dashboard should pass load-more callback into WorkspaceSessionList",
   );
 });
+
+test("session view props expose unread session ids", () => {
+  assert.match(
+    sessionSource,
+    /unreadSessionIds: Record<string, true>;/,
+    "SessionViewProps should include local unread session ids for sidebar rows",
+  );
+});
+
+test("dashboard view props expose unread session ids", () => {
+  assert.match(
+    dashboardSource,
+    /unreadSessionIds: Record<string, true>;/,
+    "DashboardViewProps should include local unread session ids for sidebar rows",
+  );
+});
+
+test("session wires unread session ids into WorkspaceSessionList", () => {
+  assert.match(
+    sessionSource,
+    /unreadSessionIds=\{props\.unreadSessionIds\}/,
+    "Session should pass unread session ids into WorkspaceSessionList",
+  );
+});
+
+test("dashboard wires unread session ids into WorkspaceSessionList", () => {
+  assert.match(
+    dashboardSource,
+    /unreadSessionIds=\{props\.unreadSessionIds\}/,
+    "Dashboard should pass unread session ids into WorkspaceSessionList",
+  );
+});
