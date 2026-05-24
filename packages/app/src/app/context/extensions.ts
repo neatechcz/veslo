@@ -129,6 +129,7 @@ export function createExtensionsStore(options: {
   // Track in-flight requests to prevent duplicate calls
   let refreshSkillsInFlight = false;
   let refreshSkillInventoryInFlight = false;
+  let refreshSkillInventoryPromise: Promise<void> | null = null;
   let refreshPluginsInFlight = false;
   let refreshHubSkillsInFlight = false;
   let refreshHubSkillsPromise: Promise<void> | null = null;
@@ -147,8 +148,18 @@ export function createExtensionsStore(options: {
   let skillInventoryContextKey = "";
   let hubSkillsRoot = "";
   let hubSkillsContextKey = "";
+  let hubSkillsRevision = 0;
+  let localSkillsRevision = 0;
   let hubMcpRoot = "";
   let hubMcpContextKey = "";
+
+  const markHubSkillsSourceChanged = () => {
+    hubSkillsRevision += 1;
+  };
+
+  const markLocalSkillsSourceChanged = () => {
+    localSkillsRevision += 1;
+  };
 
   async function refreshHubMcp(optionsOverride?: { force?: boolean }) {
     const root = options.activeWorkspaceRoot().trim();
@@ -301,6 +312,7 @@ export function createExtensionsStore(options: {
             hubSkillsLoaded = true;
             hubSkillsRoot = root;
             hubSkillsContextKey = contextKey;
+            markHubSkillsSourceChanged();
             return;
           }
 
@@ -322,6 +334,7 @@ export function createExtensionsStore(options: {
           hubSkillsLoaded = true;
           hubSkillsRoot = root;
           hubSkillsContextKey = contextKey;
+          markHubSkillsSourceChanged();
           void refreshHubMcp({ force: true });
           return;
         }
@@ -332,11 +345,13 @@ export function createExtensionsStore(options: {
         hubSkillsLoaded = true;
         hubSkillsRoot = root;
         hubSkillsContextKey = contextKey;
+        markHubSkillsSourceChanged();
         void refreshHubMcp({ force: true });
       } catch (e) {
         if (refreshHubSkillsAborted) return;
         hubSkillsLoaded = false;
         setHubSkills([]);
+        markHubSkillsSourceChanged();
         setHubSkillsStatus(e instanceof Error ? e.message : "Failed to load hub skills.");
       } finally {
         refreshHubSkillsInFlight = false;
@@ -356,6 +371,11 @@ export function createExtensionsStore(options: {
     workspace.id;
 
   async function refreshSkillInventory(optionsOverride?: { force?: boolean }) {
+    if (refreshSkillInventoryInFlight) {
+      await refreshSkillInventoryPromise;
+      return;
+    }
+
     const localWorkspaces = (options.workspaces?.() ?? [])
       .filter((workspace) => workspace.workspaceType === "local")
       .map((workspace) => ({
@@ -367,7 +387,11 @@ export function createExtensionsStore(options: {
 
     const getSkillInventoryContextKey = (hubContextKey: string) =>
       JSON.stringify({
-        hub: hubContextKey,
+        hub: {
+          contextKey: hubContextKey,
+          revision: hubSkillsRevision,
+        },
+        localRevision: localSkillsRevision,
         workspaces: localWorkspaces.map((workspace) => ({
           id: workspace.id,
           label: workspace.label,
@@ -385,66 +409,69 @@ export function createExtensionsStore(options: {
     }
 
     if (!optionsOverride?.force && skillInventoryLoaded && !hubRefreshInFlightForCurrentContext) return;
-    if (refreshSkillInventoryInFlight) return;
 
     refreshSkillInventoryInFlight = true;
     refreshSkillInventoryAborted = false;
-
-    try {
-      setSkillInventoryStatus(null);
-      await refreshHubSkills(optionsOverride);
-      if (refreshSkillInventoryAborted) return;
-
-      const refreshedHubContext = resolveHubSkillsRefreshContext();
-      if (hubSkillsContextKey !== refreshedHubContext.contextKey) {
-        await refreshHubSkills({ force: true });
+    refreshSkillInventoryPromise = (async () => {
+      try {
+        setSkillInventoryStatus(null);
+        await refreshHubSkills(optionsOverride);
         if (refreshSkillInventoryAborted) return;
-      }
 
-      const inventoryHubContext = resolveHubSkillsRefreshContext();
-      const hasMatchingHubSkills = hubSkillsLoaded && hubSkillsContextKey === inventoryHubContext.contextKey;
+        const refreshedHubContext = resolveHubSkillsRefreshContext();
+        if (hubSkillsContextKey !== refreshedHubContext.contextKey) {
+          await refreshHubSkills({ force: true });
+          if (refreshSkillInventoryAborted) return;
+        }
 
-      const listScopedSkills = options.listLocalSkillsScoped ?? listLocalSkillsScopedCommand;
-      const globalSkills = await listScopedSkills("", "global");
-      if (refreshSkillInventoryAborted) return;
+        const inventoryHubContext = resolveHubSkillsRefreshContext();
+        const hasMatchingHubSkills = hubSkillsLoaded && hubSkillsContextKey === inventoryHubContext.contextKey;
 
-      const workspaceSkillsByWorkspaceId: BuildSkillInventoryInput["workspaceSkillsByWorkspaceId"] = {};
-
-      for (const workspace of localWorkspaces) {
-        const skills = await listScopedSkills(workspace.path, "workspace");
+        const listScopedSkills = options.listLocalSkillsScoped ?? listLocalSkillsScopedCommand;
+        const globalSkills = await listScopedSkills("", "global");
         if (refreshSkillInventoryAborted) return;
-        workspaceSkillsByWorkspaceId[workspace.id] = {
-          workspace: {
-            id: workspace.id,
-            label: workspace.label,
-            path: workspace.path,
-            kind: "local",
-          },
-          skills,
-        };
-      }
 
-      const next = buildSkillInventory({
-        globalSkills,
-        workspaceSkillsByWorkspaceId,
-        hubSkills: hasMatchingHubSkills ? hubSkills() : [],
-      });
-      if (refreshSkillInventoryAborted) return;
+        const workspaceSkillsByWorkspaceId: BuildSkillInventoryInput["workspaceSkillsByWorkspaceId"] = {};
 
-      setSkillInventory(next);
-      if (!next.length) {
-        setSkillInventoryStatus(translate("skills.no_skills_found"));
+        for (const workspace of localWorkspaces) {
+          const skills = await listScopedSkills(workspace.path, "workspace");
+          if (refreshSkillInventoryAborted) return;
+          workspaceSkillsByWorkspaceId[workspace.id] = {
+            workspace: {
+              id: workspace.id,
+              label: workspace.label,
+              path: workspace.path,
+              kind: "local",
+            },
+            skills,
+          };
+        }
+
+        const next = buildSkillInventory({
+          globalSkills,
+          workspaceSkillsByWorkspaceId,
+          hubSkills: hasMatchingHubSkills ? hubSkills() : [],
+        });
+        if (refreshSkillInventoryAborted) return;
+
+        setSkillInventory(next);
+        if (!next.length) {
+          setSkillInventoryStatus(translate("skills.no_skills_found"));
+        }
+        skillInventoryLoaded = hasMatchingHubSkills;
+        skillInventoryContextKey = getSkillInventoryContextKey(inventoryHubContext.contextKey);
+      } catch (e) {
+        if (refreshSkillInventoryAborted) return;
+        skillInventoryLoaded = false;
+        setSkillInventory([]);
+        setSkillInventoryStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+      } finally {
+        refreshSkillInventoryInFlight = false;
+        refreshSkillInventoryPromise = null;
       }
-      skillInventoryLoaded = hasMatchingHubSkills;
-      skillInventoryContextKey = getSkillInventoryContextKey(inventoryHubContext.contextKey);
-    } catch (e) {
-      if (refreshSkillInventoryAborted) return;
-      skillInventoryLoaded = false;
-      setSkillInventory([]);
-      setSkillInventoryStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
-    } finally {
-      refreshSkillInventoryInFlight = false;
-    }
+    })();
+
+    await refreshSkillInventoryPromise;
   }
 
   async function installHubSkill(name: string): Promise<{ ok: boolean; message: string }> {
@@ -563,6 +590,13 @@ export function createExtensionsStore(options: {
       vesloWorkspaceId &&
       vesloCapabilities?.skills?.read;
 
+    if (!root) {
+      setSkills([]);
+      markLocalSkillsSourceChanged();
+      setSkillsStatus(translate("skills.pick_workspace_first"));
+      return;
+    }
+
     // Prefer Veslo server when available
     if (canUseVesloServer) {
       if (root !== skillsRoot) {
@@ -595,6 +629,7 @@ export function createExtensionsStore(options: {
             }))
           : [];
         setSkills(next);
+        markLocalSkillsSourceChanged();
         if (!next.length) {
           setSkillsStatus(translate("skills.no_skills_found"));
         }
@@ -603,6 +638,7 @@ export function createExtensionsStore(options: {
       } catch (e) {
         if (refreshSkillsAborted) return;
         setSkills([]);
+        markLocalSkillsSourceChanged();
         setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
       } finally {
         refreshSkillsInFlight = false;
@@ -644,6 +680,7 @@ export function createExtensionsStore(options: {
           : [];
 
         setSkills(next);
+        markLocalSkillsSourceChanged();
         if (!next.length) {
           setSkillsStatus(translate("skills.no_skills_found"));
         }
@@ -652,6 +689,7 @@ export function createExtensionsStore(options: {
       } catch (e) {
         if (refreshSkillsAborted) return;
         setSkills([]);
+        markLocalSkillsSourceChanged();
         setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
       } finally {
         refreshSkillsInFlight = false;
@@ -663,7 +701,8 @@ export function createExtensionsStore(options: {
     const c = options.client();
     if (!c) {
       setSkills([]);
-      setSkillsStatus(root ? "Veslo server unavailable. Connect to load skills." : null);
+      markLocalSkillsSourceChanged();
+      setSkillsStatus("Veslo server unavailable. Connect to load skills.");
       return;
     }
 
@@ -716,6 +755,7 @@ export function createExtensionsStore(options: {
         : [];
 
       setSkills(next);
+      markLocalSkillsSourceChanged();
       if (!next.length) {
         setSkillsStatus(translate("skills.no_skills_found"));
       }
@@ -724,6 +764,7 @@ export function createExtensionsStore(options: {
     } catch (e) {
       if (refreshSkillsAborted) return;
       setSkills([]);
+      markLocalSkillsSourceChanged();
       setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
     } finally {
       refreshSkillsInFlight = false;
