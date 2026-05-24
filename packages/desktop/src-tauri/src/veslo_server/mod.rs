@@ -127,10 +127,16 @@ fn persisted_veslo_server_plugin_state_path_from_override() -> Option<PathBuf> {
     persisted_state_dir_override().map(|dir| persisted_plugin_state_path(&dir))
 }
 
-pub(crate) fn server_health_ok(base_url: &str) -> bool {
+#[derive(Debug, Clone, Default)]
+pub(crate) struct HealthIdentity {
+    pub token: Option<String>,
+    pub pid: Option<u32>,
+}
+
+pub(crate) fn server_health_identity(base_url: &str) -> Option<HealthIdentity> {
     let trimmed = base_url.trim().trim_end_matches('/');
     if trimmed.is_empty() {
-        return false;
+        return None;
     }
 
     let url = format!("{trimmed}/health");
@@ -138,23 +144,58 @@ pub(crate) fn server_health_ok(base_url: &str) -> bool {
         .timeout(std::time::Duration::from_millis(1200))
         .build();
 
-    agent
-        .get(&url)
-        .call()
-        .map(|response| response.status() == 200)
-        .unwrap_or(false)
+    let response = agent.get(&url).call().ok()?;
+    if response.status() != 200 {
+        return None;
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct HealthResponse {
+        #[serde(default)]
+        token: Option<String>,
+        #[serde(default)]
+        pid: Option<u32>,
+    }
+
+    let body: HealthResponse = response.into_json().ok()?;
+    Some(HealthIdentity {
+        token: body.token,
+        pid: body.pid,
+    })
 }
 
 fn persisted_state_to_info_with_health(
     state: &PersistedVesloServerState,
-    health_check: impl Fn(&str) -> bool,
+    health_check: impl Fn(&str) -> Option<HealthIdentity>,
 ) -> Option<VesloServerInfo> {
     let base_url = state
         .base_url
         .clone()
         .filter(|value| !value.trim().is_empty())?;
-    if !health_check(&base_url) {
-        return None;
+
+    let identity = health_check(&base_url)?;
+
+    // Identity validation — reject if persisted token/pid doesn't match what the
+    // server on this port actually reports. Tolerate None fields on either side
+    // for backward compatibility with legacy servers that don't yet expose identity.
+    if let (Some(expected), Some(actual)) =
+        (state.client_token.as_deref(), identity.token.as_deref())
+    {
+        if expected != actual {
+            eprintln!(
+                "[veslo-server] identity mismatch — token on {base_url} does not match persisted state, rejecting"
+            );
+            return None;
+        }
+    }
+    if let (Some(expected), Some(actual)) = (state.pid, identity.pid) {
+        if expected != actual {
+            eprintln!(
+                "[veslo-server] identity mismatch — pid on {base_url} is {actual}, expected {expected}, rejecting"
+            );
+            return None;
+        }
     }
 
     Some(VesloServerInfo {
@@ -175,7 +216,7 @@ fn persisted_state_to_info_with_health(
 
 fn read_persisted_veslo_server_info_with_cleanup(
     dir: &Path,
-    health_check: impl Fn(&str) -> bool,
+    health_check: impl Fn(&str) -> Option<HealthIdentity>,
     mut cleanup_stale_pid: impl FnMut(u32) -> Result<(), String>,
 ) -> Result<Option<VesloServerInfo>, String> {
     let path = persisted_state_path(dir);
@@ -202,7 +243,7 @@ fn read_persisted_veslo_server_info_with_cleanup(
 }
 
 pub fn read_persisted_veslo_server_info(dir: &Path) -> Result<Option<VesloServerInfo>, String> {
-    read_persisted_veslo_server_info_with_cleanup(dir, server_health_ok, |pid| {
+    read_persisted_veslo_server_info_with_cleanup(dir, server_health_identity, |pid| {
         kill_stale_veslo_server_process(pid)
     })
 }
@@ -466,7 +507,8 @@ mod tests {
     use super::{
         persist_veslo_server_plugin_state, persisted_veslo_server_plugin_state_path_from_override,
         persisted_veslo_server_state_path_from_override, read_persisted_veslo_server_info,
-        read_persisted_veslo_server_info_with_cleanup, PersistedVesloServerState,
+        HealthIdentity, PersistedVesloServerState,
+        read_persisted_veslo_server_info_with_cleanup,
     };
     use crate::types::VesloServerInfo;
     use std::fs;
@@ -711,7 +753,7 @@ mod tests {
         let mut recycled_pids = Vec::new();
         let recovered = read_persisted_veslo_server_info_with_cleanup(
             &dir,
-            |_| false,
+            |_| None,
             |pid| {
                 recycled_pids.push(pid);
                 Ok(())
@@ -755,7 +797,7 @@ mod tests {
 
         let recovered = read_persisted_veslo_server_info_with_cleanup(
             &dir,
-            |_| false,
+            |_| None,
             |_| Err("taskkill failed".to_string()),
         )
         .expect("cleanup failure should not stop stale state recovery");
@@ -763,6 +805,102 @@ mod tests {
         assert!(recovered.is_none());
         assert!(!dir.join("veslo-server-state.json").exists());
         assert!(!dir.join("veslo-server-plugin-state.json").exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn write_persisted_state(dir: &std::path::Path, state: &PersistedVesloServerState) {
+        fs::write(
+            dir.join("veslo-server-state.json"),
+            serde_json::to_string_pretty(state).expect("serialize state"),
+        )
+        .expect("write state file");
+    }
+
+    fn sample_state(token: &str, pid: u32) -> PersistedVesloServerState {
+        PersistedVesloServerState {
+            host: Some("0.0.0.0".to_string()),
+            port: Some(8787),
+            base_url: Some("http://127.0.0.1:8787".to_string()),
+            connect_url: Some("http://127.0.0.1:8787".to_string()),
+            mdns_url: None,
+            lan_url: None,
+            client_token: Some(token.to_string()),
+            host_token: Some("host-token".to_string()),
+            pid: Some(pid),
+        }
+    }
+
+    #[test]
+    fn read_persisted_server_info_rejects_token_mismatch() {
+        let dir =
+            std::env::temp_dir().join(format!("veslo-server-state-token-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create test dir");
+        write_persisted_state(&dir, &sample_state("our-token", 4242));
+
+        let recovered = read_persisted_veslo_server_info_with_cleanup(
+            &dir,
+            |_| {
+                Some(HealthIdentity {
+                    token: Some("foreign-token".to_string()),
+                    pid: Some(4242),
+                })
+            },
+            |_| Ok(()),
+        )
+        .expect("read persisted state");
+
+        assert!(recovered.is_none(), "token mismatch must reject persisted state");
+        assert!(
+            !dir.join("veslo-server-state.json").exists(),
+            "stale state file must be removed when identity check fails"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn read_persisted_server_info_rejects_pid_mismatch() {
+        let dir =
+            std::env::temp_dir().join(format!("veslo-server-state-pid-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create test dir");
+        write_persisted_state(&dir, &sample_state("our-token", 4242));
+
+        let recovered = read_persisted_veslo_server_info_with_cleanup(
+            &dir,
+            |_| {
+                Some(HealthIdentity {
+                    token: Some("our-token".to_string()),
+                    pid: Some(9999),
+                })
+            },
+            |_| Ok(()),
+        )
+        .expect("read persisted state");
+
+        assert!(recovered.is_none(), "pid mismatch must reject persisted state");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn read_persisted_server_info_tolerates_legacy_server_without_identity() {
+        let dir =
+            std::env::temp_dir().join(format!("veslo-server-state-legacy-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create test dir");
+        write_persisted_state(&dir, &sample_state("our-token", 4242));
+
+        let recovered = read_persisted_veslo_server_info_with_cleanup(
+            &dir,
+            |_| Some(HealthIdentity::default()),
+            |_| Ok(()),
+        )
+        .expect("read persisted state")
+        .expect("legacy server response must still recover persisted state");
+
+        assert_eq!(recovered.client_token.as_deref(), Some("our-token"));
+        assert_eq!(recovered.pid, Some(4242));
+        assert!(recovered.running);
 
         let _ = fs::remove_dir_all(dir);
     }

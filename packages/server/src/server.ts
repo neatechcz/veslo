@@ -3525,11 +3525,23 @@ function createRoutes(
   };
 
   addRoute(routes, "GET", "/health", "none", async () => {
-    return jsonResponse({ ok: true, version: SERVER_VERSION, uptimeMs: Date.now() - config.startedAt });
+    return jsonResponse({
+      ok: true,
+      version: SERVER_VERSION,
+      uptimeMs: Date.now() - config.startedAt,
+      token: config.token,
+      pid: process.pid,
+    });
   });
 
   addRoute(routes, "GET", "/w/:id/health", "none", async () => {
-    return jsonResponse({ ok: true, version: SERVER_VERSION, uptimeMs: Date.now() - config.startedAt });
+    return jsonResponse({
+      ok: true,
+      version: SERVER_VERSION,
+      uptimeMs: Date.now() - config.startedAt,
+      token: config.token,
+      pid: process.pid,
+    });
   });
 
   addRoute(routes, "GET", "/ui", "none", async () => {

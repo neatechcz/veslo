@@ -5,8 +5,8 @@ use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::types::{VesloServerInfo, WorkspaceState, WorkspaceType};
 use crate::veslo_server::manager::VesloServerManager;
 use crate::veslo_server::{
-    clear_persisted_veslo_server_info, recover_persisted_veslo_server_info, server_health_ok,
-    start_veslo_server,
+    clear_persisted_veslo_server_info, recover_persisted_veslo_server_info,
+    server_health_identity, start_veslo_server, HealthIdentity,
 };
 use crate::workspace::state::load_workspace_state;
 
@@ -61,14 +61,60 @@ fn local_workspace_paths_for_server_restart(
 }
 
 fn sanitize_live_info_with_health(
-    info: VesloServerInfo,
-    _health_check: impl Fn(&str) -> bool,
+    mut info: VesloServerInfo,
+    health_check: impl Fn(&str) -> Option<HealthIdentity>,
 ) -> (VesloServerInfo, bool) {
-    // For the managed child, this command reports process ownership. HTTP
-    // health is polled separately by the frontend; using it here turns one
-    // transient probe failure into a lost token/PID snapshot and can trigger
-    // a restart loop for an otherwise live sidecar.
-    (info, false)
+    if !info.running {
+        return (info, false);
+    }
+
+    let base_url = info.base_url.clone().unwrap_or_default();
+    let label = if base_url.trim().is_empty() {
+        "the recorded host".to_string()
+    } else {
+        base_url.clone()
+    };
+
+    // Identity guard — if the in-memory snapshot disagrees with what the server on
+    // this port actually reports (token rotated, foreign process bound the port),
+    // treat the snapshot as stale and force a respawn. A missing health response
+    // alone is not enough to discard a supervised child process; the frontend
+    // separately polls HTTP health and can surface transient startup failures.
+    if base_url.trim().is_empty() {
+        return (info, false);
+    }
+
+    let Some(identity) = health_check(&base_url) else {
+        return (info, false);
+    };
+
+    let token_mismatch = matches!(
+        (info.client_token.as_deref(), identity.token.as_deref()),
+        (Some(a), Some(b)) if a != b
+    );
+    let pid_mismatch = matches!(
+        (info.pid, identity.pid),
+        (Some(a), Some(b)) if a != b
+    );
+
+    if !(token_mismatch || pid_mismatch) {
+        return (info, false);
+    };
+
+    info.running = false;
+    info.base_url = None;
+    info.connect_url = None;
+    info.mdns_url = None;
+    info.lan_url = None;
+    info.client_token = None;
+    info.host_token = None;
+    info.pid = None;
+    info.last_stderr = Some(truncate_output(
+        &format!("Veslo server on {label} is no longer responding."),
+        8000,
+    ));
+
+    (info, true)
 }
 
 #[tauri::command]
@@ -76,7 +122,7 @@ pub fn veslo_server_info(app: AppHandle, manager: State<VesloServerManager>) -> 
     {
         let mut state = manager.inner.lock().expect("veslo server mutex poisoned");
         let info = VesloServerManager::snapshot_locked(&mut state);
-        let (sanitized, stale) = sanitize_live_info_with_health(info, server_health_ok);
+        let (sanitized, stale) = sanitize_live_info_with_health(info, server_health_identity);
         if sanitized.running {
             return sanitized;
         }
@@ -173,7 +219,7 @@ pub fn veslo_server_restart(
 mod tests {
     use super::{
         active_local_workspace_path, local_workspace_paths_for_server_restart,
-        sanitize_live_info_with_health,
+        sanitize_live_info_with_health, HealthIdentity,
     };
     use crate::types::{
         RemoteType, VesloServerInfo, WorkspaceInfo, WorkspaceState, WorkspaceType,
@@ -274,7 +320,12 @@ mod tests {
     #[test]
     fn sanitize_live_info_with_health_keeps_a_live_server_snapshot() {
         let info = sample_live_info();
-        let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| true);
+        let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| {
+            Some(HealthIdentity {
+                token: info.client_token.clone(),
+                pid: info.pid,
+            })
+        });
         assert!(!stale);
         assert!(sanitized.running);
         assert_eq!(sanitized.base_url, info.base_url);
@@ -284,7 +335,7 @@ mod tests {
     #[test]
     fn sanitize_live_info_with_health_preserves_live_child_when_health_fails() {
         let info = sample_live_info();
-        let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| false);
+        let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| None);
         assert!(!stale);
         assert!(sanitized.running);
         assert_eq!(sanitized.base_url, info.base_url);
@@ -294,5 +345,42 @@ mod tests {
         assert_eq!(sanitized.client_token, info.client_token);
         assert_eq!(sanitized.host_token, info.host_token);
         assert_eq!(sanitized.pid, info.pid);
+    }
+
+    #[test]
+    fn sanitize_live_info_marks_stale_when_token_does_not_match() {
+        let info = sample_live_info();
+        let (sanitized, stale) = sanitize_live_info_with_health(info, |_| {
+            Some(HealthIdentity {
+                token: Some("foreign-token".to_string()),
+                pid: Some(12345),
+            })
+        });
+        assert!(stale);
+        assert!(!sanitized.running);
+        assert_eq!(sanitized.client_token, None);
+    }
+
+    #[test]
+    fn sanitize_live_info_marks_stale_when_pid_does_not_match() {
+        let info = sample_live_info();
+        let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| {
+            Some(HealthIdentity {
+                token: info.client_token.clone(),
+                pid: Some(99999),
+            })
+        });
+        assert!(stale);
+        assert!(!sanitized.running);
+    }
+
+    #[test]
+    fn sanitize_live_info_tolerates_legacy_server_without_identity_fields() {
+        let info = sample_live_info();
+        let (sanitized, stale) =
+            sanitize_live_info_with_health(info.clone(), |_| Some(HealthIdentity::default()));
+        assert!(!stale);
+        assert!(sanitized.running);
+        assert_eq!(sanitized.client_token, info.client_token);
     }
 }
