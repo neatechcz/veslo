@@ -8,10 +8,12 @@ export type EditableUserMessageDraft = {
   draft: ComposerDraft;
 };
 
-const READ_ONLY_TOOLS = new Set(["read", "list", "grep", "glob", "webfetch", "search"]);
+const READ_ONLY_TOOLS = new Set(["read", "list", "list_files", "grep", "glob", "webfetch", "search"]);
 
 function isAllowedPostUserPart(part: Part): boolean {
   if (part.type === "reasoning") return true;
+  if (part.type === "step-start" || part.type === "step-finish") return true;
+  if (part.type === "text") return !partString(part, "text").trim();
   if (part.type !== "tool") return false;
   const tool = String((part as { tool?: string }).tool ?? "").toLowerCase();
   return READ_ONLY_TOOLS.has(tool);
@@ -71,6 +73,14 @@ const fileReferenceFromPart = (part: Part): FileReference | null => {
   if (!path) return null;
   const label = partString(part, "label") || partString(part, "filename") || undefined;
   return { type: "file", path, label };
+};
+
+const isIgnorableDataFileAttachment = (part: Part): boolean => {
+  if (part.type !== "file") return false;
+  const url = partString(part, "url");
+  if (!url.startsWith("data:")) return false;
+  const mime = partString(part, "mime") || url.slice("data:".length, url.indexOf(";") === -1 ? undefined : url.indexOf(";"));
+  return !mime.toLowerCase().startsWith("image/");
 };
 
 const isMentionBoundary = (value: string | undefined): boolean => !value || !/[A-Za-z0-9_.\\/:-]/.test(value);
@@ -217,6 +227,7 @@ const reconstructComposerDraft = (message: MessageWithParts): ComposerDraft | nu
     }
 
     if (part.type === "file") {
+      if (isIgnorableDataFileAttachment(part)) continue;
       const file = fileReferenceFromPart(part);
       if (!file) return null;
       files.push(file);

@@ -40,6 +40,16 @@ const fileUrlPart = (messageID: string, url: string, filename?: string): Part =>
   filename,
 } as unknown as Part);
 
+const dataFilePart = (messageID: string, mime: string, filename: string): Part => ({
+  id: `${messageID}:data-file`,
+  sessionID: "s1",
+  messageID,
+  type: "file",
+  mime,
+  url: `data:${mime};base64,abc`,
+  filename,
+} as unknown as Part);
+
 const toolPart = (messageID: string, tool: string): Part => ({
   id: `${messageID}:${tool}`,
   sessionID: "s1",
@@ -53,6 +63,13 @@ const reasoningPart = (messageID: string): Part => ({
   sessionID: "s1",
   messageID,
   type: "reasoning",
+} as unknown as Part);
+
+const stepPart = (messageID: string, type: "step-start" | "step-finish"): Part => ({
+  id: `${messageID}:${type}`,
+  sessionID: "s1",
+  messageID,
+  type,
 } as unknown as Part);
 
 const message = (id: string, role: "user" | "assistant", parts: Part[]): MessageWithParts => ({
@@ -98,6 +115,40 @@ test("visible assistant text blocks editing", () => {
   assert.equal(result, null);
 });
 
+test("assistant step markers and blank text after user message do not block editing", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [textPart("m1", "original")]),
+      message("m2", "assistant", [
+        stepPart("m2", "step-start"),
+        textPart("m2", " \n\t "),
+        stepPart("m2", "step-finish"),
+      ]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result?.messageId, "m1");
+  assert.equal(result?.draft.text, "original");
+});
+
+test("whitespace-only assistant text after user message does not block editing", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [textPart("m1", "original")]),
+      message("m2", "assistant", [textPart("m2", " \n\t ")]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result?.messageId, "m1");
+  assert.equal(result?.draft.text, "original");
+});
+
 test("mutating tools block editing", () => {
   const result = getEditableUserMessageDraft({
     messages: [
@@ -110,6 +161,21 @@ test("mutating tools block editing", () => {
   });
 
   assert.equal(result, null);
+});
+
+test("list_files is read-only assistant activity", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [textPart("m1", "original")]),
+      message("m2", "assistant", [toolPart("m2", "list_files")]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result?.messageId, "m1");
+  assert.equal(result?.draft.text, "original");
 });
 
 test("shell and terminal tools block editing by default", () => {
@@ -165,6 +231,29 @@ test("unreconstructable attachments block editing", () => {
   });
 
   assert.equal(result, null);
+});
+
+test("non-image data file attachments represented by path text do not block reconstruction", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [
+        textPart("m1", "Review this:\nsession/brief.docx"),
+        dataFilePart(
+          "m1",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "brief.docx",
+        ),
+      ]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result?.messageId, "m1");
+  assert.equal(result?.draft.text, "Review this:\nsession/brief.docx");
+  assert.deepEqual(result?.draft.parts, [{ type: "text", text: "Review this:\nsession/brief.docx" }]);
+  assert.deepEqual(result?.draft.attachments, []);
 });
 
 test("session must be idle, queue must be empty, and composer must be empty", () => {
