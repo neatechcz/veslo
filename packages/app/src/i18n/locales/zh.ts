@@ -288,6 +288,7 @@ export default {
   "skills.uninstall_scope_ambiguous": "暂不支持从精确 skill 范围卸载。",
   "skills.uninstall_not_active_workspace": "请先切换到此工作区，再卸载此 skill。",
   "skills.uninstall_desktop_required": "卸载需要桌面应用。",
+  "skills.uninstall_scoped_pending": "暂不支持按精确范围卸载。",
   "skills.uninstalled": "Skill 已删除。",
   "skills.source_placeholder": "github:anthropics/claude-code",
   "skills.notion_crm_title": "Notion CRM 增强技能",
@@ -320,6 +321,7 @@ export default {
   "skills.import_failed": "导入失败（{status}）",
   "skills.imported": "已导入。",
   "skills.unknown_error": "未知错误",
+  "skills.global_conflict_warning": "活动工作区之外已有同名 skill。请使用新名称安装，避免修改它。",
 
   // ==================== Plugins ====================
   "plugins.title": "OpenCode 插件",

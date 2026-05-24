@@ -191,25 +191,10 @@ export default function SkillsView(props: SkillsViewProps) {
     ) ?? null;
   };
 
-  const canUninstallInventoryInstance = (input: { item: SkillInventoryItem; instance: SkillInstance }) => {
-    if (input.item.globalInstance) return false;
-    return (
-      props.canUseDesktopTools &&
-      input.item.status === "workspace-only" &&
-      input.instance.workspaceId === props.activeWorkspaceId &&
-      Boolean(actionSkillForInstance(input.instance))
-    );
-  };
+  const canUninstallInventoryInstance = (_input: { item: SkillInventoryItem; instance: SkillInstance }) => false;
 
-  const uninstallDisabledReason = (input: { item: SkillInventoryItem; instance: SkillInstance }) => {
-    if (!props.canUseDesktopTools) return translate("skills.uninstall_desktop_required");
-    if (input.item.globalInstance) return translate("skills.uninstall_scope_ambiguous");
-    if (input.instance.workspaceId !== props.activeWorkspaceId) {
-      return translate("skills.uninstall_not_active_workspace");
-    }
-    if (input.item.status !== "workspace-only") return translate("skills.uninstall_scope_ambiguous");
-    return null;
-  };
+  const uninstallDisabledReason = (_input: { item: SkillInventoryItem; instance: SkillInstance }) =>
+    translate("skills.uninstall_scoped_pending");
 
   const filteredInstalledInventoryItems = createMemo(() => {
     const query = searchQuery().trim().toLowerCase();
@@ -255,6 +240,12 @@ export default function SkillsView(props: SkillsViewProps) {
   );
 
   const installedNames = createMemo(() => installedInventoryNames());
+  const activeWorkspaceInstalledNames = createMemo(() =>
+    new Set(props.skills.map((skill) => skill.name))
+  );
+  const canOverwriteInstallLinkBundle = (name: string) => activeWorkspaceInstalledNames().has(name.trim());
+  const installLinkShouldRename = (name: string, mode: "overwrite" | "keep-both") =>
+    mode === "keep-both" || (installedNames().has(name.trim()) && !canOverwriteInstallLinkBundle(name));
 
   const availableHubSkills = createMemo(() =>
     props.hubSkills.filter((skill) => !installedNames().has(skill.name))
@@ -499,10 +490,9 @@ export default function SkillsView(props: SkillsViewProps) {
     setInstallLinkError(null);
 
     try {
-      const taken = installedNames();
       const desiredName = bundle.name.trim();
-      const conflict = taken.has(desiredName);
-      const shouldRename = conflict && mode === "keep-both";
+      const taken = installedNames();
+      const shouldRename = installLinkShouldRename(desiredName, mode);
       const finalName = shouldRename ? resolveUniqueSkillName(desiredName, taken) : desiredName;
       const content = shouldRename ? stripFrontmatter(bundle.content) : bundle.content;
 
@@ -709,9 +699,6 @@ export default function SkillsView(props: SkillsViewProps) {
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              const skill = actionSkill();
-              if (props.busy || !canUninstall() || !skill) return;
-              setUninstallTarget(skill);
             }}
             disabled={props.busy || !canUninstall()}
             title={uninstallTitle()}
@@ -1234,8 +1221,8 @@ export default function SkillsView(props: SkillsViewProps) {
 
               <Show when={installLinkBundle()}>
                 {(bundle) => {
-                  const taken = installedNames();
-                  const conflict = taken.has(bundle().name.trim());
+                  const activeWorkspaceConflict = canOverwriteInstallLinkBundle(bundle().name);
+                  const globalOnlyConflict = installedNames().has(bundle().name.trim()) && !activeWorkspaceConflict;
                   return (
                     <div class="rounded-xl border border-dls-border bg-dls-hover p-4 space-y-2">
                       <div class="text-xs font-semibold text-dls-text">{translate("skills.preview")}</div>
@@ -1245,8 +1232,11 @@ export default function SkillsView(props: SkillsViewProps) {
                       <Show when={bundle().description}>
                         <div class="text-xs text-dls-secondary">{bundle().description}</div>
                       </Show>
-                      <Show when={conflict}>
+                      <Show when={activeWorkspaceConflict}>
                         <div class="text-xs text-amber-11">{translate("skills.conflict_warning")}</div>
+                      </Show>
+                      <Show when={globalOnlyConflict}>
+                        <div class="text-xs text-amber-11">{translate("skills.global_conflict_warning")}</div>
                       </Show>
                     </div>
                   );
@@ -1266,17 +1256,20 @@ export default function SkillsView(props: SkillsViewProps) {
                 </Button>
                 <Show when={installLinkBundle()} keyed>
                   {(bundle) => {
-                    const conflict = installedNames().has(bundle.name.trim());
+                    const activeWorkspaceConflict = canOverwriteInstallLinkBundle(bundle.name);
+                    const globalOnlyConflict = installedNames().has(bundle.name.trim()) && !activeWorkspaceConflict;
                     return (
                       <Show
-                        when={conflict}
+                        when={activeWorkspaceConflict}
                         fallback={
                           <Button
                             variant="secondary"
-                            onClick={() => void installFromPreview("overwrite")}
+                            onClick={() => void installFromPreview(globalOnlyConflict ? "keep-both" : "overwrite")}
                             disabled={installLinkBusy()}
                           >
-                            {installLinkBusy() ? translate("skills.installing_skill_creator").replace("...", "…") : translate("skills.install")}
+                            {installLinkBusy()
+                              ? translate("skills.installing_skill_creator").replace("...", "…")
+                              : globalOnlyConflict ? translate("skills.keep_both") : translate("skills.install")}
                           </Button>
                         }
                       >

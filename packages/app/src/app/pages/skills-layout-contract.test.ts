@@ -8,6 +8,10 @@ const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
 const enSource = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
 const csSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
 const zhSource = readFileSync(new URL("../../i18n/locales/zh.ts", import.meta.url), "utf8");
+const renderInventoryCardSource = source.slice(
+  source.indexOf("const renderInventoryCard"),
+  source.indexOf("\n  return (\n    <section", source.indexOf("const renderInventoryCard")),
+);
 
 test("skills page removes worker profile and mode stat cards", () => {
   assert.equal(source.includes('translate("skills.worker_profile")'), false);
@@ -72,15 +76,28 @@ test("local skill import refreshes the app-wide installed inventory", () => {
   assert.doesNotMatch(source, /id: "import-local"[\s\S]{0,300}onClick: props\.importLocalSkill/);
 });
 
-test("ambiguous inventory uninstalls are guarded to active workspace-only rows", () => {
+test("inventory card uninstall is unavailable until scoped uninstall exists", () => {
   assert.match(source, /activeWorkspaceId: string/);
-  assert.match(source, /const canUninstallInventoryInstance = \(input: \{ item: SkillInventoryItem; instance: SkillInstance \}\) =>/);
-  assert.match(source, /if \(input\.item\.globalInstance\) return false/);
-  assert.match(source, /input\.item\.status === "workspace-only"/);
-  assert.match(source, /input\.instance\.workspaceId === props\.activeWorkspaceId/);
-  assert.match(source, /const uninstallDisabledReason = \(input: \{ item: SkillInventoryItem; instance: SkillInstance \}\)/);
+  assert.match(source, /const canUninstallInventoryInstance = \(_input: \{ item: SkillInventoryItem; instance: SkillInstance \}\) => false/);
+  assert.match(source, /const uninstallDisabledReason = \(_input: \{ item: SkillInventoryItem; instance: SkillInstance \}\) =>\s*translate\("skills\.uninstall_scoped_pending"\)/);
+  assert.match(renderInventoryCardSource, /disabled=\{props\.busy \|\| !canUninstall\(\)\}/);
   assert.match(source, /aria-label=\{uninstallTitle\(\)\}/);
-  assert.match(source, /disabled=\{props\.busy \|\| !canUninstall\(\)\}/);
+  assert.doesNotMatch(renderInventoryCardSource, /setUninstallTarget/);
+});
+
+test("install-from-link overwrite is gated by active workspace conflicts only", () => {
+  assert.match(source, /const activeWorkspaceInstalledNames = createMemo\(\(\) =>\s*new Set\(props\.skills\.map\(\(skill\) => skill\.name\)\)\s*\)/);
+  assert.match(source, /const canOverwriteInstallLinkBundle = \(name: string\) => activeWorkspaceInstalledNames\(\)\.has\(name\.trim\(\)\)/);
+  assert.match(source, /const installLinkShouldRename = \(name: string, mode: "overwrite" \| "keep-both"\) =>\s*mode === "keep-both" \|\| \(installedNames\(\)\.has\(name\.trim\(\)\) && !canOverwriteInstallLinkBundle\(name\)\)/);
+  assert.match(source, /const shouldRename = installLinkShouldRename\(desiredName, mode\)/);
+  assert.match(source, /const activeWorkspaceConflict = canOverwriteInstallLinkBundle\(bundle\(\)\.name\)/);
+  assert.match(source, /const globalOnlyConflict = installedNames\(\)\.has\(bundle\(\)\.name\.trim\(\)\) && !activeWorkspaceConflict/);
+  assert.match(source, /translate\("skills\.global_conflict_warning"\)/);
+  assert.match(source, /when=\{activeWorkspaceConflict\}/);
+  assert.match(enSource, /"skills\.global_conflict_warning":/);
+  assert.match(csSource, /"skills\.global_conflict_warning":/);
+  assert.match(zhSource, /"skills\.global_conflict_warning":/);
+  assert.doesNotMatch(source, /const conflict = installedNames\(\)\.has\(bundle\.name\.trim\(\)\);[\s\S]{0,500}translate\("skills\.overwrite"\)/);
 });
 
 test("active remote workspace skills fall back into the workspace-specific inventory section", () => {
