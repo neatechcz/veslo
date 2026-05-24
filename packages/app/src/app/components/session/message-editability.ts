@@ -83,15 +83,45 @@ const isNonImageDataFileAttachment = (part: Part): boolean => {
   return !mime.toLowerCase().startsWith("image/");
 };
 
+const pathLeaf = (path: string): string => {
+  const normalized = path.replace(/\\/g, "/");
+  const segments = normalized.split("/").filter(Boolean);
+  return segments[segments.length - 1] ?? "";
+};
+
+const splitFilename = (filename: string): { stem: string; ext: string } => {
+  const lastDot = filename.lastIndexOf(".");
+  if (lastDot <= 0 || lastDot === filename.length - 1) {
+    return { stem: filename, ext: "" };
+  }
+  return {
+    stem: filename.slice(0, lastDot),
+    ext: filename.slice(lastDot),
+  };
+};
+
+const matchesFilenameOrCollisionVariant = (leaf: string, filename: string): boolean => {
+  if (leaf === filename) return true;
+
+  const { stem, ext } = splitFilename(filename);
+  const prefix = `${stem} (`;
+  const suffix = `)${ext}`;
+  if (!leaf.startsWith(prefix) || !leaf.endsWith(suffix)) return false;
+
+  const counter = leaf.slice(prefix.length, leaf.length - suffix.length);
+  return /^[1-9]\d*$/.test(counter);
+};
+
 const hasVisiblePathEndingWithFilename = (text: string, filename: string): boolean => {
   if (!filename) return false;
 
   for (const line of text.split(/\r?\n/)) {
     const segment = line.trim();
-    if (segment === filename) return true;
-    if (!segment.endsWith(filename)) continue;
+    const leaf = pathLeaf(segment);
+    if (!matchesFilenameOrCollisionVariant(leaf, filename)) continue;
+    if (segment === leaf) return true;
 
-    const prefix = segment.slice(0, segment.length - filename.length);
+    const prefix = segment.slice(0, segment.length - leaf.length);
     if (!prefix.endsWith("/") && !prefix.endsWith("\\")) continue;
     if (!prefix.slice(0, -1) || /\s/.test(prefix.slice(0, -1))) continue;
     return true;

@@ -256,6 +256,29 @@ test("non-image data file attachments represented by path text do not block reco
   assert.deepEqual(result?.draft.attachments, []);
 });
 
+test("non-image data file attachments represented by collision-safe path text do not block reconstruction", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [
+        textPart("m1", "Review this:\nsession/brief (1).docx"),
+        dataFilePart(
+          "m1",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "brief.docx",
+        ),
+      ]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result?.messageId, "m1");
+  assert.equal(result?.draft.text, "Review this:\nsession/brief (1).docx");
+  assert.deepEqual(result?.draft.parts, [{ type: "text", text: "Review this:\nsession/brief (1).docx" }]);
+  assert.deepEqual(result?.draft.attachments, []);
+});
+
 test("non-image data file attachments represented by root-level path text do not block reconstruction", () => {
   const result = getEditableUserMessageDraft({
     messages: [
