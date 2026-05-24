@@ -26,6 +26,34 @@ const VESLO_DEFAULT_SKILL_NAMES = new Set([
 ]);
 const SKILLS_TOAST_DISMISS_DELAY_MS = 4_000;
 
+const cloneSkillInventoryItem = (item: SkillInventoryItem): SkillInventoryItem => ({
+  ...item,
+  workspaceInstances: [...item.workspaceInstances],
+});
+
+const mergeRemoteFallbackIntoInventory = (
+  inventoryItems: SkillInventoryItem[],
+  fallbackItems: SkillInventoryItem[],
+) =>
+  [...inventoryItems, ...fallbackItems].reduce<SkillInventoryItem[]>((items, next) => {
+    const existing = items.find((item) => item.name === next.name);
+    if (!existing) return [...items, cloneSkillInventoryItem(next)];
+    const mergedGlobalInstance = existing.globalInstance ?? next.globalInstance;
+    return items.map((item) => (
+      item.name === next.name
+        ? {
+            ...existing,
+            description: existing.description ?? next.description,
+            trigger: existing.trigger ?? next.trigger,
+            globalInstance: mergedGlobalInstance,
+            workspaceInstances: [...existing.workspaceInstances, ...next.workspaceInstances],
+            hubItem: existing.hubItem ?? next.hubItem,
+            status: mergedGlobalInstance ? "mixed" : "workspace-only",
+          }
+        : item
+    ));
+  }, []);
+
 export type SkillsViewProps = {
   workspaceName: string;
   activeWorkspaceId: string;
@@ -98,9 +126,10 @@ export default function SkillsView(props: SkillsViewProps) {
   });
 
   const installedInventoryItems = createMemo(() =>
-    props.skillInventory
-      .filter((item) => item.status !== "hub-only")
-      .concat(activeRemoteInventoryItems())
+    mergeRemoteFallbackIntoInventory(
+      props.skillInventory.filter((item) => item.status !== "hub-only"),
+      activeRemoteInventoryItems(),
+    )
   );
   const installedSkillCount = createMemo(() => installedInventoryItems().length);
   const installedInventoryNames = createMemo(() => new Set(installedInventoryItems().map((item) => item.name)));

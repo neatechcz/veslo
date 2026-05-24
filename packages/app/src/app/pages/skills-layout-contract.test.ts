@@ -42,7 +42,7 @@ test("skills page receives app-wide skill inventory props", () => {
 });
 
 test("skills page uses inventory as primary installed source", () => {
-  assert.match(source, /const installedInventoryItems = createMemo\(\(\) =>\s*props\.skillInventory/);
+  assert.match(source, /const installedInventoryItems = createMemo\(\(\) =>\s*mergeRemoteFallbackIntoInventory\(\s*props\.skillInventory/);
   assert.match(source, /const installedSkillCount = createMemo\(\(\) => installedInventoryItems\(\)\.length\)/);
   assert.match(source, /translate\("skills\.stat_installed"\)[\s\S]*\{installedSkillCount\(\)\}/);
   assert.doesNotMatch(source, /translate\("skills\.stat_installed"\)[\s\S]{0,500}\{props\.skills\.length\}/);
@@ -110,6 +110,17 @@ test("active remote workspace skills fall back into the workspace-specific inven
   assert.match(source, /props\.skills\.map\(\(skill\) => \(/);
   assert.match(source, /status: "workspace-only"/);
   assert.match(source, /workspaceLabel: props\.workspaceName/);
+});
+
+test("active remote fallback rows merge into existing inventory items by name", () => {
+  assert.match(source, /const mergeRemoteFallbackIntoInventory = \(\s*inventoryItems: SkillInventoryItem\[\],\s*fallbackItems: SkillInventoryItem\[\],\s*\) =>/);
+  assert.match(source, /\[\.\.\.inventoryItems, \.\.\.fallbackItems\]\.reduce<SkillInventoryItem\[\]>\(/);
+  assert.match(source, /const existing = items\.find\(\(item\) => item\.name === next\.name\)/);
+  assert.match(source, /workspaceInstances: \[\.\.\.existing\.workspaceInstances, \.\.\.next\.workspaceInstances\]/);
+  assert.match(source, /globalInstance: mergedGlobalInstance/);
+  assert.match(source, /hubItem: existing\.hubItem \?\? next\.hubItem/);
+  assert.match(source, /status: mergedGlobalInstance \? "mixed" : "workspace-only"/);
+  assert.doesNotMatch(source, /\.concat\(activeRemoteInventoryItems\(\)\)/);
 });
 
 test("skills page does not duplicate org catalog placeholder when hub status is shown", () => {
