@@ -726,6 +726,100 @@ test("skill inventory reruns after Den auth changes while an inventory refresh i
   });
 });
 
+test("skill inventory reruns after local source revision changes while an inventory refresh is in flight", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      let globalSkillVersion = 1;
+      const inventoryReads: string[] = [];
+      const workspaceSkillsRelease: { current?: () => void } = {};
+      let markWorkspaceSkillsStarted: (() => void) | null = null;
+      const workspaceSkillsStarted = new Promise<void>((resolve) => {
+        markWorkspaceSkillsStarted = resolve;
+      });
+      const listLocalSkillsScoped = async (
+        projectDir: string,
+        scope: LocalSkillListScope,
+      ): Promise<LocalSkillCard[]> => {
+        if (scope === "global") {
+          inventoryReads.push(`global-${globalSkillVersion}`);
+          return [
+            {
+              name: `research-${globalSkillVersion}`,
+              path: `/Users/example/.opencode/skills/research-${globalSkillVersion}/SKILL.md`,
+            },
+          ];
+        }
+        if (projectDir === "/workspaces/alpha") {
+          inventoryReads.push(`workspace-${globalSkillVersion}`);
+          if (inventoryReads.filter((entry) => entry.startsWith("workspace-")).length === 1) {
+            assert.ok(markWorkspaceSkillsStarted);
+            markWorkspaceSkillsStarted();
+            await new Promise<void>((release) => {
+              workspaceSkillsRelease.current = release;
+            });
+          }
+        }
+        return [];
+      };
+      const vesloServerClient = {
+        async listSkills() {
+          return { items: [] };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [workspaces[0] as WorkspaceInfo],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () =>
+          ({
+            skills: { read: true },
+            hub: { skills: { read: false } },
+          }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped,
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      const firstRefresh = store.refreshSkillInventory({ force: true });
+      try {
+        await workspaceSkillsStarted;
+
+        globalSkillVersion = 2;
+        await store.refreshSkills({ force: true });
+
+        let secondResolved = false;
+        const secondRefresh = store.refreshSkillInventory().then(() => {
+          secondResolved = true;
+        });
+
+        await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+        assert.equal(secondResolved, false, "second inventory refresh should wait for the new local source revision");
+
+        const releaseWorkspaceSkills = workspaceSkillsRelease.current;
+        assert.ok(releaseWorkspaceSkills);
+        releaseWorkspaceSkills();
+        await Promise.all([firstRefresh, secondRefresh]);
+
+        assert.deepEqual(inventoryReads, ["global-1", "workspace-1", "global-2", "workspace-2"]);
+        assert.equal(store.skillInventory().some((item) => item.name === "research-1"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "research-2"), true);
+      } finally {
+        workspaceSkillsRelease.current?.();
+        await firstRefresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
 test("skill inventory does not cache hub skills from an in-flight refresh after Den auth changes", async () => {
   await withDenAuthStorage(async ({ localStorage, sessionStorage }) => {
     await createRoot(async (dispose) => {
