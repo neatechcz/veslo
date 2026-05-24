@@ -75,13 +75,31 @@ const fileReferenceFromPart = (part: Part): FileReference | null => {
   return { type: "file", path, label };
 };
 
-const isIgnorableDataFileAttachment = (part: Part): boolean => {
+const isNonImageDataFileAttachment = (part: Part): boolean => {
   if (part.type !== "file") return false;
   const url = partString(part, "url");
   if (!url.startsWith("data:")) return false;
   const mime = partString(part, "mime") || url.slice("data:".length, url.indexOf(";") === -1 ? undefined : url.indexOf(";"));
   return !mime.toLowerCase().startsWith("image/");
 };
+
+const hasVisiblePathEndingWithFilename = (text: string, filename: string): boolean => {
+  if (!filename) return false;
+
+  let index = text.indexOf(filename);
+  while (index !== -1) {
+    const before = text[index - 1];
+    const after = text[index + filename.length];
+    if ((before === "/" || before === "\\") && isMentionBoundary(after)) return true;
+    index = text.indexOf(filename, index + 1);
+  }
+
+  return false;
+};
+
+const isIgnorableDataFileAttachment = (part: Part, visibleText: string): boolean =>
+  isNonImageDataFileAttachment(part) &&
+  hasVisiblePathEndingWithFilename(visibleText, partString(part, "filename"));
 
 const isMentionBoundary = (value: string | undefined): boolean => !value || !/[A-Za-z0-9_.\\/:-]/.test(value);
 
@@ -93,6 +111,17 @@ const findBoundaryTokenIndex = (text: string, token: string): number => {
   }
 
   return -1;
+};
+
+const countBoundaryTokenOccurrences = (text: string, token: string): number => {
+  let count = 0;
+  let index = text.indexOf(token);
+  while (index !== -1) {
+    if (isMentionBoundary(text[index + token.length])) count += 1;
+    index = text.indexOf(token, index + 1);
+  }
+
+  return count;
 };
 
 const pathSuffixCandidates = (path: string): string[] => {
@@ -125,6 +154,13 @@ const findBestFileTokenMatch = (text: string, filePath: string): FileTokenMatch 
 
   return null;
 };
+
+const fileTokenCandidates = (filePath: string): string[] => [
+  `@${filePath}`,
+  ...pathSuffixCandidates(filePath)
+    .filter((candidatePath) => candidatePath !== filePath)
+    .map((candidatePath) => `@${candidatePath}`),
+];
 
 const replaceFileToken = (parts: ComposerPart[], file: FileReference): { parts: ComposerPart[]; replaced: boolean } => {
   for (let index = 0; index < parts.length; index += 1) {
@@ -206,11 +242,59 @@ const partsToResolvedText = (parts: ComposerPart[]): string =>
     })
     .join("");
 
+const visibleTextFromParts = (parts: Part[]): string =>
+  parts
+    .filter((part) => part.type === "text")
+    .map((part) => partString(part, "text"))
+    .join("");
+
+const hasAmbiguousResolvedAgentTokens = (visibleParts: Part[], visibleText: string): boolean => {
+  const agentCounts = new Map<string, number>();
+
+  for (const part of visibleParts) {
+    if (part.type !== "agent") continue;
+    const name = partString(part, "name");
+    if (!name) continue;
+    agentCounts.set(name, (agentCounts.get(name) ?? 0) + 1);
+  }
+
+  for (const [name, partCount] of agentCounts) {
+    if (countBoundaryTokenOccurrences(visibleText, `@${name}`) > partCount) return true;
+  }
+
+  return false;
+};
+
+const hasAmbiguousResolvedFileTokens = (visibleParts: Part[], visibleText: string): boolean => {
+  const fileTokenCounts = new Map<string, number>();
+
+  for (const part of visibleParts) {
+    if (part.type !== "file") continue;
+    const file = fileReferenceFromPart(part);
+    if (!file) continue;
+
+    for (const token of fileTokenCandidates(file.path)) {
+      fileTokenCounts.set(token, (fileTokenCounts.get(token) ?? 0) + 1);
+    }
+  }
+
+  for (const [token, partCount] of fileTokenCounts) {
+    if (countBoundaryTokenOccurrences(visibleText, token) > partCount) return true;
+  }
+
+  return false;
+};
+
 const reconstructComposerDraft = (message: MessageWithParts): ComposerDraft | null => {
   let parts: ComposerPart[] = [];
   const files: FileReference[] = [];
+  const visibleParts = message.parts.filter(isUserVisiblePart);
+  const visibleText = visibleTextFromParts(visibleParts);
 
-  for (const part of message.parts.filter(isUserVisiblePart)) {
+  if (hasAmbiguousResolvedAgentTokens(visibleParts, visibleText)) return null;
+  if (hasAmbiguousResolvedFileTokens(visibleParts, visibleText)) return null;
+
+  for (const part of visibleParts) {
     if (part.type === "text") {
       const text = partString(part, "text");
       parts.push({ type: "text", text });
@@ -227,7 +311,10 @@ const reconstructComposerDraft = (message: MessageWithParts): ComposerDraft | nu
     }
 
     if (part.type === "file") {
-      if (isIgnorableDataFileAttachment(part)) continue;
+      if (isNonImageDataFileAttachment(part)) {
+        if (isIgnorableDataFileAttachment(part, visibleText)) continue;
+        return null;
+      }
       const file = fileReferenceFromPart(part);
       if (!file) return null;
       files.push(file);

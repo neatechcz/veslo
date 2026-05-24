@@ -256,6 +256,26 @@ test("non-image data file attachments represented by path text do not block reco
   assert.deepEqual(result?.draft.attachments, []);
 });
 
+test("non-image data file attachments without a visible path reference block editing", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [
+        textPart("m1", "please review"),
+        dataFilePart(
+          "m1",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "brief.docx",
+        ),
+      ]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result, null);
+});
+
 test("session must be idle, queue must be empty, and composer must be empty", () => {
   const base = {
     messages: [message("m1", "user", [textPart("m1", "original")])],
@@ -316,6 +336,22 @@ test("replaces matching resolved agent tokens instead of duplicating sent agent 
   ]);
 });
 
+test("duplicate resolved agent tokens block editing because the chip occurrence is ambiguous", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [
+        textPart("m1", "literal @reviewer then chip @reviewer"),
+        agentPart("m1", "reviewer"),
+      ]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result, null);
+});
+
 test("reconstructs file URL references from sent composer file parts", () => {
   const result = getEditableUserMessageDraft({
     messages: [
@@ -357,6 +393,22 @@ test("replaces matching resolved file path tokens instead of duplicating sent fi
     { type: "file", path: "/Users/me/project/docs/hello world.md", label: "hello world.md" },
     { type: "text", text: " and continue" },
   ]);
+});
+
+test("duplicate resolved file tokens block editing because the chip occurrence is ambiguous", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [
+        textPart("m1", "literal @src/app.ts then chip @src/app.ts"),
+        filePart("m1", "src/app.ts", "app.ts"),
+      ]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result, null);
 });
 
 test("dedupes relative file mentions against absolute sent file parts", () => {
