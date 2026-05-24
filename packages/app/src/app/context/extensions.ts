@@ -63,6 +63,19 @@ function resolveVesloServerClientIdentity(client: VesloServerClient | null) {
   return next;
 }
 
+function fingerprintSensitiveValue(value: string) {
+  const normalized = value.trim();
+  if (!normalized) return "none";
+
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash ^= normalized.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return `${normalized.length}:${(hash >>> 0).toString(36)}`;
+}
+
 async function loadSkillCreatorTemplate() {
   const mod = await import("../data/skill-creator.md?raw");
   return mod.default;
@@ -230,12 +243,17 @@ export function createExtensionsStore(options: {
     const denAuth = readDenAuth();
     const denToken = denAuth?.token?.trim() ?? "";
     const denOrgId = denAuth?.orgId?.trim() ?? "";
+    const denApiBase = denAuth?.denApiBase?.trim() ?? "";
+    const denUserId = denAuth?.user?.id?.trim() ?? "";
     const vesloServerClientIdentity = canUseVesloServer ? resolveVesloServerClientIdentity(vesloClient) : "none";
     const contextKey = JSON.stringify({
       root,
       canUseVesloServer,
       vesloServerClientIdentity,
+      denApiBase,
       denOrgId,
+      denUserId,
+      denTokenFingerprint: fingerprintSensitiveValue(denToken),
       hasDenToken: denToken.length > 0,
     });
 
