@@ -39,17 +39,17 @@ const fileUrlPath = (part: Part): string | null => {
   const rawPath = url.slice("file://".length);
   if (!rawPath) return null;
 
-  const decodedPath = safeDecodeURIComponent(rawPath);
+  let decodedPath = safeDecodeURIComponent(rawPath);
+  if (decodedPath.startsWith("localhost/")) {
+    decodedPath = decodedPath.slice("localhost".length);
+  }
+
   if (/^[A-Za-z]:[\\/]/.test(decodedPath)) {
     return decodedPath;
   }
 
-  if (/^\/[A-Za-z]:\//.test(decodedPath)) {
+  if (/^\/[A-Za-z]:[\\/]/.test(decodedPath)) {
     return decodedPath.slice(1);
-  }
-
-  if (decodedPath.startsWith("localhost/")) {
-    return decodedPath.slice("localhost".length);
   }
 
   if (decodedPath.startsWith("/")) return decodedPath;
@@ -90,7 +90,8 @@ const hasVisiblePathEndingWithFilename = (text: string, filename: string): boole
   while (index !== -1) {
     const before = text[index - 1];
     const after = text[index + filename.length];
-    if ((before === "/" || before === "\\") && isMentionBoundary(after)) return true;
+    const cleanStart = !before || /\s/.test(before) || before === "/" || before === "\\";
+    if (cleanStart && isMentionBoundary(after)) return true;
     index = text.indexOf(filename, index + 1);
   }
 
