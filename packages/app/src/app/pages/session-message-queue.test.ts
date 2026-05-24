@@ -68,6 +68,24 @@ test("paused queue Enter append unpauses and starts the first drain-eligible que
   );
 });
 
+test("idle Enter appends behind an existing queue instead of sending immediately", () => {
+  const handlerStart = source.indexOf("const handleSendPrompt = async (draft: ComposerDraft, options: ComposerSendOptions = {}) => {");
+  const queuedBranch = source.indexOf("if (queuedDrafts().length > 0 && !sendNow) {", handlerStart);
+  const appendCall = source.indexOf("appendDraftToCurrentQueue(draft);", queuedBranch);
+  const drainCall = source.indexOf("void drainNextQueuedDraft(\"normal\", sessionKey);", appendCall);
+  const returnTrue = source.indexOf("return true;", drainCall);
+  const sendNowBranch = source.indexOf("if (sendNow) {", returnTrue);
+  const immediateNormal = source.indexOf("return sendPromptImmediate(draft, { reason: \"normal\" });", returnTrue);
+
+  assert.notEqual(handlerStart, -1, "session send handler should exist");
+  assert.ok(queuedBranch > handlerStart, "plain Enter should branch when the queue already has drafts");
+  assert.ok(appendCall > queuedBranch, "idle queued Enter should append the new draft behind the existing queue");
+  assert.ok(drainCall > appendCall, "idle queued Enter should make sure the first queued item starts draining");
+  assert.ok(returnTrue > drainCall, "idle queued Enter should clear the composer without sending the new draft immediately");
+  assert.ok(sendNowBranch > returnTrue, "send-now should still bypass the queue after the plain Enter queue branch");
+  assert.ok(immediateNormal > returnTrue, "normal immediate send should only be reached after the existing-queue branch");
+});
+
 test("paused send-now unpauses only after accepted immediate send", () => {
   assert.match(
     source,

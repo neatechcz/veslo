@@ -3703,6 +3703,15 @@ export default function SessionView(props: SessionViewProps) {
       return true;
     }
 
+    if (queuedDrafts().length > 0 && !sendNow) {
+      const sessionKey = currentSessionQueueKey();
+      appendDraftToCurrentQueue(draft);
+      if (!showRunIndicator() && !queuePausedForSessionKey(sessionKey)) {
+        void drainNextQueuedDraft("normal", sessionKey);
+      }
+      return true;
+    }
+
     if (showRunIndicator() && !sendNow) {
       appendDraftToCurrentQueue(draft);
       return true;
