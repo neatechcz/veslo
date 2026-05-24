@@ -263,7 +263,7 @@ Current behavior:
 
 - pending draft metadata and attachment copies live in the desktop pending-draft store
 - browser local storage keeps the active pending draft key so the app can restore the same unpublished draft on restart
-- `New session` is globally singleton while unpublished: reopening it returns to the existing private pending draft
+- `Chat` is globally singleton while unpublished: reopening it returns to the existing private pending draft
 - project pending drafts are keyed by workspace plus normalized directory
 - pending drafts remain out of the sidebar until a real session is created by sending them
 

@@ -37,6 +37,7 @@ import {
   requiredVisibleCountForExpandedSession,
   rowVisibleByExpansion,
   sessionChatLabel,
+  sessionSidebarTitle,
   shouldShowNewSessionLabelText,
   splitProjectGroupsForSidebar,
   splitSessionDisplayLabel,
@@ -578,7 +579,7 @@ export default function WorkspaceSessionList(props: Props) {
 
   const sessionLabelParts = (row: FlatSessionRow) => {
     const decorated = sessionDecorationFor(row.session.id)?.label;
-    return splitSessionDisplayLabel(row.session.title, decorated);
+    return splitSessionDisplayLabel(sessionSidebarTitle(row, tr("session.chat_label")), decorated);
   };
 
   const sessionLabelTitle = (row: FlatSessionRow) => sessionLabelParts(row).tooltip;

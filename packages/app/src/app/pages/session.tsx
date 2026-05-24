@@ -229,6 +229,7 @@ export type SessionViewProps = {
   setPendingSessionLoad: (
     value: { sessionId: string; workspaceId: string; sessionTitle: string; workspaceName: string } | null
   ) => void;
+  selectedSessionTitle: string | null;
   messages: MessageWithParts[];
   todos: TodoItem[];
   busyLabel: string | null;
@@ -462,11 +463,14 @@ export default function SessionView(props: SessionViewProps) {
     }
     return null;
   });
+  const selectedSessionTitle = createMemo(() =>
+    props.selectedSessionTitle?.trim() || selectedSessionSidebarItem()?.title?.trim() || "",
+  );
   const sessionTitlebarContextModel = createMemo(() => {
     const rootPath = props.activeWorkspaceRoot.trim();
     return resolveSessionTitlebarContext({
       selectedSessionId: props.selectedSessionId,
-      selectedSessionTitle: selectedSessionSidebarItem()?.title ?? null,
+      selectedSessionTitle: selectedSessionTitle() || null,
       messageCount: props.messages.length,
       workspaceType: props.activeWorkspaceDisplay.workspaceType,
       activeWorkspaceRoot: rootPath,
@@ -2837,7 +2841,7 @@ export default function SessionView(props: SessionViewProps) {
     const id = (sessionId ?? "").trim();
     if (!id) return "";
     if (id === (props.selectedSessionId?.trim() ?? "")) {
-      return selectedSessionSidebarItem()?.title ?? "";
+      return selectedSessionTitle();
     }
     for (const group of props.workspaceSessionGroups) {
       const match = group.sessions.find((session) => session.id === id);
@@ -2846,7 +2850,6 @@ export default function SessionView(props: SessionViewProps) {
     return "";
   };
 
-  const selectedSessionTitle = createMemo(() => selectedSessionSidebarItem()?.title ?? "");
   const deleteSessionTargetId = createMemo(() => deleteSessionTarget()?.sessionId ?? props.selectedSessionId ?? null);
   const deleteSessionTargetTitle = createMemo(() => sessionTitleById(deleteSessionTargetId()));
 

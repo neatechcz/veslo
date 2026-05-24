@@ -8948,6 +8948,7 @@ export default function App() {
     selectSession: selectSession,
     pendingSessionLoad: pendingSessionLoad(),
     setPendingSessionLoad,
+    selectedSessionTitle: selectedSession()?.title ?? null,
     messages: visibleMessages(),
     todos: activeTodos(),
     busyLabel: busyLabel(),

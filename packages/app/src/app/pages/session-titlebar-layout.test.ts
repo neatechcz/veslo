@@ -65,6 +65,16 @@ test("session keeps centered titlebar context visible for new empty chats", () =
   assert.ok(titlebarContextCall, "session should call resolveSessionTitlebarContext with a literal options object");
   assert.match(
     titlebarContextCall,
+    /selectedSessionTitle: selectedSessionTitle\(\) \|\| null,/,
+    "session titlebar should use the selected session title from session state, not only the visible sidebar rows",
+  );
+  assert.doesNotMatch(
+    titlebarContextCall,
+    /selectedSessionTitle: selectedSessionSidebarItem\(\)\?\.title \?\? null,/,
+    "session titlebar must not fall back to Chat only because the selected session is outside the sidebar page",
+  );
+  assert.match(
+    titlebarContextCall,
     /newSessionLabel: tr\("session\.chat_label"\),/,
     "session titlebar should use chat copy for the new-session state label",
   );

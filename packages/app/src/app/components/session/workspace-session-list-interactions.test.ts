@@ -312,8 +312,14 @@ test("session label span exposes full title tooltip and renders colored subagent
 
   assert.match(
     source,
+    /sessionSidebarTitle\(row, tr\("session\.chat_label"\)\)/,
+    "session labels should use chat fallback titles for private rows before splitting subagent decoration",
+  );
+
+  assert.doesNotMatch(
+    source,
     /splitSessionDisplayLabel\(row\.session\.title, decorated\)/,
-    "session labels should split subagent name from raw session description",
+    "session labels should not read raw session titles directly because private chat rows need a Chat fallback",
   );
 
   assert.match(

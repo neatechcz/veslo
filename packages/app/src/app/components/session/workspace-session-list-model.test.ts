@@ -411,9 +411,9 @@ test("splitProjectGroupsForSidebar separates private chat group from project gro
   assert.deepEqual(split.projectGroups.map((group) => group.key), ["/Users/test/projects/project-a"]);
 });
 
-test("sessionChatLabel prefers title, then slug, then Chat fallback", () => {
+test("sessionChatLabel prefers title, then Chat fallback without generated slug", () => {
   assert.equal(sessionChatLabel({ id: "one", title: "  Research trip  " }, "Chat"), "Research trip");
-  assert.equal(sessionChatLabel({ id: "two", title: "", slug: "draft-chat" }, "Chat"), "draft-chat");
+  assert.equal(sessionChatLabel({ id: "two", title: "", slug: "draft-chat" }, "Chat"), "Chat");
   assert.equal(sessionChatLabel({ id: "three", title: "", slug: "" }, "Chat"), "Chat");
 });
 

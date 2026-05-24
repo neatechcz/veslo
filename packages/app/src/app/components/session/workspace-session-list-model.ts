@@ -81,7 +81,12 @@ export const splitProjectGroupsForSidebar = (
 export const sessionChatLabel = (
   session: Pick<WorkspaceSessionGroup["sessions"][number], "id" | "title" | "slug">,
   fallback: string,
-) => session.title?.trim() || session.slug?.trim() || fallback;
+) => session.title?.trim() || fallback;
+
+export const sessionSidebarTitle = (
+  row: Pick<FlatSessionRow, "isPrivateProject" | "session">,
+  chatFallback: string,
+) => row.isPrivateProject ? sessionChatLabel(row.session, chatFallback) : row.session.title;
 
 export type CollapsedProjectMap = Record<string, boolean>;
 export const NEW_SESSION_LABEL_VISIBLE_WIDTH = 220;
