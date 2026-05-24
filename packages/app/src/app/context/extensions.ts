@@ -408,10 +408,33 @@ export function createExtensionsStore(options: {
         })),
       });
 
+    const getSkillInventoryRefreshContextKey = (
+      workspacesForContext: ReturnType<typeof getLocalSkillInventoryWorkspaces>,
+      hubContextKey: string,
+      localRevision = localSkillsRevision,
+    ) =>
+      JSON.stringify({
+        hub: {
+          contextKey: hubContextKey,
+        },
+        localRevision,
+        workspaces: workspacesForContext.map((workspace) => ({
+          id: workspace.id,
+          label: workspace.label,
+          path: workspace.path,
+        })),
+      });
+
     const getCurrentSkillInventoryContextKey = () => {
       const localWorkspaces = getLocalSkillInventoryWorkspaces();
       const hubContext = resolveHubSkillsRefreshContext();
       return getSkillInventoryContextKey(localWorkspaces, hubContext.contextKey);
+    };
+
+    const getCurrentSkillInventoryRefreshContextKey = () => {
+      const localWorkspaces = getLocalSkillInventoryWorkspaces();
+      const hubContext = resolveHubSkillsRefreshContext();
+      return getSkillInventoryRefreshContextKey(localWorkspaces, hubContext.contextKey);
     };
 
     for (;;) {
@@ -421,7 +444,7 @@ export function createExtensionsStore(options: {
         const result = inFlightRefresh ? await inFlightRefresh : "stale";
         forceRefresh = false;
         if (result === "failed" || result === "aborted") {
-          if (inFlightContextKey && getCurrentSkillInventoryContextKey() !== inFlightContextKey) continue;
+          if (inFlightContextKey && getCurrentSkillInventoryRefreshContextKey() !== inFlightContextKey) continue;
           return;
         }
         if (result === "published" && getCurrentSkillInventoryContextKey() === skillInventoryContextKey) return;
@@ -431,6 +454,7 @@ export function createExtensionsStore(options: {
       const localWorkspaces = getLocalSkillInventoryWorkspaces();
       const hubContext = resolveHubSkillsRefreshContext();
       const nextContextKey = getSkillInventoryContextKey(localWorkspaces, hubContext.contextKey);
+      const nextRefreshContextKey = getSkillInventoryRefreshContextKey(localWorkspaces, hubContext.contextKey);
       const hubRefreshInFlightForCurrentContext =
         refreshHubSkillsInFlight && refreshHubSkillsInFlightContextKey === hubContext.contextKey;
 
@@ -442,7 +466,7 @@ export function createExtensionsStore(options: {
 
       const refreshOptions = forceRefresh ? { force: true } : undefined;
       refreshSkillInventoryInFlight = true;
-      refreshSkillInventoryInFlightContextKey = nextContextKey;
+      refreshSkillInventoryInFlightContextKey = nextRefreshContextKey;
       refreshSkillInventoryAborted = false;
       refreshSkillInventoryPromise = (async (): Promise<SkillInventoryRefreshResult> => {
         try {
@@ -522,7 +546,7 @@ export function createExtensionsStore(options: {
       const result = await refreshSkillInventoryPromise;
       forceRefresh = false;
       if (result === "failed" || result === "aborted") {
-        if (getCurrentSkillInventoryContextKey() !== nextContextKey) continue;
+        if (getCurrentSkillInventoryRefreshContextKey() !== nextRefreshContextKey) continue;
         return;
       }
       if (result === "published") return;

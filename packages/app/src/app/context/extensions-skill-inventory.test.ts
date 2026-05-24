@@ -383,6 +383,72 @@ test("skill inventory settles with local-only inventory when hub refresh fails",
   });
 });
 
+test("skill inventory settles when hub and local inventory reads both fail", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      let hubCallCount = 0;
+      let localCallCount = 0;
+      let allowCleanupSuccess = false;
+      const vesloServerClient = {
+        async listHubSkills() {
+          hubCallCount += 1;
+          await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+          if (allowCleanupSuccess) return { items: [] };
+          throw new Error("Hub unavailable");
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async () => {
+          localCallCount += 1;
+          await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+          if (allowCleanupSuccess) return [];
+          throw new Error("global read failed");
+        },
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      const refresh = store.refreshSkillInventory({ force: true });
+      try {
+        const result = await Promise.race([
+          refresh.then(() => "settled" as const),
+          new Promise<"timeout">((resolve) => setTimeout(resolve, 100, "timeout")),
+        ]);
+
+        if (result === "timeout") {
+          allowCleanupSuccess = true;
+          store.abortRefreshes();
+          await refresh.catch(() => undefined);
+          assert.fail(
+            `skill inventory refresh did not settle after ${hubCallCount} hub calls and ${localCallCount} local calls`,
+          );
+        }
+
+        assert.equal(hubCallCount, 1);
+        assert.equal(localCallCount, 1);
+        assert.deepEqual(store.skillInventory(), []);
+        assert.equal(store.skillInventoryStatus(), "global read failed");
+      } finally {
+        store.abortRefreshes();
+        await refresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
 test("skill inventory waits for an in-flight hub skill refresh before caching", async () => {
   await withDenAuthStorage(async () => {
     await createRoot(async (dispose) => {
