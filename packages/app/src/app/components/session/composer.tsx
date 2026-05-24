@@ -1533,11 +1533,11 @@ export default function Composer(props: ComposerProps) {
     if (event.key === "Enter") {
       event.preventDefault();
       if (sending()) return;
+      if (props.busy && !props.isStreaming) return;
       if (event.ctrlKey || event.metaKey) {
         void sendDraft({ sendNow: true, source: "ctrl-enter" });
         return;
       }
-      if (props.busy && !props.isStreaming) return;
       void sendDraft({ sendNow: false, source: "enter" });
     }
   };

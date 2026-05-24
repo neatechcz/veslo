@@ -37,8 +37,8 @@ test("composer distinguishes queued Enter sends from immediate Ctrl+Enter sends"
 
   assert.match(
     composerSource,
-    /event\.key === "Enter"[\s\S]*?\(event\.ctrlKey \|\| event\.metaKey\)[\s\S]*?void sendDraft\(\{ sendNow: true, source: "ctrl-enter" \}\);/s,
-    "Ctrl+Enter and Meta+Enter should request immediate send",
+    /if \(props\.busy && !props\.isStreaming\) return;[\s\S]*if \(event\.ctrlKey \|\| event\.metaKey\) \{[\s\S]*?void sendDraft\(\{ sendNow: true, source: "ctrl-enter" \}\);/s,
+    "Ctrl+Enter and Meta+Enter should request immediate send only after non-streaming busy state is excluded",
   );
 
   assert.match(
