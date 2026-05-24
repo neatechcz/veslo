@@ -30,6 +30,16 @@ const filePart = (messageID: string, path: string, label?: string): Part => ({
   label,
 } as unknown as Part);
 
+const fileUrlPart = (messageID: string, url: string, filename?: string): Part => ({
+  id: `${messageID}:file-url`,
+  sessionID: "s1",
+  messageID,
+  type: "file",
+  mime: "text/plain",
+  url,
+  filename,
+} as unknown as Part);
+
 const toolPart = (messageID: string, tool: string): Part => ({
   id: `${messageID}:${tool}`,
   sessionID: "s1",
@@ -193,4 +203,56 @@ test("reconstructs agents and file references into composer parts", () => {
     { type: "text", text: " about " },
     { type: "file", path: "src/app.ts", label: "app.ts" },
   ]);
+});
+
+test("reconstructs file URL references from sent composer file parts", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [
+        textPart("m1", "read "),
+        fileUrlPart("m1", "file:///Users/me/project/docs/hello%20world.md", "hello world.md"),
+      ]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result?.draft.text, "read @hello world.md");
+  assert.equal(result?.draft.resolvedText, "read @/Users/me/project/docs/hello world.md");
+  assert.deepEqual(result?.draft.parts, [
+    { type: "text", text: "read " },
+    { type: "file", path: "/Users/me/project/docs/hello world.md", label: "hello world.md" },
+  ]);
+});
+
+test("skips hidden latest user message in favor of previous visible user message", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [textPart("m1", "visible")]),
+      message("m2", "assistant", [reasoningPart("m2")]),
+      message("m3", "user", [{ ...textPart("m3", "hidden"), ignored: true } as Part]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result?.messageId, "m1");
+  assert.equal(result?.draft.text, "visible");
+});
+
+test("ignored assistant text after the candidate does not block editing", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [textPart("m1", "original")]),
+      message("m2", "assistant", [{ ...textPart("m2", "ignored answer"), ignored: true } as Part]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result?.messageId, "m1");
+  assert.equal(result?.draft.text, "original");
 });

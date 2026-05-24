@@ -1,6 +1,7 @@
 import type { Part } from "@opencode-ai/sdk/v2/client";
 
 import type { ComposerDraft, ComposerPart, MessageWithParts } from "../../types";
+import { isUserVisiblePart } from "../../utils";
 
 export type EditableUserMessageDraft = {
   messageId: string;
@@ -21,12 +22,26 @@ const partString = (part: Part, key: string): string => {
   return typeof value === "string" ? value : "";
 };
 
+const fileUrlPath = (part: Part): string | null => {
+  const url = partString(part, "url");
+  if (!url.startsWith("file://")) return null;
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "file:") return null;
+    const path = decodeURIComponent(parsed.pathname);
+    return path || null;
+  } catch {
+    return null;
+  }
+};
+
 const reconstructComposerDraft = (message: MessageWithParts): ComposerDraft | null => {
   const parts: ComposerPart[] = [];
   const visibleText: string[] = [];
   const resolvedText: string[] = [];
 
-  for (const part of message.parts) {
+  for (const part of message.parts.filter(isUserVisiblePart)) {
     if (part.type === "text") {
       const text = partString(part, "text");
       parts.push({ type: "text", text });
@@ -45,9 +60,9 @@ const reconstructComposerDraft = (message: MessageWithParts): ComposerDraft | nu
     }
 
     if (part.type === "file") {
-      const path = partString(part, "path");
+      const path = partString(part, "path") || fileUrlPath(part);
       if (!path) return null;
-      const label = partString(part, "label") || undefined;
+      const label = partString(part, "label") || partString(part, "filename") || undefined;
       parts.push({ type: "file", path, label });
       visibleText.push(`@${label ?? path}`);
       resolvedText.push(`@${path}`);
@@ -78,7 +93,8 @@ export function getEditableUserMessageDraft(input: {
 
   let messageIndex = -1;
   for (let index = input.messages.length - 1; index >= 0; index -= 1) {
-    if (input.messages[index]!.info.role === "user") {
+    const message = input.messages[index]!;
+    if (message.info.role === "user" && message.parts.some(isUserVisiblePart)) {
       messageIndex = index;
       break;
     }
@@ -88,8 +104,10 @@ export function getEditableUserMessageDraft(input: {
   const message = input.messages[messageIndex]!;
   const followingMessages = input.messages.slice(messageIndex + 1);
   for (const followingMessage of followingMessages) {
+    const visibleParts = followingMessage.parts.filter(isUserVisiblePart);
+    if (visibleParts.length === 0) continue;
     if (followingMessage.info.role !== "assistant") return null;
-    if (!followingMessage.parts.every(isAllowedPostUserPart)) return null;
+    if (!visibleParts.every(isAllowedPostUserPart)) return null;
   }
 
   const draft = reconstructComposerDraft(message);
