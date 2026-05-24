@@ -38,6 +38,10 @@ const fileUrlPath = (part: Part): string | null => {
   if (!rawPath) return null;
 
   const decodedPath = safeDecodeURIComponent(rawPath);
+  if (/^[A-Za-z]:[\\/]/.test(decodedPath)) {
+    return decodedPath;
+  }
+
   if (/^\/[A-Za-z]:\//.test(decodedPath)) {
     return decodedPath.slice(1);
   }
@@ -49,6 +53,12 @@ const fileUrlPath = (part: Part): string | null => {
 
 type FileReference = Extract<ComposerPart, { type: "file" }>;
 
+type FileTokenMatch = {
+  token: string;
+  path: string;
+  index: number;
+};
+
 const textPart = (text: string): ComposerPart[] => (text ? [{ type: "text", text }] : []);
 
 const fileReferenceFromPart = (part: Part): FileReference | null => {
@@ -58,22 +68,50 @@ const fileReferenceFromPart = (part: Part): FileReference | null => {
   return { type: "file", path, label };
 };
 
-const replaceFileToken = (parts: ComposerPart[], file: FileReference): { parts: ComposerPart[]; replaced: boolean } => {
-  const token = `@${file.path}`;
+const filePathSuffixMatches = (filePath: string, candidatePath: string): boolean =>
+  filePath.endsWith(`/${candidatePath}`) || filePath.endsWith(`\\${candidatePath}`);
 
+const findBestFileTokenMatch = (text: string, filePath: string): FileTokenMatch | null => {
+  const exactToken = `@${filePath}`;
+  const exactIndex = text.indexOf(exactToken);
+  if (exactIndex !== -1) {
+    return { token: exactToken, path: filePath, index: exactIndex };
+  }
+
+  let bestMatch: FileTokenMatch | null = null;
+  const tokenPattern = /@([^\s]+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = tokenPattern.exec(text))) {
+    const candidatePath = match[1];
+    if (!candidatePath || !filePathSuffixMatches(filePath, candidatePath)) continue;
+
+    if (!bestMatch || candidatePath.length > bestMatch.path.length) {
+      bestMatch = {
+        token: match[0],
+        path: candidatePath,
+        index: match.index,
+      };
+    }
+  }
+
+  return bestMatch;
+};
+
+const replaceFileToken = (parts: ComposerPart[], file: FileReference): { parts: ComposerPart[]; replaced: boolean } => {
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index]!;
     if (part.type !== "text") continue;
 
-    const tokenIndex = part.text.indexOf(token);
-    if (tokenIndex === -1) continue;
+    const match = findBestFileTokenMatch(part.text, file.path);
+    if (!match) continue;
+    const replacementFile = match.path === file.path ? file : { ...file, path: match.path };
 
     return {
       parts: [
         ...parts.slice(0, index),
-        ...textPart(part.text.slice(0, tokenIndex)),
-        file,
-        ...textPart(part.text.slice(tokenIndex + token.length)),
+        ...textPart(part.text.slice(0, match.index)),
+        replacementFile,
+        ...textPart(part.text.slice(match.index + match.token.length)),
         ...parts.slice(index + 1),
       ],
       replaced: true,

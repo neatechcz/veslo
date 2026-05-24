@@ -248,11 +248,34 @@ test("replaces matching resolved file path tokens instead of duplicating sent fi
   ]);
 });
 
+test("dedupes relative file mentions against absolute sent file parts", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [
+        textPart("m1", "read @src/app.ts"),
+        fileUrlPart("m1", "file:///Users/me/project/src/app.ts", "app.ts"),
+      ]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result?.draft.text, "read @app.ts");
+  assert.equal(result?.draft.resolvedText, "read @src/app.ts");
+  assert.deepEqual(result?.draft.parts, [
+    { type: "text", text: "read " },
+    { type: "file", path: "src/app.ts", label: "app.ts" },
+  ]);
+});
+
 test("reconstructs safe file URL edge cases without URL parser loss", () => {
   const cases = [
     ["file:///tmp/100%/note.md", "/tmp/100%/note.md"],
     ["file://server/share/note.md", "//server/share/note.md"],
     ["file:///C:/Users/x/note.md", "C:/Users/x/note.md"],
+    ["file://C:/Users/x/note.md", "C:/Users/x/note.md"],
+    ["file://C:\\Users\\x\\note.md", "C:\\Users\\x\\note.md"],
   ] as const;
 
   for (const [url, path] of cases) {
