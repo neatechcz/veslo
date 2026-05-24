@@ -86,13 +86,13 @@ const isNonImageDataFileAttachment = (part: Part): boolean => {
 const hasVisiblePathEndingWithFilename = (text: string, filename: string): boolean => {
   if (!filename) return false;
 
-  let index = text.indexOf(filename);
-  while (index !== -1) {
-    const before = text[index - 1];
-    const after = text[index + filename.length];
-    const cleanStart = !before || /\s/.test(before) || before === "/" || before === "\\";
-    if (cleanStart && isMentionBoundary(after)) return true;
-    index = text.indexOf(filename, index + 1);
+  for (const line of text.split(/\r?\n/)) {
+    const segment = line.trim();
+    if (segment === filename) return true;
+    if (!segment.endsWith(filename)) continue;
+
+    const before = segment[segment.length - filename.length - 1];
+    if (before === "/" || before === "\\") return true;
   }
 
   return false;

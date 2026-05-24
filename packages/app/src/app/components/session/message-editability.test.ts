@@ -299,6 +299,26 @@ test("non-image data file attachments without a visible path reference block edi
   assert.equal(result, null);
 });
 
+test("non-image data file attachments mentioned inline in prose still block editing", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [
+        textPart("m1", "please review brief.docx"),
+        dataFilePart(
+          "m1",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "brief.docx",
+        ),
+      ]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result, null);
+});
+
 test("session must be idle, queue must be empty, and composer must be empty", () => {
   const base = {
     messages: [message("m1", "user", [textPart("m1", "original")])],
