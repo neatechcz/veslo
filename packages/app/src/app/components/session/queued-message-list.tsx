@@ -17,6 +17,7 @@ export type QueuedMessageListProps = {
 };
 
 const isSending = (item: QueuedDraft) => item.state === "sending";
+const isMovable = (item: QueuedDraft) => item.state === "queued" || item.state === "error";
 
 const draftPreview = (item: QueuedDraft) => {
   const text = item.draft.text.trim();
@@ -26,9 +27,15 @@ const draftPreview = (item: QueuedDraft) => {
 export default function QueuedMessageList(props: QueuedMessageListProps) {
   const [draggedItemId, setDraggedItemId] = createSignal<string | null>(null);
   const hasItems = createMemo(() => props.items.length > 0);
+  const movableItems = createMemo(() => props.items.filter(isMovable));
+
+  const movableTargetIndex = (target: QueuedDraft) => {
+    if (!isMovable(target)) return -1;
+    return movableItems().findIndex((item) => item.id === target.id);
+  };
 
   const handleDragStart = (event: DragEvent, item: QueuedDraft) => {
-    if (isSending(item)) {
+    if (!isMovable(item)) {
       event.preventDefault();
       return;
     }
@@ -43,11 +50,13 @@ export default function QueuedMessageList(props: QueuedMessageListProps) {
     if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
   };
 
-  const handleDrop = (event: DragEvent, targetIndex: number) => {
+  const handleDrop = (event: DragEvent, target: QueuedDraft) => {
     event.preventDefault();
     const transferredId = event.dataTransfer?.getData("text/plain");
     const draggedId = transferredId && transferredId.length > 0 ? transferredId : draggedItemId();
     if (!draggedId) return;
+    const targetIndex = movableTargetIndex(target);
+    if (targetIndex === -1) return;
 
     setDraggedItemId(null);
     props.onMove(draggedId, targetIndex);
@@ -62,15 +71,15 @@ export default function QueuedMessageList(props: QueuedMessageListProps) {
               class={`group flex items-center gap-2 rounded-lg border border-gray-5/70 bg-gray-2/60 px-2 py-1.5 text-gray-11 transition-colors ${
                 isSending(item) ? "opacity-80" : "hover:border-gray-6 hover:bg-gray-2"
               }`}
-              draggable={!isSending(item)}
+              draggable={isMovable(item)}
               onDragStart={(event) => handleDragStart(event, item)}
               onDragOver={handleDragOver}
-              onDrop={(event) => handleDrop(event, index())}
+              onDrop={(event) => handleDrop(event, item)}
               onDragEnd={() => setDraggedItemId(null)}
             >
               <div
                 class={`shrink-0 rounded-md p-1 text-gray-9 ${
-                  isSending(item) ? "cursor-default" : "cursor-grab active:cursor-grabbing"
+                  isMovable(item) ? "cursor-grab active:cursor-grabbing" : "cursor-default"
                 }`}
                 title={tr("session.queue_message_label")}
                 aria-label={tr("session.queue_message_label")}

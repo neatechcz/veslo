@@ -75,8 +75,14 @@ test("queued message list guards sending items and wires drag/drop callbacks", (
 
   assert.match(
     source,
-    /draggable=\{!isSending\(item\)\}/,
-    "sending rows should not be draggable",
+    /const isMovable = \(item: QueuedDraft\) => item\.state === "queued" \|\| item\.state === "error";/,
+    "component should align movable rows with the queue model's drain-eligible states",
+  );
+
+  assert.match(
+    source,
+    /draggable=\{isMovable\(item\)\}/,
+    "only movable rows should be draggable",
   );
 
   assert.match(
@@ -105,13 +111,13 @@ test("queued message list guards sending items and wires drag/drop callbacks", (
 
   assert.match(
     source,
-    /onDrop=\{\(event\) => handleDrop\(event, index\(\)\)\}/,
-    "rows should pass the target row index to the drop handler",
+    /onDrop=\{\(event\) => handleDrop\(event, item\)\}/,
+    "rows should pass the target row to the drop handler",
   );
 
   assert.match(
     source,
-    /props\.onMove\(draggedId, targetIndex\);/,
-    "drop handler should delegate reordering to the parent with the target index",
+    /const targetIndex = movableTargetIndex\(target\);[\s\S]*if \(targetIndex === -1\) return;[\s\S]*props\.onMove\(draggedId, targetIndex\);/,
+    "drop handler should convert the visual target row into a movable subset target index",
   );
 });
