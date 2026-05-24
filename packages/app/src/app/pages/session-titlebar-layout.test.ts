@@ -56,13 +56,27 @@ test("session keeps centered titlebar context visible for new empty chats", () =
   assert.doesNotMatch(
     source,
     /const sessionTitlebarContext = createMemo\(\(\) => \{\s*if \(props\.messages\.length === 0\) return null;/,
-    "session should show New session context before the first message exists",
+    "session should show titlebar context before the first message exists",
   );
 
+  const titlebarContextCall = source.match(
+    /return resolveSessionTitlebarContext\(\{[\s\S]*?\n    \}\);/,
+  )?.[0];
+  assert.ok(titlebarContextCall, "session should call resolveSessionTitlebarContext with a literal options object");
   assert.match(
-    source,
-    /stateLabel[\s\S]*session\.new_session_label/,
-    "session should render a distinct New session state label in the titlebar",
+    titlebarContextCall,
+    /newSessionLabel: tr\("session\.chat_label"\),/,
+    "session titlebar should use chat copy for the new-session state label",
+  );
+  assert.match(
+    titlebarContextCall,
+    /chatFallbackLabel: tr\("session\.chat_label"\),/,
+    "session titlebar should use chat copy for untitled private-session fallback titles",
+  );
+  assert.doesNotMatch(
+    titlebarContextCall,
+    /session\.new_session_label/,
+    "session titlebar context should not keep old New session copy wiring",
   );
 
   assert.match(
