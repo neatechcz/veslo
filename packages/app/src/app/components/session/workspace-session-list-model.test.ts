@@ -119,6 +119,56 @@ test("buildRecentRows keeps subagents directly below their parent session", () =
   );
 });
 
+test("buildRecentRows keeps private chat sessions mixed with project sessions by activity", () => {
+  const privateRoot = "/Users/test/.veslo/private-workspaces";
+  const isPrivateWorkspacePath = (folder: string | null | undefined) =>
+    typeof folder === "string" && folder.startsWith(privateRoot);
+
+  const rows = buildRecentRows(
+    [
+      {
+        workspace: {
+          id: "chat-a",
+          name: "Private workspace",
+          path: `${privateRoot}/chat-a`,
+          preset: "starter",
+          workspaceType: "local" as const,
+        },
+        sessions: [
+          {
+            id: "chat",
+            title: "Chat",
+            directory: `${privateRoot}/chat-a`,
+            time: { created: 10, updated: 30 },
+          },
+        ],
+        status: "ready",
+      },
+      {
+        workspace: {
+          id: "project-a",
+          name: "Project A",
+          path: "/Users/test/project-a",
+          preset: "starter",
+          workspaceType: "local" as const,
+        },
+        sessions: [
+          {
+            id: "project",
+            title: "Project",
+            directory: "/Users/test/project-a",
+            time: { created: 20, updated: 20 },
+          },
+        ],
+        status: "ready",
+      },
+    ],
+    isPrivateWorkspacePath,
+  );
+
+  assert.deepEqual(rows.map((row) => row.session.id), ["chat", "project"]);
+});
+
 test("buildProjectGroups keeps subagents nested under their parent in by-project mode", () => {
   const workspace = {
     id: "workspace-1",

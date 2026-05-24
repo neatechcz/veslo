@@ -4,11 +4,36 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./workspace-session-list.tsx", import.meta.url), "utf8");
 
+const recentRenderBranch = () => {
+  const fallbackIndex = source.indexOf("fallback={\n              <>");
+  const byProjectBranchIndex = source.indexOf("<For each={normalProjectGroups()}>", fallbackIndex);
+
+  assert.notEqual(fallbackIndex, -1, "recent fallback render branch should exist");
+  assert.notEqual(byProjectBranchIndex, -1, "by-project render branch should exist after recent fallback");
+  return source.slice(fallbackIndex, byProjectBranchIndex);
+};
+
 test("recent rows reserve right space for timestamp/menu to avoid title overlap", () => {
   assert.match(
     source,
     /class=\{sessionRowClass\(isSelected\(\), "pr-12"\)\}/,
     "recent rows should reserve a right column so timestamp and menu never overlap labels",
+  );
+});
+
+test("recent mode renders from recentRowsVisible without using the chat project group", () => {
+  const recentBranch = recentRenderBranch();
+
+  assert.match(
+    recentBranch,
+    /<For each=\{recentRowsVisible\(\)\}>/,
+    "recent mode should continue rendering the single activity-sorted recent row stream",
+  );
+
+  assert.doesNotMatch(
+    recentBranch,
+    /chatProjectGroup\(\)|data-sidebar-chat-section/,
+    "recent mode should not render through the by-project Chaty section path",
   );
 });
 
