@@ -2,6 +2,7 @@ import { expect } from '@wdio/globals';
 import { navigateToHash, waitForHashRoute } from '../helpers/app-launcher.js';
 
 const MORE_ACTIONS_MENU_ID = 'sidebar-more-actions-menu';
+const SIDEBAR_VIEW_MODE_KEY = 'veslo.sidebar-session-view.v1';
 
 type LocaleCopy = {
   newSession: string;
@@ -12,6 +13,7 @@ type LocaleCopy = {
   searchSessions: string;
   byProject: string;
   recent: string;
+  createSessionInProject: string;
   archivedSection: string;
 };
 
@@ -25,6 +27,7 @@ const UI_COPY: Record<'en' | 'cs' | 'zh', LocaleCopy> = {
     searchSessions: 'Search sessions',
     byProject: 'By project',
     recent: 'Recent',
+    createSessionInProject: 'Create session in this project',
     archivedSection: 'Archived sessions',
   },
   cs: {
@@ -36,6 +39,7 @@ const UI_COPY: Record<'en' | 'cs' | 'zh', LocaleCopy> = {
     searchSessions: 'Hledat relace',
     byProject: 'Podle projektu',
     recent: 'Nedávné',
+    createSessionInProject: 'Vytvořit relaci v tomto projektu',
     archivedSection: 'Archivované relace',
   },
   zh: {
@@ -47,6 +51,7 @@ const UI_COPY: Record<'en' | 'cs' | 'zh', LocaleCopy> = {
     searchSessions: 'Search sessions',
     byProject: '按项目',
     recent: '最近',
+    createSessionInProject: '在此项目中创建会话',
     archivedSection: '已归档会话',
   },
 };
@@ -141,6 +146,13 @@ async function getSettingsTabButtonClass(label: string): Promise<string | null> 
   }, label);
 }
 
+async function readProjectPlusDisabled(label: string): Promise<boolean | null> {
+  return browser.execute((expectedLabel: string) => {
+    const button = document.querySelector<HTMLButtonElement>(`button[aria-label="${expectedLabel}"]`);
+    return button ? button.disabled : null;
+  }, label);
+}
+
 describe('Sidebar overflow actions', () => {
   before(async () => {
     await navigateToHash('/session');
@@ -209,5 +221,29 @@ describe('Sidebar overflow actions', () => {
     expect(archivedTabClass).not.toBeNull();
     expect(archivedTabClass).toContain('bg-gray-12/10');
     expect(archivedTabClass).toContain('text-white');
+  });
+
+  it('keeps the per-project plus enabled in by-project browsing mode', async () => {
+    await browser.execute((key: string) => {
+      window.localStorage.setItem(key, 'by-project');
+    }, SIDEBAR_VIEW_MODE_KEY);
+    await navigateToHash('/session');
+    await waitForHashRoute('#/session', 5000);
+    await browser.refresh();
+    await waitForHashRoute('#/session', 5000);
+
+    const locale = await getLocale();
+    const copy = UI_COPY[locale];
+
+    await browser.waitUntil(
+      async () => (await readProjectPlusDisabled(copy.createSessionInProject)) !== null,
+      {
+        timeout: 10000,
+        interval: 250,
+        timeoutMsg: 'Project plus button was not rendered in by-project mode.',
+      },
+    );
+
+    expect(await readProjectPlusDisabled(copy.createSessionInProject)).toBe(false);
   });
 });

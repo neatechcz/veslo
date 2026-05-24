@@ -94,6 +94,14 @@ test("project plus button uses the pending-draft callback instead of real-sessio
   );
 });
 
+test("project plus button stays enabled for pending-draft browsing mode", () => {
+  assert.doesNotMatch(
+    workspaceSessionListSource,
+    /onClick=\{\(\) => props\.onOpenPendingDirectoryDraftInWorkspace\(workspace\(\)\.id\)\}[\s\S]*disabled=\{props\.newTaskDisabled\}/,
+    "Project plus should not inherit the real-session disabled state because it opens a pending draft first",
+  );
+});
+
 test("session wires archived-items navigation into WorkspaceSessionList", () => {
   assert.match(
     sessionSource,

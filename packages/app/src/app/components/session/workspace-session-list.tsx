@@ -1751,7 +1751,6 @@ export default function WorkspaceSessionList(props: Props) {
                           type="button"
                           class="p-1 rounded-md text-gray-8 hover:text-gray-11 hover:bg-gray-3"
                           onClick={() => props.onOpenPendingDirectoryDraftInWorkspace(workspace().id)}
-                          disabled={props.newTaskDisabled}
                           aria-label={tr("sidebar.create_session_in_project")}
                           title={tr("sidebar.create_session_in_project")}
                         >
