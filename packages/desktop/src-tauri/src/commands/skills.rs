@@ -124,22 +124,41 @@ fn dedupe_paths(roots: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
     Ok(unique)
 }
 
+fn select_skill_roots_for_scope(
+    project_roots: Vec<PathBuf>,
+    global_roots: Vec<PathBuf>,
+    scope: SkillListScope,
+) -> Result<Vec<PathBuf>, String> {
+    let mut roots = Vec::new();
+    if matches!(scope, SkillListScope::Workspace | SkillListScope::Effective) {
+        roots.extend(project_roots);
+    }
+    if matches!(scope, SkillListScope::Global | SkillListScope::Effective) {
+        roots.extend(global_roots);
+    }
+
+    dedupe_paths(roots)
+}
+
 fn collect_skill_roots(project_dir: &str, scope: SkillListScope) -> Result<Vec<PathBuf>, String> {
     let project_dir = project_dir.trim();
     if project_dir.is_empty() && scope != SkillListScope::Global {
         return Err("projectDir is required".to_string());
     }
 
-    let mut roots = Vec::new();
-    if matches!(scope, SkillListScope::Workspace | SkillListScope::Effective) {
+    let project_roots = if matches!(scope, SkillListScope::Workspace | SkillListScope::Effective) {
         let project_path = PathBuf::from(project_dir);
-        roots.extend(collect_project_skill_roots(&project_path));
-    }
-    if matches!(scope, SkillListScope::Global | SkillListScope::Effective) {
-        roots.extend(collect_global_skill_roots());
-    }
+        collect_project_skill_roots(&project_path)
+    } else {
+        Vec::new()
+    };
+    let global_roots = if matches!(scope, SkillListScope::Global | SkillListScope::Effective) {
+        collect_global_skill_roots()
+    } else {
+        Vec::new()
+    };
 
-    dedupe_paths(roots)
+    select_skill_roots_for_scope(project_roots, global_roots, scope)
 }
 
 fn validate_skill_name(name: &str) -> Result<String, String> {
@@ -407,30 +426,85 @@ fn extract_description(raw: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_description, SkillListScope};
+    use super::{
+        collect_skill_roots, extract_description, select_skill_roots_for_scope, SkillListScope,
+    };
+    use std::path::PathBuf;
     use std::str::FromStr;
 
+    fn root(path: &str) -> PathBuf {
+        PathBuf::from(path)
+    }
+
     #[test]
-    fn skill_list_scope_workspace_excludes_global_roots() {
+    fn skill_list_scope_workspace_excludes_global_roots_and_requires_project_dir() {
         assert_eq!(
             SkillListScope::from_str("workspace").unwrap(),
             SkillListScope::Workspace
         );
-    }
 
-    #[test]
-    fn skill_list_scope_global_excludes_project_roots() {
+        let project_roots = vec![root("/workspace/.opencode/skills")];
+        let global_roots = vec![root("/home/user/.config/opencode/skills")];
+
         assert_eq!(
-            SkillListScope::from_str("global").unwrap(),
-            SkillListScope::Global
+            select_skill_roots_for_scope(
+                project_roots.clone(),
+                global_roots,
+                SkillListScope::Workspace
+            )
+            .unwrap(),
+            project_roots
+        );
+        assert_eq!(
+            collect_skill_roots("", SkillListScope::Workspace).unwrap_err(),
+            "projectDir is required"
         );
     }
 
     #[test]
-    fn skill_list_scope_effective_preserves_existing_behavior() {
+    fn skill_list_scope_global_excludes_project_roots_and_allows_empty_project_dir() {
+        assert_eq!(
+            SkillListScope::from_str("global").unwrap(),
+            SkillListScope::Global
+        );
+
+        let project_roots = vec![root("/workspace/.opencode/skills")];
+        let global_roots = vec![root("/home/user/.config/opencode/skills")];
+
+        assert_eq!(
+            select_skill_roots_for_scope(
+                project_roots,
+                global_roots.clone(),
+                SkillListScope::Global,
+            )
+            .unwrap(),
+            global_roots
+        );
+        assert!(collect_skill_roots("", SkillListScope::Global).is_ok());
+    }
+
+    #[test]
+    fn skill_list_scope_effective_includes_project_and_global_roots_and_requires_project_dir() {
         assert_eq!(
             SkillListScope::from_str("effective").unwrap(),
             SkillListScope::Effective
+        );
+
+        let project_roots = vec![root("/workspace/.opencode/skills")];
+        let global_roots = vec![root("/home/user/.config/opencode/skills")];
+
+        assert_eq!(
+            select_skill_roots_for_scope(
+                project_roots.clone(),
+                global_roots.clone(),
+                SkillListScope::Effective
+            )
+            .unwrap(),
+            vec![project_roots[0].clone(), global_roots[0].clone()]
+        );
+        assert_eq!(
+            collect_skill_roots("", SkillListScope::Effective).unwrap_err(),
+            "projectDir is required"
         );
     }
 
