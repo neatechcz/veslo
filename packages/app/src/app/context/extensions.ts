@@ -132,6 +132,7 @@ export function createExtensionsStore(options: {
   let refreshPluginsInFlight = false;
   let refreshHubSkillsInFlight = false;
   let refreshHubSkillsPromise: Promise<void> | null = null;
+  let refreshHubSkillsInFlightContextKey = "";
   let refreshSkillsAborted = false;
   let refreshSkillInventoryAborted = false;
   let refreshPluginsAborted = false;
@@ -275,7 +276,6 @@ export function createExtensionsStore(options: {
       hubSkillsLoaded = false;
     }
 
-    if (!optionsOverride?.force && hubSkillsLoaded) return;
     if (refreshHubSkillsInFlight) {
       await refreshHubSkillsPromise;
       const latestContext = resolveHubSkillsRefreshContext();
@@ -284,8 +284,10 @@ export function createExtensionsStore(options: {
       }
       return;
     }
+    if (!optionsOverride?.force && hubSkillsLoaded) return;
 
     refreshHubSkillsInFlight = true;
+    refreshHubSkillsInFlightContextKey = contextKey;
     refreshHubSkillsAborted = false;
     refreshHubSkillsPromise = (async () => {
       try {
@@ -338,6 +340,7 @@ export function createExtensionsStore(options: {
         setHubSkillsStatus(e instanceof Error ? e.message : "Failed to load hub skills.");
       } finally {
         refreshHubSkillsInFlight = false;
+        refreshHubSkillsInFlightContextKey = "";
         refreshHubSkillsPromise = null;
       }
     })();
@@ -372,13 +375,16 @@ export function createExtensionsStore(options: {
         })),
       });
 
-    const nextContextKey = getSkillInventoryContextKey(resolveHubSkillsRefreshContext().contextKey);
+    const hubContext = resolveHubSkillsRefreshContext();
+    const nextContextKey = getSkillInventoryContextKey(hubContext.contextKey);
+    const hubRefreshInFlightForCurrentContext =
+      refreshHubSkillsInFlight && refreshHubSkillsInFlightContextKey === hubContext.contextKey;
 
     if (nextContextKey !== skillInventoryContextKey) {
       skillInventoryLoaded = false;
     }
 
-    if (!optionsOverride?.force && skillInventoryLoaded) return;
+    if (!optionsOverride?.force && skillInventoryLoaded && !hubRefreshInFlightForCurrentContext) return;
     if (refreshSkillInventoryInFlight) return;
 
     refreshSkillInventoryInFlight = true;

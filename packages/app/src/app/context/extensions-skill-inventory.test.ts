@@ -388,6 +388,78 @@ test("skill inventory waits for an in-flight hub skill refresh before caching", 
   });
 });
 
+test("skill inventory refresh waits for a same-context hub reload before returning cached inventory", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const hubSkillsRelease: { current?: () => void } = {};
+      let hubCallCount = 0;
+      let markSecondHubSkillsStarted: (() => void) | null = null;
+      const secondHubSkillsStarted = new Promise<void>((resolve) => {
+        markSecondHubSkillsStarted = resolve;
+      });
+      const vesloServerClient = {
+        async listHubSkills() {
+          hubCallCount += 1;
+          const callId = hubCallCount;
+          if (callId === 2) {
+            assert.ok(markSecondHubSkillsStarted);
+            markSecondHubSkillsStarted();
+            await new Promise<void>((release) => {
+              hubSkillsRelease.current = release;
+            });
+          }
+          return { items: [hubSkill(`planning-${callId}`)] };
+        },
+      };
+
+      const store = createExtensionsStore({
+        client: () => null,
+        projectDir: () => "/workspaces/alpha",
+        activeWorkspaceRoot: () => "/workspaces/alpha",
+        workspaceType: () => "local",
+        workspaces: () => [],
+        vesloServerClient: () => vesloServerClient as never,
+        vesloServerStatus: () => "connected",
+        vesloServerCapabilities: () => ({ hub: { skills: { read: true } } }) as never,
+        vesloServerWorkspaceId: () => "ws-alpha",
+        listLocalSkillsScoped: async () => [],
+        setBusy: () => undefined,
+        setBusyLabel: () => undefined,
+        setBusyStartedAt: () => undefined,
+        setError: () => undefined,
+      });
+
+      await store.refreshSkillInventory({ force: true });
+      assert.equal(store.skillInventory().some((item) => item.name === "planning-1"), true);
+
+      const hubRefresh = store.refreshHubSkills({ force: true });
+      try {
+        await secondHubSkillsStarted;
+        let inventoryResolved = false;
+        const inventoryRefresh = store.refreshSkillInventory().then(() => {
+          inventoryResolved = true;
+        });
+
+        await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+        assert.equal(inventoryResolved, false, "cached inventory refresh should wait for in-flight hub reload");
+
+        const releaseHubSkills = hubSkillsRelease.current;
+        assert.ok(releaseHubSkills);
+        releaseHubSkills();
+        await Promise.all([hubRefresh, inventoryRefresh]);
+
+        assert.equal(hubCallCount, 2);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-1"), false);
+        assert.equal(store.skillInventory().some((item) => item.name === "planning-2"), true);
+      } finally {
+        hubSkillsRelease.current?.();
+        await hubRefresh.catch(() => undefined);
+        dispose();
+      }
+    });
+  });
+});
+
 test("skill inventory does not cache hub skills from an in-flight refresh after Den auth changes", async () => {
   await withDenAuthStorage(async ({ localStorage, sessionStorage }) => {
     await createRoot(async (dispose) => {
