@@ -39,7 +39,7 @@ pnpm dev
 
 ```bash
 cd packages/desktop
-pnpm tauri build --debug --no-bundle -- --features e2e
+pnpm tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json -- --features e2e
 ```
 
 ### WebdriverIO

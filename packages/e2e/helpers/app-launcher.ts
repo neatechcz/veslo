@@ -84,7 +84,7 @@ function resolveBinaryPath(): string {
   if (platform === 'win32') {
     const winPath = join(tauriTarget, 'veslo.exe');
     if (existsSync(winPath)) return winPath;
-    throw new Error(`Tauri binary not found at ${winPath}. Run: pnpm tauri build --debug --no-bundle -- --features e2e`);
+    throw new Error(`Tauri binary not found at ${winPath}. Run: pnpm tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json -- --features e2e`);
   }
 
   const unbundledPath = join(tauriTarget, 'veslo');
@@ -95,7 +95,7 @@ function resolveBinaryPath(): string {
     if (existsSync(bundledPath)) return bundledPath;
   }
 
-  throw new Error(`Tauri binary not found at ${unbundledPath}. Run: pnpm tauri build --debug --no-bundle -- --features e2e`);
+  throw new Error(`Tauri binary not found at ${unbundledPath}. Run: pnpm tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json -- --features e2e`);
 }
 
 async function pollStatus(port: number, timeout: number): Promise<void> {

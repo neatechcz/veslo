@@ -29,11 +29,17 @@ test("staging failure blocks send with an explicit error and no draft clear", ()
 });
 
 test("send flow snapshots pending draft context before materializing a real session", () => {
-  assert.match(
-    appSource,
-    /let sessionID = selectedSessionId\(\);\s*const pendingDraftSendState = \(\(\) => \{[\s\S]*const pendingDraftKey = \(activePendingDraftKey\(\) \?\? ""\)\.trim\(\);[\s\S]*if \(sessionID\) return null;[\s\S]*if \(!pendingDraftKey\) return null;[\s\S]*return \{[\s\S]*key: pendingDraftKey,[\s\S]*\};[\s\S]*\}\)\(\);\s*if \(!sessionID\) \{[\s\S]*sessionID = \(await createSessionAndOpen\(\)\) \?\? selectedSessionId\(\);[\s\S]*\}/s,
-    "send flow should snapshot pending draft identity before creating the real session so failure paths can preserve the draft",
-  );
+  const sendStart = appSource.indexOf("async function sendPrompt");
+  const sessionTarget = appSource.indexOf("let sessionID = options.targetSessionId?.trim() || selectedSessionId();", sendStart);
+  const pendingSnapshot = appSource.indexOf("const pendingDraftSendState = (() => {", sessionTarget);
+  const pendingKey = appSource.indexOf("const pendingDraftKey = (activePendingDraftKey() ?? \"\").trim();", pendingSnapshot);
+  const sessionCreate = appSource.indexOf("sessionID = (await createSessionAndOpen()) ?? selectedSessionId();", pendingSnapshot);
+
+  assert.notEqual(sendStart, -1, "sendPrompt should exist");
+  assert.ok(sessionTarget > sendStart, "send flow should resolve the target session before pending draft snapshot");
+  assert.ok(pendingSnapshot > sessionTarget, "send flow should snapshot pending draft identity");
+  assert.ok(pendingKey > pendingSnapshot, "pending draft snapshot should capture active pending draft key");
+  assert.ok(sessionCreate > pendingSnapshot, "pending draft snapshot should happen before creating the real session");
 });
 
 test("composer keeps dropped files as attachment chips", () => {

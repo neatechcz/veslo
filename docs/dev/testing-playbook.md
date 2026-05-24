@@ -81,7 +81,7 @@ For internal end-to-end testing, follow the repo rule from `AGENTS.md`:
 # First run the Desktop Test Runtime Preflight above.
 
 cd packages/desktop
-pnpm tauri build --debug --no-bundle -- --features e2e
+pnpm tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json -- --features e2e
 
 cd ../e2e
 pnpm test --spec ./specs/<target>.spec.ts
@@ -108,7 +108,7 @@ The live smoke uses the desktop WebdriverIO harness to click the feedback UI, su
 Requirements:
 
 - run the Desktop Test Runtime Preflight first
-- build the E2E desktop binary with `pnpm tauri build --debug --no-bundle -- --features e2e`
+- build the E2E desktop binary with `pnpm tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json -- --features e2e`
 - use a signed-in Den desktop profile with `E2E_USE_EXISTING_PROFILE=1`, or provide `E2E_DEN_AUTH_JSON`
 - ensure the YouTrack MCP command is available at `~/.config/youtrack-mcp/run-remote.sh`, or set `E2E_YOUTRACK_MCP_COMMAND`
 - set `E2E_YOUTRACK_PROJECT_KEY` if the target project differs from `VSLO`
