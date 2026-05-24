@@ -151,6 +151,7 @@ export type DashboardViewProps = {
   activeWorkspaceId: string;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
+  readyEngineWorkspaceIds?: Set<string>;
   activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   testWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean;
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
@@ -1362,6 +1363,7 @@ export default function DashboardView(props: DashboardViewProps) {
               connectingWorkspaceId={props.connectingWorkspaceId}
               pendingPermissionCountByWs={props.pendingPermissionCountByWs}
               workspaceConnectionStateById={props.workspaceConnectionStateById}
+              readyEngineWorkspaceIds={props.readyEngineWorkspaceIds}
               newTaskDisabled={props.newTaskDisabled}
               importingWorkspaceConfig={props.importingWorkspaceConfig}
               soulStatusByWorkspaceId={props.soulStatusByWorkspaceId}

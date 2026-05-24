@@ -1327,8 +1327,18 @@ async function requestJson<T>(
   const json = text ? JSON.parse(text) : null;
 
   if (!response.ok) {
-    const code = typeof json?.code === "string" ? json.code : "request_failed";
-    const message = typeof json?.message === "string" ? json.message : response.statusText;
+    let code = typeof json?.code === "string" ? json.code : "request_failed";
+    let message = typeof json?.message === "string" ? json.message : response.statusText;
+    // Orchestrator proxy returns {"error":"workspace not found"} on 404 for
+    // /workspace/:id/opencode/* and similar per-workspace paths. Map to a
+    // dedicated code so the caller can re-bootstrap the workspace registry and
+    // retry with a fresh ID instead of surfacing a generic 404.
+    if (response.status === 404 && typeof json?.error === "string") {
+      message = json.error;
+      if (json.error === "workspace not found") {
+        code = "workspace_id_mismatch";
+      }
+    }
     throw new VesloServerError(response.status, code, message, json?.details);
   }
 

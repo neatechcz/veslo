@@ -290,6 +290,7 @@ import {
   vesloServerInfo,
   vesloServerRestart,
   orchestratorStatus,
+  orchestratorEnginesList,
   opencodeRouterInfo,
   setWindowDecorations,
   setWindowTitleBarStyle,
@@ -297,6 +298,7 @@ import {
   workspaceVesloRead,
   workspaceVesloWrite,
   opencodeDbUpdateSessionDirectory,
+  type OrchestratorEngineSnapshot,
   type OrchestratorStatus,
   type PendingSessionDraftSummary,
   type VesloServerInfo,
@@ -591,6 +593,14 @@ export default function App() {
   const [vesloReconnectBusy, setVesloReconnectBusy] = createSignal(false);
   const [opencodeRouterInfoState, setOpenCodeRouterInfoState] = createSignal<OpenCodeRouterInfo | null>(null);
   const [orchestratorStatusState, setOrchestratorStatusState] = createSignal<OrchestratorStatus | null>(null);
+  const [orchestratorEnginesState, setOrchestratorEnginesState] = createSignal<OrchestratorEngineSnapshot[]>([]);
+  const readyEngineWorkspaceIds = createMemo(() => {
+    const set = new Set<string>();
+    for (const engine of orchestratorEnginesState()) {
+      if (engine.state === "ready") set.add(engine.workspaceId);
+    }
+    return set;
+  });
   const [vesloAuditEntries, setVesloAuditEntries] = createSignal<VesloAuditEntry[]>([]);
   const [vesloAuditStatus, setVesloAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
   const [vesloAuditError, setVesloAuditError] = createSignal<string | null>(null);
@@ -1095,11 +1105,36 @@ export default function App() {
     });
   });
 
+  // Poll orchestrator engine pool every 30s so the sidebar can show which
+  // workspaces have a warm engine. 30s (not 5s) — engines change state on
+  // user actions (workspace switch, idle suspend), not continuously. Tight
+  // polling was leaking timers under HMR and pushing veslo-server CPU to
+  // 500%.
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (!documentVisible()) return;
+    let active = true;
+    const run = async () => {
+      try {
+        const list = await orchestratorEnginesList();
+        if (active) setOrchestratorEnginesState(list);
+      } catch {
+        if (active) setOrchestratorEnginesState([]);
+      }
+    };
+    run();
+    const interval = window.setInterval(run, 30_000);
+    onCleanup(() => {
+      active = false;
+      window.clearInterval(interval);
+    });
+  });
+
   const [client, setClient] = createSignal<Client | null>(null);
 
   // VSLO-171 F3Ú9 — Performance pool settings forwarded to orchestrator.
-  const [maxEngines, setMaxEngines] = createSignal(8);
-  const [idleSuspendMs, setIdleSuspendMs] = createSignal(15 * 60_000);
+  const [maxEngines, setMaxEngines] = createSignal(16);
+  const [idleSuspendMs, setIdleSuspendMs] = createSignal(0);
 
   // VSLO-171 — workspace routing service. Multi mode is the only mode (no
   // single-active fallback, no feature flag). Instantiated before
@@ -1138,6 +1173,11 @@ export default function App() {
   // first one was patched in this session — see VSLO retry-loop bug after
   // server token rotation.
   const lastKnownConfigSnapshotByWs = new Map<string, string>();
+  // Inactive-workspace baseURL healing dedup. Key = Veslo workspace id, value
+  // = the server client token that the last successful patch was made for. If
+  // the server restarts with a fresh token, every entry effectively expires
+  // because the next iteration sees a different token and re-patches.
+  const inactiveWorkspaceBaseUrlHealedFor = new Map<string, string>();
   // Tracks which Veslo server token we already triggered a managed-AI engine
   // reload for. The Veslo server mints a fresh client token on every restart,
   // so opencode.jsonc files in workspaces that were not visited since the
@@ -2904,6 +2944,7 @@ export default function App() {
     managedAiAccess();
     setLastReloadedForServerToken("");
     lastKnownConfigSnapshotByWs.clear();
+    inactiveWorkspaceBaseUrlHealedFor.clear();
   });
   const managedAiBootstrapBusy = createMemo(
     () => managedAiAccessBusy() || managedAiBootstrapPendingCount() > 0,
@@ -8079,6 +8120,90 @@ export default function App() {
     });
   });
 
+  // VSLO-86: heal stale gateway baseURL in non-active managed workspaces.
+  // The active-workspace patch effect above only fires for the workspace the
+  // user has currently open, so any other workspace keeps the baseURL from a
+  // previous Veslo server lifetime. After a Tauri restart that allocates a
+  // different server port, the engine spawn for those workspaces fails with
+  // "Unable to connect" the moment the user opens or creates a session in
+  // them. We mirror the same patch flow here for every managed local
+  // workspace once per server-client-token rotation, but without restarting
+  // any engine — the active workspace's effect handles engine reload, and the
+  // other workspaces have no engine running to reload yet.
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+    const vesloClient = vesloServerClient();
+    if (!vesloClient) return;
+    if (vesloServerStatus() !== "connected") return;
+    const vesloCapabilities = resolvedVesloCapabilities();
+    if (!vesloCapabilities?.config?.write) return;
+    const managedProfile = managedAiAccess();
+    if (!managedProfile) return;
+    const providerRoutingLocalHost = activeVesloServerHostInfo();
+    if (!providerRoutingLocalHost?.baseUrl) return;
+    const gatewayClient = gatewayVesloServerClient();
+    const providerRoutingTarget = resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: isTauriRuntime(),
+      workspaceType: "local",
+      activeBaseUrl: providerRoutingLocalHost.baseUrl,
+      activeToken: providerRoutingLocalHost?.clientToken ?? "",
+      gatewayBaseUrl: gatewayClient?.baseUrl ?? "",
+      gatewayToken: gatewayClient?.token ?? "",
+    });
+    if (!providerRoutingTarget?.serverClientToken) return;
+    const gatewayAccessToken = managedAiGatewayAccessToken() || denGatewayAccessToken();
+    if (!gatewayAccessToken) return;
+
+    const sessionToken = providerRoutingTarget.serverClientToken;
+    const activeWorkspaceId = (vesloServerWorkspaceId() ?? "").trim();
+    let cancelled = false;
+
+    const healInactiveWorkspaces = async () => {
+      let workspaceItems: Awaited<ReturnType<typeof vesloClient.listWorkspaces>>["items"];
+      try {
+        const response = await vesloClient.listWorkspaces();
+        workspaceItems = Array.isArray(response.items) ? response.items : [];
+      } catch (error) {
+        if (!cancelled) reportError(error, "managed-baseurl.listWorkspaces");
+        return;
+      }
+      for (const workspace of workspaceItems) {
+        if (cancelled) return;
+        if (workspace.workspaceType !== "local") continue;
+        if (workspace.id === activeWorkspaceId) continue;
+        if (inactiveWorkspaceBaseUrlHealedFor.get(workspace.id) === sessionToken) continue;
+        try {
+          const config = await vesloClient.getConfig(workspace.id);
+          if (cancelled) return;
+          const currentOpencodeContent = JSON.stringify(config.opencode ?? {}, null, 2);
+          const desiredContent = formatManagedAiAccessConfig(currentOpencodeContent, {
+            profile: managedProfile,
+            serverBaseUrl: providerRoutingTarget.baseUrl,
+            serverClientToken: providerRoutingTarget.serverClientToken,
+            gatewayAccessToken,
+          });
+          if (managedConfigContentsMatchForServerPatch(currentOpencodeContent, desiredContent)) {
+            inactiveWorkspaceBaseUrlHealedFor.set(workspace.id, sessionToken);
+            continue;
+          }
+          await vesloClient.patchConfig(workspace.id, {
+            opencode: JSON.parse(desiredContent) as Record<string, unknown>,
+          });
+          if (cancelled) return;
+          inactiveWorkspaceBaseUrlHealedFor.set(workspace.id, sessionToken);
+        } catch (error) {
+          if (!cancelled) reportError(error, `managed-baseurl.heal:${workspace.id}`);
+        }
+      }
+    };
+
+    void healInactiveWorkspaces();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
+
   createEffect(() => {
     if (!isTauriRuntime()) return;
     if (onboardingStep() !== "local") return;
@@ -8087,6 +8212,12 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
+    // In Tauri desktop the orchestrator port rotates on every `pnpm dev`
+    // restart and the live URL always comes from `engineInfo()` IPC.
+    // Persisting it to localStorage here only pollutes the cache (the read
+    // path at line ~7509 already skips localStorage in Tauri) and creates
+    // a stale value that a future regression could read by accident.
+    if (isTauriRuntime()) return;
     try {
       window.localStorage.setItem("veslo.baseUrl", baseUrl());
     } catch {
@@ -8666,6 +8797,7 @@ export default function App() {
       activeWorkspaceId: workspaceStore.activeWorkspaceId(),
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
       workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
+      readyEngineWorkspaceIds: readyEngineWorkspaceIds(),
       activateWorkspace: workspaceStore.activateWorkspace,
       testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
       recoverWorkspace: workspaceStore.recoverWorkspace,
@@ -8783,7 +8915,7 @@ export default function App() {
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
       maxEngines: maxEngines(),
-      setMaxEngines: (n: number) => setMaxEngines(Math.max(1, Math.min(16, Math.floor(n)))),
+      setMaxEngines: (n: number) => setMaxEngines(Math.max(1, Math.min(64, Math.floor(n)))),
       idleSuspendMs: idleSuspendMs(),
       setIdleSuspendMs: (ms: number) => setIdleSuspendMs(Math.max(0, Math.floor(ms))),
       modelVariantLabel: formatModelVariantLabel(modelVariant()),
@@ -8920,6 +9052,7 @@ export default function App() {
     activeWorkspaceId: workspaceStore.activeWorkspaceId(),
     connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
     workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
+    readyEngineWorkspaceIds: readyEngineWorkspaceIds(),
     activateWorkspace: workspaceStore.activateWorkspace,
     testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
     recoverWorkspace: workspaceStore.recoverWorkspace,
@@ -9288,7 +9421,10 @@ export default function App() {
 
   return (
     <WorkspaceRoutingProvider value={workspaceRouting}>
-      <WorkspaceServerSync workspaceStore={workspaceStore} />
+      <WorkspaceServerSync
+        workspaceStore={workspaceStore}
+        orchestratorPort={() => orchestratorStatusState()?.daemon?.port ?? null}
+      />
       <Switch>
         <Match when={currentView() === "proto"}>
           <Switch>

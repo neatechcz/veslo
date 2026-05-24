@@ -1297,7 +1297,7 @@ export function createWorkspaceStore(options: {
       reason?: string;
     },
     auth?: OpencodeAuth,
-    connectOptions?: { quiet?: boolean; navigate?: boolean },
+    connectOptions?: { quiet?: boolean; navigate?: boolean; forceRefresh?: boolean },
   ) {
     const requestKey = connectRequestKey(nextBaseUrl, directory, context, auth, connectOptions);
     const existing = connectInFlightByKey.get(requestKey);
@@ -1347,8 +1347,19 @@ export function createWorkspaceStore(options: {
     // current session view and force a re-fetch.
     // VSLO-171.F3Ú5: idempotent-skip check stays on options.client() inside
     // connectToServer; will be replaced by routing.ensure cached-match.
+    // `forceRefresh` bypasses this guard for callers (refreshActiveClient)
+    // who *know* the cached client is stale (orchestrator port rotated).
+    // Also require that the routing entry actually still exists — without
+    // this, a released entry leaves us with a stale options.client() and
+    // the guard skips reconnect even though no per-workspace client is set.
+    const guardWorkspaceId = (context?.workspaceId ?? activeWorkspaceId() ?? "").trim();
+    const cachedRoutingClient = guardWorkspaceId
+      ? options.routing.client(guardWorkspaceId)
+      : null;
     if (
+      !connectOptions?.forceRefresh &&
       options.client() &&
+      cachedRoutingClient &&
       (options.baseUrl()?.trim() ?? "") === nextBaseUrl &&
       (options.clientDirectory()?.trim() ?? "") === incomingDirectory
     ) {
@@ -2683,6 +2694,36 @@ export function createWorkspaceStore(options: {
    * Order: engine restart → quiet connect → loadSessions → engineReady(true)
    * The engineReady guard in SSE sync prevents sidebar overwrite until sessions are loaded.
    */
+  // Re-bind the active workspace's OpenCode client to a new orchestrator
+   // base URL (port rotation after `pnpm dev` restart). Drops the cached
+   // routing entry so `routing.ensure` recreates the client against the
+   // fresh URL; `connectToServer` then re-publishes it on `client()` and
+   // `baseUrl()`. Idempotent / silent: no navigate, no busy spinner.
+  async function refreshActiveClient(nextBaseUrl: string): Promise<boolean> {
+    const url = nextBaseUrl.trim();
+    if (!url) return false;
+    const id = activeWorkspaceId().trim();
+    if (!id) return false;
+    const workspace = workspaces().find((w) => w.id === id);
+    options.routing.release(id);
+    // `forceRefresh: true` bypasses the idempotent guard in connectToServer.
+    // Without it, when the orchestrator rotates to a new port but the
+    // signal-level baseUrl was already set to the new URL by upstream code,
+    // the guard would skip and the routing entry never gets re-created.
+    return await connectToServer(
+      url,
+      workspace?.path || undefined,
+      {
+        workspaceId: id,
+        workspaceType: workspace?.workspaceType,
+        targetRoot: workspace?.path,
+        reason: "port-rotation",
+      },
+      undefined,
+      { quiet: true, navigate: false, forceRefresh: true },
+    );
+  }
+
   async function ensureEngineForWorkspace(): Promise<boolean> {
     const id = activeWorkspaceId();
     const workspace = workspaces().find((w) => w.id === id);
@@ -2789,6 +2830,7 @@ export function createWorkspaceStore(options: {
     refreshEngineDoctor: engineStore.refreshEngineDoctor,
     activateWorkspace,
     ensureEngineForWorkspace,
+    refreshActiveClient,
     workspacesHydrated,
     reconcileVesloServerWorkspaces,
     addLocalWorkspaceOnServer,

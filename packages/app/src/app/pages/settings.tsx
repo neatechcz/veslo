@@ -544,7 +544,7 @@ export default function SettingsView(props: SettingsViewProps) {
   const startupLabel = createMemo(() => "Connect to cloud server");
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "extensions", "archived"];
+    const tabs: SettingsTab[] = ["general", "extensions", "archived", "advanced"];
     return tabs;
   });
 
@@ -1397,12 +1397,12 @@ export default function SettingsView(props: SettingsViewProps) {
               <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                 <div class="min-w-0 flex-1">
                   <div class="text-sm text-gray-12">Max concurrent engines</div>
-                  <div class="text-xs text-gray-7">Upper bound for the per-workspace engine pool (1–16, default 8).</div>
+                  <div class="text-xs text-gray-7">Upper bound for the per-workspace engine pool (1–64, default 16).</div>
                 </div>
                 <input
                   type="number"
                   min={1}
-                  max={16}
+                  max={64}
                   step={1}
                   class="w-20 text-xs h-8 px-2 rounded border border-gray-6 bg-gray-1 text-gray-12 shrink-0"
                   value={props.maxEngines}
@@ -1417,7 +1417,7 @@ export default function SettingsView(props: SettingsViewProps) {
               <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                 <div class="min-w-0 flex-1">
                   <div class="text-sm text-gray-12">Idle suspend (minutes)</div>
-                  <div class="text-xs text-gray-7">Suspend an engine after this many minutes of inactivity (0 = never, default 15).</div>
+                  <div class="text-xs text-gray-7">Suspend an engine after this many minutes of inactivity (0 = never, default 0 — engines stay warm until app exit).</div>
                 </div>
                 <input
                   type="number"
