@@ -36,6 +36,14 @@ test("queue model appends and returns the first drain-eligible item", () => {
   assert.equal(firstQueuedDraft(next)?.draft.text, "one");
 });
 
+test("queue model appends deterministically with caller-provided id and timestamp", () => {
+  const first = appendQueuedDraft([], draft("one"), 100, "draft-1");
+  const second = appendQueuedDraft([], draft("one"), 100, "draft-1");
+
+  assert.deepEqual(first, second);
+  assert.equal(first[0]!.id, "draft-1");
+});
+
 test("queue model updates drafts immutably", () => {
   const queue = appendQueuedDraft([], draft("one"), 100);
   const updated = updateQueuedDraft(queue, queue[0]!.id, draft("changed"), 200);

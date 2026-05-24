@@ -19,11 +19,12 @@ export function appendQueuedDraft(
   queue: QueuedDraft[],
   draft: ComposerDraft,
   now = Date.now(),
+  id = createQueueId(),
 ): QueuedDraft[] {
   return [
     ...queue,
     {
-      id: createQueueId(),
+      id,
       draft,
       createdAt: now,
       updatedAt: now,
