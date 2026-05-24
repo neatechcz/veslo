@@ -1,6 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 
-import type { HubSkillCard, SkillCard } from "../types";
+import type { HubSkillCard, SkillCard, SkillInstance, SkillInventoryItem } from "../types";
+import type { WorkspaceInfo } from "../lib/tauri";
 
 import Button from "../components/button";
 import { Copy, Edit2, FolderOpen, Link2, Loader2, Package, Plus, RefreshCw, Search, Share2, Sparkles, Trash2, Upload } from "lucide-solid";
@@ -32,11 +33,15 @@ export type SkillsViewProps = {
   canUseDesktopTools: boolean;
   accessHint?: string | null;
   refreshSkills: (options?: { force?: boolean }) => void;
+  refreshSkillInventory: (options?: { force?: boolean }) => void;
   refreshHubSkills: (options?: { force?: boolean }) => void;
   skills: SkillCard[];
   skillsStatus: string | null;
+  skillInventory: SkillInventoryItem[];
+  skillInventoryStatus: string | null;
   hubSkills: HubSkillCard[];
   hubSkillsStatus: string | null;
+  workspaces: WorkspaceInfo[];
   importLocalSkill: () => void;
   installSkillCreator: () => Promise<InstallResult>;
   installHubSkill: (name: string) => Promise<InstallResult>;
@@ -59,9 +64,12 @@ export default function SkillsView(props: SkillsViewProps) {
     return value;
   };
 
-  const skillCreatorInstalled = createMemo(() =>
-    props.skills.some((skill) => skill.name === "skill-creator")
+  const installedInventoryItems = createMemo(() =>
+    props.skillInventory.filter((item) => item.status !== "hub-only")
   );
+  const installedSkillCount = createMemo(() => installedInventoryItems().length);
+  const installedInventoryNames = createMemo(() => new Set(installedInventoryItems().map((item) => item.name)));
+  const skillCreatorInstalled = createMemo(() => installedInventoryNames().has("skill-creator"));
 
   const [uninstallTarget, setUninstallTarget] = createSignal<SkillCard | null>(null);
   const uninstallOpen = createMemo(() => uninstallTarget() != null);
@@ -90,6 +98,7 @@ export default function SkillsView(props: SkillsViewProps) {
   const [installingHubSkill, setInstallingHubSkill] = createSignal<string | null>(null);
 
   onMount(() => {
+    props.refreshSkillInventory({ force: true });
     props.refreshHubSkills();
   });
 
@@ -122,19 +131,75 @@ export default function SkillsView(props: SkillsViewProps) {
     return `${trimmed}-${Date.now()}`;
   };
 
-  const filteredSkills = createMemo(() => {
+  const normalizeSkillPath = (value: string | undefined) =>
+    String(value ?? "").trim().replace(/\\/g, "/");
+
+  const workspaceLabelForInstance = (instance: SkillInstance) => {
+    const workspaceId = instance.workspaceId?.trim();
+    const workspace = workspaceId ? props.workspaces.find((item) => item.id === workspaceId) : null;
+    return (
+      instance.workspaceLabel?.trim() ||
+      workspace?.displayName?.trim() ||
+      workspace?.vesloWorkspaceName?.trim() ||
+      workspace?.name?.trim() ||
+      workspace?.path?.trim() ||
+      workspaceId ||
+      translate("skills.worker_fallback")
+    );
+  };
+
+  const actionSkillForInstance = (instance: SkillInstance) => {
+    if (instance.scope !== "workspace") return null;
+    const instancePath = normalizeSkillPath(instance.path);
+    return props.skills.find((skill) =>
+      skill.name === instance.name && normalizeSkillPath(skill.path) === instancePath
+    ) ?? null;
+  };
+
+  const filteredInstalledInventoryItems = createMemo(() => {
     const query = searchQuery().trim().toLowerCase();
-    if (!query) return props.skills;
-    return props.skills.filter((skill) => {
-      const description = skill.description ?? "";
-      return (
-        skill.name.toLowerCase().includes(query) ||
-        description.toLowerCase().includes(query)
-      );
+    const items = installedInventoryItems();
+    if (!query) return items;
+    return items.filter((item) => {
+      const haystack = [
+        item.name,
+        item.description,
+        item.trigger,
+        item.globalInstance?.description,
+        item.globalInstance?.trigger,
+        item.globalInstance?.path,
+        ...item.workspaceInstances.flatMap((instance) => [
+          instance.description,
+          instance.trigger,
+          instance.path,
+          workspaceLabelForInstance(instance),
+        ]),
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
     });
   });
 
-  const installedNames = createMemo(() => new Set(props.skills.map((skill) => skill.name)));
+  const allWorkspaceInventoryItems = createMemo(() =>
+    filteredInstalledInventoryItems().filter((item) => Boolean(item.globalInstance))
+  );
+
+  const workspaceInventoryRows = createMemo(() =>
+    filteredInstalledInventoryItems()
+      .flatMap((item) =>
+        item.workspaceInstances.map((instance) => ({
+          item,
+          instance,
+          sectionLabel: item.status === "mixed"
+            ? translate("skills.workspace_overrides")
+            : translate("skills.workspace_specific"),
+        }))
+      )
+  );
+
+  const installedNames = createMemo(() => installedInventoryNames());
 
   const availableHubSkills = createMemo(() =>
     props.hubSkills.filter((skill) => !installedNames().has(skill.name))
@@ -165,6 +230,7 @@ export default function SkillsView(props: SkillsViewProps) {
     setToast(translate("skills.installing_skill_creator"));
     try {
       const result = await props.installSkillCreator();
+      props.refreshSkillInventory({ force: true });
       setToast(result.message);
     } catch (e) {
       setToast(e instanceof Error ? e.message : translate("skills.install_failed"));
@@ -179,6 +245,7 @@ export default function SkillsView(props: SkillsViewProps) {
     setToast(translate("skills.installing_named", { name: skill.name }));
     try {
       const result = await props.installHubSkill(skill.name);
+      props.refreshSkillInventory({ force: true });
       setToast(result.message);
     } catch (e) {
       setToast(e instanceof Error ? e.message : translate("skills.install_failed"));
@@ -388,6 +455,7 @@ export default function SkillsView(props: SkillsViewProps) {
         }),
       );
       props.refreshSkills({ force: true });
+      props.refreshSkillInventory({ force: true });
       setToast(translate("skills.installed_named", { name: finalName }));
       closeInstallFromLink();
     } catch (e) {
@@ -449,6 +517,7 @@ export default function SkillsView(props: SkillsViewProps) {
           description: skill.description,
         }),
       );
+      props.refreshSkillInventory({ force: true });
       setSelectedDirty(false);
     } catch (e) {
       setSelectedError(e instanceof Error ? e.message : translate("skills.failed_save_skill"));
@@ -465,6 +534,129 @@ export default function SkillsView(props: SkillsViewProps) {
     const inProjectSkillPath = normalizedPath.includes("/.opencode/skills/");
     if (!inProjectSkillPath) return false;
     return VESLO_DEFAULT_SKILL_NAMES.has(normalizedName) || normalizedName.endsWith("-creator");
+  };
+
+  const renderInventoryCard = (input: {
+    item: SkillInventoryItem;
+    instance: SkillInstance;
+    scopeLabel: string;
+    workspaceLabel?: string;
+  }) => {
+    const actionSkill = createMemo(() => actionSkillForInstance(input.instance));
+    const displayDescription = () => input.instance.description ?? input.item.description ?? "";
+    const canUseActions = () => Boolean(actionSkill());
+    const openActionSkill = () => {
+      const skill = actionSkill();
+      if (!skill) return;
+      void openSkill(skill);
+    };
+
+    return (
+      <div
+        role={canUseActions() ? "button" : undefined}
+        tabindex={canUseActions() ? "0" : undefined}
+        class={`bg-dls-surface border border-dls-border rounded-xl p-4 flex items-start justify-between group transition-all text-left ${
+          canUseActions()
+            ? "hover:border-dls-border hover:bg-dls-hover cursor-pointer"
+            : "opacity-90"
+        }`}
+        onClick={openActionSkill}
+        onKeyDown={(e) => {
+          if (!canUseActions()) return;
+          if (e.key === "Enter" || e.key === " ") {
+            if (e.isComposing || e.keyCode === 229) return;
+            e.preventDefault();
+            openActionSkill();
+          }
+        }}
+      >
+        <div class="flex gap-4 min-w-0">
+          <div class="w-10 h-10 rounded-lg flex items-center justify-center shadow-sm border border-dls-border bg-dls-surface">
+            <Package size={20} class="text-dls-secondary" />
+          </div>
+          <div class="min-w-0">
+            <div class="flex items-center gap-2 mb-0.5">
+              <h4 class="font-product type-ui-md font-semibold text-dls-text truncate">{input.item.name}</h4>
+              <Show when={isVesloInjectedSkill({ name: input.instance.name, path: input.instance.path })}>
+                <span class="font-product type-ui-xs rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 font-semibold uppercase tracking-wide text-dls-secondary">
+                  Veslo
+                </span>
+              </Show>
+              <span class="font-product type-ui-xs rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 font-semibold text-dls-secondary">
+                {input.scopeLabel}
+              </span>
+            </div>
+            <Show when={displayDescription()}>
+              <p class="font-reading type-ui-sm text-dls-secondary line-clamp-1">
+                {displayDescription()}
+              </p>
+            </Show>
+            <Show when={input.workspaceLabel}>
+              <div class="font-product type-ui-xs mt-1 text-dls-secondary truncate">{input.workspaceLabel}</div>
+            </Show>
+            <div class="font-mono type-ui-xs mt-1 text-dls-secondary truncate">{input.instance.path}</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-1">
+          <button
+            type="button"
+            class={`p-1.5 rounded-md transition-colors ${
+              props.busy || !canUseActions()
+                ? "text-dls-secondary opacity-40"
+                : "text-dls-secondary hover:text-dls-text hover:bg-dls-active"
+            }`}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const skill = actionSkill();
+              if (!skill || props.busy) return;
+              openShareLink(skill);
+            }}
+            disabled={props.busy || !canUseActions()}
+            title={translate("skills.share_action")}
+          >
+            <Share2 size={14} />
+          </button>
+          <button
+            type="button"
+            class={`p-1.5 rounded-md transition-colors ${
+              props.busy || !canUseActions()
+                ? "text-dls-secondary opacity-40"
+                : "text-dls-secondary hover:text-dls-text hover:bg-dls-active"
+            }`}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (props.busy) return;
+              openActionSkill();
+            }}
+            disabled={props.busy || !canUseActions()}
+            title={translate("common.edit")}
+          >
+            <Edit2 size={14} />
+          </button>
+          <button
+            type="button"
+            class={`p-1.5 rounded-md transition-colors ${
+              props.busy || !props.canUseDesktopTools || !canUseActions()
+                ? "text-dls-secondary opacity-40"
+                : "text-dls-secondary hover:text-red-11 hover:bg-red-3/10"
+            }`}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const skill = actionSkill();
+              if (props.busy || !props.canUseDesktopTools || !skill) return;
+              setUninstallTarget(skill);
+            }}
+            disabled={props.busy || !props.canUseDesktopTools || !canUseActions()}
+            title={translate("skills.uninstall")}
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -500,7 +692,7 @@ export default function SkillsView(props: SkillsViewProps) {
         <div class="mt-4 grid grid-cols-2 gap-3">
           <div class="rounded-lg border border-dls-border bg-dls-hover px-3 py-2.5">
             <div class="font-product type-ui-xs text-dls-secondary">{translate("skills.stat_installed")}</div>
-            <div class="font-product type-ui-md mt-1 font-semibold text-dls-text">{props.skills.length}</div>
+            <div class="font-product type-ui-md mt-1 font-semibold text-dls-text">{installedSkillCount()}</div>
           </div>
           <div class="rounded-lg border border-dls-border bg-dls-hover px-3 py-2.5">
             <div class="font-product type-ui-xs text-dls-secondary">{translate("skills.stat_hub_available")}</div>
@@ -512,7 +704,10 @@ export default function SkillsView(props: SkillsViewProps) {
       <div class="flex flex-wrap items-center gap-3 border-b border-dls-border pb-4">
         <button
           type="button"
-          onClick={() => props.refreshSkills({ force: true })}
+          onClick={() => {
+            props.refreshSkillInventory({ force: true });
+            props.refreshSkills({ force: true });
+          }}
           disabled={props.busy}
           class={`font-product type-ui-xs flex items-center gap-1.5 font-medium transition-colors ${
             props.busy
@@ -558,6 +753,12 @@ export default function SkillsView(props: SkillsViewProps) {
         <div class="font-product type-ui-xs text-dls-secondary">{translate("skills.host_mode_only")}</div>
       </Show>
 
+      <Show when={props.skillInventoryStatus}>
+        <div class="rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary whitespace-pre-wrap break-words">
+          {props.skillInventoryStatus}
+        </div>
+      </Show>
+
       <Show when={props.skillsStatus}>
         <div class="rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary whitespace-pre-wrap break-words">
           {props.skillsStatus}
@@ -569,99 +770,51 @@ export default function SkillsView(props: SkillsViewProps) {
           {translate("skills.installed")}
         </h3>
         <Show
-          when={filteredSkills().length}
+          when={filteredInstalledInventoryItems().length}
           fallback={
             <div class="font-reading type-ui-md rounded-xl border border-dls-border bg-dls-surface px-5 py-6 text-dls-secondary">
               {translate("skills.no_skills")}
             </div>
           }
         >
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <For each={filteredSkills()}>
-              {(skill) => (
-                <div
-                  role="button"
-                  tabindex="0"
-                  class="bg-dls-surface border border-dls-border rounded-xl p-4 flex items-start justify-between group hover:border-dls-border hover:bg-dls-hover transition-all text-left cursor-pointer"
-                  onClick={() => void openSkill(skill)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      if (e.isComposing || e.keyCode === 229) return;
-                      e.preventDefault();
-                      void openSkill(skill);
-                    }
-                  }}
-                >
-                  <div class="flex gap-4 min-w-0">
-                    <div class="w-10 h-10 rounded-lg flex items-center justify-center shadow-sm border border-dls-border bg-dls-surface">
-                      <Package size={20} class="text-dls-secondary" />
-                    </div>
-                    <div class="min-w-0">
-                      <div class="flex items-center gap-2 mb-0.5">
-                        <h4 class="font-product type-ui-md font-semibold text-dls-text truncate">{skill.name}</h4>
-                        <Show when={isVesloInjectedSkill(skill)}>
-                          <span class="font-product type-ui-xs rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 font-semibold uppercase tracking-wide text-dls-secondary">
-                            Veslo
-                          </span>
-                        </Show>
-                      </div>
-                      <Show when={skill.description}>
-                        <p class="font-reading type-ui-sm text-dls-secondary line-clamp-1">
-                          {skill.description}
-                        </p>
-                      </Show>
-                      <div class="font-mono type-ui-xs mt-1 text-dls-secondary truncate">{skill.path}</div>
-                    </div>
-                  </div>
-                  <div class="flex items-center gap-1">
-                    <button
-                      type="button"
-                      class="p-1.5 text-dls-secondary hover:text-dls-text hover:bg-dls-active rounded-md transition-colors"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        openShareLink(skill);
-                      }}
-                      disabled={props.busy}
-                      title={translate("skills.share_action")}
-                    >
-                      <Share2 size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      class="p-1.5 text-dls-secondary hover:text-dls-text hover:bg-dls-active rounded-md transition-colors"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        void openSkill(skill);
-                      }}
-                      disabled={props.busy}
-                      title={translate("common.edit")}
-                    >
-                      <Edit2 size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      class={`p-1.5 rounded-md transition-colors ${
-                        props.busy || !props.canUseDesktopTools
-                          ? "text-dls-secondary opacity-40"
-                          : "text-dls-secondary hover:text-red-11 hover:bg-red-3/10"
-                      }`}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        if (props.busy || !props.canUseDesktopTools) return;
-                        setUninstallTarget(skill);
-                      }}
-                      disabled={props.busy || !props.canUseDesktopTools}
-                      title={translate("skills.uninstall")}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
+          <div class="space-y-6">
+            <Show when={allWorkspaceInventoryItems().length}>
+              <div class="space-y-3">
+                <h4 class="font-product type-ui-xs font-bold text-dls-secondary uppercase tracking-widest">
+                  {translate("skills.all_workspaces")}
+                </h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <For each={allWorkspaceInventoryItems()}>
+                    {(item) => {
+                      const instance = item.globalInstance!;
+                      return renderInventoryCard({
+                        item,
+                        instance,
+                        scopeLabel: translate("skills.all_workspaces"),
+                      });
+                    }}
+                  </For>
                 </div>
-              )}
-            </For>
+              </div>
+            </Show>
+
+            <Show when={workspaceInventoryRows().length}>
+              <div class="space-y-3">
+                <h4 class="font-product type-ui-xs font-bold text-dls-secondary uppercase tracking-widest">
+                  {translate("skills.workspace_specific")}
+                </h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <For each={workspaceInventoryRows()}>
+                    {(row) => renderInventoryCard({
+                      item: row.item,
+                      instance: row.instance,
+                      scopeLabel: row.sectionLabel,
+                      workspaceLabel: workspaceLabelForInstance(row.instance),
+                    })}
+                  </For>
+                </div>
+              </div>
+            </Show>
           </div>
         </Show>
       </div>
@@ -915,7 +1068,9 @@ export default function SkillsView(props: SkillsViewProps) {
                     const target = uninstallTarget();
                     setUninstallTarget(null);
                     if (!target) return;
-                    props.uninstallSkill(target.name);
+                    void Promise.resolve(props.uninstallSkill(target.name)).finally(() => {
+                      props.refreshSkillInventory({ force: true });
+                    });
                   }}
                   disabled={props.busy}
                 >

@@ -3,6 +3,11 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./skills.tsx", import.meta.url), "utf8");
+const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const enSource = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
+const csSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
+const zhSource = readFileSync(new URL("../../i18n/locales/zh.ts", import.meta.url), "utf8");
 
 test("skills page removes worker profile and mode stat cards", () => {
   assert.equal(source.includes('translate("skills.worker_profile")'), false);
@@ -20,6 +25,45 @@ test("skills page removes legacy new skill toolbar action", () => {
 
 test("skills page install section uses org catalog placeholder text", () => {
   assert.match(source, /translate\("skills\.org_catalog_placeholder"\)/);
+});
+
+test("skills page receives app-wide skill inventory props", () => {
+  assert.match(source, /skillInventory:\s*SkillInventoryItem\[\]/);
+  assert.match(source, /refreshSkillInventory:\s*\(options\?: \{ force\?: boolean \}\) => void/);
+  assert.match(dashboardSource, /skillInventory:\s*SkillInventoryItem\[\]/);
+  assert.match(dashboardSource, /refreshSkillInventory:\s*\(options\?: \{ force\?: boolean \}\) => void/);
+  assert.match(appSource, /\bskillInventory,\s*[\s\S]*\bskillInventoryStatus,\s*[\s\S]*\brefreshSkillInventory,/);
+  assert.match(dashboardSource, /skillInventory=\{props\.skillInventory\}/);
+  assert.match(dashboardSource, /refreshSkillInventory=\{props\.refreshSkillInventory\}/);
+});
+
+test("skills page uses inventory as primary installed source", () => {
+  assert.match(source, /const installedInventoryItems = createMemo\(\(\) =>\s*props\.skillInventory/);
+  assert.match(source, /const installedSkillCount = createMemo\(\(\) => installedInventoryItems\(\)\.length\)/);
+  assert.match(source, /translate\("skills\.stat_installed"\)[\s\S]*\{installedSkillCount\(\)\}/);
+  assert.doesNotMatch(source, /translate\("skills\.stat_installed"\)[\s\S]{0,500}\{props\.skills\.length\}/);
+});
+
+test("skills page separates global and workspace-specific inventory sections", () => {
+  assert.match(source, /translate\("skills\.all_workspaces"\)/);
+  assert.match(source, /translate\("skills\.workspace_specific"\)/);
+  assert.match(source, /translate\("skills\.workspace_overrides"\)/);
+  assert.match(enSource, /"skills\.all_workspaces":\s*"All workspaces"/);
+  assert.match(enSource, /"skills\.workspace_specific":\s*"Workspace-specific"/);
+  assert.match(enSource, /"skills\.workspace_overrides":\s*"Workspace overrides"/);
+  assert.match(csSource, /"skills\.all_workspaces":/);
+  assert.match(csSource, /"skills\.workspace_specific":/);
+  assert.match(csSource, /"skills\.workspace_overrides":/);
+  assert.match(zhSource, /"skills\.all_workspaces":/);
+  assert.match(zhSource, /"skills\.workspace_specific":/);
+  assert.match(zhSource, /"skills\.workspace_overrides":/);
+});
+
+test("workspace-specific rows come from workspaceInstances without expanding globals across workspaces", () => {
+  assert.match(source, /const workspaceInventoryRows = createMemo\(\(\) =>\s*filteredInstalledInventoryItems\(\)\s*\.flatMap/);
+  assert.match(source, /item\.workspaceInstances\.map/);
+  assert.match(source, /item\.status === "mixed"\s*\?\s*translate\("skills\.workspace_overrides"\)/);
+  assert.doesNotMatch(source, /props\.workspaces\.map\([\s\S]{0,500}globalInstance/);
 });
 
 test("skills page does not duplicate org catalog placeholder when hub status is shown", () => {
@@ -41,4 +85,9 @@ test("skills toast messages stay visible for at least four seconds", () => {
     "skills toasts should use the four-second dismiss delay",
   );
   assert.equal(source.includes("setToast(null), 2400"), false);
+});
+
+test("settings overview remains present in dashboard", () => {
+  assert.match(dashboardSource, /<SettingsView/);
+  assert.match(dashboardSource, /<Match when=\{props\.tab === "settings"\}>/);
 });

@@ -29,17 +29,19 @@ Providers are not the same thing as MCP integrations.
 
 ## Skills
 
-Skills are the main reusable workflow abstraction for the workspace.
+Skills are the main reusable workflow abstraction across workers and workspaces.
 
 Current skills surface includes:
 
-- installed skills
+- installed skills from the app-wide inventory
 - hub skills
 - local skill import
 - reading and saving skill content
 - single-skill sharing
 
 Skills are filesystem-backed and usually live under `.opencode/skills/`.
+
+The Skills page separates globally available skills from workspace-specific skills. A global skill is shown once in the all-workspaces section, not repeated under each workspace. When a skill has a global copy and workspace-local copies, the workspace-local copies are shown as workspace overrides.
 
 ## Plugins
 

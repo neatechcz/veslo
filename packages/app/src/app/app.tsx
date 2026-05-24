@@ -2927,6 +2927,8 @@ export default function App() {
   const {
     skills,
     skillsStatus,
+    skillInventory,
+    skillInventoryStatus,
     hubSkills,
     hubSkillsStatus,
     hubMcpCards,
@@ -2945,6 +2947,7 @@ export default function App() {
     sidebarPluginStatus,
     isPluginInstalledByName,
     refreshSkills,
+    refreshSkillInventory,
     refreshHubSkills,
     refreshHubMcp,
     refreshPlugins,
@@ -8770,11 +8773,15 @@ export default function App() {
       activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
       isRemoteWorkspace: workspaceStore.activeWorkspaceDisplay().workspaceType === "remote",
       refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(e => reportError(e, "skills.refresh")),
+      refreshSkillInventory: (options?: { force?: boolean }) =>
+        refreshSkillInventory(options).catch(e => reportError(e, "skills.refreshInventory")),
       refreshHubSkills: (options?: { force?: boolean }) => refreshHubSkills(options).catch(e => reportError(e, "skills.refreshHub")),
       refreshPlugins: (scopeOverride?: PluginScope) =>
         refreshPlugins(scopeOverride).catch(e => reportError(e, "plugins.refresh")),
       skills: skills(),
       skillsStatus: skillsStatus(),
+      skillInventory: skillInventory(),
+      skillInventoryStatus: skillInventoryStatus(),
       hubSkills: hubSkills(),
       hubSkillsStatus: hubSkillsStatus(),
       skillsAccessHint,

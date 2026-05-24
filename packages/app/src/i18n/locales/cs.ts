@@ -237,7 +237,7 @@ export default {
 
   // ==================== Skills ====================
   "skills.title": "Skills",
-  "skills.subtitle": "Spravujte Skills pro tento pracovní prostor.",
+  "skills.subtitle": "Spravujte Skills napříč všemi pracovními prostory.",
   "skills.refresh": "Obnovit",
   "skills.add_title": "Přidat Skills",
   "skills.add_description": "Nainstalujte úvodní příkaz, importujte skill nebo otevřete složku.",
@@ -256,6 +256,9 @@ export default {
   "skills.install_package": "Instalovat",
   "skills.registry_notice": "Publikování do registru OpenPackage (`opkg push`) dnes vyžaduje přihlášení. Hledání v registru a synchronizace kurátorovaných seznamů jsou plánované.",
   "skills.installed": "Nainstalované Skills",
+  "skills.all_workspaces": "Všechny pracovní prostory",
+  "skills.workspace_specific": "Konkrétní pracovní prostory",
+  "skills.workspace_overrides": "Přepisy v pracovních prostorech",
   "skills.no_skills": "V `.opencode/skills`, `.claude/skills` ani `~/.agents/skills` nebyly nalezeny žádné Skills.",
   "skills.desktop_required": "Správa Skills vyžaduje desktopovou aplikaci.",
   "skills.host_only_error": "Správa Skills vyžaduje lokální pracovní prostor nebo připojený server Veslo.",
@@ -294,7 +297,7 @@ export default {
   "skills.notion_crm_card_description": "Obohaťte data Notion CRM pomocí hotových Skills.",
   "skills.connect_host_to_load": "Připojte server Veslo pro načtení Skills.",
   "skills.no_skills_found": "Zatím nebyly nalezeny žádné Skills.",
-  "skills.installed_description": "Skills dostupné v tomto pracovním prostoru.",
+  "skills.installed_description": "Skills dostupné napříč všemi pracovními prostory.",
   "skills.failed_to_load": "Nepodařilo se načíst Skills",
   "skills.plugin_management_host_only": "Správa Plugins vyžaduje desktopovou aplikaci.",
   "skills.plugins_host_only": "Plugins jsou dostupné pouze v desktopové aplikaci.",
@@ -1415,7 +1418,7 @@ export default {
 
   // ==================== Skills (doplňkové) ====================
   "skills.worker_profile": "Profil pracovního prostoru",
-  "skills.worker_description": "Skills jsou hlavní schopnosti tohoto pracovního prostoru. Přidejte z Hubu nebo vytvořte nové přímo v chatu.",
+  "skills.worker_description": "Skills jsou hlavní schopnosti dostupné napříč pracovními prostory. Přidejte z Hubu nebo vytvořte nové přímo v chatu.",
   "skills.create_in_chat": "Vytvořit skill v chatu",
   "skills.stat_installed": "Nainstalováno",
   "skills.stat_hub_available": "Dostupné v Hubu",

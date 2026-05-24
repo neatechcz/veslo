@@ -245,7 +245,7 @@ export default {
 
   // ==================== Skills ====================
   "skills.title": "Skills",
-  "skills.subtitle": "管理此工作区的 skills。",
+  "skills.subtitle": "管理所有工作区和 workers 的 skills。",
   "skills.refresh": "刷新",
   "skills.add_title": "添加 skills",
   "skills.add_description": "安装起始命令、导入 skill，或打开文件夹。",
@@ -264,6 +264,9 @@ export default {
   "skills.install_package": "安装",
   "skills.registry_notice": "发布到 OpenPackage 注册表（`opkg push`）目前需要身份验证。计划添加注册表搜索和精选列表同步。",
   "skills.installed": "已安装的 skills",
+  "skills.all_workspaces": "所有工作区",
+  "skills.workspace_specific": "工作区专属",
+  "skills.workspace_overrides": "工作区覆盖",
   "skills.no_skills": "在 `.opencode/skills`、`.claude/skills` 或 `~/.agents/skills` 中未检测到 skills。",
   "skills.org_catalog_placeholder": "面向你所在组织的 skills 将会在这里提供。",
   "skills.desktop_required": "技能管理需要桌面应用。",
@@ -289,7 +292,7 @@ export default {
   "skills.notion_crm_card_description": "使用现成的技能丰富 Notion CRM 数据。",
   "skills.connect_host_to_load": "连接 Veslo 服务器以加载技能。",
   "skills.no_skills_found": "还没有找到 skills。",
-  "skills.installed_description": "此工作区可用的 skills。",
+  "skills.installed_description": "所有工作区和 workers 可用的 skills。",
   "skills.failed_to_load": "加载 skills 失败",
   "skills.plugin_management_host_only": "插件管理需要桌面应用。",
   "skills.plugins_host_only": "插件仅在桌面应用中可用。",

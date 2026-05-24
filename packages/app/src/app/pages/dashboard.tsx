@@ -12,6 +12,7 @@ import type {
   HubMcpCard,
   HubSkillCard,
   SkillCard,
+  SkillInventoryItem,
   StartupPreference,
   LoadedSessionPrefetchInterestChangeHandler,
   WorkspaceConnectionState,
@@ -197,11 +198,14 @@ export type DashboardViewProps = {
   activeWorkspaceRoot: string;
   isRemoteWorkspace: boolean;
   refreshSkills: (options?: { force?: boolean }) => void;
+  refreshSkillInventory: (options?: { force?: boolean }) => void;
   refreshHubSkills: (options?: { force?: boolean }) => void;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
   refreshMcpServers: () => void;
   skills: SkillCard[];
   skillsStatus: string | null;
+  skillInventory: SkillInventoryItem[];
+  skillInventoryStatus: string | null;
   hubSkills: HubSkillCard[];
   hubSkillsStatus: string | null;
   hubMcpCards: HubMcpCard[];
@@ -601,7 +605,11 @@ export default function DashboardView(props: DashboardViewProps) {
     const doRefresh = async () => {
       try {
         if (currentTab === "skills" && !cancelled) {
-          await props.refreshSkills();
+          await Promise.all([
+            props.refreshSkillInventory(),
+            props.refreshHubSkills(),
+            props.refreshSkills(),
+          ]);
         }
         if ((currentTab === "plugins" || currentTab === "mcp") && !cancelled) {
           await Promise.all([props.refreshPlugins(), props.refreshMcpServers()]);
@@ -1539,11 +1547,15 @@ export default function DashboardView(props: DashboardViewProps) {
                 canUseDesktopTools={props.canUseDesktopTools}
                 accessHint={props.skillsAccessHint}
                 refreshSkills={props.refreshSkills}
+                refreshSkillInventory={props.refreshSkillInventory}
                 refreshHubSkills={props.refreshHubSkills}
                 skills={props.skills}
                 skillsStatus={props.skillsStatus}
+                skillInventory={props.skillInventory}
+                skillInventoryStatus={props.skillInventoryStatus}
                 hubSkills={props.hubSkills}
                 hubSkillsStatus={props.hubSkillsStatus}
+                workspaces={props.workspaces}
                 importLocalSkill={props.importLocalSkill}
                 installSkillCreator={props.installSkillCreator}
                 installHubSkill={props.installHubSkill}

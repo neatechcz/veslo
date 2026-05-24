@@ -237,7 +237,7 @@ export default {
 
   // ==================== Skills ====================
   "skills.title": "Skills",
-  "skills.subtitle": "Manage skills for this worker.",
+  "skills.subtitle": "Manage skills across all workers and workspaces.",
   "skills.refresh": "Refresh",
   "skills.add_title": "Add skills",
   "skills.add_description": "Install a starter command, import a skill, or open the folder.",
@@ -256,6 +256,9 @@ export default {
   "skills.install_package": "Install",
   "skills.registry_notice": "Publishing to the OpenPackage registry (`opkg push`) requires authentication today. A registry search + curated list sync is planned.",
   "skills.installed": "Installed skills",
+  "skills.all_workspaces": "All workspaces",
+  "skills.workspace_specific": "Workspace-specific",
+  "skills.workspace_overrides": "Workspace overrides",
   "skills.no_skills": "No skills detected in `.opencode/skills`, `.claude/skills`, or `~/.agents/skills`.",
   "skills.desktop_required": "Skill management requires the desktop app.",
   "skills.host_only_error": "Skill management requires a local worker or connected Veslo server.",
@@ -294,7 +297,7 @@ export default {
   "skills.notion_crm_card_description": "Enrich Notion CRM data with ready-made skills.",
   "skills.connect_host_to_load": "Connect an Veslo server to load skills.",
   "skills.no_skills_found": "No skills found yet.",
-  "skills.installed_description": "Skills available in this worker.",
+  "skills.installed_description": "Skills available across all workers and workspaces.",
   "skills.failed_to_load": "Failed to load skills",
   "skills.plugin_management_host_only": "Plugin management requires the desktop app.",
   "skills.plugins_host_only": "Plugins are only available in the desktop app.",
@@ -1419,7 +1422,7 @@ export default {
 
   // ==================== Skills (additional) ====================
   "skills.worker_profile": "Worker profile",
-  "skills.worker_description": "Skills are the core abilities of this worker. Add from Hub or create new ones directly in chat.",
+  "skills.worker_description": "Skills are the core abilities available across your workers. Add from Hub or create new ones directly in chat.",
   "skills.create_in_chat": "Create skill in chat",
   "skills.stat_installed": "Installed",
   "skills.stat_hub_available": "Hub available",
