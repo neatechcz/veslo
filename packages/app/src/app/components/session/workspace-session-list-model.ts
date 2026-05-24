@@ -36,7 +36,53 @@ export type ProjectSessionGroup = {
   isWorkspaceOnlyProject: boolean;
 };
 
+export type SidebarProjectGroupSplit = {
+  projectGroups: ProjectSessionGroup[];
+  chatGroup: ProjectSessionGroup | null;
+};
+
 export const PRIVATE_PROJECT_GROUP_KEY = "project:veslo-private";
+
+export const isPrivateChatProjectGroup = (group: ProjectSessionGroup) =>
+  group.key === PRIVATE_PROJECT_GROUP_KEY || group.isPrivateProject;
+
+const mergePrivateChatProjectGroup = (
+  existing: ProjectSessionGroup | null,
+  group: ProjectSessionGroup,
+): ProjectSessionGroup => {
+  if (!existing) return group;
+
+  return {
+    ...existing,
+    sessions: [...existing.sessions, ...group.sessions],
+    activityAt: Math.max(existing.activityAt, group.activityAt),
+    status: existing.status === "error" ? existing.status : group.status,
+    error: existing.error ?? group.error,
+  };
+};
+
+export const splitProjectGroupsForSidebar = (
+  groups: ProjectSessionGroup[],
+): SidebarProjectGroupSplit => {
+  const projectGroups: ProjectSessionGroup[] = [];
+  let chatGroup: ProjectSessionGroup | null = null;
+
+  for (const group of groups) {
+    if (isPrivateChatProjectGroup(group)) {
+      chatGroup = mergePrivateChatProjectGroup(chatGroup, group);
+      continue;
+    }
+    projectGroups.push(group);
+  }
+
+  return { projectGroups, chatGroup };
+};
+
+export const sessionChatLabel = (
+  session: Pick<WorkspaceSessionGroup["sessions"][number], "id" | "title" | "slug">,
+  fallback: string,
+) => session.title?.trim() || session.slug?.trim() || fallback;
+
 export type CollapsedProjectMap = Record<string, boolean>;
 export const NEW_SESSION_LABEL_VISIBLE_WIDTH = 220;
 export const NEW_SESSION_LABEL_EXPAND_WIDTH = 300;

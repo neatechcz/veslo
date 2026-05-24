@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  PRIVATE_PROJECT_GROUP_KEY,
   buildProjectGroups,
   buildRecentRows,
   buildRowHierarchyLookup,
@@ -11,7 +12,9 @@ import {
   formatSessionTimestampTooltip,
   isProjectCollapsed,
   resolveSessionRowClickAction,
+  sessionChatLabel,
   splitSessionDisplayLabel,
+  splitProjectGroupsForSidebar,
   requiredVisibleCountForExpandedSession,
   rowVisibleByExpansion,
   shouldShowNewSessionLabelText,
@@ -294,6 +297,65 @@ test("buildProjectGroups orders private and named project groups by latest activ
     groups.map((group) => group.key),
     ["project:veslo-private", "/Users/test/projects/alpha", "/srv/beta"],
   );
+});
+
+test("splitProjectGroupsForSidebar separates private chat group from project groups", () => {
+  const privateRoot = "/Users/test/.veslo/private-workspaces";
+  const isPrivateWorkspacePath = (folder: string | null | undefined) =>
+    typeof folder === "string" && folder.startsWith(privateRoot);
+
+  const groups = buildProjectGroups(
+    [
+      {
+        workspace: {
+          id: "chat-a",
+          name: "Private workspace",
+          path: `${privateRoot}/chat-a`,
+          preset: "starter",
+          workspaceType: "local" as const,
+        },
+        sessions: [
+          {
+            id: "chat-session",
+            title: "Plan weekend",
+            directory: `${privateRoot}/chat-a`,
+            time: { created: 100, updated: 200 },
+          },
+        ],
+        status: "ready",
+      },
+      {
+        workspace: {
+          id: "project-a",
+          name: "Project A",
+          path: "/Users/test/projects/project-a",
+          preset: "starter",
+          workspaceType: "local" as const,
+        },
+        sessions: [
+          {
+            id: "project-session",
+            title: "Implement feature",
+            directory: "/Users/test/projects/project-a",
+            time: { created: 90, updated: 190 },
+          },
+        ],
+        status: "ready",
+      },
+    ],
+    isPrivateWorkspacePath,
+  );
+
+  const split = splitProjectGroupsForSidebar(groups);
+
+  assert.equal(split.chatGroup?.key, PRIVATE_PROJECT_GROUP_KEY);
+  assert.deepEqual(split.projectGroups.map((group) => group.key), ["/Users/test/projects/project-a"]);
+});
+
+test("sessionChatLabel prefers title, then slug, then Chat fallback", () => {
+  assert.equal(sessionChatLabel({ id: "one", title: "  Research trip  " }, "Chat"), "Research trip");
+  assert.equal(sessionChatLabel({ id: "two", title: "", slug: "draft-chat" }, "Chat"), "draft-chat");
+  assert.equal(sessionChatLabel({ id: "three", title: "", slug: "" }, "Chat"), "Chat");
 });
 
 test("rowVisibleByExpansion keeps a three-level branch closed until each parent is explicitly expanded", () => {
