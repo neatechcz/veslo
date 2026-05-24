@@ -64,6 +64,36 @@ test("Chaty owns quick-chat creation and resize/collapse interactions", () => {
 
   assert.match(
     source,
+    /CHAT_SIDEBAR_COLLAPSE_THRESHOLD_PX/,
+    "Chaty should use the collapse threshold as the drag baseline when expanding from a collapsed state",
+  );
+
+  assert.match(
+    source,
+    /wasCollapsed: boolean/,
+    "Chaty resize state should remember whether the drag started from the collapsed row",
+  );
+
+  assert.match(
+    source,
+    /restoreHeight: number/,
+    "Chaty resize state should keep the previous useful height for collapsed drag restore",
+  );
+
+  assert.match(
+    source,
+    /startHeight: wasCollapsed \? CHAT_SIDEBAR_COLLAPSE_THRESHOLD_PX : restoreHeight/,
+    "collapsed Chaty drags should start from the collapsed threshold instead of jumping to the restored height",
+  );
+
+  assert.match(
+    source,
+    /data-sidebar-chat-collapsed-resize-handle="true"[\s\S]*onPointerDown=\{handleChatSidebarResizeStart\}/,
+    "the collapsed Chaty row should also be wired as a drag handle",
+  );
+
+  assert.match(
+    source,
     /resolveChatSidebarResize\(/,
     "Chaty resize should use the shared clamp/collapse helper",
   );

@@ -52,6 +52,7 @@ import {
   RECENT_ESTIMATED_ROW_HEIGHT,
   RECENT_LOAD_MORE_THRESHOLD_PX,
   VIEW_LOAD_MORE_STEP,
+  CHAT_SIDEBAR_COLLAPSE_THRESHOLD_PX,
   computeInitialRecentVisibleCount,
   resolveChatSidebarResize,
   restoreChatSidebarHeight,
@@ -156,7 +157,11 @@ type ChatSidebarResizeState = {
   pointerId: number;
   startY: number;
   startHeight: number;
+  restoreHeight: number;
+  wasCollapsed: boolean;
 };
+
+const CHAT_SIDEBAR_COLLAPSED_DRAG_ACTIVATION_PX = 4;
 
 const workspaceLabel = (workspace: WorkspaceInfo) =>
   workspace.displayName?.trim() ||
@@ -1032,9 +1037,15 @@ export default function WorkspaceSessionList(props: Props) {
     applyResolvedChatSidebarResize(height, false, true);
   };
 
+  const hasActivatedChatSidebarDrag = (drag: ChatSidebarResizeState, clientY: number) =>
+    !drag.wasCollapsed || drag.startY - clientY >= CHAT_SIDEBAR_COLLAPSED_DRAG_ACTIVATION_PX;
+
+  const isCollapsedChatSidebarClick = (drag: ChatSidebarResizeState, clientY: number) =>
+    drag.wasCollapsed && Math.abs(clientY - drag.startY) < CHAT_SIDEBAR_COLLAPSED_DRAG_ACTIVATION_PX;
+
   const resolveChatSidebarDragHeight = (drag: ChatSidebarResizeState, clientY: number) => {
     const nextHeight = drag.startHeight - (clientY - drag.startY);
-    return resolveChatSidebarResize(nextHeight, drag.startHeight, chatSidebarAvailableHeight());
+    return resolveChatSidebarResize(nextHeight, drag.restoreHeight, chatSidebarAvailableHeight());
   };
 
   const handleChatSidebarResizeStart = (event: PointerEvent) => {
@@ -1043,18 +1054,28 @@ export default function WorkspaceSessionList(props: Props) {
     if (event.currentTarget instanceof HTMLElement) {
       event.currentTarget.setPointerCapture?.(event.pointerId);
     }
-    const startHeight = chatSidebarListHeight();
-    setChatSidebarCollapsed(false);
+    const wasCollapsed = chatSidebarCollapsed();
+    const restoreHeight = chatSidebarListHeight();
+    if (!wasCollapsed) setChatSidebarCollapsed(false);
     setChatSidebarResizeDrag({
       pointerId: event.pointerId,
       startY: event.clientY,
-      startHeight,
+      startHeight: wasCollapsed ? CHAT_SIDEBAR_COLLAPSE_THRESHOLD_PX : restoreHeight,
+      restoreHeight,
+      wasCollapsed,
     });
   };
 
-  const finishChatSidebarResize = (event: PointerEvent) => {
+  const finishChatSidebarResize = (event: PointerEvent, cancelled = false) => {
     const drag = chatSidebarResizeDrag();
     if (!drag || event.pointerId !== drag.pointerId) return;
+    if (!hasActivatedChatSidebarDrag(drag, event.clientY)) {
+      setChatSidebarResizeDrag(null);
+      if (!cancelled && isCollapsedChatSidebarClick(drag, event.clientY)) {
+        expandChatSidebar();
+      }
+      return;
+    }
     const resolved = resolveChatSidebarDragHeight(drag, event.clientY);
     applyResolvedChatSidebarResize(resolved.height, resolved.collapsed, true);
     setChatSidebarResizeDrag(null);
@@ -1069,11 +1090,12 @@ export default function WorkspaceSessionList(props: Props) {
     const onPointerMove = (event: PointerEvent) => {
       if (event.pointerId !== drag.pointerId) return;
       event.preventDefault();
+      if (!hasActivatedChatSidebarDrag(drag, event.clientY)) return;
       const resolved = resolveChatSidebarDragHeight(drag, event.clientY);
       applyResolvedChatSidebarResize(resolved.height, resolved.collapsed);
     };
     const onPointerUp = (event: PointerEvent) => finishChatSidebarResize(event);
-    const onPointerCancel = (event: PointerEvent) => finishChatSidebarResize(event);
+    const onPointerCancel = (event: PointerEvent) => finishChatSidebarResize(event, true);
 
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
@@ -2016,7 +2038,10 @@ export default function WorkspaceSessionList(props: Props) {
               <button
                 type="button"
                 data-sidebar-chat-collapsed="true"
-                class="mt-2 flex h-9 w-full shrink-0 items-center justify-between border-t border-gray-6/70 px-1.5 pt-2 text-[12px] font-semibold text-gray-10 transition-colors hover:text-gray-12"
+                data-sidebar-chat-collapsed-resize-handle="true"
+                class="mt-2 flex h-9 w-full shrink-0 cursor-ns-resize items-center justify-between border-t border-gray-6/70 px-1.5 pt-2 text-[12px] font-semibold text-gray-10 transition-colors hover:text-gray-12"
+                style={{ cursor: "ns-resize" }}
+                onPointerDown={handleChatSidebarResizeStart}
                 onClick={expandChatSidebar}
                 aria-label={tr("sidebar.chats")}
                 title={tr("sidebar.chats")}
