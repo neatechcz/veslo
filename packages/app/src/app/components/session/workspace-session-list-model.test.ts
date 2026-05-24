@@ -136,8 +136,8 @@ test("buildRecentRows keeps private chat sessions mixed with project sessions by
         },
         sessions: [
           {
-            id: "chat",
-            title: "Chat",
+            id: "chat-middle",
+            title: "Chat Middle",
             directory: `${privateRoot}/chat-a`,
             time: { created: 10, updated: 30 },
           },
@@ -154,10 +154,16 @@ test("buildRecentRows keeps private chat sessions mixed with project sessions by
         },
         sessions: [
           {
-            id: "project",
-            title: "Project",
+            id: "project-newest",
+            title: "Project Newest",
             directory: "/Users/test/project-a",
-            time: { created: 20, updated: 20 },
+            time: { created: 20, updated: 50 },
+          },
+          {
+            id: "project-oldest",
+            title: "Project Oldest",
+            directory: "/Users/test/project-a",
+            time: { created: 5, updated: 20 },
           },
         ],
         status: "ready",
@@ -166,7 +172,10 @@ test("buildRecentRows keeps private chat sessions mixed with project sessions by
     isPrivateWorkspacePath,
   );
 
-  assert.deepEqual(rows.map((row) => row.session.id), ["chat", "project"]);
+  assert.deepEqual(
+    rows.map((row) => row.session.id),
+    ["project-newest", "chat-middle", "project-oldest"],
+  );
 });
 
 test("buildProjectGroups keeps subagents nested under their parent in by-project mode", () => {
