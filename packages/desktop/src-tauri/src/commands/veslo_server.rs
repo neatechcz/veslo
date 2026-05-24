@@ -4,8 +4,8 @@ use crate::engine::manager::EngineManager;
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::veslo_server::manager::VesloServerManager;
 use crate::veslo_server::{
-    clear_persisted_veslo_server_info, recover_persisted_veslo_server_info, server_health_ok,
-    start_veslo_server,
+    clear_persisted_veslo_server_info, recover_persisted_veslo_server_info,
+    server_health_identity, start_veslo_server, HealthIdentity,
 };
 use crate::types::{VesloServerInfo, WorkspaceState, WorkspaceType};
 use crate::utils::truncate_output;
@@ -30,22 +30,44 @@ fn active_local_workspace_path(state: &WorkspaceState) -> Option<String> {
 
 fn sanitize_live_info_with_health(
     mut info: VesloServerInfo,
-    health_check: impl Fn(&str) -> bool,
+    health_check: impl Fn(&str) -> Option<HealthIdentity>,
 ) -> (VesloServerInfo, bool) {
     if !info.running {
         return (info, false);
     }
 
     let base_url = info.base_url.clone().unwrap_or_default();
-    if !base_url.trim().is_empty() && health_check(&base_url) {
-        return (info, false);
-    }
-
     let label = if base_url.trim().is_empty() {
         "the recorded host".to_string()
     } else {
-        base_url
+        base_url.clone()
     };
+
+    // Identity guard — if the in-memory snapshot disagrees with what the server on
+    // this port actually reports (token rotated, foreign process bound the port),
+    // treat the snapshot as stale and force a respawn.
+    let identity_ok = if base_url.trim().is_empty() {
+        false
+    } else {
+        match health_check(&base_url) {
+            None => false,
+            Some(identity) => {
+                let token_mismatch = matches!(
+                    (info.client_token.as_deref(), identity.token.as_deref()),
+                    (Some(a), Some(b)) if a != b
+                );
+                let pid_mismatch = matches!(
+                    (info.pid, identity.pid),
+                    (Some(a), Some(b)) if a != b
+                );
+                !(token_mismatch || pid_mismatch)
+            }
+        }
+    };
+
+    if identity_ok {
+        return (info, false);
+    }
 
     info.running = false;
     info.base_url = None;
@@ -71,7 +93,7 @@ pub fn veslo_server_info(app: AppHandle, manager: State<VesloServerManager>) -> 
             .lock()
             .expect("veslo server mutex poisoned");
         let info = VesloServerManager::snapshot_locked(&mut state);
-        let (sanitized, stale) = sanitize_live_info_with_health(info, server_health_ok);
+        let (sanitized, stale) = sanitize_live_info_with_health(info, server_health_identity);
         if sanitized.running {
             return sanitized;
         }
@@ -164,7 +186,7 @@ pub fn veslo_server_restart(
 
 #[cfg(test)]
 mod tests {
-    use super::{active_local_workspace_path, sanitize_live_info_with_health};
+    use super::{active_local_workspace_path, sanitize_live_info_with_health, HealthIdentity};
     use crate::types::{
         RemoteType, VesloServerInfo, WorkspaceInfo, WorkspaceState, WorkspaceType,
         WORKSPACE_STATE_VERSION,
@@ -225,7 +247,12 @@ mod tests {
     #[test]
     fn sanitize_live_info_with_health_keeps_a_live_server_snapshot() {
         let info = sample_live_info();
-        let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| true);
+        let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| {
+            Some(HealthIdentity {
+                token: info.client_token.clone(),
+                pid: info.pid,
+            })
+        });
         assert!(!stale);
         assert!(sanitized.running);
         assert_eq!(sanitized.base_url, info.base_url);
@@ -235,7 +262,7 @@ mod tests {
     #[test]
     fn sanitize_live_info_with_health_drops_stale_connection_details_when_health_fails() {
         let info = sample_live_info();
-        let (sanitized, stale) = sanitize_live_info_with_health(info, |_| false);
+        let (sanitized, stale) = sanitize_live_info_with_health(info, |_| None);
         assert!(stale);
         assert!(!sanitized.running);
         assert_eq!(sanitized.base_url, None);
@@ -250,5 +277,42 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("no longer responding"));
+    }
+
+    #[test]
+    fn sanitize_live_info_marks_stale_when_token_does_not_match() {
+        let info = sample_live_info();
+        let (sanitized, stale) = sanitize_live_info_with_health(info, |_| {
+            Some(HealthIdentity {
+                token: Some("foreign-token".to_string()),
+                pid: Some(12345),
+            })
+        });
+        assert!(stale);
+        assert!(!sanitized.running);
+        assert_eq!(sanitized.client_token, None);
+    }
+
+    #[test]
+    fn sanitize_live_info_marks_stale_when_pid_does_not_match() {
+        let info = sample_live_info();
+        let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| {
+            Some(HealthIdentity {
+                token: info.client_token.clone(),
+                pid: Some(99999),
+            })
+        });
+        assert!(stale);
+        assert!(!sanitized.running);
+    }
+
+    #[test]
+    fn sanitize_live_info_tolerates_legacy_server_without_identity_fields() {
+        let info = sample_live_info();
+        let (sanitized, stale) =
+            sanitize_live_info_with_health(info.clone(), |_| Some(HealthIdentity::default()));
+        assert!(!stale);
+        assert!(sanitized.running);
+        assert_eq!(sanitized.client_token, info.client_token);
     }
 }
