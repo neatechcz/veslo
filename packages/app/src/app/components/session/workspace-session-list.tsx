@@ -37,7 +37,6 @@ import {
   requiredVisibleCountForExpandedSession,
   rowVisibleByExpansion,
   shouldShowNewSessionLabelText,
-  shouldUseExpandedNewSessionLabel,
   splitSessionDisplayLabel,
   toggleProjectCollapsed,
   type FlatSessionRow,
@@ -1018,7 +1017,7 @@ export default function WorkspaceSessionList(props: Props) {
 
   const newSessionLabel = createMemo(() => {
     if (!showNewSessionLabelText()) return "";
-    return shouldUseExpandedNewSessionLabel(sidebarControlsWidth()) ? tr("sidebar.new_session") : tr("sidebar.new");
+    return tr("sidebar.chat");
   });
 
   useOutsideClick(() => Boolean(workspaceMenuTarget()), () => workspaceMenuRef, () => setWorkspaceMenuTarget(null));
@@ -1235,7 +1234,7 @@ export default function WorkspaceSessionList(props: Props) {
           <button
             type="button"
             class={naturalTopRailButtonClass}
-            data-tooltip={tr("sidebar.new_session")}
+            data-tooltip={tr("sidebar.new_chat")}
             onClick={() => {
               setMoreActionsMenuOpen(false);
               if (props.onQuickNewSession) {
@@ -1245,7 +1244,7 @@ export default function WorkspaceSessionList(props: Props) {
               setAddWorkspaceMenuOpen((prev) => !prev);
             }}
           >
-            <span class="sr-only">{tr("sidebar.new_session")}</span>
+            <span class="sr-only">{tr("sidebar.new_chat")}</span>
             <Plus size={12} />
             <Show when={showNewSessionLabelText()}>
               <span class="whitespace-nowrap">{newSessionLabel()}</span>

@@ -15,6 +15,10 @@ for (const [label, source] of [
     assert.match(source, /"sidebar\.add_directory_or_project":/);
     assert.match(source, /"sidebar\.more_actions":/);
     assert.match(source, /"sidebar\.archived_items":/);
+    assert.match(source, /"sidebar\.chat":/);
+    assert.match(source, /"sidebar\.chats":/);
+    assert.match(source, /"sidebar\.new_chat":/);
+    assert.match(source, /"session\.chat_label":/);
     assert.doesNotMatch(source, /"sidebar\.show_archived":/);
   });
 }

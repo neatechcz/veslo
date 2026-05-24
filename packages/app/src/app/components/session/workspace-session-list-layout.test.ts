@@ -33,8 +33,14 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
 
   assert.match(
     source,
-    /data-tooltip=\{tr\("sidebar\.new_session"\)\}[\s\S]*data-tooltip=\{tr\("sidebar\.add_directory_or_project"\)\}[\s\S]*data-tooltip=\{tr\("sidebar\.more_actions"\)\}/,
+    /data-tooltip=\{tr\("sidebar\.new_chat"\)\}[\s\S]*data-tooltip=\{tr\("sidebar\.add_directory_or_project"\)\}[\s\S]*data-tooltip=\{tr\("sidebar\.more_actions"\)\}/,
     "control row should keep new, add-directory-or-project, and overflow actions in order",
+  );
+
+  assert.match(
+    source,
+    /const newSessionLabel = createMemo\([\s\S]*tr\("sidebar\.chat"\)/,
+    "new-session label helper should use chat copy when visible",
   );
 
   assert.match(
@@ -45,7 +51,7 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
 
   assert.match(
     source,
-    /<div class="relative shrink-0" ref=\{\(el\) => \(addWorkspaceMenuRef = el\)\}>[\s\S]*data-tooltip=\{tr\("sidebar\.new_session"\)\}/,
+    /<div class="relative shrink-0" ref=\{\(el\) => \(addWorkspaceMenuRef = el\)\}>[\s\S]*data-tooltip=\{tr\("sidebar\.new_chat"\)\}/,
     "new-session wrapper should shrink to content width instead of stretching across the rail",
   );
 

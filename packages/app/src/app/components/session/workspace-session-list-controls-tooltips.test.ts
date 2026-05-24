@@ -13,7 +13,7 @@ test("workspace session controls expose matching data-tooltip without native too
 
   assert.match(
     source,
-    /data-tooltip=\{tr\("sidebar\.new_session"\)\}/,
+    /data-tooltip=\{tr\("sidebar\.new_chat"\)\}/,
     "new control should expose data-tooltip",
   );
 

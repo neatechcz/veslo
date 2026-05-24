@@ -472,8 +472,8 @@ export default function SessionView(props: SessionViewProps) {
       activeWorkspaceRoot: rootPath,
       localWorkspaceLabel: tr("session.local_workspace_label"),
       remoteWorkspaceLabel: tr("session.remote_workspace_label"),
-      newSessionLabel: tr("session.new_session_label"),
-      chatFallbackLabel: tr("session.new_session_label"),
+      newSessionLabel: tr("session.chat_label"),
+      chatFallbackLabel: tr("session.chat_label"),
       isPrivateWorkspacePath: props.isPrivateWorkspacePath(rootPath),
     });
   });
