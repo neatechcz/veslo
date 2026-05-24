@@ -47,17 +47,81 @@ const fileUrlPath = (part: Part): string | null => {
   return `//${decodedPath}`;
 };
 
+type FileReference = Extract<ComposerPart, { type: "file" }>;
+
+const textPart = (text: string): ComposerPart[] => (text ? [{ type: "text", text }] : []);
+
+const fileReferenceFromPart = (part: Part): FileReference | null => {
+  const path = partString(part, "path") || fileUrlPath(part);
+  if (!path) return null;
+  const label = partString(part, "label") || partString(part, "filename") || undefined;
+  return { type: "file", path, label };
+};
+
+const replaceFileToken = (parts: ComposerPart[], file: FileReference): { parts: ComposerPart[]; replaced: boolean } => {
+  const token = `@${file.path}`;
+
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index]!;
+    if (part.type !== "text") continue;
+
+    const tokenIndex = part.text.indexOf(token);
+    if (tokenIndex === -1) continue;
+
+    return {
+      parts: [
+        ...parts.slice(0, index),
+        ...textPart(part.text.slice(0, tokenIndex)),
+        file,
+        ...textPart(part.text.slice(tokenIndex + token.length)),
+        ...parts.slice(index + 1),
+      ],
+      replaced: true,
+    };
+  }
+
+  return { parts, replaced: false };
+};
+
+const insertFileReferences = (parts: ComposerPart[], files: FileReference[]): ComposerPart[] => {
+  let nextParts = parts;
+
+  for (const file of files) {
+    const result = replaceFileToken(nextParts, file);
+    nextParts = result.replaced ? result.parts : [...nextParts, file];
+  }
+
+  return nextParts;
+};
+
+const partsToText = (parts: ComposerPart[]): string =>
+  parts
+    .map((part) => {
+      if (part.type === "text") return part.text;
+      if (part.type === "agent") return `@${part.name}`;
+      if (part.type === "file") return `@${part.label ?? part.path}`;
+      return part.label;
+    })
+    .join("");
+
+const partsToResolvedText = (parts: ComposerPart[]): string =>
+  parts
+    .map((part) => {
+      if (part.type === "text") return part.text;
+      if (part.type === "agent") return `@${part.name}`;
+      if (part.type === "file") return `@${part.path}`;
+      return part.text;
+    })
+    .join("");
+
 const reconstructComposerDraft = (message: MessageWithParts): ComposerDraft | null => {
   const parts: ComposerPart[] = [];
-  const visibleText: string[] = [];
-  const resolvedText: string[] = [];
+  const files: FileReference[] = [];
 
   for (const part of message.parts.filter(isUserVisiblePart)) {
     if (part.type === "text") {
       const text = partString(part, "text");
       parts.push({ type: "text", text });
-      visibleText.push(text);
-      resolvedText.push(text);
       continue;
     }
 
@@ -65,32 +129,27 @@ const reconstructComposerDraft = (message: MessageWithParts): ComposerDraft | nu
       const name = partString(part, "name");
       if (!name) return null;
       parts.push({ type: "agent", name });
-      visibleText.push(`@${name}`);
-      resolvedText.push(`@${name}`);
       continue;
     }
 
     if (part.type === "file") {
-      const path = partString(part, "path") || fileUrlPath(part);
-      if (!path) return null;
-      const label = partString(part, "label") || partString(part, "filename") || undefined;
-      parts.push({ type: "file", path, label });
-      visibleText.push(`@${label ?? path}`);
-      resolvedText.push(`@${path}`);
+      const file = fileReferenceFromPart(part);
+      if (!file) return null;
+      files.push(file);
       continue;
     }
 
     return null;
   }
 
-  const text = visibleText.join("");
+  const reconstructedParts = insertFileReferences(parts, files);
 
   return {
     mode: "prompt",
-    parts,
+    parts: reconstructedParts,
     attachments: [],
-    text,
-    resolvedText: resolvedText.join(""),
+    text: partsToText(reconstructedParts),
+    resolvedText: partsToResolvedText(reconstructedParts),
   };
 };
 

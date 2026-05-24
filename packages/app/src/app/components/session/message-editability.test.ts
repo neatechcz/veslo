@@ -209,7 +209,7 @@ test("reconstructs file URL references from sent composer file parts", () => {
   const result = getEditableUserMessageDraft({
     messages: [
       message("m1", "user", [
-        textPart("m1", "read "),
+        textPart("m1", "read @/Users/me/project/docs/hello world.md"),
         fileUrlPart("m1", "file:///Users/me/project/docs/hello%20world.md", "hello world.md"),
       ]),
     ],
@@ -223,6 +223,28 @@ test("reconstructs file URL references from sent composer file parts", () => {
   assert.deepEqual(result?.draft.parts, [
     { type: "text", text: "read " },
     { type: "file", path: "/Users/me/project/docs/hello world.md", label: "hello world.md" },
+  ]);
+});
+
+test("replaces matching resolved file path tokens instead of duplicating sent file parts", () => {
+  const result = getEditableUserMessageDraft({
+    messages: [
+      message("m1", "user", [
+        textPart("m1", "compare @/Users/me/project/docs/hello world.md and continue"),
+        fileUrlPart("m1", "file:///Users/me/project/docs/hello%20world.md", "hello world.md"),
+      ]),
+    ],
+    sessionIdle: true,
+    queueEmpty: true,
+    composerEmpty: true,
+  });
+
+  assert.equal(result?.draft.text, "compare @hello world.md and continue");
+  assert.equal(result?.draft.resolvedText, "compare @/Users/me/project/docs/hello world.md and continue");
+  assert.deepEqual(result?.draft.parts, [
+    { type: "text", text: "compare " },
+    { type: "file", path: "/Users/me/project/docs/hello world.md", label: "hello world.md" },
+    { type: "text", text: " and continue" },
   ]);
 });
 
