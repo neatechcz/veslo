@@ -1395,7 +1395,8 @@ export default function WorkspaceSessionList(props: Props) {
                 <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
               </Show>
               <span
-                class={`text-[13px] text-gray-12 truncate ${isUnread() ? "font-bold" : ""}`}
+                class="text-[13px] text-gray-12 truncate"
+                classList={{ "font-bold": isUnread() }}
                 title={label().tooltip}
               >
                 <Show when={label().decoratedName} fallback={label().description ?? ""}>
@@ -1667,7 +1668,8 @@ export default function WorkspaceSessionList(props: Props) {
                                   <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
                                 </Show>
                                 <span
-                                  class={`text-[13px] text-gray-12 truncate ${isUnread() ? "font-bold" : ""}`}
+                                  class="text-[13px] text-gray-12 truncate"
+                                  classList={{ "font-bold": isUnread() }}
                                   title={sessionLabelTitle(row)}
                                 >
                                   <Show when={label().decoratedName} fallback={label().description ?? ""}>
