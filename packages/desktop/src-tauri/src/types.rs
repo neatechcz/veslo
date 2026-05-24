@@ -345,14 +345,6 @@ pub struct WorkspaceInfo {
     pub veslo_workspace_id: Option<String>,
     #[serde(default, alias = "openworkWorkspaceName")]
     pub veslo_workspace_name: Option<String>,
-
-    // Sandbox lifecycle metadata (desktop-managed)
-    #[serde(default)]
-    pub sandbox_backend: Option<String>,
-    #[serde(default)]
-    pub sandbox_run_id: Option<String>,
-    #[serde(default)]
-    pub sandbox_container_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]

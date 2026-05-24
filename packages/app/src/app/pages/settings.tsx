@@ -31,19 +31,6 @@ import {
   pickFile,
 } from "../lib/tauri";
 
-// F4Ú8c — local stub pro legacy debug probe (Rust IPC odstraněn ve F4Ú8b).
-type SandboxDebugProbeResult = {
-  startedAt?: number;
-  finishedAt?: number;
-  runId?: string;
-  workspacePath?: string;
-  ready: boolean;
-  error?: string | null;
-  doctor?: { ready: boolean; error?: string | null } | null;
-  dockerInspect?: { stdout: string; stderr: string; status: number } | null;
-  dockerLogs?: { stdout: string; stderr: string; status: number } | null;
-  cleanup?: { containerName?: string | null; containerRemoved: boolean; errors: string[] };
-};
 import {
   getDefaultDenApiBase,
   getDenApiBase,
@@ -147,7 +134,6 @@ export type SettingsViewProps = {
   pendingPermissions: unknown;
   events: unknown;
   workspaceDebugEvents: unknown;
-  sandboxCreateProgress: unknown;
   clearWorkspaceDebugEvents: () => void;
   safeStringify: (value: unknown) => string;
   repairOpencodeMigration: () => void;
@@ -716,27 +702,6 @@ export default function SettingsView(props: SettingsViewProps) {
   const [configActionStatus, setConfigActionStatus] = createSignal<string | null>(null);
   const [revealConfigBusy, setRevealConfigBusy] = createSignal(false);
   const [resetConfigBusy, setResetConfigBusy] = createSignal(false);
-  const [sandboxProbeBusy, setSandboxProbeBusy] = createSignal(false);
-  const [sandboxProbeStatus, setSandboxProbeStatus] = createSignal<string | null>(null);
-  const [sandboxProbeResult, setSandboxProbeResult] = createSignal<SandboxDebugProbeResult | null>(null);
-
-  const sandboxCreateSummary = createMemo(() => {
-    const raw = props.sandboxCreateProgress as
-      | { runId?: string; stage?: string; error?: string | null; logs?: string[] }
-      | null
-      | undefined;
-    if (!raw || typeof raw !== "object") {
-      return { runId: null, stage: null, error: null, logs: [] as string[] };
-    }
-    return {
-      runId: typeof raw.runId === "string" && raw.runId.trim() ? raw.runId : null,
-      stage: typeof raw.stage === "string" && raw.stage.trim() ? raw.stage : null,
-      error: typeof raw.error === "string" && raw.error.trim() ? raw.error : null,
-      logs: Array.isArray(raw.logs)
-        ? raw.logs.filter((line) => typeof line === "string" && line.trim()).slice(-400)
-        : [],
-    };
-  });
 
   const workspaceConfigPath = createMemo(() => {
     const root = props.activeWorkspaceRoot.trim();
@@ -795,8 +760,6 @@ export default function SettingsView(props: SettingsViewProps) {
     pendingPermissions: props.pendingPermissions,
     recentEvents: props.events,
     workspaceDebugEvents: props.workspaceDebugEvents,
-    sandboxCreateProgress: sandboxCreateSummary(),
-    sandboxProbe: sandboxProbeResult(),
   }));
 
   const runtimeDebugReportJson = createMemo(() => `${JSON.stringify(runtimeDebugReport(), null, 2)}\n`);
@@ -870,11 +833,6 @@ export default function SettingsView(props: SettingsViewProps) {
     } finally {
       setResetConfigBusy(false);
     }
-  };
-
-  // F4Ú8c — runSandboxDebugProbe no-op (Docker debug probe Rust IPC odstraněn).
-  const runSandboxDebugProbe = async () => {
-    setSandboxProbeStatus("Sandbox debug probe is no longer available — Docker backend was removed.");
   };
 
   const compactOutlineActionClass =
@@ -1526,47 +1484,6 @@ export default function SettingsView(props: SettingsViewProps) {
                   <Show when={debugReportStatus()}>
                     {(status) => <div class="text-xs text-gray-10">{status()}</div>}
                   </Show>
-                </div>
-
-                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
-                  <div class="flex items-start justify-between gap-3">
-                    <div>
-                      <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.sandbox_probe_1pxhsm", __vesloCurrentLocale())}</div>
-                      <div class="text-xs text-gray-10">
-                        {__vesloT("ui.literal.runs_a_temporary_docker_sandbox_startup_chec_37qie1", __vesloCurrentLocale())}</div>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      class="text-xs h-8 py-0 px-3"
-                      onClick={runSandboxDebugProbe}
-                      disabled={!isTauriRuntime() || sandboxProbeBusy() || props.anyActiveRuns}
-                      title={
-                        !isTauriRuntime()
-                          ? translate("settings.sandbox_probe_requires_desktop")
-                          : props.anyActiveRuns
-                            ? translate("settings.stop_runs_before_probe")
-                            : ""
-                      }
-                    >
-                      {sandboxProbeBusy() ? translate("settings.running_probe") : translate("settings.run_sandbox_probe")}
-                    </Button>
-                  </div>
-                  <Show when={sandboxProbeResult()}>
-                    {(result) => (
-                      <div class="text-xs text-gray-11 space-y-1">
-                        <div>{__vesloT("ui.literal.run_id_s94hx7", __vesloCurrentLocale())}{" "}<span class="font-mono">{result().runId}</span></div>
-                        <div>{__vesloT("ui.literal.result_1r950e", __vesloCurrentLocale())}{" "}{result().ready ? translate("status.ready") : translate("status.error")}</div>
-                        <Show when={result().error}>
-                          {(err) => <div class="text-red-11">{err()}</div>}
-                        </Show>
-                      </div>
-                    )}
-                  </Show>
-                  <Show when={sandboxProbeStatus()}>
-                    {(status) => <div class="text-xs text-gray-10">{status()}</div>}
-                  </Show>
-                  <div class="text-[11px] text-gray-7">
-                    {__vesloT("ui.literal.use_1fn0bd", __vesloCurrentLocale())}{" "}<strong>{__vesloT("ui.literal.export_1sh99l", __vesloCurrentLocale())}</strong> {__vesloT("ui.literal.in_runtime_debug_report_above_to_save_this_p_yj0tmk", __vesloCurrentLocale())}</div>
                 </div>
 
                 <Show when={!CLOUD_ONLY_MODE}>

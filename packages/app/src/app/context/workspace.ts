@@ -77,26 +77,6 @@ export type WorkspaceDebugEvent = {
   payload?: unknown;
 };
 
-export type SandboxCreateProgressStepStatus = "pending" | "active" | "done" | "error";
-
-export type SandboxCreateProgressStep = {
-  key: "docker" | "workspace" | "sandbox" | "health" | "connect";
-  label: string;
-  status: SandboxCreateProgressStepStatus;
-  detail?: string | null;
-};
-
-export type SandboxCreateProgressState = {
-  runId: string;
-  startedAt: number;
-  stage: string;
-  steps: SandboxCreateProgressStep[];
-  logs: string[];
-  error: string | null;
-};
-
-export type SandboxCreatePhase = "idle" | "preflight" | "provisioning" | "finalizing";
-
 function _wsLog(msg: string, data?: unknown) {
   const line = `[${new Date().toISOString()}] ${msg}${data !== undefined ? " " + (typeof data === "string" ? data : JSON.stringify(data)) : ""}`;
   console.log(line);
@@ -232,11 +212,9 @@ export function createWorkspaceStore(options: {
   const remoteStoreRef: {
     resolveVesloHost: (...args: any[]) => Promise<any>;
     createRemoteWorkspaceFlow: (...args: any[]) => Promise<boolean>;
-    clearSandboxCreateProgress: () => void;
   } = {
     resolveVesloHost: () => { throw new Error("remoteStore not initialized"); },
     createRemoteWorkspaceFlow: () => { throw new Error("remoteStore not initialized"); },
-    clearSandboxCreateProgress: () => {},
   };
 
   const DEFAULT_CONNECT_HEALTH_TIMEOUT_MS = 12_000;
@@ -1985,7 +1963,6 @@ export function createWorkspaceStore(options: {
     options.setBusyLabel("status.creating_workspace");
     options.setBusyStartedAt(Date.now());
     options.setError(null);
-    remoteStoreRef.clearSandboxCreateProgress();
 
     try {
       const resolvedFolder = await resolveWorkspacePath(folder);
@@ -2390,9 +2367,6 @@ export function createWorkspaceStore(options: {
     getVesloServerSettings: options.vesloServerSettings,
     updateVesloServerSettings: options.updateVesloServerSettings,
     getClientDirectory: options.clientDirectory,
-    engineStore: {
-      refreshSandboxDoctor: engineStore.refreshSandboxDoctor,
-    },
     connectToServer,
     activateWorkspace,
     testWorkspaceConnection,
@@ -2416,7 +2390,6 @@ export function createWorkspaceStore(options: {
   // Wire up the late-bound remote store reference.
   remoteStoreRef.resolveVesloHost = remoteStore.resolveVesloHost;
   remoteStoreRef.createRemoteWorkspaceFlow = remoteStore.createRemoteWorkspaceFlow;
-  remoteStoreRef.clearSandboxCreateProgress = remoteStore.clearSandboxCreateProgress;
 
   /** Race a promise against a timeout; resolves to undefined on timeout. */
   function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T | undefined> {
@@ -2995,11 +2968,6 @@ export function createWorkspaceStore(options: {
     engineDoctorResult: engineStore.engineDoctorResult,
     engineDoctorCheckedAt: engineStore.engineDoctorCheckedAt,
     engineInstallLogs: engineStore.engineInstallLogs,
-    sandboxDoctorResult: engineStore.sandboxDoctorResult,
-    sandboxDoctorCheckedAt: engineStore.sandboxDoctorCheckedAt,
-    sandboxDoctorBusy: engineStore.sandboxDoctorBusy,
-    sandboxPreflightBusy: remoteStore.sandboxPreflightBusy,
-    sandboxCreatePhase: remoteStore.sandboxCreatePhase,
     projectDir,
     workspaces,
     activeWorkspaceId,
@@ -3038,7 +3006,6 @@ export function createWorkspaceStore(options: {
     connectToServer,
     createWorkspaceFlow,
     createScratchWorkspace,
-    createSandboxFlow: remoteStore.createSandboxFlow,
     createRemoteWorkspaceFlow: remoteStore.createRemoteWorkspaceFlow,
     updateRemoteWorkspaceFlow: remoteStore.updateRemoteWorkspaceFlow,
     updateWorkspaceDisplayName,
@@ -3046,7 +3013,6 @@ export function createWorkspaceStore(options: {
     ensureWorkspaceForFolder,
     forgetWorkspace,
     recoverWorkspace: remoteStore.recoverWorkspace,
-    stopSandbox: remoteStore.stopSandbox,
     pickWorkspaceFolder,
     exportWorkspaceConfig: configStore.exportWorkspaceConfig,
     importWorkspaceConfig: configStore.importWorkspaceConfig,
@@ -3071,9 +3037,6 @@ export function createWorkspaceStore(options: {
     removeAuthorizedDirAtIndex: configStore.removeAuthorizedDirAtIndex,
     persistReloadSettings: configStore.persistReloadSettings,
     setEngineInstallLogs: engineStore.setEngineInstallLogs,
-    refreshSandboxDoctor: engineStore.refreshSandboxDoctor,
-    sandboxCreateProgress: remoteStore.sandboxCreateProgress,
-    clearSandboxCreateProgress: remoteStore.clearSandboxCreateProgress,
     workspaceDebugEvents,
     clearWorkspaceDebugEvents,
     isPrivateWorkspacePath,

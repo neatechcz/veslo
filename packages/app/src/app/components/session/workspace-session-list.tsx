@@ -217,11 +217,7 @@ const workspaceLabel = (workspace: WorkspaceInfo) =>
 
 const workspaceKindLabel = (workspace: WorkspaceInfo) =>
   workspace.workspaceType === "remote"
-    ? workspace.sandboxBackend === "docker" ||
-      Boolean(workspace.sandboxRunId?.trim()) ||
-      Boolean(workspace.sandboxContainerName?.trim())
-      ? t("sidebar.workspace_kind_sandbox", currentLocale())
-      : t("sidebar.workspace_kind_remote", currentLocale())
+    ? t("sidebar.workspace_kind_remote", currentLocale())
     : t("sidebar.workspace_kind_local", currentLocale());
 
 const sidebarControlTooltipClass =
@@ -2116,11 +2112,7 @@ export default function WorkspaceSessionList(props: Props) {
         >
           {(errorDisplay) => (
             <div
-              class={`px-2 py-1.5 text-xs rounded-lg border ${
-                errorDisplay().tone === "offline"
-                  ? "text-amber-11 bg-amber-3 border-amber-7"
-                  : "text-red-11 bg-red-3 border-red-7"
-              }`}
+              class="px-2 py-1.5 text-xs rounded-lg border text-red-11 bg-red-3 border-red-7"
               title={errorDisplay().title}
             >
               {errorDisplay().message}
@@ -2511,11 +2503,7 @@ export default function WorkspaceSessionList(props: Props) {
                             </Show>
                             <Show when={project.status === "error"}>
                               <span
-                                class={`text-[10px] px-1.5 py-0.5 rounded-full border ${
-                                  taskLoadError().tone === "offline"
-                                    ? "border-amber-7 text-amber-11 bg-amber-3"
-                                    : "border-red-7 text-red-11 bg-red-3"
-                                }`}
+                                class="text-[10px] px-1.5 py-0.5 rounded-full border border-red-7 text-red-11 bg-red-3"
                                 title={taskLoadError().title}
                               >
                                 {taskLoadError().label}

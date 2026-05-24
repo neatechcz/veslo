@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { Check, ChevronDown, GripVertical, Loader2, Plus, RefreshCcw, Settings, Square, Trash2 } from "lucide-solid";
+import { Check, ChevronDown, GripVertical, Loader2, Plus, RefreshCcw, Settings, Trash2 } from "lucide-solid";
 import { useOutsideClick } from "./use-outside-click";
 
 import type { TodoItem, WorkspaceConnectionState } from "../../types";
@@ -44,7 +44,6 @@ export type SidebarProps = {
   onEditWorkspace: (workspaceId: string) => void;
   onTestWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
-  onStopSandbox?: (workspaceId: string) => void;
   onReorderWorkspace: (fromId: string, toId: string | null) => void;
   onSelectSession: (workspaceId: string, sessionId: string) => void;
   selectedSessionId: string | null;
@@ -299,11 +298,6 @@ export default function SessionSidebar(props: SidebarProps) {
                   const isConnecting = () => props.connectingWorkspaceId === group.workspace.id;
                   const pathLabel = () => workspacePathLabel(group.workspace);
                   const detailLabel = () => workspaceDetailLabel(group.workspace);
-                  const isSandboxWorkspace = () =>
-                    group.workspace.workspaceType === "remote" &&
-                    (group.workspace.sandboxBackend === "docker" ||
-                      Boolean(group.workspace.sandboxRunId?.trim()) ||
-                      Boolean(group.workspace.sandboxContainerName?.trim()));
                   const sessions = () => group.sessions;
                   const connectionState = () => props.workspaceConnectionStateById[group.workspace.id];
                   const connectionStatus = () => connectionState()?.status ?? "idle";
@@ -365,7 +359,7 @@ export default function SessionSidebar(props: SidebarProps) {
                                 </span>
                                 <Show when={group.workspace.workspaceType === "remote"}>
                                   <span class="font-product type-ui-xs uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-3 text-gray-11">
-                                    {isSandboxWorkspace() ? __vesloT("sidebar.workspace_kind_sandbox", __vesloCurrentLocale()) : __vesloT("sidebar.workspace_kind_remote", __vesloCurrentLocale())}
+                                    {__vesloT("sidebar.workspace_kind_remote", __vesloCurrentLocale())}
                                   </span>
                                 </Show>
                               </div>
@@ -442,16 +436,6 @@ export default function SessionSidebar(props: SidebarProps) {
                               >
                                 <RefreshCcw size={12} class={connectionStatus() === "connecting" ? "animate-spin" : ""} />
                                 {__vesloT("mcp.verify_connection", __vesloCurrentLocale())}</button>
-                            </Show>
-                            <Show when={group.workspace.sandboxContainerName?.trim() && props.onStopSandbox}>
-                              <button
-                                type="button"
-                                class="font-product type-ui-xs inline-flex items-center gap-1.5 rounded-md border border-gray-6 px-2 py-1 text-gray-10 hover:text-gray-12 hover:border-gray-7 hover:bg-gray-2 transition-colors"
-                                onClick={() => props.onStopSandbox?.(group.workspace.id)}
-                                disabled={isActivelyConnecting()}
-                              >
-                                <Square size={12} />
-                                {__vesloT("ui.literal.stop_sandbox_1fq7ye", __vesloCurrentLocale())}</button>
                             </Show>
                             <button
                               type="button"

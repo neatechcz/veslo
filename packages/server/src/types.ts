@@ -4,8 +4,6 @@ export type ApprovalMode = "manual" | "auto";
 
 export type TokenScope = "owner" | "collaborator" | "viewer";
 
-export type SandboxBackend = "none" | "docker" | "container";
-
 export type ProviderPlacement = "in-sandbox" | "host-machine" | "client-machine" | "external";
 
 export type LogFormat = "pretty" | "json";
@@ -95,7 +93,6 @@ export interface Capabilities {
   config: { read: boolean; write: boolean };
 
   approvals: { mode: ApprovalMode; timeoutMs: number };
-  sandbox: { enabled: boolean; backend: SandboxBackend };
   ui: { toy: boolean };
   tokens: { scoped: boolean; scopes: TokenScope[] };
   proxy: {

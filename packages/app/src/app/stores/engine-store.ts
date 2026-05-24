@@ -25,25 +25,6 @@ import {
 } from "../lib/tauri";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
-// F4Ú8c — local stub for legacy sandbox doctor result (Docker odstraněn).
-// Pole zachována kvůli compat se settings/app UI bindings, vždy null/false.
-type SandboxDoctorResult = {
-  installed: boolean;
-  daemonRunning: boolean;
-  permissionOk: boolean;
-  ready: boolean;
-  clientVersion?: string | null;
-  serverVersion?: string | null;
-  error?: string | null;
-  debug?: {
-    candidates: string[];
-    selectedBin?: string | null;
-    versionCommand?: { status: number; stdout: string; stderr: string } | null;
-    infoCommand?: { status: number; stdout: string; stderr: string } | null;
-  } | null;
-};
-export type { SandboxDoctorResult };
-
 export interface EngineStoreDeps {
   // Workspace path / info accessors
   activeWorkspacePath: () => string;
@@ -118,9 +99,6 @@ export function createEngineStore(deps: EngineStoreDeps) {
   const [engineDoctorResult, setEngineDoctorResult] = createSignal<EngineDoctorResult | null>(null);
   const [engineDoctorCheckedAt, setEngineDoctorCheckedAt] = createSignal<number | null>(null);
   const [engineInstallLogs, setEngineInstallLogs] = createSignal<string | null>(null);
-  const [sandboxDoctorResult, setSandboxDoctorResult] = createSignal<SandboxDoctorResult | null>(null);
-  const [sandboxDoctorCheckedAt, setSandboxDoctorCheckedAt] = createSignal<number | null>(null);
-  const [sandboxDoctorBusy, setSandboxDoctorBusy] = createSignal(false);
 
   const localRuntimeLifecycle = createLocalRuntimeLifecycle({
     engineSource: deps.engineSource,
@@ -201,15 +179,6 @@ export function createEngineStore(deps: EngineStoreDeps) {
       setEngineDoctorCheckedAt(Date.now());
       setEngineInstallLogs(e instanceof Error ? e.message : safeStringify(e));
     }
-  }
-
-  // F4Ú8c — refreshSandboxDoctor no-op (Docker doctor Rust IPC odstraněn).
-  // Konzumenti dostávají null result + busy=false. Ponecháno aby UI bindings
-  // (Create sandbox modal retry, settings) nevyhazovaly.
-  async function refreshSandboxDoctor(): Promise<SandboxDoctorResult | null> {
-    setSandboxDoctorResult(null);
-    setSandboxDoctorCheckedAt(Date.now());
-    return null;
   }
 
   async function startHost(optionsOverride?: { workspacePath?: string; navigate?: boolean }) {
@@ -447,13 +416,9 @@ export function createEngineStore(deps: EngineStoreDeps) {
     engineDoctorCheckedAt,
     engineInstallLogs,
     setEngineInstallLogs,
-    sandboxDoctorResult,
-    sandboxDoctorCheckedAt,
-    sandboxDoctorBusy,
     // Methods
     refreshEngine,
     refreshEngineDoctor,
-    refreshSandboxDoctor,
     startHost,
     stopHost,
     reloadWorkspaceEngine,

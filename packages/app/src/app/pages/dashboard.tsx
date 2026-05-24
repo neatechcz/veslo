@@ -195,10 +195,10 @@ export type DashboardViewProps = {
   openRenameWorkspace: (workspaceId: string) => void;
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
-  stopSandbox: (workspaceId: string) => void;
   automationItems: WorkspaceAutomationItem[];
   automationWorkspaces: AutomationWorkspaceSummary[];
   defaultAutomationWorkspaceId: string | null;
+  scheduledJobs: ScheduledJob[];
   scheduledJobsSource: "local" | "remote";
   scheduledJobsSourceReady: boolean;
   scheduledJobsStatus: string | null;
@@ -367,7 +367,6 @@ export type DashboardViewProps = {
   pendingPermissions: unknown;
   events: unknown;
   workspaceDebugEvents: unknown;
-  sandboxCreateProgress: unknown;
   clearWorkspaceDebugEvents: () => void;
   safeStringify: (value: unknown) => string;
   repairOpencodeMigration: () => void;
@@ -457,11 +456,7 @@ export default function DashboardView(props: DashboardViewProps) {
     t("workspace.fallback_worker", currentLocale());
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
     workspace.workspaceType === "remote"
-      ? workspace.sandboxBackend === "docker" ||
-        Boolean(workspace.sandboxRunId?.trim()) ||
-        Boolean(workspace.sandboxContainerName?.trim())
-        ? t("sidebar.workspace_kind_sandbox", currentLocale())
-        : t("sidebar.workspace_kind_remote", currentLocale())
+      ? t("sidebar.workspace_kind_remote", currentLocale())
       : t("sidebar.workspace_kind_local", currentLocale());
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
@@ -1773,7 +1768,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   pendingPermissions={props.pendingPermissions}
                   events={props.events}
                   workspaceDebugEvents={props.workspaceDebugEvents}
-                  sandboxCreateProgress={props.sandboxCreateProgress}
                   clearWorkspaceDebugEvents={props.clearWorkspaceDebugEvents}
                   safeStringify={props.safeStringify}
                   repairOpencodeMigration={props.repairOpencodeMigration}

@@ -1,7 +1,4 @@
-import { createSignal } from "solid-js";
-import { listen, type Event as TauriEvent } from "@tauri-apps/api/event";
-
-import type { WorkspacePreset, WorkspaceConnectionState } from "../types";
+import type { WorkspaceConnectionState } from "../types";
 import {
   addOpencodeCacheHint,
   isTauriRuntime,
@@ -9,7 +6,6 @@ import {
   safeStringify,
 } from "../utils";
 import { t, currentLocale } from "../../i18n";
-import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import type { OpencodeAuth } from "../lib/opencode";
 import {
   buildVesloWorkspaceBaseUrl,
@@ -22,37 +18,10 @@ import {
 } from "../lib/veslo-server";
 import { createClient, waitForHealthy } from "../lib/opencode";
 import {
-  orchestratorStartDetached,
-  workspaceCreate,
   workspaceCreateRemote,
-  workspaceForget,
   workspaceUpdateRemote,
   type WorkspaceInfo,
 } from "../lib/tauri";
-
-// F4Ú8c — local stub pro legacy sandbox doctor result type (Docker odstraněn).
-type SandboxDoctorResult = {
-  installed: boolean;
-  daemonRunning: boolean;
-  permissionOk: boolean;
-  ready: boolean;
-  clientVersion?: string | null;
-  serverVersion?: string | null;
-  error?: string | null;
-  debug?: {
-    candidates: string[];
-    selectedBin?: string | null;
-    versionCommand?: { status: number; stdout: string; stderr: string } | null;
-    infoCommand?: { status: number; stdout: string; stderr: string } | null;
-  } | null;
-};
-
-import type {
-  SandboxCreatePhase,
-  SandboxCreateProgressState,
-  SandboxCreateProgressStep,
-} from "../context/workspace";
-import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 export interface RemoteStoreDeps {
   // Workspace state accessors
@@ -84,11 +53,6 @@ export interface RemoteStoreDeps {
   getVesloServerSettings: () => VesloServerSettings;
   updateVesloServerSettings: (next: VesloServerSettings) => void;
   getClientDirectory: () => string;
-
-  // Engine store reference
-  engineStore: {
-    refreshSandboxDoctor: () => Promise<SandboxDoctorResult | null>;
-  };
 
   // Server connection
   connectToServer: (
@@ -135,48 +99,6 @@ export interface RemoteStoreDeps {
 }
 
 export function createRemoteStore(deps: RemoteStoreDeps) {
-  // ---------------------------------------------------------------------------
-  // Sandbox signals (owned by this store)
-  // ---------------------------------------------------------------------------
-  const [sandboxPreflightBusy, setSandboxPreflightBusy] = createSignal(false);
-  const [sandboxCreatePhase, setSandboxCreatePhase] = createSignal<SandboxCreatePhase>("idle");
-  const [sandboxCreateProgress, setSandboxCreateProgress] = createSignal<SandboxCreateProgressState | null>(null);
-  const clearSandboxCreateProgress = () => setSandboxCreateProgress(null);
-
-  const pushSandboxCreateLog = (line: string) => {
-    const value = String(line ?? "").trim();
-    if (!value) return;
-    setSandboxCreateProgress((prev) => {
-      if (!prev) return prev;
-      const nextLogs = prev.logs.length ? prev.logs.slice(-119) : [];
-      // Avoid rapid duplicates.
-      const last = nextLogs[nextLogs.length - 1] ?? "";
-      if (last !== value) nextLogs.push(value);
-      return { ...prev, logs: nextLogs };
-    });
-  };
-
-  const setSandboxStep = (key: SandboxCreateProgressStep["key"], patch: Partial<SandboxCreateProgressStep>) => {
-    setSandboxCreateProgress((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        steps: prev.steps.map((step) => (step.key === key ? { ...step, ...patch } : step)),
-      };
-    });
-  };
-
-  const setSandboxStage = (stage: string) => {
-    const value = String(stage ?? "").trim();
-    if (!value) return;
-    setSandboxCreateProgress((prev) => (prev ? { ...prev, stage: value } : prev));
-  };
-
-  const setSandboxError = (message: string) => {
-    const value = String(message ?? "").trim() || "Sandbox failed to start";
-    setSandboxCreateProgress((prev) => (prev ? { ...prev, error: value } : prev));
-  };
-
   // ---------------------------------------------------------------------------
   // In-flight guard for createRemoteWorkspaceFlow
   // ---------------------------------------------------------------------------
@@ -338,11 +260,6 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
     displayName?: string | null;
     manageBusy?: boolean;
     closeModal?: boolean;
-
-    // Sandbox lifecycle metadata (desktop-managed)
-    sandboxBackend?: "docker" | null;
-    sandboxRunId?: string | null;
-    sandboxContainerName?: string | null;
   }) {
     if (createRemoteInFlight) {
       deps.wsDebug("create-remote:dedupe", {
@@ -386,41 +303,18 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
     });
 
     try {
-      let resolved: Awaited<ReturnType<typeof resolveVesloHost>> | null = null;
-      try {
-        resolved = await resolveVesloHost({
-          hostUrl,
-          token,
-          directoryHint: directory || null,
-        });
-      } catch (error) {
-        // Sandbox workers can report healthy before listWorkspaces is fully ready.
-        // Fall back to host-level OpenCode URL so the worker can still be registered.
-        if (input.sandboxBackend !== "docker") {
-          throw error;
-        }
-        deps.wsDebug("sandbox:veslo-resolve-fallback:error", {
-          hostUrl,
-          message: error instanceof Error ? error.message : safeStringify(error),
-        });
-      }
+      const resolved = await resolveVesloHost({
+        hostUrl,
+        token,
+        directoryHint: directory || null,
+      });
 
-      if (resolved?.kind === "veslo") {
+      if (resolved.kind === "veslo") {
         resolvedBaseUrl = resolved.opencodeBaseUrl;
         resolvedDirectory = resolved.directory || directory;
         vesloWorkspace = resolved.workspace;
         resolvedHostUrl = resolved.hostUrl;
         resolvedAuth = resolved.auth;
-      } else if (input.sandboxBackend === "docker") {
-        resolvedHostUrl = hostUrl;
-        resolvedBaseUrl = `${hostUrl.replace(/\/+$/, "")}/opencode`;
-        resolvedDirectory = directory || resolvedDirectory;
-        resolvedAuth = token ? { token, mode: "veslo" } : undefined;
-        deps.wsDebug("sandbox:veslo-resolve-fallback:host", {
-          hostUrl: resolvedHostUrl,
-          baseUrl: resolvedBaseUrl,
-          directory: resolvedDirectory,
-        });
       } else {
         deps.setError(__vesloIndirectT("ui.indirect.veslo_server_unavailable_check_the_url_and_tok_pthxtb", __vesloIndirectLocale()));
         return false;
@@ -471,9 +365,6 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
           vesloToken: remoteType === "veslo" ? (token || null) : null,
           vesloWorkspaceId: remoteType === "veslo" ? vesloWorkspace?.id ?? null : null,
           vesloWorkspaceName: remoteType === "veslo" ? vesloWorkspace?.name ?? null : null,
-          sandboxBackend: input.sandboxBackend ?? null,
-          sandboxRunId: input.sandboxRunId ?? null,
-          sandboxContainerName: input.sandboxContainerName ?? null,
         });
         deps.setWorkspaces(ws.workspaces);
         deps.syncActiveWorkspaceId(ws.activeId);
@@ -494,9 +385,6 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
           vesloToken: remoteType === "veslo" ? (token || null) : null,
           vesloWorkspaceId: remoteType === "veslo" ? vesloWorkspace?.id ?? null : null,
           vesloWorkspaceName: remoteType === "veslo" ? vesloWorkspace?.name ?? null : null,
-          sandboxBackend: input.sandboxBackend ?? null,
-          sandboxRunId: input.sandboxRunId ?? null,
-          sandboxContainerName: input.sandboxContainerName ?? null,
         };
 
         deps.setWorkspaces((prev: WorkspaceInfo[]) => {
@@ -730,87 +618,7 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
     try {
       deps.updateWorkspaceConnectionState(id, { status: "connecting", message: null });
 
-      if (workspace.workspaceType !== "remote") {
-        return Boolean(await reconnect());
-      }
-
-      const isSandboxWorkspace =
-        workspace.sandboxBackend === "docker" || Boolean(workspace.sandboxContainerName?.trim());
-
-      if (!isSandboxWorkspace) {
-        return Boolean(await reconnect());
-      }
-
-      if (!isTauriRuntime()) {
-        deps.setError(t("app.error.tauri_required", currentLocale()));
-        deps.updateWorkspaceConnectionState(id, {
-          status: "error",
-          message: t("app.error.tauri_required", currentLocale()),
-        });
-        return false;
-      }
-
-      const workspacePath = workspace.directory?.trim() || workspace.path?.trim() || "";
-      if (!workspacePath) {
-        const message = __vesloIndirectT("ui.indirect.worker_folder_is_missing_open_edit_connection__1owlnp", __vesloIndirectLocale());
-        deps.setError(message);
-        deps.updateWorkspaceConnectionState(id, { status: "error", message });
-        return false;
-      }
-
-      const doctor = await deps.engineStore.refreshSandboxDoctor();
-      if (!doctor?.ready) {
-        const detail =
-          doctor?.error?.trim() ||
-          "Docker needs to be running before we can get this worker back online.";
-        throw new Error(detail);
-      }
-
-      const host = await orchestratorStartDetached({
-        workspacePath,
-        sandboxBackend: "docker",
-        runId: workspace.sandboxRunId?.trim() || null,
-        vesloToken:
-          workspace.vesloToken?.trim() || deps.getVesloServerSettings().token?.trim() || null,
-      });
-
-      const resolved = await resolveVesloHost({
-        hostUrl: host.vesloUrl,
-        token: host.token,
-        directoryHint: workspacePath,
-      });
-
-      if (resolved.kind !== "veslo") {
-        throw new Error("Worker is still warming up. Try again in a few seconds.");
-      }
-
-      const updated = await workspaceUpdateRemote({
-        workspaceId: id,
-        remoteType: "veslo",
-        baseUrl: resolved.opencodeBaseUrl,
-        directory: resolved.directory || workspacePath,
-        vesloHostUrl: resolved.hostUrl,
-        vesloToken: host.token,
-        vesloWorkspaceId: resolved.workspace?.id ?? workspace.vesloWorkspaceId ?? null,
-        vesloWorkspaceName: resolved.workspace?.name ?? workspace.vesloWorkspaceName ?? null,
-        sandboxBackend: host.sandboxBackend ?? "docker",
-        sandboxRunId: host.sandboxRunId ?? workspace.sandboxRunId ?? null,
-        sandboxContainerName: host.sandboxContainerName ?? workspace.sandboxContainerName ?? null,
-      });
-
-      deps.setWorkspaces(updated.workspaces);
-      deps.syncActiveWorkspaceId(updated.activeId);
-
-      const ok = await reconnect();
-      if (!ok) {
-        const message = __vesloIndirectT("ui.indirect.worker_restarted_but_reconnect_failed_try_agai_1h6c8d", __vesloIndirectLocale());
-        deps.updateWorkspaceConnectionState(id, { status: "error", message });
-        deps.setError(message);
-        return false;
-      }
-
-      deps.updateWorkspaceConnectionState(id, { status: "connected", message: null });
-      return true;
+      return Boolean(await reconnect());
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       const hint = addOpencodeCacheHint(message);
@@ -822,306 +630,13 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // createSandboxFlow
-  // ---------------------------------------------------------------------------
-  async function createSandboxFlow(
-    preset: WorkspacePreset,
-    folder: string | null,
-    input?: { onReady?: () => Promise<void> | void },
-  ): Promise<boolean> {
-    if (CLOUD_ONLY_MODE) {
-      return deps.blockLocalAction("cloud_only_local_disabled", "Local sandbox provisioning is disabled.");
-    }
-
-    if (!isTauriRuntime()) {
-      deps.setError(t("app.error.tauri_required", currentLocale()));
-      return false;
-    }
-
-    if (!folder) {
-      deps.setError(t("app.error.choose_folder", currentLocale()));
-      return false;
-    }
-
-    const runId = deps.makeRunId();
-    const startedAt = Date.now();
-    setSandboxCreatePhase("preflight");
-    setSandboxPreflightBusy(true);
-    deps.setError(null);
-    clearSandboxCreateProgress();
-
-    const doctor = await deps.engineStore.refreshSandboxDoctor();
-    setSandboxPreflightBusy(false);
-    setSandboxCreatePhase("provisioning");
-    setSandboxCreateProgress({
-      runId,
-      startedAt,
-      stage: "Checking Docker...",
-      error: null,
-      logs: [],
-      steps: [
-        { key: "docker", label: __vesloIndirectT("ui.indirect.docker_ready_1yjkkw", __vesloIndirectLocale()), status: "active", detail: null },
-        { key: "workspace", label: __vesloIndirectT("ui.indirect.prepare_worker_1jlaxy", __vesloIndirectLocale()), status: "pending", detail: null },
-        { key: "sandbox", label: __vesloIndirectT("ui.indirect.start_sandbox_services_p0s0ek", __vesloIndirectLocale()), status: "pending", detail: null },
-        { key: "health", label: __vesloIndirectT("ui.indirect.wait_for_veslo_vf1c10", __vesloIndirectLocale()), status: "pending", detail: null },
-        { key: "connect", label: __vesloIndirectT("ui.indirect.connect_in_veslo_1ixpuk", __vesloIndirectLocale()), status: "pending", detail: null },
-      ],
-    });
-
-    if (doctor?.debug) {
-      const selectedBin = doctor.debug.selectedBin?.trim();
-      if (selectedBin) {
-        pushSandboxCreateLog(`Docker binary: ${selectedBin}`);
-      }
-      const candidates = (doctor.debug.candidates ?? []).filter((item) => item?.trim());
-      if (candidates.length) {
-        pushSandboxCreateLog(`Docker candidates: ${candidates.join(", ")}`);
-      }
-      const versionDebug = doctor.debug.versionCommand;
-      if (versionDebug) {
-        pushSandboxCreateLog(`docker --version exit=${versionDebug.status}`);
-        if (versionDebug.stderr?.trim()) pushSandboxCreateLog(`docker --version stderr: ${versionDebug.stderr.trim()}`);
-      }
-      const infoDebug = doctor.debug.infoCommand;
-      if (infoDebug) {
-        pushSandboxCreateLog(`docker info exit=${infoDebug.status}`);
-        if (infoDebug.stderr?.trim()) pushSandboxCreateLog(`docker info stderr: ${infoDebug.stderr.trim()}`);
-      }
-    }
-    if (!doctor?.ready) {
-      const detail =
-        doctor?.error?.trim() ||
-        "Docker is required for sandboxes. Install Docker Desktop, start it, then retry.";
-      deps.setError(detail);
-      setSandboxStep("docker", { status: "error", detail });
-      setSandboxError(detail);
-      setSandboxStage("Docker not ready");
-      setSandboxCreatePhase("idle");
-      return false;
-    }
-    setSandboxStep("docker", { status: "done", detail: doctor.serverVersion ?? null });
-    setSandboxStage("Preparing worker...");
-
-    try {
-      const resolvedFolder = await deps.resolveWorkspacePath(folder);
-      if (!resolvedFolder) {
-        deps.setError(t("app.error.choose_folder", currentLocale()));
-        setSandboxStep("workspace", { status: "error", detail: __vesloIndirectT("ui.indirect.no_folder_selected_z6mgj7", __vesloIndirectLocale()) });
-        setSandboxError(__vesloIndirectT("ui.indirect.no_folder_selected_z6mgj7", __vesloIndirectLocale()));
-        return false;
-      }
-
-      const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Worker";
-
-      setSandboxStep("workspace", { status: "active", detail: name });
-      pushSandboxCreateLog(`Worker: ${resolvedFolder}`);
-
-      // Ensure the workspace folder has baseline Veslo/OpenCode files.
-      const created = await workspaceCreate({ folderPath: resolvedFolder, name, preset });
-      deps.setWorkspaces(created.workspaces);
-      deps.syncActiveWorkspaceId(created.activeId);
-      setSandboxStep("workspace", { status: "done", detail: null });
-
-      // Remove the local workspace entry to avoid duplicate Local+Remote rows.
-      const localId = created.activeId;
-      if (localId) {
-        pushSandboxCreateLog("Removing local worker row (will re-add as remote sandbox)...");
-        const forgotten = await workspaceForget(localId);
-        deps.setWorkspaces(forgotten.workspaces);
-        deps.syncActiveWorkspaceId(forgotten.activeId);
-      }
-
-      setSandboxStep("sandbox", { status: "active", detail: null });
-      setSandboxStage("Starting sandbox services...");
-
-      let stopListen: (() => void) | null = null;
-      try {
-        stopListen = await listen(
-          "veslo://sandbox-create-progress",
-          (event: TauriEvent<{ runId?: string; stage?: string; message?: string; payload?: any }>) => {
-            const payload = event.payload ?? {};
-            if ((payload.runId ?? "").trim() !== runId) return;
-            const stage = String(payload.stage ?? "").trim();
-            const message = String(payload.message ?? "").trim();
-            if (message) {
-              setSandboxStage(message);
-              pushSandboxCreateLog(message);
-            }
-
-            if (stage === "docker.container") {
-              const state = String(payload.payload?.containerState ?? "").trim();
-              if (state) {
-                setSandboxStep("sandbox", { status: "active", detail: `Container: ${state}` });
-              }
-            }
-
-            if (stage === "docker.config") {
-              const selected = String(payload.payload?.vesloDockerBin ?? "").trim();
-              if (selected) {
-                pushSandboxCreateLog(`VESLO_DOCKER_BIN=${selected}`);
-              }
-              const candidates = Array.isArray(payload.payload?.candidates)
-                ? payload.payload.candidates.filter((item: unknown) => String(item ?? "").trim())
-                : [];
-              if (candidates.length) {
-                pushSandboxCreateLog(`Docker probe paths: ${candidates.join(", ")}`);
-              }
-            }
-
-            if (stage === "docker.inspect") {
-              const inspectError = String(payload.payload?.error ?? "").trim();
-              if (inspectError) {
-                setSandboxStep("sandbox", { status: "active", detail: __vesloIndirectT("ui.indirect.docker_inspect_warning_ddtuut", __vesloIndirectLocale()) });
-                pushSandboxCreateLog(`docker inspect warning: ${inspectError}`);
-              }
-            }
-
-            if (stage === "veslo.waiting") {
-              const elapsedMs = Number(payload.payload?.elapsedMs ?? 0);
-              const seconds = elapsedMs > 0 ? Math.max(1, Math.floor(elapsedMs / 1000)) : 0;
-              setSandboxStep("health", { status: "active", detail: seconds ? `${seconds}s` : null });
-              const probeError = String(payload.payload?.containerProbeError ?? "").trim();
-              if (probeError) {
-                pushSandboxCreateLog(`Container probe: ${probeError}`);
-              }
-            }
-
-            if (stage === "veslo.healthy") {
-              setSandboxStep("sandbox", { status: "done" });
-              setSandboxStep("health", { status: "done", detail: null });
-            }
-
-            if (stage === "error") {
-              const err = String(payload.payload?.error ?? "").trim() || message || "Sandbox failed to start";
-              setSandboxStep("sandbox", { status: "error", detail: err });
-              setSandboxStep("health", { status: "error", detail: err });
-              setSandboxError(err);
-            }
-          },
-        );
-
-        const host = await orchestratorStartDetached({
-          workspacePath: resolvedFolder,
-          sandboxBackend: "docker",
-          runId,
-        });
-        setSandboxStep("sandbox", { status: "done", detail: host.sandboxContainerName ?? null });
-        setSandboxStep("health", { status: "done" });
-        setSandboxStage("Connecting to sandbox...");
-
-        setSandboxStep("connect", { status: "active", detail: null });
-
-        deps.markOnboardingComplete();
-
-        const ok = await createRemoteWorkspaceFlow({
-          vesloHostUrl: host.vesloUrl,
-          vesloToken: host.token,
-          directory: resolvedFolder,
-          displayName: name,
-          sandboxBackend: host.sandboxBackend ?? "docker",
-          sandboxRunId: host.sandboxRunId ?? runId,
-          sandboxContainerName: host.sandboxContainerName ?? null,
-          manageBusy: false,
-          closeModal: false,
-        });
-        if (!ok) {
-          const fallback = "Failed to connect to sandbox";
-          pushSandboxCreateLog(fallback);
-          setSandboxStep("connect", { status: "error", detail: fallback });
-          setSandboxError(fallback);
-          return false;
-        }
-
-        if (input?.onReady) {
-          setSandboxCreatePhase("finalizing");
-          setSandboxStage("Finalizing worker...");
-          setSandboxStep("connect", { status: "active", detail: __vesloIndirectT("ui.indirect.applying_setup_fvqwvs", __vesloIndirectLocale()) });
-          pushSandboxCreateLog("Applying final worker setup...");
-          await input.onReady();
-        }
-
-        setSandboxStep("connect", { status: "done", detail: null });
-        setSandboxStage("Sandbox ready.");
-        deps.setCreateWorkspaceOpen(false);
-        await deps.openEmptySession(deps.getActiveWorkspaceRoot().trim() || resolvedFolder);
-        clearSandboxCreateProgress();
-        return true;
-      } finally {
-        stopListen?.();
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      deps.setError(addOpencodeCacheHint(message));
-      setSandboxError(message);
-      setSandboxStage("Sandbox failed");
-      return false;
-    } finally {
-      setSandboxPreflightBusy(false);
-      setSandboxCreatePhase("idle");
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // stopSandbox
-  // ---------------------------------------------------------------------------
-  async function stopSandbox(workspaceId: string) {
-    if (!isTauriRuntime()) {
-      deps.setError(t("app.error.tauri_required", currentLocale()));
-      return;
-    }
-
-    const id = workspaceId.trim();
-    if (!id) return;
-
-    const workspace = deps.getWorkspaces().find((entry) => entry.id === id) ?? null;
-    const containerName = workspace?.sandboxContainerName?.trim() ?? "";
-    if (!containerName) {
-      deps.setError("Sandbox container name missing.");
-      return;
-    }
-
-    deps.setBusy(true);
-    deps.setBusyLabel("Stopping sandbox...");
-    deps.setBusyStartedAt(Date.now());
-    deps.setError(null);
-
-    try {
-      // F4Ú8c — sandboxStop IPC odstraněn (Docker backend nahrazen OS-level
-      // sandbox). Stop button v UI bude smazán v chunk 3, tato větev je dead.
-      void containerName;
-      if (deps.getActiveWorkspaceId() === id) {
-        deps.setClient(null);
-        deps.setConnectedVersion(null);
-        deps.setSseConnected(false);
-      }
-      deps.updateWorkspaceConnectionState(id, { status: "error", message: __vesloIndirectT("ui.indirect.sandbox_stopped_lnhjw9", __vesloIndirectLocale()) });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      deps.setError(addOpencodeCacheHint(message));
-    } finally {
-      deps.setBusy(false);
-      deps.setBusyLabel(null);
-      deps.setBusyStartedAt(null);
-    }
-  }
-
-  // ---------------------------------------------------------------------------
   // Public API
   // ---------------------------------------------------------------------------
   return {
-    // Signals
-    sandboxPreflightBusy,
-    sandboxCreatePhase,
-    sandboxCreateProgress,
-    clearSandboxCreateProgress,
-
     // Methods
     resolveVesloHost,
     createRemoteWorkspaceFlow,
     updateRemoteWorkspaceFlow,
     recoverWorkspace,
-    createSandboxFlow,
-    stopSandbox,
   };
 }

@@ -10618,10 +10618,10 @@ export default function App() {
       openRenameWorkspace,
       editWorkspaceConnection: openWorkspaceConnectionSettings,
       forgetWorkspace: workspaceStore.forgetWorkspace,
-      stopSandbox: workspaceStore.stopSandbox,
       automationItems: automationItems(),
       automationWorkspaces: automationWorkspaces(),
       defaultAutomationWorkspaceId: activeAutomationWorkspace()?.serverWorkspaceId ?? null,
+      scheduledJobs: scheduledJobs(),
       scheduledJobsSource: scheduledJobsSource(),
       scheduledJobsSourceReady: scheduledJobsSourceReady(),
       scheduledJobsStatus: scheduledJobsStatus(),
@@ -10757,7 +10757,6 @@ export default function App() {
       pendingPermissions: pendingPermissions(),
       events: events(),
       workspaceDebugEvents: workspaceStore.workspaceDebugEvents(),
-      sandboxCreateProgress: workspaceStore.sandboxCreateProgress(),
       clearWorkspaceDebugEvents: workspaceStore.clearWorkspaceDebugEvents,
       safeStringify,
       repairOpencodeMigration: workspaceStore.repairOpencodeMigration,
@@ -11318,80 +11317,12 @@ export default function App() {
         open={workspaceStore.createWorkspaceOpen()}
         onClose={() => {
           workspaceStore.setCreateWorkspaceOpen(false);
-          workspaceStore.clearSandboxCreateProgress?.();
         }}
         onPickFolder={workspaceStore.pickWorkspaceFolder}
         onConfirm={(preset, folder) =>
           workspaceStore.createWorkspaceFlow(preset, folder)
         }
-        onConfirmWorker={
-          isTauriRuntime()
-            ? async (preset, folder) => {
-                const ok = await workspaceStore.createSandboxFlow(preset, folder);
-                if (!ok) return;
-              }
-            : undefined
-        }
-        workerDisabled={(() => {
-          if (!isTauriRuntime()) return true;
-          if (workspaceStore.sandboxDoctorBusy?.()) return true;
-          const doctor = workspaceStore.sandboxDoctorResult?.();
-          if (!doctor) return false;
-          return !doctor?.ready;
-        })()}
-        workerDisabledReason={(() => {
-          if (!isTauriRuntime()) return t("app.error.tauri_required", currentLocale());
-          if (workspaceStore.sandboxDoctorBusy?.()) {
-            return t("dashboard.sandbox_checking_docker", currentLocale());
-          }
-          const doctor = workspaceStore.sandboxDoctorResult?.();
-          if (!doctor || doctor.ready) return null;
-          const message = doctor?.error?.trim();
-          return message || t("dashboard.sandbox_get_ready_desc", currentLocale());
-        })()}
-        workerCtaLabel={t("dashboard.sandbox_get_ready_action", currentLocale())}
-        workerCtaDescription={t("dashboard.sandbox_get_ready_desc", currentLocale())}
-        onWorkerCta={async () => {
-          const url = "https://www.docker.com/products/docker-desktop/";
-          if (isTauriRuntime()) {
-            const { openUrl } = await import("@tauri-apps/plugin-opener");
-            await openUrl(url);
-          } else {
-            window.open(url, "_blank", "noopener,noreferrer");
-          }
-        }}
-        workerRetryLabel={t("common.retry", currentLocale())}
-        workerDebugLines={(() => {
-          const doctor = workspaceStore.sandboxDoctorResult?.();
-          const lines: string[] = [];
-          if (!doctor?.debug) return lines;
-          const selected = doctor.debug.selectedBin?.trim();
-          if (selected) lines.push(`selected: ${selected}`);
-          if (doctor.debug.candidates?.length) {
-            lines.push(`candidates: ${doctor.debug.candidates.join(", ")}`);
-          }
-          if (doctor.debug.versionCommand) {
-            const cmd = doctor.debug.versionCommand;
-            lines.push(`docker --version exit=${cmd.status}`);
-            if (cmd.stderr?.trim()) lines.push(`docker --version stderr: ${cmd.stderr.trim()}`);
-          }
-          if (doctor.debug.infoCommand) {
-            const cmd = doctor.debug.infoCommand;
-            lines.push(`docker info exit=${cmd.status}`);
-            if (cmd.stderr?.trim()) lines.push(`docker info stderr: ${cmd.stderr.trim()}`);
-          }
-          return lines;
-        })()}
-        onWorkerRetry={() => {
-          void workspaceStore.refreshSandboxDoctor?.();
-        }}
-        workerSubmitting={workspaceStore.sandboxPreflightBusy?.() ?? false}
-        submitting={(() => {
-          const phase = workspaceStore.sandboxCreatePhase?.() ?? "idle";
-          if (phase === "provisioning" || phase === "finalizing") return true;
-          return busy() && busyLabel() === "status.creating_workspace";
-        })()}
-        submittingProgress={workspaceStore.sandboxCreateProgress?.() ?? null}
+        submitting={busy() && busyLabel() === "status.creating_workspace"}
       />
 
       <CreateRemoteWorkspaceModal
