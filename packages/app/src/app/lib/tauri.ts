@@ -915,8 +915,17 @@ export type LocalSkillContent = {
   content: string;
 };
 
+export type LocalSkillListScope = "workspace" | "global" | "effective";
+
 export async function listLocalSkills(projectDir: string): Promise<LocalSkillCard[]> {
   return invoke<LocalSkillCard[]>("list_local_skills", { projectDir });
+}
+
+export async function listLocalSkillsScoped(
+  projectDir: string,
+  scope: LocalSkillListScope,
+): Promise<LocalSkillCard[]> {
+  return invoke<LocalSkillCard[]>("list_local_skills_scoped", { projectDir, scope });
 }
 
 export async function readLocalSkill(projectDir: string, name: string): Promise<LocalSkillContent> {

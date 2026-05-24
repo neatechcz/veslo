@@ -2,6 +2,7 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use crate::paths::{candidate_xdg_config_dirs, home_dir};
 use crate::types::ExecResult;
@@ -90,17 +91,27 @@ fn collect_global_skill_roots() -> Vec<PathBuf> {
     roots
 }
 
-fn collect_skill_roots(project_dir: &str) -> Result<Vec<PathBuf>, String> {
-    let project_dir = project_dir.trim();
-    if project_dir.is_empty() {
-        return Err("projectDir is required".to_string());
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkillListScope {
+    Workspace,
+    Global,
+    Effective,
+}
+
+impl FromStr for SkillListScope {
+    type Err = String;
+
+    fn from_str(scope: &str) -> Result<Self, Self::Err> {
+        match scope {
+            "workspace" => Ok(Self::Workspace),
+            "global" => Ok(Self::Global),
+            "effective" => Ok(Self::Effective),
+            _ => Err("scope must be workspace, global, or effective".to_string()),
+        }
     }
+}
 
-    let mut roots = Vec::new();
-    let project_path = PathBuf::from(project_dir);
-    roots.extend(collect_project_skill_roots(&project_path));
-    roots.extend(collect_global_skill_roots());
-
+fn dedupe_paths(roots: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
     let mut seen = HashSet::new();
     let mut unique = Vec::new();
     for root in roots {
@@ -111,6 +122,24 @@ fn collect_skill_roots(project_dir: &str) -> Result<Vec<PathBuf>, String> {
     }
 
     Ok(unique)
+}
+
+fn collect_skill_roots(project_dir: &str, scope: SkillListScope) -> Result<Vec<PathBuf>, String> {
+    let project_dir = project_dir.trim();
+    if project_dir.is_empty() && scope != SkillListScope::Global {
+        return Err("projectDir is required".to_string());
+    }
+
+    let mut roots = Vec::new();
+    if matches!(scope, SkillListScope::Workspace | SkillListScope::Effective) {
+        let project_path = PathBuf::from(project_dir);
+        roots.extend(collect_project_skill_roots(&project_path));
+    }
+    if matches!(scope, SkillListScope::Global | SkillListScope::Effective) {
+        roots.extend(collect_global_skill_roots());
+    }
+
+    dedupe_paths(roots)
 }
 
 fn validate_skill_name(name: &str) -> Result<String, String> {
@@ -378,7 +407,32 @@ fn extract_description(raw: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_description;
+    use super::{extract_description, SkillListScope};
+    use std::str::FromStr;
+
+    #[test]
+    fn skill_list_scope_workspace_excludes_global_roots() {
+        assert_eq!(
+            SkillListScope::from_str("workspace").unwrap(),
+            SkillListScope::Workspace
+        );
+    }
+
+    #[test]
+    fn skill_list_scope_global_excludes_project_roots() {
+        assert_eq!(
+            SkillListScope::from_str("global").unwrap(),
+            SkillListScope::Global
+        );
+    }
+
+    #[test]
+    fn skill_list_scope_effective_preserves_existing_behavior() {
+        assert_eq!(
+            SkillListScope::from_str("effective").unwrap(),
+            SkillListScope::Effective
+        );
+    }
 
     #[test]
     fn extract_description_truncates_multibyte_text_without_panicking() {
@@ -408,7 +462,21 @@ pub fn list_local_skills(project_dir: String) -> Result<Vec<LocalSkillCard>, Str
         return Err("projectDir is required".to_string());
     }
 
-    let skill_roots = collect_skill_roots(project_dir)?;
+    let skill_roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
+    list_skill_cards_from_roots(skill_roots)
+}
+
+#[tauri::command]
+pub fn list_local_skills_scoped(
+    project_dir: String,
+    scope: String,
+) -> Result<Vec<LocalSkillCard>, String> {
+    let scope = SkillListScope::from_str(scope.trim())?;
+    let skill_roots = collect_skill_roots(project_dir.trim(), scope)?;
+    list_skill_cards_from_roots(skill_roots)
+}
+
+fn list_skill_cards_from_roots(skill_roots: Vec<PathBuf>) -> Result<Vec<LocalSkillCard>, String> {
     let mut found: Vec<PathBuf> = Vec::new();
     let mut seen = HashSet::new();
     for root in skill_roots {
@@ -446,7 +514,7 @@ pub fn read_local_skill(project_dir: String, name: String) -> Result<LocalSkillC
     }
 
     let name = validate_skill_name(&name)?;
-    let roots = collect_skill_roots(project_dir)?;
+    let roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
 
     for root in roots {
         let Some(path) = find_skill_file_in_root(&root, &name) else {
@@ -475,7 +543,7 @@ pub fn write_local_skill(
     }
 
     let name = validate_skill_name(&name)?;
-    let roots = collect_skill_roots(project_dir)?;
+    let roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
     let mut target: Option<PathBuf> = None;
 
     for root in roots {
@@ -563,7 +631,7 @@ pub fn uninstall_skill(project_dir: String, name: String) -> Result<ExecResult, 
     }
 
     let name = validate_skill_name(&name)?;
-    let skill_roots = collect_skill_roots(project_dir)?;
+    let skill_roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
     let mut removed = false;
 
     for root in skill_roots {

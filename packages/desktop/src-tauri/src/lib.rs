@@ -50,7 +50,8 @@ use commands::pending_session_drafts::{
 use commands::scheduler::{scheduler_delete_job, scheduler_list_jobs};
 use commands::session_reader::{opencode_db_read_sessions, opencode_db_read_transcript};
 use commands::skills::{
-    install_skill_template, list_local_skills, read_local_skill, uninstall_skill, write_local_skill,
+    install_skill_template, list_local_skills, list_local_skills_scoped, read_local_skill,
+    uninstall_skill, write_local_skill,
 };
 use commands::updater::{updater_environment, updater_prepare_install};
 use commands::veslo_server::{veslo_server_info, veslo_server_restart};
@@ -227,6 +228,7 @@ pub fn run() {
             import_skill,
             install_skill_template,
             list_local_skills,
+            list_local_skills_scoped,
             read_local_skill,
             uninstall_skill,
             write_local_skill,
