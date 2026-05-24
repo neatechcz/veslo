@@ -3,12 +3,23 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  CHAT_SIDEBAR_DEFAULT_HEIGHT_PX,
+  CHAT_SIDEBAR_MIN_HEIGHT_PX,
+} from "./workspace-session-list-windowing.js";
+
+import {
   DEFAULT_SIDEBAR_VIEW_MODE,
+  SIDEBAR_CHAT_COLLAPSED_KEY,
+  SIDEBAR_CHAT_HEIGHT_KEY,
   readExpandedParentSessionIds,
+  readChatSidebarCollapsed,
+  readChatSidebarHeight,
   readProjectOrder,
   readCollapsedProjectMap,
   readSidebarViewMode,
   writeExpandedParentSessionIds,
+  writeChatSidebarCollapsed,
+  writeChatSidebarHeight,
   writeProjectOrder,
   writeCollapsedProjectMap,
   writeSidebarViewMode,
@@ -119,6 +130,39 @@ test("expanded parent session ids read and write normalized ids", () => {
     storage.snapshot()["veslo.sidebar-expanded-parent-sessions.v1"],
     JSON.stringify(["session-c", "session-b"]),
   );
+});
+
+test("chat sidebar height reads and writes normalized pixels", () => {
+  const storage = createMemoryStorage({
+    [SIDEBAR_CHAT_HEIGHT_KEY]: "320",
+  });
+
+  assert.equal(readChatSidebarHeight(storage), 320);
+
+  writeChatSidebarHeight(37, storage);
+  assert.equal(storage.snapshot()[SIDEBAR_CHAT_HEIGHT_KEY], String(CHAT_SIDEBAR_MIN_HEIGHT_PX));
+});
+
+test("chat sidebar height defaults on missing or invalid storage", () => {
+  assert.equal(readChatSidebarHeight(createMemoryStorage()), CHAT_SIDEBAR_DEFAULT_HEIGHT_PX);
+  assert.equal(
+    readChatSidebarHeight(createMemoryStorage({ [SIDEBAR_CHAT_HEIGHT_KEY]: "tiny" })),
+    CHAT_SIDEBAR_DEFAULT_HEIGHT_PX,
+  );
+});
+
+test("chat sidebar collapsed state reads and writes compact booleans", () => {
+  const storage = createMemoryStorage({
+    [SIDEBAR_CHAT_COLLAPSED_KEY]: "1",
+  });
+
+  assert.equal(readChatSidebarCollapsed(storage), true);
+
+  writeChatSidebarCollapsed(false, storage);
+  assert.equal(storage.snapshot()[SIDEBAR_CHAT_COLLAPSED_KEY], "0");
+
+  writeChatSidebarCollapsed(true, storage);
+  assert.equal(storage.snapshot()[SIDEBAR_CHAT_COLLAPSED_KEY], "1");
 });
 
 test("prefs source no longer defines archived visibility helpers", () => {

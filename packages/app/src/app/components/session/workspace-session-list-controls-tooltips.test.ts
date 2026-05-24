@@ -11,10 +11,16 @@ test("workspace session controls expose matching data-tooltip without native too
     "left sidebar control tooltips should use the reduced 250ms show delay",
   );
 
-  assert.match(
+  assert.doesNotMatch(
     source,
     /data-tooltip=\{tr\("sidebar\.new_chat"\)\}/,
-    "new control should expose data-tooltip",
+    "top control row should no longer expose a Chat tooltip",
+  );
+
+  assert.match(
+    source,
+    /aria-label=\{tr\("sidebar\.new_chat"\)\}[\s\S]*title=\{tr\("sidebar\.new_chat"\)\}/,
+    "Chaty new-chat button should keep accessible native labeling inside the bottom section",
   );
 
   assert.match(

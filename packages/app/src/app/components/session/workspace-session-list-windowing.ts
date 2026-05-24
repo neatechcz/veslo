@@ -3,6 +3,11 @@ export const VIEW_LOAD_MORE_STEP = 20;
 export const RECENT_OVERSCAN_ROWS = 3;
 export const RECENT_ESTIMATED_ROW_HEIGHT = 40;
 export const RECENT_LOAD_MORE_THRESHOLD_PX = 120;
+export const CHAT_SIDEBAR_DEFAULT_HEIGHT_PX = 288;
+export const CHAT_SIDEBAR_MIN_HEIGHT_PX = 56;
+export const CHAT_SIDEBAR_MAX_HEIGHT_PX = 480;
+export const CHAT_SIDEBAR_COLLAPSE_THRESHOLD_PX = 44;
+const CHAT_SIDEBAR_MAX_HEIGHT_RATIO = 0.65;
 
 const normalizePositiveInteger = (value: number, fallback: number) =>
   Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
@@ -96,4 +101,54 @@ export const shouldLoadMoreRecentRowsOnScroll = (
   const safeScrollTop = Number.isFinite(scrollTop) && scrollTop > 0 ? scrollTop : 0;
   const safeThreshold = Number.isFinite(thresholdPx) && thresholdPx >= 0 ? thresholdPx : RECENT_LOAD_MORE_THRESHOLD_PX;
   return safeScrollTop + safeClientHeight >= safeScrollHeight - safeThreshold;
+};
+
+export const computeChatSidebarMaxHeight = (containerHeight: number) => {
+  if (!Number.isFinite(containerHeight) || containerHeight <= 0) return CHAT_SIDEBAR_MAX_HEIGHT_PX;
+  const viewportMax = Math.floor(containerHeight * CHAT_SIDEBAR_MAX_HEIGHT_RATIO);
+  return Math.max(
+    CHAT_SIDEBAR_MIN_HEIGHT_PX,
+    Math.min(CHAT_SIDEBAR_MAX_HEIGHT_PX, viewportMax),
+  );
+};
+
+export const clampChatSidebarHeight = (
+  height: number,
+  containerHeight?: number,
+) => {
+  const safeHeight = Number.isFinite(height) && height > 0
+    ? Math.floor(height)
+    : CHAT_SIDEBAR_DEFAULT_HEIGHT_PX;
+  const maxHeight = containerHeight == null
+    ? CHAT_SIDEBAR_MAX_HEIGHT_PX
+    : computeChatSidebarMaxHeight(containerHeight);
+  return Math.min(Math.max(safeHeight, CHAT_SIDEBAR_MIN_HEIGHT_PX), maxHeight);
+};
+
+export const restoreChatSidebarHeight = (
+  height: number,
+  containerHeight?: number,
+) => {
+  if (!Number.isFinite(height) || height < CHAT_SIDEBAR_MIN_HEIGHT_PX) {
+    return clampChatSidebarHeight(CHAT_SIDEBAR_DEFAULT_HEIGHT_PX, containerHeight);
+  }
+  return clampChatSidebarHeight(height, containerHeight);
+};
+
+export const resolveChatSidebarResize = (
+  height: number,
+  previousHeight: number,
+  containerHeight?: number,
+) => {
+  if (Number.isFinite(height) && height < CHAT_SIDEBAR_COLLAPSE_THRESHOLD_PX) {
+    return {
+      height: restoreChatSidebarHeight(previousHeight, containerHeight),
+      collapsed: true,
+    };
+  }
+
+  return {
+    height: clampChatSidebarHeight(height, containerHeight),
+    collapsed: false,
+  };
 };

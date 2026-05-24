@@ -49,6 +49,44 @@ test("recent mode interactions stay wired to recentRowsVisible instead of chatPr
   );
 });
 
+test("Chaty owns quick-chat creation and resize/collapse interactions", () => {
+  assert.match(
+    source,
+    /const startQuickChat = \(\) => \{[\s\S]*props\.onQuickNewSession\?\.\(\);[\s\S]*\};/,
+    "Chaty should call the quick new-session action through a shared handler",
+  );
+
+  assert.match(
+    source,
+    /const handleChatSidebarResizeStart = \(event: PointerEvent\) => \{/,
+    "Chaty should define a pointer-based resize start handler",
+  );
+
+  assert.match(
+    source,
+    /resolveChatSidebarResize\(/,
+    "Chaty resize should use the shared clamp/collapse helper",
+  );
+
+  assert.match(
+    source,
+    /window\.addEventListener\("pointermove", onPointerMove\);/,
+    "Chaty resize should track pointer movement outside the handle",
+  );
+
+  assert.match(
+    source,
+    /writeChatSidebarHeight\(/,
+    "Chaty should persist resized height",
+  );
+
+  assert.match(
+    source,
+    /writeChatSidebarCollapsed\(/,
+    "Chaty should persist collapsed state",
+  );
+});
+
 test("sidebar session list no longer persists archived visibility locally", () => {
   assert.doesNotMatch(
     source,

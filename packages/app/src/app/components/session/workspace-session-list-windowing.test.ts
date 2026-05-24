@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CHAT_SIDEBAR_COLLAPSE_THRESHOLD_PX,
+  CHAT_SIDEBAR_DEFAULT_HEIGHT_PX,
+  CHAT_SIDEBAR_MAX_HEIGHT_PX,
+  CHAT_SIDEBAR_MIN_HEIGHT_PX,
   computeVisibleRowLoadCount,
   planVisibleRowLoadMore,
   PROJECT_VISIBLE_DEFAULT,
@@ -9,7 +13,11 @@ import {
   RECENT_OVERSCAN_ROWS,
   VIEW_LOAD_MORE_STEP,
   computeInitialRecentVisibleCount,
+  clampChatSidebarHeight,
+  computeChatSidebarMaxHeight,
   nextProjectVisibleCount,
+  resolveChatSidebarResize,
+  restoreChatSidebarHeight,
   shouldShowLessVisibleRowsControl,
   shouldLoadMoreRecentRowsOnScroll,
 } from "./workspace-session-list-windowing.js";
@@ -18,6 +26,10 @@ test("project window defaults and step size are stable", () => {
   assert.equal(PROJECT_VISIBLE_DEFAULT, 7);
   assert.equal(VIEW_LOAD_MORE_STEP, 20);
   assert.equal(RECENT_OVERSCAN_ROWS, 3);
+  assert.equal(CHAT_SIDEBAR_DEFAULT_HEIGHT_PX, 288);
+  assert.equal(CHAT_SIDEBAR_MIN_HEIGHT_PX, 56);
+  assert.equal(CHAT_SIDEBAR_MAX_HEIGHT_PX, 480);
+  assert.equal(CHAT_SIDEBAR_COLLAPSE_THRESHOLD_PX, 44);
 });
 
 test("project window increments by +20", () => {
@@ -83,4 +95,39 @@ test("load-more planning fetches another server page only after the loaded rows 
       shouldFetchServerRows: true,
     },
   );
+});
+
+test("chat sidebar height clamps to useful minimum and available maximum", () => {
+  assert.equal(clampChatSidebarHeight(20), CHAT_SIDEBAR_MIN_HEIGHT_PX);
+  assert.equal(clampChatSidebarHeight(999), CHAT_SIDEBAR_MAX_HEIGHT_PX);
+  assert.equal(clampChatSidebarHeight(420, 600), 390);
+});
+
+test("chat sidebar maximum follows available sidebar height with a hard cap", () => {
+  assert.equal(computeChatSidebarMaxHeight(600), 390);
+  assert.equal(computeChatSidebarMaxHeight(1_000), CHAT_SIDEBAR_MAX_HEIGHT_PX);
+  assert.equal(computeChatSidebarMaxHeight(Number.NaN), CHAT_SIDEBAR_MAX_HEIGHT_PX);
+});
+
+test("chat sidebar resize collapses below the one-row threshold", () => {
+  assert.deepEqual(
+    resolveChatSidebarResize(CHAT_SIDEBAR_COLLAPSE_THRESHOLD_PX - 1, 180, 600),
+    {
+      height: 180,
+      collapsed: true,
+    },
+  );
+
+  assert.deepEqual(
+    resolveChatSidebarResize(50, 180, 600),
+    {
+      height: CHAT_SIDEBAR_MIN_HEIGHT_PX,
+      collapsed: false,
+    },
+  );
+});
+
+test("chat sidebar restore keeps a useful height when expanding from collapsed state", () => {
+  assert.equal(restoreChatSidebarHeight(20, 600), CHAT_SIDEBAR_DEFAULT_HEIGHT_PX);
+  assert.equal(restoreChatSidebarHeight(420, 600), 390);
 });

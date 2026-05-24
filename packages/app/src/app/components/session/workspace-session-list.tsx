@@ -2,6 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "so
 import { useOutsideClick } from "./use-outside-click";
 import {
   Archive,
+  ChevronUp,
   Folder,
   FolderPlus,
   HeartPulse,
@@ -38,7 +39,6 @@ import {
   rowVisibleByExpansion,
   sessionChatLabel,
   sessionSidebarTitle,
-  shouldShowNewSessionLabelText,
   splitProjectGroupsForSidebar,
   splitSessionDisplayLabel,
   toggleProjectCollapsed,
@@ -53,6 +53,8 @@ import {
   RECENT_LOAD_MORE_THRESHOLD_PX,
   VIEW_LOAD_MORE_STEP,
   computeInitialRecentVisibleCount,
+  resolveChatSidebarResize,
+  restoreChatSidebarHeight,
   shouldShowLessVisibleRowsControl,
   shouldLoadMoreRecentRowsOnScroll,
 } from "./workspace-session-list-windowing";
@@ -65,10 +67,14 @@ import {
 import { resolveRenderableProjectGroups } from "./workspace-session-list-render-model";
 import {
   readCollapsedProjectMap,
+  readChatSidebarCollapsed,
+  readChatSidebarHeight,
   readExpandedParentSessionIds,
   readProjectOrder,
   readSidebarViewMode,
   writeCollapsedProjectMap,
+  writeChatSidebarCollapsed,
+  writeChatSidebarHeight,
   writeExpandedParentSessionIds,
   writeProjectOrder,
   writeSidebarViewMode,
@@ -146,6 +152,12 @@ type ProjectDragPreviewState = {
   label: string;
 };
 
+type ChatSidebarResizeState = {
+  pointerId: number;
+  startY: number;
+  startHeight: number;
+};
+
 const workspaceLabel = (workspace: WorkspaceInfo) =>
   workspace.displayName?.trim() ||
   workspace.vesloWorkspaceName?.trim() ||
@@ -195,20 +207,19 @@ export default function WorkspaceSessionList(props: Props) {
   const [projectDropIndicator, setProjectDropIndicator] = createSignal<ProjectDropIndicator | null>(null);
   const [projectPointerDrag, setProjectPointerDrag] = createSignal<ProjectPointerDragState | null>(null);
   const [projectDragPreview, setProjectDragPreview] = createSignal<ProjectDragPreviewState | null>(null);
+  const [chatSidebarHeight, setChatSidebarHeight] = createSignal(readChatSidebarHeight());
+  const [chatSidebarCollapsed, setChatSidebarCollapsed] = createSignal(readChatSidebarCollapsed());
+  const [chatSidebarResizeDrag, setChatSidebarResizeDrag] = createSignal<ChatSidebarResizeState | null>(null);
   const [lastClickedSessionId, setLastClickedSessionId] = createSignal<string | null>(null);
   const [workspaceMenuTarget, setWorkspaceMenuTarget] = createSignal<WorkspaceMenuTarget | null>(null);
-  const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
   const [moreActionsMenuOpen, setMoreActionsMenuOpen] = createSignal(false);
   const [pendingArchiveConfirmationSessionId, setPendingArchiveConfirmationSessionId] = createSignal<string | null>(
     null,
   );
-  const [sidebarControlsWidth, setSidebarControlsWidth] = createSignal(0);
   let workspaceMenuRef: HTMLDivElement | undefined;
-  let addWorkspaceMenuRef: HTMLDivElement | undefined;
   let moreActionsMenuRef: HTMLDivElement | undefined;
   let moreActionsButtonRef: HTMLButtonElement | undefined;
   let pendingArchiveConfirmButtonRef: HTMLButtonElement | undefined;
-  let sidebarControlsRef: HTMLDivElement | undefined;
   let scrollContainerRef: HTMLDivElement | undefined;
   let recentSentinelRef: HTMLDivElement | undefined;
   let projectDragPreviewElement: HTMLDivElement | null = null;
@@ -532,25 +543,6 @@ export default function WorkspaceSessionList(props: Props) {
 
     void loadMoreRecentRows();
   };
-
-  createEffect(() => {
-    const element = sidebarControlsRef;
-    if (!element) return;
-
-    const measure = () => setSidebarControlsWidth(element.clientWidth ?? 0);
-    measure();
-
-    if (typeof ResizeObserver === "undefined") {
-      const onResize = () => measure();
-      window.addEventListener("resize", onResize);
-      onCleanup(() => window.removeEventListener("resize", onResize));
-      return;
-    }
-
-    const observer = new ResizeObserver(() => measure());
-    observer.observe(element);
-    onCleanup(() => observer.disconnect());
-  });
 
   const emptyError = createMemo(() => {
     const failedGroup = props.workspaceSessionGroups.find((group) => group.status === "error");
@@ -1008,6 +1000,90 @@ export default function WorkspaceSessionList(props: Props) {
     });
   });
 
+  const chatSidebarAvailableHeight = () => {
+    const height = scrollContainerRef?.parentElement?.clientHeight ?? 0;
+    return height > 0 ? height : undefined;
+  };
+
+  const chatSidebarListHeight = () =>
+    restoreChatSidebarHeight(chatSidebarHeight(), chatSidebarAvailableHeight());
+
+  const persistChatSidebarState = (height: number, collapsed: boolean) => {
+    writeChatSidebarHeight(height);
+    writeChatSidebarCollapsed(collapsed);
+  };
+
+  const applyResolvedChatSidebarResize = (
+    height: number,
+    collapsed: boolean,
+    persist = false,
+  ) => {
+    setChatSidebarHeight(height);
+    setChatSidebarCollapsed(collapsed);
+    if (persist) persistChatSidebarState(height, collapsed);
+  };
+
+  const startQuickChat = () => {
+    props.onQuickNewSession?.();
+  };
+
+  const expandChatSidebar = () => {
+    const height = restoreChatSidebarHeight(chatSidebarHeight(), chatSidebarAvailableHeight());
+    applyResolvedChatSidebarResize(height, false, true);
+  };
+
+  const resolveChatSidebarDragHeight = (drag: ChatSidebarResizeState, clientY: number) => {
+    const nextHeight = drag.startHeight - (clientY - drag.startY);
+    return resolveChatSidebarResize(nextHeight, drag.startHeight, chatSidebarAvailableHeight());
+  };
+
+  const handleChatSidebarResizeStart = (event: PointerEvent) => {
+    if (event.button !== 0 && event.button !== -1) return;
+    event.preventDefault();
+    if (event.currentTarget instanceof HTMLElement) {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    }
+    const startHeight = chatSidebarListHeight();
+    setChatSidebarCollapsed(false);
+    setChatSidebarResizeDrag({
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startHeight,
+    });
+  };
+
+  const finishChatSidebarResize = (event: PointerEvent) => {
+    const drag = chatSidebarResizeDrag();
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const resolved = resolveChatSidebarDragHeight(drag, event.clientY);
+    applyResolvedChatSidebarResize(resolved.height, resolved.collapsed, true);
+    setChatSidebarResizeDrag(null);
+  };
+
+  createEffect(() => {
+    const drag = chatSidebarResizeDrag();
+    if (!drag) return;
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (event.pointerId !== drag.pointerId) return;
+      event.preventDefault();
+      const resolved = resolveChatSidebarDragHeight(drag, event.clientY);
+      applyResolvedChatSidebarResize(resolved.height, resolved.collapsed);
+    };
+    const onPointerUp = (event: PointerEvent) => finishChatSidebarResize(event);
+    const onPointerCancel = (event: PointerEvent) => finishChatSidebarResize(event);
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerCancel);
+
+    onCleanup(() => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
+    });
+  });
+
   const lastReportedLoadedInterestByWorkspace = new Map<string, string>();
 
   createEffect(() => {
@@ -1075,15 +1151,6 @@ export default function WorkspaceSessionList(props: Props) {
     lastReportedLoadedInterestByWorkspace.clear();
   });
 
-  const showNewSessionLabelText = createMemo(() =>
-    shouldShowNewSessionLabelText(sidebarControlsWidth()),
-  );
-
-  const newSessionLabel = createMemo(() => {
-    if (!showNewSessionLabelText()) return "";
-    return tr("sidebar.chat");
-  });
-
   useOutsideClick(() => Boolean(workspaceMenuTarget()), () => workspaceMenuRef, () => setWorkspaceMenuTarget(null));
 
   createEffect(() => {
@@ -1097,7 +1164,6 @@ export default function WorkspaceSessionList(props: Props) {
     () => setPendingArchiveConfirmationSessionId(null),
   );
 
-  useOutsideClick(() => addWorkspaceMenuOpen(), () => addWorkspaceMenuRef, () => setAddWorkspaceMenuOpen(false));
   useOutsideClick(() => moreActionsMenuOpen(), () => moreActionsMenuRef, () => setMoreActionsMenuOpen(false));
 
   createEffect(() => {
@@ -1407,9 +1473,6 @@ export default function WorkspaceSessionList(props: Props) {
   const topRailButtonClass =
     `inline-flex h-8 w-full min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-gray-6 bg-gray-1 px-2 text-[12px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60 ${sidebarControlTooltipClass}`;
 
-  const naturalTopRailButtonClass =
-    `inline-flex h-8 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-gray-6 bg-gray-1 px-2 text-[12px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60 ${sidebarControlTooltipClass}`;
-
   const compactTopRailButtonClass =
     `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60 ${sidebarControlTooltipClass}`;
 
@@ -1422,69 +1485,7 @@ export default function WorkspaceSessionList(props: Props) {
 
   return (
     <div class="flex h-full min-h-0 flex-col">
-      <div class="mb-3 flex flex-nowrap items-center gap-1" ref={(el) => (sidebarControlsRef = el)}>
-        <div class="relative shrink-0" ref={(el) => (addWorkspaceMenuRef = el)}>
-          <button
-            type="button"
-            class={naturalTopRailButtonClass}
-            data-tooltip={tr("sidebar.new_chat")}
-            onClick={() => {
-              setMoreActionsMenuOpen(false);
-              if (props.onQuickNewSession) {
-                props.onQuickNewSession();
-                return;
-              }
-              setAddWorkspaceMenuOpen((prev) => !prev);
-            }}
-          >
-            <span class="sr-only">{tr("sidebar.new_chat")}</span>
-            <Plus size={12} />
-            <Show when={showNewSessionLabelText()}>
-              <span class="whitespace-nowrap">{newSessionLabel()}</span>
-            </Show>
-          </button>
-
-          <Show when={!props.onQuickNewSession && addWorkspaceMenuOpen()}>
-            <div class="absolute left-0 right-0 top-full z-20 mt-2 overflow-hidden rounded-lg border border-gray-6 bg-gray-1 shadow-xl">
-              <button
-                type="button"
-                class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:text-gray-12 hover:bg-gray-3 transition-colors"
-                onClick={() => {
-                  props.onOpenCreateWorkspace();
-                  setAddWorkspaceMenuOpen(false);
-                }}
-              >
-                <Plus size={12} />
-                {tr("sidebar.new_worker")}
-              </button>
-              <Show when={props.showRemoteActions !== false}>
-                <button
-                  type="button"
-                  class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:text-gray-12 hover:bg-gray-3 transition-colors"
-                  onClick={() => {
-                    props.onOpenCreateRemoteWorkspace();
-                    setAddWorkspaceMenuOpen(false);
-                  }}
-                >
-                  <Plus size={12} />
-                  {tr("sidebar.connect_remote")}
-                </button>
-              </Show>
-              <button
-                type="button"
-                class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                disabled={props.importingWorkspaceConfig}
-                onClick={() => {
-                  props.onImportWorkspaceConfig();
-                  setAddWorkspaceMenuOpen(false);
-                }}
-              >
-                <Plus size={12} />
-                {tr("sidebar.import_config")}
-              </button>
-            </div>
-          </Show>
-        </div>
+      <div class="mb-3 flex flex-nowrap items-center gap-1">
         <div class="flex min-w-0 flex-1">
           <button
             type="button"
@@ -1492,7 +1493,6 @@ export default function WorkspaceSessionList(props: Props) {
             data-tooltip={tr("sidebar.add_directory_or_project")}
             disabled={addDirectorySessionDisabled()}
             onClick={() => {
-              setAddWorkspaceMenuOpen(false);
               setMoreActionsMenuOpen(false);
               props.onAddDirectorySession?.();
             }}
@@ -1515,7 +1515,6 @@ export default function WorkspaceSessionList(props: Props) {
             aria-expanded={moreActionsMenuOpen()}
             aria-controls="sidebar-more-actions-menu"
             onClick={() => {
-              setAddWorkspaceMenuOpen(false);
               setMoreActionsMenuOpen((prev) => !prev);
             }}
           >
@@ -2010,63 +2009,92 @@ export default function WorkspaceSessionList(props: Props) {
             shouldShowLessVisibleRowsControl(visibleCount(), PROJECT_VISIBLE_DEFAULT);
 
           return (
-            <div
-              data-sidebar-chat-section="true"
-              class="mt-2 shrink-0 border-t border-gray-6/70 pt-2"
-            >
-              <div class="mb-1 flex items-center justify-between gap-2 px-1.5">
-                <span class="truncate text-[12px] font-semibold text-gray-10">
-                  {tr("sidebar.chats")}
-                </span>
+            <Show when={!chatSidebarCollapsed()} fallback={
+              <button
+                type="button"
+                data-sidebar-chat-collapsed="true"
+                class="mt-2 flex h-9 w-full shrink-0 items-center justify-between border-t border-gray-6/70 px-1.5 pt-2 text-[12px] font-semibold text-gray-10 transition-colors hover:text-gray-12"
+                onClick={expandChatSidebar}
+                aria-label={tr("sidebar.chats")}
+                title={tr("sidebar.chats")}
+              >
+                <span class="truncate">{tr("sidebar.chats")}</span>
+                <ChevronUp size={11} />
+              </button>
+            }>
+              <div
+                data-sidebar-chat-section="true"
+                class="mt-2 shrink-0"
+              >
                 <button
                   type="button"
-                  class="inline-flex h-7 items-center gap-1 rounded-full border border-gray-6 bg-gray-1 px-2 text-[11px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60"
-                  onClick={() => props.onQuickNewSession?.()}
-                  disabled={!props.onQuickNewSession || props.newTaskDisabled}
-                  aria-label={tr("sidebar.new_chat")}
-                  title={tr("sidebar.new_chat")}
+                  data-sidebar-chat-resize-handle="true"
+                  class="group flex h-3 w-full cursor-row-resize items-center px-1.5"
+                  onPointerDown={handleChatSidebarResizeStart}
+                  aria-label={tr("sidebar.chats")}
+                  title={tr("sidebar.chats")}
                 >
-                  <Plus size={12} />
-                  <span>{tr("sidebar.chat")}</span>
+                  <span class="h-px w-full rounded-full bg-gray-6/70 transition-colors group-hover:bg-gray-8" />
                 </button>
+                <div class="mb-1 flex items-center justify-between gap-2 px-1.5">
+                  <span class="truncate text-[12px] font-semibold text-gray-10">
+                    {tr("sidebar.chats")}
+                  </span>
+                  <button
+                    type="button"
+                    class="inline-flex h-7 items-center gap-1 rounded-full border border-gray-6 bg-gray-1 px-2 text-[11px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={startQuickChat}
+                    disabled={!props.onQuickNewSession}
+                    aria-label={tr("sidebar.new_chat")}
+                    title={tr("sidebar.new_chat")}
+                  >
+                    <Plus size={12} />
+                    <span>{tr("sidebar.chat")}</span>
+                  </button>
+                </div>
+                <div
+                  class="overflow-y-auto pr-1"
+                  style={{
+                    height: `${chatSidebarListHeight()}px`,
+                  }}
+                >
+                  <For each={chatRows()}>
+                    {(row) =>
+                      projectSessionRow(row, hasChildren, {
+                        anchorKey: `chat-session:${row.rowKey}`,
+                        label: () => sessionChatLabel(row.session, tr("session.chat_label")),
+                        showWorkspaceMenu: false,
+                      })}
+                  </For>
+                  <Show when={canLoadMoreChatRows()}>
+                    <div>
+                      <button
+                        type="button"
+                        class="w-full inline-flex items-center gap-1 rounded-xl px-3 py-1 text-left text-[11px] text-gray-9 transition-colors hover:bg-gray-3/70 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
+                        disabled={chatPaging().loadingMore}
+                        onClick={() => {
+                          void loadMoreProjectRowsForGroup(chatGroup());
+                        }}
+                      >
+                        <span aria-hidden>{tr("sidebar.more_ellipsis")}</span>
+                        <span>{chatPaging().loadingMore ? tr("sidebar.loading_more") : loadMoreLabel(chatLoadMoreCount())}</span>
+                      </button>
+                    </div>
+                  </Show>
+                  <Show when={canShowLessChatRows()}>
+                    <div>
+                      <button
+                        type="button"
+                        class="w-full inline-flex items-center gap-1 rounded-xl px-3 py-1 text-left text-[11px] text-gray-9 transition-colors hover:bg-gray-3/70 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
+                        onClick={() => resetProjectVisibleRowsForGroup(chatGroup())}
+                      >
+                        <span>{tr("sidebar.show_less")}</span>
+                      </button>
+                    </div>
+                  </Show>
+                </div>
               </div>
-              <div class="max-h-[min(40vh,18rem)] overflow-y-auto pr-1">
-                <For each={chatRows()}>
-                  {(row) =>
-                    projectSessionRow(row, hasChildren, {
-                      anchorKey: `chat-session:${row.rowKey}`,
-                      label: () => sessionChatLabel(row.session, tr("session.chat_label")),
-                      showWorkspaceMenu: false,
-                    })}
-                </For>
-                <Show when={canLoadMoreChatRows()}>
-                  <div>
-                    <button
-                      type="button"
-                      class="w-full inline-flex items-center gap-1 rounded-xl px-3 py-1 text-left text-[11px] text-gray-9 transition-colors hover:bg-gray-3/70 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
-                      disabled={chatPaging().loadingMore}
-                      onClick={() => {
-                        void loadMoreProjectRowsForGroup(chatGroup());
-                      }}
-                    >
-                      <span aria-hidden>{tr("sidebar.more_ellipsis")}</span>
-                      <span>{chatPaging().loadingMore ? tr("sidebar.loading_more") : loadMoreLabel(chatLoadMoreCount())}</span>
-                    </button>
-                  </div>
-                </Show>
-                <Show when={canShowLessChatRows()}>
-                  <div>
-                    <button
-                      type="button"
-                      class="w-full inline-flex items-center gap-1 rounded-xl px-3 py-1 text-left text-[11px] text-gray-9 transition-colors hover:bg-gray-3/70 hover:text-gray-11 disabled:opacity-60 disabled:cursor-not-allowed"
-                      onClick={() => resetProjectVisibleRowsForGroup(chatGroup())}
-                    >
-                      <span>{tr("sidebar.show_less")}</span>
-                    </button>
-                  </div>
-                </Show>
-              </div>
-            </div>
+            </Show>
           );
         }}
       </Show>

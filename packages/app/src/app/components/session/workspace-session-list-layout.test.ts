@@ -27,20 +27,26 @@ test("workspace session sidebar keeps controls pinned while only session rows sc
 test("workspace session sidebar keeps the control rail ordered and compact-safe", () => {
   assert.match(
     source,
-    /<div class="mb-3 flex flex-nowrap items-center gap-1" ref=\{\(el\) => \(sidebarControlsRef = el\)\}>/,
+    /<div class="mb-3 flex flex-nowrap items-center gap-1">/,
     "sidebar controls should stay in a single row, even at minimum sidebar width",
   );
 
   assert.match(
     source,
-    /data-tooltip=\{tr\("sidebar\.new_chat"\)\}[\s\S]*data-tooltip=\{tr\("sidebar\.add_directory_or_project"\)\}[\s\S]*data-tooltip=\{tr\("sidebar\.more_actions"\)\}/,
-    "control row should keep new, add-directory-or-project, and overflow actions in order",
+    /data-tooltip=\{tr\("sidebar\.add_directory_or_project"\)\}[\s\S]*data-tooltip=\{tr\("sidebar\.more_actions"\)\}/,
+    "control row should keep add-directory-or-project before overflow actions",
   );
 
-  assert.match(
+  assert.doesNotMatch(
     source,
-    /const newSessionLabel = createMemo\([\s\S]*tr\("sidebar\.chat"\)/,
-    "new-session label helper should use chat copy when visible",
+    /<div class="mb-3 flex flex-nowrap items-center gap-1">[\s\S]*data-tooltip=\{tr\("sidebar\.new_chat"\)\}[\s\S]*data-tooltip=\{tr\("sidebar\.add_directory_or_project"\)\}/,
+    "top control row should not render a Chat button before add-directory-or-project",
+  );
+
+  assert.doesNotMatch(
+    source,
+    /const newSessionLabel = createMemo/,
+    "new-session label helper should be removed with the top Chat button",
   );
 
   assert.match(
@@ -49,16 +55,10 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
     "overflow control should expose a tooltip and accessible label",
   );
 
-  assert.match(
+  assert.doesNotMatch(
     source,
-    /<div class="relative shrink-0" ref=\{\(el\) => \(addWorkspaceMenuRef = el\)\}>[\s\S]*data-tooltip=\{tr\("sidebar\.new_chat"\)\}/,
-    "new-session wrapper should shrink to content width instead of stretching across the rail",
-  );
-
-  assert.match(
-    source,
-    /const naturalTopRailButtonClass =[\s\S]*h-8[\s\S]*rounded-full[\s\S]*px-2/,
-    "new-session should use a dedicated content-width button class",
+    /const naturalTopRailButtonClass =/,
+    "dedicated top Chat button class should be removed with the control",
   );
 
   assert.match(
@@ -95,12 +95,6 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
     source,
     /<div class="flex min-w-0 flex-1">[\s\S]*data-tooltip=\{tr\("sidebar\.add_directory_or_project"\)\}[\s\S]*<FolderPlus size=\{18\} \/>/,
     "add-directory CTA should stay as the expanding middle control and use a larger folder icon",
-  );
-
-  assert.match(
-    source,
-    /<Plus size=\{12\} \/>[\s\S]*<FolderPlus size=\{18\} \/>/,
-    "add-directory icon should be visibly larger than the new-session plus icon",
   );
 
   assert.match(
@@ -175,8 +169,20 @@ test("by-project rows keep the title wrapper without a branch toggle button", ()
 test("by-project sidebar renders private chats as a bottom section", () => {
   assert.match(source, /splitProjectGroupsForSidebar/);
   assert.match(source, /data-sidebar-chat-section="true"/);
+  assert.match(source, /data-sidebar-chat-resize-handle="true"/);
+  assert.match(source, /data-sidebar-chat-collapsed="true"/);
   assert.match(source, /tr\("sidebar\.chats"\)/);
   assert.match(source, /tr\("sidebar\.new_chat"\)/);
+  assert.match(source, /ChevronUp/);
+  assert.match(source, /readChatSidebarHeight/);
+  assert.match(source, /readChatSidebarCollapsed/);
+  assert.match(source, /style=\{\{\s*height: `\$\{chatSidebarListHeight\(\)\}px`,\s*\}\}/);
+  assert.match(source, /onClick=\{startQuickChat\}/);
+  assert.doesNotMatch(
+    source,
+    /disabled=\{!props\.onQuickNewSession \|\| props\.newTaskDisabled\}/,
+    "Chaty new-chat button should not be disabled by unrelated newTaskDisabled state",
+  );
   assert.match(source, /const chatRows = \(\) => visibleProjectRowsForGroup\(chatGroup\(\)\);/);
   assert.match(source, /const canLoadMoreChatRows = \(\) => hasHiddenChatRows\(\) \|\| chatPaging\(\)\.hasMore;/);
   assert.match(source, /void loadMoreProjectRowsForGroup\(chatGroup\(\)\);/);

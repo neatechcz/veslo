@@ -1,4 +1,8 @@
 import type { CollapsedProjectMap } from "./workspace-session-list-model";
+import {
+  CHAT_SIDEBAR_DEFAULT_HEIGHT_PX,
+  clampChatSidebarHeight,
+} from "./workspace-session-list-windowing";
 
 export type SidebarPrefsStorage = {
   getItem: (key: string) => string | null;
@@ -11,6 +15,8 @@ export const SIDEBAR_VIEW_MODE_KEY = "veslo.sidebar-session-view.v1";
 export const SIDEBAR_COLLAPSED_PROJECTS_KEY = "veslo.sidebar-collapsed-projects.v1";
 export const SIDEBAR_PROJECT_ORDER_KEY = "veslo.sidebar-project-order.v1";
 export const SIDEBAR_EXPANDED_PARENT_SESSIONS_KEY = "veslo.sidebar-expanded-parent-sessions.v1";
+export const SIDEBAR_CHAT_HEIGHT_KEY = "veslo.sidebar-chat-height.v1";
+export const SIDEBAR_CHAT_COLLAPSED_KEY = "veslo.sidebar-chat-collapsed.v1";
 export const DEFAULT_SIDEBAR_VIEW_MODE: SidebarViewMode = "by-project";
 
 const resolveStorage = (storage?: SidebarPrefsStorage | null): SidebarPrefsStorage | null => {
@@ -171,6 +177,64 @@ export const writeExpandedParentSessionIds = (
       SIDEBAR_EXPANDED_PARENT_SESSIONS_KEY,
       JSON.stringify(normalizeStringList(Array.from(ids))),
     );
+  } catch {
+    // ignore storage failures
+  }
+};
+
+export const readChatSidebarHeight = (
+  storage?: SidebarPrefsStorage | null,
+): number => {
+  const resolvedStorage = resolveStorage(storage);
+  if (!resolvedStorage) return CHAT_SIDEBAR_DEFAULT_HEIGHT_PX;
+
+  try {
+    const raw = resolvedStorage.getItem(SIDEBAR_CHAT_HEIGHT_KEY);
+    if (!raw) return CHAT_SIDEBAR_DEFAULT_HEIGHT_PX;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) return CHAT_SIDEBAR_DEFAULT_HEIGHT_PX;
+    return clampChatSidebarHeight(parsed);
+  } catch {
+    return CHAT_SIDEBAR_DEFAULT_HEIGHT_PX;
+  }
+};
+
+export const writeChatSidebarHeight = (
+  height: number,
+  storage?: SidebarPrefsStorage | null,
+): void => {
+  const resolvedStorage = resolveStorage(storage);
+  if (!resolvedStorage) return;
+
+  try {
+    resolvedStorage.setItem(SIDEBAR_CHAT_HEIGHT_KEY, String(clampChatSidebarHeight(height)));
+  } catch {
+    // ignore storage failures
+  }
+};
+
+export const readChatSidebarCollapsed = (
+  storage?: SidebarPrefsStorage | null,
+): boolean => {
+  const resolvedStorage = resolveStorage(storage);
+  if (!resolvedStorage) return false;
+
+  try {
+    return resolvedStorage.getItem(SIDEBAR_CHAT_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+};
+
+export const writeChatSidebarCollapsed = (
+  collapsed: boolean,
+  storage?: SidebarPrefsStorage | null,
+): void => {
+  const resolvedStorage = resolveStorage(storage);
+  if (!resolvedStorage) return;
+
+  try {
+    resolvedStorage.setItem(SIDEBAR_CHAT_COLLAPSED_KEY, collapsed ? "1" : "0");
   } catch {
     // ignore storage failures
   }
