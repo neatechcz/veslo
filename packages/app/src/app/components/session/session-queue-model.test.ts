@@ -5,6 +5,7 @@ import type { ComposerDraft } from "../../types";
 import {
   appendQueuedDraft,
   firstQueuedDraft,
+  markQueuedDraftEditing,
   markQueuedDraftError,
   markQueuedDraftQueued,
   markQueuedDraftSending,
@@ -107,45 +108,60 @@ test("queue model clamps reorder target indexes", () => {
 
 test("queue model marks drafts sending and excludes them from draining", () => {
   const queue = appendQueuedDraft(appendQueuedDraft([], draft("one"), 100), draft("two"), 200);
-  const sending = markQueuedDraftSending(queue, queue[0]!.id);
-  const missing = markQueuedDraftSending(queue, "missing");
+  const sending = markQueuedDraftSending(queue, queue[0]!.id, 300);
+  const missing = markQueuedDraftSending(queue, "missing", 400);
 
   assert.equal(sending[0]!.state, "sending");
   assert.equal(sending[0]!.error, undefined);
+  assert.equal(sending[0]!.updatedAt, 300);
   assert.equal(firstQueuedDraft(sending)?.draft.text, "two");
   assert.equal(missing, queue);
 });
 
 test("queue model marks drafts failed and keeps them drain-eligible", () => {
   const queue = appendQueuedDraft([], draft("one"), 100);
-  const failed = markQueuedDraftError(queue, queue[0]!.id, "network failed");
-  const missing = markQueuedDraftError(queue, "missing", "ignored");
+  const failed = markQueuedDraftError(queue, queue[0]!.id, "network failed", 200);
+  const missing = markQueuedDraftError(queue, "missing", "ignored", 300);
 
   assert.equal(failed[0]!.state, "error");
   assert.equal(failed[0]!.error, "network failed");
+  assert.equal(failed[0]!.updatedAt, 200);
   assert.equal(firstQueuedDraft(failed)?.draft.text, "one");
   assert.equal(missing, queue);
 });
 
 test("queue model marks drafts queued for retry and clears errors", () => {
   const queue = appendQueuedDraft([], draft("one"), 100);
-  const failed = markQueuedDraftError(queue, queue[0]!.id, "network failed");
-  const retry = markQueuedDraftQueued(failed, queue[0]!.id);
-  const missing = markQueuedDraftQueued(queue, "missing");
+  const failed = markQueuedDraftError(queue, queue[0]!.id, "network failed", 200);
+  const retry = markQueuedDraftQueued(failed, queue[0]!.id, 300);
+  const missing = markQueuedDraftQueued(queue, "missing", 400);
 
   assert.equal(retry[0]!.state, "queued");
   assert.equal(retry[0]!.error, undefined);
+  assert.equal(retry[0]!.updatedAt, 300);
   assert.equal(firstQueuedDraft(retry)?.draft.text, "one");
+  assert.equal(missing, queue);
+});
+
+test("queue model marks drafts editing and excludes them from draining", () => {
+  const queue = appendQueuedDraft([], draft("one"), 100);
+  const failed = markQueuedDraftError(queue, queue[0]!.id, "network failed", 200);
+  const editing = markQueuedDraftEditing(failed, queue[0]!.id, 300);
+  const missing = markQueuedDraftEditing(queue, "missing", 400);
+
+  assert.equal(editing[0]!.state, "editing");
+  assert.equal(editing[0]!.error, undefined);
+  assert.equal(editing[0]!.updatedAt, 300);
+  assert.equal(firstQueuedDraft(editing), null);
   assert.equal(missing, queue);
 });
 
 test("queue model returns null when no draft is drain-eligible", () => {
   const queue = appendQueuedDraft(appendQueuedDraft([], draft("one"), 100), draft("two"), 200);
   const sending = markQueuedDraftSending(queue, queue[0]!.id);
-  const editing = updateQueuedDraft(sending, queue[1]!.id, draft("two edited"), 300);
-  const editingState = editing.map((item) =>
-    item.id === queue[1]!.id ? { ...item, state: "editing" as const } : item,
-  );
+  const updated = updateQueuedDraft(sending, queue[1]!.id, draft("two edited"), 300);
+  const editing = markQueuedDraftEditing(updated, queue[1]!.id, 400);
 
-  assert.equal(firstQueuedDraft(editingState), null);
+  assert.equal(editing[1]!.updatedAt, 400);
+  assert.equal(firstQueuedDraft(editing), null);
 });

@@ -67,21 +67,47 @@ export function moveQueuedDraft(queue: QueuedDraft[], id: string, targetIndex: n
   return queue.map((item) => (isDrainEligible(item) ? reorderedItems[nextMovableIndex++]! : item));
 }
 
-export function markQueuedDraftSending(queue: QueuedDraft[], id: string): QueuedDraft[] {
+export function markQueuedDraftSending(
+  queue: QueuedDraft[],
+  id: string,
+  now = Date.now(),
+): QueuedDraft[] {
   if (!queue.some((item) => item.id === id)) return queue;
   return queue.map((item) =>
-    item.id === id ? { ...item, state: "sending", error: undefined } : item,
+    item.id === id ? { ...item, state: "sending", error: undefined, updatedAt: now } : item,
   );
 }
 
-export function markQueuedDraftError(queue: QueuedDraft[], id: string, error: string): QueuedDraft[] {
-  if (!queue.some((item) => item.id === id)) return queue;
-  return queue.map((item) => (item.id === id ? { ...item, state: "error", error } : item));
-}
-
-export function markQueuedDraftQueued(queue: QueuedDraft[], id: string): QueuedDraft[] {
+export function markQueuedDraftError(
+  queue: QueuedDraft[],
+  id: string,
+  error: string,
+  now = Date.now(),
+): QueuedDraft[] {
   if (!queue.some((item) => item.id === id)) return queue;
   return queue.map((item) =>
-    item.id === id ? { ...item, state: "queued", error: undefined } : item,
+    item.id === id ? { ...item, state: "error", error, updatedAt: now } : item,
+  );
+}
+
+export function markQueuedDraftQueued(
+  queue: QueuedDraft[],
+  id: string,
+  now = Date.now(),
+): QueuedDraft[] {
+  if (!queue.some((item) => item.id === id)) return queue;
+  return queue.map((item) =>
+    item.id === id ? { ...item, state: "queued", error: undefined, updatedAt: now } : item,
+  );
+}
+
+export function markQueuedDraftEditing(
+  queue: QueuedDraft[],
+  id: string,
+  now = Date.now(),
+): QueuedDraft[] {
+  if (!queue.some((item) => item.id === id)) return queue;
+  return queue.map((item) =>
+    item.id === id ? { ...item, state: "editing", error: undefined, updatedAt: now } : item,
   );
 }
