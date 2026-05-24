@@ -101,6 +101,20 @@ test("titlebar menu toggles keep macOS-sized icon controls", () => {
   );
 });
 
+test("titlebar text labels are not selectable while dragging the window", () => {
+  assert.match(
+    source,
+    /<span class="[^"]*\bselect-none\b[^"]*">[\s\S]*Veslo by Neatech/,
+    "fallback app name should not be selectable in the draggable titlebar area",
+  );
+
+  assert.match(
+    source,
+    /<div class="[^"]*\bselect-none\b[^"]*">\s*\{props\.centerContent\}/,
+    "centered session and project titlebar labels should not be selectable",
+  );
+});
+
 test("titlebar menu toggles let session context replace the left-side brand", () => {
   assert.match(
     source,

@@ -65,7 +65,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
               <LeftSidebarToggleIcon size={18} />
             </button>
             {props.leftContent ?? (props.showBrand !== false ? (
-              <span class="truncate text-[13px] font-medium leading-6 text-gray-12">
+              <span class="select-none truncate text-[13px] font-medium leading-6 text-gray-12">
                 Veslo by Neatech
               </span>
             ) : null)}
@@ -74,7 +74,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
 
         <Show when={props.centerContent}>
           <div class={layout.centerContentClass}>
-            <div class="pointer-events-auto min-w-0 max-w-full truncate text-[12px] leading-6 text-gray-10">
+            <div class="pointer-events-auto min-w-0 max-w-full select-none truncate text-[12px] leading-6 text-gray-10">
               {props.centerContent}
             </div>
           </div>
