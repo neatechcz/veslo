@@ -16,7 +16,6 @@ import type {
   SkillInventoryItem,
 } from "../types";
 import { addOpencodeCacheHint, isTauriRuntime } from "../utils";
-import skillCreatorTemplate from "../data/skill-creator.md?raw";
 import {
   isPluginInstalled,
   loadPluginsFromConfig as loadPluginsFromConfigHelpers,
@@ -49,6 +48,11 @@ import { readDenAuth } from "../lib/den-auth";
 
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
 type ListLocalSkillsScoped = (projectDir: string, scope: LocalSkillListScope) => Promise<LocalSkillCard[]>;
+
+async function loadSkillCreatorTemplate() {
+  const mod = await import("../data/skill-creator.md?raw");
+  return mod.default;
+}
 
 export function createExtensionsStore(options: {
   client: () => Client | null;
@@ -100,6 +104,7 @@ export function createExtensionsStore(options: {
   let refreshSkillInventoryInFlight = false;
   let refreshPluginsInFlight = false;
   let refreshHubSkillsInFlight = false;
+  let refreshHubSkillsPromise: Promise<void> | null = null;
   let refreshSkillsAborted = false;
   let refreshSkillInventoryAborted = false;
   let refreshPluginsAborted = false;
@@ -113,6 +118,7 @@ export function createExtensionsStore(options: {
   let skillsRoot = "";
   let skillInventoryContextKey = "";
   let hubSkillsRoot = "";
+  let hubSkillsContextKey = "";
   let hubMcpRoot = "";
   let hubMcpContextKey = "";
 
@@ -198,7 +204,7 @@ export function createExtensionsStore(options: {
     }
   }
 
-  async function refreshHubSkills(optionsOverride?: { force?: boolean }) {
+  const resolveHubSkillsRefreshContext = () => {
     const root = options.activeWorkspaceRoot().trim();
     const vesloClient = options.vesloServerClient();
     const vesloCapabilities = options.vesloServerCapabilities();
@@ -207,68 +213,98 @@ export function createExtensionsStore(options: {
       vesloClient &&
       vesloCapabilities?.hub?.skills?.read &&
       typeof (vesloClient as any).listHubSkills === "function";
+    const denAuth = readDenAuth();
+    const denToken = denAuth?.token?.trim() ?? "";
+    const denOrgId = denAuth?.orgId?.trim() ?? "";
+    const contextKey = JSON.stringify({
+      root,
+      canUseVesloServer,
+      denOrgId,
+      hasDenToken: denToken.length > 0,
+    });
 
-    if (root !== hubSkillsRoot) {
+    return {
+      root,
+      vesloClient,
+      canUseVesloServer,
+      denToken,
+      denOrgId,
+      contextKey,
+    };
+  };
+
+  async function refreshHubSkills(optionsOverride?: { force?: boolean }) {
+    const { root, vesloClient, canUseVesloServer, denToken, denOrgId, contextKey } =
+      resolveHubSkillsRefreshContext();
+
+    if (root !== hubSkillsRoot || contextKey !== hubSkillsContextKey) {
       hubSkillsLoaded = false;
     }
 
     if (!optionsOverride?.force && hubSkillsLoaded) return;
-    if (refreshHubSkillsInFlight) return;
+    if (refreshHubSkillsInFlight) {
+      await refreshHubSkillsPromise;
+      return;
+    }
 
     refreshHubSkillsInFlight = true;
     refreshHubSkillsAborted = false;
+    refreshHubSkillsPromise = (async () => {
+      try {
+        setHubSkillsStatus(null);
+        const orgCatalogPlaceholder = translate("skills.org_catalog_placeholder");
 
-    try {
-      setHubSkillsStatus(null);
-      const orgCatalogPlaceholder = translate("skills.org_catalog_placeholder");
+        if (canUseVesloServer) {
+          if (!denToken || !denOrgId) {
+            setHubSkills([]);
+            setHubSkillsStatus(orgCatalogPlaceholder);
+            hubSkillsLoaded = true;
+            hubSkillsRoot = root;
+            hubSkillsContextKey = contextKey;
+            return;
+          }
 
-      if (canUseVesloServer) {
-        const denAuth = readDenAuth();
-        const denToken = denAuth?.token?.trim() ?? "";
-        const denOrgId = denAuth?.orgId?.trim() ?? "";
-
-        if (!denToken || !denOrgId) {
-          setHubSkills([]);
-          setHubSkillsStatus(orgCatalogPlaceholder);
+          const response = await (vesloClient as any).listHubSkills({
+            denToken,
+            denOrgId,
+          });
+          if (refreshHubSkillsAborted) return;
+          const next: HubSkillCard[] = Array.isArray(response?.items)
+            ? response.items.map((entry: any) => ({
+                name: String(entry.name ?? ""),
+                description: typeof entry.description === "string" ? entry.description : undefined,
+                trigger: typeof entry.trigger === "string" ? entry.trigger : undefined,
+                source: entry.source,
+              }))
+            : [];
+          setHubSkills(next);
+          if (!next.length) setHubSkillsStatus(orgCatalogPlaceholder);
           hubSkillsLoaded = true;
           hubSkillsRoot = root;
+          hubSkillsContextKey = contextKey;
+          void refreshHubMcp({ force: true });
           return;
         }
 
-        const response = await (vesloClient as any).listHubSkills({
-          denToken,
-          denOrgId,
-        });
         if (refreshHubSkillsAborted) return;
-        const next: HubSkillCard[] = Array.isArray(response?.items)
-          ? response.items.map((entry: any) => ({
-              name: String(entry.name ?? ""),
-              description: typeof entry.description === "string" ? entry.description : undefined,
-              trigger: typeof entry.trigger === "string" ? entry.trigger : undefined,
-              source: entry.source,
-            }))
-          : [];
-        setHubSkills(next);
-        if (!next.length) setHubSkillsStatus(orgCatalogPlaceholder);
+        setHubSkills([]);
+        setHubSkillsStatus(orgCatalogPlaceholder);
         hubSkillsLoaded = true;
         hubSkillsRoot = root;
+        hubSkillsContextKey = contextKey;
         void refreshHubMcp({ force: true });
-        return;
+      } catch (e) {
+        if (refreshHubSkillsAborted) return;
+        hubSkillsLoaded = false;
+        setHubSkills([]);
+        setHubSkillsStatus(e instanceof Error ? e.message : "Failed to load hub skills.");
+      } finally {
+        refreshHubSkillsInFlight = false;
+        refreshHubSkillsPromise = null;
       }
+    })();
 
-      if (refreshHubSkillsAborted) return;
-      setHubSkills([]);
-      setHubSkillsStatus(orgCatalogPlaceholder);
-      hubSkillsLoaded = true;
-      hubSkillsRoot = root;
-      void refreshHubMcp({ force: true });
-    } catch (e) {
-      if (refreshHubSkillsAborted) return;
-      setHubSkills([]);
-      setHubSkillsStatus(e instanceof Error ? e.message : "Failed to load hub skills.");
-    } finally {
-      refreshHubSkillsInFlight = false;
-    }
+    await refreshHubSkillsPromise;
   }
 
   const localWorkspaceLabel = (workspace: WorkspaceInfo) =>
@@ -288,13 +324,14 @@ export function createExtensionsStore(options: {
       }))
       .filter((workspace) => workspace.id && workspace.path);
 
-    const nextContextKey = JSON.stringify(
-      localWorkspaces.map((workspace) => ({
+    const nextContextKey = JSON.stringify({
+      hub: resolveHubSkillsRefreshContext().contextKey,
+      workspaces: localWorkspaces.map((workspace) => ({
         id: workspace.id,
         label: workspace.label,
         path: workspace.path,
       })),
-    );
+    });
 
     if (nextContextKey !== skillInventoryContextKey) {
       skillInventoryLoaded = false;
@@ -342,10 +379,11 @@ export function createExtensionsStore(options: {
       if (!next.length) {
         setSkillInventoryStatus(translate("skills.no_skills_found"));
       }
-      skillInventoryLoaded = true;
+      skillInventoryLoaded = hubSkillsLoaded;
       skillInventoryContextKey = nextContextKey;
     } catch (e) {
       if (refreshSkillInventoryAborted) return;
+      skillInventoryLoaded = false;
       setSkillInventory([]);
       setSkillInventoryStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
     } finally {
@@ -1027,6 +1065,7 @@ export function createExtensionsStore(options: {
       setSkillsStatus(translate("skills.installing_skill_creator"));
 
       try {
+        const skillCreatorTemplate = await loadSkillCreatorTemplate();
         await vesloClient.upsertSkill(vesloWorkspaceId, {
           name: "skill-creator",
           content: skillCreatorTemplate,
@@ -1075,6 +1114,7 @@ export function createExtensionsStore(options: {
     setSkillsStatus(translate("skills.installing_skill_creator"));
 
     try {
+      const skillCreatorTemplate = await loadSkillCreatorTemplate();
       const result = await installSkillTemplate(targetDir, "skill-creator", skillCreatorTemplate, { overwrite: false });
 
       if (!result.ok && /already exists/i.test(result.stderr)) {
