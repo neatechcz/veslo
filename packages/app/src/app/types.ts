@@ -228,6 +228,41 @@ export type HubSkillCard = {
   };
 };
 
+export type SkillInventoryScope = "workspace" | "user-global";
+
+export type SkillInventoryStatus = "global" | "workspace-only" | "mixed" | "hub-only";
+
+export type SkillInventoryWorkspace = {
+  id: string;
+  label: string;
+  path?: string;
+  kind: "local" | "remote";
+};
+
+export type SkillInstance = {
+  id: string;
+  name: string;
+  scope: SkillInventoryScope;
+  workspaceId?: string;
+  workspaceLabel?: string;
+  path: string;
+  description?: string;
+  trigger?: string;
+  source: "opencode" | "claude" | "agents" | "hub" | "unknown";
+  readable: boolean;
+  writable: boolean;
+};
+
+export type SkillInventoryItem = {
+  name: string;
+  description?: string;
+  trigger?: string;
+  globalInstance?: SkillInstance;
+  workspaceInstances: SkillInstance[];
+  hubItem?: HubSkillCard;
+  status: SkillInventoryStatus;
+};
+
 export type HubMcpItem = {
   id: string;
   name: string;
