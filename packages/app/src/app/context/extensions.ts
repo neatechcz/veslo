@@ -14,6 +14,7 @@ import type {
   ReloadTrigger,
   SkillCard,
   SkillInventoryItem,
+  SkillSaveResult,
 } from "../types";
 import { addOpencodeCacheHint, isTauriRuntime } from "../utils";
 import {
@@ -1464,11 +1465,16 @@ export function createExtensionsStore(options: {
     }
   }
 
-  async function saveSkill(input: { name: string; content: string; description?: string }) {
+  async function saveSkill(input: { name: string; content: string; description?: string }): Promise<SkillSaveResult> {
     const trimmed = input.name.trim();
-    if (!trimmed) return;
+    if (!trimmed) return { ok: false, message: translate("skills.bundle_missing_name") };
 
     const root = options.activeWorkspaceRoot().trim();
+    if (!root) {
+      const message = translate("skills.pick_workspace_first");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
@@ -1493,29 +1499,35 @@ export function createExtensionsStore(options: {
         });
         options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "updated" });
         await refreshSkills({ force: true });
-        setSkillsStatus("Saved.");
+        const message = "Saved.";
+        setSkillsStatus(message);
+        return { ok: true, message };
       } catch (e) {
         const message = e instanceof Error ? e.message : translate("skills.unknown_error");
-        options.setError(addOpencodeCacheHint(message));
+        const hintedMessage = addOpencodeCacheHint(message);
+        options.setError(hintedMessage);
+        return { ok: false, message: hintedMessage };
       } finally {
         options.setBusy(false);
       }
-      return;
     }
 
     if (isRemoteWorkspace) {
-      setSkillsStatus("Veslo server unavailable. Connect to edit skills.");
-      return;
+      const message = "Veslo server unavailable. Connect to edit skills.";
+      setSkillsStatus(message);
+      return { ok: false, message };
     }
 
     if (!isTauriRuntime()) {
-      setSkillsStatus(translate("skills.desktop_required"));
-      return;
+      const message = translate("skills.desktop_required");
+      setSkillsStatus(message);
+      return { ok: false, message };
     }
 
     if (!isLocalWorkspace) {
-      setSkillsStatus("Local workers are required to edit skills.");
-      return;
+      const message = "Local workers are required to edit skills.";
+      setSkillsStatus(message);
+      return { ok: false, message };
     }
 
     options.setBusy(true);
@@ -1523,16 +1535,23 @@ export function createExtensionsStore(options: {
     setSkillsStatus(null);
     try {
       const result = await writeLocalSkill(root, trimmed, input.content);
+      const message = result.stderr || result.stdout || translate("skills.unknown_error");
       if (!result.ok) {
-        setSkillsStatus(result.stderr || result.stdout || translate("skills.unknown_error"));
+        setSkillsStatus(message);
+        await refreshSkills({ force: true });
+        return { ok: false, message };
       } else {
-        setSkillsStatus(result.stdout || "Saved.");
+        const successMessage = result.stdout || "Saved.";
+        setSkillsStatus(successMessage);
         options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "updated" });
+        await refreshSkills({ force: true });
+        return { ok: true, message: successMessage };
       }
-      await refreshSkills({ force: true });
     } catch (e) {
       const message = e instanceof Error ? e.message : translate("skills.unknown_error");
-      options.setError(addOpencodeCacheHint(message));
+      const hintedMessage = addOpencodeCacheHint(message);
+      options.setError(hintedMessage);
+      return { ok: false, message: hintedMessage };
     } finally {
       options.setBusy(false);
     }

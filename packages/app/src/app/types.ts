@@ -216,6 +216,11 @@ export type SkillCard = {
   trigger?: string;
 };
 
+export type SkillSaveResult = {
+  ok: boolean;
+  message?: string;
+};
+
 export type HubSkillCard = {
   name: string;
   description?: string;

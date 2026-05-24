@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 
-import type { HubSkillCard, SkillCard, SkillInstance, SkillInventoryItem } from "../types";
+import type { HubSkillCard, SkillCard, SkillInstance, SkillInventoryItem, SkillSaveResult } from "../types";
 import type { WorkspaceInfo } from "../lib/tauri";
 
 import Button from "../components/button";
@@ -78,7 +78,7 @@ export type SkillsViewProps = {
   revealSkillsFolder: () => void;
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
-  saveSkill: (input: { name: string; content: string; description?: string }) => void;
+  saveSkill: (input: { name: string; content: string; description?: string }) => Promise<SkillSaveResult>;
   createSessionAndOpen: () => void;
   setPrompt: (value: string) => void;
 };
@@ -268,7 +268,6 @@ export default function SkillsView(props: SkillsViewProps) {
       )
   );
 
-  const installedNames = createMemo(() => installedInventoryNames());
   const activeWorkspaceInstalledNames = createMemo(() =>
     new Set(
       installedInventoryItems()
@@ -279,6 +278,17 @@ export default function SkillsView(props: SkillsViewProps) {
         )
     )
   );
+  const activeOrGlobalInstalledNames = createMemo(() =>
+    new Set(
+      installedInventoryItems()
+        .flatMap((item) =>
+          item.globalInstance || item.workspaceInstances.some((instance) => instance.workspaceId === props.activeWorkspaceId)
+            ? [item.name]
+            : []
+        )
+    )
+  );
+  const installedNames = createMemo(() => activeOrGlobalInstalledNames());
   const canOverwriteInstallLinkBundle = (name: string) => activeWorkspaceInstalledNames().has(name.trim());
   const installLinkShouldRename = (name: string, mode: "overwrite" | "keep-both") =>
     mode === "keep-both" || (installedNames().has(name.trim()) && !canOverwriteInstallLinkBundle(name));
@@ -532,13 +542,17 @@ export default function SkillsView(props: SkillsViewProps) {
       const finalName = shouldRename ? resolveUniqueSkillName(desiredName, taken) : desiredName;
       const content = shouldRename ? stripFrontmatter(bundle.content) : bundle.content;
 
-      await Promise.resolve(
+      const result = await Promise.resolve(
         props.saveSkill({
           name: finalName,
           content,
           description: bundle.description,
         }),
       );
+      if (!result.ok) {
+        setInstallLinkError(result.message ?? translate("skills.failed_save_skill"));
+        return;
+      }
       props.refreshSkills({ force: true });
       props.refreshSkillInventory({ force: true });
       setToast(translate("skills.installed_named", { name: finalName }));
@@ -595,13 +609,17 @@ export default function SkillsView(props: SkillsViewProps) {
     if (!selectedDirty()) return;
     setSelectedError(null);
     try {
-      await Promise.resolve(
+      const result = await Promise.resolve(
         props.saveSkill({
           name: skill.name,
           content: selectedContent(),
           description: skill.description,
         }),
       );
+      if (!result.ok) {
+        setSelectedError(result.message ?? translate("skills.failed_save_skill"));
+        return;
+      }
       props.refreshSkillInventory({ force: true });
       setSelectedDirty(false);
     } catch (e) {

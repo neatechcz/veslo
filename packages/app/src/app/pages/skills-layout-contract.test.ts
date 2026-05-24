@@ -88,9 +88,14 @@ test("inventory card uninstall is unavailable until scoped uninstall exists", ()
 test("install-from-link overwrite is gated by active workspace conflicts only", () => {
   assert.match(source, /const activeWorkspaceInstalledNames = createMemo\(\(\) =>\s*new Set\(\s*installedInventoryItems\(\)\s*\.flatMap\(\(item\) =>\s*item\.workspaceInstances\.some\(\(instance\) => instance\.workspaceId === props\.activeWorkspaceId\)\s*\? \[item\.name\]\s*: \[\]\s*\)\s*\)\s*\)/);
   assert.doesNotMatch(source, /const activeWorkspaceInstalledNames = createMemo\(\(\) =>\s*new Set\(props\.skills\.map/);
+  assert.match(source, /const activeOrGlobalInstalledNames = createMemo\(\(\) =>\s*new Set\(\s*installedInventoryItems\(\)\s*\.flatMap\(\(item\) =>\s*item\.globalInstance \|\| item\.workspaceInstances\.some\(\(instance\) => instance\.workspaceId === props\.activeWorkspaceId\)\s*\? \[item\.name\]\s*: \[\]\s*\)\s*\)\s*\)/);
+  assert.match(source, /const installedNames = createMemo\(\(\) => activeOrGlobalInstalledNames\(\)\)/);
+  assert.doesNotMatch(source, /const installedNames = createMemo\(\(\) => installedInventoryNames\(\)\)/);
   assert.match(source, /const canOverwriteInstallLinkBundle = \(name: string\) => activeWorkspaceInstalledNames\(\)\.has\(name\.trim\(\)\)/);
   assert.match(source, /const installLinkShouldRename = \(name: string, mode: "overwrite" \| "keep-both"\) =>\s*mode === "keep-both" \|\| \(installedNames\(\)\.has\(name\.trim\(\)\) && !canOverwriteInstallLinkBundle\(name\)\)/);
   assert.match(source, /const shouldRename = installLinkShouldRename\(desiredName, mode\)/);
+  assert.match(source, /const taken = installedNames\(\)/);
+  assert.match(source, /props\.hubSkills\.filter\(\(skill\) => !installedNames\(\)\.has\(skill\.name\)\)/);
   assert.match(source, /const activeWorkspaceConflict = canOverwriteInstallLinkBundle\(bundle\(\)\.name\)/);
   assert.match(source, /const globalOnlyConflict = installedNames\(\)\.has\(bundle\(\)\.name\.trim\(\)\) && !activeWorkspaceConflict/);
   assert.match(source, /translate\("skills\.global_conflict_warning"\)/);
@@ -99,6 +104,15 @@ test("install-from-link overwrite is gated by active workspace conflicts only", 
   assert.match(csSource, /"skills\.global_conflict_warning":/);
   assert.match(zhSource, /"skills\.global_conflict_warning":/);
   assert.doesNotMatch(source, /const conflict = installedNames\(\)\.has\(bundle\.name\.trim\(\)\);[\s\S]{0,500}translate\("skills\.overwrite"\)/);
+});
+
+test("install-from-link keeps the modal open when saveSkill reports failure", () => {
+  assert.match(source, /import type \{[\s\S]*SkillSaveResult[\s\S]*\} from "\.\.\/types"/);
+  assert.match(source, /saveSkill: \(input: \{ name: string; content: string; description\?: string \}\) => Promise<SkillSaveResult>/);
+  assert.match(dashboardSource, /saveSkill: \(input: \{ name: string; content: string; description\?: string \}\) => Promise<SkillSaveResult>/);
+  assert.match(source, /const result = await Promise\.resolve\(\s*props\.saveSkill\(\{/);
+  assert.match(source, /if \(!result\.ok\) \{\s*setInstallLinkError\(result\.message \?\? translate\("skills\.failed_save_skill"\)\);\s*return;\s*\}/);
+  assert.match(source, /if \(!result\.ok\)[\s\S]{0,220}return;[\s\S]{0,220}props\.refreshSkills\(\{ force: true \}\);/);
 });
 
 test("active remote workspace skills fall back into the workspace-specific inventory section", () => {

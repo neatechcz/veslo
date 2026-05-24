@@ -13,6 +13,7 @@ import type {
   HubSkillCard,
   SkillCard,
   SkillInventoryItem,
+  SkillSaveResult,
   StartupPreference,
   LoadedSessionPrefetchInterestChangeHandler,
   WorkspaceConnectionState,
@@ -221,7 +222,7 @@ export type DashboardViewProps = {
   revealSkillsFolder: () => void;
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
-  saveSkill: (input: { name: string; content: string; description?: string }) => void;
+  saveSkill: (input: { name: string; content: string; description?: string }) => Promise<SkillSaveResult>;
   pluginsAccessHint?: string | null;
   canEditPlugins: boolean;
   canUseGlobalPluginScope: boolean;
