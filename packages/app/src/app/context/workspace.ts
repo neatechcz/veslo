@@ -1360,22 +1360,6 @@ export function createWorkspaceStore(options: {
       // the wrong workspace, and ensureEngineForWorkspace reconnects
       // to the correct workspace on demand.
 
-      // VSLO-86 Task #14 — sync orchestrator activeId to the UI's selected
-      // workspace even in browsing mode. Without this, the orchestrator
-      // keeps the previously active workspace as its routing default; the
-      // next send/engine_info request lands on the stale engine, the UI
-      // sees "engine-not-started" for the currently selected workspace, and
-      // the user gets a 60s timeout instead of a fresh engine spawn.
-      // Fire-and-forget — UI doesn't need to wait for the eager engine
-      // spawn this triggers; the next interactive request will pick up
-      // whichever engine the pool has ready.
-      void activateOrchestratorWorkspace({
-        workspacePath: next.path,
-        name: next.displayName?.trim() || next.name?.trim() || null,
-      }).catch((e) => {
-        _wsLog("[workspace:activate] STEP 5-BROWSE — orchestrator activate failed", e instanceof Error ? e.message : String(e));
-      });
-
       try {
         await options.populateSidebarFromDb!(id, next.path);
       } catch (e) {
@@ -1392,6 +1376,25 @@ export function createWorkspaceStore(options: {
 
       options.setEngineReady?.(false);
       updateWorkspaceConnectionState(id, { status: "connected", message: null });
+
+      // VSLO-86 Task #14 — kick off the full engine bootstrap in the
+      // background so that:
+      //   (a) the orchestrator's activeId follows the UI's selected workspace,
+      //   (b) restartWorkspaceRuntime / startHost spawns the engine,
+      //   (c) loadSessions + setEngineReady(true) fire when the engine is up,
+      //   (d) onEngineStable runs, which is what triggers
+      //       ensureLocalVesloServerRunning (the production veslo-server with
+      //       --workspace flags for every registered user workspace).
+      // Without this, browsing mode would leave engineReady=false forever and
+      // the next send would fail the AI-access preflight (production
+      // veslo-server never came up, so /ai-gateway/me/ai-access has nothing
+      // to talk to). ensureEngineForWorkspace is single-flighted by workspace
+      // id, so rapid sidebar clicks coalesce instead of stacking parallel
+      // POSTs onto the orchestrator daemon.
+      void ensureEngineForWorkspace().catch((e) => {
+        _wsLog("[workspace:activate] STEP 5-BROWSE — ensureEngineForWorkspace failed", e instanceof Error ? e.message : String(e));
+      });
+
       wsDebug("activate:local->local:browsingMode:done", { id, ms: Date.now() - activateStart });
       return true;
     }
