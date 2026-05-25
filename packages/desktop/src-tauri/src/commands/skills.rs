@@ -6,6 +6,7 @@ use std::str::FromStr;
 
 use crate::paths::{candidate_xdg_config_dirs, home_dir};
 use crate::types::ExecResult;
+use crate::workspace::validation::{validate_workspace_path, ValidationMode};
 
 fn ensure_project_skill_root(project_dir: &str) -> Result<PathBuf, String> {
     let project_dir = project_dir.trim();
@@ -774,11 +775,14 @@ mod tests {
 }
 
 #[tauri::command]
-pub fn list_local_skills(project_dir: String) -> Result<Vec<LocalSkillCard>, String> {
-    let project_dir = project_dir.trim();
-    if project_dir.is_empty() {
-        return Err("projectDir is required".to_string());
-    }
+pub fn list_local_skills(
+    app: tauri::AppHandle,
+    project_dir: String,
+) -> Result<Vec<LocalSkillCard>, String> {
+    let project_dir_buf =
+        validate_workspace_path(&app, &project_dir, ValidationMode::IsRegisteredWorkspace)?;
+    let project_dir = project_dir_buf.to_string_lossy();
+    let project_dir = project_dir.as_ref();
 
     let skill_roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
     list_skill_cards_from_roots(skill_roots)
@@ -826,11 +830,15 @@ fn list_skill_cards_from_roots(skill_roots: Vec<PathBuf>) -> Result<Vec<LocalSki
 }
 
 #[tauri::command]
-pub fn read_local_skill(project_dir: String, name: String) -> Result<LocalSkillContent, String> {
-    let project_dir = project_dir.trim();
-    if project_dir.is_empty() {
-        return Err("projectDir is required".to_string());
-    }
+pub fn read_local_skill(
+    app: tauri::AppHandle,
+    project_dir: String,
+    name: String,
+) -> Result<LocalSkillContent, String> {
+    let project_dir_buf =
+        validate_workspace_path(&app, &project_dir, ValidationMode::IsRegisteredWorkspace)?;
+    let project_dir = project_dir_buf.to_string_lossy();
+    let project_dir = project_dir.as_ref();
 
     let name = validate_skill_name(&name)?;
     let roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
@@ -867,14 +875,15 @@ pub fn read_local_skill_at_path(
 
 #[tauri::command]
 pub fn write_local_skill(
+    app: tauri::AppHandle,
     project_dir: String,
     name: String,
     content: String,
 ) -> Result<ExecResult, String> {
-    let project_dir = project_dir.trim();
-    if project_dir.is_empty() {
-        return Err("projectDir is required".to_string());
-    }
+    let project_dir_buf =
+        validate_workspace_path(&app, &project_dir, ValidationMode::IsRegisteredWorkspace)?;
+    let project_dir = project_dir_buf.to_string_lossy();
+    let project_dir = project_dir.as_ref();
 
     let name = validate_skill_name(&name)?;
     let roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
@@ -959,15 +968,16 @@ pub fn uninstall_skill_at_path(
 
 #[tauri::command]
 pub fn install_skill_template(
+    app: tauri::AppHandle,
     project_dir: String,
     name: String,
     content: String,
     overwrite: bool,
 ) -> Result<ExecResult, String> {
-    let project_dir = project_dir.trim();
-    if project_dir.is_empty() {
-        return Err("projectDir is required".to_string());
-    }
+    let project_dir_buf =
+        validate_workspace_path(&app, &project_dir, ValidationMode::IsRegisteredWorkspace)?;
+    let project_dir = project_dir_buf.to_string_lossy();
+    let project_dir = project_dir.as_ref();
 
     let name = validate_skill_name(&name)?;
     let skill_root = ensure_project_skill_root(project_dir)?;
@@ -1044,11 +1054,15 @@ pub fn install_global_skill_template(
 }
 
 #[tauri::command]
-pub fn uninstall_skill(project_dir: String, name: String) -> Result<ExecResult, String> {
-    let project_dir = project_dir.trim();
-    if project_dir.is_empty() {
-        return Err("projectDir is required".to_string());
-    }
+pub fn uninstall_skill(
+    app: tauri::AppHandle,
+    project_dir: String,
+    name: String,
+) -> Result<ExecResult, String> {
+    let project_dir_buf =
+        validate_workspace_path(&app, &project_dir, ValidationMode::IsRegisteredWorkspace)?;
+    let project_dir = project_dir_buf.to_string_lossy();
+    let project_dir = project_dir.as_ref();
 
     let name = validate_skill_name(&name)?;
     let skill_roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;

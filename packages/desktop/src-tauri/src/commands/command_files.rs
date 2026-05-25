@@ -2,18 +2,22 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::paths::xdg_config_home;
+use tauri::AppHandle;
+
 use crate::types::{ExecResult, OpencodeCommand};
 use crate::workspace::commands::{sanitize_command_name, serialize_command_frontmatter};
+use crate::workspace::validation::{validate_workspace_path, ValidationMode};
 
-fn resolve_commands_dir(scope: &str, project_dir: &str) -> Result<PathBuf, String> {
+fn resolve_commands_dir(
+    app: &AppHandle,
+    scope: &str,
+    project_dir: &str,
+) -> Result<PathBuf, String> {
     match scope {
         "workspace" => {
-            if project_dir.trim().is_empty() {
-                return Err("projectDir is required".to_string());
-            }
-            Ok(PathBuf::from(project_dir)
-                .join(".opencode")
-                .join("commands"))
+            let workspace =
+                validate_workspace_path(app, project_dir, ValidationMode::IsRegisteredWorkspace)?;
+            Ok(workspace.join(".opencode").join("commands"))
         }
         "global" => {
             let base =
@@ -45,13 +49,18 @@ fn list_command_names(dir: &PathBuf) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-pub fn opencode_command_list(scope: String, project_dir: String) -> Result<Vec<String>, String> {
-    let dir = resolve_commands_dir(scope.trim(), project_dir.trim())?;
+pub fn opencode_command_list(
+    app: AppHandle,
+    scope: String,
+    project_dir: String,
+) -> Result<Vec<String>, String> {
+    let dir = resolve_commands_dir(&app, scope.trim(), project_dir.trim())?;
     list_command_names(&dir)
 }
 
 #[tauri::command]
 pub fn opencode_command_write(
+    app: AppHandle,
     scope: String,
     project_dir: String,
     command: OpencodeCommand,
@@ -60,7 +69,7 @@ pub fn opencode_command_write(
     let safe_name = sanitize_command_name(&command.name)
         .ok_or_else(|| "command.name is required".to_string())?;
 
-    let dir = resolve_commands_dir(scope, project_dir.trim())?;
+    let dir = resolve_commands_dir(&app, scope, project_dir.trim())?;
     if let Some(parent) = dir.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
@@ -86,13 +95,14 @@ pub fn opencode_command_write(
 
 #[tauri::command]
 pub fn opencode_command_delete(
+    app: AppHandle,
     scope: String,
     project_dir: String,
     name: String,
 ) -> Result<ExecResult, String> {
     let scope = scope.trim();
     let safe_name = sanitize_command_name(&name).ok_or_else(|| "name is required".to_string())?;
-    let dir = resolve_commands_dir(scope, project_dir.trim())?;
+    let dir = resolve_commands_dir(&app, scope, project_dir.trim())?;
     let file_path = dir.join(format!("{safe_name}.md"));
 
     if file_path.exists() {

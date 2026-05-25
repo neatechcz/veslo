@@ -13,6 +13,7 @@ use uuid::Uuid;
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{resolve_orchestrator_data_dir, resolve_orchestrator_status};
 use crate::types::{OrchestratorEngineSnapshot, OrchestratorStatus, OrchestratorWorkspace};
+use crate::workspace::validation::{validate_workspace_path, ValidationMode};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -181,10 +182,18 @@ pub fn spawn_engine_event_poller(app: AppHandle) {
 
 #[tauri::command]
 pub fn orchestrator_workspace_activate(
+    app: AppHandle,
     manager: State<OrchestratorManager>,
     workspace_path: String,
     name: Option<String>,
 ) -> Result<OrchestratorWorkspace, String> {
+    let workspace_path = validate_workspace_path(
+        &app,
+        &workspace_path,
+        ValidationMode::IsRegisteredWorkspace,
+    )?
+    .to_string_lossy()
+    .to_string();
     let base_url = resolve_base_url(&manager)?;
     let add_url = format!("{}/workspaces", base_url.trim_end_matches('/'));
     let payload = json!({
@@ -220,9 +229,17 @@ pub fn orchestrator_workspace_activate(
 
 #[tauri::command]
 pub fn orchestrator_instance_dispose(
+    app: AppHandle,
     manager: State<OrchestratorManager>,
     workspace_path: String,
 ) -> Result<bool, String> {
+    let workspace_path = validate_workspace_path(
+        &app,
+        &workspace_path,
+        ValidationMode::IsRegisteredWorkspace,
+    )?
+    .to_string_lossy()
+    .to_string();
     let base_url = resolve_base_url(&manager)?;
     let add_url = format!("{}/workspaces", base_url.trim_end_matches('/'));
     let payload = json!({
@@ -263,10 +280,13 @@ pub fn orchestrator_start_detached(
     veslo_host_token: Option<String>,
 ) -> Result<OrchestratorDetachedHost, String> {
     let start_ts = now_ms();
-    let workspace_path = workspace_path.trim().to_string();
-    if workspace_path.is_empty() {
-        return Err("workspacePath is required".to_string());
-    }
+    let workspace_path = validate_workspace_path(
+        &app,
+        &workspace_path,
+        ValidationMode::IsRegisteredWorkspace,
+    )?
+    .to_string_lossy()
+    .to_string();
 
     let host_run_id = run_id
         .map(|value| value.trim().to_string())
