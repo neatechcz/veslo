@@ -19,7 +19,7 @@ import { reconcileOpencodeVersion } from "./opencode-version.js";
 import { sanitizeRuntimePayloadForLogs } from "./security.js";
 import { readVersionManifestFromDirs, type VersionInfo, type VersionManifest } from "./version-manifest.js";
 import type { SerializedEngineState } from "./engine-pool.js";
-import { atomicWriteJson, createDebouncedPersister } from "./persistence.js";
+import { atomicWriteJson, cleanupStaleTmpFiles, createDebouncedPersister } from "./persistence.js";
 import { EnginePool, type EngineProcess } from "./engine-pool.js";
 import { proxyToEngine } from "./router-proxy.js";
 
@@ -3225,6 +3225,17 @@ async function runRouterDaemon(args: ParsedArgs) {
   const opencodeSource = opencodeSourceInput;
   const dataDir = resolveRouterDataDir(args.flags);
   const statePath = routerStatePath(dataDir);
+  // Clear stale `.tmp.*` files left behind by previous crashes between
+  // writeFile and rename inside atomicWriteJson. Without this, the data dir
+  // can accumulate orphan tmp files that confuse later debugging.
+  const cleanedTmps = await cleanupStaleTmpFiles(statePath);
+  if (cleanedTmps > 0) {
+    logger.info(
+      "cleaned stale state tmp files",
+      { count: cleanedTmps, statePath },
+      "veslo-orchestrator",
+    );
+  }
   let state = await loadRouterState(statePath);
 
   const host = readFlag(args.flags, "daemon-host") ?? "127.0.0.1";
