@@ -384,8 +384,17 @@ export class EnginePool {
    * `lastActivityAt` is older than `idleSuspendMs`. Suspended engines stay in
    * the Map as placeholders (preserving lastActivityAt history); the next
    * `ensure` call respawns them lazily.
+   *
+   * VSLO-86 — `idleSuspendMs <= 0` is treated as "auto-suspend disabled".
+   * Without this, the frontend's default of 0 (signalling "no preference",
+   * see app.tsx idleSuspendMs signal) immediately suspends every engine the
+   * moment it transitions to ready: `now - lastActivityAt` is a small positive
+   * delta, and `<= 0` is false, so the engine ends up in the suspend queue.
+   * The orchestrator then reports "Unable to connect" on every subsequent
+   * request because the engine is killed before the SDK client can talk to it.
    */
   private runIdleSweep(): void {
+    if (this.config.idleSuspendMs <= 0) return;
     const now = this.deps.now();
     const idsToSuspend: string[] = [];
     for (const engine of this.engines.values()) {
