@@ -2813,7 +2813,29 @@ function createLogger(options: {
       ? colorize(levelTag, levelColors[level] ?? ANSI.gray, colorEnabled)
       : "";
     const tag = [coloredLabel, coloredLevel].filter(Boolean).join(" ");
-    const line = tag ? `${tag} ${message}` : message;
+    // Append caller-supplied attributes inline for warn/error so spawn /
+    // proxy / connect failures surface their real cause in plain-text logs.
+    // Without this, `logger.warn("X failed", { error: e.message })` shows
+    // only "X failed" — the actual message gets dropped on the floor in
+    // text format, leaving debugging to crash-dump archaeology.
+    let attrsSuffix = "";
+    if ((level === "warn" || level === "error") && attributes) {
+      const omitKeys = new Set(["run.id", "process.pid", "service.component"]);
+      const filtered: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(attributes)) {
+        if (omitKeys.has(k)) continue;
+        if (v === undefined || v === null) continue;
+        filtered[k] = v;
+      }
+      if (Object.keys(filtered).length > 0) {
+        try {
+          attrsSuffix = ` ${JSON.stringify(filtered)}`;
+        } catch {
+          // ignore stringify failure
+        }
+      }
+    }
+    const line = tag ? `${tag} ${message}${attrsSuffix}` : `${message}${attrsSuffix}`;
     process.stdout.write(`${line}\n`);
   };
 
@@ -3290,7 +3312,15 @@ async function runRouterDaemon(args: ParsedArgs) {
           runId: `${runId}-${workspaceId.slice(-8)}`,
           logFormat,
         });
-        return { child, baseUrl: `http://${opencodeHost}:${port}` };
+        // opencodeHost is the *bind* address (often 0.0.0.0 so the engine is
+        // reachable from the host machine + LAN). The pool/proxy fetches this
+        // baseUrl as a client, where 0.0.0.0 is meaningless — Node's fetch
+        // resolves it to a routable address only on some platforms and refuses
+        // on others, producing "Unable to connect" engine proxy errors. Map
+        // wildcard binds to loopback so the local client always has a valid
+        // target.
+        const clientHost = opencodeHost === "0.0.0.0" || opencodeHost === "::" ? "127.0.0.1" : opencodeHost;
+        return { child, baseUrl: `http://${clientHost}:${port}` };
       },
       waitForHealthy: async (baseUrl) => {
         const client = createOpencodeClient({ baseUrl, headers: authHeaders });
