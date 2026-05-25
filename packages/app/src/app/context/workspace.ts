@@ -1198,6 +1198,22 @@ export function createWorkspaceStore(options: {
       // the wrong workspace, and ensureEngineForWorkspace reconnects
       // to the correct workspace on demand.
 
+      // VSLO-86 Task #14 — sync orchestrator activeId to the UI's selected
+      // workspace even in browsing mode. Without this, the orchestrator
+      // keeps the previously active workspace as its routing default; the
+      // next send/engine_info request lands on the stale engine, the UI
+      // sees "engine-not-started" for the currently selected workspace, and
+      // the user gets a 60s timeout instead of a fresh engine spawn.
+      // Fire-and-forget — UI doesn't need to wait for the eager engine
+      // spawn this triggers; the next interactive request will pick up
+      // whichever engine the pool has ready.
+      void activateOrchestratorWorkspace({
+        workspacePath: next.path,
+        name: next.displayName?.trim() || next.name?.trim() || null,
+      }).catch((e) => {
+        _wsLog("[workspace:activate] STEP 5-BROWSE — orchestrator activate failed", e instanceof Error ? e.message : String(e));
+      });
+
       try {
         await options.populateSidebarFromDb!(id, next.path);
       } catch (e) {

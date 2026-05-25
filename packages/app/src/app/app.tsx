@@ -275,6 +275,7 @@ import { createWorkspaceStore } from "./context/workspace";
 import { WorkspaceServerSync } from "./context/workspace-server-sync";
 import {
   createWorkspaceRouting,
+  isWorkspaceClientStaleError,
   WorkspaceRoutingProvider,
 } from "./context/workspace-routing";
 import {
@@ -2275,6 +2276,19 @@ export default function App() {
       restorePendingDraftAfterSendFailure();
       if (commandMessageIDToClear) {
         sessionStore.clearCommandDisplay(commandMessageIDToClear);
+      }
+      // VSLO-86 Task #20 — if the workspace switched while this send was
+      // mid-flight, the routed client's guard proxies throw
+      // WorkspaceClientStaleError before forwarding the SDK call. Treat it
+      // as a silent abort: don't poison the (now-irrelevant) session with
+      // an error turn, just unwind cleanly.
+      if (isWorkspaceClientStaleError(e)) {
+        recordSendTrace("sendPrompt:stale-client", {
+          sessionID,
+          entryWorkspaceId: e.entryWorkspaceId,
+          currentWorkspaceId: e.currentWorkspaceId,
+        });
+        return false;
       }
       finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
         sessionID,
@@ -6993,6 +7007,18 @@ export default function App() {
         runId,
         error: e instanceof Error ? e.message : safeStringify(e),
       });
+      // VSLO-86 Task #20 — workspace switched while session.create was in
+      // flight. The guarded routedClient threw to keep the new session from
+      // landing in the stale workspace's engine. Don't surface a user-visible
+      // error: the user already moved on and the next click will spin up a
+      // fresh session in the right workspace.
+      if (isWorkspaceClientStaleError(e)) {
+        recordSendTrace("createSessionAndOpen:stale-client", {
+          entryWorkspaceId: e.entryWorkspaceId,
+          currentWorkspaceId: e.currentWorkspaceId,
+        });
+        return undefined;
+      }
       const message = e instanceof Error ? e.message : t("app.unknown_error", currentLocale());
       recordSendTrace("createSessionAndOpen:error", {
         message,
