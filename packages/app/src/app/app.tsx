@@ -3272,6 +3272,38 @@ export default function App() {
     });
   };
 
+  // Clear a stale "error" sidebar-session status for a workspace right when
+  // the user re-activates it. Without this the red "Error" badge persists in
+  // the sidebar long after the underlying engine cleared — the failed
+  // refreshSidebarWorkspaceSessions call from an earlier cascade is the only
+  // thing that flips the status to "error", and only a successful sidebar
+  // reload flips it back. We let the activate path's populateSidebarFromDb
+  // re-set status to "loading" → "ready" naturally, but the user shouldn't
+  // see the leftover badge in the meantime.
+  const clearStaleWorkspaceSessionError = (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return;
+    setSidebarSessionStatusByWorkspaceId((prev) => {
+      if (prev[id] !== "error") return prev;
+      const next = { ...prev };
+      next[id] = "idle" as const;
+      return next;
+    });
+    setSidebarSessionErrorByWorkspaceId((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      next[id] = null;
+      return next;
+    });
+  };
+
+  const handleActivateWorkspace: typeof workspaceStore.activateWorkspace = (workspaceId, options) => {
+    if (typeof workspaceId === "string") {
+      clearStaleWorkspaceSessionError(workspaceId);
+    }
+    return workspaceStore.activateWorkspace(workspaceId, options);
+  };
+
   const resolveSidebarClientConfig = (workspaceId: string) => {
     const workspace = workspaceStore.workspaces().find((entry) => entry.id === workspaceId) ?? null;
     if (!workspace) return null;
@@ -8808,7 +8840,7 @@ export default function App() {
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
       workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
       readyEngineWorkspaceIds: readyEngineWorkspaceIds(),
-      activateWorkspace: workspaceStore.activateWorkspace,
+      activateWorkspace: handleActivateWorkspace,
       testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
       recoverWorkspace: workspaceStore.recoverWorkspace,
       openCreateWorkspace: () => {
@@ -9063,7 +9095,7 @@ export default function App() {
     connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
     workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
     readyEngineWorkspaceIds: readyEngineWorkspaceIds(),
-    activateWorkspace: workspaceStore.activateWorkspace,
+    activateWorkspace: handleActivateWorkspace,
     testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
     recoverWorkspace: workspaceStore.recoverWorkspace,
     editWorkspaceConnection: openWorkspaceConnectionSettings,
