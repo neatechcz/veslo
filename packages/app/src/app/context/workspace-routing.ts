@@ -4,6 +4,72 @@ import type { createClient, OpencodeAuth } from "../lib/opencode";
 
 export type RoutingClient = ReturnType<typeof createClient>;
 
+/**
+ * VSLO-86 Task #20 — thrown by guarded `RoutingClient` proxies when the
+ * caller-anchored `entryWorkspaceId` no longer matches the currently active
+ * workspace.
+ *
+ * Why: `routedClient()` is read sync, but the SDK methods it returns are
+ * called async. A workspace switch between those two events used to silently
+ * route the SDK call through the previous workspace's engine. The guard
+ * proxies (see `wrapClientWithGuard`) snapshot the workspace ID at lookup
+ * time and check it at each method invocation; on mismatch they throw this
+ * error so callers can abort cleanly instead of writing to the wrong engine.
+ */
+export class WorkspaceClientStaleError extends Error {
+  constructor(
+    public readonly entryWorkspaceId: string,
+    public readonly currentWorkspaceId: string,
+  ) {
+    super(
+      `Workspace client is stale: anchored to "${entryWorkspaceId}", active is "${currentWorkspaceId}"`,
+    );
+    this.name = "WorkspaceClientStaleError";
+  }
+}
+
+export function isWorkspaceClientStaleError(
+  err: unknown,
+): err is WorkspaceClientStaleError {
+  return err instanceof WorkspaceClientStaleError;
+}
+
+/**
+ * Recursively proxies a `RoutingClient` so every leaf function call checks
+ * `getActiveWsId() === entryWsId` before delegating. Sub-objects (e.g.
+ * `client.session`, `client.global`) are wrapped lazily on property access.
+ *
+ * The guard is intentionally permissive: when `getActiveWsId()` returns an
+ * empty string (no active workspace yet — e.g. early bootstrap), the call
+ * is allowed through so legitimate startup flows aren't broken.
+ */
+function wrapClientWithGuard<T extends object>(
+  target: T,
+  entryWsId: string,
+  getActiveWsId: () => string,
+): T {
+  return new Proxy(target, {
+    get(inner, prop, receiver) {
+      const value = Reflect.get(inner, prop, receiver);
+      if (typeof value === "function") {
+        return new Proxy(value as (...args: unknown[]) => unknown, {
+          apply(fn, thisArg, args) {
+            const current = getActiveWsId();
+            if (current && current !== entryWsId) {
+              throw new WorkspaceClientStaleError(entryWsId, current);
+            }
+            return Reflect.apply(fn, thisArg === receiver ? inner : thisArg, args);
+          },
+        });
+      }
+      if (value && typeof value === "object") {
+        return wrapClientWithGuard(value as object, entryWsId, getActiveWsId);
+      }
+      return value;
+    },
+  }) as T;
+}
+
 export type ClientEntry = {
   workspaceId: string;
   client: RoutingClient;
@@ -86,9 +152,19 @@ export function createWorkspaceRouting(
 
   return {
     client(workspaceId?: string) {
-      if (workspaceId) {
-        const entry = entries.get(workspaceId);
-        if (entry) return entry.client;
+      // VSLO-86 Task #20 — anchor the returned client to a snapshot of the
+      // workspace ID at lookup time. Caller may pass an explicit ID or rely
+      // on the active workspace; either way, all subsequent SDK calls go
+      // through guard proxies that re-check the active ID before each call.
+      // Workspace switches between this lookup and the async SDK call now
+      // surface as `WorkspaceClientStaleError` instead of silently hitting
+      // the previous workspace's engine.
+      const wsId = workspaceId ?? opts.activeWorkspaceId();
+      if (wsId) {
+        const entry = entries.get(wsId);
+        if (entry) {
+          return wrapClientWithGuard(entry.client, wsId, opts.activeWorkspaceId);
+        }
       }
       return opts.clientSource();
     },
@@ -96,7 +172,9 @@ export function createWorkspaceRouting(
       const wsId = opts.activeWorkspaceId();
       if (wsId) {
         const entry = entries.get(wsId);
-        if (entry) return entry.client;
+        if (entry) {
+          return wrapClientWithGuard(entry.client, wsId, opts.activeWorkspaceId);
+        }
       }
       return opts.clientSource();
     },
