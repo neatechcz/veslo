@@ -125,7 +125,7 @@ fn validate_server_name(name: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
-use crate::workspace::validation::validate_project_dir;
+use crate::workspace::validation::{validate_project_dir, validate_workspace_path, ValidationMode};
 
 fn resolve_opencode_program(
     app: &AppHandle,
@@ -279,32 +279,15 @@ pub fn obsidian_is_available() -> bool {
 }
 
 #[tauri::command]
-pub fn open_in_obsidian(file_path: String) -> Result<(), String> {
-    let trimmed = file_path.trim();
-    println!("[misc][obsidian] open request path={trimmed}");
-    if trimmed.is_empty() {
-        println!("[misc][obsidian] rejected: empty path");
-        return Err("file_path is required".to_string());
-    }
-
-    let path = PathBuf::from(trimmed);
-    if !path.is_absolute() {
-        println!(
-            "[misc][obsidian] rejected: non-absolute path={}",
-            path.display()
-        );
-        return Err("file_path must be an absolute path".to_string());
-    }
-    if !path.exists() {
-        println!(
-            "[misc][obsidian] missing path={} cwd={}",
-            path.display(),
-            std::env::current_dir()
-                .map(|dir| dir.display().to_string())
-                .unwrap_or_else(|_| "(unknown)".to_string())
-        );
-        return Err(format!("File does not exist: {}", path.display()));
-    }
+pub fn open_in_obsidian(app: AppHandle, file_path: String) -> Result<(), String> {
+    let path = match validate_workspace_path(&app, &file_path, ValidationMode::InAuthorizedRoot) {
+        Ok(canonical) => canonical,
+        Err(e) => {
+            println!("[misc][obsidian] rejected: {e}");
+            return Err(e);
+        }
+    };
+    println!("[misc][obsidian] open request path={}", path.display());
 
     #[cfg(target_os = "macos")]
     {

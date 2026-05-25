@@ -397,19 +397,14 @@ pub struct WorkspaceFolderTransferResult {
 
 #[tauri::command]
 pub fn workspace_copy_into_folder(
+    app: tauri::AppHandle,
     source_path: String,
     target_path: String,
     overwrite: bool,
 ) -> Result<WorkspaceFolderTransferResult, String> {
-    let source = PathBuf::from(source_path.trim());
-    let target = PathBuf::from(target_path.trim());
+    let source = validate_workspace_path(&app, &source_path, ValidationMode::InAuthorizedRoot)?;
+    let target = validate_workspace_path(&app, &target_path, ValidationMode::NotSystemPath)?;
 
-    if source.as_os_str().is_empty() {
-        return Err("sourcePath is required".to_string());
-    }
-    if target.as_os_str().is_empty() {
-        return Err("targetPath is required".to_string());
-    }
     if !source.is_dir() {
         return Err(format!("Source is not a directory: {}", source.display()));
     }
@@ -984,10 +979,8 @@ pub fn workspace_export_config(
     if workspace_id.is_empty() {
         return Err("workspaceId is required".to_string());
     }
-    let output_path = output_path.trim().to_string();
-    if output_path.is_empty() {
-        return Err("outputPath is required".to_string());
-    }
+    let output_path =
+        validate_workspace_path(&app, &output_path, ValidationMode::NotSystemPath)?;
 
     let state = load_workspace_state(&app)?;
     let workspace = state
@@ -1008,7 +1001,6 @@ pub fn workspace_export_config(
         ));
     }
 
-    let output_path = PathBuf::from(&output_path);
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create export folder {}: {e}", parent.display()))?;
@@ -1083,12 +1075,9 @@ pub fn workspace_import_config(
     if archive_path.is_empty() {
         return Err("archivePath is required".to_string());
     }
-    let target_dir = target_dir.trim().to_string();
-    if target_dir.is_empty() {
-        return Err("targetDir is required".to_string());
-    }
+    let target_path = validate_workspace_path(&app, &target_dir, ValidationMode::NotSystemPath)?;
+    let target_dir = target_path.to_string_lossy().to_string();
 
-    let target_path = PathBuf::from(&target_dir);
     if target_path.exists() {
         let mut entries = fs::read_dir(&target_path)
             .map_err(|e| format!("Failed to read {}: {e}", target_path.display()))?;
