@@ -14,6 +14,7 @@ use crate::workspace::state::{
     load_workspace_state, private_workspace_root_from_data_dir, save_workspace_state, stable_workspace_id,
     stable_workspace_id_for_remote, stable_workspace_id_for_veslo,
 };
+use crate::workspace::validation::{validate_workspace_path, ValidationMode};
 use crate::workspace::watch::{update_workspace_watch, WorkspaceWatchState};
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -446,10 +447,8 @@ pub fn workspace_create(
     watch_state: State<WorkspaceWatchState>,
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] create local request");
-    let folder = folder_path.trim().to_string();
-    if folder.is_empty() {
-        return Err("folderPath is required".to_string());
-    }
+    let folder_path = validate_workspace_path(&app, &folder_path, ValidationMode::NotSystemPath)?;
+    let folder = folder_path.to_string_lossy().to_string();
 
     let workspace_name = name.trim().to_string();
     if workspace_name.is_empty() {
@@ -716,23 +715,24 @@ pub fn workspace_update_remote(
 
 #[tauri::command]
 pub fn workspace_add_authorized_root(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     workspace_path: String,
     folder_path: String,
 ) -> Result<ExecResult, String> {
-    let workspace_path = workspace_path.trim().to_string();
-    let folder_path = folder_path.trim().to_string();
+    let workspace_path = validate_workspace_path(
+        &app,
+        &workspace_path,
+        ValidationMode::IsRegisteredWorkspace,
+    )?;
+    let folder_path = validate_workspace_path(
+        &app,
+        &folder_path,
+        ValidationMode::NotSystemPath,
+    )?;
+    let workspace_path_str = workspace_path.to_string_lossy().to_string();
+    let folder_path_str = folder_path.to_string_lossy().to_string();
 
-    if workspace_path.is_empty() {
-        return Err("workspacePath is required".to_string());
-    }
-    if folder_path.is_empty() {
-        return Err("folderPath is required".to_string());
-    }
-
-    let veslo_path = PathBuf::from(&workspace_path)
-        .join(".opencode")
-        .join("veslo.json");
+    let veslo_path = workspace_path.join(".opencode").join("veslo.json");
 
     if let Some(parent) = veslo_path.parent() {
         fs::create_dir_all(parent)
@@ -745,14 +745,14 @@ pub fn workspace_add_authorized_root(
         serde_json::from_str(&raw).unwrap_or_default()
     } else {
         let mut cfg = WorkspaceVesloConfig::default();
-        if !cfg.authorized_roots.iter().any(|p| p == &workspace_path) {
-            cfg.authorized_roots.push(workspace_path.clone());
+        if !cfg.authorized_roots.iter().any(|p| p == &workspace_path_str) {
+            cfg.authorized_roots.push(workspace_path_str.clone());
         }
         cfg
     };
 
-    if !config.authorized_roots.iter().any(|p| p == &folder_path) {
-        config.authorized_roots.push(folder_path);
+    if !config.authorized_roots.iter().any(|p| p == &folder_path_str) {
+        config.authorized_roots.push(folder_path_str);
     }
 
     fs::write(
@@ -771,21 +771,21 @@ pub fn workspace_add_authorized_root(
 
 #[tauri::command]
 pub fn workspace_veslo_read(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     workspace_path: String,
 ) -> Result<WorkspaceVesloConfig, String> {
-    let workspace_path = workspace_path.trim().to_string();
-    if workspace_path.is_empty() {
-        return Err("workspacePath is required".to_string());
-    }
+    let workspace_path = validate_workspace_path(
+        &app,
+        &workspace_path,
+        ValidationMode::IsRegisteredWorkspace,
+    )?;
 
-    let veslo_path = PathBuf::from(&workspace_path)
-        .join(".opencode")
-        .join("veslo.json");
+    let veslo_path = workspace_path.join(".opencode").join("veslo.json");
 
     if !veslo_path.exists() {
         let mut cfg = WorkspaceVesloConfig::default();
-        cfg.authorized_roots.push(workspace_path);
+        cfg.authorized_roots
+            .push(workspace_path.to_string_lossy().to_string());
         return Ok(cfg);
     }
 
@@ -798,18 +798,17 @@ pub fn workspace_veslo_read(
 
 #[tauri::command]
 pub fn workspace_veslo_write(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     workspace_path: String,
     config: WorkspaceVesloConfig,
 ) -> Result<ExecResult, String> {
-    let workspace_path = workspace_path.trim().to_string();
-    if workspace_path.is_empty() {
-        return Err("workspacePath is required".to_string());
-    }
+    let workspace_path = validate_workspace_path(
+        &app,
+        &workspace_path,
+        ValidationMode::IsRegisteredWorkspace,
+    )?;
 
-    let veslo_path = PathBuf::from(&workspace_path)
-        .join(".opencode")
-        .join("veslo.json");
+    let veslo_path = workspace_path.join(".opencode").join("veslo.json");
 
     if let Some(parent) = veslo_path.parent() {
         fs::create_dir_all(parent)
