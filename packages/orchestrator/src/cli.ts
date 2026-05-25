@@ -2229,6 +2229,10 @@ async function startOpencode(options: {
     //   - /tmp + /private/tmp + /var/folders (SQLite WAL/SHM, scratch files)
     //   - XDG dirs opencode uses: ~/.local/state/opencode, ~/.local/share/opencode,
     //     ~/.cache/opencode, ~/.config/opencode (sessions DB, model cache, settings)
+    //   - ~/.bun/install/cache (Bun resolves @opencode-ai/plugin and other npm
+    //     packages imported by user/managed tool files through this cache; without
+    //     read+write access opencode hits "Cannot find module '@opencode-ai/plugin'"
+    //     when loading delegate/router tools)
     //   These will move to per-workspace dirs in a later fáze.
     const home = process.env.HOME ?? "";
     const extraWrites: string[] = [
@@ -2243,6 +2247,7 @@ async function startOpencode(options: {
         `${home}/.local/share/opencode`,
         `${home}/.cache/opencode`,
         `${home}/.config/opencode`,
+        `${home}/.bun/install/cache`,
       );
     }
     const wrapped = await sandbox.wrap({
@@ -2270,6 +2275,30 @@ async function startOpencode(options: {
 
   prefixStream(child.stdout, "opencode", "stdout", options.logger, child.pid ?? undefined);
   prefixStream(child.stderr, "opencode", "stderr", options.logger, child.pid ?? undefined);
+
+  // Surface spawn-level failures eagerly. Without these listeners an opencode
+  // crash before its first stdout write was invisible — callers blocked on
+  // waitForHealthy for up to 60s with no log explaining what went wrong.
+  child.once("error", (err) => {
+    options.logger.error(
+      "engine spawn failed (process error)",
+      { workspace: options.workspace, pid: child.pid, error: err.message },
+      "opencode",
+    );
+  });
+  child.once("exit", (code, signal) => {
+    if (code === 0) return; // clean shutdown
+    options.logger.warn(
+      "engine process exited",
+      {
+        workspace: options.workspace,
+        pid: child.pid,
+        code,
+        signal,
+      },
+      "opencode",
+    );
+  });
 
   return child;
 }
@@ -2372,6 +2401,22 @@ async function startVesloServer(options: {
   prefixStream(child.stdout, "veslo-server", "stdout", options.logger, child.pid ?? undefined);
   prefixStream(child.stderr, "veslo-server", "stderr", options.logger, child.pid ?? undefined);
 
+  child.once("error", (err) => {
+    options.logger.error(
+      "veslo-server spawn failed (process error)",
+      { workspace: options.workspace, pid: child.pid, error: err.message },
+      "veslo-server",
+    );
+  });
+  child.once("exit", (code, signal) => {
+    if (code === 0) return;
+    options.logger.warn(
+      "veslo-server process exited",
+      { workspace: options.workspace, pid: child.pid, code, signal },
+      "veslo-server",
+    );
+  });
+
   return child;
 }
 
@@ -2421,6 +2466,22 @@ async function startOpenCodeRouter(options: {
 
   prefixStream(child.stdout, "veslo-code-router", "stdout", options.logger, child.pid ?? undefined);
   prefixStream(child.stderr, "veslo-code-router", "stderr", options.logger, child.pid ?? undefined);
+
+  child.once("error", (err) => {
+    options.logger.error(
+      "veslo-code-router spawn failed (process error)",
+      { workspace: options.workspace, pid: child.pid, error: err.message },
+      "veslo-code-router",
+    );
+  });
+  child.once("exit", (code, signal) => {
+    if (code === 0) return;
+    options.logger.warn(
+      "veslo-code-router process exited",
+      { workspace: options.workspace, pid: child.pid, code, signal },
+      "veslo-code-router",
+    );
+  });
 
   return child;
 }
@@ -3518,26 +3579,33 @@ async function runRouterDaemon(args: ParsedArgs) {
           send(404, { error: "workspace not found" });
           return;
         }
-        // Activate updates activeId immediately and triggers a background
-        // engine warm-up. Without the eager spawn the first proxy request
-        // after a workspace switch races a cold-start opencode (Bun JIT +
-        // SQLite migration + sandbox init can take >30s in dev), surfacing as
-        // 502 "engine spawn failed" in the UI. Fire-and-forget so the
-        // response stays snappy.
+        // Activate updates activeId immediately and waits for the engine to
+        // become ready before responding. The previous fire-and-forget pattern
+        // produced a race: callers (UI restartWorkspaceRuntime → loadSessions →
+        // sidebar session listing) issued proxy requests with a 10s client
+        // timeout, while opencode cold-start (Bun JIT + SQLite migration +
+        // sandbox init) routinely needs 30-60s. Result: "Request timed out."
+        // errors and Error badges in the sidebar even though the engine came
+        // up shortly after. Synchronous ensure here means activate returns
+        // only when the engine is ready (or the per-engine health timeout
+        // fires, which the pool surfaces as a thrown error).
         state.activeId = workspace.id;
         workspace.lastUsedAt = nowMs();
         await saveRouterState(statePath, state);
         if (workspace.workspaceType === "local" && workspace.path) {
-          void pool
-            .ensure({ id: workspace.id, path: workspace.path })
-            .then(() => persistEnginesSnapshot())
-            .catch((err) => {
-              logger.warn(
-                "eager engine spawn failed",
-                { workspaceId: workspace.id, error: err instanceof Error ? err.message : String(err) },
-                "engine-pool",
-              );
-            });
+          try {
+            await pool.ensure({ id: workspace.id, path: workspace.path });
+            persistEnginesSnapshot();
+          } catch (err) {
+            const detail = err instanceof Error ? err.message : String(err);
+            logger.warn(
+              "eager engine spawn failed",
+              { workspaceId: workspace.id, error: detail },
+              "engine-pool",
+            );
+            send(502, { error: "engine spawn failed", detail });
+            return;
+          }
         }
         send(200, { activeId: state.activeId, workspace });
         return;
