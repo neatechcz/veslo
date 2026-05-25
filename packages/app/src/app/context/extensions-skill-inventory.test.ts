@@ -168,6 +168,7 @@ test("extensions store exposes an app-wide skill inventory from global, workspac
         const store = createExtensionsStore({
           client: () => null,
           projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
           activeWorkspaceRoot: () => "/workspaces/alpha",
           workspaceType: () => "local",
           workspaces: () => [...workspaces, remoteWorkspace],
@@ -243,6 +244,7 @@ test("skill inventory refreshes hub entries when the Veslo server client changes
         const store = createExtensionsStore({
           client: () => null,
           projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
           activeWorkspaceRoot: () => "/workspaces/alpha",
           workspaceType: () => "local",
           workspaces: () => [],
@@ -292,6 +294,7 @@ test("skill inventory retries after a failed forced refresh", async () => {
         const store = createExtensionsStore({
           client: () => null,
           projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
           activeWorkspaceRoot: () => "/workspaces/alpha",
           workspaceType: () => "local",
           workspaces: () => [],
@@ -341,6 +344,7 @@ test("skill inventory settles with local-only inventory when hub refresh fails",
       const store = createExtensionsStore({
         client: () => null,
         projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
         activeWorkspaceRoot: () => "/workspaces/alpha",
         workspaceType: () => "local",
         workspaces: () => [],
@@ -401,6 +405,7 @@ test("skill inventory settles when hub and local inventory reads both fail", asy
       const store = createExtensionsStore({
         client: () => null,
         projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
         activeWorkspaceRoot: () => "/workspaces/alpha",
         workspaceType: () => "local",
         workspaces: () => [],
@@ -471,6 +476,7 @@ test("skill inventory waits for an in-flight hub skill refresh before caching", 
       const store = createExtensionsStore({
         client: () => null,
         projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
         activeWorkspaceRoot: () => "/workspaces/alpha",
         workspaceType: () => "local",
         workspaces: () => [],
@@ -538,6 +544,7 @@ test("skill inventory refresh waits for a same-context hub reload before returni
       const store = createExtensionsStore({
         client: () => null,
         projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
         activeWorkspaceRoot: () => "/workspaces/alpha",
         workspaceType: () => "local",
         workspaces: () => [],
@@ -598,6 +605,7 @@ test("skill inventory rebuilds after a completed same-context hub reload", async
         const store = createExtensionsStore({
           client: () => null,
           projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
           activeWorkspaceRoot: () => "/workspaces/alpha",
           workspaceType: () => "local",
           workspaces: () => [],
@@ -656,6 +664,7 @@ test("skill inventory rebuilds after active local skills refresh changes local s
         const store = createExtensionsStore({
           client: () => null,
           projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
           activeWorkspaceRoot: () => "/workspaces/alpha",
           workspaceType: () => "local",
           workspaces: () => [],
@@ -716,6 +725,7 @@ test("concurrent skill inventory refresh callers await the in-flight refresh", a
       const store = createExtensionsStore({
         client: () => null,
         projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
         activeWorkspaceRoot: () => "/workspaces/alpha",
         workspaceType: () => "local",
         workspaces: () => [],
@@ -799,6 +809,7 @@ test("skill inventory reruns after Den auth changes while an inventory refresh i
       const store = createExtensionsStore({
         client: () => null,
         projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
         activeWorkspaceRoot: () => "/workspaces/alpha",
         workspaceType: () => "local",
         workspaces: () => [],
@@ -893,6 +904,7 @@ test("skill inventory reruns after local source revision changes while an invent
       const store = createExtensionsStore({
         client: () => null,
         projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
         activeWorkspaceRoot: () => "/workspaces/alpha",
         workspaceType: () => "local",
         workspaces: () => [workspaces[0] as WorkspaceInfo],
@@ -978,6 +990,7 @@ test("skill inventory reruns after a failed in-flight refresh when workspace con
       const store = createExtensionsStore({
         client: () => null,
         projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
         activeWorkspaceRoot: () => "/workspaces/alpha",
         workspaceType: () => "local",
         workspaces: () => activeWorkspaces,
@@ -1047,6 +1060,7 @@ test("skill inventory does not cache hub skills from an in-flight refresh after 
       const store = createExtensionsStore({
         client: () => null,
         projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
         activeWorkspaceRoot: () => "/workspaces/alpha",
         workspaceType: () => "local",
         workspaces: () => [],
@@ -1104,6 +1118,7 @@ test("skill inventory invalidates cached hub entries when Den auth context chang
         const store = createExtensionsStore({
           client: () => null,
           projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
           activeWorkspaceRoot: () => "/workspaces/alpha",
           workspaceType: () => "local",
           workspaces: () => [],
@@ -1156,6 +1171,7 @@ test("skill inventory invalidates cached hub entries when the Den token changes 
         const store = createExtensionsStore({
           client: () => null,
           projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
           activeWorkspaceRoot: () => "/workspaces/alpha",
           workspaceType: () => "local",
           workspaces: () => [],
@@ -1219,6 +1235,7 @@ test("skill inventory does not cache hub skills from an in-flight refresh after 
       const store = createExtensionsStore({
         client: () => null,
         projectDir: () => "/workspaces/alpha",
+        activeWorkspaceId: () => "ws-alpha",
         activeWorkspaceRoot: () => "/workspaces/alpha",
         workspaceType: () => "local",
         workspaces: () => [],
@@ -1284,6 +1301,7 @@ test("skill inventory invalidates cached hub entries when the Den API base chang
         const store = createExtensionsStore({
           client: () => null,
           projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
           activeWorkspaceRoot: () => "/workspaces/alpha",
           workspaceType: () => "local",
           workspaces: () => [],
@@ -1343,6 +1361,7 @@ test("skill inventory invalidates cached hub entries when the Den user changes f
         const store = createExtensionsStore({
           client: () => null,
           projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
           activeWorkspaceRoot: () => "/workspaces/alpha",
           workspaceType: () => "local",
           workspaces: () => [],

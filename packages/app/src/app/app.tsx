@@ -2899,6 +2899,7 @@ export default function App() {
   const extensionsStore = createExtensionsStore({
     client,
     projectDir: () => workspaceProjectDir(),
+    activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
     workspaceType: () => workspaceStore.activeWorkspaceDisplay().workspaceType,
     workspaces: () => workspaceStore.workspaces(),
@@ -2961,6 +2962,9 @@ export default function App() {
     uninstallSkill,
     readSkill,
     saveSkill,
+    readSkillInstance,
+    saveSkillInstance,
+    deleteSkillInstance,
     abortRefreshes,
   } = extensionsStore;
 
@@ -8794,6 +8798,9 @@ export default function App() {
       uninstallSkill,
       readSkill,
       saveSkill,
+      readSkillInstance,
+      saveSkillInstance,
+      deleteSkillInstance,
       pluginsAccessHint,
       canEditPlugins,
       canUseGlobalPluginScope,

@@ -233,6 +233,10 @@ export type HubSkillCard = {
   };
 };
 
+export type HubSkillInstallTarget =
+  | { scope: "global" }
+  | { scope: "workspace"; workspaceId: string };
+
 export type SkillInventoryScope = "workspace" | "user-global";
 
 export type SkillInventoryStatus = "global" | "workspace-only" | "mixed" | "hub-only";

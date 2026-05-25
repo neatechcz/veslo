@@ -52,6 +52,10 @@ local OpenCode-compatible skill roots. They are not organization catalog entries
 and do not imply Den/admin approval. Promotion to an organization catalog,
 system-approved catalog, or bulk organization rollout remains future work.
 
+Hub skill installs require an explicit target. Today, the supported target is
+the active workspace; all-workspaces Hub install is visible as unavailable until
+there is a safe global-write backend.
+
 ## Plugins
 
 Plugins are OpenCode-native extensions configured through:

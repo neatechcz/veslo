@@ -1,14 +1,24 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 
-import type { HubSkillCard, SkillCard, SkillInstance, SkillInventoryItem, SkillSaveResult } from "../types";
+import type {
+  HubSkillCard,
+  HubSkillInstallTarget,
+  SkillCard,
+  SkillInstance,
+  SkillInventoryItem,
+  SkillSaveResult,
+} from "../types";
 import type { WorkspaceInfo } from "../lib/tauri";
 
 import Button from "../components/button";
 import { Copy, Edit2, FolderOpen, Link2, Loader2, Package, Plus, RefreshCw, Search, Share2, Sparkles, Trash2, Upload } from "lucide-solid";
 import { currentLocale, t } from "../../i18n";
 import { DEFAULT_VESLO_PUBLISHER_BASE_URL, publishVesloBundleJson } from "../lib/publisher";
+import { skillMutationTargetFromInstance } from "../lib/skill-inventory";
+import type { SkillMutationTarget } from "../lib/skill-inventory";
 
 type InstallResult = { ok: boolean; message: string };
+type ActionSkillCard = SkillCard & { mutationTarget: SkillMutationTarget };
 
 type SkillBundleV1 = {
   schemaVersion: 1;
@@ -74,11 +84,14 @@ export type SkillsViewProps = {
   workspaces: WorkspaceInfo[];
   importLocalSkill: () => void;
   installSkillCreator: () => Promise<InstallResult>;
-  installHubSkill: (name: string) => Promise<InstallResult>;
+  installHubSkill: (name: string, target: HubSkillInstallTarget) => Promise<InstallResult>;
   revealSkillsFolder: () => void;
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
   saveSkill: (input: { name: string; content: string; description?: string }) => Promise<SkillSaveResult>;
+  readSkillInstance: (target: SkillMutationTarget) => Promise<{ name: string; path: string; content: string } | null>;
+  saveSkillInstance: (target: SkillMutationTarget, content: string) => Promise<SkillSaveResult>;
+  deleteSkillInstance: (target: SkillMutationTarget) => Promise<void>;
   createSessionAndOpen: () => void;
   setPrompt: (value: string) => void;
 };
@@ -135,7 +148,7 @@ export default function SkillsView(props: SkillsViewProps) {
   const installedInventoryNames = createMemo(() => new Set(installedInventoryItems().map((item) => item.name)));
   const skillCreatorInstalled = createMemo(() => installedInventoryNames().has("skill-creator"));
 
-  const [uninstallTarget, setUninstallTarget] = createSignal<SkillCard | null>(null);
+  const [uninstallTarget, setUninstallTarget] = createSignal<SkillMutationTarget | null>(null);
   const uninstallOpen = createMemo(() => uninstallTarget() != null);
   const [searchQuery, setSearchQuery] = createSignal("");
 
@@ -151,7 +164,11 @@ export default function SkillsView(props: SkillsViewProps) {
   const [installLinkError, setInstallLinkError] = createSignal<string | null>(null);
   const [installLinkBundle, setInstallLinkBundle] = createSignal<SkillBundleV1 | null>(null);
 
-  const [selectedSkill, setSelectedSkill] = createSignal<SkillCard | null>(null);
+  const [installTargetSkill, setInstallTargetSkill] = createSignal<HubSkillCard | null>(null);
+  const [selectedInstallScope, setSelectedInstallScope] = createSignal<"global" | "workspace">("workspace");
+  const [selectedInstallWorkspaceId, setSelectedInstallWorkspaceId] = createSignal<string | null>(null);
+
+  const [selectedSkill, setSelectedSkill] = createSignal<ActionSkillCard | null>(null);
   const [selectedContent, setSelectedContent] = createSignal("");
   const [selectedLoading, setSelectedLoading] = createSignal(false);
   const [selectedDirty, setSelectedDirty] = createSignal(false);
@@ -212,12 +229,34 @@ export default function SkillsView(props: SkillsViewProps) {
     );
   };
 
-  const actionSkillForInstance = (instance: SkillInstance) => {
+  const workspaceLabelForTarget = (workspace: WorkspaceInfo) => (
+    workspace.displayName?.trim() ||
+    workspace.vesloWorkspaceName?.trim() ||
+    workspace.name?.trim() ||
+    workspace.directory?.trim() ||
+    workspace.path?.trim() ||
+    workspace.id
+  );
+
+  const mutationTargetForInstance = (instance: SkillInstance): SkillMutationTarget | null => {
     if (instance.scope !== "workspace") return null;
+    if (instance.workspaceId !== props.activeWorkspaceId) return null;
+    return skillMutationTargetFromInstance(instance);
+  };
+
+  const actionSkillForInstance = (instance: SkillInstance): ActionSkillCard | null => {
+    const mutationTarget = mutationTargetForInstance(instance);
+    if (!mutationTarget) return null;
     const instancePath = normalizeSkillPath(instance.path);
-    return props.skills.find((skill) =>
-      skill.name === instance.name && normalizeSkillPath(skill.path) === instancePath
-    ) ?? null;
+    const skill = props.skills.find((candidate) =>
+      candidate.name === instance.name && normalizeSkillPath(candidate.path) === instancePath
+    );
+    return skill
+      ? {
+          ...skill,
+          mutationTarget,
+        }
+      : null;
   };
 
   const canUninstallInventoryInstance = (_input: { item: SkillInventoryItem; instance: SkillInstance }) => false;
@@ -312,6 +351,51 @@ export default function SkillsView(props: SkillsViewProps) {
     });
   });
 
+  const installTargetWorkspaces = createMemo<WorkspaceInfo[]>(() => {
+    if (props.workspaces.some((workspace) => workspace.id === props.activeWorkspaceId)) {
+      return props.workspaces;
+    }
+    return [
+      {
+        id: props.activeWorkspaceId,
+        name: props.workspaceName,
+        path: "",
+        preset: "",
+        workspaceType: props.isRemoteWorkspace ? "remote" : "local",
+      },
+      ...props.workspaces,
+    ];
+  });
+
+  const selectedInstallWorkspace = createMemo(() => {
+    const workspaceId = selectedInstallWorkspaceId()?.trim();
+    if (!workspaceId) return null;
+    return installTargetWorkspaces().find((workspace) => workspace.id === workspaceId) ?? null;
+  });
+
+  const installTargetCanSubmit = createMemo(() =>
+    selectedInstallScope() === "workspace" &&
+    selectedInstallWorkspaceId() === props.activeWorkspaceId
+  );
+
+  const installTargetDisabledReason = (workspace: WorkspaceInfo) => (
+    workspace.id === props.activeWorkspaceId
+      ? null
+      : translate("skills.install_target_switch_workspace")
+  );
+
+  const openHubInstallTargetPicker = (skill: HubSkillCard) => {
+    if (props.busy || installingHubSkill()) return;
+    setSelectedInstallScope("workspace");
+    setSelectedInstallWorkspaceId(props.activeWorkspaceId);
+    setInstallTargetSkill(skill);
+  };
+
+  const closeHubInstallTargetPicker = () => {
+    if (props.busy || installingHubSkill()) return;
+    setInstallTargetSkill(null);
+  };
+
   const installSkillCreator = async () => {
     if (props.busy || installingSkillCreator()) return;
     if (!props.canInstallSkillCreator) {
@@ -331,19 +415,40 @@ export default function SkillsView(props: SkillsViewProps) {
     }
   };
 
-  const installFromHub = async (skill: HubSkillCard) => {
+  const installFromHub = async (skill: HubSkillCard, target: HubSkillInstallTarget) => {
     if (props.busy || installingHubSkill()) return;
     setInstallingHubSkill(skill.name);
     setToast(translate("skills.installing_named", { name: skill.name }));
     try {
-      const result = await props.installHubSkill(skill.name);
+      const result = await props.installHubSkill(skill.name, target);
       props.refreshSkillInventory({ force: true });
       setToast(result.message);
+      if (result.ok) {
+        setInstallTargetSkill(null);
+      }
     } catch (e) {
       setToast(e instanceof Error ? e.message : translate("skills.install_failed"));
     } finally {
       setInstallingHubSkill(null);
     }
+  };
+
+  const confirmHubInstallTarget = () => {
+    const skill = installTargetSkill();
+    if (!skill) return;
+    if (selectedInstallScope() === "global") {
+      void installFromHub(skill, { scope: "global" });
+      return;
+    }
+    const workspaceId = selectedInstallWorkspaceId();
+    if (!workspaceId) {
+      setToast(translate("skills.install_target_required"));
+      return;
+    }
+    void installFromHub(skill, {
+      scope: "workspace",
+      workspaceId,
+    });
   };
 
   const importLocalSkillAndRefreshInventory = () =>
@@ -574,7 +679,7 @@ export default function SkillsView(props: SkillsViewProps) {
     return null;
   };
 
-  const openSkill = async (skill: SkillCard) => {
+  const openSkill = async (skill: ActionSkillCard) => {
     if (props.busy) return;
     setSelectedSkill(skill);
     setSelectedContent("");
@@ -582,7 +687,7 @@ export default function SkillsView(props: SkillsViewProps) {
     setSelectedError(null);
     setSelectedLoading(true);
     try {
-      const result = await props.readSkill(skill.name);
+      const result = await props.readSkillInstance(skill.mutationTarget);
       if (!result) {
         setSelectedError(translate("skills.failed_load_skill"));
         return;
@@ -610,11 +715,7 @@ export default function SkillsView(props: SkillsViewProps) {
     setSelectedError(null);
     try {
       const result = await Promise.resolve(
-        props.saveSkill({
-          name: skill.name,
-          content: selectedContent(),
-          description: skill.description,
-        }),
+        props.saveSkillInstance(skill.mutationTarget, selectedContent()),
       );
       if (!result.ok) {
         setSelectedError(result.message ?? translate("skills.failed_save_skill"));
@@ -1004,7 +1105,7 @@ export default function SkillsView(props: SkillsViewProps) {
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      void installFromHub(skill);
+                      openHubInstallTargetPicker(skill);
                     }}
                     disabled={props.busy || installingHubSkill() === skill.name}
                     title={translate("skills.install_named", { name: skill.name })}
@@ -1096,6 +1197,117 @@ export default function SkillsView(props: SkillsViewProps) {
         </div>
       </div>
 
+      <Show when={installTargetSkill()}>
+        {(skill) => (
+          <div class="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-dls-surface border border-dls-border w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
+              <div class="p-6 space-y-5">
+                <div>
+                  <h3 class="text-lg font-semibold text-dls-text">{translate("skills.install_target_title")}</h3>
+                  <p class="text-sm text-dls-secondary mt-1">
+                    {translate("skills.install_target_description", { name: skill().name })}
+                  </p>
+                </div>
+
+                <div class="space-y-3">
+                  <label class="flex items-start gap-3 rounded-xl border border-dls-border bg-dls-hover px-4 py-3 opacity-70">
+                    <input
+                      type="radio"
+                      class="mt-0.5"
+                      checked={selectedInstallScope() === "global"}
+                      disabled
+                      onChange={() => setSelectedInstallScope("global")}
+                    />
+                    <div class="min-w-0">
+                      <div class="text-sm font-semibold text-dls-text">
+                        {translate("skills.install_target_all_workspaces")}
+                      </div>
+                      <div class="mt-1 text-xs text-dls-secondary">
+                        {translate("skills.install_target_global_unavailable")}
+                      </div>
+                    </div>
+                  </label>
+
+                  <div class="space-y-2">
+                    <div class="text-xs font-semibold uppercase tracking-widest text-dls-secondary">
+                      {translate("skills.install_target_workspace")}
+                    </div>
+                    <For each={installTargetWorkspaces()}>
+                      {(workspace) => {
+                        const disabledReason = () => installTargetDisabledReason(workspace);
+                        const isDisabled = () => Boolean(disabledReason());
+                        return (
+                          <label
+                            class={`flex items-start gap-3 rounded-xl border px-4 py-3 transition-colors ${
+                              isDisabled()
+                                ? "border-dls-border bg-dls-hover opacity-70"
+                                : "border-dls-border bg-dls-surface hover:bg-dls-hover"
+                            }`}
+                            title={disabledReason() ?? workspaceLabelForTarget(workspace)}
+                          >
+                            <input
+                              type="radio"
+                              class="mt-0.5"
+                              checked={selectedInstallScope() === "workspace" && selectedInstallWorkspaceId() === workspace.id}
+                              disabled={isDisabled()}
+                              onChange={() => {
+                                if (isDisabled()) return;
+                                setSelectedInstallScope("workspace");
+                                setSelectedInstallWorkspaceId(workspace.id);
+                              }}
+                            />
+                            <div class="min-w-0">
+                              <div class="flex flex-wrap items-center gap-2">
+                                <span class="text-sm font-semibold text-dls-text truncate">
+                                  {workspaceLabelForTarget(workspace)}
+                                </span>
+                                <Show when={workspace.id === props.activeWorkspaceId}>
+                                  <span class="text-[11px] rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 text-dls-secondary">
+                                    {translate("skills.install_target_active_workspace")}
+                                  </span>
+                                </Show>
+                              </div>
+                              <div class="mt-1 text-xs text-dls-secondary truncate">
+                                {disabledReason() ?? (workspace.workspaceType === "remote"
+                                  ? translate("skills.install_target_remote_workspace")
+                                  : translate("skills.install_target_local_workspace"))}
+                              </div>
+                            </div>
+                          </label>
+                        );
+                      }}
+                    </For>
+                  </div>
+                </div>
+
+                <Show when={!installTargetCanSubmit()}>
+                  <div class="rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
+                    {selectedInstallScope() === "global"
+                      ? translate("skills.install_target_global_unavailable")
+                      : selectedInstallWorkspace()
+                        ? translate("skills.install_target_switch_workspace")
+                        : translate("skills.install_target_required")}
+                  </div>
+                </Show>
+
+                <div class="flex justify-end gap-2">
+                  <Button variant="outline" onClick={closeHubInstallTargetPicker} disabled={props.busy || Boolean(installingHubSkill())}>
+                    {translate("common.cancel")}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={confirmHubInstallTarget}
+                    disabled={props.busy || Boolean(installingHubSkill()) || !installTargetCanSubmit()}
+                  >
+                    {installingHubSkill() === skill().name ? translate("skills.installing_hub") : translate("skills.install_target_confirm")}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </Show>
+
       <Show when={selectedSkill()}>
         <div class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div class="w-full max-w-4xl rounded-2xl border border-dls-border bg-dls-surface shadow-2xl overflow-hidden">
@@ -1179,7 +1391,7 @@ export default function SkillsView(props: SkillsViewProps) {
                     const target = uninstallTarget();
                     setUninstallTarget(null);
                     if (!target) return;
-                    void Promise.resolve(props.uninstallSkill(target.name)).finally(() => {
+                    void Promise.resolve(props.deleteSkillInstance(target)).finally(() => {
                       props.refreshSkillInventory({ force: true });
                     });
                   }}

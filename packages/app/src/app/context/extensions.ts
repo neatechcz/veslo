@@ -9,6 +9,7 @@ import type {
   HubMcpCard,
   HubMcpItem,
   HubSkillCard,
+  HubSkillInstallTarget,
   PluginScope,
   ReloadReason,
   ReloadTrigger,
@@ -23,7 +24,7 @@ import {
   parsePluginListFromContent,
   stripPluginVersion,
 } from "../utils/plugins";
-import { buildSkillInventory, type BuildSkillInventoryInput } from "../lib/skill-inventory";
+import { buildSkillInventory, type BuildSkillInventoryInput, type SkillMutationTarget } from "../lib/skill-inventory";
 import {
   importSkill,
   installSkillTemplate,
@@ -86,6 +87,7 @@ async function loadSkillCreatorTemplate() {
 export function createExtensionsStore(options: {
   client: () => Client | null;
   projectDir: () => string;
+  activeWorkspaceId: () => string;
   activeWorkspaceRoot: () => string;
   workspaceType: () => "local" | "remote";
   workspaces?: () => WorkspaceInfo[];
@@ -555,9 +557,19 @@ export function createExtensionsStore(options: {
     }
   }
 
-  async function installHubSkill(name: string): Promise<{ ok: boolean; message: string }> {
+  async function installHubSkill(name: string, target: HubSkillInstallTarget): Promise<{ ok: boolean; message: string }> {
     const trimmed = name.trim();
     if (!trimmed) return { ok: false, message: "Skill name is required." };
+    if (!target) return { ok: false, message: translate("skills.install_target_required") };
+    if (target.scope === "global") {
+      return { ok: false, message: translate("skills.install_target_global_unavailable") };
+    }
+
+    const targetWorkspaceId = target.workspaceId.trim();
+    if (!targetWorkspaceId) return { ok: false, message: translate("skills.install_target_required") };
+    if (targetWorkspaceId !== options.activeWorkspaceId().trim()) {
+      return { ok: false, message: translate("skills.install_target_switch_workspace") };
+    }
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const vesloClient = options.vesloServerClient();
@@ -1465,6 +1477,84 @@ export function createExtensionsStore(options: {
     }
   }
 
+  const normalizeSkillMutationPath = (value: string | undefined) =>
+    String(value ?? "").trim().replace(/\\/g, "/");
+
+  const activeSkillForMutationTarget = (target: SkillMutationTarget):
+    | { skill: SkillCard; normalizedPath: string }
+    | { message: string } => {
+    const name = target.name.trim();
+    const normalizedPath = normalizeSkillMutationPath(target.path);
+    if (!name || !normalizedPath) {
+      return { message: translate("skills.failed_load_skill") };
+    }
+    if (target.scope !== "workspace") {
+      return { message: translate("skills.uninstall_scope_ambiguous") };
+    }
+    const targetWorkspaceId = target.workspaceId?.trim();
+    if (targetWorkspaceId && targetWorkspaceId !== options.activeWorkspaceId().trim()) {
+      return { message: translate("skills.uninstall_not_active_workspace") };
+    }
+
+    const skill = skills().find((candidate) =>
+      candidate.name === name && normalizeSkillMutationPath(candidate.path) === normalizedPath
+    );
+    if (!skill) {
+      return { message: translate("skills.failed_load_skill") };
+    }
+    return { skill, normalizedPath };
+  };
+
+  async function readSkillInstance(target: SkillMutationTarget): Promise<{ name: string; path: string; content: string } | null> {
+    const resolved = activeSkillForMutationTarget(target);
+    if ("message" in resolved) {
+      setSkillsStatus(resolved.message);
+      return null;
+    }
+
+    const result = await readSkill(resolved.skill.name);
+    if (!result) return null;
+    if (normalizeSkillMutationPath(result.path) !== resolved.normalizedPath) {
+      setSkillsStatus(translate("skills.failed_load_skill"));
+      return null;
+    }
+    return {
+      name: resolved.skill.name,
+      path: resolved.skill.path,
+      content: result.content,
+    };
+  }
+
+  async function saveSkillInstance(target: SkillMutationTarget, content: string): Promise<SkillSaveResult> {
+    const resolved = activeSkillForMutationTarget(target);
+    if ("message" in resolved) {
+      setSkillsStatus(resolved.message);
+      return { ok: false, message: resolved.message };
+    }
+
+    const current = await readSkill(resolved.skill.name);
+    if (!current || normalizeSkillMutationPath(current.path) !== resolved.normalizedPath) {
+      const message = translate("skills.failed_save_skill");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+
+    return saveSkill({
+      name: resolved.skill.name,
+      content,
+      description: resolved.skill.description,
+    });
+  }
+
+  async function deleteSkillInstance(target: SkillMutationTarget): Promise<void> {
+    const resolved = activeSkillForMutationTarget(target);
+    if ("message" in resolved) {
+      setSkillsStatus(resolved.message);
+      return;
+    }
+    setSkillsStatus(translate("skills.uninstall_scoped_pending"));
+  }
+
   async function saveSkill(input: { name: string; content: string; description?: string }): Promise<SkillSaveResult> {
     const trimmed = input.name.trim();
     if (!trimmed) return { ok: false, message: translate("skills.bundle_missing_name") };
@@ -1601,6 +1691,9 @@ export function createExtensionsStore(options: {
     uninstallSkill,
     readSkill,
     saveSkill,
+    readSkillInstance,
+    saveSkillInstance,
+    deleteSkillInstance,
     installHubMcp,
     abortRefreshes,
   };

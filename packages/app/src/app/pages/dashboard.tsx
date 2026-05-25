@@ -11,6 +11,7 @@ import type {
   SidebarSubagentDecoration,
   HubMcpCard,
   HubSkillCard,
+  HubSkillInstallTarget,
   SkillCard,
   SkillInventoryItem,
   SkillSaveResult,
@@ -54,6 +55,7 @@ import {
 } from "../lib/tauri";
 import { acquireBlankNativeWindowTitleLease } from "../lib/native-window-title-lease";
 import { DEFAULT_VESLO_PUBLISHER_BASE_URL, publishVesloBundleJson } from "../lib/publisher";
+import type { SkillMutationTarget } from "../lib/skill-inventory";
 
 import Button from "../components/button";
 import ExtensionsView from "./extensions";
@@ -216,13 +218,16 @@ export type DashboardViewProps = {
   canUseDesktopTools: boolean;
   importLocalSkill: () => void;
   installSkillCreator: () => Promise<{ ok: boolean; message: string }>;
-  installHubSkill: (name: string) => Promise<{ ok: boolean; message: string }>;
+  installHubSkill: (name: string, target: HubSkillInstallTarget) => Promise<{ ok: boolean; message: string }>;
   refreshHubMcp: () => void;
   installHubMcp: (name: string) => Promise<{ ok: boolean; message: string }>;
   revealSkillsFolder: () => void;
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
   saveSkill: (input: { name: string; content: string; description?: string }) => Promise<SkillSaveResult>;
+  readSkillInstance: (target: SkillMutationTarget) => Promise<{ name: string; path: string; content: string } | null>;
+  saveSkillInstance: (target: SkillMutationTarget, content: string) => Promise<SkillSaveResult>;
+  deleteSkillInstance: (target: SkillMutationTarget) => Promise<void>;
   pluginsAccessHint?: string | null;
   canEditPlugins: boolean;
   canUseGlobalPluginScope: boolean;
@@ -1566,6 +1571,9 @@ export default function DashboardView(props: DashboardViewProps) {
                 uninstallSkill={props.uninstallSkill}
                 readSkill={props.readSkill}
                 saveSkill={props.saveSkill}
+                readSkillInstance={props.readSkillInstance}
+                saveSkillInstance={props.saveSkillInstance}
+                deleteSkillInstance={props.deleteSkillInstance}
                 createSessionAndOpen={props.createSessionAndOpen}
                 setPrompt={props.setPrompt}
               />

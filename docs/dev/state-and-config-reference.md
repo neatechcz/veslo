@@ -255,6 +255,12 @@ workspace behavior, but the inventory must not expand global skills under every
 workspace. Workspace rows represent only real workspace-local instances or
 overrides.
 
+Skill edit and save flows target a concrete inventory instance by scope,
+workspace id, and path before falling back to name-based legacy commands. Delete
+remains disabled for scoped inventory rows until a path-specific backend command
+exists. Hub install uses an explicit target picker; current writes are limited
+to the active workspace.
+
 ## Import and Export
 
 Workspace config export/import is handled by `packages/app/src/app/stores/config-store.ts` and Tauri commands.

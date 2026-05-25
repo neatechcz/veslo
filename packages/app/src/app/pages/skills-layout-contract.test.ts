@@ -5,6 +5,7 @@ import test from "node:test";
 const source = readFileSync(new URL("./skills.tsx", import.meta.url), "utf8");
 const dashboardSource = readFileSync(new URL("./dashboard.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const extensionsSource = readFileSync(new URL("../context/extensions.ts", import.meta.url), "utf8");
 const enSource = readFileSync(new URL("../../i18n/locales/en.ts", import.meta.url), "utf8");
 const csSource = readFileSync(new URL("../../i18n/locales/cs.ts", import.meta.url), "utf8");
 const zhSource = readFileSync(new URL("../../i18n/locales/zh.ts", import.meta.url), "utf8");
@@ -173,4 +174,50 @@ test("skills inventory exposes stable desktop e2e selectors", () => {
   assert.match(source, /data-testid="skills-workspace-specific-section"/);
   assert.match(source, /data-testid="skills-hub-section"/);
   assert.match(source, /data-testid="skills-hub-placeholder"/);
+});
+
+test("hub skill install requires an explicit target selection", () => {
+  assert.match(source, /import type \{[\s\S]*HubSkillInstallTarget[\s\S]*\} from "\.\.\/types"/);
+  assert.match(source, /installHubSkill:\s*\(name: string, target: HubSkillInstallTarget\) => Promise<InstallResult>/);
+  assert.match(dashboardSource, /installHubSkill:\s*\(name: string, target: HubSkillInstallTarget\) => Promise<\{ ok: boolean; message: string \}>/);
+  assert.match(extensionsSource, /activeWorkspaceId:\s*\(\) => string/);
+  assert.match(extensionsSource, /async function installHubSkill\(name: string, target: HubSkillInstallTarget\)/);
+  assert.match(extensionsSource, /if \(target\.scope === "global"\)/);
+  assert.match(source, /const \[installTargetSkill, setInstallTargetSkill\] = createSignal<HubSkillCard \| null>\(null\)/);
+  assert.match(source, /const \[selectedInstallScope, setSelectedInstallScope\] = createSignal<"global" \| "workspace">\("workspace"\)/);
+  assert.match(source, /const \[selectedInstallWorkspaceId, setSelectedInstallWorkspaceId\] = createSignal<string \| null>\(null\)/);
+  assert.match(source, /const openHubInstallTargetPicker = \(skill: HubSkillCard\) =>/);
+  assert.match(source, /void installFromHub\(skill, \{\s*scope: "workspace",\s*workspaceId,/);
+  assert.match(source, /props\.installHubSkill\(skill\.name, target\)/);
+  assert.match(source, /setInstallTargetSkill\(skill\)/);
+  assert.doesNotMatch(source, /void installFromHub\(skill\);/);
+  assert.match(source, /translate\("skills\.install_target_title"/);
+  assert.match(source, /translate\("skills\.install_target_all_workspaces"/);
+  assert.match(source, /translate\("skills\.install_target_workspace"/);
+  assert.match(source, /translate\("skills\.install_target_confirm"/);
+  assert.match(enSource, /"skills\.install_target_title":/);
+  assert.match(csSource, /"skills\.install_target_title":/);
+  assert.match(zhSource, /"skills\.install_target_title":/);
+});
+
+test("skill edit and delete callbacks are targeted by inventory instance", () => {
+  assert.match(source, /import \{ skillMutationTargetFromInstance \} from "\.\.\/lib\/skill-inventory"/);
+  assert.match(source, /import type \{ SkillMutationTarget \} from "\.\.\/lib\/skill-inventory"/);
+  assert.match(source, /readSkillInstance:\s*\(target: SkillMutationTarget\) => Promise<\{ name: string; path: string; content: string \} \| null>/);
+  assert.match(source, /saveSkillInstance:\s*\(target: SkillMutationTarget, content: string\) => Promise<SkillSaveResult>/);
+  assert.match(source, /deleteSkillInstance:\s*\(target: SkillMutationTarget\) => Promise<void>/);
+  assert.match(dashboardSource, /readSkillInstance:\s*\(target: SkillMutationTarget\) => Promise<\{ name: string; path: string; content: string \} \| null>/);
+  assert.match(dashboardSource, /saveSkillInstance:\s*\(target: SkillMutationTarget, content: string\) => Promise<SkillSaveResult>/);
+  assert.match(dashboardSource, /deleteSkillInstance:\s*\(target: SkillMutationTarget\) => Promise<void>/);
+  assert.match(extensionsSource, /async function readSkillInstance\(target: SkillMutationTarget\)/);
+  assert.match(extensionsSource, /async function saveSkillInstance\(target: SkillMutationTarget, content: string\)/);
+  assert.match(extensionsSource, /async function deleteSkillInstance\(target: SkillMutationTarget\)/);
+  assert.match(source, /const mutationTargetForInstance = \(instance: SkillInstance\): SkillMutationTarget \| null =>/);
+  assert.match(source, /skillMutationTargetFromInstance\(instance\)/);
+  assert.match(source, /props\.readSkillInstance\(skill\.mutationTarget\)/);
+  assert.match(source, /props\.saveSkillInstance\(skill\.mutationTarget, selectedContent\(\)\)/);
+  assert.match(source, /props\.deleteSkillInstance\(target\)/);
+  assert.doesNotMatch(source, /props\.readSkill\(skill\.name\)/);
+  assert.doesNotMatch(source, /props\.saveSkill\(\{\s*name: skill\.name/);
+  assert.doesNotMatch(source, /props\.uninstallSkill\(target\.name\)/);
 });

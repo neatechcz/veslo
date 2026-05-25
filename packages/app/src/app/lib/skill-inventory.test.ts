@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildSkillInventory } from "./skill-inventory.js";
+import { buildSkillInventory, skillMutationTargetFromInstance } from "./skill-inventory.js";
 
 const hubSkill = (name: string, description = `${name} from hub`) => ({
   name,
@@ -156,4 +156,38 @@ test("items and workspace instances are sorted deterministically", () => {
     items[0]?.workspaceInstances.map((instance) => instance.workspaceLabel),
     ["Alpha", "Beta"],
   );
+});
+
+test("skill mutation targets keep exact instance scope, path, and workspace", () => {
+  const items = buildSkillInventory({
+    globalSkills: [{ name: "research", path: "/global/research/SKILL.md", scope: "user-global" }],
+    workspaceSkillsByWorkspaceId: {
+      ws1: {
+        workspace: { id: "ws1", label: "Veslo", kind: "local" },
+        skills: [
+          {
+            name: "research",
+            path: "/workspaces/veslo/.opencode/skills/research/SKILL.md",
+            scope: "workspace",
+          },
+        ],
+      },
+    },
+    hubSkills: [],
+  });
+
+  const item = items[0];
+  assert.ok(item?.globalInstance);
+  assert.equal(item.workspaceInstances.length, 1);
+  assert.deepEqual(skillMutationTargetFromInstance(item.globalInstance), {
+    name: "research",
+    path: "/global/research/SKILL.md",
+    scope: "user-global",
+  });
+  assert.deepEqual(skillMutationTargetFromInstance(item.workspaceInstances[0]!), {
+    name: "research",
+    path: "/workspaces/veslo/.opencode/skills/research/SKILL.md",
+    scope: "workspace",
+    workspaceId: "ws1",
+  });
 });

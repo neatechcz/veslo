@@ -33,6 +33,13 @@ export type BuildSkillInventoryInput = {
   hubSkills: HubSkillCard[];
 };
 
+export type SkillMutationTarget = {
+  name: string;
+  path: string;
+  scope: SkillInventoryScope;
+  workspaceId?: string;
+};
+
 type SkillInventoryGroup = {
   name: string;
   globalInstance?: SkillInstance;
@@ -76,6 +83,13 @@ const normalizeSource = (source: SkillInventorySkillInput["source"], path: strin
   if (source && SKILL_SOURCES.has(source)) return source;
   return inferSourceFromPath(path);
 };
+
+export const skillMutationTargetFromInstance = (instance: SkillInstance): SkillMutationTarget => ({
+  name: instance.name,
+  path: instance.path,
+  scope: instance.scope,
+  ...(instance.workspaceId ? { workspaceId: instance.workspaceId } : {}),
+});
 
 const instanceId = (scope: SkillInventoryScope, workspaceId: string | undefined, name: string, path: string) =>
   `${scope}:${scope === "workspace" ? workspaceId || "workspace" : "global"}:${name}:${path}`;
