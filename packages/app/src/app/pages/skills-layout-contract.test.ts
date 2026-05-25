@@ -162,3 +162,15 @@ test("settings overview remains present in dashboard", () => {
   assert.match(dashboardSource, /<SettingsView/);
   assert.match(dashboardSource, /<Match when=\{props\.tab === "settings"\}>/);
 });
+
+test("skills inventory exposes stable desktop e2e selectors", () => {
+  assert.match(source, /data-testid="skills-page"/);
+  assert.match(renderInventoryCardSource, /data-testid="skill-inventory-card"/);
+  assert.match(renderInventoryCardSource, /data-skill-inventory-name=\{input\.item\.name\}/);
+  assert.match(renderInventoryCardSource, /data-skill-inventory-scope=\{input\.instance\.scope\}/);
+  assert.match(renderInventoryCardSource, /data-skill-inventory-workspace-id=\{input\.instance\.workspaceId \?\? ""\}/);
+  assert.match(source, /data-testid="skills-all-workspaces-section"/);
+  assert.match(source, /data-testid="skills-workspace-specific-section"/);
+  assert.match(source, /data-testid="skills-hub-section"/);
+  assert.match(source, /data-testid="skills-hub-placeholder"/);
+});

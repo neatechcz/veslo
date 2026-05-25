@@ -659,6 +659,10 @@ export default function SkillsView(props: SkillsViewProps) {
 
     return (
       <div
+        data-testid="skill-inventory-card"
+        data-skill-inventory-name={input.item.name}
+        data-skill-inventory-scope={input.instance.scope}
+        data-skill-inventory-workspace-id={input.instance.workspaceId ?? ""}
         role={canUseActions() ? "button" : undefined}
         tabindex={canUseActions() ? "0" : undefined}
         class={`bg-dls-surface border border-dls-border rounded-xl p-4 flex items-start justify-between group transition-all text-left ${
@@ -766,7 +770,7 @@ export default function SkillsView(props: SkillsViewProps) {
   };
 
   return (
-    <section class="space-y-8">
+    <section data-testid="skills-page" class="space-y-8">
       <Show when={toast()}>
         <div class="fixed bottom-6 right-6 z-50 max-w-sm rounded-xl border border-dls-border bg-dls-surface px-4 py-3 text-xs text-dls-text shadow-2xl">
           {toast()}
@@ -871,7 +875,7 @@ export default function SkillsView(props: SkillsViewProps) {
         </div>
       </Show>
 
-      <div class="space-y-4">
+      <div data-testid="skills-installed-section" class="space-y-4">
         <h3 class="font-product type-ui-xs font-bold text-dls-secondary uppercase tracking-widest">
           {translate("skills.installed")}
         </h3>
@@ -885,7 +889,7 @@ export default function SkillsView(props: SkillsViewProps) {
         >
           <div class="space-y-6">
             <Show when={allWorkspaceInventoryItems().length}>
-              <div class="space-y-3">
+              <div data-testid="skills-all-workspaces-section" class="space-y-3">
                 <h4 class="font-product type-ui-xs font-bold text-dls-secondary uppercase tracking-widest">
                   {translate("skills.all_workspaces")}
                 </h4>
@@ -905,7 +909,7 @@ export default function SkillsView(props: SkillsViewProps) {
             </Show>
 
             <Show when={workspaceInventoryRows().length}>
-              <div class="space-y-3">
+              <div data-testid="skills-workspace-specific-section" class="space-y-3">
                 <h4 class="font-product type-ui-xs font-bold text-dls-secondary uppercase tracking-widest">
                   {translate("skills.workspace_specific")}
                 </h4>
@@ -925,7 +929,7 @@ export default function SkillsView(props: SkillsViewProps) {
         </Show>
       </div>
 
-      <div class="space-y-4">
+      <div data-testid="skills-hub-section" class="space-y-4">
         <div class="flex items-center justify-between gap-3">
           <h3 class="text-[11px] font-bold text-dls-secondary uppercase tracking-widest">{translate("skills.install_skills")}</h3>
           <button
@@ -954,7 +958,7 @@ export default function SkillsView(props: SkillsViewProps) {
           when={filteredHubSkills().length}
           fallback={
             <Show when={!props.hubSkillsStatus}>
-              <div class="rounded-xl border border-dls-border bg-dls-surface px-5 py-6 text-sm text-dls-secondary">
+              <div data-testid="skills-hub-placeholder" class="rounded-xl border border-dls-border bg-dls-surface px-5 py-6 text-sm text-dls-secondary">
                 {translate("skills.org_catalog_placeholder")}
               </div>
             </Show>

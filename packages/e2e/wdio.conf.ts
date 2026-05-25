@@ -23,6 +23,7 @@ const defaultSpecs = [
   './specs/live-admin-codex-roundtrip.spec.ts',
   './specs/markdown-drop-guard.spec.ts',
   './specs/navigation.spec.ts',
+  './specs/skills-global-inventory.e2e.ts',
   './specs/session-prefetch.spec.ts',
   './specs/session.spec.ts',
   './specs/settings-gear-navigation.spec.ts',
