@@ -34,6 +34,7 @@ walkdir = "2.5"
 zip = "0.6"
 include_dir = "0.7"
 tauri-plugin-pilot = { version = "0.7.1", default-features = false }
+sha1 = "0.10"
 
 [profile.release]
 panic = "abort"
