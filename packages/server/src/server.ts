@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, rm, readdir, rename, stat } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rm, readdir, realpath, rename, stat } from "node:fs/promises";
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
@@ -1859,13 +1859,18 @@ export function normalizeWorkspaceRelativePath(input: string, options: { allowSu
   return parts.join("/");
 }
 
-function resolveSafeChildPath(root: string, child: string): string {
-  const rootResolved = resolve(root);
+async function resolveSafeChildPath(root: string, child: string): Promise<string> {
+  // Use realpath when the path exists so that symlinks inside the workspace
+  // pointing outside cannot be used to escape the boundary. Fall back to the
+  // resolved (non-realpath) form when the candidate doesn't exist yet — that
+  // covers write/mkdir operations that legitimately target a future path.
+  const rootResolved = await realpath(root).catch(() => resolve(root));
   const candidate = resolve(rootResolved, child);
-  if (candidate === rootResolved) {
+  const candidateResolved = await realpath(candidate).catch(() => candidate);
+  if (candidateResolved === rootResolved) {
     throw new ApiError(400, "invalid_path", "Path must point to a file");
   }
-  if (!candidate.startsWith(rootResolved + sep)) {
+  if (!candidateResolved.startsWith(rootResolved + sep)) {
     throw new ApiError(400, "invalid_path", "Path traversal is not allowed");
   }
   return candidate;
@@ -5028,7 +5033,7 @@ function createRoutes(
     }
     const inboxRoot = resolveInboxDir(workspace.path);
     const relativePath = decodeInboxId(ctx.params.inboxId);
-    const absPath = resolveSafeChildPath(inboxRoot, relativePath);
+    const absPath = await resolveSafeChildPath(inboxRoot, relativePath);
     if (!(await exists(absPath))) {
       throw new ApiError(404, "inbox_item_not_found", "Inbox item not found");
     }
@@ -5078,7 +5083,8 @@ function createRoutes(
 
     const relativePath = normalizeWorkspaceRelativePath(requestedPath, { allowSubdirs: true });
     const inboxRoot = resolveInboxDir(workspace.path);
-    const dest = resolveSafeChildPath(inboxRoot, relativePath);
+    const dest = await resolveSafeChildPath(inboxRoot, relativePath);
+    const maxBytes = resolveInboxMaxBytes();
     if (file.size > maxBytes) {
       throw new ApiError(413, "file_too_large", "File exceeds upload limit", { maxBytes, size: file.size });
     }
@@ -5126,7 +5132,7 @@ function createRoutes(
     }
     const outboxRoot = resolveOutboxDir(workspace.path);
     const relativePath = decodeArtifactId(ctx.params.artifactId);
-    const absPath = resolveSafeChildPath(outboxRoot, relativePath);
+    const absPath = await resolveSafeChildPath(outboxRoot, relativePath);
     if (!(await exists(absPath))) {
       throw new ApiError(404, "artifact_not_found", "Artifact not found");
     }
@@ -5228,7 +5234,7 @@ function createRoutes(
 
     for (const relativePath of paths) {
       try {
-        const absPath = resolveSafeChildPath(workspace.path, relativePath);
+        const absPath = await resolveSafeChildPath(workspace.path, relativePath);
         if (!(await exists(absPath))) {
           items.push({ ok: false, path: relativePath, code: "file_not_found", message: "File not found" });
           continue;
@@ -5296,7 +5302,7 @@ function createRoutes(
 
     for (const write of writes) {
       try {
-        const absPath = resolveSafeChildPath(workspace.path, write.path);
+        const absPath = await resolveSafeChildPath(workspace.path, write.path);
         const bytes = Buffer.from(write.contentBase64, "base64");
         if (bytes.byteLength > FILE_SESSION_MAX_FILE_BYTES) {
           items.push({
@@ -5428,13 +5434,13 @@ function createRoutes(
     const approvalPaths: string[] = [];
     for (const op of operations) {
       if (typeof op?.path === "string" && op.path.trim()) {
-        approvalPaths.push(resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.path, { allowSubdirs: true })));
+        approvalPaths.push(await resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.path, { allowSubdirs: true })));
       }
       if (typeof op?.from === "string" && op.from.trim()) {
-        approvalPaths.push(resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.from, { allowSubdirs: true })));
+        approvalPaths.push(await resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.from, { allowSubdirs: true })));
       }
       if (typeof op?.to === "string" && op.to.trim()) {
-        approvalPaths.push(resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.to, { allowSubdirs: true })));
+        approvalPaths.push(await resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.to, { allowSubdirs: true })));
       }
     }
 
@@ -5452,7 +5458,7 @@ function createRoutes(
       try {
         if (type === "mkdir") {
           const path = normalizeWorkspaceRelativePath(String(op.path ?? ""), { allowSubdirs: true });
-          const absPath = resolveSafeChildPath(workspace.path, path);
+          const absPath = await resolveSafeChildPath(workspace.path, path);
           await ensureDir(absPath);
           recordWorkspaceFileEvent(workspace.id, { type: "mkdir", path });
           items.push({ ok: true, type, path });
@@ -5461,7 +5467,7 @@ function createRoutes(
 
         if (type === "delete") {
           const path = normalizeWorkspaceRelativePath(String(op.path ?? ""), { allowSubdirs: true });
-          const absPath = resolveSafeChildPath(workspace.path, path);
+          const absPath = await resolveSafeChildPath(workspace.path, path);
           if (!(await exists(absPath))) {
             items.push({ ok: false, type, path, code: "file_not_found", message: "Path not found" });
             continue;
@@ -5475,8 +5481,8 @@ function createRoutes(
         if (type === "rename") {
           const from = normalizeWorkspaceRelativePath(String(op.from ?? ""), { allowSubdirs: true });
           const to = normalizeWorkspaceRelativePath(String(op.to ?? ""), { allowSubdirs: true });
-          const fromAbs = resolveSafeChildPath(workspace.path, from);
-          const toAbs = resolveSafeChildPath(workspace.path, to);
+          const fromAbs = await resolveSafeChildPath(workspace.path, from);
+          const toAbs = await resolveSafeChildPath(workspace.path, to);
           if (!(await exists(fromAbs))) {
             items.push({ ok: false, type, from, to, code: "file_not_found", message: "Source path not found" });
             continue;
@@ -5509,7 +5515,7 @@ function createRoutes(
       throw new ApiError(400, "invalid_path", "Only markdown files are supported");
     }
 
-    const absPath = resolveSafeChildPath(workspace.path, relativePath);
+    const absPath = await resolveSafeChildPath(workspace.path, relativePath);
     if (!(await exists(absPath))) {
       throw new ApiError(404, "file_not_found", "File not found");
     }
@@ -5559,7 +5565,7 @@ function createRoutes(
       typeof baseUpdatedAtRaw === "number" && Number.isFinite(baseUpdatedAtRaw) ? baseUpdatedAtRaw : null;
     const force = body.force === true;
 
-    const absPath = resolveSafeChildPath(workspace.path, relativePath);
+    const absPath = await resolveSafeChildPath(workspace.path, relativePath);
 
     const before = (await exists(absPath)) ? await stat(absPath) : null;
     if (before && !before.isFile()) {
