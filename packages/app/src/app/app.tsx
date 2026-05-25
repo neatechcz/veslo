@@ -10062,7 +10062,17 @@ export default function App() {
           if (cancelled) return;
           inactiveWorkspaceBaseUrlHealedFor.set(workspace.id, sessionToken);
         } catch (error) {
-          if (!cancelled) reportError(error, `managed-baseurl.heal:${workspace.id}`);
+          if (cancelled) continue;
+          const message = error instanceof Error ? error.message : safeStringify(error);
+          // Private/system workspaces returned by listWorkspaces() can refuse
+          // GET/PATCH /config with "Workspace is not authorized" — mark them
+          // healed for this server token so the effect doesn't re-spam once
+          // per state-change cycle.
+          if (/not authorized|unauthorized|401/i.test(message)) {
+            inactiveWorkspaceBaseUrlHealedFor.set(workspace.id, sessionToken);
+            continue;
+          }
+          reportError(error, `managed-baseurl.heal:${workspace.id}`);
         }
       }
     };
