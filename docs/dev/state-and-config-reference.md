@@ -237,6 +237,24 @@ Use this surface for:
 
 Veslo pages that mutate plugins or MCP are usually editing this config, not `.opencode/veslo.json`.
 
+## Skills Inventory
+
+The Skills page builds an app-wide inventory from three sources:
+
+- user-global runtime skills from global OpenCode-compatible skill roots
+- workspace-local skills discovered per readable local workspace
+- Hub skills from the existing prepared catalog flow
+
+User-global skills are runtime-available skills, not organization catalog or
+admin-approved skills. Organization promotion and bulk rollout remain future
+work until the Den/admin backend owns those concepts.
+
+For inventory correctness, global skill roots and workspace skill roots are read
+separately. Runtime-effective discovery may still include both scopes for active
+workspace behavior, but the inventory must not expand global skills under every
+workspace. Workspace rows represent only real workspace-local instances or
+overrides.
+
 ## Import and Export
 
 Workspace config export/import is handled by `packages/app/src/app/stores/config-store.ts` and Tauri commands.

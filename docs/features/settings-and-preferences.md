@@ -82,6 +82,14 @@ Current advanced and debug areas include:
 
 These are primarily debugging and support surfaces. If behavior changes, update this doc and `docs/dev/state-and-config-reference.md` when persistence or scope changes too.
 
+## Extensions Overview
+
+Settings still contains the legacy extensions overview during the Skills
+inventory transition. It can show workspace-local skills and integration config
+where the current workspace data is readable, but it is not the canonical
+app-wide skills inventory. Use the Skills page for global, workspace-specific,
+override, and Hub skill visibility.
+
 ## Workspace Config Entry Point
 
 Settings includes a debug path to reveal `.opencode/veslo.json`. That file is the durable home for workspace-scoped Veslo config, not a general app preference store.

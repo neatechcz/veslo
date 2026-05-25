@@ -41,7 +41,16 @@ Current skills surface includes:
 
 Skills are filesystem-backed and usually live under `.opencode/skills/`.
 
-The Skills page separates globally available skills from workspace-specific skills. A global skill is shown once in the all-workspaces section, not repeated under each workspace. When a skill has a global copy and workspace-local copies, the workspace-local copies are shown as workspace overrides.
+The Skills page is an app-wide inventory, not a current-workspace-only view. It
+separates globally available skills from workspace-specific skills. A global
+skill is shown once in the all-workspaces section, not repeated under each
+workspace. When a skill has a global copy and workspace-local copies, the
+workspace-local copies are shown as workspace overrides.
+
+Global skills in this surface are user-global runtime skills discovered from
+local OpenCode-compatible skill roots. They are not organization catalog entries
+and do not imply Den/admin approval. Promotion to an organization catalog,
+system-approved catalog, or bulk organization rollout remains future work.
 
 ## Plugins
 
