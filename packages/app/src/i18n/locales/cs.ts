@@ -293,7 +293,6 @@ export default {
   "skills.notion_crm_description": "Přidejte workflow pro obohacení kontaktů, pipeline a follow-upů.",
   "skills.notion_crm_card_description": "Obohaťte data Notion CRM pomocí hotových Skills.",
   "skills.connect_host_to_load": "Připojte server Veslo pro načtení Skills.",
-  "skills.pick_workspace_first": "Nejdřív vyberte složku pracovního prostoru.",
   "skills.no_skills_found": "Zatím nebyly nalezeny žádné Skills.",
   "skills.installed_description": "Skills dostupné v tomto pracovním prostoru.",
   "skills.failed_to_load": "Nepodařilo se načíst Skills",

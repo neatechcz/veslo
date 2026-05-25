@@ -371,12 +371,6 @@ export function createExtensionsStore(options: {
       vesloWorkspaceId &&
       vesloCapabilities?.skills?.read;
 
-    if (!root) {
-      setSkills([]);
-      setSkillsStatus(translate("skills.pick_workspace_first"));
-      return;
-    }
-
     // Prefer Veslo server when available
     if (canUseVesloServer) {
       if (root !== skillsRoot) {
@@ -427,7 +421,7 @@ export function createExtensionsStore(options: {
 
     // Host/Tauri mode fallback: read directly from `.opencode/skills` or `.claude/skills`
     // so the UI still works even if the OpenCode engine is stopped or unreachable.
-    if (isLocalWorkspace && isTauriRuntime()) {
+    if (root && isLocalWorkspace && isTauriRuntime()) {
       if (root !== skillsRoot) {
         skillsLoaded = false;
       }
@@ -477,7 +471,7 @@ export function createExtensionsStore(options: {
     const c = options.client();
     if (!c) {
       setSkills([]);
-      setSkillsStatus("Veslo server unavailable. Connect to load skills.");
+      setSkillsStatus(root ? "Veslo server unavailable. Connect to load skills." : null);
       return;
     }
 
@@ -977,11 +971,6 @@ export function createExtensionsStore(options: {
     }
 
     const targetDir = options.activeWorkspaceRoot().trim();
-    if (!targetDir) {
-      const message = translate("skills.pick_workspace_first");
-      setSkillsStatus(message);
-      return { ok: false, message };
-    }
 
     options.setBusy(true);
     options.setError(null);
@@ -1029,7 +1018,7 @@ export function createExtensionsStore(options: {
 
     const root = options.activeWorkspaceRoot().trim();
     if (!root) {
-      setSkillsStatus(translate("skills.pick_workspace_first"));
+      setSkillsStatus(null);
       return;
     }
 
@@ -1070,10 +1059,6 @@ export function createExtensionsStore(options: {
     }
 
     const root = options.activeWorkspaceRoot().trim();
-    if (!root) {
-      setSkillsStatus(translate("skills.pick_workspace_first"));
-      return;
-    }
 
     const trimmed = name.trim();
     if (!trimmed) {
@@ -1107,10 +1092,6 @@ export function createExtensionsStore(options: {
     if (!trimmed) return null;
 
     const root = options.activeWorkspaceRoot().trim();
-    if (!root) {
-      setSkillsStatus(translate("skills.pick_workspace_first"));
-      return null;
-    }
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
@@ -1173,10 +1154,6 @@ export function createExtensionsStore(options: {
     if (!trimmed) return;
 
     const root = options.activeWorkspaceRoot().trim();
-    if (!root) {
-      setSkillsStatus(translate("skills.pick_workspace_first"));
-      return;
-    }
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";

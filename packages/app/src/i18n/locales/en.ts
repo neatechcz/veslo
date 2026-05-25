@@ -293,7 +293,6 @@ export default {
   "skills.notion_crm_description": "Add enrichment workflows for contacts, pipelines, and follow-ups.",
   "skills.notion_crm_card_description": "Enrich Notion CRM data with ready-made skills.",
   "skills.connect_host_to_load": "Connect an Veslo server to load skills.",
-  "skills.pick_workspace_first": "Pick a worker folder first.",
   "skills.no_skills_found": "No skills found yet.",
   "skills.installed_description": "Skills available in this worker.",
   "skills.failed_to_load": "Failed to load skills",

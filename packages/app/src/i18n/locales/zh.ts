@@ -288,7 +288,6 @@ export default {
   "skills.notion_crm_description": "为联系人、管道和跟进添加增强工作流。",
   "skills.notion_crm_card_description": "使用现成的技能丰富 Notion CRM 数据。",
   "skills.connect_host_to_load": "连接 Veslo 服务器以加载技能。",
-  "skills.pick_workspace_first": "先选择一个工作区文件夹。",
   "skills.no_skills_found": "还没有找到 skills。",
   "skills.installed_description": "此工作区可用的 skills。",
   "skills.failed_to_load": "加载 skills 失败",
