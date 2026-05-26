@@ -38,6 +38,7 @@ test("owned-server deployment workflow deploys the Compose stack on the owned-se
     "https://api.veslo.work/health",
     "https://ai.veslo.work/health",
     "https://app.veslo.work",
+    "compose exec -T worker-manager",
     "http://127.0.0.1:8790/health",
   ]) {
     assert.match(workflowSource, new RegExp(requiredText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))

@@ -112,8 +112,8 @@ After startup:
 curl -fsS https://api.veslo.work/health
 curl -fsS https://ai.veslo.work/health
 curl -I https://app.veslo.work
-curl -fsS http://127.0.0.1:8790/health
 sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env ps
+sudo docker compose -f packaging/owned-server/compose.yml --env-file /srv/veslo/env/production.env exec -T worker-manager node -e "fetch('http://127.0.0.1:8790/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 ```
 
 Compose also defines container health checks for Den `/health`, AI Gateway `/health`, worker manager `/health`, and the web app `/`.

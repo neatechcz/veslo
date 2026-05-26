@@ -80,7 +80,7 @@ jobs:
           compose run --rm --no-deps ai-gateway pnpm --filter @neatech/ai-gateway db:migrate
           compose up -d
           compose ps
-          curl -fsS http://127.0.0.1:8790/health >/dev/null
+          compose exec -T worker-manager node -e "fetch('http://127.0.0.1:8790/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
       - name: Verify public production endpoints
         run: |
