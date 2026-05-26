@@ -4,3 +4,4 @@
 .tmp-opencode-home-live/
 __snapshots__/**/actual/
 __snapshots__/**/diff/
+__snapshots__/switch-scenario/
