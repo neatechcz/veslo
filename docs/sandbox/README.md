@@ -5,6 +5,12 @@ práci na multi-workspace stabilizaci Vesla (interní označení VSLO-86).
 Píše se v květnu 2026, navazuje na sérii commitů `04a2ba75 … 60c5d93d`
 na branchi `sandbox`.
 
+> **Pozor na slovo "sandbox":** tahle složka řeší **multi-workspace
+> stabilizaci** (= VSLO-86 = branch `sandbox`). Existuje ještě
+> separátní téma "sandbox" v kontextu **filesystem isolation** (= jak
+> engine `sandbox-exec` čte/zapisuje soubory). To je jiná věc, není
+> v této složce popsaná.
+
 ## Komu je to určeno
 
 Externí vývojář, který Veslo neviděl. V `docs/sandbox/` najdeš všechno
@@ -36,7 +42,7 @@ viz [`known-issues.md`](known-issues.md) a [`fixes-timeline.md`](fixes-timeline.
 | 6 | [`e2e-specs.md`](e2e-specs.md) | Existující WebDriver specy a jak je rozšířit | Pokud chceš automatizovaně reprodukovat / verifikovat fixy. |
 | 7 | [`handoff.md`](handoff.md) | Otevřené úkoly, doporučená strategie, copy-paste prompt pro novou AI session | Až budeš plánovat další krok. |
 
-## Vztah k existující dokumentaci
+## Vztah k existující dokumentaci v gitu
 
 Existující docs **nezatahuj duplikováním**, jen na ně odkazuj:
 
@@ -57,16 +63,6 @@ Existující docs **nezatahuj duplikováním**, jen na ně odkazuj:
   Sandbox/data-flows.md odkazuje pro detail v send flow.
 - **`docs/plans/`** — historické plány. **Nepoužívat** — jsou převážně
   desuted a popisují stav před VSLO-86 fixy.
-
-## Mimo git: Pavlův pracovní `/docs/`
-
-Mimo repo existuje `/Users/pavelve/PlayGround/NeanTech/veslo/docs/`
-(Pavlova lokální pracovní složka). Tam jsou další materiály
-(handoff prompty z předchozích AI session, ROADMAP, memory).
-**Není v gitu, nepoužívej jako autoritativní zdroj** — ale můžeš tam
-najít user-facing perspektivu a kontext, který nebyl ještě promítnut
-do sandbox docs. Soubory přejmenuj/přenes do `docs/sandbox/` jen
-pokud se shodují s návrhem v tomhle README.
 
 ## Co dělat když se docs rozcházejí
 

@@ -20,7 +20,7 @@ pnpm install
 
 ## Spuštění dev modu
 
-### Variant A: standard pnpm dev (= Pavlův workflow)
+### Variant A: standard pnpm dev (= primární dev workflow)
 
 ```bash
 cd git
@@ -49,11 +49,11 @@ cd git/packages/desktop
 pnpm exec tauri build --debug --no-bundle -- --features e2e
 ```
 
-Vyrobí `git/packages/desktop/src-tauri/target/debug/veslo`. Spuštění
+Vyrobí `packages/desktop/src-tauri/target/debug/veslo`. Spuštění
 přímo:
 
 ```bash
-/Users/.../packages/desktop/src-tauri/target/debug/veslo
+./packages/desktop/src-tauri/target/debug/veslo
 ```
 
 Použije production Tauri identifier `com.neatech.veslo` (= jiná data
@@ -216,16 +216,18 @@ pnpm dev
 
 ## Screenshot Vesla okna (= visual debug bez WebDriver)
 
-Pavel má skript `scripts/veslo-screenshot.sh` v repu (pracovní adresář,
-ne git):
+V macOS lze pořídit screenshot aktivního Vesla okna přes
+`screencapture`:
 
 ```bash
-# Z pracovního dir (mimo git)
-./scripts/veslo-screenshot.sh
-# Uloží do screenshots/veslo.png
+# Aktivní okno (klik kdekoli → po pípnutí klik na Vesla okno)
+screencapture -W /tmp/veslo.png
+
+# Cele Vesla okno bez interakce — najít window-id přes Quartz API
+# (viz `man screencapture` -l flag pro window id mode)
 ```
 
-Pak `open screenshots/veslo.png` nebo Read tool v Claude.
+Pak `open /tmp/veslo.png` nebo Read tool v Claude.
 
 ## Připojení WebDriver session přes wd-cli (interaktivně)
 
@@ -271,11 +273,11 @@ tail -f /tmp/veslo-runtime.log | grep "workspace:activate\|workspace:ensureEngin
 # Spočítat engine procesy
 ps aux | grep "veslo-code serve" | grep -v grep | wc -l
 
-# Zjistit token v opencode.jsonc
-grep apiKey /Users/pavelve/PlayGround/NeanTech/veslo/storage/veslo-test3-*/opencode.jsonc
+# Zjistit token v opencode.jsonc (uprav cestu na tvůj workspace)
+grep apiKey <workspace-root>/opencode.jsonc
 
 # Stav všech E2E test sessions
-ls -la /Users/pavelve/PlayGround/NeanTech/veslo/storage/veslo-test3-*/.opencode/
+ls -la <workspace-root>/.opencode/
 
 # Kill zombies (= bun --watch z předchozího Tauri main restart)
 for pid in $(ps aux | grep "bun --watch src/cli.ts" | grep -v grep | awk '{print $2}'); do

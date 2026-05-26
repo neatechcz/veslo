@@ -18,16 +18,17 @@ Všechny specy jsou v `packages/e2e/specs/`. Framework je
    cd git/packages/desktop
    pnpm exec tauri build --debug --no-bundle -- --features e2e
    ```
-2. Existující profile s 4 test workspaces (`veslo-test3-A/B/C/D`) v
-   `~/Library/Application Support/com.neatech.veslo/`. (Pavlův dev
-   profile už je má.)
+2. Existující profile s test workspaces v
+   `~/Library/Application Support/com.neatech.veslo/`. Pokud žádné
+   workspaces nemáš, vytvoř je v UI před spuštěním specs (kliknutím
+   na "Přidat adresář" v sidebaru).
 
 ### Spuštění proti **fresh launched binary**
 
 ```bash
 cd git/packages/e2e
 export E2E_USE_EXISTING_PROFILE=1
-export E2E_TAURI_BINARY=/Users/.../git/packages/desktop/src-tauri/target/debug/veslo
+export E2E_TAURI_BINARY=$(pwd)/../desktop/src-tauri/target/debug/veslo
 pnpm exec wdio run wdio.conf.ts --spec ./specs/<name>.spec.ts
 ```
 
@@ -36,8 +37,8 @@ WebDriver port 4445, spustí test, na konci killne.
 
 ### Spuštění proti **běžící pnpm dev session** (= attach mode)
 
-Pokud máš `pnpm dev` se `--features e2e` spuštěné jako Pavlův dev
-workflow, specy se k němu přimknou (reuse).
+Pokud máš `pnpm dev` se `--features e2e` spuštěné (standardní dev
+workflow), specy se k němu přimknou (reuse).
 
 ```bash
 cd git/packages/e2e
@@ -60,8 +61,8 @@ Verifikuje že auto-aktivace posledního workspace nezablokuje UI.
 - Žádný spinner ("Otevírám konverzaci…", "Načítám") visible
 - Žádné Error badges v sidebaru
 
-**Předfix baseline:** Pavel viděl 30-60 s spinner per boot, pak Error
-badges.
+**Předfix baseline:** 30-60 s spinner per boot, pak Error badges
+v sidebaru.
 
 **Postfix metriky:** 3× po sobě time-to-interactive **9-19 ms**,
 spinner 0 ms, 0 error badges.

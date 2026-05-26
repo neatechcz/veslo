@@ -145,8 +145,9 @@ session.ts ::selectSession(sessionID)
 `c.session.messages({sessionID})` přes OpenCode SDK. Klient byl
 nakešovaný z předchozí session (nebo z `dev-autostart`), takže SDK
 volání šlo orchestrator proxy → `pool.ensure` → cold engine spawn
-(30-60 s). Pavlův "zelený puntík se rozsvítil i bez send" byl přesně
-tohle — engine se spawnoval na klik session.
+(30-60 s). Symptom: zelené kolečko (= engine ready) se v UI rozsvítilo
+u workspace, do kterého uživatel jen klikl na session, ale neposlal
+žádnou zprávu — engine se spawnoval na klik session.
 
 ## Flow 4 — Send message (první v session, cold engine spawn)
 
