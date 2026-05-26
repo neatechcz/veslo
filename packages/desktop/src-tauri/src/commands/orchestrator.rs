@@ -239,9 +239,9 @@ pub fn reconcile_orchestrator_workspaces(
 }
 
 #[tauri::command]
-pub fn orchestrator_workspace_activate(
+pub async fn orchestrator_workspace_activate(
     app: AppHandle,
-    manager: State<OrchestratorManager>,
+    manager: State<'_, OrchestratorManager>,
     workspace_path: String,
     name: Option<String>,
 ) -> Result<OrchestratorWorkspace, String> {
@@ -253,19 +253,27 @@ pub fn orchestrator_workspace_activate(
     .to_string_lossy()
     .to_string();
     let base_url = resolve_base_url(&manager)?;
-    let added = register_workspace_with_orchestrator(&base_url, &workspace_path, name.as_deref())?;
 
-    let activate_url = format!(
-        "{}/workspaces/{}/activate",
-        base_url.trim_end_matches('/'),
-        added.id
-    );
-    ureq::post(&activate_url)
-        .set("Content-Type", "application/json")
-        .send_string("")
-        .map_err(|e| format!("Failed to activate workspace: {e}"))?;
-
-    Ok(added)
+    // VSLO-86 — push the blocking ureq calls onto a dedicated thread so the
+    // Tauri command runtime stays responsive. Otherwise consecutive sidebar
+    // clicks queue behind the previous synchronous activate IPC and the
+    // user sees "kolečko se točí" for 30s+ on every second click while
+    // browser.execute / other Tauri invokes wait for their turn.
+    tauri::async_runtime::spawn_blocking(move || {
+        let added = register_workspace_with_orchestrator(&base_url, &workspace_path, name.as_deref())?;
+        let activate_url = format!(
+            "{}/workspaces/{}/activate",
+            base_url.trim_end_matches('/'),
+            added.id
+        );
+        ureq::post(&activate_url)
+            .set("Content-Type", "application/json")
+            .send_string("")
+            .map_err(|e| format!("Failed to activate workspace: {e}"))?;
+        Ok::<_, String>(added)
+    })
+    .await
+    .map_err(|e| format!("orchestrator_workspace_activate join error: {e}"))?
 }
 
 #[tauri::command]
