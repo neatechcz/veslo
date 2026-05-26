@@ -32,6 +32,58 @@ Important rule:
 - `/opencode-router/health` accepts client auth
 - other `/opencode-router/*` routes require host or owner auth
 
+## Cloud Skill Registry Contract
+
+The cloud skill registry is a distribution and governance service. It is not the runtime executor for local skills. Veslo desktop and Veslo server should use it to discover approved packages, download package archives, and sync desired workspace skill sets, then install or activate those packages through local server-controlled skill surfaces.
+
+Expected registry routes:
+
+- `GET /v1/skills`
+  List skills visible to the caller. Supports filtering by owner scope, workspace, org, tag, review status, and pagination cursor.
+- `POST /v1/skills`
+  Create a skill record before uploading the first package version.
+- `GET /v1/skills/:skillId`
+  Read skill metadata and latest approved version summary.
+- `POST /v1/skills/:skillId/versions`
+  Publish a new package version for an existing skill.
+- `GET /v1/skills/:skillId/versions`
+  List package versions for a skill.
+- `GET /v1/skill-versions/:versionId/package`
+  Download the package archive for a concrete version. The response must validate against the local package manifest model.
+- `POST /v1/skill-installations`
+  Install a skill version for a personal, workspace, or organization target.
+- `PATCH /v1/skill-installations/:installationId`
+  Enable, disable, or move an installation to another version.
+- `DELETE /v1/skill-installations/:installationId`
+  Remove an installation from its target.
+- `POST /v1/skill-installations/:installationId/restore`
+  Restore a previously removed installation where audit and retention policy allow it.
+- `GET /v1/workspaces/:workspaceId/skill-set`
+  Read the effective desired registry-backed skill set for a workspace.
+- `PATCH /v1/workspaces/:workspaceId/skill-set`
+  Replace or reconcile the desired registry-backed skill set for a workspace.
+- `POST /v1/skills/:skillId/review-requests`
+  Request approval for organization or platform distribution.
+- `POST /v1/skill-review-requests/:requestId/approve`
+  Approve a review request and make the requested scope/version available.
+- `POST /v1/skill-review-requests/:requestId/reject`
+  Reject a review request with reviewer rationale.
+- `GET /v1/skills/search`
+  Search visible skills by text query, tags, owner scope, review status, and package metadata.
+
+Auth scopes:
+
+- Personal user
+  Can create personal skills, publish personal versions, install personal skills, search visible personal/org/platform skills, and request review for broader distribution.
+- Workspace collaborator/admin
+  Can read workspace skill sets. Workspace admins can patch workspace skill sets and manage workspace-targeted installations.
+- Org skill admin
+  Can review, approve, reject, publish, restore, and manage organization-scoped skills and installations for the org.
+- Platform admin
+  Can manage platform-scoped skills, approve platform distribution, moderate all review requests, and perform registry support actions across tenants.
+
+Local contract validators live server-side and are intentionally narrow. They validate only registry response shapes consumed by the local Veslo server and app, including skill lists, skill detail, version lists, package downloads, installations, workspace skill sets, review responses, and search results. Package download validation delegates to the existing skill package manifest model so local install behavior stays aligned with pack/unpack.
+
 ## Workspace Scope
 
 Many routes are workspace-scoped and should be called with an active workspace id.

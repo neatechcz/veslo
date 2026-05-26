@@ -261,6 +261,36 @@ remains disabled for scoped inventory rows until a path-specific backend command
 exists. Hub install uses an explicit target picker; current writes are limited
 to the active workspace.
 
+## Skill Registry State
+
+The cloud skill registry introduces distribution state separate from runtime skill files. Registry state is cloud-owned and should not be inferred from local `.opencode/skills/` folders alone.
+
+Registry-owned state:
+
+- skill records, slugs, descriptions, tags, visibility, and review status
+- immutable package versions and package digests
+- personal, workspace, and organization installation records
+- workspace desired skill sets
+- review requests, reviewer decisions, and restore history
+
+Local Veslo state:
+
+- downloaded package archives before install
+- unpacked runtime skill directories controlled by the local Veslo server
+- workspace activation or reload state after a skill set changes
+- any temporary install progress, errors, or selected install target in the app UI
+
+The local server validates registry responses before using them. Validators accept only the response fields needed by the app/server contract and delegate package manifest checks to the skill package model. They are not a backend implementation and do not replace registry-side authorization, review workflow, package storage, or audit enforcement.
+
+Registry auth is account-scoped:
+
+- personal user: owns personal skills and personal installs
+- workspace collaborator/admin: reads workspace skill sets; admins manage workspace installs
+- org skill admin: manages organization skills, reviews, and org installs
+- platform admin: manages platform skills and cross-tenant moderation
+
+Registry-backed workspace skill-set changes are durable behavior. If the local app applies a changed workspace skill set, it should trigger the same server-backed install and reload semantics used for other skill mutations rather than writing only through the UI.
+
 ## Import and Export
 
 Workspace config export/import is handled by `packages/app/src/app/stores/config-store.ts` and Tauri commands.
