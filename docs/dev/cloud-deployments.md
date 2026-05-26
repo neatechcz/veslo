@@ -53,6 +53,16 @@ Required GitHub Actions configuration:
 
 Do not store production secrets in the repository. Keep production environment values in the server-side env file and GitHub secrets only.
 
+## Production ops workflows
+
+Production operations that mutate Den state must run on the owned-server runner
+and use the owned-server Compose stack. `Ops DEN Platform Admin` follows this
+policy: it runs on the `veslo-owned-server` runner and executes inside the
+running `den` service so database access stays on the owned server.
+
+Do not reintroduce GitHub-hosted production database mutation workflows that
+connect through externally reachable database URLs.
+
 ## Managed-AI routing and admin visibility
 
 Signed-in app identity and desktop handoff can come from DEN, but managed-AI assignment and admin truth follow the service that receives the routed managed-AI request. The inference base URL is separate from DEN auth: desktop and orchestrator defaults route managed-AI requests to the owned standalone AI Gateway at `https://ai.veslo.work`. The previous Render AI Gateway is a rollback target only.
