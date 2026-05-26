@@ -244,8 +244,6 @@ export default {
   "commands.override_cancel": "保留现有",
 
   // ==================== Skills ====================
-  "skills.title": "Skills",
-  "skills.subtitle": "管理所有工作区和 workers 的 skills。",
   "skills.refresh": "刷新",
   "skills.add_title": "添加 skills",
   "skills.add_description": "安装起始命令、导入 skill，或打开文件夹。",
@@ -265,9 +263,7 @@ export default {
   "skills.registry_notice": "发布到 OpenPackage 注册表（`opkg push`）目前需要身份验证。计划添加注册表搜索和精选列表同步。",
   "skills.installed": "已安装的 skills",
   "skills.all_workspaces": "所有工作区",
-  "skills.scope_global": "全局",
   "skills.workspace_specific": "工作区专属",
-  "skills.workspace_scope_multiple": "多个",
   "skills.workspace_overrides": "工作区覆盖",
   "skills.no_skills": "在 `.opencode/skills`、`.claude/skills` 或 `~/.agents/skills` 中未检测到 skills。",
   "skills.org_catalog_placeholder": "面向你所在组织的 skills 将会在这里提供。",

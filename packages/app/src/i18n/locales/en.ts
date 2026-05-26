@@ -236,8 +236,6 @@ export default {
   "commands.override_cancel": "Keep existing",
 
   // ==================== Skills ====================
-  "skills.title": "Skills",
-  "skills.subtitle": "Manage skills across all workers and workspaces.",
   "skills.refresh": "Refresh",
   "skills.add_title": "Add skills",
   "skills.add_description": "Install a starter command, import a skill, or open the folder.",
@@ -257,9 +255,7 @@ export default {
   "skills.registry_notice": "Publishing to the OpenPackage registry (`opkg push`) requires authentication today. A registry search + curated list sync is planned.",
   "skills.installed": "Installed skills",
   "skills.all_workspaces": "All workspaces",
-  "skills.scope_global": "Global",
   "skills.workspace_specific": "Workspace-specific",
-  "skills.workspace_scope_multiple": "Various",
   "skills.workspace_overrides": "Workspace overrides",
   "skills.no_skills": "No skills detected in `.opencode/skills`, `.claude/skills`, or `~/.agents/skills`.",
   "skills.desktop_required": "Skill management requires the desktop app.",
@@ -1441,9 +1437,6 @@ export default {
   // ==================== Skills (additional) ====================
   "skills.worker_profile": "Worker profile",
   "skills.worker_description": "Skills are the core abilities available across your workers. Add from Hub or create new ones directly in chat.",
-  "skills.create_in_chat": "Create skill in chat",
-  "skills.stat_installed": "Installed",
-  "skills.stat_hub_available": "Hub available",
   "skills.stat_skill_creator": "Skill creator",
   "skills.stat_not_installed": "Not installed",
   "skills.stat_mode": "Mode",

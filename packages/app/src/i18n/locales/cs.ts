@@ -236,8 +236,6 @@ export default {
   "commands.override_cancel": "Ponechat stávající",
 
   // ==================== Skills ====================
-  "skills.title": "Skills",
-  "skills.subtitle": "Spravujte Skills napříč všemi pracovními prostory.",
   "skills.refresh": "Obnovit",
   "skills.add_title": "Přidat Skills",
   "skills.add_description": "Nainstalujte úvodní příkaz, importujte skill nebo otevřete složku.",
@@ -257,9 +255,7 @@ export default {
   "skills.registry_notice": "Publikování do registru OpenPackage (`opkg push`) dnes vyžaduje přihlášení. Hledání v registru a synchronizace kurátorovaných seznamů jsou plánované.",
   "skills.installed": "Nainstalované Skills",
   "skills.all_workspaces": "Všechny pracovní prostory",
-  "skills.scope_global": "Globální",
   "skills.workspace_specific": "Konkrétní pracovní prostory",
-  "skills.workspace_scope_multiple": "Různé",
   "skills.workspace_overrides": "Přepisy v pracovních prostorech",
   "skills.no_skills": "V `.opencode/skills`, `.claude/skills` ani `~/.agents/skills` nebyly nalezeny žádné Skills.",
   "skills.desktop_required": "Správa Skills vyžaduje desktopovou aplikaci.",
@@ -1437,9 +1433,6 @@ export default {
   // ==================== Skills (doplňkové) ====================
   "skills.worker_profile": "Profil pracovního prostoru",
   "skills.worker_description": "Skills jsou hlavní schopnosti dostupné napříč pracovními prostory. Přidejte z Hubu nebo vytvořte nové přímo v chatu.",
-  "skills.create_in_chat": "Vytvořit skill v chatu",
-  "skills.stat_installed": "Nainstalováno",
-  "skills.stat_hub_available": "Dostupné v Hubu",
   "skills.stat_skill_creator": "Skill creator",
   "skills.stat_not_installed": "Nenainstalováno",
   "skills.stat_mode": "Režim",

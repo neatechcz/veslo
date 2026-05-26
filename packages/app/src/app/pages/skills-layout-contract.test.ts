@@ -20,8 +20,13 @@ test("skills page removes worker profile and mode stat cards", () => {
   assert.equal(source.includes('translate("skills.stat_mode")'), false);
 });
 
-test("skills page keeps create skill in chat CTA", () => {
-  assert.match(source, /translate\("skills\.create_in_chat"\)/);
+test("skills page removes redundant top summary block", () => {
+  assert.doesNotMatch(source, /translate\("skills\.title"\)/);
+  assert.doesNotMatch(source, /translate\("skills\.subtitle"\)/);
+  assert.doesNotMatch(source, /translate\("skills\.create_in_chat"\)/);
+  assert.doesNotMatch(source, /translate\("skills\.stat_installed"\)/);
+  assert.doesNotMatch(source, /translate\("skills\.stat_hub_available"\)/);
+  assert.doesNotMatch(source, /const installedSkillCount = createMemo/);
 });
 
 test("skills page removes legacy new skill toolbar action", () => {
@@ -44,9 +49,7 @@ test("skills page receives app-wide skill inventory props", () => {
 
 test("skills page uses inventory as primary installed source", () => {
   assert.match(source, /const installedInventoryItems = createMemo\(\(\) =>\s*mergeRemoteFallbackIntoInventory\(\s*props\.skillInventory/);
-  assert.match(source, /const installedSkillCount = createMemo\(\(\) => installedInventoryItems\(\)\.length\)/);
-  assert.match(source, /translate\("skills\.stat_installed"\)[\s\S]*\{installedSkillCount\(\)\}/);
-  assert.doesNotMatch(source, /translate\("skills\.stat_installed"\)[\s\S]{0,500}\{props\.skills\.length\}/);
+  assert.doesNotMatch(source, /\{props\.skills\.length\}/);
 });
 
 test("skills page separates global and workspace-specific inventory sections", () => {
@@ -60,40 +63,31 @@ test("skills page separates global and workspace-specific inventory sections", (
   assert.match(zhSource, /"skills\.workspace_specific":/);
 });
 
-test("skills inventory cards show placement badges instead of Veslo bootstrap badges", () => {
+test("skills inventory cards avoid duplicate placement badges", () => {
   assert.equal(source.includes("VESLO_DEFAULT_SKILL_NAMES"), false);
   assert.equal(source.includes("isVesloInjectedSkill"), false);
   assert.doesNotMatch(renderInventoryCardSource, />\s*Veslo\s*</);
-  assert.match(source, /const workspaceDirectoryNameForInstance = \(instance: SkillInstance\) =>/);
-  assert.match(source, /const workspaceDirectoryNamesForItem = \(item: SkillInventoryItem\) =>/);
-  assert.match(source, /const workspaceDirectoryTooltipLinesForItem = \(item: SkillInventoryItem\) =>/);
-  assert.match(source, /const skillInventoryScopeBadge = \(input: \{ item: SkillInventoryItem; instance: SkillInstance \}\) =>/);
-  assert.match(source, /input\.instance\.scope === "user-global"[\s\S]{0,220}translate\("skills\.scope_global"\)/);
-  assert.match(source, /workspaceTooltipLines\.length > 1[\s\S]{0,260}translate\("skills\.workspace_scope_multiple"\)/);
-  assert.match(source, /title: input\.instance\.path/);
-  assert.match(source, /title: workspaceTooltipLines\.join\("\\n"\)/);
+  assert.doesNotMatch(source, /const workspaceDirectoryNameForInstance = \(instance: SkillInstance\) =>/);
+  assert.doesNotMatch(source, /const workspaceDirectoryNamesForItem = \(item: SkillInventoryItem\) =>/);
+  assert.doesNotMatch(source, /const workspaceDirectoryTooltipLinesForItem = \(item: SkillInventoryItem\) =>/);
+  assert.doesNotMatch(source, /const skillInventoryScopeBadge = \(input: \{ item: SkillInventoryItem; instance: SkillInstance \}\) =>/);
   assert.match(source, /const skillDirectoryPathForLocation = \(path: string\) =>/);
   assert.equal(source.includes('path.trim().replace(/[\\\\/](?:SKILL\\.md|AGENTS\\.md)$/i, "")'), true);
   assert.match(source, /const openInventoryInstanceLocation = async \(path: string\) =>/);
   assert.match(source, /await import\("@tauri-apps\/plugin-opener"\)/);
   assert.match(source, /await openPath\(target\)/);
   assert.match(source, /await revealItemInDir\(originalTarget \|\| target\)/);
-  assert.match(renderInventoryCardSource, /const scopeBadge = createMemo\(\(\) => skillInventoryScopeBadge\(input\)\)/);
+  assert.doesNotMatch(renderInventoryCardSource, /scopeBadge/);
   assert.match(renderInventoryCardSource, /<h4[\s\S]*?title=\{input\.item\.name\}[\s\S]*?>[\s\S]*?\{input\.item\.name\}[\s\S]*?<\/h4>/);
-  assert.match(renderInventoryCardSource, /title=\{scopeBadge\(\)\.title\}/);
+  assert.doesNotMatch(renderInventoryCardSource, /translate\("skills\.scope_global"\)/);
+  assert.doesNotMatch(renderInventoryCardSource, /translate\("skills\.workspace_scope_multiple"\)/);
   assert.match(renderInventoryCardSource, /<FolderOpen size=\{13\}/);
   assert.match(renderInventoryCardSource, /openInventoryInstanceLocation\(input\.instance\.path\)/);
   assert.match(renderInventoryCardSource, /title=\{translate\("skills\.reveal_skill_location"\)\}/);
   assert.match(renderInventoryCardSource, /e\.stopPropagation\(\)/);
   assert.doesNotMatch(renderInventoryCardSource, /\{input\.instance\.path\}<\/div>/);
-  assert.match(enSource, /"skills\.scope_global":\s*"Global"/);
-  assert.match(enSource, /"skills\.workspace_scope_multiple":\s*"Various"/);
   assert.match(enSource, /"skills\.reveal_skill_location":/);
-  assert.match(csSource, /"skills\.scope_global":\s*"Globální"/);
-  assert.match(csSource, /"skills\.workspace_scope_multiple":\s*"Různé"/);
   assert.match(csSource, /"skills\.reveal_skill_location":/);
-  assert.match(zhSource, /"skills\.scope_global":/);
-  assert.match(zhSource, /"skills\.workspace_scope_multiple":/);
   assert.match(zhSource, /"skills\.reveal_skill_location":/);
 });
 
