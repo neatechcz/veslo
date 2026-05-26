@@ -21,6 +21,8 @@ Installations connect a skill version to a target:
 
 Workspace skill sets represent the effective, reconciled registry-backed skills for a workspace. They contain at most one installation per `skillId` and are separate from locally discovered `.opencode/skills/` inventory rows, though applying a workspace skill set ultimately materializes local runtime skill files through Veslo server.
 
+Organization-shared workspaces should commit `.opencode/veslo.skills.lock.json` when they opt into registry-backed skills. The lockfile records the resolved skill set identity, revision, installation ids, version ids, skill names, and package hashes. Managed package payloads should not be committed unless an organization explicitly chooses vendored skills for regulated or offline operation.
+
 ## Registry API
 
 The expected cloud registry routes are:
