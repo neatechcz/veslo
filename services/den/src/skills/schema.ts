@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm"
 import {
   boolean,
+  check,
   index,
   int,
   json,
@@ -78,6 +79,7 @@ export const SkillTable = mysqlTable(
   {
     id: idColumn().primaryKey(),
     scope: mysqlEnum("scope", SkillScope).notNull(),
+    scope_owner_key: varchar("scope_owner_key", { length: 255 }).notNull(),
     org_id: orgIdColumn(),
     owner_user_id: userIdColumn("owner_user_id"),
     workspace_id: varchar("workspace_id", { length: 64 }),
@@ -90,13 +92,7 @@ export const SkillTable = mysqlTable(
     ...timestamps,
   },
   (table) => [
-    uniqueIndex("skills_scope_owner_name").on(
-      table.scope,
-      table.org_id,
-      table.workspace_id,
-      table.owner_user_id,
-      table.name,
-    ),
+    uniqueIndex("skills_scope_owner_name").on(table.scope, table.scope_owner_key, table.name),
     index("skills_org_skill").on(table.org_id, table.id),
     index("skills_org_workspace").on(table.org_id, table.workspace_id, table.name),
     index("skills_org_deleted").on(table.org_id, table.deleted_at),
@@ -155,6 +151,7 @@ export const SkillVersionFileTable = mysqlTable(
     version_id: versionIdColumn().notNull(),
     blob_id: varchar("blob_id", { length: 64 }).notNull(),
     path: varchar("path", { length: 1024 }).notNull(),
+    path_sha256: sha256Column("path_sha256"),
     sha256: sha256Column("sha256"),
     size_bytes: int("size_bytes", { unsigned: true }).notNull(),
     media_type: varchar("media_type", { length: 255 }).notNull(),
@@ -162,7 +159,7 @@ export const SkillVersionFileTable = mysqlTable(
     ...createdAt,
   },
   (table) => [
-    uniqueIndex("skill_version_file_version_path").on(table.version_id, table.path),
+    uniqueIndex("skill_version_file_version_path_sha").on(table.version_id, table.path_sha256),
     index("skill_version_files_org_version").on(table.org_id, table.version_id),
     index("skill_version_files_blob").on(table.blob_id),
   ],
@@ -193,6 +190,10 @@ export const SkillInstallationTable = mysqlTable(
     index("skill_installations_org_user").on(table.org_id, table.owner_user_id, table.skill_id),
     index("skill_installation_scope_approval").on(table.scope, table.approval_id, table.approved_version_id),
     index("skill_installations_skill").on(table.skill_id),
+    check(
+      "skill_installation_active_managed_approval",
+      sql`${table.status} <> 'active' OR ${table.scope} NOT IN ('org','system') OR (${table.approval_id} IS NOT NULL AND ${table.approved_version_id} IS NOT NULL)`,
+    ),
   ],
 )
 
@@ -294,17 +295,24 @@ export const SkillApprovalTable = mysqlTable(
     id: idColumn().primaryKey(),
     org_id: orgIdColumn(),
     scope: mysqlEnum("scope", SkillApprovalScope).notNull(),
+    approval_owner_key: varchar("approval_owner_key", { length: 255 }).notNull(),
     skill_id: skillIdColumn().notNull(),
     version_id: versionIdColumn().notNull(),
     review_request_id: varchar("review_request_id", { length: 64 }),
     release_channel: varchar("release_channel", { length: 128 }),
+    release_channel_key: varchar("release_channel_key", { length: 128 }).notNull().default("default"),
     approved_by_user_id: userIdColumn("approved_by_user_id").notNull(),
     approved_at: timestamp("approved_at", { fsp: 3 }).notNull().defaultNow(),
     revoked_by_user_id: userIdColumn("revoked_by_user_id"),
     revoked_at: timestamp("revoked_at", { fsp: 3 }),
   },
   (table) => [
-    uniqueIndex("skill_approval_scope_version").on(table.scope, table.org_id, table.version_id, table.release_channel),
+    uniqueIndex("skill_approval_scope_version").on(
+      table.scope,
+      table.approval_owner_key,
+      table.version_id,
+      table.release_channel_key,
+    ),
     index("skill_approvals_org_version").on(table.org_id, table.version_id),
     index("skill_approvals_org_skill").on(table.org_id, table.skill_id),
     index("skill_approvals_review_request").on(table.review_request_id),

@@ -1,6 +1,7 @@
 CREATE TABLE `skills` (
   `id` varchar(64) NOT NULL,
   `scope` enum('user','org','workspace','system') NOT NULL,
+  `scope_owner_key` varchar(255) NOT NULL,
   `org_id` varchar(64),
   `owner_user_id` varchar(64),
   `workspace_id` varchar(64),
@@ -19,7 +20,7 @@ CREATE TABLE `skills` (
   CONSTRAINT `skills_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `skills_scope_owner_name` ON `skills` (`scope`, `org_id`, `workspace_id`, `owner_user_id`, `name`);
+CREATE UNIQUE INDEX `skills_scope_owner_name` ON `skills` (`scope`, `scope_owner_key`, `name`);
 --> statement-breakpoint
 CREATE INDEX `skills_org_skill` ON `skills` (`org_id`, `id`);
 --> statement-breakpoint
@@ -64,6 +65,7 @@ CREATE TABLE `skill_version_files` (
   `version_id` varchar(64) NOT NULL,
   `blob_id` varchar(64) NOT NULL,
   `path` varchar(1024) NOT NULL,
+  `path_sha256` varchar(64) NOT NULL,
   `sha256` varchar(64) NOT NULL,
   `size_bytes` int unsigned NOT NULL,
   `media_type` varchar(255) NOT NULL,
@@ -72,7 +74,7 @@ CREATE TABLE `skill_version_files` (
   CONSTRAINT `skill_version_files_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `skill_version_file_version_path` ON `skill_version_files` (`version_id`, `path`);
+CREATE UNIQUE INDEX `skill_version_file_version_path_sha` ON `skill_version_files` (`version_id`, `path_sha256`);
 --> statement-breakpoint
 CREATE INDEX `skill_version_files_org_version` ON `skill_version_files` (`org_id`, `version_id`);
 --> statement-breakpoint
@@ -226,10 +228,12 @@ CREATE TABLE `skill_approvals` (
   `id` varchar(64) NOT NULL,
   `org_id` varchar(64),
   `scope` enum('org','system') NOT NULL,
+  `approval_owner_key` varchar(255) NOT NULL,
   `skill_id` varchar(64) NOT NULL,
   `version_id` varchar(64) NOT NULL,
   `review_request_id` varchar(64),
   `release_channel` varchar(128),
+  `release_channel_key` varchar(128) NOT NULL DEFAULT 'default',
   `approved_by_user_id` varchar(64) NOT NULL,
   `approved_at` timestamp(3) NOT NULL DEFAULT (now()),
   `revoked_by_user_id` varchar(64),
@@ -237,7 +241,7 @@ CREATE TABLE `skill_approvals` (
   CONSTRAINT `skill_approvals_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `skill_approval_scope_version` ON `skill_approvals` (`scope`, `org_id`, `version_id`, `release_channel`);
+CREATE UNIQUE INDEX `skill_approval_scope_version` ON `skill_approvals` (`scope`, `approval_owner_key`, `version_id`, `release_channel_key`);
 --> statement-breakpoint
 CREATE INDEX `skill_approvals_org_version` ON `skill_approvals` (`org_id`, `version_id`);
 --> statement-breakpoint
@@ -308,7 +312,7 @@ CREATE INDEX `skill_audit_events_org_skill` ON `skill_audit_events` (`org_id`, `
 --> statement-breakpoint
 CREATE INDEX `skill_audit_events_actor_time` ON `skill_audit_events` (`actor_user_id`, `created_at`);
 --> statement-breakpoint
-CREATE TRIGGER `skill_versions_prevent_update` BEFORE UPDATE ON `skill_versions` FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'skill_versions are immutable';
+CREATE TRIGGER `skill_versions_prevent_update` BEFORE UPDATE ON `skill_versions` FOR EACH ROW SET NEW.id = IF(NOT (OLD.org_id <=> NEW.org_id) OR OLD.skill_id <> NEW.skill_id OR OLD.version_number <> NEW.version_number OR OLD.manifest_sha256 <> NEW.manifest_sha256 OR OLD.package_sha256 <> NEW.package_sha256 OR OLD.package_size_bytes <> NEW.package_size_bytes OR OLD.file_count <> NEW.file_count OR OLD.created_by_user_id <> NEW.created_by_user_id OR OLD.created_at <> NEW.created_at, NULL, NEW.id);
 --> statement-breakpoint
 CREATE TRIGGER `skill_version_files_prevent_update` BEFORE UPDATE ON `skill_version_files` FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'skill_version_files are immutable';
 --> statement-breakpoint

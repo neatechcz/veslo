@@ -95,7 +95,7 @@ export function validateManagedSkillInstallationApproval(input: {
   }
 
   if (installation.scope === "system") {
-    if (approval.orgId != null) {
+    if (installation.orgId != null || approval.orgId != null) {
       return { ok: false, code: "approval_org_mismatch" }
     }
     if (version.orgId != null) {
@@ -114,7 +114,7 @@ export type SkillRegistryTenantIsolationRef = {
 
 export type SkillRegistryTenantIsolationResult =
   | { ok: true }
-  | { ok: false; code: "missing_org" | "org_mismatch"; entity: string }
+  | { ok: false; code: "missing_org" | "missing_system_scope" | "org_mismatch"; entity: string }
 
 export function validateSkillRegistryTenantIsolation(input: {
   orgId: string | null
@@ -124,6 +124,9 @@ export function validateSkillRegistryTenantIsolation(input: {
     if (input.orgId === null) {
       if (ref.orgId != null) {
         return { ok: false, code: "org_mismatch", entity: ref.entity }
+      }
+      if (ref.systemScope !== true) {
+        return { ok: false, code: "missing_system_scope", entity: ref.entity }
       }
       continue
     }

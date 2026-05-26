@@ -5,6 +5,7 @@ import test from "node:test"
 const skillsSchema = await import("../src/skills/schema.js")
 const skillPolicy = await import("../src/skills/policy.js")
 const dbSchema = await import("../src/db/schema.js")
+const { getTableConfig } = await import("drizzle-orm/mysql-core")
 
 const migrationUrl = new URL("../drizzle/0013_skill_registry.sql", import.meta.url)
 
@@ -32,6 +33,12 @@ function readMigration() {
 function tableBlock(migration: string, tableName: string) {
   const match = migration.match(new RegExp(`CREATE TABLE \`${tableName}\` \\([\\s\\S]*?\\n\\);`))
   assert.ok(match, `missing CREATE TABLE for ${tableName}`)
+  return match[0]
+}
+
+function triggerStatement(migration: string, triggerName: string) {
+  const match = migration.match(new RegExp(`CREATE TRIGGER \`${triggerName}\`[\\s\\S]*?;`))
+  assert.ok(match, `missing trigger ${triggerName}`)
   return match[0]
 }
 
@@ -68,10 +75,25 @@ test("skill_versions, version files, and blobs are immutable schema rows", () =>
   const versionBlock = tableBlock(migration, "skill_versions")
   assert.match(versionBlock, /`manifest_sha256` varchar\(64\) NOT NULL/)
   assert.match(versionBlock, /`package_sha256` varchar\(64\) NOT NULL/)
-  assert.match(
-    migration,
-    /CREATE TRIGGER `skill_versions_prevent_update` BEFORE UPDATE ON `skill_versions` FOR EACH ROW SIGNAL SQLSTATE '45000'/,
-  )
+  const skillVersionTrigger = triggerStatement(migration, "skill_versions_prevent_update")
+  assert.match(skillVersionTrigger, /SET NEW\.id = IF\(/)
+  for (const immutableColumn of [
+    "org_id",
+    "skill_id",
+    "version_number",
+    "manifest_sha256",
+    "package_sha256",
+    "package_size_bytes",
+    "file_count",
+    "created_by_user_id",
+    "created_at",
+  ]) {
+    assert.match(skillVersionTrigger, new RegExp(`OLD\\.${immutableColumn}`))
+    assert.match(skillVersionTrigger, new RegExp(`NEW\\.${immutableColumn}`))
+  }
+  for (const mutableColumn of ["status", "submitted_for_review_at", "approved_at", "rejected_at", "archived_at"]) {
+    assert.doesNotMatch(skillVersionTrigger, new RegExp(`OLD\\.${mutableColumn}|NEW\\.${mutableColumn}`))
+  }
   assert.match(
     migration,
     /CREATE TRIGGER `skill_version_files_prevent_update` BEFORE UPDATE ON `skill_version_files` FOR EACH ROW SIGNAL SQLSTATE '45000'/,
@@ -106,6 +128,11 @@ test("approved org and system installations have approval and approved-version w
   assert.match(installationBlock, /`scope` NOT IN \('org','system'\)/)
   assert.match(installationBlock, /`approval_id` IS NOT NULL/)
   assert.match(installationBlock, /`approved_version_id` IS NOT NULL/)
+  assert.ok(
+    getTableConfig(skillsSchema.SkillInstallationTable).checks.some(
+      (check) => check.name === "skill_installation_active_managed_approval",
+    ),
+  )
   assert.match(approvalsBlock, /`scope` enum\('org','system'\) NOT NULL/)
   assert.match(approvalsBlock, /`version_id` varchar\(64\) NOT NULL/)
   assert.match(migration, /skill_installation_scope_approval/)
@@ -191,6 +218,50 @@ test("approved org and system installation policy rejects unapproved or mismatch
       approval: { ...orgApproval, id: "approval_2", scope: "system", orgId: null },
     }),
     { ok: true },
+  )
+  assert.deepEqual(
+    skillPolicy.validateManagedSkillInstallationApproval({
+      installation: {
+        scope: "system",
+        status: "active",
+        orgId: "org_1",
+        skillId: "skill_1",
+        approvalId: "approval_2",
+        approvedVersionId: "version_1",
+      },
+      version: { ...approvedVersion, orgId: null },
+      approval: { ...orgApproval, id: "approval_2", scope: "system", orgId: null },
+    }),
+    { ok: false, code: "approval_org_mismatch" },
+  )
+})
+
+test("skill version files use a bounded path hash for version uniqueness", () => {
+  const migration = readMigration()
+  const fileBlock = tableBlock(migration, "skill_version_files")
+
+  assert.match(fileBlock, /`path` varchar\(1024\) NOT NULL/)
+  assert.match(fileBlock, /`path_sha256` varchar\(64\) NOT NULL/)
+  assert.match(
+    migration,
+    /CREATE UNIQUE INDEX `skill_version_file_version_path_sha` ON `skill_version_files` \(`version_id`, `path_sha256`\)/,
+  )
+  assert.doesNotMatch(migration, /CREATE UNIQUE INDEX `skill_version_file_version_path` ON `skill_version_files` \(`version_id`, `path`\)/)
+})
+
+test("registry uniqueness keys avoid nullable owner and release-channel columns", () => {
+  const migration = readMigration()
+  const skillBlock = tableBlock(migration, "skills")
+  const approvalBlock = tableBlock(migration, "skill_approvals")
+
+  assert.match(skillBlock, /`scope_owner_key` varchar\(255\) NOT NULL/)
+  assert.match(migration, /CREATE UNIQUE INDEX `skills_scope_owner_name` ON `skills` \(`scope`, `scope_owner_key`, `name`\)/)
+
+  assert.match(approvalBlock, /`approval_owner_key` varchar\(255\) NOT NULL/)
+  assert.match(approvalBlock, /`release_channel_key` varchar\(128\) NOT NULL DEFAULT 'default'/)
+  assert.match(
+    migration,
+    /CREATE UNIQUE INDEX `skill_approval_scope_version` ON `skill_approvals` \(`scope`, `approval_owner_key`, `version_id`, `release_channel_key`\)/,
   )
 })
 
@@ -324,5 +395,19 @@ test("tenant isolation policy rejects cross-org references and allows matching o
       ],
     }),
     { ok: false, code: "missing_org", entity: "approval" },
+  )
+  assert.deepEqual(
+    skillPolicy.validateSkillRegistryTenantIsolation({
+      orgId: null,
+      refs: [{ entity: "system_skill", orgId: null, systemScope: true }],
+    }),
+    { ok: true },
+  )
+  assert.deepEqual(
+    skillPolicy.validateSkillRegistryTenantIsolation({
+      orgId: null,
+      refs: [{ entity: "ambiguous_null_skill", orgId: null }],
+    }),
+    { ok: false, code: "missing_system_scope", entity: "ambiguous_null_skill" },
   )
 })
