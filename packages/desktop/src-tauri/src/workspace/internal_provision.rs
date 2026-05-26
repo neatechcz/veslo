@@ -5,6 +5,13 @@ use crate::fs::copy_dir_recursive;
 use include_dir::{include_dir, Dir};
 use serde::{Deserialize, Serialize};
 
+// VSLO-86 — bundled with the orchestrator; same versions are vendored into
+// `<configDir>/node_modules/` by the orchestrator (`ensureOpencodeManagedTools`)
+// for managed tool files. Keep these aligned with the constants in
+// `packages/orchestrator/src/cli.ts`.
+const VESLO_MANAGED_PLUGIN_VERSION: &str = "1.15.10";
+const VESLO_MANAGED_ZOD_VERSION: &str = "4.1.13";
+
 const INTERNAL_PACK_VERSION: &str = "2026-04-22.1";
 const INTERNAL_PACK_SOURCE: &str = "openwork-snapshot";
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
@@ -491,6 +498,15 @@ pub fn provision_internal_workspace_assets(
         &mut stats,
     )?;
 
+    // VSLO-86 — vendor @opencode-ai/plugin + zod into <workspace>/.opencode/node_modules/.
+    // The delegate plugin (.opencode/plugins/veslo-delegate.js) imports
+    // `@opencode-ai/plugin`; opencode runs Bun with `--no-install`, so Bun.resolve
+    // walks node_modules from the plugin's parent directories. Without a local
+    // copy here the engine fails to load the plugin with "Cannot find module
+    // '@opencode-ai/plugin' from .../veslo-delegate.js" and the assistant becomes
+    // unresponsive. Source is the Bun install cache populated by `bun install`.
+    vendor_opencode_plugin_into_workspace(&opencode_root, &mut stats);
+
     // 4) Upsert managed blocks in veslo.md (routing + agent instructions)
     ensure_veslo_agent_routing(workspace_root, &mut stats)?;
 
@@ -535,6 +551,65 @@ pub fn provision_internal_workspace_assets(
         written: stats.written,
         unchanged: stats.unchanged,
     })
+}
+
+fn vendor_opencode_plugin_into_workspace(opencode_root: &Path, stats: &mut WriteStats) {
+    let Ok(home) = std::env::var("HOME") else {
+        return;
+    };
+    let node_modules_root = opencode_root.join("node_modules");
+    if let Err(err) = fs::create_dir_all(&node_modules_root) {
+        eprintln!("[workspace] failed to create plugin node_modules: {err}");
+        return;
+    }
+    vendor_bun_cache_package(
+        &home,
+        "@opencode-ai/plugin",
+        VESLO_MANAGED_PLUGIN_VERSION,
+        &node_modules_root,
+        stats,
+    );
+    vendor_bun_cache_package(&home, "zod", VESLO_MANAGED_ZOD_VERSION, &node_modules_root, stats);
+}
+
+fn vendor_bun_cache_package(
+    home: &str,
+    pkg: &str,
+    version: &str,
+    node_modules_root: &Path,
+    stats: &mut WriteStats,
+) {
+    let src = PathBuf::from(home)
+        .join(".bun")
+        .join("install")
+        .join("cache")
+        .join(pkg)
+        .join(format!("{}@@@1", version));
+    if !src.exists() {
+        eprintln!(
+            "[workspace] Bun cache miss for {pkg}@{version} (looked at {}); engine plugins importing this package may fail to load",
+            src.display()
+        );
+        return;
+    }
+    let dst = node_modules_root.join(pkg);
+    // Skip when the package is already present — vendoring is idempotent and
+    // we don't want to clobber every provisioning run.
+    if dst.join("package.json").exists() {
+        return;
+    }
+    if let Some(parent) = dst.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    match copy_dir_recursive(&src, &dst) {
+        Ok(_) => stats.written += 1,
+        Err(err) => {
+            eprintln!(
+                "[workspace] failed to vendor {pkg}@{version} into {}: {err}",
+                dst.display()
+            );
+        }
+    }
 }
 
 fn manifest_matches(path: &Path, expected: &InternalManifest) -> Result<bool, String> {

@@ -2381,10 +2381,12 @@ async function startOpencode(options: {
     //   - /tmp + /private/tmp + /var/folders (SQLite WAL/SHM, scratch files)
     //   - XDG dirs opencode uses: ~/.local/state/opencode, ~/.local/share/opencode,
     //     ~/.cache/opencode, ~/.config/opencode (sessions DB, model cache, settings)
-    //   - ~/.bun/install/cache (Bun resolves @opencode-ai/plugin and other npm
-    //     packages imported by user/managed tool files through this cache; without
-    //     read+write access opencode hits "Cannot find module '@opencode-ai/plugin'"
-    //     when loading delegate/router tools)
+    //   VSLO-86: `@opencode-ai/plugin` + zod are vendored into
+    //   `<workspace>/.opencode/node_modules/` and `<configDir>/node_modules/`
+    //   at provisioning time, so the engine no longer needs to walk into
+    //   `~/.bun/install/cache` at runtime. Keeping that path out of the
+    //   sandbox allow-list avoids a regression where the sandbox-runtime
+    //   appears to abort fresh spawns when the path is added.
     //   These will move to per-workspace dirs in a later fáze.
     const home = process.env.HOME ?? "";
     const extraWrites: string[] = [
@@ -2399,7 +2401,6 @@ async function startOpencode(options: {
         `${home}/.local/share/opencode`,
         `${home}/.cache/opencode`,
         `${home}/.config/opencode`,
-        `${home}/.bun/install/cache`,
       );
     }
     const wrapped = await sandbox.wrap({
