@@ -5,12 +5,12 @@ import test from "node:test"
 const opsWorkflowUrl = new URL("../../../.github/workflows/ops-den-platform-admin.yml", import.meta.url)
 
 test("platform-admin ops workflow runs through owned-server Compose", () => {
-  assert.equal(existsSync(opsWorkflowUrl), true, "Ops DEN Platform Admin workflow must exist")
+  assert.equal(existsSync(opsWorkflowUrl), true, "Grant Veslo Platform Admin workflow must exist")
 
   const workflowSource = readFileSync(opsWorkflowUrl, "utf8")
 
   for (const requiredText of [
-    "name: Ops DEN Platform Admin",
+    "name: Grant Veslo Platform Admin",
     "workflow_dispatch",
     "runs-on:",
     "self-hosted",
@@ -42,11 +42,13 @@ test("platform-admin ops workflow does not use old hosted-runner database access
     "pnpm install",
     "DEN_DATABASE_URL",
     "DATABASE_URL: ${{ secrets.",
+    "name: Ops DEN Platform Admin",
+    "DEN user email",
   ]) {
     assert.equal(
       workflowSource.includes(forbiddenText),
       false,
-      `Ops DEN Platform Admin workflow must not include ${forbiddenText}`,
+      `Grant Veslo Platform Admin workflow must not include ${forbiddenText}`,
     )
   }
 })

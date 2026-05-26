@@ -1,10 +1,10 @@
-name: Ops DEN Platform Admin
+name: Grant Veslo Platform Admin
 
 on:
   workflow_dispatch:
     inputs:
       email:
-        description: DEN user email to grant platform_admin
+        description: Veslo user email to grant platform_admin
         required: true
         type: string
       apply:
@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ops-den-platform-admin-production
+  group: grant-veslo-platform-admin-production
   cancel-in-progress: false
 
 jobs:
@@ -50,7 +50,7 @@ jobs:
           test -f "$OWNED_SERVER_ENV_FILE"
           test -f "$OWNED_SERVER_APP_DIR/packaging/owned-server/compose.yml"
 
-      - name: Grant platform admin role
+      - name: Grant Veslo platform admin role
         run: |
           set -euo pipefail
 

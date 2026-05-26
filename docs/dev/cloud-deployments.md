@@ -56,7 +56,7 @@ Do not store production secrets in the repository. Keep production environment v
 ## Production ops workflows
 
 Production operations that mutate Den state must run on the owned-server runner
-and use the owned-server Compose stack. `Ops DEN Platform Admin` follows this
+and use the owned-server Compose stack. `Grant Veslo Platform Admin` follows this
 policy: it runs on the `veslo-owned-server` runner and executes inside the
 running `den` service so database access stays on the owned server.
 

@@ -2,7 +2,7 @@
 
 ## Context
 
-`Ops DEN Platform Admin` is a manual production operation that grants a Den user
+`Grant Veslo Platform Admin` is a manual production operation that grants a Veslo user
 the `platform_admin` role. It still runs on a GitHub-hosted runner and connects
 to a database through `DEN_DATABASE_URL`.
 
@@ -12,7 +12,7 @@ reachable database credentials from GitHub-hosted runners.
 
 ## Decision
 
-Run `Ops DEN Platform Admin` on the `veslo-owned-server` self-hosted runner and
+Run `Grant Veslo Platform Admin` on the `veslo-owned-server` self-hosted runner and
 execute the existing role-grant script inside the running `den` Compose service.
 
 The workflow keeps its existing dry-run/apply behavior. It validates the stable
