@@ -90,16 +90,17 @@ The worker manager is the only long-running service that mounts `/var/run/docker
 
 Production deploys are normally run through the `Deploy Owned Server` GitHub Actions workflow. The workflow is manual-only and does not run on push.
 
+The workflow runs on a repository self-hosted runner installed on the owned
+server and labeled `veslo-owned-server`. This avoids requiring GitHub-hosted
+runners to open inbound SSH to the production host.
+
 Required GitHub Actions configuration:
 
-- `OWNED_SERVER_HOST`: owned-server host or IP. The workflow has a default for the current production host.
-- `OWNED_SERVER_USER`: SSH deploy user. The workflow has a default for the current production user.
-- `OWNED_SERVER_SSH_KEY`: private SSH key for the deploy user. Store this as a secret.
-- `OWNED_SERVER_KNOWN_HOSTS`: known-hosts entry for the owned server. Store this as a secret.
+- Repository self-hosted runner labels: `self-hosted`, `linux`, `x64`, and `veslo-owned-server`.
 - `OWNED_SERVER_APP_DIR`: stable Git checkout directory on the owned server.
 - `OWNED_SERVER_ENV_FILE`: production env file path on the owned server.
 
-On each run, the workflow creates or updates the stable checkout, checks out the requested branch, validates the Compose configuration, builds `worker-runtime-image`, `worker-manager`, `den`, `ai-gateway`, and `web`, starts database dependencies, runs Den and AI Gateway migrations, starts the full stack, and verifies internal plus public health endpoints.
+On each run, the workflow creates or updates the stable checkout, checks out the requested branch with the job `GITHUB_TOKEN`, validates the Compose configuration, builds `worker-runtime-image`, `worker-manager`, `den`, `ai-gateway`, and `web`, starts database dependencies, runs Den and AI Gateway migrations, starts the full stack, and verifies internal plus public health endpoints.
 
 Keep production secrets in the server-side env file and GitHub secrets. Do not commit them.
 
