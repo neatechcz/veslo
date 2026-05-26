@@ -5,6 +5,18 @@ import type { McpDirectoryInfo } from "./constants";
 
 type McpConfigValue = Record<string, unknown> | null | undefined;
 
+const parseJsoncObject = (content: string): Record<string, unknown> => {
+  if (!content.trim()) return {};
+
+  try {
+    const parsed = parse(content);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+};
+
 const toSlug = (value: string) =>
   value
     .trim()
@@ -115,31 +127,48 @@ export async function removeMcpFromConfig(
 }
 
 export function parseMcpServersFromContent(content: string): McpServerEntry[] {
-  if (!content.trim()) return [];
+  const parsed = parseJsoncObject(content);
+  const mcp = parsed.mcp as McpConfigValue;
 
-  try {
-    const parsed = parse(content) as Record<string, unknown> | undefined;
-    const mcp = parsed?.mcp as McpConfigValue;
+  if (!mcp || typeof mcp !== "object") {
+    return [];
+  }
 
-    if (!mcp || typeof mcp !== "object") {
+  return Object.entries(mcp).flatMap(([name, value]) => {
+    if (!value || typeof value !== "object") {
       return [];
     }
 
-    return Object.entries(mcp).flatMap(([name, value]) => {
-      if (!value || typeof value !== "object") {
-        return [];
-      }
+    const config = value as McpServerConfig;
+    if (config.type !== "remote" && config.type !== "local") {
+      return [];
+    }
 
-      const config = value as McpServerConfig;
-      if (config.type !== "remote" && config.type !== "local") {
-        return [];
-      }
+    return [{ name, config }];
+  });
+}
 
-      return [{ name, config }];
-    });
-  } catch {
-    return [];
-  }
+function getDeniedToolPatterns(config: Record<string, unknown>): string[] {
+  const tools = config.tools;
+  if (!tools || typeof tools !== "object" || Array.isArray(tools)) return [];
+  const deny = (tools as { deny?: unknown }).deny;
+  if (!Array.isArray(deny)) return [];
+  return deny.filter((item): item is string => typeof item === "string");
+}
+
+function matchesToolPattern(pattern: string, candidate: string): boolean {
+  const escaped = pattern
+    .split("*")
+    .map((part) => part.replace(/[|\\{}()[\]^$+?.]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${escaped}$`).test(candidate);
+}
+
+function isMcpDisabledByTools(config: Record<string, unknown>, name: string): boolean {
+  const patterns = getDeniedToolPatterns(config);
+  if (!patterns.length) return false;
+  const candidates = [`mcp.${name}`, `mcp.${name}.*`, `mcp:${name}`, `mcp:${name}:*`, "mcp.*", "mcp:*"];
+  return patterns.some((pattern) => candidates.some((candidate) => matchesToolPattern(pattern, candidate)));
 }
 
 export function mergeMcpServerEntries(
@@ -155,20 +184,36 @@ export function mergeMcpServerEntries(
   ];
 }
 
+export function buildEffectiveMcpServerEntriesFromContent(
+  globalContent: string,
+  projectContent: string,
+): McpServerEntry[] {
+  const globalConfig = parseJsoncObject(globalContent);
+  const projectConfig = parseJsoncObject(projectContent);
+  const globalEntries = parseMcpServersFromContent(globalContent).map((entry) => ({
+    ...entry,
+    source: "config.global" as const,
+    disabledByTools:
+      isMcpDisabledByTools(globalConfig, entry.name) || isMcpDisabledByTools(projectConfig, entry.name) || undefined,
+  }));
+  const projectEntries = parseMcpServersFromContent(projectContent).map((entry) => ({
+    ...entry,
+    source: "config.project" as const,
+    disabledByTools: isMcpDisabledByTools(projectConfig, entry.name) || undefined,
+  }));
+
+  return mergeMcpServerEntries(globalEntries, projectEntries);
+}
+
 export async function readEffectiveMcpServerEntries(projectDir: string): Promise<McpServerEntry[]> {
   const [globalConfig, projectConfig] = await Promise.all([
     readOpencodeConfig("global", projectDir),
     readOpencodeConfig("project", projectDir),
   ]);
 
-  const globalEntries = parseMcpServersFromContent(globalConfig.content ?? "").map((entry) => ({
-    ...entry,
-    source: "config.global" as const,
-  }));
-  const projectEntries = parseMcpServersFromContent(projectConfig.content ?? "").map((entry) => ({
-    ...entry,
-    source: "config.project" as const,
-  }));
+  return buildEffectiveMcpServerEntriesFromContent(globalConfig.content ?? "", projectConfig.content ?? "");
+}
 
-  return mergeMcpServerEntries(globalEntries, projectEntries);
+export function canRemoveMcpFromProjectConfig(entry: McpServerEntry | undefined): boolean {
+  return entry?.source !== "config.global";
 }

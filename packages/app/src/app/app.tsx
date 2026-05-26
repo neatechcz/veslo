@@ -171,6 +171,7 @@ import {
   type McpDirectoryInfo,
 } from "./constants";
 import {
+  canRemoveMcpFromProjectConfig,
   parseMcpServersFromContent,
   quickConnectEntryKey,
   readEffectiveMcpServerEntries,
@@ -6780,6 +6781,11 @@ export default function App() {
         const projectDir = workspaceProjectDir().trim();
         if (!projectDir) {
           setMcpStatus(t("mcp.pick_workspace_first", currentLocale()));
+          return;
+        }
+        const entry = mcpServers().find((server) => server.name === name);
+        if (!canRemoveMcpFromProjectConfig(entry)) {
+          setMcpStatus("This MCP comes from your global OpenCode config and cannot be removed from this workspace.");
           return;
         }
         await removeMcpFromConfig(projectDir, name);
