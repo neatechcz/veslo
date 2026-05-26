@@ -21,11 +21,52 @@ export type SessionMcpCapabilityRow = {
   statusDetail?: string;
 };
 
+export type SessionCapabilitiesSnapshot = {
+  directory: string;
+  skills: SessionSkillCapabilityRow[];
+  mcp: SessionMcpCapabilityRow[];
+  loadedAt?: number;
+};
+
+export type SessionCapabilitiesScope = {
+  directory: string;
+  workspaceId?: string;
+  workspaceLabel?: string;
+  workspaceType?: "local" | "remote";
+};
+
 export function normalizeSessionCapabilityDirectory(value: string | null | undefined) {
   const normalized = String(value ?? "")
     .trim()
     .replace(/\\/g, "/");
   return normalized === "/" ? normalized : normalized.replace(/\/+$/, "");
+}
+
+export function createSessionCapabilitiesCache(
+  loadFresh: (scope: SessionCapabilitiesScope) => Promise<Omit<SessionCapabilitiesSnapshot, "loadedAt">>,
+) {
+  const cache = new Map<string, SessionCapabilitiesSnapshot>();
+
+  return {
+    clear() {
+      cache.clear();
+    },
+    async load(scope: SessionCapabilitiesScope, options?: { force?: boolean }) {
+      const directory = normalizeSessionCapabilityDirectory(scope.directory);
+      if (!directory) {
+        throw new Error("Workspace directory for this chat is not loaded yet.");
+      }
+      if (!options?.force) {
+        const cached = cache.get(directory);
+        if (cached) return cached;
+      }
+
+      const fresh = await loadFresh({ ...scope, directory });
+      const snapshot = { ...fresh, directory, loadedAt: Date.now() };
+      cache.set(directory, snapshot);
+      return snapshot;
+    },
+  };
 }
 
 function rowFromSkillInstance(instance: SkillInstance): SessionSkillCapabilityRow {
