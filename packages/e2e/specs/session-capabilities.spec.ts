@@ -33,13 +33,14 @@ const CAPABILITIES_PANEL_SELECTOR = '[data-testid="session-capabilities-panel"]'
 const CAPABILITIES_SKILLS_SELECTOR = '[data-testid="session-capabilities-skills"]';
 const CAPABILITIES_MCP_SELECTOR = '[data-testid="session-capabilities-mcp"]';
 
-const profileRoot = () => process.env.E2E_OPENCODE_HOME?.trim() || join(process.cwd(), ".tmp-veslo-home");
-const activeWorkspaceRoot = () => join(profileRoot(), "workspaces", "visual-workspace");
-const selectedWorkspaceRoot = () => join(profileRoot(), "workspaces", "session-capabilities-selected-workspace");
-const globalSkillsRoot = () => join(profileRoot(), ".config", "opencode", "skills");
+const defaultIsolatedProfileRoot = () => join(process.cwd(), ".tmp-veslo-home");
+const activeWorkspaceRoot = () => join(defaultIsolatedProfileRoot(), "workspaces", "visual-workspace");
+const selectedWorkspaceRoot = () =>
+  join(defaultIsolatedProfileRoot(), "workspaces", "session-capabilities-selected-workspace");
+const globalSkillsRoot = () => join(defaultIsolatedProfileRoot(), ".config", "opencode", "skills");
 const activeWorkspaceSkillsRoot = () => join(activeWorkspaceRoot(), ".opencode", "skills");
 const selectedWorkspaceSkillsRoot = () => join(selectedWorkspaceRoot(), ".opencode", "skills");
-const globalMcpConfigPath = () => join(profileRoot(), ".config", "opencode", "opencode.jsonc");
+const globalMcpConfigPath = () => join(defaultIsolatedProfileRoot(), ".config", "opencode", "opencode.jsonc");
 const activeWorkspaceMcpConfigPath = () => join(activeWorkspaceRoot(), "opencode.jsonc");
 const selectedWorkspaceMcpConfigPath = () => join(selectedWorkspaceRoot(), "opencode.jsonc");
 
@@ -300,11 +301,14 @@ async function waitForPanelText(selector: string, expected: string[]): Promise<s
   return latestText;
 }
 
-const runWhenIsolatedProfile = process.env.E2E_USE_EXISTING_PROFILE?.trim() === "1"
+// Custom E2E_OPENCODE_HOME does not rewrite HOME/XDG_CONFIG_HOME in the launcher,
+// so global capability fixtures are deterministic only in the default isolated profile.
+const runWhenDefaultIsolatedProfile =
+  process.env.E2E_USE_EXISTING_PROFILE?.trim() === "1" || process.env.E2E_OPENCODE_HOME?.trim()
   ? describe.skip
   : describe;
 
-runWhenIsolatedProfile("Session capabilities right menu", () => {
+runWhenDefaultIsolatedProfile("Session capabilities right menu", () => {
   it("shows local global and workspace skills and MCP servers for the selected session", async () => {
     seedSessionCapabilitiesFixture();
     const session = await createSessionForSelectedWorkspace();
