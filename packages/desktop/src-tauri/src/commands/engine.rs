@@ -1,6 +1,7 @@
 use tauri::{AppHandle, Manager, State};
 
 use crate::commands::opencode_router::opencodeRouter_start;
+use crate::commands::orchestrator::reconcile_orchestrator_workspaces;
 use crate::config::{read_opencode_config, write_opencode_config};
 use crate::engine::doctor::{
     opencode_serve_help, opencode_version, resolve_engine_path, resolve_sidecar_candidate,
@@ -14,7 +15,7 @@ use crate::orchestrator::{self, OrchestratorSpawnOptions};
 use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
 use crate::env_guard::EnvVarGuard;
 use crate::utils::truncate_output;
-use crate::veslo_server::{manager::VesloServerManager, resolve_connect_url, start_veslo_server};
+use crate::veslo_server::{manager::VesloServerManager, start_veslo_server};
 use serde_json::json;
 use std::time::Duration;
 use tauri_plugin_shell::process::CommandEvent;
@@ -826,8 +827,9 @@ pub fn engine_start(
         } else {
             format!("http://127.0.0.1:{daemon_port}")
         };
-        let opencode_connect_url =
-            resolve_connect_url(opencode_port).unwrap_or_else(|| opencode_base_url.clone());
+        // Loopback only — daemon binds 127.0.0.1; LAN URL (resolve_connect_url)
+        // would loop router/server health checks against an unreachable address.
+        let opencode_connect_url = format!("http://127.0.0.1:{opencode_port}");
 
         if let Ok(mut state) = manager.inner.lock() {
             state.runtime = EngineRuntime::Orchestrator;
@@ -882,6 +884,20 @@ pub fn engine_start(
             if let Ok(mut state) = manager.inner.lock() {
                 state.last_stderr =
                     Some(truncate_output(&format!("OpenCodeRouter: {error}"), 8000));
+            }
+        }
+
+        // Reconcile orchestrator registry with Tauri-side workspace list. Without
+        // this the daemon only learns about workspaces that get explicitly
+        // activated, and a sidebar click on any unseen workspace would 404 on
+        // /workspaces/:id/activate and stall the 30s frontend timeout.
+        match reconcile_orchestrator_workspaces(&app, &orchestrator_manager) {
+            Ok(count) if count > 0 => {
+                eprintln!("[orchestrator] reconciled {count} workspace(s)");
+            }
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!("[orchestrator] reconcile failed: {error}");
             }
         }
 
@@ -1039,8 +1055,7 @@ pub fn engine_start(
     state.opencode_username = opencode_username.clone();
     state.opencode_password = opencode_password.clone();
 
-    let opencode_connect_url =
-        resolve_connect_url(port).unwrap_or_else(|| format!("http://{client_host}:{port}"));
+    let opencode_connect_url = format!("http://127.0.0.1:{port}");
     let opencode_router_health_port = match resolve_opencode_router_health_port() {
         Ok(port) => Some(port),
         Err(error) => {

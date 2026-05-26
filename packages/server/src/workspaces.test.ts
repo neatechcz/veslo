@@ -58,9 +58,9 @@ describe("workspaceIdForPath", () => {
     expect(workspaceIdForPath("/tmp/a")).not.toBe(workspaceIdForPath("/tmp/b"));
   });
 
-  test("returns ws_ prefixed 15-char id", () => {
+  test("returns ws- prefixed 15-char id matching orchestrator/Tauri scheme", () => {
     const id = workspaceIdForPath("/tmp/foo");
-    expect(id.startsWith("ws_")).toBe(true);
+    expect(id.startsWith("ws-")).toBe(true);
     expect(id.length).toBe(3 + 12);
   });
 });
