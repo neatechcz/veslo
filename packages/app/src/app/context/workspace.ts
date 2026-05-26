@@ -1224,23 +1224,13 @@ export function createWorkspaceStore(options: {
       options.setEngineReady?.(false);
       updateWorkspaceConnectionState(id, { status: "connected", message: null });
 
-      // VSLO-86 Task #14 — kick off the full engine bootstrap in the
-      // background so that:
-      //   (a) the orchestrator's activeId follows the UI's selected workspace,
-      //   (b) restartWorkspaceRuntime / startHost spawns the engine,
-      //   (c) loadSessions + setEngineReady(true) fire when the engine is up,
-      //   (d) onEngineStable runs, which is what triggers
-      //       ensureLocalVesloServerRunning (the production veslo-server with
-      //       --workspace flags for every registered user workspace).
-      // Without this, browsing mode would leave engineReady=false forever and
-      // the next send would fail the AI-access preflight (production
-      // veslo-server never came up, so /ai-gateway/me/ai-access has nothing
-      // to talk to). ensureEngineForWorkspace is single-flighted by workspace
-      // id, so rapid sidebar clicks coalesce instead of stacking parallel
-      // POSTs onto the orchestrator daemon.
-      void ensureEngineForWorkspace().catch((e) => {
-        _wsLog("[workspace:activate] STEP 5-BROWSE — ensureEngineForWorkspace failed", e instanceof Error ? e.message : String(e));
-      });
+      // VSLO-86 — DO NOT eager-spawn the engine here. The user is just
+      // browsing history; spawning sandbox-exec + opencode serve takes
+      // 30-60s of cold-start and locks the UI behind an "Otevírám
+      // konverzaci…" spinner before they've even decided to send anything.
+      // sendPrompt (app.tsx) already calls ensureEngineForWorkspace + the
+      // AI-access bootstrap before sending, so the engine spawns on the
+      // first real interaction (~10-15s) instead of on every sidebar click.
 
       wsDebug("activate:local->local:browsingMode:done", { id, ms: Date.now() - activateStart });
       return true;
