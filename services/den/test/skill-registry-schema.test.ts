@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs"
 import test from "node:test"
 
 const skillsSchema = await import("../src/skills/schema.js")
+const skillPolicy = await import("../src/skills/policy.js")
 const dbSchema = await import("../src/db/schema.js")
 
 const migrationUrl = new URL("../drizzle/0013_skill_registry.sql", import.meta.url)
@@ -67,6 +68,18 @@ test("skill_versions, version files, and blobs are immutable schema rows", () =>
   const versionBlock = tableBlock(migration, "skill_versions")
   assert.match(versionBlock, /`manifest_sha256` varchar\(64\) NOT NULL/)
   assert.match(versionBlock, /`package_sha256` varchar\(64\) NOT NULL/)
+  assert.match(
+    migration,
+    /CREATE TRIGGER `skill_versions_prevent_update` BEFORE UPDATE ON `skill_versions` FOR EACH ROW SIGNAL SQLSTATE '45000'/,
+  )
+  assert.match(
+    migration,
+    /CREATE TRIGGER `skill_version_files_prevent_update` BEFORE UPDATE ON `skill_version_files` FOR EACH ROW SIGNAL SQLSTATE '45000'/,
+  )
+  assert.match(
+    migration,
+    /CREATE TRIGGER `skill_blobs_prevent_update` BEFORE UPDATE ON `skill_blobs` FOR EACH ROW SIGNAL SQLSTATE '45000'/,
+  )
 })
 
 test("approved org and system installations have approval and approved-version wiring", () => {
@@ -89,10 +102,96 @@ test("approved org and system installations have approval and approved-version w
   assert.match(installationBlock, /`desired_version_id` varchar\(64\)/)
   assert.match(installationBlock, /`approval_id` varchar\(64\)/)
   assert.match(installationBlock, /`approved_version_id` varchar\(64\)/)
+  assert.match(installationBlock, /CONSTRAINT `skill_installation_active_managed_approval` CHECK/)
+  assert.match(installationBlock, /`scope` NOT IN \('org','system'\)/)
+  assert.match(installationBlock, /`approval_id` IS NOT NULL/)
+  assert.match(installationBlock, /`approved_version_id` IS NOT NULL/)
   assert.match(approvalsBlock, /`scope` enum\('org','system'\) NOT NULL/)
   assert.match(approvalsBlock, /`version_id` varchar\(64\) NOT NULL/)
   assert.match(migration, /skill_installation_scope_approval/)
   assert.match(migration, /skill_approval_scope_version/)
+})
+
+test("approved org and system installation policy rejects unapproved or mismatched versions", () => {
+  const orgInstallation = {
+    scope: "org",
+    status: "active",
+    orgId: "org_1",
+    skillId: "skill_1",
+    approvalId: "approval_1",
+    approvedVersionId: "version_1",
+  } as const
+  const approvedVersion = {
+    id: "version_1",
+    orgId: "org_1",
+    skillId: "skill_1",
+    status: "approved",
+  } as const
+  const orgApproval = {
+    id: "approval_1",
+    scope: "org",
+    orgId: "org_1",
+    skillId: "skill_1",
+    versionId: "version_1",
+    revokedAt: null,
+  } as const
+
+  assert.deepEqual(
+    skillPolicy.validateManagedSkillInstallationApproval({
+      installation: orgInstallation,
+      version: approvedVersion,
+      approval: orgApproval,
+    }),
+    { ok: true },
+  )
+  assert.deepEqual(
+    skillPolicy.validateManagedSkillInstallationApproval({
+      installation: orgInstallation,
+      version: { ...approvedVersion, status: "draft" },
+      approval: orgApproval,
+    }),
+    { ok: false, code: "version_not_approved" },
+  )
+  assert.deepEqual(
+    skillPolicy.validateManagedSkillInstallationApproval({
+      installation: orgInstallation,
+      version: { ...approvedVersion, status: "rejected" },
+      approval: orgApproval,
+    }),
+    { ok: false, code: "version_not_approved" },
+  )
+  assert.deepEqual(
+    skillPolicy.validateManagedSkillInstallationApproval({
+      installation: orgInstallation,
+      version: approvedVersion,
+      approval: { ...orgApproval, versionId: "version_2" },
+    }),
+    { ok: false, code: "approval_version_mismatch" },
+  )
+  assert.deepEqual(
+    skillPolicy.validateManagedSkillInstallationApproval({
+      installation: orgInstallation,
+      version: approvedVersion,
+      approval: { ...orgApproval, orgId: "org_2" },
+    }),
+    { ok: false, code: "approval_org_mismatch" },
+  )
+
+  assert.deepEqual(
+    skillPolicy.validateManagedSkillInstallationApproval({
+      installation: {
+        scope: "system",
+        status: "active",
+        orgId: null,
+        skillId: "skill_1",
+        approvalId: "approval_2",
+        approvedVersionId: "version_1",
+      },
+      version: { ...approvedVersion, orgId: null },
+      approval: { ...orgApproval, id: "approval_2", scope: "system", orgId: null },
+    }),
+    { ok: true },
+  )
 })
 
 test("soft-deleted skills and installations retain enough data to restore before purge", () => {
@@ -107,6 +206,48 @@ test("soft-deleted skills and installations retain enough data to restore before
     assert.match(block, /`restored_at` timestamp\(3\)/)
     assert.match(block, /`restored_by_user_id` varchar\(64\)/)
   }
+})
+
+test("skill retention policy allows hard purge only for admins after retention and restore before purge", () => {
+  const now = new Date("2026-05-26T12:00:00.000Z")
+  const deletedAt = new Date("2026-05-20T12:00:00.000Z")
+
+  assert.deepEqual(
+    skillPolicy.evaluateSkillRegistryRetentionPolicy({
+      roles: ["owner"],
+      deletedAt,
+      purgeAfter: new Date("2026-05-27T12:00:00.000Z"),
+      now,
+    }),
+    { canHardPurge: false, canRestore: true },
+  )
+  assert.deepEqual(
+    skillPolicy.evaluateSkillRegistryRetentionPolicy({
+      roles: ["member"],
+      deletedAt,
+      purgeAfter: new Date("2026-05-25T12:00:00.000Z"),
+      now,
+    }),
+    { canHardPurge: false, canRestore: false },
+  )
+  assert.deepEqual(
+    skillPolicy.evaluateSkillRegistryRetentionPolicy({
+      roles: ["platform_admin"],
+      deletedAt,
+      purgeAfter: new Date("2026-05-25T12:00:00.000Z"),
+      now,
+    }),
+    { canHardPurge: true, canRestore: false },
+  )
+  assert.deepEqual(
+    skillPolicy.evaluateSkillRegistryRetentionPolicy({
+      roles: ["platform_admin"],
+      deletedAt: null,
+      purgeAfter: new Date("2026-05-25T12:00:00.000Z"),
+      now,
+    }),
+    { canHardPurge: false, canRestore: false },
+  )
 })
 
 test("skill package blobs are content-addressed and globally de-duplicated by hash", () => {
@@ -147,4 +288,41 @@ test("tenant-scoped registry reads can filter by org before workspace or skill",
   assert.match(tableBlock(migration, "workspace_skill_sets"), /`release_channel` varchar\(128\)/)
   assert.match(tableBlock(migration, "skill_materializations"), /`desired_version_id` varchar\(64\)/)
   assert.match(tableBlock(migration, "skill_materializations"), /`actual_version_id` varchar\(64\)/)
+})
+
+test("tenant isolation policy rejects cross-org references and allows matching org plus system refs", () => {
+  assert.deepEqual(
+    skillPolicy.validateSkillRegistryTenantIsolation({
+      orgId: "org_1",
+      refs: [
+        { entity: "skill", orgId: "org_1" },
+        { entity: "version", orgId: "org_1" },
+        { entity: "installation", orgId: "org_1" },
+        { entity: "workspace_skill_set", orgId: "org_1" },
+        { entity: "materialization", orgId: "org_1" },
+        { entity: "system_approval", orgId: null, systemScope: true },
+      ],
+    }),
+    { ok: true },
+  )
+  assert.deepEqual(
+    skillPolicy.validateSkillRegistryTenantIsolation({
+      orgId: "org_1",
+      refs: [
+        { entity: "skill", orgId: "org_1" },
+        { entity: "version", orgId: "org_2" },
+      ],
+    }),
+    { ok: false, code: "org_mismatch", entity: "version" },
+  )
+  assert.deepEqual(
+    skillPolicy.validateSkillRegistryTenantIsolation({
+      orgId: "org_1",
+      refs: [
+        { entity: "skill", orgId: "org_1" },
+        { entity: "approval", orgId: null },
+      ],
+    }),
+    { ok: false, code: "missing_org", entity: "approval" },
+  )
 })

@@ -111,6 +111,7 @@ CREATE TABLE `skill_installations` (
   `restored_by_user_id` varchar(64),
   `created_at` timestamp(3) NOT NULL DEFAULT (now()),
   `updated_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  CONSTRAINT `skill_installation_active_managed_approval` CHECK (`status` <> 'active' OR `scope` NOT IN ('org','system') OR (`approval_id` IS NOT NULL AND `approved_version_id` IS NOT NULL)),
   CONSTRAINT `skill_installations_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
@@ -306,3 +307,9 @@ CREATE INDEX `skill_audit_events_org_time` ON `skill_audit_events` (`org_id`, `c
 CREATE INDEX `skill_audit_events_org_skill` ON `skill_audit_events` (`org_id`, `skill_id`);
 --> statement-breakpoint
 CREATE INDEX `skill_audit_events_actor_time` ON `skill_audit_events` (`actor_user_id`, `created_at`);
+--> statement-breakpoint
+CREATE TRIGGER `skill_versions_prevent_update` BEFORE UPDATE ON `skill_versions` FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'skill_versions are immutable';
+--> statement-breakpoint
+CREATE TRIGGER `skill_version_files_prevent_update` BEFORE UPDATE ON `skill_version_files` FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'skill_version_files are immutable';
+--> statement-breakpoint
+CREATE TRIGGER `skill_blobs_prevent_update` BEFORE UPDATE ON `skill_blobs` FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'skill_blobs are immutable';
