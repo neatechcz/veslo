@@ -276,6 +276,7 @@ Registry-owned state:
 Local Veslo state:
 
 - downloaded package archives before install
+- cached package archives under `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/skill-package-cache/`, keyed by package SHA-256 and verified before use
 - unpacked runtime skill directories controlled by the local Veslo server
 - workspace activation or reload state after a skill set changes
 - any temporary install progress, errors, or selected install target in the app UI
