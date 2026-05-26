@@ -78,6 +78,64 @@ fn validate_managed_opencode_base_url(opencode_base_url: Option<&str>) -> Result
     ))
 }
 
+/// Find PIDs of veslo-server (or `bun --watch src/cli.ts`) processes bound to
+/// the given TCP port. Returns only processes that look like our own server,
+/// not arbitrary 8787 squatters.
+fn detect_zombie_veslo_server_pids(port: u16) -> Vec<u32> {
+    use std::process::Command;
+    let lsof = Command::new("lsof")
+        .args(["-nP", "-iTCP", "-sTCP:LISTEN", "-Fp"])
+        .arg(format!("-iTCP:{port}"))
+        .output();
+    let stdout = match lsof {
+        Ok(out) if out.status.success() => out.stdout,
+        _ => return Vec::new(),
+    };
+    let mut pids = Vec::new();
+    for line in String::from_utf8_lossy(&stdout).lines() {
+        if let Some(rest) = line.strip_prefix('p') {
+            if let Ok(pid) = rest.trim().parse::<u32>() {
+                let ps = Command::new("ps")
+                    .args(["-p", &pid.to_string(), "-o", "command="])
+                    .output();
+                if let Ok(out) = ps {
+                    let cmd = String::from_utf8_lossy(&out.stdout);
+                    if cmd.contains("veslo-server")
+                        || cmd.contains("bun --watch src/cli.ts")
+                        || cmd.contains("bun src/cli.ts")
+                    {
+                        pids.push(pid);
+                    }
+                }
+            }
+        }
+    }
+    pids
+}
+
+fn kill_pid(pid: u32) {
+    use std::process::Command;
+    let _ = Command::new("kill").args(["-TERM", &pid.to_string()]).status();
+    // Give the process a moment to clean up, then force-kill if still alive.
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    let _ = Command::new("kill").args(["-KILL", &pid.to_string()]).status();
+}
+
+fn reclaim_default_veslo_port_from_zombies(port: u16) {
+    if port != DEFAULT_VESLO_PORT {
+        return;
+    }
+    let zombies = detect_zombie_veslo_server_pids(port);
+    if zombies.is_empty() {
+        return;
+    }
+    for pid in &zombies {
+        eprintln!("[veslo-server] reclaiming port {port} from stale veslo-server PID {pid}");
+        kill_pid(*pid);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(300));
+}
+
 #[cfg(test)]
 pub fn resolve_veslo_port() -> Result<u16, String> {
     let port = configured_veslo_port()?;
@@ -85,9 +143,22 @@ pub fn resolve_veslo_port() -> Result<u16, String> {
 }
 
 fn bind_veslo_port(port: u16) -> Result<u16, String> {
-    TcpListener::bind(("0.0.0.0", port))
-        .map(|_| port)
-        .map_err(|error| format!("Veslo server port {port} is unavailable: {error}"))
+    match TcpListener::bind(("0.0.0.0", port)) {
+        Ok(_) => Ok(port),
+        Err(first_error) => {
+            reclaim_default_veslo_port_from_zombies(port);
+            TcpListener::bind(("0.0.0.0", port))
+                .map(|_| port)
+                .map_err(|error| {
+                    let detail = if error.to_string() == first_error.to_string() {
+                        error.to_string()
+                    } else {
+                        format!("{error} (initial error: {first_error})")
+                    };
+                    format!("Veslo server port {port} is unavailable: {detail}")
+                })
+        }
+    }
 }
 
 pub fn resolve_veslo_port_after_restart() -> Result<u16, String> {
