@@ -221,6 +221,29 @@ export type SkillSaveResult = {
   message?: string;
 };
 
+export type SkillPackageFile = {
+  path: string;
+  sha256: string;
+  sizeBytes: number;
+  mediaType: string;
+  executable?: boolean;
+  text?: string;
+};
+
+export type SkillPackageManifest = {
+  schemaVersion: 1;
+  entrypoint: "SKILL.md";
+  files: SkillPackageFile[];
+  packageSha256: string;
+  metadata: {
+    name: string;
+    description?: string;
+    trigger?: string;
+    tags?: string[];
+    language?: string;
+  };
+};
+
 export type HubSkillCard = {
   name: string;
   description?: string;
