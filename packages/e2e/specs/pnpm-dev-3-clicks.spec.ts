@@ -41,8 +41,22 @@ async function clickSidebarWorkspace(name: string): Promise<boolean> {
 
 describe('pnpm dev — 3 sidebar clicks (VSLO-86)', () => {
   before(async () => {
-    // App is already booted; just wait for sidebar to populate.
-    await browser.pause(5000);
+    // Wait for the sidebar to actually render the workspace buttons. Whether
+    // we're attached to an already-running pnpm dev session or to a freshly
+    // spawned binary, the first paint can take a couple seconds, and freshly
+    // spawned Vesla also needs to mount the SolidJS shell + hydrate the
+    // workspace store.
+    await browser.waitUntil(
+      async () => browser.execute(() => {
+        return Array.from(document.querySelectorAll('button')).some((b) =>
+          (b.textContent ?? '').includes('veslo-test3'),
+        );
+      }),
+      { timeout: 30_000, timeoutMsg: 'Sidebar workspace buttons did not render within 30s' },
+    );
+    // Small additional settle to let the activate effect of the last-active
+    // workspace finish before we start clicking other ones.
+    await browser.pause(2000);
   });
 
   for (let i = 0; i < 3; i += 1) {
