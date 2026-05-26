@@ -164,6 +164,10 @@ Main model source:
 
 - `packages/app/src/app/components/session/artifact-family-model.ts`
 
+## Right Menu Capabilities
+
+The session right menu shows a read-only summary of Skills and MCP servers available to the selected chat's workspace directory. This summary is scoped by the selected chat directory, not by the currently active runtime workspace. It includes installed workspace capabilities plus globally inherited capabilities and excludes Hub-only catalog items.
+
 ## Archive and Restore
 
 Session archive behavior removes sessions from the active primary list and exposes archived items through Settings.
