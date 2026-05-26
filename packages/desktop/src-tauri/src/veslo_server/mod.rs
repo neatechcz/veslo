@@ -324,6 +324,31 @@ pub fn start_veslo_server(
     opencode_password: Option<&str>,
     opencode_router_health_port: Option<u16>,
 ) -> Result<VesloServerInfo, String> {
+    // VSLO-86 — extend caller-supplied workspaces with every local workspace
+    // from veslo-workspaces.json before spawn. The frontend passes only the
+    // current/active workspace in engine_start, so a freshly-spawned veslo-
+    // server otherwise only knows about that one entry. A sidebar click on
+    // any other locally-registered workspace then 404s on /workspaces/:id/
+    // activate and the activate handler times out at 12s, leaving the user
+    // staring at "Opening conversation…". Pulling the local store now means
+    // veslo-server's --workspace args mirror what the sidebar shows.
+    let mut workspace_paths_owned: Vec<String> = workspace_paths.to_vec();
+    if let Ok(state) = crate::workspace::state::load_workspace_state(app) {
+        for ws in state.workspaces.iter() {
+            if !matches!(ws.workspace_type, crate::types::WorkspaceType::Local) {
+                continue;
+            }
+            let trimmed = ws.path.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if !workspace_paths_owned.iter().any(|p| p.trim() == trimmed) {
+                workspace_paths_owned.push(trimmed.to_string());
+            }
+        }
+    }
+    let workspace_paths: &[String] = &workspace_paths_owned;
+
     let mut state = manager
         .inner
         .lock()

@@ -57,6 +57,48 @@ pub fn post_local_workspace(app: &AppHandle, path: &str, name: &str) {
     }
 }
 
+/// Push every local workspace from the Tauri-side veslo-workspaces.json into
+/// veslo-server's registry. Symmetric to reconcile_orchestrator_workspaces in
+/// commands/orchestrator.rs: without this, veslo-server only learns about
+/// workspaces present in its --workspace CLI args at spawn (just `scratch` in
+/// dev mode) plus whatever the frontend's reconcileVesloServerWorkspaces
+/// races in afterwards. Workspaces created later in the same session miss
+/// the bootstrap reconcile and stay invisible to veslo-server, so clicking
+/// them in the sidebar 404s on /workspaces/:id/activate or /workspace/:id/*
+/// reads, and the frontend hangs on "Opening conversation…".
+pub fn reconcile_server_workspaces(app: &AppHandle) -> usize {
+    use crate::types::WorkspaceType;
+    use crate::workspace::state::load_workspace_state;
+
+    let state = match load_workspace_state(app) {
+        Ok(state) => state,
+        Err(error) => {
+            eprintln!("[workspace] reconcile_server_workspaces: load_workspace_state failed: {error}");
+            return 0;
+        }
+    };
+
+    let mut registered = 0usize;
+    for workspace in state.workspaces.iter() {
+        if !matches!(workspace.workspace_type, WorkspaceType::Local) {
+            continue;
+        }
+        let path = workspace.path.trim();
+        if path.is_empty() {
+            continue;
+        }
+        let display_name = workspace
+            .display_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| workspace.name.trim());
+        post_local_workspace(app, path, display_name);
+        registered += 1;
+    }
+    registered
+}
+
 /// `PATCH /workspaces/:id` — rename / update workspace metadata.
 pub fn patch_workspace(app: &AppHandle, workspace_id: &str, name: &str) {
     let Some((base_url, host_token)) = collect_server_state(app) else {

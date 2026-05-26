@@ -38,36 +38,40 @@ fn build_veslo_server_dev_watch_args(mut server_args: Vec<String>) -> Vec<String
     args
 }
 
-/// Find PIDs of veslo-server (or `bun --watch src/cli.ts`) processes bound to
-/// the given TCP port. Returns only processes that look like our own server,
-/// not arbitrary 8787 squatters.
-fn detect_zombie_veslo_server_pids(port: u16) -> Vec<u32> {
+/// Find every PID matching a Veslo server bun/binary across the system, except
+/// our own current process. Used to reap zombies after a Tauri main restart:
+/// the shell plugin doesn't kill the spawned child on Drop, so previous
+/// veslo-server processes survive cargo rebuilds and camp on random ports
+/// (and the 8787 socket they vacated stays in TIME_WAIT for a few seconds).
+fn list_stale_veslo_server_pids() -> Vec<u32> {
     use std::process::Command;
-    let lsof = Command::new("lsof")
-        .args(["-nP", "-iTCP", "-sTCP:LISTEN", "-Fp"])
-        .arg(format!("-iTCP:{port}"))
-        .output();
-    let stdout = match lsof {
+    let our_pid = std::process::id();
+    let ps = Command::new("ps").args(["-axo", "pid=,command="]).output();
+    let stdout = match ps {
         Ok(out) if out.status.success() => out.stdout,
         _ => return Vec::new(),
     };
     let mut pids = Vec::new();
     for line in String::from_utf8_lossy(&stdout).lines() {
-        if let Some(rest) = line.strip_prefix('p') {
-            if let Ok(pid) = rest.trim().parse::<u32>() {
-                let ps = Command::new("ps")
-                    .args(["-p", &pid.to_string(), "-o", "command="])
-                    .output();
-                if let Ok(out) = ps {
-                    let cmd = String::from_utf8_lossy(&out.stdout);
-                    if cmd.contains("veslo-server")
-                        || cmd.contains("bun --watch src/cli.ts")
-                        || cmd.contains("bun src/cli.ts")
-                    {
-                        pids.push(pid);
-                    }
-                }
-            }
+        let trimmed = line.trim_start();
+        let mut parts = trimmed.splitn(2, char::is_whitespace);
+        let pid_str = match parts.next() {
+            Some(value) => value,
+            None => continue,
+        };
+        let command = parts.next().unwrap_or("");
+        let pid: u32 = match pid_str.parse() {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if pid == our_pid {
+            continue;
+        }
+        let is_veslo_server = command.contains("veslo-server")
+            || command.contains("bun --watch src/cli.ts")
+            || command.contains("bun src/cli.ts");
+        if is_veslo_server {
+            pids.push(pid);
         }
     }
     pids
@@ -82,27 +86,30 @@ fn kill_pid(pid: u32) {
 }
 
 pub fn resolve_veslo_port() -> Result<u16, String> {
-    if TcpListener::bind(("0.0.0.0", DEFAULT_VESLO_PORT)).is_ok() {
-        return Ok(DEFAULT_VESLO_PORT);
-    }
-    // 8787 is busy. If a previous Veslo dev/desktop instance left its server
-    // behind (cargo rebuild + Tauri restart drops state.child without killing
-    // the bun --watch sidecar), the engines bake stale baseURL/apiKey values
-    // into opencode.jsonc and AI inference 401s. Reclaim 8787 from our own
-    // zombies before falling back to a random ephemeral port so the next
-    // workspace activate writes a stable URL the engine can keep reaching.
-    let zombies = detect_zombie_veslo_server_pids(DEFAULT_VESLO_PORT);
-    if !zombies.is_empty() {
-        for pid in &zombies {
-            eprintln!("[veslo-server] reclaiming port {DEFAULT_VESLO_PORT} from stale veslo-server PID {pid}");
+    // Reap orphan veslo-server processes from previous Vesla sessions before
+    // attempting to bind. Tauri's shell plugin doesn't kill spawned children
+    // when the main process restarts (cargo rebuild during pnpm dev), so the
+    // previous server keeps holding a random ephemeral port and the 8787
+    // socket it vacated lingers in TIME_WAIT for a couple seconds. Reaping
+    // first + retry loop ensures the new server lands back on the stable
+    // 8787 the workspace opencode.jsonc files were written against.
+    let stale = list_stale_veslo_server_pids();
+    if !stale.is_empty() {
+        for pid in &stale {
+            eprintln!("[veslo-server] reaping stale veslo-server PID {pid}");
             kill_pid(*pid);
         }
-        // Give the OS a brief moment to release the socket after SIGKILL.
-        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+
+    // TIME_WAIT typically clears within ~1s of the previous owner closing.
+    // Retry the canonical port for up to ~3s before falling back to random.
+    for _ in 0..10 {
         if TcpListener::bind(("0.0.0.0", DEFAULT_VESLO_PORT)).is_ok() {
             return Ok(DEFAULT_VESLO_PORT);
         }
+        std::thread::sleep(std::time::Duration::from_millis(300));
     }
+
     let listener = TcpListener::bind(("0.0.0.0", 0)).map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     Ok(port)

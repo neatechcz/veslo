@@ -2,6 +2,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::commands::opencode_router::opencodeRouter_start;
 use crate::commands::orchestrator::reconcile_orchestrator_workspaces;
+use crate::workspace::server_client::reconcile_server_workspaces;
 use crate::config::{read_opencode_config, write_opencode_config};
 use crate::engine::doctor::{
     opencode_serve_help, opencode_version, resolve_engine_path, resolve_sidecar_candidate,
@@ -858,7 +859,7 @@ pub fn engine_start(
             }
         };
 
-        if let Err(error) = start_veslo_server(
+        let veslo_started = start_veslo_server(
             &app,
             &veslo_manager,
             &workspace_paths,
@@ -866,10 +867,19 @@ pub fn engine_start(
             opencode_username.as_deref(),
             opencode_password.as_deref(),
             opencode_router_health_port,
-        ) {
+        );
+        if let Err(error) = veslo_started {
             if let Ok(mut state) = manager.inner.lock() {
                 state.last_stderr = Some(truncate_output(&format!("Veslo server: {error}"), 8000));
             }
+        }
+        // Reconcile every engine_start call (not only on fresh spawn), because
+        // start_veslo_server has an idempotent-reuse fast path that skips the
+        // reconcile branch — sidebar clicks on workspaces added after the
+        // initial boot would otherwise stay unknown to veslo-server.
+        let count = reconcile_server_workspaces(&app);
+        if count > 0 {
+            eprintln!("[veslo-server] reconciled {count} workspace(s)");
         }
 
         if let Err(error) = opencodeRouter_start(

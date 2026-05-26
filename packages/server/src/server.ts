@@ -85,6 +85,13 @@ function isSensitiveConfigKey(key: string): boolean {
   const normalized = normalizeConfigKey(key);
   if (!normalized) return false;
   if (normalized === "tokensource") return false;
+  // VSLO-86 — x-veslo-gateway-token must round-trip in clear so the frontend
+  // can re-patch opencode.jsonc on disk with a valid token. Without this
+  // exception, getConfig returned "[REDACTED]", the patch effect echoed the
+  // literal back, and engines later sent "[REDACTED]" as the Den gateway
+  // header → AI gateway 401. The same header lives in the allow-list on the
+  // client (GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS); keep both in sync.
+  if (normalized === "xveslogatewaytoken") return false;
   return REDACTED_CONFIG_KEYS.some((segment) => normalized === segment || normalized.endsWith(segment));
 }
 
