@@ -17,14 +17,15 @@ export type SessionMcpCapabilityRow = {
   scope: SessionCapabilityScope;
   type: "remote" | "local";
   detail?: string;
-  status: string;
+  status: "connected" | "disabled" | "failed" | "needs_auth" | "needs_client_registration" | "disconnected";
+  statusDetail?: string;
 };
 
 export function normalizeSessionCapabilityDirectory(value: string | null | undefined) {
-  return String(value ?? "")
+  const normalized = String(value ?? "")
     .trim()
-    .replace(/\\/g, "/")
-    .replace(/\/+$/, "");
+    .replace(/\\/g, "/");
+  return normalized === "/" ? normalized : normalized.replace(/\/+$/, "");
 }
 
 function rowFromSkillInstance(instance: SkillInstance): SessionSkillCapabilityRow {
@@ -39,6 +40,7 @@ function rowFromSkillInstance(instance: SkillInstance): SessionSkillCapabilityRo
 }
 
 export function buildSessionSkillRows(items: SkillInventoryItem[]): SessionSkillCapabilityRow[] {
+  // Input inventory must already be scoped to the selected chat workspace.
   return items.flatMap((item) => {
     if (item.workspaceInstances.length > 0) return item.workspaceInstances.map(rowFromSkillInstance);
     if (item.globalInstance) return [rowFromSkillInstance(item.globalInstance)];
@@ -46,16 +48,25 @@ export function buildSessionSkillRows(items: SkillInventoryItem[]): SessionSkill
   });
 }
 
+function statusDetailFor(status: McpStatusMap[string] | undefined) {
+  if (status?.status === "failed" || status?.status === "needs_client_registration") return status.error;
+  return undefined;
+}
+
 export function buildSessionMcpRows(entries: McpServerEntry[], statuses: McpStatusMap): SessionMcpCapabilityRow[] {
-  return entries.map((entry) => ({
-    id: entry.name,
-    name: entry.name,
-    scope: entry.source === "config.global" ? "global" : "workspace",
-    type: entry.config.type,
-    detail: entry.config.type === "remote" ? entry.config.url : entry.config.command?.join(" "),
-    status:
-      entry.config.enabled === false || entry.disabledByTools
-        ? "disabled"
-        : statuses[entry.name]?.status ?? "disconnected",
-  }));
+  return entries.map((entry) => {
+    const runtimeStatus = statuses[entry.name];
+    return {
+      id: entry.name,
+      name: entry.name,
+      scope: entry.source === "config.global" ? "global" : "workspace",
+      type: entry.config.type,
+      detail: entry.config.type === "remote" ? entry.config.url : entry.config.command?.join(" "),
+      status:
+        entry.config.enabled === false || entry.disabledByTools
+          ? "disabled"
+          : runtimeStatus?.status ?? "disconnected",
+      statusDetail: statusDetailFor(runtimeStatus),
+    };
+  });
 }

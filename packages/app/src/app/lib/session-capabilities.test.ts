@@ -9,6 +9,7 @@ import {
 
 test("normalizeSessionCapabilityDirectory does not fall back to the active workspace", () => {
   assert.equal(normalizeSessionCapabilityDirectory("  /workspaces/chat-a  "), "/workspaces/chat-a");
+  assert.equal(normalizeSessionCapabilityDirectory("/"), "/");
   assert.equal(normalizeSessionCapabilityDirectory(""), "");
 });
 
@@ -71,5 +72,16 @@ test("buildSessionMcpRows carries status and source", () => {
   assert.deepEqual(rows.map((row) => `${row.name}:${row.scope}:${row.status}:${row.detail}`), [
     "browser:global:connected:https://mcp.example",
     "local-tools:workspace:disconnected:node server.js",
+  ]);
+});
+
+test("buildSessionMcpRows preserves failed status detail", () => {
+  const rows = buildSessionMcpRows(
+    [{ name: "broken", config: { type: "remote", url: "https://broken.example" }, source: "config.project" }],
+    { broken: { status: "failed", error: "connection refused" } },
+  );
+
+  assert.deepEqual(rows.map((row) => `${row.name}:${row.status}:${row.statusDetail}`), [
+    "broken:failed:connection refused",
   ]);
 });
