@@ -47,10 +47,12 @@ jobs:
         run: |
           set -euo pipefail
 
+          git_auth_header="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+
           git_auth() {
             GIT_CONFIG_COUNT=1 \
             GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
-            GIT_CONFIG_VALUE_0="AUTHORIZATION: bearer $GITHUB_TOKEN" \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $git_auth_header" \
             git "$@"
           }
 

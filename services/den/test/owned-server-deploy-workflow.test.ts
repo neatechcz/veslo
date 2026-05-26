@@ -27,6 +27,8 @@ test("owned-server deployment workflow deploys the Compose stack on the owned-se
     "OWNED_SERVER_ENV_FILE",
     "GITHUB_TOKEN",
     "http.https://github.com/.extraheader",
+    "x-access-token",
+    "AUTHORIZATION: basic",
     "git_auth fetch --prune origin",
     "packaging/owned-server/compose.yml",
     "docker compose",
