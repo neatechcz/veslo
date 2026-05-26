@@ -49,6 +49,8 @@ export type EngineSseSubscribeOptions = {
   directory?: string | null;
   username?: string | null;
   password?: string | null;
+  /** Veslo-server bearer token. Takes precedence over username/password when set. */
+  bearerToken?: string | null;
   /** AbortSignal lets callers tear down the subscription. */
   signal?: AbortSignal;
 };
@@ -105,6 +107,7 @@ export async function engineSseSubscribe(
       directory: options.directory ?? null,
       username: options.username ?? null,
       password: options.password ?? null,
+      bearerToken: options.bearerToken ?? null,
     },
   });
 

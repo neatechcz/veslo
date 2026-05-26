@@ -89,6 +89,10 @@ pub struct EngineSseSubscribeOptions {
     /// `Authorization: Basic <b64>`).
     pub username: Option<String>,
     pub password: Option<String>,
+    /// Optional Bearer auth (veslo-server expects `Authorization: Bearer
+    /// <token>`). Mutually exclusive with username/password — Bearer wins
+    /// when both are supplied.
+    pub bearer_token: Option<String>,
     /// Timeout in seconds for the initial connect (HTTP headers). Once the
     /// stream is open we stay connected indefinitely. Default 30s.
     pub connect_timeout_secs: Option<u64>,
@@ -115,7 +119,10 @@ pub async fn engine_sse_subscribe(
     let workspace_id = options.workspace_id.clone();
     let base_url = options.base_url.clone();
     let directory = options.directory.clone();
-    let auth_header = build_basic_auth_header(options.username.as_deref(), options.password.as_deref());
+    let auth_header = match options.bearer_token.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(token) => Some(format!("Bearer {}", token)),
+        None => build_basic_auth_header(options.username.as_deref(), options.password.as_deref()),
+    };
     let connect_timeout = std::time::Duration::from_secs(options.connect_timeout_secs.unwrap_or(30));
 
     tauri::async_runtime::spawn(async move {
