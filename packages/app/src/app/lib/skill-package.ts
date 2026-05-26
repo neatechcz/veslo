@@ -8,6 +8,7 @@ export type BuildSkillPackageManifestInput = {
 const ENTRYPOINT = "SKILL.md";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
 const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[a-zA-Z]:[\\/]/;
+const WINDOWS_RESERVED_BASENAME_PATTERN = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
 
 const comparePackagePaths = (left: SkillPackageFile, right: SkillPackageFile) => {
   if (left.path < right.path) return -1;
@@ -50,6 +51,18 @@ export function normalizeSkillPackagePath(path: string): string {
   }
   if (segments.length === 0) {
     throw new Error(`Skill package file path must name a file: ${path}`);
+  }
+  const colonSegment = segments.find((segment) => segment.includes(":"));
+  if (colonSegment) {
+    throw new Error(`Skill package file path cannot contain ':': ${path}`);
+  }
+  const reservedSegment = segments.find((segment) => WINDOWS_RESERVED_BASENAME_PATTERN.test(segment));
+  if (reservedSegment) {
+    throw new Error(`Skill package file path cannot use reserved Windows name '${reservedSegment}': ${path}`);
+  }
+  const trailingWindowsSpaceOrDotSegment = segments.find((segment) => /[ .]$/.test(segment));
+  if (trailingWindowsSpaceOrDotSegment) {
+    throw new Error(`Skill package file path segment cannot end with a space or '.': ${path}`);
   }
 
   return segments.join("/");

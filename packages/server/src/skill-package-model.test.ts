@@ -34,6 +34,20 @@ test("package file paths reject traversal", () => {
   expect(() => normalizeSkillPackageFiles([packageFile({ path: "docs/../SKILL.md" })])).toThrow(/\.\./);
 });
 
+test("package file paths reject colons", () => {
+  expect(() => normalizeSkillPackageFiles([packageFile({ path: "scripts/setup:ads.sh" })])).toThrow(/:/);
+});
+
+test("package file paths reject Windows reserved basenames", () => {
+  expect(() => normalizeSkillPackageFiles([packageFile({ path: "scripts/CON.txt" })])).toThrow(/reserved/i);
+  expect(() => normalizeSkillPackageFiles([packageFile({ path: "scripts/com1.sh" })])).toThrow(/reserved/i);
+});
+
+test("package file paths reject segments ending in spaces or dots", () => {
+  expect(() => normalizeSkillPackageFiles([packageFile({ path: "scripts/setup./SKILL.md" })])).toThrow(/end/i);
+  expect(() => normalizeSkillPackageFiles([packageFile({ path: "scripts/setup /SKILL.md" })])).toThrow(/end/i);
+});
+
 test("duplicate normalized package file paths are rejected", () => {
   expect(() =>
     normalizeSkillPackageFiles([

@@ -42,6 +42,35 @@ test("package file paths reject traversal", () => {
   );
 });
 
+test("package file paths reject colons", () => {
+  assert.throws(
+    () => normalizeSkillPackageFiles([packageFile({ path: "scripts/setup:ads.sh" })]),
+    /:/,
+  );
+});
+
+test("package file paths reject Windows reserved basenames", () => {
+  assert.throws(
+    () => normalizeSkillPackageFiles([packageFile({ path: "scripts/CON.txt" })]),
+    /reserved/i,
+  );
+  assert.throws(
+    () => normalizeSkillPackageFiles([packageFile({ path: "scripts/com1.sh" })]),
+    /reserved/i,
+  );
+});
+
+test("package file paths reject segments ending in spaces or dots", () => {
+  assert.throws(
+    () => normalizeSkillPackageFiles([packageFile({ path: "scripts/setup./SKILL.md" })]),
+    /end/i,
+  );
+  assert.throws(
+    () => normalizeSkillPackageFiles([packageFile({ path: "scripts/setup /SKILL.md" })]),
+    /end/i,
+  );
+});
+
 test("duplicate normalized package file paths are rejected", () => {
   assert.throws(
     () =>

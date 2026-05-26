@@ -9,6 +9,8 @@ import { validateDescription, validateSkillName } from "./validators.js";
 import { ApiError } from "./errors.js";
 import { projectSkillsDir } from "./workspace-files.js";
 
+export const SKILL_ENTRYPOINT = "SKILL.md";
+
 async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
   const roots: string[] = [];
   let current = resolve(workspaceRoot);
@@ -23,7 +25,7 @@ async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
   return roots;
 }
 
-const extractTriggerFromBody = (body: string) => {
+export const extractTriggerFromBody = (body: string) => {
   const lines = body.split(/\r?\n/);
   let inWhenSection = false;
 
