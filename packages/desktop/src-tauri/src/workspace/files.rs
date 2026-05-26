@@ -1,9 +1,5 @@
-use std::collections::HashSet;
 use std::fs;
-use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
-
-use zip::ZipArchive;
 
 use crate::types::{OpencodeCommand, WorkspaceVesloConfig};
 use crate::utils::now_ms;
@@ -311,118 +307,6 @@ description: Guide users through the get started setup and Chrome DevTools demo.
     Ok(())
 }
 
-const ENTERPRISE_ARCHIVE_URL: &str =
-    "https://github.com/different-ai/openwork-enterprise/archive/refs/heads/main.zip";
-const ENTERPRISE_SEED_MARKER: &str = ".veslo-enterprise-creators";
-const ENTERPRISE_ALLOWED_CREATORS: [&str; 3] = ["skill-creator", "plugin-creator", "agent-creator"];
-
-fn is_allowed_enterprise_creator_skill_name(skill_name: &str) -> bool {
-    ENTERPRISE_ALLOWED_CREATORS.contains(&skill_name)
-}
-
-fn seed_enterprise_creator_skills(root: &PathBuf, skill_root: &PathBuf) -> Result<(), String> {
-    let marker_path = root.join(".opencode").join(ENTERPRISE_SEED_MARKER);
-    if marker_path.exists() {
-        return Ok(());
-    }
-
-    let mut existing = HashSet::new();
-    if let Ok(entries) = fs::read_dir(skill_root) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if !name.is_empty() {
-                existing.insert(name);
-            }
-        }
-    }
-
-    let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(15))
-        .redirects(5)
-        .build();
-    let response = match agent.get(ENTERPRISE_ARCHIVE_URL).call() {
-        Ok(resp) => resp,
-        Err(e) => {
-            // Write the marker so we don't retry on every bootstrap for every
-            // workspace.  The download can be re-attempted by deleting the
-            // marker file manually.
-            let _ = fs::write(&marker_path, format!("failed: {e}\n"));
-            return Err(format!("Failed to download enterprise archive: {e}"));
-        }
-    };
-
-    let mut buffer = Vec::new();
-    response
-        .into_reader()
-        .read_to_end(&mut buffer)
-        .map_err(|e| format!("Failed to read enterprise archive: {e}"))?;
-
-    let cursor = Cursor::new(buffer);
-    let mut archive =
-        ZipArchive::new(cursor).map_err(|e| format!("Failed to open enterprise archive: {e}"))?;
-
-    for i in 0..archive.len() {
-        let mut entry = archive
-            .by_index(i)
-            .map_err(|e| format!("Failed to read enterprise entry: {e}"))?;
-        let name = entry.name().to_string();
-        let entry_path = Path::new(&name);
-        if entry_path.components().any(|component| match component {
-            std::path::Component::ParentDir
-            | std::path::Component::RootDir
-            | std::path::Component::Prefix(_) => true,
-            _ => false,
-        }) {
-            continue;
-        }
-
-        let parts: Vec<String> = entry_path
-            .components()
-            .map(|component| component.as_os_str().to_string_lossy().to_string())
-            .collect();
-        if parts.len() < 5 {
-            continue;
-        }
-        if parts[1] != ".opencode" || parts[2] != "skills" {
-            continue;
-        }
-
-        let skill_name = &parts[3];
-        if !is_allowed_enterprise_creator_skill_name(skill_name) || existing.contains(skill_name) {
-            continue;
-        }
-
-        let dest_root = skill_root.join(skill_name);
-        let mut dest_path = dest_root.clone();
-        for part in parts.iter().skip(4) {
-            dest_path = dest_path.join(part);
-        }
-
-        if name.ends_with('/') {
-            fs::create_dir_all(&dest_path)
-                .map_err(|e| format!("Failed to create {}: {e}", dest_path.display()))?;
-            continue;
-        }
-
-        if let Some(parent) = dest_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
-        }
-
-        let mut file_buffer = Vec::new();
-        entry
-            .read_to_end(&mut file_buffer)
-            .map_err(|e| format!("Failed to read enterprise entry: {e}"))?;
-        fs::write(&dest_path, file_buffer)
-            .map_err(|e| format!("Failed to write {}: {e}", dest_path.display()))?;
-    }
-
-    fs::write(&marker_path, "seeded\n")
-        .map_err(|e| format!("Failed to write {}: {e}", marker_path.display()))?;
-
-    Ok(())
-}
-
 fn seed_commands(commands_dir: &PathBuf, preset: &str) -> Result<(), String> {
     if fs::read_dir(commands_dir)
         .map_err(|e| format!("Failed to read {}: {e}", commands_dir.display()))?
@@ -506,11 +390,6 @@ pub fn ensure_workspace_files(
     let skill_root = root.join(".opencode").join("skills");
     fs::create_dir_all(&skill_root)
         .map_err(|e| format!("Failed to create .opencode/skills: {e}"))?;
-    if preset == "starter" {
-        if let Err(err) = seed_enterprise_creator_skills(&root, &skill_root) {
-            println!("[workspace] Failed to seed creator skills: {err}");
-        }
-    }
 
     let agents_dir = root.join(".opencode").join("agents");
     fs::create_dir_all(&agents_dir)
@@ -753,17 +632,16 @@ mod tests {
     }
 
     #[test]
-    fn enterprise_creator_allowlist_accepts_required_creators() {
-        assert!(is_allowed_enterprise_creator_skill_name("skill-creator"));
-        assert!(is_allowed_enterprise_creator_skill_name("plugin-creator"));
-        assert!(is_allowed_enterprise_creator_skill_name("agent-creator"));
-    }
+    fn starter_workspace_does_not_seed_creator_skills() {
+        let root = temp_workspace_root("starter-no-creator-skills");
+        let root_str = root.to_string_lossy().to_string();
 
-    #[test]
-    fn enterprise_creator_allowlist_rejects_non_allowed_skills() {
-        assert!(!is_allowed_enterprise_creator_skill_name("command-creator"));
-        assert!(!is_allowed_enterprise_creator_skill_name("workspace-guide"));
-        assert!(!is_allowed_enterprise_creator_skill_name("get-started"));
+        ensure_workspace_files(&root_str, "starter", None, None).expect("seed workspace files");
+
+        let skills_dir = root.join(".opencode").join("skills");
+        assert!(!skills_dir.join("skill-creator").exists());
+        assert!(!skills_dir.join("plugin-creator").exists());
+        assert!(!skills_dir.join("agent-creator").exists());
     }
 
     #[test]

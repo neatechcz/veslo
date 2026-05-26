@@ -51,6 +51,10 @@ Global skills in this surface are user-global runtime skills discovered from
 local OpenCode-compatible skill roots. They are not organization catalog entries
 and do not imply Den/admin approval. Promotion to an organization catalog,
 system-approved catalog, or bulk organization rollout remains future work.
+Starter workspace provisioning does not install creator skills such as
+`skill-creator`, `plugin-creator`, or `agent-creator` into workspace-local
+skill roots. Those creator skills are expected to be supplied through the
+user-global skill root when available.
 
 Hub skill installs require an explicit target. Today, the supported target is
 the active workspace; all-workspaces Hub install is visible as unavailable until
