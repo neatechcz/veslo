@@ -176,6 +176,14 @@ export function createSessionStore(options: {
   onHotReloadApplied?: () => void;
   onSessionLoadComplete?: () => void;
   loadOfflineTranscript?: (sessionID: string, limit: number) => Promise<VesloSessionTranscriptSnapshot | null>;
+  /**
+   * VSLO-86 — `engineReady()` reports whether the user has explicitly brought
+   * up the engine for the active workspace (sendPrompt has succeeded at least
+   * once). When false, selectSession prefers the offline transcript over an
+   * SDK `session.messages` call so that just clicking through session history
+   * never accidentally cold-spawns sandbox-exec + opencode serve.
+   */
+  engineReady?: () => boolean;
   onSessionBusyChange?: (sessionId: string, busy: boolean) => void;
 }) {
 
@@ -930,8 +938,14 @@ export function createSessionStore(options: {
       const existingLimit = messageLimitBySession()[sessionID] ?? 0;
       const requestLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, existingLimit);
       setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
-      mark("client check", { hasClient: Boolean(c), sessionID });
-      if (!c) {
+      const browseModeOnly = options.engineReady ? !options.engineReady() : false;
+      mark("client check", { hasClient: Boolean(c), browseModeOnly, sessionID });
+      // VSLO-86 — in browse mode (engineReady=false), the user hasn't asked
+      // for the engine yet. Hitting `c.session.messages` here would force a
+      // 30-60s sandbox-exec cold spawn just so we could pull the same
+      // messages already cached locally. Fall through to the offline
+      // transcript instead so passive sidebar clicking stays free.
+      if (!c || browseModeOnly) {
         try {
           mark("calling offline transcript fallback", { limit: requestLimit });
           let snapshot: VesloSessionTranscriptSnapshot | null = null;

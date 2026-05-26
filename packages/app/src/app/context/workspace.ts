@@ -1207,6 +1207,14 @@ export function createWorkspaceStore(options: {
       // the wrong workspace, and ensureEngineForWorkspace reconnects
       // to the correct workspace on demand.
 
+      // VSLO-86 — flip engineReady BEFORE the DB hydration calls. selectSession
+      // (invoked indirectly by hydrateLatestSessionFromDb) reads this signal
+      // to decide whether to hit the SDK or the offline transcript; leaving it
+      // at the stale `true` from the previous active workspace forces an SDK
+      // session.messages call and pulls a fresh sandbox-exec engine into
+      // existence even though the user is just browsing history.
+      options.setEngineReady?.(false);
+
       try {
         await options.populateSidebarFromDb!(id, next.path);
       } catch (e) {
@@ -1221,7 +1229,6 @@ export function createWorkspaceStore(options: {
         _wsLog("[workspace:activate] STEP 5-BROWSE — hydrateLatestSessionFromDb failed", e);
       }
 
-      options.setEngineReady?.(false);
       updateWorkspaceConnectionState(id, { status: "connected", message: null });
 
       // VSLO-86 — DO NOT eager-spawn the engine here. The user is just
