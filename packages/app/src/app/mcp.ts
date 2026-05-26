@@ -141,3 +141,34 @@ export function parseMcpServersFromContent(content: string): McpServerEntry[] {
     return [];
   }
 }
+
+export function mergeMcpServerEntries(
+  globalEntries: McpServerEntry[],
+  projectEntries: McpServerEntry[],
+): McpServerEntry[] {
+  const projectNames = new Set(projectEntries.map((entry) => entry.name));
+  return [
+    ...globalEntries
+      .filter((entry) => !projectNames.has(entry.name))
+      .map((entry) => ({ ...entry, source: entry.source ?? ("config.global" as const) })),
+    ...projectEntries.map((entry) => ({ ...entry, source: entry.source ?? ("config.project" as const) })),
+  ];
+}
+
+export async function readEffectiveMcpServerEntries(projectDir: string): Promise<McpServerEntry[]> {
+  const [globalConfig, projectConfig] = await Promise.all([
+    readOpencodeConfig("global", projectDir),
+    readOpencodeConfig("project", projectDir),
+  ]);
+
+  const globalEntries = parseMcpServersFromContent(globalConfig.content ?? "").map((entry) => ({
+    ...entry,
+    source: "config.global" as const,
+  }));
+  const projectEntries = parseMcpServersFromContent(projectConfig.content ?? "").map((entry) => ({
+    ...entry,
+    source: "config.project" as const,
+  }));
+
+  return mergeMcpServerEntries(globalEntries, projectEntries);
+}

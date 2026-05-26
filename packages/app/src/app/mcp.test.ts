@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseLocalCommandInput, quickConnectEntryKey } from "./mcp.js";
+import { mergeMcpServerEntries, parseLocalCommandInput, quickConnectEntryKey } from "./mcp.js";
 
 test("quickConnectEntryKey prefers stable id when provided", () => {
   const key = quickConnectEntryKey({
@@ -38,4 +38,23 @@ test("parseLocalCommandInput supports single-quoted args", () => {
 test("parseLocalCommandInput falls back safely on unmatched quotes", () => {
   const args = parseLocalCommandInput('cmd --flag "broken value');
   assert.deepEqual(args, ["cmd", "--flag", '"broken', "value"]);
+});
+
+test("mergeMcpServerEntries includes global MCP and lets project override by name", () => {
+  const result = mergeMcpServerEntries(
+    [
+      { name: "global-only", config: { type: "remote", url: "https://global.example" }, source: "config.global" },
+      { name: "shared", config: { type: "remote", url: "https://global-shared.example" }, source: "config.global" },
+    ],
+    [
+      { name: "shared", config: { type: "remote", url: "https://project-shared.example" }, source: "config.project" },
+      { name: "project-only", config: { type: "local", command: ["node", "server.js"] }, source: "config.project" },
+    ],
+  );
+
+  assert.deepEqual(result.map((entry) => `${entry.name}:${entry.source}`), [
+    "global-only:config.global",
+    "shared:config.project",
+    "project-only:config.project",
+  ]);
 });

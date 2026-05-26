@@ -170,7 +170,13 @@ import {
   VARIANT_PREF_KEY,
   type McpDirectoryInfo,
 } from "./constants";
-import { parseMcpServersFromContent, quickConnectEntryKey, removeMcpFromConfig, validateMcpServerName } from "./mcp";
+import {
+  parseMcpServersFromContent,
+  quickConnectEntryKey,
+  readEffectiveMcpServerEntries,
+  removeMcpFromConfig,
+  validateMcpServerName,
+} from "./mcp";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "./types";
 import type {
   Client,
@@ -6257,6 +6263,8 @@ export default function App() {
         const next = response.items.map((entry) => ({
           name: entry.name,
           config: entry.config as McpServerEntry["config"],
+          source: entry.source,
+          disabledByTools: entry.disabledByTools,
         }));
         setMcpServers(next);
         setMcpLastUpdatedAt(Date.now());
@@ -6291,6 +6299,8 @@ export default function App() {
         const next = response.items.map((entry) => ({
           name: entry.name,
           config: entry.config as McpServerEntry["config"],
+          source: entry.source,
+          disabledByTools: entry.disabledByTools,
         }));
         setMcpServers(next);
         setMcpLastUpdatedAt(Date.now());
@@ -6334,15 +6344,7 @@ export default function App() {
 
     try {
       setMcpStatus(null);
-      const config = await readOpencodeConfig("project", projectDir);
-      if (!config.exists || !config.content) {
-        setMcpServers([]);
-        setMcpStatuses({});
-        setMcpStatus("No opencode.json found yet. Create one by connecting an MCP.");
-        return;
-      }
-
-      const next = parseMcpServersFromContent(config.content);
+      const next = await readEffectiveMcpServerEntries(projectDir);
       setMcpServers(next);
       setMcpLastUpdatedAt(Date.now());
 

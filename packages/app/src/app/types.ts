@@ -356,6 +356,8 @@ export type McpServerConfig = {
 export type McpServerEntry = {
   name: string;
   config: McpServerConfig;
+  source?: "config.project" | "config.global" | "config.remote";
+  disabledByTools?: boolean;
 };
 
 export type McpStatus =
