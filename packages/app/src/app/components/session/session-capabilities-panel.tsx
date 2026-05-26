@@ -75,6 +75,8 @@ export default function SessionCapabilitiesPanel(props: SessionCapabilitiesPanel
       >
         <button
           type="button"
+          aria-expanded={skillsExpanded()}
+          aria-controls="session-capabilities-skills-content"
           class="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left"
           onClick={() => setSkillsExpanded((expanded) => !expanded)}
         >
@@ -96,7 +98,7 @@ export default function SessionCapabilitiesPanel(props: SessionCapabilitiesPanel
         </button>
 
         <Show when={skillsExpanded()}>
-          <div class="space-y-1 px-2 pb-2">
+          <div id="session-capabilities-skills-content" class="space-y-1 px-2 pb-2">
             <Show
               when={ready() && props.skills.length > 0}
               fallback={
@@ -140,6 +142,8 @@ export default function SessionCapabilitiesPanel(props: SessionCapabilitiesPanel
       <section data-testid="session-capabilities-mcp" class="rounded-xl border border-gray-5/80 bg-gray-2/40">
         <button
           type="button"
+          aria-expanded={mcpExpanded()}
+          aria-controls="session-capabilities-mcp-content"
           class="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left"
           onClick={() => setMcpExpanded((expanded) => !expanded)}
         >
@@ -161,7 +165,7 @@ export default function SessionCapabilitiesPanel(props: SessionCapabilitiesPanel
         </button>
 
         <Show when={mcpExpanded()}>
-          <div class="space-y-1 px-2 pb-2">
+          <div id="session-capabilities-mcp-content" class="space-y-1 px-2 pb-2">
             <Show
               when={ready() && props.mcp.length > 0}
               fallback={
