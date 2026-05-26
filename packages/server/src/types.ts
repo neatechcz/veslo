@@ -168,6 +168,97 @@ export interface SkillItem {
   paths?: string[];
 }
 
+export type ManagedSkillSource = "personal" | "workspace" | "organization" | "platform";
+
+export type WorkspaceSkillWorkspaceScope = "personal" | "organization";
+
+export type WorkspaceSkillSetWorkspace = {
+  id: string;
+  scope: WorkspaceSkillWorkspaceScope;
+  orgId?: string | null;
+  releaseChannel?: string | null;
+};
+
+export type WorkspaceSkillSetUser = {
+  id: string;
+  orgId?: string | null;
+};
+
+export type WorkspaceSkillSetUpdatePolicy = "pinned" | "latest_user" | "latest_approved" | "release_channel";
+
+export type WorkspaceSkillRegistryInstallation = {
+  installationId: string;
+  skillId: string;
+  name: string;
+  versionId: string;
+  packageSha256: string;
+  enabled: boolean;
+  source: ManagedSkillSource;
+  installedAt: string;
+  ownerUserId?: string | null;
+  orgId?: string | null;
+  workspaceId?: string | null;
+  approved?: boolean;
+  updatePolicy?: WorkspaceSkillSetUpdatePolicy;
+  releaseChannel?: string | null;
+  desiredVersionId?: string | null;
+  desiredPackageSha256?: string | null;
+};
+
+export type WorkspaceSkillSetLocalUnmanagedSkill = {
+  name: string;
+  path: string;
+  scope: "workspace" | "user-global";
+};
+
+export type WorkspaceSkillSetPolicy = {
+  allowPersonalGlobalInOrgWorkspace?: boolean;
+  allowPersonalGlobalShadowOrgManaged?: boolean;
+};
+
+export type ResolvedWorkspaceSkill = {
+  installationId: string;
+  skillId: string;
+  name: string;
+  versionId: string;
+  packageSha256: string;
+  source: ManagedSkillSource;
+  target: "workspace" | "personal-global";
+};
+
+export type WorkspaceSkillMaterialization = {
+  installationId: string;
+  skillId: string;
+  name: string;
+  versionId: string;
+  packageSha256: string;
+  target: "workspace" | "personal-global";
+};
+
+export type WorkspaceSkillConflict = {
+  code: "personal-global-shadowed" | "unmanaged-local-shadowed";
+  name: string;
+  message: string;
+  blockingInstallationId?: string;
+  blockedInstallationId?: string;
+  localPath?: string;
+};
+
+export type BlockedWorkspaceSkillInstallation = {
+  installationId: string;
+  skillId: string;
+  name: string;
+  reason: "disabled" | "not-approved" | "out-of-scope" | "shadowed";
+};
+
+export type WorkspaceSkillSetResolution = {
+  effectiveManagedSkills: ResolvedWorkspaceSkill[];
+  requiredMaterializations: WorkspaceSkillMaterialization[];
+  conflicts: WorkspaceSkillConflict[];
+  blockedInstallations: BlockedWorkspaceSkillInstallation[];
+  reloadRequired: boolean;
+};
+
 export interface SkillResolveCandidate {
   name: string;
   score: number;

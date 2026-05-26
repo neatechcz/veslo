@@ -295,6 +295,70 @@ export type SkillInventoryItem = {
   status: SkillInventoryStatus;
 };
 
+export type ManagedSkillSource = "personal" | "workspace" | "organization" | "platform";
+
+export type WorkspaceSkillSetUpdatePolicy = "pinned" | "latest_user" | "latest_approved" | "release_channel";
+
+export type WorkspaceSkillRegistryInstallation = {
+  installationId: string;
+  skillId: string;
+  name: string;
+  versionId: string;
+  packageSha256: string;
+  enabled: boolean;
+  source: ManagedSkillSource;
+  installedAt: string;
+  ownerUserId?: string | null;
+  orgId?: string | null;
+  workspaceId?: string | null;
+  approved?: boolean;
+  updatePolicy?: WorkspaceSkillSetUpdatePolicy;
+  releaseChannel?: string | null;
+  desiredVersionId?: string | null;
+  desiredPackageSha256?: string | null;
+};
+
+export type ResolvedWorkspaceSkill = {
+  installationId: string;
+  skillId: string;
+  name: string;
+  versionId: string;
+  packageSha256: string;
+  source: ManagedSkillSource;
+  target: "workspace" | "personal-global";
+};
+
+export type WorkspaceSkillMaterialization = {
+  installationId: string;
+  skillId: string;
+  name: string;
+  versionId: string;
+  packageSha256: string;
+  target: "workspace" | "personal-global";
+};
+
+export type WorkspaceSkillConflict = {
+  code: "personal-global-shadowed" | "unmanaged-local-shadowed";
+  name: string;
+  message: string;
+  blockingInstallationId?: string;
+  blockedInstallationId?: string;
+  localPath?: string;
+};
+
+export type WorkspaceSkillSetResolution = {
+  effectiveManagedSkills: ResolvedWorkspaceSkill[];
+  requiredMaterializations: WorkspaceSkillMaterialization[];
+  conflicts: WorkspaceSkillConflict[];
+  blockedInstallations: Array<{
+    installationId: string;
+    skillId: string;
+    name: string;
+    reason: "disabled" | "not-approved" | "out-of-scope" | "shadowed";
+  }>;
+  reloadRequired: boolean;
+};
+
 export type HubMcpItem = {
   id: string;
   name: string;
