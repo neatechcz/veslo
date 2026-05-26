@@ -51,7 +51,7 @@ CREATE TABLE `skill_versions` (
 --> statement-breakpoint
 CREATE UNIQUE INDEX `skill_version_skill_number` ON `skill_versions` (`skill_id`, `version_number`);
 --> statement-breakpoint
-CREATE UNIQUE INDEX `skill_version_manifest_sha256` ON `skill_versions` (`manifest_sha256`);
+CREATE INDEX `skill_version_manifest_sha256` ON `skill_versions` (`manifest_sha256`);
 --> statement-breakpoint
 CREATE INDEX `skill_versions_org_skill` ON `skill_versions` (`org_id`, `skill_id`);
 --> statement-breakpoint
@@ -70,6 +70,7 @@ CREATE TABLE `skill_version_files` (
   `size_bytes` int unsigned NOT NULL,
   `media_type` varchar(255) NOT NULL,
   `executable` boolean NOT NULL DEFAULT false,
+  `text_content` longtext,
   `created_at` timestamp(3) NOT NULL DEFAULT (now()),
   CONSTRAINT `skill_version_files_id` PRIMARY KEY(`id`)
 );
@@ -86,6 +87,7 @@ CREATE TABLE `skill_blobs` (
   `size_bytes` int unsigned NOT NULL,
   `media_type` varchar(255) NOT NULL,
   `storage_key` varchar(1024) NOT NULL,
+  `content_base64` longtext NOT NULL,
   `created_at` timestamp(3) NOT NULL DEFAULT (now()),
   CONSTRAINT `skill_blobs_id` PRIMARY KEY(`id`)
 );
@@ -210,6 +212,7 @@ CREATE TABLE `skill_review_requests` (
   `status` enum('pending','approved','rejected','cancelled') NOT NULL DEFAULT 'pending',
   `requested_by_user_id` varchar(64) NOT NULL,
   `reason` text,
+  `release_channel` varchar(128),
   `reviewer_note` text,
   `resolved_by_user_id` varchar(64),
   `resolved_at` timestamp(3),

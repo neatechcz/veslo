@@ -121,7 +121,7 @@ export const SkillVersionTable = mysqlTable(
   },
   (table) => [
     uniqueIndex("skill_version_skill_number").on(table.skill_id, table.version_number),
-    uniqueIndex("skill_version_manifest_sha256").on(table.manifest_sha256),
+    index("skill_version_manifest_sha256").on(table.manifest_sha256),
     index("skill_versions_org_skill").on(table.org_id, table.skill_id),
     index("skill_versions_org_status").on(table.org_id, table.status),
     index("skill_versions_status").on(table.status),
@@ -136,6 +136,7 @@ export const SkillBlobTable = mysqlTable(
     size_bytes: int("size_bytes", { unsigned: true }).notNull(),
     media_type: varchar("media_type", { length: 255 }).notNull(),
     storage_key: varchar("storage_key", { length: 1024 }).notNull(),
+    content_base64: longtext("content_base64").notNull(),
     ...createdAt,
   },
   (table) => [
@@ -156,6 +157,7 @@ export const SkillVersionFileTable = mysqlTable(
     size_bytes: int("size_bytes", { unsigned: true }).notNull(),
     media_type: varchar("media_type", { length: 255 }).notNull(),
     executable: boolean("executable").notNull().default(false),
+    text_content: longtext("text_content"),
     ...createdAt,
   },
   (table) => [
@@ -277,6 +279,7 @@ export const SkillReviewRequestTable = mysqlTable(
     status: mysqlEnum("status", SkillReviewRequestStatus).notNull().default("pending"),
     requested_by_user_id: userIdColumn("requested_by_user_id").notNull(),
     reason: text("reason"),
+    release_channel: varchar("release_channel", { length: 128 }),
     reviewer_note: text("reviewer_note"),
     resolved_by_user_id: userIdColumn("resolved_by_user_id"),
     resolved_at: timestamp("resolved_at", { fsp: 3 }),

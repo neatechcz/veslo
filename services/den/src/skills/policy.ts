@@ -139,7 +139,8 @@ export function validateManagedSkillInstallationApproval(input: {
     return { ok: false, code: "approval_id_mismatch" }
   }
 
-  if (approval.scope !== installation.scope) {
+  const systemApprovalForOrgInstall = installation.scope === "org" && approval.scope === "system"
+  if (approval.scope !== installation.scope && !systemApprovalForOrgInstall) {
     return { ok: false, code: "approval_scope_mismatch" }
   }
 
@@ -156,10 +157,10 @@ export function validateManagedSkillInstallationApproval(input: {
   }
 
   if (installation.scope === "org") {
-    if (!installation.orgId || approval.orgId !== installation.orgId) {
+    if (!installation.orgId || (!systemApprovalForOrgInstall && approval.orgId !== installation.orgId)) {
       return { ok: false, code: "approval_org_mismatch" }
     }
-    if (version.orgId != null && version.orgId !== installation.orgId) {
+    if (!systemApprovalForOrgInstall && version.orgId != null && version.orgId !== installation.orgId) {
       return { ok: false, code: "version_org_mismatch" }
     }
   }

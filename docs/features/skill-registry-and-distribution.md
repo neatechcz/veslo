@@ -41,6 +41,7 @@ The expected cloud registry routes are:
 - `POST /v1/skill-review-requests/:requestId/approve`
 - `POST /v1/skill-review-requests/:requestId/reject`
 - `GET /v1/skills/search`
+- `GET /v1/skill-registry-events`
 
 ## Authorization
 
@@ -51,6 +52,8 @@ Workspace collaborators can read workspace skill sets. Workspace admins can patc
 Org skill admins can manage organization-scoped skills, review requests, approvals, rejections, restores, and org installations.
 
 Platform admins can manage platform-scoped skills and moderate registry state across tenants.
+
+Registry event polling returns ordered mutation events visible to the caller and can be narrowed by org, workspace, cursor, and limit. Clients can use it as the baseline update transport until an SSE or WebSocket stream is available.
 
 ## Local Runtime Contract
 

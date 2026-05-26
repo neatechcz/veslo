@@ -70,6 +70,8 @@ Expected registry routes:
   Reject a review request with reviewer rationale.
 - `GET /v1/skills/search`
   Search visible skills by text query, tags, owner scope, review status, and package metadata.
+- `GET /v1/skill-registry-events`
+  Poll ordered registry mutation events visible to the caller. Supports org, workspace, cursor, and limit filters.
 
 Auth scopes:
 

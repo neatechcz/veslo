@@ -76,6 +76,8 @@ test("skill_versions, version files, and blobs are immutable schema rows", () =>
   const versionBlock = tableBlock(migration, "skill_versions")
   assert.match(versionBlock, /`manifest_sha256` varchar\(64\) NOT NULL/)
   assert.match(versionBlock, /`package_sha256` varchar\(64\) NOT NULL/)
+  assert.match(migration, /CREATE INDEX `skill_version_manifest_sha256` ON `skill_versions` \(`manifest_sha256`\)/)
+  assert.doesNotMatch(migration, /CREATE UNIQUE INDEX `skill_version_manifest_sha256`/)
   const skillVersionTrigger = triggerStatement(migration, "skill_versions_prevent_update")
   assert.match(skillVersionTrigger, /SET NEW\.id = IF\(/)
   for (const immutableColumn of [
@@ -203,6 +205,17 @@ test("approved org and system installation policy rejects unapproved or mismatch
   )
   assert.deepEqual(
     skillPolicy.validateManagedSkillInstallationApproval({
+      installation: {
+        ...orgInstallation,
+        approvalId: "approval_system",
+      },
+      version: { ...approvedVersion, orgId: null },
+      approval: { ...orgApproval, id: "approval_system", scope: "system", orgId: null },
+    }),
+    { ok: true },
+  )
+  assert.deepEqual(
+    skillPolicy.validateManagedSkillInstallationApproval({
       installation: orgInstallation,
       version: { ...approvedVersion, status: "draft" },
       approval: orgApproval,
@@ -272,6 +285,7 @@ test("skill version files use a bounded path hash for version uniqueness", () =>
 
   assert.match(fileBlock, /`path` varchar\(1024\) NOT NULL/)
   assert.match(fileBlock, /`path_sha256` varchar\(64\) NOT NULL/)
+  assert.match(fileBlock, /`text_content` longtext/)
   assert.match(
     migration,
     /CREATE UNIQUE INDEX `skill_version_file_version_path_sha` ON `skill_version_files` \(`version_id`, `path_sha256`\)/,
@@ -283,12 +297,14 @@ test("registry uniqueness keys avoid nullable owner and release-channel columns"
   const migration = readMigration()
   const skillBlock = tableBlock(migration, "skills")
   const approvalBlock = tableBlock(migration, "skill_approvals")
+  const reviewRequestBlock = tableBlock(migration, "skill_review_requests")
 
   assert.match(skillBlock, /`scope_owner_key` varchar\(255\) NOT NULL/)
   assert.match(migration, /CREATE UNIQUE INDEX `skills_scope_owner_name` ON `skills` \(`scope`, `scope_owner_key`, `name`\)/)
 
   assert.match(approvalBlock, /`approval_owner_key` varchar\(255\) NOT NULL/)
   assert.match(approvalBlock, /`release_channel_key` varchar\(128\) NOT NULL DEFAULT 'default'/)
+  assert.match(reviewRequestBlock, /`release_channel` varchar\(128\)/)
   assert.match(
     migration,
     /CREATE UNIQUE INDEX `skill_approval_scope_version` ON `skill_approvals` \(`scope`, `approval_owner_key`, `version_id`, `release_channel_key`\)/,
@@ -357,6 +373,7 @@ test("skill package blobs are content-addressed and globally de-duplicated by ha
 
   assert.match(blobBlock, /`sha256` varchar\(64\) NOT NULL/)
   assert.match(blobBlock, /`size_bytes` int unsigned NOT NULL/)
+  assert.match(blobBlock, /`content_base64` longtext NOT NULL/)
   assert.match(migration, /CREATE UNIQUE INDEX `skill_blob_sha256` ON `skill_blobs` \(`sha256`\)/)
 })
 

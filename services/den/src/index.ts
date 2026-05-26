@@ -25,6 +25,8 @@ import {
 } from "./managed-ai/credentials/openai-oauth.js"
 import { createProxyRouter } from "./managed-ai/http/proxy.js"
 import { createUserCredentialsRouter } from "./managed-ai/http/user-credentials.js"
+import { createDbSkillRegistryStore } from "./skills/db-store.js"
+import { createSkillRegistryRouter } from "./skills/routes.js"
 import {
   createDefaultProxyDependencies,
   createDefaultRuntimeState,
@@ -59,6 +61,7 @@ const feedbackProjector = createFeedbackProjector({
 const feedbackRouter = createFeedbackRouter({
   projector: feedbackProjector,
 })
+const skillRegistryStore = createDbSkillRegistryStore(db)
 const debugLogStore = createDbDebugLogStore(db)
 const debugLogService = env.debugLogs.masterKey && env.debugLogs.masterKeyVersion
   ? createDebugLogService({
@@ -110,6 +113,7 @@ function handleRootRequest(req: express.Request, res: express.Response) {
 app.get("/", handleRootRequest)
 app.get("/index.html", handleRootRequest)
 app.use(express.static(publicDir, { index: false }))
+app.use("/v1", createSkillRegistryRouter({ store: skillRegistryStore }))
 
 if (managedAiRuntime) {
   app.use(
