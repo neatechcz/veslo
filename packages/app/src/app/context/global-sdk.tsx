@@ -12,7 +12,6 @@ import {
 
 import { extractSessionId } from "../utils";
 import { reportError } from "../lib/error-reporter";
-import { engineSseSubscribe, isEngineSseAvailable } from "../lib/engine-sse";
 import { usePlatform } from "./platform";
 import { useServer } from "./server";
 
@@ -130,18 +129,13 @@ export function GlobalSDKProvider(props: ParentProps) {
     };
 
     void (async () => {
-      // VSLO-86 — when running in Tauri, hold the SSE stream entirely in Rust
-      // via engine_sse_subscribe so it doesn't keep an `fetch_read_body`
-      // invoke pending on the http plugin's IPC channel (that pending invoke
-      // was starving paralel short requests like sidebar session listing).
-      // Outside Tauri (dev web build) we still use the SDK path.
-      const subscription = isEngineSseAvailable()
-        ? await engineSseSubscribe({
-            workspaceId: "global",
-            baseUrl,
-            signal: abort.signal,
-          })
-        : await eventClient.event.subscribe(undefined, { signal: abort.signal });
+      // VSLO-86 — global SDK SSE targets veslo-server (Bearer auth required).
+      // The Rust SSE proxy was opened against this URL without a token, which
+      // caused a 401 reconnect loop that spammed the Tauri http plugin and
+      // froze paralel veslo-server calls (workspace activate, AI access). The
+      // per-workspace engine SSE (session.ts) still uses the Rust proxy where
+      // the engine accepts the orchestrator daemon's Basic auth credentials.
+      const subscription = await eventClient.event.subscribe(undefined, { signal: abort.signal });
       let yielded = Date.now();
 
       for await (const event of subscription.stream as AsyncIterable<unknown>) {
