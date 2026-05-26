@@ -78,6 +78,24 @@ pub fn reconcile_server_workspaces(app: &AppHandle) -> usize {
         }
     };
 
+    // Wait for veslo-server to actually start accepting connections before
+    // POSTing. start_veslo_server returns when the child process is spawned,
+    // not when bun has finished loading + listening. Posting too early just
+    // logs "Connection refused" for every workspace and leaves the registry
+    // empty until the next engine_start call. Poll /health for up to ~5s.
+    if let Some((base_url, _)) = collect_server_state(app) {
+        let probe_url = format!("{}/health", base_url.trim_end_matches('/'));
+        let probe_agent = ureq::AgentBuilder::new()
+            .timeout(Duration::from_millis(800))
+            .build();
+        for _ in 0..10 {
+            if probe_agent.get(&probe_url).call().is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    }
+
     let mut registered = 0usize;
     for workspace in state.workspaces.iter() {
         if !matches!(workspace.workspace_type, WorkspaceType::Local) {
