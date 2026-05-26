@@ -1,6 +1,8 @@
 use tauri::{AppHandle, Manager, State};
 
 use crate::commands::opencode_router::opencodeRouter_start;
+use crate::commands::orchestrator::reconcile_orchestrator_workspaces;
+use crate::workspace::server_client::reconcile_server_workspaces;
 use crate::config::{read_opencode_config, write_opencode_config};
 use crate::engine::doctor::{
     opencode_serve_help, opencode_version, resolve_engine_path, resolve_sidecar_candidate,
@@ -14,7 +16,7 @@ use crate::orchestrator::{self, OrchestratorSpawnOptions};
 use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
 use crate::env_guard::EnvVarGuard;
 use crate::utils::truncate_output;
-use crate::veslo_server::{manager::VesloServerManager, resolve_connect_url, start_veslo_server};
+use crate::veslo_server::{manager::VesloServerManager, start_veslo_server};
 use serde_json::json;
 use std::time::Duration;
 use tauri_plugin_shell::process::CommandEvent;
@@ -104,10 +106,87 @@ fn should_retry_orchestrator_start(attempt: usize, max_attempts: usize, child_ex
     child_exited && attempt < max_attempts && max_attempts > 1
 }
 
+/// VSLO-171 F2Ú7 (dev only): auto-spawn orchestrator daemon shortly after app
+/// boot so the UI can use per-workspace `engine_info(workspaceId)` without
+/// requiring an explicit user action. Runs on a dedicated OS thread because
+/// `engine_start` does blocking I/O (spawns binaries, waits for health).
+///
+/// No-op when:
+/// - the engine is already running (frontend onboarding got there first), or
+/// - the home directory can't be resolved, or
+/// - directory creation/spawning fails (logged to stderr, not surfaced).
+#[cfg(debug_assertions)]
+pub fn spawn_orchestrator_dev_autostart(app: AppHandle) {
+    use std::thread;
+    use std::time::Duration;
+    use tauri::Manager;
+
+    thread::spawn(move || {
+        // Let UI mount and onboarding flow finish first; if the user picks a
+        // real workspace within this window, that engine_start wins and ours
+        // becomes a no-op (see check below).
+        thread::sleep(Duration::from_millis(1500));
+
+        let engine_manager = app.state::<EngineManager>();
+        let already_running = engine_manager
+            .inner
+            .lock()
+            .ok()
+            .map(|state| state.base_url.is_some())
+            .unwrap_or(false);
+        if already_running {
+            eprintln!("[dev-autostart] engine already running — skipping");
+            return;
+        }
+
+        let Some(home) = crate::paths::home_dir() else {
+            eprintln!("[dev-autostart] HOME not found — skipping");
+            return;
+        };
+        let scratch = home.join(".veslo").join("scratch");
+        if let Err(e) = std::fs::create_dir_all(&scratch) {
+            eprintln!("[dev-autostart] mkdir {:?} failed: {}", scratch, e);
+            return;
+        }
+
+        let project_dir = scratch.to_string_lossy().to_string();
+        eprintln!("[dev-autostart] starting orchestrator at {}", project_dir);
+        // Force `prefer_sidecar = true`: the dev autostart runs before the
+        // frontend has a chance to surface the user's engineSource preference,
+        // so without this override the path resolver falls back to system
+        // PATH and picks /opt/homebrew/bin/opencode (typically 1.3.2),
+        // incompatible with the bundled orchestrator (expects 1.14.29).
+        // Engine spawns then silently time out.
+        let result = engine_start(
+            app.clone(),
+            app.state::<EngineManager>(),
+            app.state::<OrchestratorManager>(),
+            app.state::<VesloServerManager>(),
+            app.state::<OpenCodeRouterManager>(),
+            project_dir,
+            Some(true),
+            None,
+            Some(EngineRuntime::Orchestrator),
+            None,
+            None,
+            None,
+        );
+        match result {
+            Ok(info) => eprintln!(
+                "[dev-autostart] orchestrator ready, base_url={:?}",
+                info.base_url
+            ),
+            Err(e) => eprintln!("[dev-autostart] failed: {}", e),
+        }
+    });
+}
+
 #[tauri::command]
 pub fn engine_info(
     manager: State<EngineManager>,
     orchestrator_manager: State<OrchestratorManager>,
+    workspace_id: Option<String>,
+    workspace_path: Option<String>,
 ) -> EngineInfo {
     let (
         direct_snapshot,
@@ -118,7 +197,10 @@ pub fn engine_info(
     ) = {
         let mut state = manager.inner.lock().expect("engine mutex poisoned");
         let direct_snapshot = EngineManager::snapshot_locked(&mut state);
-        if state.runtime != EngineRuntime::Orchestrator && direct_snapshot.running {
+        if workspace_id.is_none()
+            && state.runtime != EngineRuntime::Orchestrator
+            && direct_snapshot.running
+        {
             return direct_snapshot;
         }
         (
@@ -167,6 +249,64 @@ pub fn engine_info(
     let auth_project_dir = auth_snapshot
         .as_ref()
         .and_then(|auth| auth.project_dir.clone());
+
+    // Per-workspace branch: route to a pooled engine via the orchestrator's
+    // /workspace/:id/opencode/* proxy (F2Ú2). The SDK still talks to the
+    // returned base_url; the orchestrator injects x-opencode-directory and
+    // basic auth on the way to the upstream engine.
+    if let Some(ref ws_id) = workspace_id {
+        let daemon_port = status.daemon.as_ref().map(|d| d.port);
+        // VSLO-171 F3 fix — frontend and orchestrator maintain independent
+        // workspace ID stores; the frontend ID may not match the orchestrator's
+        // ID even though both refer to the same path. If the caller-provided
+        // ws_id doesn't resolve in orchestrator state, fall back to a
+        // path-based lookup using workspace_path. The proxy URL must use the
+        // *orchestrator's* ID — otherwise the proxy returns 404 "workspace not
+        // found" on the first request and the engine never starts.
+        let by_id = status.workspaces.iter().find(|ws| &ws.id == ws_id);
+        let by_path = workspace_path.as_ref().and_then(|path| {
+            let normalized = path.trim_end_matches('/');
+            status
+                .workspaces
+                .iter()
+                .find(|ws| ws.path.trim_end_matches('/') == normalized)
+        });
+        let resolved_ws = by_id.or(by_path);
+        let resolved_ws_id = resolved_ws.map(|ws| ws.id.clone()).unwrap_or_else(|| ws_id.clone());
+        let engine = status
+            .engines
+            .iter()
+            .find(|e| e.workspace_id == resolved_ws_id);
+        let workspace_path = resolved_ws
+            .map(|ws| ws.path.clone())
+            .or_else(|| engine.map(|e| e.workdir.clone()));
+        // Workspace IDs are `ws-` + 12 hex chars (see workspaceIdForLocal in
+        // packages/orchestrator/src/cli.ts); they are URL-safe, no encoding needed.
+        let proxy_base_url = daemon_port
+            .map(|port| format!("http://127.0.0.1:{port}/workspace/{resolved_ws_id}/opencode"));
+        let running = engine
+            .map(|e| matches!(e.state.as_str(), "ready" | "idle"))
+            .unwrap_or(false);
+        // VSLO-171 — always return the orchestrator proxy URL when daemon is
+        // up. Engines are lazy-spawned by the proxy on the first request, so
+        // gating base_url on the engine being "ready" prevented connectToServer
+        // from running for a workspace the user just clicked into for the
+        // first time (sendPrompt would block with no client).
+        return EngineInfo {
+            running,
+            runtime: EngineRuntime::Orchestrator,
+            base_url: proxy_base_url,
+            project_dir: workspace_path,
+            hostname: Some("127.0.0.1".to_string()),
+            port: engine.map(|e| e.port),
+            opencode_username,
+            opencode_password,
+            pid: engine.map(|e| e.pid),
+            last_stdout: orchestrator_stdout,
+            last_stderr: orchestrator_stderr,
+        };
+    }
+
     let opencode = status.opencode.clone();
     let base_url = opencode
         .as_ref()
@@ -224,6 +364,7 @@ pub fn engine_info(
 
 #[tauri::command]
 pub fn engine_stop(
+    app: AppHandle,
     manager: State<EngineManager>,
     orchestrator_manager: State<OrchestratorManager>,
     veslo_manager: State<VesloServerManager>,
@@ -237,6 +378,8 @@ pub fn engine_stop(
     if let Ok(mut veslo_state) = veslo_manager.inner.lock() {
         VesloServerManager::stop_locked(&mut veslo_state);
     }
+    // VSLO-86 — keep disk state.json in sync with the actually-stopped server.
+    let _ = crate::veslo_server::clear_persisted_veslo_server_info(&app);
     if let Ok(mut opencode_router_state) = opencode_router_manager.inner.lock() {
         OpenCodeRouterManager::stop_locked(&mut opencode_router_state);
     }
@@ -274,6 +417,8 @@ pub fn engine_restart(
         None,
         Some(runtime),
         Some(workspace_paths),
+        None,
+        None,
     )
 }
 
@@ -374,6 +519,9 @@ pub fn engine_start(
     opencode_bin_path: Option<String>,
     runtime: Option<EngineRuntime>,
     workspace_paths: Option<Vec<String>>,
+    // VSLO-171 F3Ú9: Settings Performance panel passes pool tuning.
+    max_engines: Option<u32>,
+    idle_suspend_ms: Option<u64>,
 ) -> Result<EngineInfo, String> {
     let project_dir = project_dir.trim().to_string();
     if project_dir.is_empty() {
@@ -498,6 +646,8 @@ pub fn engine_start(
                 opencode_username: opencode_username.clone(),
                 opencode_password: opencode_password.clone(),
                 cors: Some("*".to_string()),
+                max_engines,
+                idle_suspend_ms,
             };
 
             let (mut rx, child) = orchestrator::spawn_orchestrator_daemon(&app, &spawn_options)?;
@@ -649,13 +799,38 @@ pub fn engine_start(
             "Failed to start orchestrator: retry loop exhausted without a successful health check."
                 .to_string()
         })?;
-        let opencode = health
+
+        // VSLO-171 F2Ú3 removed the legacy singleton `opencode` field from
+        // /health — in multi-mode the orchestrator spawns per-workspace engines
+        // lazily through its proxy. Route via the daemon proxy URL when no
+        // singleton is reported; fall back to the singleton path for backward
+        // compatibility if `opencode` is still present.
+        let daemon_port = health
+            .daemon
+            .as_ref()
+            .map(|d| d.port)
+            .unwrap_or_else(|| {
+                health
+                    .opencode
+                    .as_ref()
+                    .map(|o| o.port)
+                    .unwrap_or(0)
+            });
+        let active_ws_id = health.active_id.clone();
+        let opencode_port = health
             .opencode
-            .ok_or_else(|| "Orchestrator did not report OpenCode status".to_string())?;
-        let opencode_port = opencode.port;
-        let opencode_base_url = format!("http://127.0.0.1:{opencode_port}");
-        let opencode_connect_url =
-            resolve_connect_url(opencode_port).unwrap_or_else(|| opencode_base_url.clone());
+            .as_ref()
+            .map(|o| o.port)
+            .unwrap_or(daemon_port);
+        let opencode_pid = health.opencode.as_ref().map(|o| o.pid);
+        let opencode_base_url = if let Some(ref ws_id) = active_ws_id {
+            format!("http://127.0.0.1:{daemon_port}/workspace/{ws_id}/opencode")
+        } else {
+            format!("http://127.0.0.1:{daemon_port}")
+        };
+        // Loopback only — daemon binds 127.0.0.1; LAN URL (resolve_connect_url)
+        // would loop router/server health checks against an unreachable address.
+        let opencode_connect_url = format!("http://127.0.0.1:{opencode_port}");
 
         if let Ok(mut state) = manager.inner.lock() {
             state.runtime = EngineRuntime::Orchestrator;
@@ -684,7 +859,7 @@ pub fn engine_start(
             }
         };
 
-        if let Err(error) = start_veslo_server(
+        let veslo_started = start_veslo_server(
             &app,
             &veslo_manager,
             &workspace_paths,
@@ -692,10 +867,19 @@ pub fn engine_start(
             opencode_username.as_deref(),
             opencode_password.as_deref(),
             opencode_router_health_port,
-        ) {
+        );
+        if let Err(error) = veslo_started {
             if let Ok(mut state) = manager.inner.lock() {
                 state.last_stderr = Some(truncate_output(&format!("Veslo server: {error}"), 8000));
             }
+        }
+        // Reconcile every engine_start call (not only on fresh spawn), because
+        // start_veslo_server has an idempotent-reuse fast path that skips the
+        // reconcile branch — sidebar clicks on workspaces added after the
+        // initial boot would otherwise stay unknown to veslo-server.
+        let count = reconcile_server_workspaces(&app);
+        if count > 0 {
+            eprintln!("[veslo-server] reconciled {count} workspace(s)");
         }
 
         if let Err(error) = opencodeRouter_start(
@@ -713,6 +897,20 @@ pub fn engine_start(
             }
         }
 
+        // Reconcile orchestrator registry with Tauri-side workspace list. Without
+        // this the daemon only learns about workspaces that get explicitly
+        // activated, and a sidebar click on any unseen workspace would 404 on
+        // /workspaces/:id/activate and stall the 30s frontend timeout.
+        match reconcile_orchestrator_workspaces(&app, &orchestrator_manager) {
+            Ok(count) if count > 0 => {
+                eprintln!("[orchestrator] reconciled {count} workspace(s)");
+            }
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!("[orchestrator] reconcile failed: {error}");
+            }
+        }
+
         return Ok(EngineInfo {
             running: true,
             runtime: EngineRuntime::Orchestrator,
@@ -722,7 +920,7 @@ pub fn engine_start(
             port: Some(opencode_port),
             opencode_username,
             opencode_password,
-            pid: Some(opencode.pid),
+            pid: opencode_pid,
             last_stdout: None,
             last_stderr: None,
         });
@@ -867,8 +1065,7 @@ pub fn engine_start(
     state.opencode_username = opencode_username.clone();
     state.opencode_password = opencode_password.clone();
 
-    let opencode_connect_url =
-        resolve_connect_url(port).unwrap_or_else(|| format!("http://{client_host}:{port}"));
+    let opencode_connect_url = format!("http://127.0.0.1:{port}");
     let opencode_router_health_port = match resolve_opencode_router_health_port() {
         Ok(port) => Some(port),
         Err(error) => {

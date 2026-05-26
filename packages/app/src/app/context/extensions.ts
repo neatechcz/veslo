@@ -43,8 +43,11 @@ import { readDenAuth } from "../lib/den-auth";
 
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
 
+import type { WorkspaceRouting } from "./workspace-routing";
+
 export function createExtensionsStore(options: {
   client: () => Client | null;
+  routing: WorkspaceRouting;
   projectDir: () => string;
   activeWorkspaceRoot: () => string;
   workspaceType: () => "local" | "remote";
@@ -474,7 +477,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    const c = options.client();
+    const c = options.routing.active();
     if (!c) {
       setSkills([]);
       setSkillsStatus("Veslo server unavailable. Connect to load skills.");

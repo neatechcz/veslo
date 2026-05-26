@@ -11,6 +11,8 @@ export const AUTO_COMPACT_CONTEXT_PREF_KEY = "veslo.autoCompactContext";
 export const ENGINE_SOURCE_PREF_KEY = "veslo.engineSource";
 export const ENGINE_SOURCE_EXPLICIT_PREF_KEY = "veslo.engineSourceExplicit";
 export const ENGINE_CUSTOM_BIN_PATH_PREF_KEY = "veslo.engineCustomBinPath";
+export const MAX_ENGINES_PREF_KEY = "veslo.maxEngines";
+export const IDLE_SUSPEND_MS_PREF_KEY = "veslo.idleSuspendMs";
 
 export const DEFAULT_MODEL: ModelRef = {
   providerID: "opencode",

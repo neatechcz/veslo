@@ -171,6 +171,7 @@ export type SessionViewProps = {
   activeWorkspaceId: string;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
+  readyEngineWorkspaceIds?: Set<string>;
   activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   testWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean;
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
@@ -236,6 +237,7 @@ export type SessionViewProps = {
   lastPromptSent: string;
   retryLastPrompt: () => void;
   newTaskDisabled: boolean;
+  pendingPermissionCountByWs?: Record<string, number>;
   workspaceSessionGroups: WorkspaceSessionGroup[];
   workspaceSessionPagingById: Record<string, { hasMore: boolean; loadingMore: boolean }>;
   subagentDecorationsBySessionId: Record<string, SidebarSubagentDecoration>;
@@ -1793,7 +1795,7 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     const isRemoteWorkspace = props.activeWorkspaceDisplay.workspaceType === "remote";
-    const preferLocalOpen = !isRemoteWorkspace || isSandboxWorkspace();
+    const preferLocalOpen = !isRemoteWorkspace;
 
     try {
       if (preferLocalOpen) {
@@ -3866,7 +3868,6 @@ export default function SessionView(props: SessionViewProps) {
     });
   };
 
-  const isSandboxWorkspace = createMemo(() => Boolean((props.activeWorkspaceDisplay as any)?.sandboxContainerName?.trim()));
   let pendingSessionLoadAttempt = 0;
 
   const handleDraftChange = (draft: ComposerDraft) => {
@@ -4245,12 +4246,14 @@ export default function SessionView(props: SessionViewProps) {
             archivedSessionIds={props.archivedSessionIds}
             activeWorkspaceId={props.activeWorkspaceId}
             selectedSessionId={props.selectedSessionId}
+            pendingPermissionCountByWs={props.pendingPermissionCountByWs}
             pendingSelectedSessionId={props.pendingSessionLoad?.sessionId ?? null}
             pendingSelectedWorkspaceId={props.pendingSessionLoad?.workspaceId ?? null}
             suspendProjectReorder={Boolean(props.pendingSessionLoad)}
             sessionStatusById={props.sessionStatusById}
             connectingWorkspaceId={props.connectingWorkspaceId}
             workspaceConnectionStateById={props.workspaceConnectionStateById}
+            readyEngineWorkspaceIds={props.readyEngineWorkspaceIds}
             newTaskDisabled={props.newTaskDisabled}
             importingWorkspaceConfig={props.importingWorkspaceConfig}
             showRemoteActions={props.showRemoteActions}
@@ -4773,7 +4776,6 @@ export default function SessionView(props: SessionViewProps) {
                 searchFiles={props.searchFiles}
                 listCommands={props.listCommands}
                 isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
-                isSandboxWorkspace={isSandboxWorkspace()}
                 localWorkspacePath={props.activeWorkspaceRoot}
                 canChooseSessionFolder={props.canChooseSessionFolder}
                 onChooseSessionFolder={chooseFolderForSession}

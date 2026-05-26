@@ -17,7 +17,14 @@ export type OpencodeAuth = {
   mode?: "basic" | "veslo";
 };
 
-const DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS = 10_000;
+// VSLO-86 — opencode engine cold-start (Bun JIT + SQLite migration + sandbox
+// init + plugin vendoring) routinely takes 15-30s, and the first proxy request
+// through the orchestrator after a workspace activate must wait for the engine
+// to finish spawning. A 10s frontend timeout (the previous value) raced the
+// engine warmup and surfaced as "Request timed out" Error badges on every
+// workspace in the sidebar. Once the engine is up, requests complete in tens
+// of ms — the longer ceiling only changes worst-case behavior.
+const DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS = 60_000;
 const OAUTH_OPENCODE_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const MCP_AUTH_OPENCODE_REQUEST_TIMEOUT_MS = 90_000;
 const GATEWAY_PROVIDER_SECRET_OPTION_KEYS = new Set([
@@ -33,6 +40,13 @@ const GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS = new Set([
 ]);
 const SERVER_PATCH_COMPARISON_SECRET_VALUE = "__veslo_secret__";
 const SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE = "__veslo_gateway_token__";
+// VSLO-86 — a literal "[REDACTED]" sitting in opencode.jsonc on disk is a
+// broken state from an earlier patch round-trip where the server returned
+// the redacted value and the app patched it back through formatConfig. The
+// comparison normalizer must distinguish this from a real token so the
+// boot-time effect forces a re-patch with the in-memory gateway token.
+const SERVER_PATCH_COMPARISON_REDACTED_LITERAL = "__veslo_broken_redacted_token__";
+const REDACTED_LITERAL = "[REDACTED]";
 
 export const OPENCODE_SESSION_ID_TEMPLATE = "${OPENCODE_SESSION_ID}";
 
@@ -245,18 +259,22 @@ function normalizeConfigForServerPatchComparison(value: unknown): unknown {
   for (const [key, rawValue] of Object.entries(input)) {
     const normalizedKey = normalizeConfigKey(key);
     if (normalizedKey === "xveslogatewaytoken") {
-      output[key] =
-        typeof rawValue === "string" && rawValue.trim()
-          ? SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE
-          : rawValue;
+      const trimmed = typeof rawValue === "string" ? rawValue.trim() : "";
+      if (trimmed === REDACTED_LITERAL) {
+        output[key] = SERVER_PATCH_COMPARISON_REDACTED_LITERAL;
+        continue;
+      }
+      output[key] = trimmed ? SERVER_PATCH_COMPARISON_GATEWAY_TOKEN_VALUE : rawValue;
       continue;
     }
 
     if (isGatewayProviderSecretKey(normalizedKey)) {
-      output[key] =
-        typeof rawValue === "string" && rawValue.trim()
-          ? SERVER_PATCH_COMPARISON_SECRET_VALUE
-          : rawValue;
+      const trimmed = typeof rawValue === "string" ? rawValue.trim() : "";
+      if (trimmed === REDACTED_LITERAL) {
+        output[key] = SERVER_PATCH_COMPARISON_REDACTED_LITERAL;
+        continue;
+      }
+      output[key] = trimmed ? SERVER_PATCH_COMPARISON_SECRET_VALUE : rawValue;
       continue;
     }
 

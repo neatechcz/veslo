@@ -3,6 +3,7 @@ pub mod command_files;
 pub mod config;
 pub mod den_auth;
 pub mod engine;
+pub mod engine_sse;
 pub mod misc;
 pub mod opencode_router;
 pub mod opkg;

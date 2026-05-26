@@ -9,7 +9,7 @@ const settingsTabLabelKeyByTab: Partial<Record<SettingsTab, string>> = {
   debug: "settings.debug",
 };
 
-const visibleSettingsTabs: SettingsTab[] = ["general", "extensions", "archived"];
+const visibleSettingsTabs: SettingsTab[] = ["general", "extensions", "archived", "advanced"];
 
 export const resolveVisibleSettingsTab = (settingsTab: SettingsTab, _developerMode: boolean) => {
   return visibleSettingsTabs.includes(settingsTab) ? settingsTab : "general";

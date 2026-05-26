@@ -12,6 +12,7 @@ import {
 
 import { extractSessionId } from "../utils";
 import { reportError } from "../lib/error-reporter";
+import { engineSseSubscribe, isEngineSseAvailable } from "../lib/engine-sse";
 import { usePlatform } from "./platform";
 import { useServer } from "./server";
 
@@ -128,11 +129,19 @@ export function GlobalSDKProvider(props: ParentProps) {
       flush();
     };
 
-    void (async () => {
-      const subscription = await eventClient.event.subscribe(undefined, { signal: abort.signal });
-      let yielded = Date.now();
+    // VSLO-86 — keep the SSE stream entirely on the Rust side when running in
+    // Tauri. JS-side `eventClient.event.subscribe()` holds the Tauri http
+    // plugin's IPC channel open for as long as the stream lives, which
+    // blocks every other veslo-server call (health, soul/status, config
+    // patches) until 8-12s timeouts fire and the UI looks frozen for ~60s
+    // after boot. The Rust proxy now accepts Bearer auth so the previous
+    // 401 reconnect loop (which forced us back onto the SDK path) is gone.
+    let rustSubscription: Awaited<ReturnType<typeof engineSseSubscribe>> | null = null;
+    let sdkSubscription: Awaited<ReturnType<typeof eventClient.event.subscribe>> | null = null;
 
-      for await (const event of subscription.stream as AsyncIterable<unknown>) {
+    const consumeEvents = async (stream: AsyncIterable<unknown>) => {
+      let yielded = Date.now();
+      for await (const event of stream) {
         const record = event as Event & { directory?: string; payload?: Event };
         const payload = record.payload ?? record;
         if (!payload?.type) continue;
@@ -154,12 +163,31 @@ export function GlobalSDKProvider(props: ParentProps) {
         yielded = Date.now();
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
       }
+    };
+
+    void (async () => {
+      if (isEngineSseAvailable()) {
+        rustSubscription = await engineSseSubscribe({
+          workspaceId: "__global__",
+          baseUrl,
+          bearerToken: token || null,
+          signal: abort.signal,
+        });
+        await consumeEvents(rustSubscription.stream);
+      } else {
+        sdkSubscription = await eventClient.event.subscribe(undefined, { signal: abort.signal });
+        await consumeEvents(sdkSubscription.stream as AsyncIterable<unknown>);
+      }
     })()
       .finally(stop)
       .catch(e => reportError(e, "sse.subscribe"));
 
     onCleanup(() => {
       abort.abort();
+      if (rustSubscription) {
+        void rustSubscription.close().catch(() => {});
+        rustSubscription = null;
+      }
       stop();
     });
   });

@@ -52,6 +52,7 @@ import {
   type WorkspaceInfo,
 } from "../lib/tauri";
 import { waitForHealthy, createClient, type OpencodeAuth } from "../lib/opencode";
+import type { WorkspaceRouting } from "./workspace-routing";
 import type { OpencodeConnectStatus, ProviderListItem } from "../types";
 import { t, currentLocale, isLanguage } from "../../i18n";
 import { mapConfigProvidersToList } from "../utils/providers";
@@ -74,30 +75,16 @@ export type WorkspaceDebugEvent = {
   payload?: unknown;
 };
 
-export type SandboxCreateProgressStepStatus = "pending" | "active" | "done" | "error";
-
-export type SandboxCreateProgressStep = {
-  key: "docker" | "workspace" | "sandbox" | "health" | "connect";
-  label: string;
-  status: SandboxCreateProgressStepStatus;
-  detail?: string | null;
-};
-
-export type SandboxCreateProgressState = {
-  runId: string;
-  startedAt: number;
-  stage: string;
-  steps: SandboxCreateProgressStep[];
-  logs: string[];
-  error: string | null;
-};
-
-export type SandboxCreatePhase = "idle" | "preflight" | "provisioning" | "finalizing";
-
 function _wsLog(msg: string, data?: unknown) {
   const line = `[${new Date().toISOString()}] ${msg}${data !== undefined ? " " + (typeof data === "string" ? data : JSON.stringify(data)) : ""}`;
   console.log(line);
   try { (window as any).__wsActivateLog = ((window as any).__wsActivateLog || "") + line + "\n"; } catch {}
+  // VSLO-86 — forward to Tauri stderr (/tmp/veslo.log) so ensureEngine /
+  // workspace:activate diagnostics survive without DevTools. Lazy import so
+  // module load order is preserved (workspace.ts imports tauri.ts already).
+  try {
+    void import("../lib/tauri").then((mod) => mod.logUiEvent("workspace", msg, data)).catch(() => {});
+  } catch {}
 }
 
 export function createWorkspaceStore(options: {
@@ -113,6 +100,10 @@ export function createWorkspaceStore(options: {
   setClientDirectory: (value: string) => void;
   client: () => Client | null;
   setClient: (value: Client | null) => void;
+  // VSLO-171 F3Ú4 — workspace routing service (single-active adapter today).
+  // Use `options.routing.active()` or `options.routing.client(workspaceId)`
+  // instead of `options.client()`.
+  routing: WorkspaceRouting;
   setConnectedVersion: (value: string | null) => void;
   setSseConnected: (value: boolean) => void;
   setProviders: (value: ProviderListItem[]) => void;
@@ -137,6 +128,9 @@ export function createWorkspaceStore(options: {
   refreshPlugins: () => Promise<void>;
   engineSource: () => "path" | "sidecar" | "custom";
   engineCustomBinPath?: () => string;
+  // VSLO-171 F3Ú9: pool tuning forwarded into engine-store / spawn args.
+  maxEngines?: () => number | null;
+  idleSuspendMs?: () => number | null;
   setEngineSource: (value: "path" | "sidecar" | "custom") => void;
   setView: (value: any) => void;
   setTab: (value: any) => void;
@@ -145,6 +139,7 @@ export function createWorkspaceStore(options: {
   updateVesloServerSettings: (next: VesloServerSettings) => void;
   preferServerByDefault?: () => boolean;
   vesloServerClient?: () => VesloServerClient | null;
+  vesloServerHostInfo?: () => { baseUrl?: string | null; clientToken?: string | null } | null;
   setOpencodeConnectStatus?: (status: OpencodeConnectStatus | null) => void;
   onEngineStable?: () => void;
   engineRuntime?: () => EngineRuntime;
@@ -196,15 +191,18 @@ export function createWorkspaceStore(options: {
   const connectInFlightByKey = new Map<string, Promise<boolean>>();
   const ensureEngineForWorkspaceSingleFlight = createSingleFlight<boolean>();
 
+  // VSLO-171 — flip to true once workspaceBootstrap() has populated workspaces()
+  // (or skipped on non-Tauri). Callers that need the full workspace set (engine
+  // start, veslo-server hot-register reconciliation) should wait on this.
+  const [workspacesHydrated, setWorkspacesHydrated] = createSignal(false);
+
   // Late-bound reference for the remote store — populated after createRemoteStore().
   const remoteStoreRef: {
     resolveVesloHost: (...args: any[]) => Promise<any>;
     createRemoteWorkspaceFlow: (...args: any[]) => Promise<boolean>;
-    clearSandboxCreateProgress: () => void;
   } = {
     resolveVesloHost: () => { throw new Error("remoteStore not initialized"); },
     createRemoteWorkspaceFlow: () => { throw new Error("remoteStore not initialized"); },
-    clearSandboxCreateProgress: () => {},
   };
 
   const DEFAULT_CONNECT_HEALTH_TIMEOUT_MS = 12_000;
@@ -216,7 +214,14 @@ export function createWorkspaceStore(options: {
   const WORKSPACE_SET_ACTIVE_TIMEOUT_MS = 8_000;
   const START_HOST_TIMEOUT_MS = 45_000;
   const WORKSPACE_ACTIVATE_TIMEOUT_MS = 30_000;
-  const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS = 15_000;
+  // VSLO-86 — orchestrator_workspace_activate Tauri IPC POSTs two HTTP calls
+  // to the orchestrator daemon (`/workspaces`, `/workspaces/:id/activate`).
+  // When the daemon is busy spawning an engine (cold first-message in a
+  // workspace), those POSTs serialize behind the engine spawn and the
+  // 15s window timed out → fallback startHost → another ~12s cold respawn
+  // = 27s user-visible latency. 30s comfortably covers the realistic cold
+  // spawn (sandbox-exec + opencode serve) without forcing the fallback.
+  const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS = 30_000;
   const LONG_BOOT_CONNECT_REASONS = new Set([
     "host-start",
     "workspace-orchestrator-switch",
@@ -328,23 +333,9 @@ export function createWorkspaceStore(options: {
     });
   }
 
-  function isAnyOtherWorkspaceBusy(): { workspaceId: string; displayName: string } | null {
-    const activeId = activeWorkspaceId();
-    const busy = workspaceBusy();
-    for (const [wsId, entry] of Object.entries(busy)) {
-      if (wsId === activeId) continue;
-      if (!entry) continue;
-      const ws = workspaces().find((w) => w.id === wsId);
-      const displayName =
-        ws?.displayName?.trim() ||
-        ws?.vesloWorkspaceName?.trim() ||
-        ws?.name?.trim() ||
-        ws?.path ||
-        wsId;
-      return { workspaceId: wsId, displayName };
-    }
-    return null;
-  }
+  // VSLO-171 F3Ú8: isAnyOtherWorkspaceBusy() byla smazána — multi mode
+  // garantuje paralelní engine pool, single-active fallback ztratí task
+  // tiše (žádný dialog). workspaceBusy mapa zůstává pro sidebar dot.
 
   const [workspaceConfig, setWorkspaceConfig] = createSignal<WorkspaceVesloConfig | null>(null);
   const [workspaceConfigLoaded, setWorkspaceConfigLoaded] = createSignal(false);
@@ -490,12 +481,137 @@ export function createWorkspaceStore(options: {
     try {
       const response = await client.listWorkspaces();
       const items = Array.isArray(response.items) ? response.items : [];
-      const match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
+      let match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
+      // VSLO-171 — workspace may not be registered with veslo-server yet (race
+      // with workspaceBootstrap / lazily added after spawn). Hot-register it.
+      if (!match) {
+        const local = workspaces().find(
+          (w) =>
+            w.workspaceType === "local" &&
+            normalizeDirectoryPath(w.path?.trim() ?? "") === targetPath,
+        );
+        if (local?.path) {
+          await addLocalWorkspaceOnServer(local.path, local.displayName?.trim() || local.name?.trim());
+          const refreshed = await client.listWorkspaces();
+          const refreshedItems = Array.isArray(refreshed.items) ? refreshed.items : [];
+          match = refreshedItems.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
+          if (refreshed.activeId === match?.id) return;
+        }
+      }
       if (!match?.id) return;
       if (response.activeId === match.id) return;
       await client.activateWorkspace(match.id);
     } catch {
       // ignore
+    }
+  };
+
+  // POST /workspaces/local to veslo-server. 409 (workspace already exists) is
+  // treated as success — the server already knows about this path.
+  const addLocalWorkspaceOnServer = async (path: string, name?: string) => {
+    const client = options.vesloServerClient?.();
+    if (!client) return;
+    const trimmed = path.trim();
+    if (!trimmed) return;
+    try {
+      await client.addLocalWorkspace({ path: trimmed, name: name?.trim() || undefined });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // 409 Conflict from POST /workspaces/local means the workspace is
+      // already registered — that's the desired end state, swallow silently.
+      if (!/workspace_exists|409/i.test(message)) {
+        wsDebug("addLocalWorkspaceOnServer:failed", { path: trimmed, error: message });
+      }
+    }
+  };
+
+  // VSLO-171 — bring veslo-server's workspace set in sync with the local
+  // store. Called after workspaceBootstrap so the server knows about every
+  // local workspace even if engine_start was issued before bootstrap completed.
+  const reconcileVesloServerWorkspaces = async () => {
+    const client = options.vesloServerClient?.();
+    if (!client) return;
+    let knownPaths = new Set<string>();
+    try {
+      const response = await client.listWorkspaces();
+      const items = Array.isArray(response.items) ? response.items : [];
+      knownPaths = new Set(items.map((entry) => normalizeDirectoryPath(entry.path)));
+    } catch {
+      return;
+    }
+    const missing = workspaces().filter((w) => {
+      if (w.workspaceType !== "local") return false;
+      const path = normalizeDirectoryPath(w.path?.trim() ?? "");
+      return path.length > 0 && !knownPaths.has(path);
+    });
+    for (const w of missing) {
+      if (!w.path) continue;
+      await addLocalWorkspaceOnServer(w.path, w.displayName?.trim() || w.name?.trim());
+    }
+    await reconcileManagedAiApiKeys();
+  };
+
+  // VSLO-171 — every workspace's opencode.jsonc stores the veslo-server bearer
+  // token in provider.<id>.options.apiKey (plus baseURL with the server's
+  // port). When the server respawns/relocates these values become stale and
+  // the embedded engine starts returning 401 "Invalid bearer token". The
+  // active-workspace effect in app.tsx patches the on-disk file when the user
+  // visits a workspace; this reconciliation extends the same fix to every
+  // local workspace at boot so the user doesn't need to "warm up" each one.
+  const reconcileManagedAiApiKeys = async () => {
+    const client = options.vesloServerClient?.();
+    const hostInfo = options.vesloServerHostInfo?.();
+    const currentToken = hostInfo?.clientToken?.trim() ?? "";
+    const currentBaseUrl = hostInfo?.baseUrl?.trim().replace(/\/+$/, "") ?? "";
+    if (!client || !currentToken) return;
+    let serverItems: Array<{ id: string; workspaceType?: string; path?: string }> = [];
+    try {
+      const response = await client.listWorkspaces();
+      serverItems = Array.isArray(response.items) ? response.items : [];
+    } catch {
+      return;
+    }
+    for (const ws of serverItems) {
+      if (ws.workspaceType !== "local" || !ws.id) continue;
+      try {
+        const config = await client.getConfig(ws.id);
+        const opencode = (config.opencode ?? {}) as Record<string, unknown>;
+        const provider = opencode.provider;
+        if (!provider || typeof provider !== "object") continue;
+        let changed = false;
+        for (const entry of Object.values(provider as Record<string, unknown>)) {
+          if (!entry || typeof entry !== "object") continue;
+          const opts = (entry as Record<string, unknown>).options;
+          if (!opts || typeof opts !== "object") continue;
+          const optsRecord = opts as Record<string, unknown>;
+          if (
+            typeof optsRecord.apiKey === "string" &&
+            optsRecord.apiKey !== currentToken
+          ) {
+            optsRecord.apiKey = currentToken;
+            changed = true;
+          }
+          if (
+            currentBaseUrl &&
+            typeof optsRecord.baseURL === "string"
+          ) {
+            const rest = optsRecord.baseURL.replace(/^https?:\/\/[^/]+/, "");
+            const next = `${currentBaseUrl}${rest}`;
+            if (optsRecord.baseURL !== next) {
+              optsRecord.baseURL = next;
+              changed = true;
+            }
+          }
+        }
+        if (changed) {
+          await client.patchConfig(ws.id, { opencode });
+        }
+      } catch (err) {
+        wsDebug("reconcileManagedAiApiKeys:skip", {
+          workspaceId: ws.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
   };
 
@@ -606,7 +722,7 @@ export function createWorkspaceStore(options: {
       prevActiveId: activeWorkspaceId(),
       prevProjectDir: projectDir(),
       startupPref: options.startupPreference(),
-      hasClient: Boolean(options.client()),
+      hasClient: Boolean(options.routing.active()),
     });
 
     const remoteType = isRemote ? normalizeRemoteType(next.remoteType) : "opencode";
@@ -889,7 +1005,7 @@ export function createWorkspaceStore(options: {
         return true;
       }
 
-    const wasLocalConnection = options.startupPreference() === "local" && options.client();
+    const wasLocalConnection = options.startupPreference() === "local" && options.routing.active();
     options.setStartupPreference("local");
     const nextRoot = isRemote ? next.directory?.trim() ?? "" : next.path;
     const oldWorkspacePath = projectDir();
@@ -981,12 +1097,12 @@ export function createWorkspaceStore(options: {
     // "local", and subsequent session/file actions behave inconsistently.
     _wsLog("[workspace:activate] STEP 4 — branch decision", {
       isRemote,
-      hasClient: Boolean(options.client()),
+      hasClient: Boolean(options.routing.active()),
       wasLocalConnection,
       workspaceChanged,
     });
 
-    if (!isRemote && options.client() && !wasLocalConnection) {
+    if (!isRemote && options.routing.active() && !wasLocalConnection) {
       if (isSuperseded()) {
         wsDebug("activate:superseded:before-remote-to-local", { id });
         return false;
@@ -1066,11 +1182,20 @@ export function createWorkspaceStore(options: {
     // can browse history without waiting for engine startup.  Entered when
     // switching between local workspaces (wasLocalConnection truthy) OR on
     // cold boot when no engine is running yet (client is null and startup
-    // preference has already been set to "local" by this function).
+    // preference has already been set to "local" by this function), OR when
+    // the user clicks the already-active workspace but no engine is running
+    // for it yet (post-restart lazy-boot state — without this branch the
+    // engine never spawns until a proxy request triggers pool.ensure, which
+    // then races the UI's 10s session-list timeout).
+    const enginePresentForActiveWorkspace = Boolean(
+      engineStore.engine()?.baseUrl?.trim() &&
+        (engineStore.engine()?.projectDir?.trim() ?? "") === next.path,
+    );
+    const needsEngineWarmup = !isRemote && !workspaceChanged && !enginePresentForActiveWorkspace;
     const canBrowseOffline =
-      !isRemote && workspaceChanged && isTauriRuntime() && options.populateSidebarFromDb;
-    const isColdBoot = !options.client() && options.startupPreference() === "local";
-    if (canBrowseOffline && (wasLocalConnection || isColdBoot)) {
+      !isRemote && (workspaceChanged || needsEngineWarmup) && isTauriRuntime() && options.populateSidebarFromDb;
+    const isColdBoot = !options.routing.active() && options.startupPreference() === "local";
+    if (canBrowseOffline && (wasLocalConnection || isColdBoot || needsEngineWarmup)) {
       _wsLog("[workspace:activate] STEP 5-BROWSE — browsing mode, loading from SQLite", { id, path: next.path });
       wsDebug("activate:local->local:browsingMode", { id, nextPath: next.path });
 
@@ -1081,6 +1206,14 @@ export function createWorkspaceStore(options: {
       // stays green — engineReady(false) below prevents API calls for
       // the wrong workspace, and ensureEngineForWorkspace reconnects
       // to the correct workspace on demand.
+
+      // VSLO-86 — flip engineReady BEFORE the DB hydration calls. selectSession
+      // (invoked indirectly by hydrateLatestSessionFromDb) reads this signal
+      // to decide whether to hit the SDK or the offline transcript; leaving it
+      // at the stale `true` from the previous active workspace forces an SDK
+      // session.messages call and pulls a fresh sandbox-exec engine into
+      // existence even though the user is just browsing history.
+      options.setEngineReady?.(false);
 
       try {
         await options.populateSidebarFromDb!(id, next.path);
@@ -1096,8 +1229,16 @@ export function createWorkspaceStore(options: {
         _wsLog("[workspace:activate] STEP 5-BROWSE — hydrateLatestSessionFromDb failed", e);
       }
 
-      options.setEngineReady?.(false);
       updateWorkspaceConnectionState(id, { status: "connected", message: null });
+
+      // VSLO-86 — DO NOT eager-spawn the engine here. The user is just
+      // browsing history; spawning sandbox-exec + opencode serve takes
+      // 30-60s of cold-start and locks the UI behind an "Otevírám
+      // konverzaci…" spinner before they've even decided to send anything.
+      // sendPrompt (app.tsx) already calls ensureEngineForWorkspace + the
+      // AI-access bootstrap before sending, so the engine spawns on the
+      // first real interaction (~10-15s) instead of on every sidebar click.
+
       wsDebug("activate:local->local:browsingMode:done", { id, ms: Date.now() - activateStart });
       return true;
     }
@@ -1181,7 +1322,7 @@ export function createWorkspaceStore(options: {
       reason?: string;
     },
     auth?: OpencodeAuth,
-    connectOptions?: { quiet?: boolean; navigate?: boolean },
+    connectOptions?: { quiet?: boolean; navigate?: boolean; forceRefresh?: boolean },
   ) {
     const requestKey = connectRequestKey(nextBaseUrl, directory, context, auth, connectOptions);
     const existing = connectInFlightByKey.get(requestKey);
@@ -1229,8 +1370,21 @@ export function createWorkspaceStore(options: {
     // messages and todos, so a redundant call (e.g. delayed auth-hydration
     // retry firing bootstrapOnboarding a second time) would race the user's
     // current session view and force a re-fetch.
+    // VSLO-171.F3Ú5: idempotent-skip check stays on options.client() inside
+    // connectToServer; will be replaced by routing.ensure cached-match.
+    // `forceRefresh` bypasses this guard for callers (refreshActiveClient)
+    // who *know* the cached client is stale (orchestrator port rotated).
+    // Also require that the routing entry actually still exists — without
+    // this, a released entry leaves us with a stale options.client() and
+    // the guard skips reconnect even though no per-workspace client is set.
+    const guardWorkspaceId = (context?.workspaceId ?? activeWorkspaceId() ?? "").trim();
+    const cachedRoutingClient = guardWorkspaceId
+      ? options.routing.client(guardWorkspaceId)
+      : null;
     if (
+      !connectOptions?.forceRefresh &&
       options.client() &&
+      cachedRoutingClient &&
       (options.baseUrl()?.trim() ?? "") === nextBaseUrl &&
       (options.clientDirectory()?.trim() ?? "") === incomingDirectory
     ) {
@@ -1247,6 +1401,134 @@ export function createWorkspaceStore(options: {
       return true;
     }
 
+    // VSLO-171 — connectToServer delegates to routing.ensure so the per-WS
+    // Client cached in workspace-routing.ts is reused on subsequent switches
+    // (no kill-restart, no Managed AI bootstrap timeout when returning to a
+    // previously-visited workspace). State RESET is handled by the
+    // per-workspace cache effect in app.tsx (save/load on activeWorkspaceId).
+    const multiWorkspaceId =
+      context?.workspaceId ?? activeWorkspaceId().trim() ?? "";
+    if (!multiWorkspaceId) {
+      wsDebug("connect:no-workspace-id", {
+        baseUrl: nextBaseUrl,
+        directory: directory ?? null,
+      });
+      options.setError("Connect requires a workspace id");
+      return false;
+    }
+    {
+      const multiRun = (async () => {
+        const connectStart = Date.now();
+        const quiet = connectOptions?.quiet ?? false;
+        const navigate = connectOptions?.navigate ?? true;
+        options.setError(null);
+        if (!quiet) {
+          options.setBusy(true);
+          options.setBusyLabel("status.connecting");
+          options.setBusyStartedAt(Date.now());
+        }
+        options.setSseConnected(false);
+        wsDebug("connect:multi:start", {
+          workspaceId: multiWorkspaceId,
+          baseUrl: nextBaseUrl,
+          directory: incomingDirectory || null,
+          reason: context?.reason ?? null,
+        });
+        try {
+          const entry = await options.routing.ensure(
+            multiWorkspaceId,
+            nextBaseUrl,
+            {
+              directory: incomingDirectory || undefined,
+              auth,
+              context: {
+                workspaceType: context?.workspaceType,
+                targetRoot: context?.targetRoot,
+                reason: context?.reason,
+              },
+            }
+          );
+          if (!entry) {
+            const message = "Failed to ensure workspace client";
+            options.setError(message);
+            options.setOpencodeConnectStatus?.({
+              at: Date.now(),
+              baseUrl: nextBaseUrl,
+              directory: directory ?? null,
+              reason: context?.reason ?? null,
+              status: "error",
+              error: message,
+            });
+            return false;
+          }
+          // Publish on the global client signal so callsites that still read
+          // `client()` directly (rather than `routedClient()`) see the active
+          // workspace's client. `routedClient()` prefers
+          // routing.client(activeWorkspaceId) which hits the entries Map.
+          options.setClient(entry.client);
+          options.setConnectedVersion(null);
+          options.setBaseUrl(nextBaseUrl);
+          options.setClientDirectory(entry.directory ?? incomingDirectory);
+          wsDebug("connect:ensured", {
+            workspaceId: multiWorkspaceId,
+            ms: Date.now() - connectStart,
+          });
+          // Per-workspace cache effect in app.tsx already restored sessions/
+          // messages/todos on activeWorkspaceId change. We still refresh
+          // sessions to catch updates the cache didn't have, but the cache
+          // hit means UI is responsive immediately.
+          try {
+            await options.loadSessions(context?.targetRoot);
+          } catch (e) {
+            console.warn("[workspace] multi loadSessions failed", e);
+          }
+          try {
+            await options.refreshPendingPermissions();
+          } catch (e) {
+            console.warn("[workspace] multi refreshPendingPermissions failed", e);
+          }
+          if (navigate && !options.selectedSessionId()) {
+            options.setTab("scheduled");
+            options.setView("session");
+          }
+          options.onEngineStable?.();
+          options.setOpencodeConnectStatus?.({
+            at: Date.now(),
+            baseUrl: nextBaseUrl,
+            directory: directory ?? null,
+            reason: context?.reason ?? null,
+            status: "connected",
+            error: null,
+          });
+          return true;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown connect error";
+          options.setError(message);
+          options.setOpencodeConnectStatus?.({
+            at: Date.now(),
+            baseUrl: nextBaseUrl,
+            directory: directory ?? null,
+            reason: context?.reason ?? null,
+            status: "error",
+            error: message,
+          });
+          return false;
+        } finally {
+          if (!connectOptions?.quiet) options.setBusy(false);
+        }
+      })();
+      connectInFlightByKey.set(requestKey, multiRun);
+      try {
+        return await multiRun;
+      } finally {
+        connectInFlightByKey.delete(requestKey);
+      }
+    }
+
+    // Unreachable — single-active fallback was removed along with the flag.
+    // The early `if (!multiWorkspaceId)` above is the only exit besides the
+    // multiRun result. Leaving this dead block deliberately empty so the
+    // diff stays small; future cleanup can drop the labeled scope above.
     const run = (async () => {
       console.log("[workspace] connect", {
         baseUrl: nextBaseUrl,
@@ -1331,6 +1613,8 @@ export function createWorkspaceStore(options: {
         // a fresh client + baseUrl — the session/messages on disk are still
         // valid, and clearing them forces a redundant re-fetch and visibly
         // blanks the UI for ~300ms.
+        // VSLO-171.F3Ú5: directory-changed check inside connectToServer; will
+        // be subsumed by routing.ensure lifecycle in multi mode.
         const previousDirectory = (options.clientDirectory()?.trim() ?? "");
         const directoryChanged =
           !options.client() || previousDirectory !== (resolvedDirectory ?? "");
@@ -1488,7 +1772,7 @@ export function createWorkspaceStore(options: {
 
   const openEmptySession = async (scopeRoot?: string) => {
     const root = (scopeRoot ?? activeWorkspaceRoot().trim()).trim();
-    if (options.client()) {
+    if (options.routing.active()) {
       try {
         await options.loadSessions(root || undefined);
       } catch {
@@ -1508,7 +1792,7 @@ export function createWorkspaceStore(options: {
       await openEmptySession(workspacePath);
       return true;
     }
-    const hasClient = Boolean(options.client());
+    const hasClient = Boolean(options.routing.client(workspaceId));
     const ok = hasClient
       ? await activateWorkspace(workspaceId)
       : await engineStore.startHost({ workspacePath, navigate: false });
@@ -1546,7 +1830,6 @@ export function createWorkspaceStore(options: {
     options.setBusyLabel("status.creating_workspace");
     options.setBusyStartedAt(Date.now());
     options.setError(null);
-    remoteStoreRef.clearSandboxCreateProgress();
 
     try {
       const resolvedFolder = await resolveWorkspacePath(folder);
@@ -1671,7 +1954,7 @@ export function createWorkspaceStore(options: {
     if (!id) return false;
     const activated = await activateWorkspace(id);
     if (activated === false) return false;
-    if (options.client()) return true;
+    if (options.routing.client(id)) return true;
 
     const workspace = workspaces().find((entry) => entry.id === id) ?? null;
     if (!workspace || workspace.workspaceType !== "local") {
@@ -1681,7 +1964,7 @@ export function createWorkspaceStore(options: {
 
     const started = await engineStore.startHost({ workspacePath: workspace.path, navigate: false });
     if (!started) return false;
-    return Boolean(options.client());
+    return Boolean(options.routing.client(id));
   }
 
   async function forgetWorkspace(
@@ -1843,6 +2126,7 @@ export function createWorkspaceStore(options: {
     hasPersistedLanguagePreference() ? "welcome" : "language";
 
   const engineStore = createEngineStore({
+    routing: options.routing,
     activeWorkspacePath: () => activeWorkspacePath(),
     activeWorkspaceRoot: () => activeWorkspaceRoot(),
     activeWorkspaceInfo: () => activeWorkspaceInfo(),
@@ -1854,6 +2138,8 @@ export function createWorkspaceStore(options: {
     setAuthorizedDirs,
     engineSource: options.engineSource,
     engineCustomBinPath: options.engineCustomBinPath,
+    maxEngines: options.maxEngines,
+    idleSuspendMs: options.idleSuspendMs,
     isWindowsPlatform: options.isWindowsPlatform,
     setError: options.setError,
     setBusy: options.setBusy,
@@ -1948,9 +2234,6 @@ export function createWorkspaceStore(options: {
     getVesloServerSettings: options.vesloServerSettings,
     updateVesloServerSettings: options.updateVesloServerSettings,
     getClientDirectory: options.clientDirectory,
-    engineStore: {
-      refreshSandboxDoctor: engineStore.refreshSandboxDoctor,
-    },
     connectToServer,
     activateWorkspace,
     testWorkspaceConnection,
@@ -1974,7 +2257,6 @@ export function createWorkspaceStore(options: {
   // Wire up the late-bound remote store reference.
   remoteStoreRef.resolveVesloHost = remoteStore.resolveVesloHost;
   remoteStoreRef.createRemoteWorkspaceFlow = remoteStore.createRemoteWorkspaceFlow;
-  remoteStoreRef.clearSandboxCreateProgress = remoteStore.clearSandboxCreateProgress;
 
   /** Race a promise against a timeout; resolves to undefined on timeout. */
   function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T | undefined> {
@@ -2080,7 +2362,21 @@ export function createWorkspaceStore(options: {
         }
       } catch {
         bootTrace("workspaceBootstrap FAILED (ignored)");
+      } finally {
+        setWorkspacesHydrated(true);
+        // Stale connection states (e.g. "error") from a previous orchestrator
+        // run survive soft UI restarts because the signal lives in module
+        // memory and is not persisted. Clear on every boot.
+        setWorkspaceConnectionStateById({});
       }
+      // Reconcile veslo-server's workspace registry with the local store. The
+      // server is spawned with --workspace arguments captured at engine_start
+      // time, which can race with workspaceBootstrap. Hot-register any locals
+      // the server doesn't know about so workspace switches don't 404.
+      void reconcileVesloServerWorkspaces();
+    } else {
+      setWorkspacesHydrated(true);
+      setWorkspaceConnectionStateById({});
     }
 
     bootTrace("refreshEngine + refreshEngineDoctor → background");
@@ -2401,6 +2697,8 @@ export function createWorkspaceStore(options: {
   const localRuntimeLifecycle = createLocalRuntimeLifecycle({
     engineSource: options.engineSource,
     engineCustomBinPath: options.engineCustomBinPath,
+    maxEngines: options.maxEngines,
+    idleSuspendMs: options.idleSuspendMs,
     resolveEngineRuntime,
     resolveWorkspacePaths,
     setEngine: engineStore.setEngine,
@@ -2421,6 +2719,36 @@ export function createWorkspaceStore(options: {
    * Order: engine restart → quiet connect → loadSessions → engineReady(true)
    * The engineReady guard in SSE sync prevents sidebar overwrite until sessions are loaded.
    */
+  // Re-bind the active workspace's OpenCode client to a new orchestrator
+   // base URL (port rotation after `pnpm dev` restart). Drops the cached
+   // routing entry so `routing.ensure` recreates the client against the
+   // fresh URL; `connectToServer` then re-publishes it on `client()` and
+   // `baseUrl()`. Idempotent / silent: no navigate, no busy spinner.
+  async function refreshActiveClient(nextBaseUrl: string): Promise<boolean> {
+    const url = nextBaseUrl.trim();
+    if (!url) return false;
+    const id = activeWorkspaceId().trim();
+    if (!id) return false;
+    const workspace = workspaces().find((w) => w.id === id);
+    options.routing.release(id);
+    // `forceRefresh: true` bypasses the idempotent guard in connectToServer.
+    // Without it, when the orchestrator rotates to a new port but the
+    // signal-level baseUrl was already set to the new URL by upstream code,
+    // the guard would skip and the routing entry never gets re-created.
+    return await connectToServer(
+      url,
+      workspace?.path || undefined,
+      {
+        workspaceId: id,
+        workspaceType: workspace?.workspaceType,
+        targetRoot: workspace?.path,
+        reason: "port-rotation",
+      },
+      undefined,
+      { quiet: true, navigate: false, forceRefresh: true },
+    );
+  }
+
   async function ensureEngineForWorkspace(): Promise<boolean> {
     const id = activeWorkspaceId();
     const workspace = workspaces().find((w) => w.id === id);
@@ -2428,6 +2756,18 @@ export function createWorkspaceStore(options: {
 
     return await ensureEngineForWorkspaceSingleFlight(workspace.id || workspace.path, async () => {
       _wsLog("[workspace:ensureEngine] starting engine for browsing mode", { id, path: workspace.path });
+
+      // VSLO-171 — wait for workspaces() to be fully hydrated before any
+      // engine_start call. The Rust side reads resolveWorkspacePaths() to
+      // build --workspace args for veslo-server; if bootstrap is still in
+      // flight we'd spawn the server with only the active path and later
+      // workspace switches would 404.
+      if (!workspacesHydrated()) {
+        const start = Date.now();
+        while (!workspacesHydrated() && Date.now() - start < 5_000) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
 
       // Any engine that was running for another workspace is about to be torn
       // down by restartWorkspaceRuntime/startHost — clear stale busy entries
@@ -2484,11 +2824,6 @@ export function createWorkspaceStore(options: {
     engineDoctorResult: engineStore.engineDoctorResult,
     engineDoctorCheckedAt: engineStore.engineDoctorCheckedAt,
     engineInstallLogs: engineStore.engineInstallLogs,
-    sandboxDoctorResult: engineStore.sandboxDoctorResult,
-    sandboxDoctorCheckedAt: engineStore.sandboxDoctorCheckedAt,
-    sandboxDoctorBusy: engineStore.sandboxDoctorBusy,
-    sandboxPreflightBusy: remoteStore.sandboxPreflightBusy,
-    sandboxCreatePhase: remoteStore.sandboxCreatePhase,
     projectDir,
     workspaces,
     activeWorkspaceId,
@@ -2520,11 +2855,14 @@ export function createWorkspaceStore(options: {
     refreshEngineDoctor: engineStore.refreshEngineDoctor,
     activateWorkspace,
     ensureEngineForWorkspace,
+    refreshActiveClient,
+    workspacesHydrated,
+    reconcileVesloServerWorkspaces,
+    addLocalWorkspaceOnServer,
     testWorkspaceConnection,
     connectToServer,
     createWorkspaceFlow,
     createScratchWorkspace,
-    createSandboxFlow: remoteStore.createSandboxFlow,
     createRemoteWorkspaceFlow: remoteStore.createRemoteWorkspaceFlow,
     updateRemoteWorkspaceFlow: remoteStore.updateRemoteWorkspaceFlow,
     updateWorkspaceDisplayName,
@@ -2532,7 +2870,6 @@ export function createWorkspaceStore(options: {
     ensureWorkspaceForFolder,
     forgetWorkspace,
     recoverWorkspace: remoteStore.recoverWorkspace,
-    stopSandbox: remoteStore.stopSandbox,
     pickWorkspaceFolder,
     exportWorkspaceConfig: configStore.exportWorkspaceConfig,
     importWorkspaceConfig: configStore.importWorkspaceConfig,
@@ -2557,15 +2894,11 @@ export function createWorkspaceStore(options: {
     removeAuthorizedDirAtIndex: configStore.removeAuthorizedDirAtIndex,
     persistReloadSettings: configStore.persistReloadSettings,
     setEngineInstallLogs: engineStore.setEngineInstallLogs,
-    refreshSandboxDoctor: engineStore.refreshSandboxDoctor,
-    sandboxCreateProgress: remoteStore.sandboxCreateProgress,
-    clearSandboxCreateProgress: remoteStore.clearSandboxCreateProgress,
     workspaceDebugEvents,
     clearWorkspaceDebugEvents,
     isPrivateWorkspacePath,
     workspaceBusy,
     markWorkspaceBusy,
     clearWorkspaceBusy,
-    isAnyOtherWorkspaceBusy,
   };
 }

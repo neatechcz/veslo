@@ -166,6 +166,20 @@ pub struct OrchestratorWorkspace {
     pub last_used_at: Option<u64>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestratorEngineSnapshot {
+    pub workspace_id: String,
+    pub pid: u32,
+    pub port: u16,
+    pub base_url: String,
+    pub workdir: String,
+    pub config_dir: String,
+    pub state: String,
+    pub spawned_at: u64,
+    pub last_activity_at: u64,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct OrchestratorStatus {
@@ -179,6 +193,8 @@ pub struct OrchestratorStatus {
     pub active_id: Option<String>,
     pub workspace_count: usize,
     pub workspaces: Vec<OrchestratorWorkspace>,
+    #[serde(default)]
+    pub engines: Vec<OrchestratorEngineSnapshot>,
     pub last_error: Option<String>,
 }
 
@@ -329,14 +345,6 @@ pub struct WorkspaceInfo {
     pub veslo_workspace_id: Option<String>,
     #[serde(default, alias = "openworkWorkspaceName")]
     pub veslo_workspace_name: Option<String>,
-
-    // Sandbox lifecycle metadata (desktop-managed)
-    #[serde(default)]
-    pub sandbox_backend: Option<String>,
-    #[serde(default)]
-    pub sandbox_run_id: Option<String>,
-    #[serde(default)]
-    pub sandbox_container_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]

@@ -19,7 +19,6 @@ import type {
   VesloServerInfo,
   AppBuildInfo,
   OpenCodeRouterInfo,
-  SandboxDebugProbeResult,
   WorkspaceInfo,
 } from "../lib/tauri";
 import ExtensionsOverview from "./extensions-overview";
@@ -30,8 +29,8 @@ import {
   opencodeRouterStop,
   vesloServerRestart,
   pickFile,
-  sandboxDebugProbe,
 } from "../lib/tauri";
+
 import {
   getDefaultDenApiBase,
   getDenApiBase,
@@ -88,6 +87,10 @@ export type SettingsViewProps = {
   toggleAutoCompactContext: () => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
+  maxEngines: number;
+  setMaxEngines: (n: number) => void;
+  idleSuspendMs: number;
+  setIdleSuspendMs: (ms: number) => void;
   modelVariantLabel: string;
   modelVariant: string;
   setModelVariant: (value: string) => void;
@@ -123,7 +126,6 @@ export type SettingsViewProps = {
   pendingPermissions: unknown;
   events: unknown;
   workspaceDebugEvents: unknown;
-  sandboxCreateProgress: unknown;
   clearWorkspaceDebugEvents: () => void;
   safeStringify: (value: unknown) => string;
   repairOpencodeMigration: () => void;
@@ -542,7 +544,7 @@ export default function SettingsView(props: SettingsViewProps) {
   const startupLabel = createMemo(() => "Connect to cloud server");
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "extensions", "archived"];
+    const tabs: SettingsTab[] = ["general", "extensions", "archived", "advanced"];
     return tabs;
   });
 
@@ -670,27 +672,6 @@ export default function SettingsView(props: SettingsViewProps) {
   const [configActionStatus, setConfigActionStatus] = createSignal<string | null>(null);
   const [revealConfigBusy, setRevealConfigBusy] = createSignal(false);
   const [resetConfigBusy, setResetConfigBusy] = createSignal(false);
-  const [sandboxProbeBusy, setSandboxProbeBusy] = createSignal(false);
-  const [sandboxProbeStatus, setSandboxProbeStatus] = createSignal<string | null>(null);
-  const [sandboxProbeResult, setSandboxProbeResult] = createSignal<SandboxDebugProbeResult | null>(null);
-
-  const sandboxCreateSummary = createMemo(() => {
-    const raw = props.sandboxCreateProgress as
-      | { runId?: string; stage?: string; error?: string | null; logs?: string[] }
-      | null
-      | undefined;
-    if (!raw || typeof raw !== "object") {
-      return { runId: null, stage: null, error: null, logs: [] as string[] };
-    }
-    return {
-      runId: typeof raw.runId === "string" && raw.runId.trim() ? raw.runId : null,
-      stage: typeof raw.stage === "string" && raw.stage.trim() ? raw.stage : null,
-      error: typeof raw.error === "string" && raw.error.trim() ? raw.error : null,
-      logs: Array.isArray(raw.logs)
-        ? raw.logs.filter((line) => typeof line === "string" && line.trim()).slice(-400)
-        : [],
-    };
-  });
 
   const workspaceConfigPath = createMemo(() => {
     const root = props.activeWorkspaceRoot.trim();
@@ -749,8 +730,6 @@ export default function SettingsView(props: SettingsViewProps) {
     pendingPermissions: props.pendingPermissions,
     recentEvents: props.events,
     workspaceDebugEvents: props.workspaceDebugEvents,
-    sandboxCreateProgress: sandboxCreateSummary(),
-    sandboxProbe: sandboxProbeResult(),
   }));
 
   const runtimeDebugReportJson = createMemo(() => `${JSON.stringify(runtimeDebugReport(), null, 2)}\n`);
@@ -823,25 +802,6 @@ export default function SettingsView(props: SettingsViewProps) {
       setConfigActionStatus(error instanceof Error ? error.message : "Failed to reset app config.");
     } finally {
       setResetConfigBusy(false);
-    }
-  };
-
-  const runSandboxDebugProbe = async () => {
-    if (!isTauriRuntime() || sandboxProbeBusy()) return;
-    setSandboxProbeBusy(true);
-    setSandboxProbeStatus(null);
-    try {
-      const report = await sandboxDebugProbe();
-      setSandboxProbeResult(report);
-      if (report.ready) {
-        setSandboxProbeStatus("Sandbox probe succeeded. Export the debug report for support.");
-      } else {
-        setSandboxProbeStatus(report.error?.trim() || "Sandbox probe completed with errors.");
-      }
-    } catch (error) {
-      setSandboxProbeStatus(error instanceof Error ? error.message : "Sandbox probe failed.");
-    } finally {
-      setSandboxProbeBusy(false);
     }
   };
 
@@ -1428,6 +1388,53 @@ export default function SettingsView(props: SettingsViewProps) {
               </div>
             </Show>
 
+            <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+              <div>
+                <div class="text-sm font-medium text-gray-12">Performance</div>
+                <div class="text-xs text-gray-10">Engine pool tuning (multi-workspace routing). Restart engine to apply.</div>
+              </div>
+
+              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                <div class="min-w-0 flex-1">
+                  <div class="text-sm text-gray-12">Max concurrent engines</div>
+                  <div class="text-xs text-gray-7">Upper bound for the per-workspace engine pool (1–64, default 16).</div>
+                </div>
+                <input
+                  type="number"
+                  min={1}
+                  max={64}
+                  step={1}
+                  class="w-20 text-xs h-8 px-2 rounded border border-gray-6 bg-gray-1 text-gray-12 shrink-0"
+                  value={props.maxEngines}
+                  disabled={props.busy}
+                  onChange={(event) => {
+                    const v = Number(event.currentTarget.value);
+                    if (Number.isFinite(v)) props.setMaxEngines(v);
+                  }}
+                />
+              </div>
+
+              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                <div class="min-w-0 flex-1">
+                  <div class="text-sm text-gray-12">Idle suspend (minutes)</div>
+                  <div class="text-xs text-gray-7">Suspend an engine after this many minutes of inactivity (0 = never, default 0 — engines stay warm until app exit).</div>
+                </div>
+                <input
+                  type="number"
+                  min={0}
+                  max={120}
+                  step={1}
+                  class="w-20 text-xs h-8 px-2 rounded border border-gray-6 bg-gray-1 text-gray-12 shrink-0"
+                  value={Math.round(props.idleSuspendMs / 60_000)}
+                  disabled={props.busy}
+                  onChange={(event) => {
+                    const minutes = Number(event.currentTarget.value);
+                    if (Number.isFinite(minutes)) props.setIdleSuspendMs(Math.max(0, minutes) * 60_000);
+                  }}
+                />
+              </div>
+            </div>
+
           </div>
         </Match>
 
@@ -1468,49 +1475,6 @@ export default function SettingsView(props: SettingsViewProps) {
                   <Show when={debugReportStatus()}>
                     {(status) => <div class="text-xs text-gray-10">{status()}</div>}
                   </Show>
-                </div>
-
-                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
-                  <div class="flex items-start justify-between gap-3">
-                    <div>
-                      <div class="text-sm font-medium text-gray-12">Sandbox probe</div>
-                      <div class="text-xs text-gray-10">
-                        Runs a temporary Docker sandbox startup check and captures inspect/log output.
-                      </div>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      class="text-xs h-8 py-0 px-3"
-                      onClick={runSandboxDebugProbe}
-                      disabled={!isTauriRuntime() || sandboxProbeBusy() || props.anyActiveRuns}
-                      title={
-                        !isTauriRuntime()
-                          ? "Sandbox probe requires desktop app"
-                          : props.anyActiveRuns
-                            ? "Stop active runs before probing"
-                            : ""
-                      }
-                    >
-                      {sandboxProbeBusy() ? "Running probe..." : "Run sandbox probe"}
-                    </Button>
-                  </div>
-                  <Show when={sandboxProbeResult()}>
-                    {(result) => (
-                      <div class="text-xs text-gray-11 space-y-1">
-                        <div>Run ID: <span class="font-mono">{result().runId}</span></div>
-                        <div>Result: {result().ready ? "ready" : "error"}</div>
-                        <Show when={result().error}>
-                          {(err) => <div class="text-red-11">{err()}</div>}
-                        </Show>
-                      </div>
-                    )}
-                  </Show>
-                  <Show when={sandboxProbeStatus()}>
-                    {(status) => <div class="text-xs text-gray-10">{status()}</div>}
-                  </Show>
-                  <div class="text-[11px] text-gray-7">
-                    Use <strong>Export</strong> in Runtime debug report above to save this probe output with logs.
-                  </div>
                 </div>
 
                 <Show when={!CLOUD_ONLY_MODE}>

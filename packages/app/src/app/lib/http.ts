@@ -17,6 +17,13 @@ const DEFAULT_TIMEOUT_MS = 10_000;
  * @param init - Standard RequestInit, optionally extended with timeoutMs
  * @param timeoutMs - Timeout in milliseconds (default 10s). Pass 0 or Infinity to disable.
  */
+function describeRequestTarget(input: RequestInfo | URL): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  if (typeof Request !== "undefined" && input instanceof Request) return input.url;
+  return "<unknown>";
+}
+
 export async function fetchWithTimeout(
   fetchImpl: typeof globalThis.fetch,
   input: RequestInfo | URL,
@@ -26,6 +33,10 @@ export async function fetchWithTimeout(
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return fetchImpl(input, init);
   }
+
+  const target = describeRequestTarget(input);
+  const method = (init?.method ?? "GET").toUpperCase();
+  const timeoutMessage = `Request timed out after ${timeoutMs}ms: ${method} ${target}`;
 
   const controller =
     typeof AbortController !== "undefined" ? new AbortController() : null;
@@ -41,7 +52,8 @@ export async function fetchWithTimeout(
       } catch {
         // ignore
       }
-      reject(new Error("Request timed out."));
+      console.warn("[http] timeout", { method, url: target, timeoutMs });
+      reject(new Error(timeoutMessage));
     }, timeoutMs);
   });
 
@@ -58,7 +70,7 @@ export async function fetchWithTimeout(
         ? (error as { name: string }).name
         : "";
     if (name === "AbortError") {
-      throw new Error("Request timed out.");
+      throw new Error(timeoutMessage);
     }
     throw error;
   } finally {

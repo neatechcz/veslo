@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import type { WorkerSandbox } from "./sandbox/index.js";
+import { resolveSandbox } from "./sandbox/index.js";
 import { randomUUID, createHash } from "node:crypto";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile, realpath } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile, realpath } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
 import { homedir, hostname, networkInterfaces, tmpdir } from "node:os";
@@ -16,12 +18,12 @@ import type { TuiHandle } from "./tui/app.js";
 import { reconcileOpencodeVersion } from "./opencode-version.js";
 import { sanitizeRuntimePayloadForLogs } from "./security.js";
 import { readVersionManifestFromDirs, type VersionInfo, type VersionManifest } from "./version-manifest.js";
+import type { SerializedEngineState } from "./engine-pool.js";
+import { atomicWriteJson, cleanupStaleTmpFiles, createDebouncedPersister } from "./persistence.js";
+import { EnginePool, type EngineProcess } from "./engine-pool.js";
+import { proxyToEngine } from "./router-proxy.js";
 
 type ApprovalMode = "manual" | "auto";
-
-type SandboxMode = "none" | "auto" | "docker" | "container";
-
-type ResolvedSandboxMode = "none" | "docker" | "container";
 
 type LogFormat = "pretty" | "json";
 
@@ -88,16 +90,6 @@ const DEFAULT_OPENCODE_USERNAME = "opencode";
 const DEFAULT_OPENCODE_HOT_RELOAD_DEBOUNCE_MS = 700;
 const DEFAULT_OPENCODE_HOT_RELOAD_COOLDOWN_MS = 1500;
 const DEFAULT_MANAGED_AI_BASE_URL = "https://ai.veslo.work";
-
-const SANDBOX_INTERNAL_OPENCODE_PORT = 4096;
-const SANDBOX_INTERNAL_VESLO_PORT = DEFAULT_VESLO_PORT;
-// OpenCodeRouter defaults its health server to 3005 when not overridden. In sandbox
-// mode we keep the *internal* port stable and only vary the published host
-// port to avoid collisions.
-const SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT = 3005;
-
-const SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH = "/persist/.config/opencode";
-const SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH = "/persist/.veslo-host-opencode-data";
 
 type ParsedArgs = {
   positionals: string[];
@@ -222,7 +214,12 @@ type RouterSidecarState = {
 type RouterState = {
   version: number;
   daemon?: RouterDaemonState;
+  /**
+   * @deprecated VSLO-171 fáze 2 F2Ú3 — singleton engine path smazán.
+   * Field zachován pro deserializaci starých state files; nikdy se nezapisuje.
+   */
   opencode?: RouterOpencodeState;
+  engines?: Record<string, SerializedEngineState>;
   cliVersion?: string;
   sidecar?: RouterSidecarState;
   binaries?: RouterBinaryState;
@@ -419,72 +416,6 @@ function readLogFormat(
   throw new Error(`Invalid ${key} value: ${raw}. Use pretty|json.`);
 }
 
-function readSandboxMode(
-  flags: Map<string, string | boolean>,
-  key: string,
-  fallback: SandboxMode,
-  envKey?: string,
-): SandboxMode {
-  const raw = readFlag(flags, key) ?? (envKey ? process.env[envKey] : undefined);
-  if (!raw) return fallback;
-  const normalized = String(raw).trim().toLowerCase();
-  if (
-    normalized === "none" ||
-    normalized === "auto" ||
-    normalized === "docker" ||
-    normalized === "container"
-  ) {
-    return normalized as SandboxMode;
-  }
-  throw new Error(`Invalid ${key} value: ${raw}. Use none|auto|docker|container.`);
-}
-
-type SandboxAllowedRoot = {
-  path: string;
-  allowReadWrite?: boolean;
-  description?: string;
-};
-
-type SandboxMountAllowlist = {
-  allowedRoots: SandboxAllowedRoot[];
-  blockedPatterns?: string[];
-};
-
-type SandboxMount = {
-  hostPath: string;
-  containerPath: string;
-  readonly: boolean;
-};
-
-const DEFAULT_SANDBOX_BLOCKED_PATTERNS = [
-  ".ssh",
-  ".gnupg",
-  ".gpg",
-  ".aws",
-  ".azure",
-  ".gcloud",
-  ".kube",
-  ".docker",
-  "credentials",
-  ".env",
-  ".netrc",
-  ".npmrc",
-  ".pypirc",
-  "id_rsa",
-  "id_ed25519",
-  "private_key",
-  ".secret",
-];
-
-let cachedSandboxAllowlist: SandboxMountAllowlist | null | undefined;
-let cachedSandboxAllowlistError: string | null = null;
-
-function resolveSandboxAllowlistPath(): string {
-  const override = process.env.VESLO_SANDBOX_MOUNT_ALLOWLIST?.trim();
-  if (override) return resolve(override);
-  return join(homedir(), ".config", "veslo", "sandbox-mount-allowlist.json");
-}
-
 function expandTildePath(input: string): string {
   const trimmed = input.trim();
   if (!trimmed) return trimmed;
@@ -501,247 +432,12 @@ async function isDir(input: string): Promise<boolean> {
   }
 }
 
-async function resolveHostOpencodeGlobalConfigDir(): Promise<string | null> {
-  const enabled = (process.env.VESLO_SANDBOX_MOUNT_OPENCODE_CONFIG ?? "1").trim() !== "0";
-  if (!enabled) return null;
-
-  const candidates: string[] = [];
-  const xdg = process.env.XDG_CONFIG_HOME?.trim();
-  if (xdg) candidates.push(join(xdg, "opencode"));
-  candidates.push(join(homedir(), ".config", "opencode"));
-  if (process.platform === "darwin") {
-    candidates.push(join(homedir(), "Library", "Application Support", "opencode"));
-  }
-
-  const files = ["opencode.jsonc", "opencode.json", "config.json", "AGENTS.md"];
-  for (const candidate of Array.from(new Set(candidates.map((item) => resolve(expandTildePath(item)))))) {
-    if (!(await isDir(candidate))) continue;
-    for (const file of files) {
-      try {
-        await access(join(candidate, file));
-        return candidate;
-      } catch {
-        // keep looking
-      }
-    }
-
-    // Fall back to any non-empty config directory. Some setups keep
-    // provider/auth material in files that are not part of the strict list above.
-    try {
-      const entries = await readdir(candidate);
-      if (entries.length > 0) return candidate;
-    } catch {
-      // keep looking
-    }
-  }
-
-  return null;
-}
-
-async function resolveHostOpencodeGlobalDataDir(): Promise<string | null> {
-  const enabled = (process.env.VESLO_SANDBOX_MOUNT_OPENCODE_CONFIG ?? "1").trim() !== "0";
-  if (!enabled) return null;
-
-  const candidates: string[] = [];
-  const xdgData = process.env.XDG_DATA_HOME?.trim();
-  if (xdgData) candidates.push(join(xdgData, "opencode"));
-  candidates.push(join(homedir(), ".local", "share", "opencode"));
-  if (process.platform === "darwin") {
-    candidates.push(join(homedir(), "Library", "Application Support", "opencode"));
-  }
-
-  const files = ["auth.json", "mcp-auth.json"];
-  for (const candidate of Array.from(new Set(candidates.map((item) => resolve(expandTildePath(item)))))) {
-    if (!(await isDir(candidate))) continue;
-    for (const file of files) {
-      try {
-        await access(join(candidate, file));
-        return candidate;
-      } catch {
-        // keep looking
-      }
-    }
-  }
-
-  return null;
-}
-
 async function realpathOrNull(input: string): Promise<string | null> {
   try {
     return await realpath(input);
   } catch {
     return null;
   }
-}
-
-function matchesBlockedPattern(real: string, patterns: string[]): string | null {
-  const parts = real.split(sep);
-  for (const pattern of patterns) {
-    for (const part of parts) {
-      if (part === pattern || part.includes(pattern)) return pattern;
-    }
-    if (real.includes(pattern)) return pattern;
-  }
-  return null;
-}
-
-async function findAllowedRoot(real: string, roots: SandboxAllowedRoot[]): Promise<SandboxAllowedRoot | null> {
-  for (const root of roots) {
-    const expanded = resolve(expandTildePath(root.path));
-    const realRoot = await realpathOrNull(expanded);
-    if (!realRoot) continue;
-    const rel = relative(realRoot, real);
-    if (!rel.startsWith("..") && !isAbsolute(rel)) {
-      return root;
-    }
-  }
-  return null;
-}
-
-async function loadSandboxAllowlist(): Promise<SandboxMountAllowlist | null> {
-  if (cachedSandboxAllowlist !== undefined) return cachedSandboxAllowlist;
-  if (cachedSandboxAllowlistError) return null;
-
-  const path = resolveSandboxAllowlistPath();
-  try {
-    if (!(await fileExists(path))) {
-      cachedSandboxAllowlistError = `Mount allowlist not found at ${path}`;
-      cachedSandboxAllowlist = null;
-      return null;
-    }
-    const raw = await readFile(path, "utf8");
-    const parsed = JSON.parse(raw) as SandboxMountAllowlist;
-    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.allowedRoots)) {
-      throw new Error("allowedRoots must be an array");
-    }
-    const blocked = Array.isArray(parsed.blockedPatterns) ? parsed.blockedPatterns : [];
-    parsed.blockedPatterns = [...new Set([...DEFAULT_SANDBOX_BLOCKED_PATTERNS, ...blocked])];
-    cachedSandboxAllowlist = parsed;
-    return parsed;
-  } catch (error) {
-    cachedSandboxAllowlistError = error instanceof Error ? error.message : String(error);
-    cachedSandboxAllowlist = null;
-    return null;
-  }
-}
-
-function isValidSandboxContainerSubPath(value: string): boolean {
-  const trimmed = value.trim();
-  if (!trimmed) return false;
-  if (trimmed.includes("..")) return false;
-  if (trimmed.startsWith("/")) return false;
-  if (trimmed.includes("\\")) return false;
-  const parts = trimmed.split("/").filter(Boolean);
-  if (!parts.length) return false;
-  if (parts.some((part) => part === "." || part === "..")) return false;
-  return true;
-}
-
-function parseSandboxMountSpec(spec: string): {
-  hostPath: string;
-  containerSubPath: string;
-  requestedReadWrite: boolean;
-} {
-  const trimmed = spec.trim();
-  if (!trimmed) {
-    throw new Error("Empty --sandbox-mount entry");
-  }
-
-  let requestedReadWrite = true;
-  let base = trimmed;
-  if (trimmed.endsWith(":ro")) {
-    requestedReadWrite = false;
-    base = trimmed.slice(0, -3);
-  } else if (trimmed.endsWith(":rw")) {
-    requestedReadWrite = true;
-    base = trimmed.slice(0, -3);
-  }
-
-  const idx = base.indexOf(":");
-  if (idx <= 0 || idx >= base.length - 1) {
-    throw new Error(`Invalid --sandbox-mount value: ${spec}. Use hostPath:subpath[:ro|rw].`);
-  }
-
-  const hostPath = base.slice(0, idx).trim();
-  const containerSubPath = base.slice(idx + 1).trim();
-  if (!hostPath) throw new Error(`Invalid --sandbox-mount value: ${spec}. Host path is empty.`);
-  if (!containerSubPath) throw new Error(`Invalid --sandbox-mount value: ${spec}. Container subpath is empty.`);
-
-  return { hostPath, containerSubPath, requestedReadWrite };
-}
-
-function generateSandboxAllowlistTemplate(): string {
-  const template: SandboxMountAllowlist = {
-    allowedRoots: [
-      {
-        path: "~/projects",
-        allowReadWrite: true,
-        description: "Development projects",
-      },
-      {
-        path: "~/Documents",
-        allowReadWrite: false,
-        description: "Documents (read-only)",
-      },
-    ],
-    blockedPatterns: ["password", "secret", "token"],
-  };
-  return JSON.stringify(template, null, 2);
-}
-
-async function resolveSandboxExtraMounts(
-  specs: string[],
-  sandboxMode: ResolvedSandboxMode,
-): Promise<SandboxMount[]> {
-  if (!specs.length) return [];
-  const allowlistPath = resolveSandboxAllowlistPath();
-  const allowlist = await loadSandboxAllowlist();
-  if (!allowlist) {
-    const template = generateSandboxAllowlistTemplate();
-    throw new Error(
-      `Additional sandbox mounts are blocked. Create ${allowlistPath} to enable.\n\nExample:\n${template}`,
-    );
-  }
-  const blocked = allowlist.blockedPatterns ?? DEFAULT_SANDBOX_BLOCKED_PATTERNS;
-  const roots = allowlist.allowedRoots;
-
-  const mounts: SandboxMount[] = [];
-  for (const spec of specs) {
-    const parsed = parseSandboxMountSpec(spec);
-    if (!isValidSandboxContainerSubPath(parsed.containerSubPath)) {
-      throw new Error(
-        `Invalid sandbox container subpath: "${parsed.containerSubPath}". Use a relative path without "/" prefix or "..".`,
-      );
-    }
-    const expanded = resolve(expandTildePath(parsed.hostPath));
-    const real = await realpathOrNull(expanded);
-    if (!real) {
-      throw new Error(`Sandbox mount host path does not exist: ${parsed.hostPath} (expanded: ${expanded})`);
-    }
-    const blockedMatch = matchesBlockedPattern(real, blocked);
-    if (blockedMatch) {
-      throw new Error(`Sandbox mount rejected (blocked pattern "${blockedMatch}"): ${real}`);
-    }
-    const allowedRoot = await findAllowedRoot(real, roots);
-    if (!allowedRoot) {
-      const allowedList = roots.map((root) => resolve(expandTildePath(root.path))).join(", ");
-      throw new Error(`Sandbox mount rejected: ${real} is not under any allowed root. Allowed: ${allowedList}`);
-    }
-    const allowReadWrite = allowedRoot.allowReadWrite === true;
-    const readonly = parsed.requestedReadWrite ? !allowReadWrite : true;
-    if (sandboxMode === "container") {
-      const info = await stat(real);
-      if (!info.isDirectory()) {
-        throw new Error(`Apple container sandbox mounts must be directories: ${real}`);
-      }
-    }
-    mounts.push({
-      hostPath: real,
-      containerPath: `/workspace/extra/${parsed.containerSubPath}`,
-      readonly,
-    });
-  }
-  return mounts;
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -1011,14 +707,6 @@ function resolveSidecarTarget(): SidecarTarget | null {
   return null;
 }
 
-function resolveSandboxSidecarTarget(mode: ResolvedSandboxMode): SidecarTarget | null {
-  if (mode === "none") return resolveSidecarTarget();
-  // Sandbox runs inside Linux (docker / container).
-  if (process.arch === "arm64") return "linux-arm64";
-  if (process.arch === "x64") return "linux-x64";
-  return null;
-}
-
 function resolveSidecarConfigForTarget(
   flags: Map<string, string | boolean>,
   cliVersion: string,
@@ -1038,47 +726,6 @@ function spawnProcess(command: string, args: string[], options: SpawnOptions = {
     return spawn(command, args, { ...options, windowsHide: true });
   }
   return spawn(command, args, options);
-}
-
-async function probeCommand(command: string, args: string[], timeoutMs = 2500): Promise<boolean> {
-  return await new Promise((resolve) => {
-    const child = spawnProcess(command, args, { stdio: ["ignore", "ignore", "ignore"] });
-    const timeout = setTimeout(() => {
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        // ignore
-      }
-      resolve(false);
-    }, timeoutMs);
-    child.on("error", () => {
-      clearTimeout(timeout);
-      resolve(false);
-    });
-    child.on("exit", (code) => {
-      clearTimeout(timeout);
-      resolve(code === 0);
-    });
-  });
-}
-
-async function resolveSandboxMode(mode: SandboxMode): Promise<ResolvedSandboxMode> {
-  if (mode === "none") return "none";
-  if (mode === "docker") return "docker";
-  if (mode === "container") return "container";
-
-  // auto
-  if (process.platform === "darwin" && process.arch === "arm64") {
-    const containerOk = await probeCommand("container", ["--version"]);
-    if (containerOk) return "container";
-  }
-
-  const dockerOk = await probeCommand("docker", ["version"]);
-  if (dockerOk) return "docker";
-
-  const containerOk = await probeCommand("container", ["--version"]);
-  if (containerOk) return "container";
-  return "none";
 }
 
 function shQuote(value: string): string {
@@ -1594,24 +1241,6 @@ function isPathLikeBinary(bin: string): boolean {
   return bin.includes("/") || bin.startsWith(".");
 }
 
-async function assertSandboxBinaryFile(name: string, bin: string): Promise<void> {
-  const lower = bin.toLowerCase();
-  if (lower.endsWith(".js") || lower.endsWith(".ts")) {
-    throw new Error(
-      `Sandbox mode requires ${name} to be a native binary (got ${bin}). Use downloaded sidecars or pass a Linux binary path.`,
-    );
-  }
-  if (!isPathLikeBinary(bin)) {
-    throw new Error(
-      `Sandbox mode requires ${name} to be a file path (got ${bin}). Use downloaded sidecars or pass --${name}-bin with a Linux binary path.`,
-    );
-  }
-  const resolved = resolve(process.cwd(), bin);
-  if (!(await fileExists(resolved))) {
-    throw new Error(`Sandbox mode could not find ${name} binary at ${resolved}.`);
-  }
-}
-
 async function resolveVesloServerBin(options: {
   explicit?: string;
   manifest: VersionManifest | null;
@@ -1908,12 +1537,14 @@ async function loadRouterState(path: string): Promise<RouterState> {
     if (!parsed.workspaces) parsed.workspaces = [];
     if (!parsed.activeId) parsed.activeId = "";
     if (!parsed.version) parsed.version = 1;
+    if (!parsed.engines) parsed.engines = {};
     return parsed;
   } catch {
     return {
       version: 1,
       daemon: undefined,
       opencode: undefined,
+      engines: {},
       cliVersion: undefined,
       sidecar: undefined,
       binaries: undefined,
@@ -1924,9 +1555,19 @@ async function loadRouterState(path: string): Promise<RouterState> {
 }
 
 async function saveRouterState(path: string, state: RouterState): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const payload = JSON.stringify(state, null, 2);
-  await writeFile(path, `${payload}\n`, "utf8");
+  await atomicWriteJson(path, state);
+}
+
+const routerStatePersister = createDebouncedPersister<RouterState>({
+  write: saveRouterState,
+});
+
+function persistDebounced(path: string, state: RouterState): void {
+  routerStatePersister.schedule(path, state);
+}
+
+async function flushPersist(): Promise<void> {
+  await routerStatePersister.flush();
 }
 
 function normalizeWorkspacePath(input: string): string {
@@ -2212,6 +1853,137 @@ function opencodeRouterStatusToolSource(): string {
   ].join("\n");
 }
 
+/**
+ * Vendors `@opencode-ai/plugin` (plus its `zod` dependency) into
+ * `<configDir>/node_modules/` so managed tool files load cleanly inside the
+ * sandboxed opencode engine. Opencode runs Bun with `--no-install`, and
+ * opencode's `tool({...})` introspects real zod internals (`_zod.def`), so a
+ * pure shim isn't enough — we need the actual published packages.
+ *
+ * Source is the local Bun install cache (`~/.bun/install/cache/<pkg>@<ver>@@@1/`),
+ * which is populated by `bun install` during development and shipped alongside
+ * orchestrator builds. If the cache is empty (CI, first run), we fall back to
+ * a minimal hand-written shim that lets opencode load the tools but won't pass
+ * full zod introspection — the warning is logged so callers can investigate.
+ */
+const VESLO_MANAGED_PLUGIN_VERSION = "1.15.10";
+const VESLO_MANAGED_ZOD_VERSION = "4.1.13";
+
+const MANAGED_PLUGIN_FALLBACK_TOOL = `function makeLeaf(typeName) {
+  const leaf = { _veslo_schema_type: typeName, _zod: { def: { type: typeName } } };
+  leaf.optional = () => leaf;
+  leaf.nullable = () => leaf;
+  leaf.describe = () => leaf;
+  leaf.default = () => leaf;
+  leaf.parse = (value) => value;
+  leaf.safeParse = (value) => ({ success: true, data: value });
+  return leaf;
+}
+const schema = {
+  string: () => makeLeaf("string"),
+  number: () => makeLeaf("number"),
+  boolean: () => makeLeaf("boolean"),
+  any: () => makeLeaf("any"),
+  enum: (values) => Object.assign(makeLeaf("enum"), { options: Array.isArray(values) ? values.slice() : [] }),
+  literal: (value) => Object.assign(makeLeaf("literal"), { value }),
+  object: (shape) => Object.assign(makeLeaf("object"), { shape: shape || {} }),
+  array: (item) => Object.assign(makeLeaf("array"), { element: item }),
+  record: (value) => Object.assign(makeLeaf("record"), { valueType: value }),
+  union: (options) => Object.assign(makeLeaf("union"), { options: Array.isArray(options) ? options.slice() : [] }),
+  optional: (inner) => Object.assign(makeLeaf("optional"), { inner }),
+  nullable: (inner) => Object.assign(makeLeaf("nullable"), { inner }),
+};
+export function tool(input) {
+  return input;
+}
+tool.schema = schema;
+`;
+
+const MANAGED_PLUGIN_FALLBACK_INDEX = `export * from "./tool.js";\n`;
+
+const MANAGED_PLUGIN_FALLBACK_PACKAGE_JSON = `${JSON.stringify(
+  {
+    name: "@opencode-ai/plugin",
+    version: "0.0.0-veslo-managed",
+    type: "module",
+    exports: {
+      ".": { import: "./dist/index.js" },
+      "./tool": { import: "./dist/tool.js" },
+    },
+    files: ["dist"],
+  },
+  null,
+  2,
+)}\n`;
+
+async function copyDirRecursive(src: string, dst: string): Promise<void> {
+  // Prefer fs/promises.cp, but fall back to shell `cp -R` when running inside a
+  // Bun-compiled standalone binary, where cp() can silently no-op on macOS.
+  try {
+    await cp(src, dst, { recursive: true, force: true });
+    // Sanity check: cp succeeded but copied nothing? Fall through to shell cp.
+    const entries = await readdir(src).catch(() => [] as string[]);
+    if (entries.length > 0) {
+      const dstEntries = await readdir(dst).catch(() => [] as string[]);
+      if (dstEntries.length > 0) return;
+    } else {
+      return;
+    }
+  } catch (err) {
+    // fall through to shell cp
+    void err;
+  }
+  const result = spawnProcess("cp", ["-R", `${src}/.`, dst], { stdio: "ignore" });
+  await new Promise<void>((resolve, reject) => {
+    result.on("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`cp -R ${src} -> ${dst} exited with code ${code}`));
+    });
+    result.on("error", reject);
+  });
+}
+
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await access(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveBunCacheEntry(pkg: string, version: string): string {
+  return join(
+    process.env.HOME ?? "",
+    ".bun",
+    "install",
+    "cache",
+    pkg,
+    `${version}@@@1`,
+  );
+}
+
+async function vendorBunCachePackage(
+  pkg: string,
+  version: string,
+  destNodeModules: string,
+): Promise<boolean> {
+  const cacheRoot = resolveBunCacheEntry(pkg, version);
+  if (!(await pathExists(cacheRoot))) return false;
+  const destDir = join(destNodeModules, pkg);
+  await mkdir(destDir, { recursive: true });
+  await copyDirRecursive(cacheRoot, destDir);
+  return true;
+}
+
+async function writeManagedPluginFallback(pluginDir: string): Promise<void> {
+  const distDir = join(pluginDir, "dist");
+  await mkdir(distDir, { recursive: true });
+  await writeFile(join(pluginDir, "package.json"), MANAGED_PLUGIN_FALLBACK_PACKAGE_JSON, "utf8");
+  await writeFile(join(distDir, "index.js"), MANAGED_PLUGIN_FALLBACK_INDEX, "utf8");
+  await writeFile(join(distDir, "tool.js"), MANAGED_PLUGIN_FALLBACK_TOOL, "utf8");
+}
+
 async function ensureOpencodeManagedTools(configDir: string): Promise<void> {
   const toolsDir = join(configDir, "tools");
   await mkdir(toolsDir, { recursive: true });
@@ -2226,6 +1998,38 @@ async function ensureOpencodeManagedTools(configDir: string): Promise<void> {
     }
     await writeFile(toolPath, content, "utf8");
   };
+
+  const nodeModulesDir = join(configDir, "node_modules");
+  await mkdir(nodeModulesDir, { recursive: true });
+
+  // Vendor @opencode-ai/plugin (preferred: from Bun cache; fallback: hand-rolled shim).
+  const pluginDir = join(nodeModulesDir, "@opencode-ai", "plugin");
+  if (!(await pathExists(join(pluginDir, "package.json")))) {
+    await mkdir(join(nodeModulesDir, "@opencode-ai"), { recursive: true });
+    const ok = await vendorBunCachePackage(
+      "@opencode-ai/plugin",
+      VESLO_MANAGED_PLUGIN_VERSION,
+      nodeModulesDir,
+    );
+    if (!ok) {
+      console.warn(
+        `[veslo-orchestrator] Bun cache miss for @opencode-ai/plugin@${VESLO_MANAGED_PLUGIN_VERSION}; using hand-rolled shim (tools may not pass full zod introspection).`,
+      );
+      await writeManagedPluginFallback(pluginDir);
+    }
+  }
+
+  // Vendor zod (only used when the real plugin from cache is in place; cheap to
+  // skip the copy if the destination already exists).
+  const zodDir = join(nodeModulesDir, "zod");
+  if (!(await pathExists(join(zodDir, "package.json")))) {
+    const ok = await vendorBunCachePackage("zod", VESLO_MANAGED_ZOD_VERSION, nodeModulesDir);
+    if (!ok) {
+      console.warn(
+        `[veslo-orchestrator] Bun cache miss for zod@${VESLO_MANAGED_ZOD_VERSION}; the @opencode-ai/plugin shim will be used instead.`,
+      );
+    }
+  }
 
   await writeManagedTool("opencode_router_send.ts", opencodeRouterSendToolSource());
   await writeManagedTool("opencode_router_status.ts", opencodeRouterStatusToolSource());
@@ -2304,34 +2108,6 @@ async function waitForOpenCodeRouterHealthy(baseUrl: string, timeoutMs = 10_000,
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
   throw new Error(lastError ?? "Timed out waiting for opencodeRouter health");
-}
-
-async function waitForOpenCodeRouterHealthyViaVeslo(
-  vesloUrl: string,
-  token: string,
-  timeoutMs = 10_000,
-  pollMs = 500,
-): Promise<OpenCodeRouterHealthSnapshot> {
-  const url = `${vesloUrl.replace(/\/$/, "")}/veslo-code-router/health`;
-  const start = Date.now();
-  let lastError: string | null = null;
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      if (response.ok) {
-        return (await response.json()) as OpenCodeRouterHealthSnapshot;
-      }
-      lastError = `HTTP ${response.status}`;
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
-    }
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-  }
-  throw new Error(lastError ?? "Timed out waiting for opencodeRouter health via veslo-server");
 }
 
 async function waitForOpencodeHealthy(client: ReturnType<typeof createOpencodeClient>, timeoutMs = 10_000, pollMs = 250) {
@@ -2434,6 +2210,8 @@ function printHelp(): void {
     "  --opencode-hot-reload     Enable OpenCode hot reload (default: true)",
     "  --opencode-hot-reload-debounce-ms <ms>  Debounce window for hot reload triggers (default: 700)",
     "  --opencode-hot-reload-cooldown-ms <ms>  Minimum interval between hot reloads (default: 1500)",
+    "  --max-engines <N>         Max concurrent engines in pool (1-64, default: 8) [VSLO-171]",
+    "  --idle-suspend-ms <ms>    Idle threshold for engine suspend (default: 900000 = 15 min)",
     "  --opencode-username <u>   OpenCode basic auth username",
     "  --opencode-password <p>   OpenCode basic auth password",
     "  --veslo-host <host>    Bind host for veslo-server (default: 0.0.0.0)",
@@ -2475,10 +2253,6 @@ function printHelp(): void {
     "  --tui                     Force interactive dashboard (TTY only)",
     "  --no-tui                  Disable interactive dashboard",
     "  --detach                  Detach after start and keep services running",
-    "  --sandbox <mode>          none | auto | docker | container (default: none)",
-    "  --sandbox-image <ref>     Container image for sandbox mode",
-    "  --sandbox-persist-dir <p> Persist dir mounted into sandbox (default: per-workspace)",
-    "  --sandbox-mount <specs>   Extra mounts (validated): hostPath:subpath[:ro|rw] (requires allowlist)",
     "  --json                    Output JSON when applicable",
     "  --verbose                 Print additional diagnostics",
     "  --log-format <format>     Log output format: pretty | json",
@@ -2514,6 +2288,15 @@ async function stopChild(child: ReturnType<typeof spawn>, timeoutMs = 2500): Pro
   ]);
 }
 
+/**
+ * F4Ú4 — shell-quote a single argument (bash-safe single-quoting).
+ * Used to compose a shell command string for sandbox wrapping.
+ */
+function shellQuote(arg: string): string {
+  if (/^[A-Za-z0-9_./:=+-]+$/.test(arg)) return arg;
+  return "'" + arg.replace(/'/g, "'\\''") + "'";
+}
+
 async function startOpencode(options: {
   bin: string;
   workspace: string;
@@ -2528,41 +2311,147 @@ async function startOpencode(options: {
   runId: string;
   logFormat: LogFormat;
   opencodeRouterHealthPort?: number;
+  /** F4Ú4 — wrap engine spawn in OS-level sandbox. When omitted, sandbox is
+   *  resolved automatically per platform unless `VESLO_DISABLE_SANDBOX=1`. */
+  sandbox?: WorkerSandbox | null;
 }) {
   const args = ["serve", "--hostname", options.bindHost, "--port", String(options.port)];
   for (const origin of options.corsOrigins) {
     args.push("--cors", origin);
   }
 
-  const child = spawnProcess(options.bin, args, {
-    cwd: options.workspace,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: {
-      ...process.env,
-      OPENCODE_CLIENT: "veslo-orchestrator",
-      OPENCODE_DISABLE_CLAUDE_CODE: "1",
-      VESLO: "1",
-      VESLO_RUN_ID: options.runId,
-      VESLO_LOG_FORMAT: options.logFormat,
-      OTEL_RESOURCE_ATTRIBUTES: mergeResourceAttributes(
-        {
-          "service.name": "opencode",
-          "service.instance.id": options.runId,
-        },
-        process.env.OTEL_RESOURCE_ATTRIBUTES,
-      ),
-      ...(options.username ? { OPENCODE_SERVER_USERNAME: options.username } : {}),
-      ...(options.password ? { OPENCODE_SERVER_PASSWORD: options.password } : {}),
-      ...(options.configDir ? { OPENCODE_CONFIG_DIR: options.configDir } : {}),
-      OPENCODE_HOT_RELOAD: options.hotReload.enabled ? "1" : "0",
-      OPENCODE_HOT_RELOAD_DEBOUNCE_MS: String(options.hotReload.debounceMs),
-      OPENCODE_HOT_RELOAD_COOLDOWN_MS: String(options.hotReload.cooldownMs),
-      ...(options.opencodeRouterHealthPort ? { OPENCODE_ROUTER_HEALTH_PORT: String(options.opencodeRouterHealthPort) } : {}),
-    },
-  });
+  const env = {
+    ...process.env,
+    OPENCODE_CLIENT: "veslo-orchestrator",
+    OPENCODE_DISABLE_CLAUDE_CODE: "1",
+    VESLO: "1",
+    VESLO_RUN_ID: options.runId,
+    VESLO_LOG_FORMAT: options.logFormat,
+    OTEL_RESOURCE_ATTRIBUTES: mergeResourceAttributes(
+      {
+        "service.name": "opencode",
+        "service.instance.id": options.runId,
+      },
+      process.env.OTEL_RESOURCE_ATTRIBUTES,
+    ),
+    ...(options.username ? { OPENCODE_SERVER_USERNAME: options.username } : {}),
+    ...(options.password ? { OPENCODE_SERVER_PASSWORD: options.password } : {}),
+    ...(options.configDir ? { OPENCODE_CONFIG_DIR: options.configDir } : {}),
+    OPENCODE_HOT_RELOAD: options.hotReload.enabled ? "1" : "0",
+    OPENCODE_HOT_RELOAD_DEBOUNCE_MS: String(options.hotReload.debounceMs),
+    OPENCODE_HOT_RELOAD_COOLDOWN_MS: String(options.hotReload.cooldownMs),
+    ...(options.opencodeRouterHealthPort
+      ? { OPENCODE_ROUTER_HEALTH_PORT: String(options.opencodeRouterHealthPort) }
+      : {}),
+  };
+
+  // F4Ú4 — resolve sandbox: explicit `null` disables; explicit object wraps;
+  // omitted -> platform default unless VESLO_DISABLE_SANDBOX=1 (escape hatch
+  // for headless tests, never for prod).
+  let sandbox: WorkerSandbox | null;
+  if (options.sandbox === null) {
+    sandbox = null;
+  } else if (options.sandbox) {
+    sandbox = options.sandbox;
+  } else if (process.env.VESLO_DISABLE_SANDBOX === "1") {
+    sandbox = null;
+    options.logger.warn(
+      "engine spawn unsandboxed (VESLO_DISABLE_SANDBOX=1)",
+      { workspace: options.workspace },
+      "sandbox",
+    );
+  } else {
+    try {
+      sandbox = resolveSandbox();
+    } catch (err) {
+      options.logger.warn(
+        "sandbox unavailable, spawning unsandboxed",
+        { workspace: options.workspace, error: err instanceof Error ? err.message : String(err) },
+        "sandbox",
+      );
+      sandbox = null;
+    }
+  }
+
+  let child: ChildProcess;
+  if (sandbox && sandbox.isAvailable()) {
+    const baseCommand = [options.bin, ...args].map(shellQuote).join(" ");
+    // F4Ú4 — engine needs write access beyond workspace:
+    //   - OPENCODE_CONFIG_DIR (SQLite migrations, logs, telemetry, auth cache)
+    //   - /tmp + /private/tmp + /var/folders (SQLite WAL/SHM, scratch files)
+    //   - XDG dirs opencode uses: ~/.local/state/opencode, ~/.local/share/opencode,
+    //     ~/.cache/opencode, ~/.config/opencode (sessions DB, model cache, settings)
+    //   VSLO-86: `@opencode-ai/plugin` + zod are vendored into
+    //   `<workspace>/.opencode/node_modules/` and `<configDir>/node_modules/`
+    //   at provisioning time, so the engine no longer needs to walk into
+    //   `~/.bun/install/cache` at runtime. Keeping that path out of the
+    //   sandbox allow-list avoids a regression where the sandbox-runtime
+    //   appears to abort fresh spawns when the path is added.
+    //   These will move to per-workspace dirs in a later fáze.
+    const home = process.env.HOME ?? "";
+    const extraWrites: string[] = [
+      "/tmp",
+      "/private/tmp",
+      "/var/folders",
+    ];
+    if (options.configDir) extraWrites.push(options.configDir);
+    if (home) {
+      extraWrites.push(
+        `${home}/.local/state/opencode`,
+        `${home}/.local/share/opencode`,
+        `${home}/.cache/opencode`,
+        `${home}/.config/opencode`,
+      );
+    }
+    const wrapped = await sandbox.wrap({
+      command: baseCommand,
+      workspacePath: options.workspace,
+      additionalWritePaths: extraWrites,
+    });
+    options.logger.info(
+      "engine spawn (sandboxed)",
+      { workspace: options.workspace, backend: sandbox.name },
+      "sandbox",
+    );
+    child = spawnProcess("/bin/sh", ["-c", wrapped], {
+      cwd: options.workspace,
+      stdio: ["ignore", "pipe", "pipe"],
+      env,
+    });
+  } else {
+    child = spawnProcess(options.bin, args, {
+      cwd: options.workspace,
+      stdio: ["ignore", "pipe", "pipe"],
+      env,
+    });
+  }
 
   prefixStream(child.stdout, "opencode", "stdout", options.logger, child.pid ?? undefined);
   prefixStream(child.stderr, "opencode", "stderr", options.logger, child.pid ?? undefined);
+
+  // Surface spawn-level failures eagerly. Without these listeners an opencode
+  // crash before its first stdout write was invisible — callers blocked on
+  // waitForHealthy for up to 60s with no log explaining what went wrong.
+  child.once("error", (err) => {
+    options.logger.error(
+      "engine spawn failed (process error)",
+      { workspace: options.workspace, pid: child.pid, error: err.message },
+      "opencode",
+    );
+  });
+  child.once("exit", (code, signal) => {
+    if (code === 0) return; // clean shutdown
+    options.logger.warn(
+      "engine process exited",
+      {
+        workspace: options.workspace,
+        pid: child.pid,
+        code,
+        signal,
+      },
+      "opencode",
+    );
+  });
 
   return child;
 }
@@ -2665,6 +2554,22 @@ async function startVesloServer(options: {
   prefixStream(child.stdout, "veslo-server", "stdout", options.logger, child.pid ?? undefined);
   prefixStream(child.stderr, "veslo-server", "stderr", options.logger, child.pid ?? undefined);
 
+  child.once("error", (err) => {
+    options.logger.error(
+      "veslo-server spawn failed (process error)",
+      { workspace: options.workspace, pid: child.pid, error: err.message },
+      "veslo-server",
+    );
+  });
+  child.once("exit", (code, signal) => {
+    if (code === 0) return;
+    options.logger.warn(
+      "veslo-server process exited",
+      { workspace: options.workspace, pid: child.pid, code, signal },
+      "veslo-server",
+    );
+  });
+
   return child;
 }
 
@@ -2715,6 +2620,22 @@ async function startOpenCodeRouter(options: {
   prefixStream(child.stdout, "veslo-code-router", "stdout", options.logger, child.pid ?? undefined);
   prefixStream(child.stderr, "veslo-code-router", "stderr", options.logger, child.pid ?? undefined);
 
+  child.once("error", (err) => {
+    options.logger.error(
+      "veslo-code-router spawn failed (process error)",
+      { workspace: options.workspace, pid: child.pid, error: err.message },
+      "veslo-code-router",
+    );
+  });
+  child.once("exit", (code, signal) => {
+    if (code === 0) return;
+    options.logger.warn(
+      "veslo-code-router process exited",
+      { workspace: options.workspace, pid: child.pid, code, signal },
+      "veslo-code-router",
+    );
+  });
+
   return child;
 }
 
@@ -2751,489 +2672,6 @@ async function opencodeRouterSupportsOpencodeUrl(bin: string): Promise<boolean> 
       resolve(false);
     });
   });
-}
-
-async function stopDockerContainer(name: string): Promise<void> {
-  if (!name.trim()) return;
-  await new Promise<void>((resolve) => {
-    const child = spawnProcess("docker", ["stop", name], { stdio: ["ignore", "ignore", "ignore"] });
-    child.on("error", () => resolve());
-    child.on("exit", () => resolve());
-  });
-}
-
-async function stopAppleContainer(name: string): Promise<void> {
-  if (!name.trim()) return;
-  await new Promise<void>((resolve) => {
-    const child = spawnProcess("container", ["stop", name], { stdio: ["ignore", "ignore", "ignore"] });
-    child.on("error", () => resolve());
-    child.on("exit", () => resolve());
-  });
-}
-
-async function runQuiet(command: string, args: string[], timeoutMs = 60_000): Promise<void> {
-  const child = spawnProcess(command, args, { stdio: ["ignore", "ignore", "ignore"] });
-  type QuietResult =
-    | { type: "exit"; code: number | null }
-    | { type: "error"; error: unknown }
-    | { type: "timeout" };
-
-  const result = await Promise.race<QuietResult>([
-    once(child, "exit").then(([code]) => ({ type: "exit" as const, code: (code ?? null) as number | null })),
-    once(child, "error").then(([error]) => ({ type: "error" as const, error })),
-    new Promise<QuietResult>((resolve) => setTimeout(resolve, timeoutMs, { type: "timeout" as const })),
-  ]);
-  if (result.type === "timeout") {
-    try {
-      child.kill("SIGKILL");
-    } catch {
-      // ignore
-    }
-    throw new Error(`Command timed out: ${command} ${args.join(" ")}`);
-  }
-  if (result.type === "error") {
-    throw new Error(`Command failed: ${command} ${args.join(" ")}: ${String(result.error)}`);
-  }
-  if (result.code !== 0) {
-    throw new Error(`Command failed: ${command} ${args.join(" ")}`);
-  }
-}
-
-async function ensureAppleContainerSystemReady(): Promise<void> {
-  if (process.platform !== "darwin") {
-    throw new Error("Apple container backend is only supported on macOS");
-  }
-  if (process.arch !== "arm64") {
-    throw new Error("Apple container backend requires Apple silicon (arm64)");
-  }
-  if (!(await probeCommand("container", ["--version"]))) {
-    throw new Error("Apple container CLI not found. Install https://github.com/apple/container");
-  }
-  // Best-effort: start the background system service.
-  try {
-    await runQuiet("container", ["system", "start"], 90_000);
-  } catch {
-    // Ignore; older versions may not require an explicit start.
-  }
-}
-
-async function stageSandboxRuntime(options: {
-  persistDir: string;
-  containerName: string;
-  sidecars: { opencode: string; vesloServer: string; opencodeRouter?: string | null };
-  detach: boolean;
-}): Promise<{
-  baseDir: string;
-  rootInContainer: string;
-  entrypointHostPath: string;
-  cleanup: () => Promise<void>;
-}> {
-  const baseDir = join(options.persistDir, "veslo-orchestrator-sandbox", options.containerName);
-  await mkdir(baseDir, { recursive: true });
-
-  const sidecarsDir = join(baseDir, "sidecars");
-  await mkdir(sidecarsDir, { recursive: true });
-  const entrypointHostPath = join(baseDir, "entrypoint.sh");
-
-  const stagedOpencode = join(sidecarsDir, "veslo-code");
-  const stagedVeslo = join(sidecarsDir, "veslo-server");
-  await copyFile(options.sidecars.opencode, stagedOpencode);
-  await copyFile(options.sidecars.vesloServer, stagedVeslo);
-  await ensureExecutable(stagedOpencode);
-  await ensureExecutable(stagedVeslo);
-
-  if (options.sidecars.opencodeRouter) {
-    const stagedOpenCodeRouter = join(sidecarsDir, "veslo-code-router");
-    await copyFile(options.sidecars.opencodeRouter, stagedOpenCodeRouter);
-    await ensureExecutable(stagedOpenCodeRouter);
-  }
-
-  const rootInContainer = `/persist/veslo-orchestrator-sandbox/${options.containerName}`;
-  const cleanup = async () => {
-    if (options.detach) return;
-    try {
-      await rm(baseDir, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
-  };
-
-  return { baseDir, rootInContainer, entrypointHostPath, cleanup };
-}
-
-async function writeSandboxEntrypoint(options: {
-  entrypointHostPath: string;
-  rootInContainer: string;
-  opencodeConfigDirInContainer: string;
-  backend: "docker" | "container";
-  opencode: {
-    corsOrigins: string[];
-    username?: string;
-    password?: string;
-    hotReload: OpencodeHotReload;
-  };
-  veslo: {
-    token: string;
-    hostToken: string;
-    approvalMode: ApprovalMode;
-    approvalTimeoutMs: number;
-    readOnly: boolean;
-    corsOrigins: string[];
-    opencodeUsername?: string;
-    opencodePassword?: string;
-    logFormat: LogFormat;
-    opencodeRouterEnabled: boolean;
-  };
-  runId: string;
-  logFormat: LogFormat;
-}): Promise<void> {
-  const opencodeBin = `${options.rootInContainer}/sidecars/veslo-code`;
-  const vesloBin = `${options.rootInContainer}/sidecars/veslo-server`;
-  const opencodeRouterBin = `${options.rootInContainer}/sidecars/veslo-code-router`;
-  const workspaceDir = "/workspace";
-  const opencodeConfigDir = options.opencodeConfigDirInContainer;
-  const hostOpencodeConfigDir = SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH;
-  const hostOpencodeDataDir = SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH;
-
-  const opencodeCors = options.opencode.corsOrigins
-    .map((origin) => `--cors ${shQuote(origin)}`)
-    .join(" ");
-
-  const vesloCors = options.veslo.corsOrigins.length
-    ? `--cors ${shQuote(options.veslo.corsOrigins.join(","))}`
-    : "";
-
-  const opencodeAuthEnv = [
-    options.opencode.username ? `export OPENCODE_SERVER_USERNAME=${shQuote(options.opencode.username)}` : "",
-    options.opencode.password ? `export OPENCODE_SERVER_PASSWORD=${shQuote(options.opencode.password)}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  const vesloAuthArgs = [
-    options.veslo.opencodeUsername ? `--opencode-username ${shQuote(options.veslo.opencodeUsername)}` : "",
-    options.veslo.opencodePassword ? `--opencode-password ${shQuote(options.veslo.opencodePassword)}` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  const opencodeRouterEnv = options.veslo.opencodeRouterEnabled
-    ? `export OPENCODE_ROUTER_HEALTH_PORT=${shQuote(String(SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT))}`
-    : "";
-
-  const script = [
-    "set -eu",
-    `export HOME=${shQuote("/persist")}`,
-    "export XDG_CONFIG_HOME=\"$HOME/.config\"",
-    "export XDG_CACHE_HOME=\"$HOME/.cache\"",
-    "export XDG_DATA_HOME=\"$HOME/.local/share\"",
-    "export XDG_STATE_HOME=\"$HOME/.local/state\"",
-    "mkdir -p \"$XDG_CONFIG_HOME\" \"$XDG_CACHE_HOME\" \"$XDG_DATA_HOME\" \"$XDG_STATE_HOME\"",
-    // Do not `cd` into the mounted workspace: bun-compiled sidecars read bunfig.toml
-    // from cwd, and user workspaces may include preloads that break startup.
-    `cd ${shQuote("/persist")}`,
-    `export OPENCODE_DIRECTORY=${shQuote(workspaceDir)}`,
-    `export OPENCODE_CONFIG_DIR=${shQuote(opencodeConfigDir)}`,
-    `mkdir -p ${shQuote(opencodeConfigDir)}`,
-    `if [ -d ${shQuote(hostOpencodeConfigDir)} ]; then cp -R ${shQuote(`${hostOpencodeConfigDir}/.`)} ${shQuote(opencodeConfigDir)} 2>/dev/null || true; fi`,
-    "mkdir -p \"$XDG_DATA_HOME/opencode\"",
-    `if [ -d ${shQuote(hostOpencodeDataDir)} ]; then cp ${shQuote(`${hostOpencodeDataDir}/auth.json`)} \"$XDG_DATA_HOME/opencode/auth.json\" 2>/dev/null || true; cp ${shQuote(`${hostOpencodeDataDir}/mcp-auth.json`)} \"$XDG_DATA_HOME/opencode/mcp-auth.json\" 2>/dev/null || true; fi`,
-    `export OPENCODE_URL=${shQuote(`http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`)}`,
-    `export OPENCODE_CLIENT=veslo-orchestrator`,
-    `export OPENCODE_DISABLE_CLAUDE_CODE=1`,
-    `export OPENCODE_HOT_RELOAD=${shQuote(options.opencode.hotReload.enabled ? "1" : "0")}`,
-    `export OPENCODE_HOT_RELOAD_DEBOUNCE_MS=${shQuote(String(options.opencode.hotReload.debounceMs))}`,
-    `export OPENCODE_HOT_RELOAD_COOLDOWN_MS=${shQuote(String(options.opencode.hotReload.cooldownMs))}`,
-    `export VESLO=1`,
-    `export VESLO_RUN_ID=${shQuote(options.runId)}`,
-    `export VESLO_LOG_FORMAT=${shQuote(options.logFormat)}`,
-    `export VESLO_SANDBOX_ENABLED=1`,
-    `export VESLO_SANDBOX_BACKEND=${shQuote(options.backend)}`,
-    opencodeRouterEnv,
-    opencodeAuthEnv,
-    "opencode_pid=\"\"",
-    "opencodeRouter_pid=\"\"",
-    "cleanup() {",
-    "  if [ -n \"$opencodeRouter_pid\" ]; then kill \"$opencodeRouter_pid\" 2>/dev/null || true; fi",
-    "  if [ -n \"$opencode_pid\" ]; then kill \"$opencode_pid\" 2>/dev/null || true; fi",
-    "}",
-    "trap cleanup INT TERM",
-    `${shQuote(opencodeBin)} serve --hostname 127.0.0.1 --port ${shQuote(String(SANDBOX_INTERNAL_OPENCODE_PORT))} ${opencodeCors} &`,
-    "opencode_pid=$!",
-    options.veslo.opencodeRouterEnabled ? `${shQuote(opencodeRouterBin)} serve ${shQuote(workspaceDir)} &` : "",
-    options.veslo.opencodeRouterEnabled ? "opencodeRouter_pid=$!" : "",
-    `exec ${shQuote(vesloBin)} --host 0.0.0.0 --port ${shQuote(String(SANDBOX_INTERNAL_VESLO_PORT))}` +
-      ` --token ${shQuote(options.veslo.token)} --host-token ${shQuote(options.veslo.hostToken)}` +
-      ` --workspace ${shQuote(workspaceDir)}` +
-      ` --approval ${shQuote(options.veslo.approvalMode)}` +
-      ` --approval-timeout ${shQuote(String(options.veslo.approvalTimeoutMs))}` +
-      (options.veslo.readOnly ? " --read-only" : "") +
-      ` --opencode-base-url ${shQuote(`http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`)}` +
-      ` --opencode-directory ${shQuote(workspaceDir)}` +
-      ` ${vesloAuthArgs}` +
-      ` --log-format ${shQuote(options.veslo.logFormat)}` +
-      (options.veslo.opencodeRouterEnabled ? ` --veslo-code-router-health-port ${shQuote(String(SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT))}` : "") +
-      (vesloCors ? ` ${vesloCors}` : ""),
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  await writeFile(options.entrypointHostPath, `${script}\n`, "utf8");
-}
-
-async function startDockerSandbox(options: {
-  image: string;
-  containerName: string;
-  workspace: string;
-  persistDir: string;
-  opencodeConfigDir: string;
-  extraMounts: SandboxMount[];
-  sidecars: { opencode: string; vesloServer: string; opencodeRouter?: string | null };
-  ports: { veslo: number; opencodeRouterHealth?: number | null };
-  opencode: {
-    corsOrigins: string[];
-    username?: string;
-    password?: string;
-    hotReload: OpencodeHotReload;
-  };
-  veslo: {
-    token: string;
-    hostToken: string;
-    approvalMode: ApprovalMode;
-    approvalTimeoutMs: number;
-    readOnly: boolean;
-    corsOrigins: string[];
-    opencodeUsername?: string;
-    opencodePassword?: string;
-    logFormat: LogFormat;
-  };
-  runId: string;
-  logFormat: LogFormat;
-  detach: boolean;
-  logger: Logger;
-}): Promise<{ child: ReturnType<typeof spawn>; cleanup: () => Promise<void> }> {
-  const staged = await stageSandboxRuntime({
-    persistDir: options.persistDir,
-    containerName: options.containerName,
-    sidecars: options.sidecars,
-    detach: options.detach,
-  });
-
-  await writeSandboxEntrypoint({
-    entrypointHostPath: staged.entrypointHostPath,
-    rootInContainer: staged.rootInContainer,
-    opencodeConfigDirInContainer: "/opencode-config",
-    backend: "docker",
-    opencode: options.opencode,
-    veslo: {
-      token: options.veslo.token,
-      hostToken: options.veslo.hostToken,
-      approvalMode: options.veslo.approvalMode,
-      approvalTimeoutMs: options.veslo.approvalTimeoutMs,
-      readOnly: options.veslo.readOnly,
-      corsOrigins: options.veslo.corsOrigins,
-      opencodeUsername: options.veslo.opencodeUsername,
-      opencodePassword: options.veslo.opencodePassword,
-      logFormat: options.veslo.logFormat,
-      opencodeRouterEnabled: !!options.sidecars.opencodeRouter,
-    },
-    runId: options.runId,
-    logFormat: options.logFormat,
-  });
-
-  const args: string[] = [
-    "run",
-    "--rm",
-    "--name",
-    options.containerName,
-    "-p",
-    `${options.ports.veslo}:${SANDBOX_INTERNAL_VESLO_PORT}`,
-    "-v",
-    `${options.workspace}:/workspace`,
-    "-v",
-    `${options.persistDir}:/persist`,
-    "-v",
-    `${options.opencodeConfigDir}:/opencode-config`,
-  ];
-
-  const hostOpencodeConfig = await resolveHostOpencodeGlobalConfigDir();
-  const hasOpencodeConfigMount = options.extraMounts.some(
-    (mount) => mount.containerPath === SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH,
-  );
-  if (hostOpencodeConfig && !hasOpencodeConfigMount) {
-    args.push("-v", `${hostOpencodeConfig}:${SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH}:ro`);
-    options.logger.debug("sandbox: mounted host opencode config", {
-      hostPath: hostOpencodeConfig,
-      containerPath: SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH,
-    });
-  }
-
-  const hostOpencodeData = await resolveHostOpencodeGlobalDataDir();
-  const hasOpencodeDataMount = options.extraMounts.some(
-    (mount) => mount.containerPath === SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH,
-  );
-  if (hostOpencodeData && !hasOpencodeDataMount) {
-    args.push("-v", `${hostOpencodeData}:${SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH}:ro`);
-    options.logger.debug("sandbox: mounted host opencode data", {
-      hostPath: hostOpencodeData,
-      containerPath: SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH,
-    });
-  }
-
-  if (options.sidecars.opencodeRouter && options.ports.opencodeRouterHealth) {
-    args.push("-p", `${options.ports.opencodeRouterHealth}:${SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT}`);
-  }
-
-  for (const mount of options.extraMounts) {
-    const suffix = mount.readonly ? ":ro" : "";
-    args.push("-v", `${mount.hostPath}:${mount.containerPath}${suffix}`);
-  }
-
-  if (options.detach) {
-    args.push("-d");
-  }
-
-  const scriptInContainer = `${staged.rootInContainer}/entrypoint.sh`;
-  args.push(options.image, "sh", scriptInContainer);
-
-  const child = spawnProcess("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
-  prefixStream(child.stdout, "sandbox", "stdout", options.logger, child.pid ?? undefined);
-  prefixStream(child.stderr, "sandbox", "stderr", options.logger, child.pid ?? undefined);
-
-  return { child, cleanup: staged.cleanup };
-}
-
-async function startAppleContainerSandbox(options: {
-  image: string;
-  containerName: string;
-  workspace: string;
-  persistDir: string;
-  opencodeConfigDir: string;
-  extraMounts: SandboxMount[];
-  sidecars: { opencode: string; vesloServer: string; opencodeRouter?: string | null };
-  ports: { veslo: number; opencodeRouterHealth?: number | null };
-  opencode: {
-    corsOrigins: string[];
-    username?: string;
-    password?: string;
-    hotReload: OpencodeHotReload;
-  };
-  veslo: {
-    token: string;
-    hostToken: string;
-    approvalMode: ApprovalMode;
-    approvalTimeoutMs: number;
-    readOnly: boolean;
-    corsOrigins: string[];
-    opencodeUsername?: string;
-    opencodePassword?: string;
-    logFormat: LogFormat;
-  };
-  runId: string;
-  logFormat: LogFormat;
-  detach: boolean;
-  logger: Logger;
-}): Promise<{ child: ReturnType<typeof spawn>; cleanup: () => Promise<void> }> {
-  await ensureAppleContainerSystemReady();
-
-  const staged = await stageSandboxRuntime({
-    persistDir: options.persistDir,
-    containerName: options.containerName,
-    sidecars: options.sidecars,
-    detach: options.detach,
-  });
-
-  await writeSandboxEntrypoint({
-    entrypointHostPath: staged.entrypointHostPath,
-    rootInContainer: staged.rootInContainer,
-    opencodeConfigDirInContainer: "/opencode-config",
-    backend: "container",
-    opencode: options.opencode,
-    veslo: {
-      token: options.veslo.token,
-      hostToken: options.veslo.hostToken,
-      approvalMode: options.veslo.approvalMode,
-      approvalTimeoutMs: options.veslo.approvalTimeoutMs,
-      readOnly: options.veslo.readOnly,
-      corsOrigins: options.veslo.corsOrigins,
-      opencodeUsername: options.veslo.opencodeUsername,
-      opencodePassword: options.veslo.opencodePassword,
-      logFormat: options.veslo.logFormat,
-      opencodeRouterEnabled: !!options.sidecars.opencodeRouter,
-    },
-    runId: options.runId,
-    logFormat: options.logFormat,
-  });
-
-  const args: string[] = [
-    "run",
-    "--rm",
-    "--name",
-    options.containerName,
-    "-p",
-    `${options.ports.veslo}:${SANDBOX_INTERNAL_VESLO_PORT}`,
-    "-v",
-    `${options.workspace}:/workspace`,
-    "-v",
-    `${options.persistDir}:/persist`,
-    "-v",
-    `${options.opencodeConfigDir}:/opencode-config`,
-  ];
-
-  const hostOpencodeConfig = await resolveHostOpencodeGlobalConfigDir();
-  const hasOpencodeConfigMount = options.extraMounts.some(
-    (mount) => mount.containerPath === SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH,
-  );
-  if (hostOpencodeConfig && !hasOpencodeConfigMount) {
-    args.push(
-      "--mount",
-      `type=bind,source=${hostOpencodeConfig},target=${SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH},readonly`,
-    );
-    options.logger.debug("sandbox: mounted host opencode config", {
-      hostPath: hostOpencodeConfig,
-      containerPath: SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH,
-    });
-  }
-
-  const hostOpencodeData = await resolveHostOpencodeGlobalDataDir();
-  const hasOpencodeDataMount = options.extraMounts.some(
-    (mount) => mount.containerPath === SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH,
-  );
-  if (hostOpencodeData && !hasOpencodeDataMount) {
-    args.push(
-      "--mount",
-      `type=bind,source=${hostOpencodeData},target=${SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH},readonly`,
-    );
-    options.logger.debug("sandbox: mounted host opencode data", {
-      hostPath: hostOpencodeData,
-      containerPath: SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH,
-    });
-  }
-
-  if (options.sidecars.opencodeRouter && options.ports.opencodeRouterHealth) {
-    args.push("-p", `${options.ports.opencodeRouterHealth}:${SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT}`);
-  }
-
-  for (const mount of options.extraMounts) {
-    if (mount.readonly) {
-      args.push("--mount", `type=bind,source=${mount.hostPath},target=${mount.containerPath},readonly`);
-    } else {
-      args.push("-v", `${mount.hostPath}:${mount.containerPath}`);
-    }
-  }
-
-  if (options.detach) {
-    args.push("-d");
-  }
-
-  const scriptInContainer = `${staged.rootInContainer}/entrypoint.sh`;
-  args.push(options.image, "sh", scriptInContainer);
-
-  const child = spawnProcess("container", args, { stdio: ["ignore", "pipe", "pipe"] });
-  prefixStream(child.stdout, "sandbox", "stdout", options.logger, child.pid ?? undefined);
-  prefixStream(child.stderr, "sandbox", "stderr", options.logger, child.pid ?? undefined);
-
-  return { child, cleanup: staged.cleanup };
 }
 
 async function verifyOpenCodeRouterVersion(binary: ResolvedBinary): Promise<string | undefined> {
@@ -3400,92 +2838,6 @@ async function runChecks(input: {
 
     if (!events.length) {
       throw new Error("No SSE events observed during check");
-    }
-  }
-}
-
-/**
- * Lighter check suite for sandbox mode.  Uses only raw HTTP against the
- * veslo-server endpoints — no OpenCode SDK calls that rely on Bearer
- * auth through the proxy (since the released server binary may predate our
- * token/proxy changes).
- */
-async function runSandboxChecks(input: {
-  vesloUrl: string;
-  vesloToken: string;
-  hostToken: string;
-}) {
-  const baseUrl = input.vesloUrl.replace(/\/$/, "");
-  const headers = { Authorization: `Bearer ${input.vesloToken}` };
-  const hostHeaders = { "X-Veslo-Host-Token": input.hostToken };
-
-  // 1. Server health
-  const health = await fetchJson(`${baseUrl}/health`);
-  if (!health || typeof health !== "object") {
-    throw new Error("veslo-server /health returned invalid payload");
-  }
-
-  // 2. Workspaces list
-  const workspaces = await fetchJson(`${baseUrl}/workspaces`, { headers });
-  if (!workspaces?.items?.length) {
-    throw new Error("veslo-server returned no workspaces");
-  }
-  const workspaceId = workspaces.items[0].id as string;
-
-  // 3. Workspace config
-  await fetchJson(`${baseUrl}/workspace/${workspaceId}/config`, { headers });
-
-  // 4. Approvals endpoint (host auth)
-  await fetchJson(`${baseUrl}/approvals`, { headers: hostHeaders });
-
-  // 5. Proxy is reachable (even if auth is rejected — non-5xx proves the
-  //    server is proxying to a running opencode)
-  const proxyRes = await fetch(`${baseUrl}/opencode/health`, {
-    headers,
-    signal: AbortSignal.timeout(3000),
-  });
-  if (proxyRes.status >= 500) {
-    throw new Error(`opencode proxy returned ${proxyRes.status}`);
-  }
-
-  // 6. opencodeRouter proxy is reachable (if configured)
-  const owRes = await fetch(`${baseUrl}/veslo-code-router/health`, {
-    headers,
-    signal: AbortSignal.timeout(3000),
-  });
-  if (owRes.status >= 500) {
-    throw new Error(`opencodeRouter proxy returned ${owRes.status}`);
-  }
-
-  // 7. Mounted opencodeRouter proxy + auth behavior (if configured)
-  if (owRes.status !== 404) {
-    const owMountBase = `${baseUrl}/w/${encodeURIComponent(workspaceId)}/veslo-code-router`;
-    const mountHealth = await fetch(`${owMountBase}/health`, {
-      headers,
-      signal: AbortSignal.timeout(3000),
-    });
-    if (mountHealth.status >= 500) {
-      throw new Error(`opencodeRouter mount proxy returned ${mountHealth.status}`);
-    }
-    const mountClient = await fetch(`${owMountBase}/config/groups`, {
-      headers,
-      signal: AbortSignal.timeout(3000),
-    });
-    if (mountClient.status === 200) {
-      throw new Error("opencodeRouter mount proxy /config/groups should require host auth");
-    }
-    if (mountClient.status !== 401 && mountClient.status !== 403) {
-      throw new Error(`opencodeRouter mount proxy /config/groups unexpected status: ${mountClient.status}`);
-    }
-    const mountHost = await fetch(`${owMountBase}/config/groups`, {
-      headers: hostHeaders,
-      signal: AbortSignal.timeout(3000),
-    });
-    if (mountHost.status >= 500) {
-      throw new Error(`opencodeRouter mount proxy (host auth) returned ${mountHost.status}`);
-    }
-    if (mountHost.status === 401 || mountHost.status === 403) {
-      throw new Error("opencodeRouter mount proxy /config/groups rejected host auth");
     }
   }
 }
@@ -3686,7 +3038,29 @@ function createLogger(options: {
       ? colorize(levelTag, levelColors[level] ?? ANSI.gray, colorEnabled)
       : "";
     const tag = [coloredLabel, coloredLevel].filter(Boolean).join(" ");
-    const line = tag ? `${tag} ${message}` : message;
+    // Append caller-supplied attributes inline for warn/error so spawn /
+    // proxy / connect failures surface their real cause in plain-text logs.
+    // Without this, `logger.warn("X failed", { error: e.message })` shows
+    // only "X failed" — the actual message gets dropped on the floor in
+    // text format, leaving debugging to crash-dump archaeology.
+    let attrsSuffix = "";
+    if ((level === "warn" || level === "error") && attributes) {
+      const omitKeys = new Set(["run.id", "process.pid", "service.component"]);
+      const filtered: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(attributes)) {
+        if (omitKeys.has(k)) continue;
+        if (v === undefined || v === null) continue;
+        filtered[k] = v;
+      }
+      if (Object.keys(filtered).length > 0) {
+        try {
+          attrsSuffix = ` ${JSON.stringify(filtered)}`;
+        } catch {
+          // ignore stringify failure
+        }
+      }
+    }
+    const line = tag ? `${tag} ${message}${attrsSuffix}` : `${message}${attrsSuffix}`;
     process.stdout.write(`${line}\n`);
   };
 
@@ -4015,6 +3389,17 @@ async function runRouterDaemon(args: ParsedArgs) {
   const opencodeSource = opencodeSourceInput;
   const dataDir = resolveRouterDataDir(args.flags);
   const statePath = routerStatePath(dataDir);
+  // Clear stale `.tmp.*` files left behind by previous crashes between
+  // writeFile and rename inside atomicWriteJson. Without this, the data dir
+  // can accumulate orphan tmp files that confuse later debugging.
+  const cleanedTmps = await cleanupStaleTmpFiles(statePath);
+  if (cleanedTmps > 0) {
+    logger.info(
+      "cleaned stale state tmp files",
+      { count: cleanedTmps, statePath },
+      "veslo-orchestrator",
+    );
+  }
   let state = await loadRouterState(statePath);
 
   const host = readFlag(args.flags, "daemon-host") ?? "127.0.0.1";
@@ -4022,6 +3407,18 @@ async function runRouterDaemon(args: ParsedArgs) {
     readNumber(args.flags, "daemon-port", undefined, "VESLO_DAEMON_PORT"),
     "127.0.0.1",
   );
+
+  // VSLO-171 fáze 2 F2Ú4 — engine pool capacity + idle suspend.
+  const maxEngines = readNumber(args.flags, "max-engines", 8, "VESLO_MAX_ENGINES") ?? 8;
+  if (!Number.isFinite(maxEngines) || maxEngines < 1 || maxEngines > 64) {
+    throw new Error("--max-engines must be between 1 and 64");
+  }
+  const idleSuspendMs =
+    readNumber(args.flags, "idle-suspend-ms", 15 * 60_000, "VESLO_IDLE_SUSPEND_MS") ??
+    15 * 60_000;
+  if (!Number.isFinite(idleSuspendMs) || idleSuspendMs < 0) {
+    throw new Error("--idle-suspend-ms must be >= 0");
+  }
 
   const opencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.VESLO_OPENCODE_BIN;
   const opencodeHost =
@@ -4038,10 +3435,13 @@ async function runRouterDaemon(args: ParsedArgs) {
   const authHeaders = opencodePassword
     ? { Authorization: `Basic ${encodeBasicAuth(opencodeUsername, opencodePassword)}` }
     : undefined;
+  // VSLO-171 fáze 2 F2Ú3: singleton engine smazán. Tento port byl pro legacy
+  // singleton; pool si spawne engines na vlastních volných portech přes findFreePort.
+  // Necháváme proměnnou pro CLI flag kompat (--opencode-port), ale fallback na
+  // state.opencode (deprecated field) je pryč.
   const opencodePort = await resolvePort(
-    readNumber(args.flags, "opencode-port", state.opencode?.port, "VESLO_OPENCODE_PORT"),
+    readNumber(args.flags, "opencode-port", undefined, "VESLO_OPENCODE_PORT"),
     "127.0.0.1",
-    state.opencode?.port,
   );
   const opencodeHotReload = readOpencodeHotReload(
     args.flags,
@@ -4061,33 +3461,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     process.env.VESLO_OPENCODE_CORS ??
     "http://localhost:5173,tauri://localhost,http://tauri.localhost";
   const corsOrigins = parseList(corsValue);
-  const opencodeWorkdirFlag =
-    readFlag(args.flags, "opencode-workdir") ?? process.env.VESLO_OPENCODE_WORKDIR;
-  const activeWorkspace = state.workspaces.find((entry) => entry.id === state.activeId && entry.workspaceType === "local");
-  const opencodeWorkdir = opencodeWorkdirFlag ?? activeWorkspace?.path ?? process.cwd();
-  let currentWorkdir = await ensureWorkspace(opencodeWorkdir);
-  let currentConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(currentWorkdir));
-  await ensureOpencodeManagedTools(currentConfigDir);
-  logger.info(
-    "Daemon starting",
-    { runId, logFormat, workdir: currentWorkdir, host, port },
-    "veslo-orchestrator",
-  );
-
-  const switchWorkdir = async (newPath: string): Promise<boolean> => {
-    const resolved = await ensureWorkspace(newPath);
-    if (resolved === currentWorkdir) return false;
-    if (opencodeChild) {
-      logger.info("Stopping engine for workspace switch", { from: currentWorkdir, to: resolved }, "opencode");
-      await stopChild(opencodeChild);
-      opencodeChild = null;
-      state.opencode = undefined;
-    }
-    currentWorkdir = resolved;
-    currentConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(currentWorkdir));
-    await ensureOpencodeManagedTools(currentConfigDir);
-    return true;
-  };
+  logger.info("Daemon starting", { runId, logFormat, host, port }, "veslo-orchestrator");
 
   const sidecar = resolveSidecarConfig(args.flags, cliVersion);
   const allowExternal = readBool(args.flags, "allow-external", false, "VESLO_ALLOW_EXTERNAL");
@@ -4112,8 +3486,6 @@ async function runRouterDaemon(args: ParsedArgs) {
   });
   logVerbose(`opencode bin: ${opencodeBinary.bin} (${opencodeBinary.source})`);
 
-  let opencodeChild: ReturnType<typeof spawn> | null = null;
-
   const updateDiagnostics = (actualVersion?: string) => {
     state.cliVersion = cliVersion;
     state.sidecar = {
@@ -4135,69 +3507,98 @@ async function runRouterDaemon(args: ParsedArgs) {
     };
   };
 
-  const ensureOpencode = async () => {
-    const existing = state.opencode;
-    if (existing && isProcessAlive(existing.pid)) {
-      const client = createOpencodeClient({
-        baseUrl: existing.baseUrl,
-        directory: currentWorkdir,
-        headers: authHeaders,
-      });
-      try {
-        await waitForOpencodeHealthy(client, 2000, 200);
-        if (!state.sidecar || !state.cliVersion || !state.binaries?.opencode) {
-          updateDiagnostics(state.binaries?.opencode?.actualVersion);
-          await saveRouterState(statePath, state);
-        }
-        return { baseUrl: existing.baseUrl, client };
-      } catch {
-        // restart
-      }
-    }
-
-    if (opencodeChild) {
-      await stopChild(opencodeChild);
-    }
-
-    const opencodeActualVersion = await verifyOpencodeVersion(opencodeBinary);
-    logVerbose(`opencode version: ${opencodeActualVersion ?? "unknown"}`);
-    const child = await startOpencode({
-      bin: opencodeBinary.bin,
-      workspace: currentWorkdir,
-      configDir: currentConfigDir,
-      hotReload: opencodeHotReload,
-      bindHost: opencodeHost,
-      port: opencodePort,
-      username: opencodePassword ? opencodeUsername : undefined,
-      password: opencodePassword,
-      corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
-      logger,
-      runId,
-      logFormat,
-    });
-    opencodeChild = child;
-    logger.info("Process spawned", { pid: child.pid ?? 0 }, "opencode");
-    const baseUrl = `http://${opencodeHost}:${opencodePort}`;
-    const client = createOpencodeClient({
-      baseUrl,
-      directory: currentWorkdir,
-      headers: authHeaders,
-    });
-    logger.info("Waiting for health", { url: baseUrl }, "opencode");
-    await waitForOpencodeHealthy(client);
-    logger.info("Healthy", { url: baseUrl }, "opencode");
-    state.opencode = {
-      pid: child.pid ?? 0,
-      port: opencodePort,
-      baseUrl,
-      startedAt: nowMs(),
-    };
-    updateDiagnostics(opencodeActualVersion);
+  // VSLO-171 fáze 2 F2Ú3: opencode version je dnes diagnostika-only; pool si
+  // verzi neověřuje, OpenCode binary stačí spawnnout per workspace lazy.
+  // updateDiagnostics() se volá při prvním pool.ensure (nebo přes /health
+  // poll), ale tady ji už neaktualizujeme z initial check.
+  try {
+    const initialOpencodeVersion = await verifyOpencodeVersion(opencodeBinary);
+    logVerbose(`opencode version: ${initialOpencodeVersion ?? "unknown"}`);
+    updateDiagnostics(initialOpencodeVersion);
     await saveRouterState(statePath, state);
-    return { baseUrl, client };
+  } catch (err) {
+    logger.warn("opencode version probe failed", { error: String(err) }, "veslo-orchestrator");
+  }
+
+  // F2Ú5 — 2-stage closure: `pool` references `persistEngines`, which itself
+  // references `pool`. Mutable placeholder breaks the cycle; assigned right
+  // after `pool` is constructed.
+  let persistEngines: () => void = () => {};
+
+  const pool = new EnginePool({
+    deps: {
+      resolveWorkspace: async (ws) => {
+        const workdir = await ensureWorkspace(ws.path ?? "");
+        const configDir = join(dataDir, "opencode-config", workspaceIdForLocal(workdir));
+        await ensureOpencodeManagedTools(configDir);
+        return { workdir, configDir };
+      },
+      spawnEngine: async ({ workspaceId, workdir, configDir, port }) => {
+        const child = await startOpencode({
+          bin: opencodeBinary.bin,
+          workspace: workdir,
+          configDir,
+          hotReload: opencodeHotReload,
+          bindHost: opencodeHost,
+          port,
+          username: opencodePassword ? opencodeUsername : undefined,
+          password: opencodePassword,
+          corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+          logger,
+          runId: `${runId}-${workspaceId.slice(-8)}`,
+          logFormat,
+        });
+        // opencodeHost is the *bind* address (often 0.0.0.0 so the engine is
+        // reachable from the host machine + LAN). The pool/proxy fetches this
+        // baseUrl as a client, where 0.0.0.0 is meaningless — Node's fetch
+        // resolves it to a routable address only on some platforms and refuses
+        // on others, producing "Unable to connect" engine proxy errors. Map
+        // wildcard binds to loopback so the local client always has a valid
+        // target.
+        const clientHost = opencodeHost === "0.0.0.0" || opencodeHost === "::" ? "127.0.0.1" : opencodeHost;
+        return { child, baseUrl: `http://${clientHost}:${port}` };
+      },
+      waitForHealthy: async (baseUrl) => {
+        const client = createOpencodeClient({ baseUrl, headers: authHeaders });
+        // Opencode cold-start (Bun JIT + SQLite migration + sandbox-runtime
+        // init) routinely exceeds 30s in dev builds. Pool returns 502 to the
+        // SDK if we time out, even though the engine reaches ready shortly
+        // after — the user then sees Error badges and a stuck UI. 60s gives
+        // cold paths room without blocking interactive switches.
+        const timeoutMs = (() => {
+          const raw = process.env.VESLO_OPENCODE_HEALTH_TIMEOUT_MS;
+          const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+          return Number.isFinite(parsed) && parsed >= 1_000 ? parsed : 60_000;
+        })();
+        await waitForOpencodeHealthy(client, timeoutMs);
+      },
+      stopChild,
+      findFreePort: () => findFreePort(opencodeHost),
+      isProcessAlive,
+      log: (msg, attrs) => logger.info(msg, attrs, "engine-pool"),
+      // F2Ú5 — per-engine health probe (2s timeout, 250ms retry). Pool
+      // strikes 3× before treating as crashed.
+      healthCheck: async (baseUrl) => {
+        const client = createOpencodeClient({ baseUrl, headers: authHeaders });
+        await waitForOpencodeHealthy(client, 2000, 250);
+      },
+      // F2Ú5 — state transition events. Log + trigger debounced persist.
+      onEngineChange: (workspaceId, event) => {
+        logger.info("engine event", { workspaceId, event }, "engine-pool");
+        persistEngines();
+      },
+    },
+    config: { maxEngines, idleSuspendMs },
+  });
+
+  persistEngines = (): void => {
+    state.engines = Object.fromEntries(
+      pool.snapshot().map((entry) => [entry.workspaceId, entry]),
+    );
+    persistDebounced(statePath, state);
   };
 
-  await ensureOpencode();
+  const persistEnginesSnapshot = persistEngines;
 
   const server = createHttpServer(async (req, res) => {
     const startedAt = Date.now();
@@ -4246,10 +3647,13 @@ async function runRouterDaemon(args: ParsedArgs) {
 
     try {
         if (req.method === "GET" && url.pathname === "/health") {
+          // VSLO-171 fáze 2 F2Ú3: `opencode` field (legacy singleton) smazán
+          // z /health. Tauri Rust `OrchestratorHealth.opencode: Option<...>`
+          // deserializuje missing field jako None — backward-safe.
           send(200, {
             ok: true,
             daemon: state.daemon ?? null,
-            opencode: state.opencode ?? null,
+            engines: pool.snapshot(),
             activeId: state.activeId,
             workspaceCount: state.workspaces.length,
             cliVersion: state.cliVersion ?? null,
@@ -4338,50 +3742,41 @@ async function runRouterDaemon(args: ParsedArgs) {
           send(404, { error: "workspace not found" });
           return;
         }
+        // Activate updates activeId immediately and waits for the engine to
+        // become ready before responding. The previous fire-and-forget pattern
+        // produced a race: callers (UI restartWorkspaceRuntime → loadSessions →
+        // sidebar session listing) issued proxy requests with a 10s client
+        // timeout, while opencode cold-start (Bun JIT + SQLite migration +
+        // sandbox init) routinely needs 30-60s. Result: "Request timed out."
+        // errors and Error badges in the sidebar even though the engine came
+        // up shortly after. Synchronous ensure here means activate returns
+        // only when the engine is ready (or the per-engine health timeout
+        // fires, which the pool surfaces as a thrown error).
         state.activeId = workspace.id;
         workspace.lastUsedAt = nowMs();
         await saveRouterState(statePath, state);
         if (workspace.workspaceType === "local" && workspace.path) {
-          const didSwitch = await switchWorkdir(workspace.path);
-          if (didSwitch) {
-            try {
-              await ensureOpencode();
-              logger.info("Engine restarted for workspace switch", { workspaceId: workspace.id, workdir: currentWorkdir }, "opencode");
-            } catch (err) {
-              logger.error("Engine restart failed after workspace switch", { workspaceId: workspace.id, error: String(err) }, "opencode");
-              send(500, { error: "engine restart failed", activeId: state.activeId });
-              return;
-            }
+          try {
+            await pool.ensure({ id: workspace.id, path: workspace.path });
+            persistEnginesSnapshot();
+          } catch (err) {
+            const detail = err instanceof Error ? err.message : String(err);
+            logger.warn(
+              "eager engine spawn failed",
+              { workspaceId: workspace.id, error: detail },
+              "engine-pool",
+            );
+            send(502, { error: "engine spawn failed", detail });
+            return;
           }
         }
         send(200, { activeId: state.activeId, workspace });
         return;
       }
 
-      if (parts[0] === "workspaces" && parts.length === 3 && parts[2] === "path" && req.method === "GET") {
-        const workspace = findWorkspace(state, decodeURIComponent(parts[1] ?? ""));
-        if (!workspace) {
-          send(404, { error: "workspace not found" });
-          return;
-        }
-        const isRemote = workspace.workspaceType === "remote";
-        const baseUrl = isRemote ? workspace.baseUrl ?? "" : (await ensureOpencode()).baseUrl;
-        if (!baseUrl) {
-          send(400, { error: "workspace baseUrl missing" });
-          return;
-        }
-        const directory = isRemote ? workspace.directory ?? "" : workspace.path;
-        const client = createOpencodeClient({
-          baseUrl,
-          directory: directory ? directory : undefined,
-          headers: authHeaders,
-        });
-        const pathInfo = unwrap(await client.path.get());
-        workspace.lastUsedAt = nowMs();
-        await saveRouterState(statePath, state);
-        send(200, { workspace, path: pathInfo });
-        return;
-      }
+      // VSLO-171 fáze 2 F2Ú3: GET /workspaces/:id/path endpoint smazán.
+      // Tauri Rust orchestrator_workspace_activate dnes response ignoruje
+      // (`let _ = ureq::get(...)`), jiný callsite není.
 
       if (parts[0] === "instances" && parts.length === 3 && parts[2] === "dispose" && req.method === "POST") {
         const workspace = findWorkspace(state, decodeURIComponent(parts[1] ?? ""));
@@ -4389,21 +3784,87 @@ async function runRouterDaemon(args: ParsedArgs) {
           send(404, { error: "workspace not found" });
           return;
         }
-        const isRemote = workspace.workspaceType === "remote";
-        const baseUrl = isRemote ? workspace.baseUrl ?? "" : (await ensureOpencode()).baseUrl;
-        if (!baseUrl) {
-          send(400, { error: "workspace baseUrl missing" });
-          return;
+        // VSLO-171 fáze 2 F2Ú3: dispose mapuje na pool.suspend. Engine je
+        // killnut, lazy respawn na další proxy request. Pro remote workspaces
+        // dispose je no-op (vzdálený server si engine spravuje sám).
+        if (workspace.workspaceType === "local") {
+          await pool.suspend(workspace.id);
+          persistEnginesSnapshot();
         }
-        const directory = isRemote ? workspace.directory ?? "" : workspace.path;
-        const response = await fetch(
-          `${baseUrl.replace(/\/$/, "")}/instance/dispose?directory=${encodeURIComponent(directory)}`,
-          { method: "POST", headers: authHeaders },
-        );
-        const ok = response.ok ? await response.json() : false;
         workspace.lastUsedAt = nowMs();
         await saveRouterState(statePath, state);
-        send(200, { disposed: ok });
+        send(200, { disposed: true });
+        return;
+      }
+
+      if (parts[0] === "workspace" && parts.length >= 3 && parts[2] === "opencode") {
+        const ws = findWorkspace(state, decodeURIComponent(parts[1] ?? ""));
+        if (!ws) {
+          send(404, { error: "workspace not found" });
+          return;
+        }
+        if (ws.workspaceType === "remote") {
+          send(501, {
+            error: "remote engines are proxied by veslo-server, not orchestrator pool",
+          });
+          return;
+        }
+        if (!ws.path) {
+          send(400, { error: "local workspace missing path" });
+          return;
+        }
+
+        let engine: EngineProcess;
+        try {
+          engine = await pool.ensure({ id: ws.id, path: ws.path });
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          // F2Ú4 — capacity exceeded je 503 (retry-able), spawn/health fail je 502.
+          const status = detail.includes("capacity exceeded") ? 503 : 502;
+          send(status, { error: "engine spawn failed", detail });
+          return;
+        }
+
+        const restPath = "/" + parts.slice(3).join("/");
+        const injectHeaders: Record<string, string> = {
+          "x-opencode-directory": ws.path,
+          "x-veslo-workspace-id": ws.id,
+        };
+        if (opencodePassword) {
+          injectHeaders["authorization"] = `Basic ${encodeBasicAuth(
+            opencodeUsername,
+            opencodePassword,
+          )}`;
+        }
+
+        ws.lastUsedAt = nowMs();
+        persistEnginesSnapshot();
+
+        proxyToEngine({
+          clientReq: req,
+          clientRes: res,
+          targetBaseUrl: engine.baseUrl,
+          targetPath: restPath,
+          targetSearch: url.search,
+          injectHeaders,
+          stripIncomingHeaders: [
+            "authorization",
+            "x-forwarded-for",
+            "x-forwarded-host",
+            "x-forwarded-proto",
+          ],
+          onSuccess: () => {
+            pool.touch(ws.id);
+            persistEnginesSnapshot();
+          },
+          onError: (err) => {
+            logger.warn(
+              "engine proxy error",
+              { workspaceId: ws.id, error: err.message },
+              "engine-pool",
+            );
+          },
+        });
         return;
       }
 
@@ -4427,15 +3888,11 @@ async function runRouterDaemon(args: ParsedArgs) {
       // ignore
     }
 
-    if (opencodeChild) {
-      await stopChild(opencodeChild);
-      opencodeChild = null;
-    }
+    await pool.killAll();
 
     state.daemon = undefined;
-    if (state.opencode && !isProcessAlive(state.opencode.pid)) {
-      state.opencode = undefined;
-    }
+    state.engines = {};
+    await flushPersist();
     await saveRouterState(statePath, state);
     process.exit(0);
   };
@@ -4869,49 +4326,20 @@ async function runStart(args: ParsedArgs) {
   const resolvedWorkspace = await ensureWorkspace(workspace);
   logger.info("Run starting", { workspace: resolvedWorkspace, logFormat, runId }, "veslo-orchestrator");
 
-  const sandboxRequested = readSandboxMode(args.flags, "sandbox", "none", "VESLO_SANDBOX");
-  const sandboxMode = await resolveSandboxMode(sandboxRequested);
-  const sandboxImage =
-    readFlag(args.flags, "sandbox-image") ?? process.env.VESLO_SANDBOX_IMAGE ?? "debian:bookworm-slim";
-  const sandboxPersistOverride =
-    readFlag(args.flags, "sandbox-persist-dir") ?? process.env.VESLO_SANDBOX_PERSIST_DIR;
   const dataDir = resolveRouterDataDir(args.flags);
   const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkspace));
   await ensureOpencodeManagedTools(opencodeConfigDir);
-  const opencodeRouterDataDir =
-    sandboxMode === "none" ? join(dataDir, "veslo-code-router", workspaceIdForLocal(resolvedWorkspace)) : null;
-  if (opencodeRouterDataDir) {
-    await mkdir(opencodeRouterDataDir, { recursive: true });
-  }
-  const sandboxPersistDir = resolve(
-    sandboxPersistOverride?.trim()
-      ? sandboxPersistOverride.trim()
-      : join(dataDir, "sandbox", workspaceIdForLocal(resolvedWorkspace)),
-  );
-  if (sandboxMode !== "none") {
-    await mkdir(sandboxPersistDir, { recursive: true });
-  }
-
-  const sandboxMountValue =
-    readFlag(args.flags, "sandbox-mount") ??
-    process.env.VESLO_SANDBOX_MOUNT;
-  const sandboxMountSpecs = parseList(sandboxMountValue);
-  const sandboxExtraMounts =
-    sandboxMode !== "none" && sandboxMountSpecs.length
-      ? await resolveSandboxExtraMounts(sandboxMountSpecs, sandboxMode)
-      : [];
+  const opencodeRouterDataDir = join(dataDir, "veslo-code-router", workspaceIdForLocal(resolvedWorkspace));
+  await mkdir(opencodeRouterDataDir, { recursive: true });
 
   const explicitOpencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.VESLO_OPENCODE_BIN;
   const explicitVesloServerBin = readFlag(args.flags, "veslo-server-bin") ?? process.env.VESLO_SERVER_BIN;
   const explicitOpenCodeRouterBin = readFlag(args.flags, "veslo-code-router-bin") ?? process.env.OPENCODE_ROUTER_BIN;
   const opencodeBindHost = readFlag(args.flags, "opencode-host") ?? process.env.VESLO_OPENCODE_BIND_HOST ?? "0.0.0.0";
-  const opencodePort =
-    sandboxMode !== "none"
-      ? SANDBOX_INTERNAL_OPENCODE_PORT
-      : await resolvePort(
-          readNumber(args.flags, "opencode-port", undefined, "VESLO_OPENCODE_PORT"),
-          "127.0.0.1",
-        );
+  const opencodePort = await resolvePort(
+    readNumber(args.flags, "opencode-port", undefined, "VESLO_OPENCODE_PORT"),
+    "127.0.0.1",
+  );
   const opencodeHotReload = readOpencodeHotReload(
     args.flags,
     {
@@ -4963,37 +4391,12 @@ async function runStart(args: ParsedArgs) {
 
   const manifest = await readVersionManifest();
   const allowExternal = readBool(args.flags, "allow-external", false, "VESLO_ALLOW_EXTERNAL");
-  const sidecarTarget = resolveSandboxSidecarTarget(sandboxMode);
+  const sidecarTarget = resolveSidecarTarget();
   const sidecar = resolveSidecarConfigForTarget(args.flags, cliVersion, sidecarTarget);
 
-  let sidecarSource = sidecarSourceInput;
-  let opencodeSource = opencodeSourceInput;
-  if (sandboxMode !== "none") {
-    if (sidecarSourceInput === "bundled") {
-      throw new Error("Sandbox mode does not support --sidecar-source bundled");
-    }
-    if (opencodeSourceInput === "bundled") {
-      throw new Error("Sandbox mode does not support --opencode-source bundled");
-    }
-    // In sandbox mode, we must run Linux binaries inside the container. When
-    // custom *-bin paths are provided, treat the source as external so we don't
-    // accidentally pick host (darwin) bundled binaries.
-    if (sidecarSourceInput === "auto") {
-      sidecarSource = explicitVesloServerBin || explicitOpenCodeRouterBin ? "external" : "downloaded";
-    }
-    if (opencodeSourceInput === "auto") {
-      opencodeSource = explicitOpencodeBin ? "external" : "downloaded";
-    }
-  }
+  const sidecarSource = sidecarSourceInput;
+  const opencodeSource = opencodeSourceInput;
   logVerbose(`cli version: ${cliVersion}`);
-  logVerbose(`sandbox: ${sandboxMode}`);
-  if (sandboxMode !== "none") {
-    logVerbose(`sandbox image: ${sandboxImage}`);
-    logVerbose(`sandbox persist dir: ${sandboxPersistDir}`);
-    if (sandboxExtraMounts.length) {
-      logVerbose(`sandbox mounts: ${sandboxExtraMounts.length}`);
-    }
-  }
   logVerbose(`sidecar target: ${sidecar.target ?? "unknown"}`);
   logVerbose(`sidecar dir: ${sidecar.dir}`);
   logVerbose(`sidecar base URL: ${sidecar.baseUrl}`);
@@ -5012,26 +4415,6 @@ async function runStart(args: ParsedArgs) {
     source: opencodeSource,
   });
 
-  if (sandboxMode !== "none") {
-    if (sandboxMode === "docker") {
-      if (!(await probeCommand("docker", ["version"]))) {
-        throw new Error(
-          "Docker is required for --sandbox docker. Install Docker Desktop and ensure 'docker' is on PATH.",
-        );
-      }
-    }
-    if (sandboxMode === "container") {
-      if (process.platform !== "darwin") {
-        throw new Error("Apple container backend is only supported on macOS");
-      }
-      if (process.arch !== "arm64") {
-        throw new Error("Apple container backend requires Apple silicon (arm64)");
-      }
-      if (!(await probeCommand("container", ["--version"]))) {
-        throw new Error("Apple container CLI not found. Install https://github.com/apple/container");
-      }
-    }
-  }
   const opencodeRouterEnabled = readBool(args.flags, "veslo-code-router", true);
   const opencodeRouterRequired = readBool(
     args.flags,
@@ -5056,14 +4439,6 @@ async function runStart(args: ParsedArgs) {
       })
     : null;
 
-  if (sandboxMode !== "none") {
-    // Ensure the binaries we stage into the container are actual files.
-    await assertSandboxBinaryFile("opencode", opencodeBinary.bin);
-    await assertSandboxBinaryFile("veslo-server", vesloServerBinary.bin);
-    if (opencodeRouterBinary) {
-      await assertSandboxBinaryFile("veslo-code-router", opencodeRouterBinary.bin);
-    }
-  }
   let opencodeRouterActualVersion: string | undefined;
   logVerbose(`opencode bin: ${opencodeBinary.bin} (${opencodeBinary.source})`);
   logVerbose(`veslo-server bin: ${vesloServerBinary.bin} (${vesloServerBinary.source})`);
@@ -5075,22 +4450,16 @@ async function runStart(args: ParsedArgs) {
   const vesloConnect = resolveConnectUrl(vesloPort, connectHost);
   const vesloConnectUrl = vesloConnect.connectUrl ?? vesloBaseUrl;
 
-  const opencodeBaseUrl =
-    sandboxMode !== "none" ? `${vesloBaseUrl}/opencode` : `http://127.0.0.1:${opencodePort}`;
+  const opencodeBaseUrl = `http://127.0.0.1:${opencodePort}`;
   const opencodeConnectUrl =
-    sandboxMode !== "none"
-      ? `${vesloConnectUrl.replace(/\/$/, "")}/opencode`
-      : (resolveConnectUrl(opencodePort, connectHost).connectUrl ?? opencodeBaseUrl);
+    resolveConnectUrl(opencodePort, connectHost).connectUrl ?? opencodeBaseUrl;
 
-  const attachCommand =
-    sandboxMode !== "none"
-      ? `OpenCode is proxied via ${opencodeConnectUrl} (requires Veslo token)`
-      : buildAttachCommand({
-          url: opencodeConnectUrl,
-          workspace: resolvedWorkspace,
-          username: opencodeUsername,
-          password: opencodePassword,
-        });
+  const attachCommand = buildAttachCommand({
+    url: opencodeConnectUrl,
+    workspace: resolvedWorkspace,
+    username: opencodeUsername,
+    password: opencodePassword,
+  });
 
   const opencodeRouterHealthUrl = `http://127.0.0.1:${opencodeRouterHealthPort}`;
   const opencodeRouterEnv: NodeJS.ProcessEnv = {
@@ -5105,10 +4474,6 @@ async function runStart(args: ParsedArgs) {
   const children: ChildHandle[] = [];
   let shuttingDown = false;
   let detached = false;
-  let sandboxContainerName: string | null = null;
-  let sandboxStop: ((name: string) => Promise<void>) | null = null;
-  let sandboxStopCommand: string | null = null;
-  let sandboxCleanup: (() => Promise<void>) | null = null;
   const startedAt = Date.now();
   let opencodeRouterHealthInterval: NodeJS.Timeout | null = null;
   const shutdown = async () => {
@@ -5125,14 +4490,7 @@ async function runStart(args: ParsedArgs) {
       { children: children.map((handle) => handle.name) },
       "veslo-orchestrator",
     );
-    if (sandboxContainerName && sandboxStop) {
-      await sandboxStop(sandboxContainerName);
-    }
     await Promise.all(children.map((handle) => stopChild(handle.child)));
-    if (sandboxCleanup) {
-      await sandboxCleanup();
-      sandboxCleanup = null;
-    }
   };
 
   const detachChildren = () => {
@@ -5169,12 +4527,6 @@ async function runStart(args: ParsedArgs) {
     const summary = [
       "Detached. Services still running:",
       ...children.map((handle) => `- ${handle.name} (pid ${handle.child.pid ?? "unknown"})`),
-      ...(sandboxContainerName && sandboxStopCommand
-        ? [
-            `- sandbox (${sandboxStopCommand.split(" ")[0]} container ${sandboxContainerName})`,
-            `Stop: ${sandboxStopCommand} ${sandboxContainerName}`,
-          ]
-        : []),
       `Veslo URL: ${vesloConnectUrl}`,
       `Veslo Token: ${vesloToken}`,
       `OpenCode URL: ${opencodeConnectUrl}`,
@@ -5219,8 +4571,8 @@ async function runStart(args: ParsedArgs) {
           vesloToken,
           hostToken: vesloHostToken,
           opencodeUrl: opencodeConnectUrl,
-          opencodePassword: sandboxMode !== "none" ? undefined : (opencodePassword ?? undefined),
-          opencodeUsername: sandboxMode !== "none" ? undefined : (opencodeUsername ?? undefined),
+          opencodePassword: opencodePassword ?? undefined,
+          opencodeUsername: opencodeUsername ?? undefined,
           attachCommand,
         },
         services: [
@@ -5230,7 +4582,7 @@ async function runStart(args: ParsedArgs) {
             name: "router",
             label: "veslo-code-router",
             status: opencodeRouterEnabled ? "starting" : "disabled",
-            port: sandboxMode !== "none" ? undefined : opencodeRouterHealthPort,
+            port: opencodeRouterHealthPort,
           },
         ],
         onQuit: handleQuit,
@@ -5340,119 +4692,11 @@ async function runStart(args: ParsedArgs) {
   };
 
   try {
-    const opencodeActualVersion =
-      sandboxMode !== "none" ? opencodeBinary.expectedVersion : await verifyOpencodeVersion(opencodeBinary);
+    const opencodeActualVersion = await verifyOpencodeVersion(opencodeBinary);
     let vesloActualVersion: string | undefined;
     let opencodeClient: ReturnType<typeof createOpencodeClient>;
 
-    if (sandboxMode !== "none") {
-      const containerName = `veslo-orchestrator-${runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 24)}`;
-      sandboxContainerName = containerName;
-
-      sandboxStop = sandboxMode === "container" ? stopAppleContainer : stopDockerContainer;
-      sandboxStopCommand = sandboxMode === "container" ? "container stop" : "docker stop";
-      const opencodeInternalBaseUrl = `http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`;
-
-      const runner = sandboxMode === "container" ? startAppleContainerSandbox : startDockerSandbox;
-      const sandboxChild = await runner({
-        image: sandboxImage,
-        containerName,
-        workspace: resolvedWorkspace,
-        persistDir: sandboxPersistDir,
-        opencodeConfigDir,
-        extraMounts: sandboxExtraMounts,
-        sidecars: {
-          opencode: opencodeBinary.bin,
-          vesloServer: vesloServerBinary.bin,
-          opencodeRouter: opencodeRouterEnabled ? (opencodeRouterBinary?.bin ?? null) : null,
-        },
-        ports: {
-          veslo: vesloPort,
-          // In sandbox mode, opencodeRouter is only reachable via veslo-server
-          // proxy (/veslo-code-router/*). Do not publish a separate host port.
-          opencodeRouterHealth: null,
-        },
-        opencode: {
-          corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
-          username: opencodeUsername,
-          password: opencodePassword,
-          hotReload: opencodeHotReload,
-        },
-        veslo: {
-          token: vesloToken,
-          hostToken: vesloHostToken,
-          approvalMode: approvalMode === "auto" ? "auto" : "manual",
-          approvalTimeoutMs,
-          readOnly,
-          corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
-          opencodeUsername,
-          opencodePassword,
-          logFormat,
-        },
-        runId,
-        logFormat,
-        detach: detachRequested,
-        logger,
-      });
-
-      sandboxCleanup = sandboxChild.cleanup;
-      tui?.updateService("opencode", { status: "running", port: SANDBOX_INTERNAL_OPENCODE_PORT });
-      tui?.updateService("veslo-server", { status: "running", port: vesloPort });
-      if (opencodeRouterEnabled) {
-        tui?.updateService("router", { status: "running", port: undefined });
-      }
-
-      if (!detachRequested) {
-        children.push({ name: "sandbox", child: sandboxChild.child });
-        logger.info("Process spawned", { pid: sandboxChild.child.pid ?? 0, containerName }, "sandbox");
-        sandboxChild.child.on("exit", (code, signal) => handleExit("sandbox", code, signal));
-        sandboxChild.child.on("error", (error) => handleSpawnError("sandbox", error));
-      } else {
-        // docker run -d exits quickly; the container continues to run.
-        logger.info("Sandbox detached", { containerName }, "sandbox");
-      }
-
-      logger.info("Waiting for health", { url: vesloBaseUrl }, "veslo-server");
-      await waitForHealthy(vesloBaseUrl);
-      logger.info("Healthy", { url: vesloBaseUrl }, "veslo-server");
-      tui?.updateService("veslo-server", { status: "healthy" });
-
-      opencodeClient = createOpencodeClient({
-        baseUrl: `${vesloBaseUrl.replace(/\/$/, "")}/opencode`,
-        headers: { Authorization: `Bearer ${vesloToken}` },
-      });
-
-      // In sandbox mode, the released veslo-server binary may not have our
-      // latest proxy/auth changes yet.  Instead of using the OpenCode SDK client
-      // (which relies on the proxy handling Bearer tokens), do a direct health
-      // check against the veslo-server's own /opencode proxy path.  If the
-      // server is healthy *and* is proxying to a healthy opencode, we're good.
-      logger.info("Waiting for health (proxy)", { url: `${vesloBaseUrl}/opencode` }, "opencode");
-      await waitForHealthyViaProxy(`${vesloBaseUrl.replace(/\/$/, "")}/opencode`, vesloToken);
-      logger.info("Healthy (proxy)", { url: `${vesloBaseUrl}/opencode` }, "opencode");
-      tui?.updateService("opencode", { status: "healthy" });
-
-      try {
-        vesloActualVersion = await verifyVesloServer({
-          baseUrl: vesloBaseUrl,
-          token: vesloToken,
-          hostToken: vesloHostToken,
-          expectedVersion: vesloServerBinary.expectedVersion,
-          expectedWorkspace: "/workspace",
-          expectedOpencodeBaseUrl: opencodeInternalBaseUrl,
-          expectedOpencodeDirectory: "/workspace",
-          expectedOpencodeUsername: opencodeUsername,
-          expectedOpencodePassword: opencodePassword,
-        });
-      } catch (verifyError) {
-        // In sandbox mode the released server binary may differ from the
-        // expected version or lack capabilities we just added locally.  Log
-        // the mismatch but don't abort — the health checks above already
-        // proved the server is running and proxying correctly.
-        logger.warn("Sandbox server verification warning (non-fatal)", { error: String(verifyError) }, "veslo-server");
-      }
-      logVerbose(`veslo-server version: ${vesloActualVersion ?? "unknown"}`);
-    } else {
+    {
       const opencodeChild = await startOpencode({
         bin: opencodeBinary.bin,
         workspace: resolvedWorkspace,
@@ -5622,40 +4866,6 @@ async function runStart(args: ParsedArgs) {
       }
     }
 
-    if (opencodeRouterEnabled) {
-      if (sandboxMode !== "none") {
-        // OpenCodeRouter is started inside the sandbox container; just probe health.
-        opencodeRouterActualVersion = opencodeRouterBinary?.expectedVersion;
-        logVerbose(`opencodeRouter version: ${opencodeRouterActualVersion ?? "unknown"}`);
-        try {
-          const url = `${vesloBaseUrl.replace(/\/$/, "")}/veslo-code-router/health`;
-          logger.info("Waiting for health", { url }, "veslo-code-router");
-          const health = await waitForOpenCodeRouterHealthyViaVeslo(vesloBaseUrl, vesloToken);
-          tui?.setRouterHealth(health);
-          tui?.updateService("router", { status: health.ok ? "healthy" : "running" });
-          logger.info("Healthy", { url, ok: health.ok }, "veslo-code-router");
-        } catch (error) {
-          logger.warn("OpenCodeRouter health check failed", { error: String(error) }, "veslo-code-router");
-          tui?.updateService("router", { status: "running", message: String(error) });
-        }
-        if (!opencodeRouterHealthInterval) {
-          opencodeRouterHealthInterval = setInterval(() => {
-            fetchOpenCodeRouterHealthViaVeslo(vesloBaseUrl, vesloToken)
-              .then((health) => {
-                tui?.setRouterHealth(health);
-                if (health.ok) {
-                  tui?.updateService("router", { status: "healthy" });
-                }
-              })
-              .catch(() => undefined);
-          }, 15_000);
-        }
-      } else {
-        // In host mode, opencodeRouter is started before veslo-server so we can
-        // confirm health before wiring the proxy.
-      }
-    }
-
     const payload = {
       runId,
       workspace: resolvedWorkspace,
@@ -5667,8 +4877,8 @@ async function runStart(args: ParsedArgs) {
       opencode: {
         baseUrl: opencodeBaseUrl,
         connectUrl: opencodeConnectUrl,
-        username: sandboxMode !== "none" ? undefined : opencodeUsername,
-        password: sandboxMode !== "none" ? undefined : opencodePassword,
+        username: opencodeUsername,
+        password: opencodePassword,
         bindHost: opencodeBindHost,
         port: opencodePort,
         hotReload: opencodeHotReload,
@@ -5686,7 +4896,7 @@ async function runStart(args: ParsedArgs) {
       opencodeRouter: {
         enabled: opencodeRouterEnabled,
         version: opencodeRouterEnabled ? opencodeRouterActualVersion : undefined,
-        healthPort: sandboxMode !== "none" ? null : opencodeRouterHealthPort,
+        healthPort: opencodeRouterHealthPort,
       },
       diagnostics: {
         cliVersion,
@@ -5771,26 +4981,13 @@ async function runStart(args: ParsedArgs) {
 
     if (checkOnly) {
       try {
-        if (sandboxMode !== "none") {
-          // In sandbox mode the released server binary may not support the
-          // Bearer-through-proxy auth that the OpenCode SDK client expects.
-          // Run a lighter set of checks: veslo-server endpoints + proxy
-          // health.  Full SDK checks (session create, SSE events) are deferred
-          // until the modified server binary is released.
-          await runSandboxChecks({
-            vesloUrl: vesloBaseUrl,
-            vesloToken,
-            hostToken: vesloHostToken,
-          });
-        } else {
-          await runChecks({
-            opencodeClient,
-            vesloUrl: vesloBaseUrl,
-            vesloToken,
-            hostToken: vesloHostToken,
-            checkEvents,
-          });
-        }
+        await runChecks({
+          opencodeClient,
+          vesloUrl: vesloBaseUrl,
+          vesloToken,
+          hostToken: vesloHostToken,
+          checkEvents,
+        });
         logger.info("Checks ok", { checkEvents }, "veslo-orchestrator");
         if (!outputJson && logFormat === "pretty") {
           console.log("Checks: ok");

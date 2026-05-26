@@ -1,4 +1,4 @@
-import { readFile, writeFile, rm, readdir, rename, stat } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rm, readdir, realpath, rename, stat } from "node:fs/promises";
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
@@ -31,7 +31,7 @@ import { ReloadEventStore } from "./events.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { opencodeConfigPath, vesloConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
-import { workspaceIdForPath } from "./workspaces.js";
+import { persistServerWorkspaceState, workspaceIdForPath } from "./workspaces.js";
 import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
 import { TOY_UI_CSS, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsResponse } from "./toy-ui.js";
@@ -85,6 +85,13 @@ function isSensitiveConfigKey(key: string): boolean {
   const normalized = normalizeConfigKey(key);
   if (!normalized) return false;
   if (normalized === "tokensource") return false;
+  // VSLO-86 — x-veslo-gateway-token must round-trip in clear so the frontend
+  // can re-patch opencode.jsonc on disk with a valid token. Without this
+  // exception, getConfig returned "[REDACTED]", the patch effect echoed the
+  // literal back, and engines later sent "[REDACTED]" as the Den gateway
+  // header → AI gateway 401. The same header lives in the allow-list on the
+  // client (GATEWAY_PROVIDER_ALLOWED_HEADER_KEYS); keep both in sync.
+  if (normalized === "xveslogatewaytoken") return false;
   return REDACTED_CONFIG_KEYS.some((segment) => normalized === segment || normalized.endsWith(segment));
 }
 
@@ -247,6 +254,26 @@ function parseWorkspaceMount(pathname: string): { workspaceId: string; restPath:
   const workspaceId = remainder.slice(0, slash);
   const restPath = remainder.slice(slash) || "/";
   if (!workspaceId.trim()) return null;
+  return { workspaceId: decodeURIComponent(workspaceId), restPath };
+}
+
+/**
+ * Canonical multi-workspace OpenCode mount: `/workspace/:id/opencode[/*]`.
+ * Returned `restPath` is the OpenCode-relative path (always starts with `/opencode`),
+ * which `proxyOpencodeRequest` already understands the same way as the short `/w/:id` form.
+ */
+export function parseWorkspaceOpencodeMount(
+  pathname: string,
+): { workspaceId: string; restPath: string } | null {
+  if (!pathname.startsWith("/workspace/")) return null;
+  const remainder = pathname.slice("/workspace/".length);
+  if (!remainder) return null;
+  const slash = remainder.indexOf("/");
+  if (slash === -1) return null;
+  const workspaceId = remainder.slice(0, slash);
+  const restPath = remainder.slice(slash) || "/";
+  if (!workspaceId.trim()) return null;
+  if (restPath !== "/opencode" && !restPath.startsWith("/opencode/")) return null;
   return { workspaceId: decodeURIComponent(workspaceId), restPath };
 }
 
@@ -431,16 +458,28 @@ export function startServer(config: ServerConfig) {
         return finalize(new Response(null, { status: 204 }));
       }
 
-      const mount = parseWorkspaceMount(url.pathname);
-      if (mount && (mount.restPath === "/opencode" || mount.restPath.startsWith("/opencode/"))) {
+      const canonicalOpencodeMount = parseWorkspaceOpencodeMount(url.pathname);
+      const mount = canonicalOpencodeMount ?? parseWorkspaceMount(url.pathname);
+      const opencodeMount =
+        canonicalOpencodeMount ??
+        (mount && (mount.restPath === "/opencode" || mount.restPath.startsWith("/opencode/"))
+          ? mount
+          : null);
+
+      if (opencodeMount) {
         authMode = "client";
         try {
           const actor = await requireClient(request, config, tokens);
-          assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
-          const workspace = await resolveWorkspace(config, mount.workspaceId);
+          assertOpencodeProxyAllowed(actor, request.method, opencodeMount.restPath);
+          const workspace = await resolveWorkspace(config, opencodeMount.workspaceId);
           proxyService = "opencode";
           proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
-          const response = await proxyOpencodeRequest({ request, url, workspace, proxyPath: mount.restPath });
+          const response = await proxyOpencodeRequest({
+            request,
+            url,
+            workspace,
+            proxyPath: opencodeMount.restPath,
+          });
           return finalize(response);
         } catch (error) {
           const apiError = error instanceof ApiError
@@ -742,9 +781,13 @@ async function proxyOpencodeRequest(input: {
 
   // Per-request directory override (e.g. from sessions moved via "Choose folder")
   // takes priority over the workspace-level default.
+  // Always strip a client-supplied `x-opencode-directory` header first so the
+  // engine cannot be redirected to an attacker-chosen path by spoofing this
+  // header through the proxy.
+  headers.delete("x-opencode-directory");
   const queryDir = input.url.searchParams.get("directory")?.trim() || null;
   const directory = queryDir ?? (workspace ? resolveOpencodeDirectory(workspace) : null);
-  if (directory && !headers.has("x-opencode-directory")) {
+  if (directory) {
     headers.set("x-opencode-directory", directory);
   }
 
@@ -761,7 +804,26 @@ async function proxyOpencodeRequest(input: {
     body,
   });
 
-  return response;
+  return sanitizeProxyResponse(response);
+}
+
+/**
+ * Strip hop-by-hop and transport-level headers that Bun's native fetch keeps
+ * in the upstream response even after it has already decoded the body for us.
+ * Without this the browser sees `content-encoding: gzip` on a plain-text
+ * payload and bails out with ERR_CONTENT_DECODING_FAILED, breaking any UI
+ * code that reaches through /opencode/* (including session.create).
+ */
+export function sanitizeProxyResponse(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.delete("content-encoding");
+  headers.delete("transfer-encoding");
+  headers.delete("content-length");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function resolveOpenCodeRouterBaseUrl(): string {
@@ -1158,8 +1220,6 @@ export function resolveArchiveOwnerKey(request: Request): string {
 function buildCapabilities(config: ServerConfig): Capabilities {
   const writeEnabled = !config.readOnly;
   const schemaVersion = 1;
-  const sandboxBackend = resolveSandboxBackend();
-  const sandboxEnabled = resolveSandboxEnabled(sandboxBackend);
   const inboxEnabled = resolveInboxEnabled();
   const outboxEnabled = resolveOutboxEnabled();
   const maxBytes = resolveInboxMaxBytes();
@@ -1187,7 +1247,6 @@ function buildCapabilities(config: ServerConfig): Capabilities {
     config: { read: true, write: writeEnabled },
 
     approvals: { mode: config.approval.mode, timeoutMs: config.approval.timeoutMs },
-    sandbox: { enabled: sandboxEnabled, backend: sandboxBackend },
     ui: { toy: toyUiEnabled },
     tokens: { scoped: true, scopes: ["owner", "collaborator", "viewer"] },
     proxy: {
@@ -1205,20 +1264,6 @@ function buildCapabilities(config: ServerConfig): Capabilities {
       },
     },
   };
-}
-
-function resolveSandboxBackend(): Capabilities["sandbox"]["backend"] {
-  const raw = (process.env.VESLO_SANDBOX_BACKEND ?? "").trim().toLowerCase();
-  if (raw === "docker") return "docker";
-  if (raw === "container") return "container";
-  return "none";
-}
-
-function resolveSandboxEnabled(backend: Capabilities["sandbox"]["backend"]): boolean {
-  const raw = (process.env.VESLO_SANDBOX_ENABLED ?? "").trim().toLowerCase();
-  if (["1", "true", "yes", "on"].includes(raw)) return true;
-  if (["0", "false", "no", "off"].includes(raw)) return false;
-  return backend !== "none";
 }
 
 function resolveInboxEnabled(): boolean {
@@ -1416,13 +1461,18 @@ export function normalizeWorkspaceRelativePath(input: string, options: { allowSu
   return parts.join("/");
 }
 
-function resolveSafeChildPath(root: string, child: string): string {
-  const rootResolved = resolve(root);
+async function resolveSafeChildPath(root: string, child: string): Promise<string> {
+  // Use realpath when the path exists so that symlinks inside the workspace
+  // pointing outside cannot be used to escape the boundary. Fall back to the
+  // resolved (non-realpath) form when the candidate doesn't exist yet — that
+  // covers write/mkdir operations that legitimately target a future path.
+  const rootResolved = await realpath(root).catch(() => resolve(root));
   const candidate = resolve(rootResolved, child);
-  if (candidate === rootResolved) {
+  const candidateResolved = await realpath(candidate).catch(() => candidate);
+  if (candidateResolved === rootResolved) {
     throw new ApiError(400, "invalid_path", "Path must point to a file");
   }
-  if (!candidate.startsWith(rootResolved + sep)) {
+  if (!candidateResolved.startsWith(rootResolved + sep)) {
     throw new ApiError(400, "invalid_path", "Path traversal is not allowed");
   }
   return candidate;
@@ -1815,11 +1865,23 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
   };
 
   addRoute(routes, "GET", "/health", "none", async () => {
-    return jsonResponse({ ok: true, version: SERVER_VERSION, uptimeMs: Date.now() - config.startedAt });
+    return jsonResponse({
+      ok: true,
+      version: SERVER_VERSION,
+      uptimeMs: Date.now() - config.startedAt,
+      token: config.token,
+      pid: process.pid,
+    });
   });
 
   addRoute(routes, "GET", "/w/:id/health", "none", async () => {
-    return jsonResponse({ ok: true, version: SERVER_VERSION, uptimeMs: Date.now() - config.startedAt });
+    return jsonResponse({
+      ok: true,
+      version: SERVER_VERSION,
+      uptimeMs: Date.now() - config.startedAt,
+      token: config.token,
+      pid: process.pid,
+    });
   });
 
   addRoute(routes, "GET", "/ui", "none", async () => {
@@ -1921,6 +1983,76 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const active = config.workspaces[0] ?? null;
     const items = config.workspaces.map(serializeWorkspace);
     return jsonResponse({ items, activeId: active?.id ?? null });
+  });
+
+  addRoute(routes, "POST", "/workspaces/local", "host", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    const folderPath = typeof body.path === "string" ? body.path.trim() : "";
+    if (!folderPath) {
+      throw new ApiError(400, "invalid_payload", "path is required");
+    }
+    const name = typeof body.name === "string" && body.name.trim()
+      ? body.name.trim()
+      : basename(folderPath);
+
+    const workspacePath = resolve(folderPath);
+    await mkdir(workspacePath, { recursive: true });
+
+    const id = workspaceIdForPath(workspacePath);
+    const existing = config.workspaces.find((entry) => entry.id === id);
+    if (existing) {
+      throw new ApiError(409, "workspace_exists", "Workspace already exists", {
+        id,
+        path: workspacePath,
+      });
+    }
+
+    const workspace: WorkspaceInfo = {
+      id,
+      name,
+      path: workspacePath,
+      workspaceType: "local",
+    };
+
+    // Prepend so it becomes the active workspace (single-active-workspace model).
+    config.workspaces = [workspace, ...config.workspaces];
+    if (!config.authorizedRoots.some((root) => resolve(root) === workspacePath)) {
+      config.authorizedRoots = [...config.authorizedRoots, workspacePath];
+    }
+    const persisted = await persistServerWorkspaceState(config);
+
+    return jsonResponse(
+      {
+        activeId: workspace.id,
+        items: config.workspaces.map(serializeWorkspace),
+        persisted,
+      },
+      201,
+    );
+  });
+
+  addRoute(routes, "PATCH", "/workspaces/:id", "host", async (ctx) => {
+    ensureWritable(config);
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const nextName = typeof body.name === "string" && body.name.trim()
+      ? body.name.trim()
+      : undefined;
+
+    if (!nextName) {
+      throw new ApiError(400, "invalid_payload", "name must be a non-empty string");
+    }
+
+    config.workspaces = config.workspaces.map((entry) =>
+      entry.id === workspace.id ? { ...entry, name: nextName } : entry,
+    );
+    const persisted = await persistServerWorkspaceState(config);
+
+    return jsonResponse({
+      items: config.workspaces.map(serializeWorkspace),
+      persisted,
+    });
   });
 
   addRoute(routes, "GET", "/session-archives", "client", async (ctx) => {
@@ -3236,7 +3368,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     }
     const inboxRoot = resolveInboxDir(workspace.path);
     const relativePath = decodeInboxId(ctx.params.inboxId);
-    const absPath = resolveSafeChildPath(inboxRoot, relativePath);
+    const absPath = await resolveSafeChildPath(inboxRoot, relativePath);
     if (!(await exists(absPath))) {
       throw new ApiError(404, "inbox_item_not_found", "Inbox item not found");
     }
@@ -3276,7 +3408,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
     const relativePath = normalizeWorkspaceRelativePath(requestedPath, { allowSubdirs: true });
     const inboxRoot = resolveInboxDir(workspace.path);
-    const dest = resolveSafeChildPath(inboxRoot, relativePath);
+    const dest = await resolveSafeChildPath(inboxRoot, relativePath);
     const maxBytes = resolveInboxMaxBytes();
     if (file.size > maxBytes) {
       throw new ApiError(413, "file_too_large", "File exceeds upload limit", { maxBytes, size: file.size });
@@ -3325,7 +3457,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     }
     const outboxRoot = resolveOutboxDir(workspace.path);
     const relativePath = decodeArtifactId(ctx.params.artifactId);
-    const absPath = resolveSafeChildPath(outboxRoot, relativePath);
+    const absPath = await resolveSafeChildPath(outboxRoot, relativePath);
     if (!(await exists(absPath))) {
       throw new ApiError(404, "artifact_not_found", "Artifact not found");
     }
@@ -3427,7 +3559,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
     for (const relativePath of paths) {
       try {
-        const absPath = resolveSafeChildPath(workspace.path, relativePath);
+        const absPath = await resolveSafeChildPath(workspace.path, relativePath);
         if (!(await exists(absPath))) {
           items.push({ ok: false, path: relativePath, code: "file_not_found", message: "File not found" });
           continue;
@@ -3492,7 +3624,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
     for (const write of writes) {
       try {
-        const absPath = resolveSafeChildPath(workspace.path, write.path);
+        const absPath = await resolveSafeChildPath(workspace.path, write.path);
         const bytes = Buffer.from(write.contentBase64, "base64");
         if (bytes.byteLength > FILE_SESSION_MAX_FILE_BYTES) {
           items.push({
@@ -3624,13 +3756,13 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const approvalPaths: string[] = [];
     for (const op of operations) {
       if (typeof op?.path === "string" && op.path.trim()) {
-        approvalPaths.push(resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.path, { allowSubdirs: true })));
+        approvalPaths.push(await resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.path, { allowSubdirs: true })));
       }
       if (typeof op?.from === "string" && op.from.trim()) {
-        approvalPaths.push(resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.from, { allowSubdirs: true })));
+        approvalPaths.push(await resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.from, { allowSubdirs: true })));
       }
       if (typeof op?.to === "string" && op.to.trim()) {
-        approvalPaths.push(resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.to, { allowSubdirs: true })));
+        approvalPaths.push(await resolveSafeChildPath(workspace.path, normalizeWorkspaceRelativePath(op.to, { allowSubdirs: true })));
       }
     }
 
@@ -3648,7 +3780,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       try {
         if (type === "mkdir") {
           const path = normalizeWorkspaceRelativePath(String(op.path ?? ""), { allowSubdirs: true });
-          const absPath = resolveSafeChildPath(workspace.path, path);
+          const absPath = await resolveSafeChildPath(workspace.path, path);
           await ensureDir(absPath);
           recordWorkspaceFileEvent(workspace.id, { type: "mkdir", path });
           items.push({ ok: true, type, path });
@@ -3657,7 +3789,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
         if (type === "delete") {
           const path = normalizeWorkspaceRelativePath(String(op.path ?? ""), { allowSubdirs: true });
-          const absPath = resolveSafeChildPath(workspace.path, path);
+          const absPath = await resolveSafeChildPath(workspace.path, path);
           if (!(await exists(absPath))) {
             items.push({ ok: false, type, path, code: "file_not_found", message: "Path not found" });
             continue;
@@ -3671,8 +3803,8 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
         if (type === "rename") {
           const from = normalizeWorkspaceRelativePath(String(op.from ?? ""), { allowSubdirs: true });
           const to = normalizeWorkspaceRelativePath(String(op.to ?? ""), { allowSubdirs: true });
-          const fromAbs = resolveSafeChildPath(workspace.path, from);
-          const toAbs = resolveSafeChildPath(workspace.path, to);
+          const fromAbs = await resolveSafeChildPath(workspace.path, from);
+          const toAbs = await resolveSafeChildPath(workspace.path, to);
           if (!(await exists(fromAbs))) {
             items.push({ ok: false, type, from, to, code: "file_not_found", message: "Source path not found" });
             continue;
@@ -3705,7 +3837,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       throw new ApiError(400, "invalid_path", "Only markdown files are supported");
     }
 
-    const absPath = resolveSafeChildPath(workspace.path, relativePath);
+    const absPath = await resolveSafeChildPath(workspace.path, relativePath);
     if (!(await exists(absPath))) {
       throw new ApiError(404, "file_not_found", "File not found");
     }
@@ -3752,7 +3884,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       typeof baseUpdatedAtRaw === "number" && Number.isFinite(baseUpdatedAtRaw) ? baseUpdatedAtRaw : null;
     const force = body.force === true;
 
-    const absPath = resolveSafeChildPath(workspace.path, relativePath);
+    const absPath = await resolveSafeChildPath(workspace.path, relativePath);
 
     const before = (await exists(absPath)) ? await stat(absPath) : null;
     if (before && !before.isFile()) {
@@ -5908,9 +6040,20 @@ async function readVesloConfig(workspaceRoot: string): Promise<Record<string, un
 
 function resolveOpencodeDirectory(workspace: WorkspaceInfo): string | null {
   const explicit = workspace.directory?.trim() ?? "";
-  if (explicit) return explicit;
-  if (workspace.workspaceType === "local") return workspace.path;
+  if (explicit) return normalizeOpencodeDirectory(explicit);
+  if (workspace.workspaceType === "local") return normalizeOpencodeDirectory(workspace.path);
   return null;
+}
+
+export function normalizeOpencodeDirectory(directory: string): string {
+  // OpenCode stores/list-filters Windows sessions by regular drive paths
+  // (`C:\Users\...`). Tauri can persist local workspaces as extended-length
+  // paths (`\\?\C:\Users\...`); passing those through as the directory query
+  // makes OpenCode return an empty session list even though the sessions exist.
+  if (process.platform === "win32") {
+    return directory.replace(/^\\\\\?\\/, "").replace(/^\/\/\?\//, "");
+  }
+  return directory;
 }
 
 function buildOpencodeReloadUrl(baseUrl: string, directory?: string | null): string {

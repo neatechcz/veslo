@@ -119,11 +119,6 @@ export type WorkspaceInfo = {
   vesloToken?: string | null;
   vesloWorkspaceId?: string | null;
   vesloWorkspaceName?: string | null;
-
-  // Sandbox lifecycle metadata (desktop-managed)
-  sandboxBackend?: "docker" | null;
-  sandboxRunId?: string | null;
-  sandboxContainerName?: string | null;
 };
 
 export type WorkspaceList = {
@@ -378,6 +373,9 @@ export async function engineStart(
     runtime?: "direct" | "veslo-orchestrator";
     workspacePaths?: string[];
     opencodeBinPath?: string | null;
+    // VSLO-171 F3Ú9: Performance settings forwarded to orchestrator daemon.
+    maxEngines?: number | null;
+    idleSuspendMs?: number | null;
   },
 ): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_start", {
@@ -386,6 +384,8 @@ export async function engineStart(
     opencodeBinPath: options?.opencodeBinPath ?? null,
     runtime: options?.runtime ?? null,
     workspacePaths: options?.workspacePaths ?? null,
+    maxEngines: options?.maxEngines ?? null,
+    idleSuspendMs: options?.idleSuspendMs ?? null,
   });
 }
 
@@ -440,11 +440,6 @@ export async function workspaceCreateRemote(input: {
   vesloToken?: string | null;
   vesloWorkspaceId?: string | null;
   vesloWorkspaceName?: string | null;
-
-  // Sandbox lifecycle metadata (desktop-managed)
-  sandboxBackend?: "docker" | null;
-  sandboxRunId?: string | null;
-  sandboxContainerName?: string | null;
 }): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_create_remote", {
     baseUrl: input.baseUrl,
@@ -455,9 +450,6 @@ export async function workspaceCreateRemote(input: {
     vesloToken: input.vesloToken ?? null,
     vesloWorkspaceId: input.vesloWorkspaceId ?? null,
     vesloWorkspaceName: input.vesloWorkspaceName ?? null,
-    sandboxBackend: input.sandboxBackend ?? null,
-    sandboxRunId: input.sandboxRunId ?? null,
-    sandboxContainerName: input.sandboxContainerName ?? null,
   });
 }
 
@@ -471,11 +463,6 @@ export async function workspaceUpdateRemote(input: {
   vesloToken?: string | null;
   vesloWorkspaceId?: string | null;
   vesloWorkspaceName?: string | null;
-
-  // Sandbox lifecycle metadata (desktop-managed)
-  sandboxBackend?: "docker" | null;
-  sandboxRunId?: string | null;
-  sandboxContainerName?: string | null;
 }): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_update_remote", {
     workspaceId: input.workspaceId,
@@ -487,9 +474,6 @@ export async function workspaceUpdateRemote(input: {
     vesloToken: input.vesloToken ?? null,
     vesloWorkspaceId: input.vesloWorkspaceId ?? null,
     vesloWorkspaceName: input.vesloWorkspaceName ?? null,
-    sandboxBackend: input.sandboxBackend ?? null,
-    sandboxRunId: input.sandboxRunId ?? null,
-    sandboxContainerName: input.sandboxContainerName ?? null,
   });
 }
 
@@ -660,103 +644,20 @@ export type OrchestratorDetachedHost = {
   token: string;
   hostToken: string;
   port: number;
-  sandboxBackend?: "docker" | null;
-  sandboxRunId?: string | null;
-  sandboxContainerName?: string | null;
 };
 
 export async function orchestratorStartDetached(input: {
   workspacePath: string;
-  sandboxBackend?: "none" | "docker" | null;
   runId?: string | null;
   vesloToken?: string | null;
   vesloHostToken?: string | null;
 }): Promise<OrchestratorDetachedHost> {
   return invoke<OrchestratorDetachedHost>("orchestrator_start_detached", {
     workspacePath: input.workspacePath,
-    sandboxBackend: input.sandboxBackend ?? null,
     runId: input.runId ?? null,
     vesloToken: input.vesloToken ?? null,
     vesloHostToken: input.vesloHostToken ?? null,
   });
-}
-
-export type SandboxDoctorResult = {
-  installed: boolean;
-  daemonRunning: boolean;
-  permissionOk: boolean;
-  ready: boolean;
-  clientVersion?: string | null;
-  serverVersion?: string | null;
-  error?: string | null;
-  debug?: {
-    candidates: string[];
-    selectedBin?: string | null;
-    versionCommand?: {
-      status: number;
-      stdout: string;
-      stderr: string;
-    } | null;
-    infoCommand?: {
-      status: number;
-      stdout: string;
-      stderr: string;
-    } | null;
-  } | null;
-};
-
-export async function sandboxDoctor(): Promise<SandboxDoctorResult> {
-  return invoke<SandboxDoctorResult>("sandbox_doctor");
-}
-
-export async function sandboxStop(containerName: string): Promise<ExecResult> {
-  return invoke<ExecResult>("sandbox_stop", { containerName });
-}
-
-export type VesloDockerCleanupResult = {
-  candidates: string[];
-  removed: string[];
-  errors: string[];
-};
-
-export async function sandboxCleanupVesloContainers(): Promise<VesloDockerCleanupResult> {
-  return invoke<VesloDockerCleanupResult>("sandbox_cleanup_veslo_containers");
-}
-
-export type SandboxDebugProbeResult = {
-  startedAt: number;
-  finishedAt: number;
-  runId: string;
-  workspacePath: string;
-  ready: boolean;
-  doctor: SandboxDoctorResult;
-  detachedHost?: OrchestratorDetachedHost | null;
-  dockerInspect?: {
-    status: number;
-    stdout: string;
-    stderr: string;
-  } | null;
-  dockerLogs?: {
-    status: number;
-    stdout: string;
-    stderr: string;
-  } | null;
-  cleanup: {
-    containerName?: string | null;
-    containerRemoved: boolean;
-    removeResult?: {
-      status: number;
-      stdout: string;
-      stderr: string;
-    } | null;
-    workspaceRemoved: boolean;
-    errors: string[];
-  };
-  error?: string | null;
-};
-
-export async function sandboxDebugProbe(): Promise<SandboxDebugProbeResult> {
-  return invoke<SandboxDebugProbeResult>("sandbox_debug_probe");
 }
 
 export async function vesloServerInfo(): Promise<VesloServerInfo> {
@@ -767,8 +668,30 @@ export async function vesloServerRestart(): Promise<VesloServerInfo> {
   return invoke<VesloServerInfo>("veslo_server_restart");
 }
 
-export async function engineInfo(): Promise<EngineInfo> {
-  return invoke<EngineInfo>("engine_info");
+export async function engineInfo(
+  workspaceId?: string,
+  workspacePath?: string,
+): Promise<EngineInfo> {
+  return invoke<EngineInfo>("engine_info", {
+    workspaceId: workspaceId ?? null,
+    workspacePath: workspacePath ?? null,
+  });
+}
+
+export type OrchestratorEngineSnapshot = {
+  workspaceId: string;
+  pid: number;
+  port: number;
+  baseUrl: string;
+  workdir: string;
+  configDir: string;
+  state: "spawning" | "ready" | "idle" | "suspended" | "crashed" | string;
+  spawnedAt: number;
+  lastActivityAt: number;
+};
+
+export async function orchestratorEnginesList(): Promise<OrchestratorEngineSnapshot[]> {
+  return invoke<OrchestratorEngineSnapshot[]>("orchestrator_engines_list");
 }
 
 export async function engineDoctor(options?: {
@@ -1266,4 +1189,23 @@ export async function startWindowDragging(): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`[tauri.startWindowDragging] Failed to start drag: ${message}`);
   }
+}
+
+/**
+ * VSLO-86 — forward a webview log line to the Tauri stderr (and thus to
+ * /tmp/veslo.log) so workspace activation, ensureEngine, SSE, and message-send
+ * diagnostics survive without opening DevTools. Fire-and-forget; silently
+ * drops outside the Tauri runtime.
+ */
+export function logUiEvent(scope: string, message: string, payload?: unknown): void {
+  if (!isTauriRuntime()) return;
+  let serialized: string | undefined;
+  if (payload !== undefined) {
+    try {
+      serialized = typeof payload === "string" ? payload : JSON.stringify(payload);
+    } catch {
+      serialized = String(payload);
+    }
+  }
+  void invoke("log_ui_event", { scope, message, payload: serialized }).catch(() => {});
 }

@@ -166,6 +166,8 @@ import {
   MODEL_PREF_KEY,
   SUGGESTED_PLUGINS,
   THINKING_PREF_KEY,
+  MAX_ENGINES_PREF_KEY,
+  IDLE_SUSPEND_MS_PREF_KEY,
   VARIANT_PREF_KEY,
   type McpDirectoryInfo,
 } from "./constants";
@@ -270,6 +272,12 @@ import type { ReconnectNotice } from "./context/session-reconnect";
 import { createExtensionsStore } from "./context/extensions";
 import { useGlobalSync } from "./context/global-sync";
 import { createWorkspaceStore } from "./context/workspace";
+import { WorkspaceServerSync } from "./context/workspace-server-sync";
+import {
+  createWorkspaceRouting,
+  isWorkspaceClientStaleError,
+  WorkspaceRoutingProvider,
+} from "./context/workspace-routing";
 import {
   updaterEnvironment,
   pendingSessionDraftsDelete,
@@ -283,6 +291,7 @@ import {
   vesloServerInfo,
   vesloServerRestart,
   orchestratorStatus,
+  orchestratorEnginesList,
   opencodeRouterInfo,
   setWindowDecorations,
   setWindowTitleBarStyle,
@@ -290,6 +299,7 @@ import {
   workspaceVesloRead,
   workspaceVesloWrite,
   opencodeDbUpdateSessionDirectory,
+  type OrchestratorEngineSnapshot,
   type OrchestratorStatus,
   type PendingSessionDraftSummary,
   type VesloServerInfo,
@@ -584,6 +594,14 @@ export default function App() {
   const [vesloReconnectBusy, setVesloReconnectBusy] = createSignal(false);
   const [opencodeRouterInfoState, setOpenCodeRouterInfoState] = createSignal<OpenCodeRouterInfo | null>(null);
   const [orchestratorStatusState, setOrchestratorStatusState] = createSignal<OrchestratorStatus | null>(null);
+  const [orchestratorEnginesState, setOrchestratorEnginesState] = createSignal<OrchestratorEngineSnapshot[]>([]);
+  const readyEngineWorkspaceIds = createMemo(() => {
+    const set = new Set<string>();
+    for (const engine of orchestratorEnginesState()) {
+      if (engine.state === "ready") set.add(engine.workspaceId);
+    }
+    return set;
+  });
   const [vesloAuditEntries, setVesloAuditEntries] = createSignal<VesloAuditEntry[]>([]);
   const [vesloAuditStatus, setVesloAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
   const [vesloAuditError, setVesloAuditError] = createSignal<string | null>(null);
@@ -1088,7 +1106,50 @@ export default function App() {
     });
   });
 
+  // Poll orchestrator engine pool every 30s so the sidebar can show which
+  // workspaces have a warm engine. 30s (not 5s) — engines change state on
+  // user actions (workspace switch, idle suspend), not continuously. Tight
+  // polling was leaking timers under HMR and pushing veslo-server CPU to
+  // 500%.
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (!documentVisible()) return;
+    let active = true;
+    const run = async () => {
+      try {
+        const list = await orchestratorEnginesList();
+        if (active) setOrchestratorEnginesState(list);
+      } catch {
+        if (active) setOrchestratorEnginesState([]);
+      }
+    };
+    run();
+    const interval = window.setInterval(run, 30_000);
+    onCleanup(() => {
+      active = false;
+      window.clearInterval(interval);
+    });
+  });
+
   const [client, setClient] = createSignal<Client | null>(null);
+
+  // VSLO-171 F3Ú9 — Performance pool settings forwarded to orchestrator.
+  const [maxEngines, setMaxEngines] = createSignal(16);
+  const [idleSuspendMs, setIdleSuspendMs] = createSignal(0);
+
+  // VSLO-171 — workspace routing service. Multi mode is the only mode (no
+  // single-active fallback, no feature flag). Instantiated before
+  // createSessionStore so memos that read routing.mode() at init can resolve.
+  let workspaceStoreRef: ReturnType<typeof createWorkspaceStore> | null = null;
+  const workspaceRouting = createWorkspaceRouting({
+    clientSource: client,
+    activeWorkspaceId: () => workspaceStoreRef?.activeWorkspaceId().trim() ?? "",
+    createClient: (baseUrl, directory, auth) => createClient(baseUrl, directory, auth),
+    waitForHealthy: (c, opts) => waitForHealthy(c, opts),
+  });
+  const routedClient = (workspaceId?: string) =>
+    workspaceRouting.client(workspaceId);
+
   const [connectedVersion, setConnectedVersion] = createSignal<string | null>(
     null
   );
@@ -1103,24 +1164,8 @@ export default function App() {
   const [booting, setBooting] = createSignal(true);
   const [engineReady, setEngineReady] = createSignal(true);
 
-  // VSLO-171: imperative confirm dialog used when sendPrompt is about to
-  // tear down an engine that is still running in another workspace.
-  type CrossWorkspaceConfirmState = {
-    workspaceName: string;
-    resolve: (proceed: boolean) => void;
-  } | null;
-  const [crossWorkspaceConfirm, setCrossWorkspaceConfirm] =
-    createSignal<CrossWorkspaceConfirmState>(null);
-  const confirmCrossWorkspaceTakeover = (workspaceName: string): Promise<boolean> =>
-    new Promise<boolean>((resolve) => {
-      setCrossWorkspaceConfirm({ workspaceName, resolve });
-    });
-  const resolveCrossWorkspaceConfirm = (proceed: boolean) => {
-    const state = crossWorkspaceConfirm();
-    if (!state) return;
-    setCrossWorkspaceConfirm(null);
-    state.resolve(proceed);
-  };
+  // VSLO-171 F3Ú8: cross-workspace takeover confirmation dialog removed.
+  // See comment in sendPrompt about replacement strategy.
 
   const mountTime = Date.now();
   // Per-workspace deduplication of opencode.jsonc patches. Key is the Veslo
@@ -1129,6 +1174,11 @@ export default function App() {
   // first one was patched in this session — see VSLO retry-loop bug after
   // server token rotation.
   const lastKnownConfigSnapshotByWs = new Map<string, string>();
+  // Inactive-workspace baseURL healing dedup. Key = Veslo workspace id, value
+  // = the server client token that the last successful patch was made for. If
+  // the server restarts with a fresh token, every entry effectively expires
+  // because the next iteration sees a different token and re-patches.
+  const inactiveWorkspaceBaseUrlHealedFor = new Map<string, string>();
   // Tracks which Veslo server token we already triggered a managed-AI engine
   // reload for. The Veslo server mints a fresh client token on every restart,
   // so opencode.jsonc files in workspaces that were not visited since the
@@ -1372,6 +1422,7 @@ export default function App() {
 
   const sessionStore = createSessionStore({
     client,
+    routing: workspaceRouting,
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot().trim(),
     selectedSessionId,
     setSelectedSessionId,
@@ -1398,6 +1449,11 @@ export default function App() {
         limit,
       );
     },
+    // VSLO-86 — selectSession uses this to decide between the offline DB
+    // transcript (browse mode) and a live SDK call that would cold-spawn the
+    // engine. engineReady() flips to true only after sendPrompt has driven
+    // the engine through ensureEngineForWorkspace.
+    engineReady: () => engineReady(),
     onSessionBusyChange: (sessionId, busy) => {
       const wsId = workspaceStore.activeWorkspaceId().trim();
       if (!wsId) return;
@@ -1586,7 +1642,7 @@ export default function App() {
   };
 
   createEffect(() => {
-    if (!client()) {
+    if (!routedClient()) {
       setSessionsLoaded(false);
     }
   });
@@ -1977,7 +2033,7 @@ export default function App() {
       engineReady: engineReady(),
       selectedSessionId: selectedSessionId(),
       targetSessionId: options.targetSessionId ?? null,
-      hasClient: Boolean(client()),
+      hasClient: Boolean(routedClient()),
       busy: busy(),
       busyLabel: busyLabel(),
     });
@@ -2004,19 +2060,10 @@ export default function App() {
 
     // In browsing mode, engine is not connected. Start it before sending.
     if (!engineReady()) {
-      // VSLO-171: warn before we tear down a still-running engine in another worker.
-      const otherBusy = workspaceStore.isAnyOtherWorkspaceBusy();
-      if (otherBusy) {
-        if (crossWorkspaceConfirm()) {
-          recordSendTrace("sendPrompt:blocked-confirm-already-open");
-          return false;
-        }
-        const proceed = await confirmCrossWorkspaceTakeover(otherBusy.displayName);
-        if (!proceed) {
-          recordSendTrace("sendPrompt:cancelled-other-workspace-busy", { other: otherBusy.workspaceId });
-          return false;
-        }
-      }
+      // VSLO-171 F3Ú8: cross-workspace takeover dialog removed.
+      // Multi mode (F3Ú6) keeps per-WS clients alive in parallel; single-active
+      // fallback may interrupt another worker silently but that's the legacy
+      // behavior the multi flag is meant to replace.
 
       setBusy(true);
       setBusyLabel("status.connecting");
@@ -2044,7 +2091,7 @@ export default function App() {
 
     await ensureManagedAiBootstrapReady();
 
-    const c = client();
+    const c = routedClient();
     if (!c) {
       recordSendTrace("sendPrompt:blocked-no-client");
       return false;
@@ -2244,6 +2291,19 @@ export default function App() {
       if (commandMessageIDToClear) {
         sessionStore.clearCommandDisplay(commandMessageIDToClear);
       }
+      // VSLO-86 Task #20 — if the workspace switched while this send was
+      // mid-flight, the routed client's guard proxies throw
+      // WorkspaceClientStaleError before forwarding the SDK call. Treat it
+      // as a silent abort: don't poison the (now-irrelevant) session with
+      // an error turn, just unwind cleanly.
+      if (isWorkspaceClientStaleError(e)) {
+        recordSendTrace("sendPrompt:stale-client", {
+          sessionID,
+          entryWorkspaceId: e.entryWorkspaceId,
+          currentWorkspaceId: e.currentWorkspaceId,
+        });
+        return false;
+      }
       finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
         sessionID,
         mode: resolvedDraft.mode,
@@ -2265,7 +2325,7 @@ export default function App() {
   }
 
   async function abortSession(sessionID?: string) {
-    const c = client();
+    const c = routedClient();
     if (!c) return;
     const id = (sessionID ?? selectedSessionId() ?? "").trim();
     if (!id) return;
@@ -2287,7 +2347,7 @@ export default function App() {
   }
 
   async function compactCurrentSession(sessionIdOverride?: string) {
-    const c = client();
+    const c = routedClient();
     if (!c) {
       throw new Error("Not connected to a server");
     }
@@ -2555,7 +2615,7 @@ export default function App() {
   }
 
   async function undoLastUserMessage() {
-    const c = client();
+    const c = routedClient();
     const sessionID = (selectedSessionId() ?? "").trim();
     if (!c || !sessionID) return;
 
@@ -2591,7 +2651,7 @@ export default function App() {
   }
 
   async function redoLastUserMessage() {
-    const c = client();
+    const c = routedClient();
     const sessionID = (selectedSessionId() ?? "").trim();
     if (!c || !sessionID) return;
 
@@ -2654,7 +2714,7 @@ export default function App() {
   async function deleteSessionById(sessionID: string, workspaceID?: string) {
     const trimmed = sessionID.trim();
     if (!trimmed) return;
-    const c = client();
+    const c = routedClient();
     if (!c) {
       throw new Error("Not connected to a server");
     }
@@ -2723,7 +2783,7 @@ export default function App() {
 
 
   async function listAgents(): Promise<Agent[]> {
-    const c = client();
+    const c = routedClient();
     if (!c) return [];
     const list = unwrap(await c.app.agents());
     return list.filter((agent) => !agent.hidden && agent.mode !== "subagent");
@@ -2737,7 +2797,7 @@ export default function App() {
   };
 
   async function listCommands(): Promise<{ id: string; name: string; description?: string; source?: "command" | "mcp" | "skill" }[]> {
-    const c = client();
+    const c = routedClient();
     if (!c) return [];
     const list = await listCommandsTyped(c, workspaceStore.activeWorkspaceRoot().trim() || undefined);
     if (list.some((entry) => entry.name === "compact")) {
@@ -2760,7 +2820,7 @@ export default function App() {
   }
 
   async function saveSessionExport(sessionID: string) {
-    const c = client();
+    const c = routedClient();
     if (!c) {
       throw new Error("Not connected to a server");
     }
@@ -2848,6 +2908,7 @@ export default function App() {
 
   const extensionsStore = createExtensionsStore({
     client,
+    routing: workspaceRouting,
     projectDir: () => workspaceProjectDir(),
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
     workspaceType: () => workspaceStore.activeWorkspaceDisplay().workspaceType,
@@ -2940,6 +3001,7 @@ export default function App() {
     managedAiAccess();
     setLastReloadedForServerToken("");
     lastKnownConfigSnapshotByWs.clear();
+    inactiveWorkspaceBaseUrlHealedFor.clear();
   });
   const managedAiBootstrapBusy = createMemo(
     () => managedAiAccessBusy() || managedAiBootstrapPendingCount() > 0,
@@ -2990,7 +3052,7 @@ export default function App() {
         hasManagedProfile: Boolean(managedAiAccess()) || managedAiBootstrapBusy(),
         isBootstrapBusy: managedAiBootstrapBusy,
         isReloadBusy: reloadBusy,
-        hasClient: () => Boolean(client()),
+        hasClient: () => Boolean(routedClient()),
       });
     } catch (error) {
       setError(error instanceof Error ? error.message : safeStringify(error));
@@ -2999,6 +3061,9 @@ export default function App() {
 
   const [showThinking, setShowThinking] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
+  // VSLO-171 F3Ú9 — maxEngines, idleSuspendMs were moved up to ~ř.1097 so
+  // workspaceRouting closures (and downstream session store memos) can
+  // access them without TDZ at createSessionStore init.
   const [autoCompactContext, setAutoCompactContext] = createSignal(true);
   const [modelVariant, setModelVariant] = createSignal<string | null>(DEFAULT_MODEL_VARIANT);
   const [modelVariantPreferenceReady, setModelVariantPreferenceReady] = createSignal(false);
@@ -3025,6 +3090,9 @@ export default function App() {
     setClientDirectory,
     client,
     setClient,
+    routing: workspaceRouting,
+    maxEngines: () => maxEngines(),
+    idleSuspendMs: () => idleSuspendMs(),
     setConnectedVersion,
     setSseConnected,
     setProviders,
@@ -3058,6 +3126,7 @@ export default function App() {
     updateVesloServerSettings,
     preferServerByDefault: () => Boolean(cloudEnvironment.vesloUrl),
     vesloServerClient,
+    vesloServerHostInfo: () => vesloServerHostInfo(),
     onEngineStable: () => {
       setEngineReady(true);
       void ensureLocalVesloServerRunning().catch((error) => {
@@ -3093,12 +3162,50 @@ export default function App() {
       sessionStore.hydrateTranscriptSnapshot(snapshot);
     },
   });
+  workspaceStoreRef = workspaceStore;
+
+  // VSLO-171 F3Ú7a — per-workspace pending permissions polling. Without SSE
+  // multiplex (F3Ú6d push) we refresh every 5 s in multi mode so background
+  // workspaces show up-to-date badge counts. Single-active mode skips polling
+  // (one client, SSE already covers it).
+  // VSLO-171 — per-workspace pending permissions polling. Refresh every 5 s
+  // so background workspaces show up-to-date sidebar badge counts.
+  createEffect(() => {
+    const id = setInterval(() => {
+      void sessionStore.refreshPendingPermissions();
+    }, 5000);
+    onCleanup(() => clearInterval(id));
+  });
+
+  // VSLO-171 F3Ú6a — per-workspace session cache save/load. In single-active
+  // mode this effect is a no-op (cache stays empty). In multi mode each
+  // workspace switch saves the outgoing snapshot and restores the incoming
+  // one so sessions/messages/permissions don't get wiped between switches.
+  // connectToServer (F3Ú6c) will skip its own state RESET when running in
+  // multi so the cache is the single source of truth across switches.
+  // VSLO-171 — per-workspace session cache save/load. Each workspace switch
+  // saves the outgoing snapshot and restores the incoming one so sessions/
+  // messages/permissions don't get wiped between switches. connectToServer
+  // skips its own state RESET — this cache is the source of truth.
+  let previousActiveWsId: string | null = null;
+  createEffect(() => {
+    const wsId = workspaceStore.activeWorkspaceId().trim();
+    if (previousActiveWsId && previousActiveWsId !== wsId) {
+      sessionStore.saveWorkspaceSnapshot(previousActiveWsId);
+    }
+    if (wsId) {
+      sessionStore.loadWorkspaceSnapshot(wsId);
+      // Cache miss is fine — connectToServer will trigger loadSessions to
+      // populate fresh state.
+    }
+    previousActiveWsId = wsId || null;
+  });
 
   let lastLocalVesloEnsureKey = "";
   createEffect(() => {
     if (!isTauriRuntime()) return;
     if (startupPreference() === "server") return;
-    if (!client()) return;
+    if (!routedClient()) return;
     if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") return;
 
     const nextKey = [
@@ -3220,6 +3327,38 @@ export default function App() {
       }
       return changed ? next : prev;
     });
+  };
+
+  // Clear a stale "error" sidebar-session status for a workspace right when
+  // the user re-activates it. Without this the red "Error" badge persists in
+  // the sidebar long after the underlying engine cleared — the failed
+  // refreshSidebarWorkspaceSessions call from an earlier cascade is the only
+  // thing that flips the status to "error", and only a successful sidebar
+  // reload flips it back. We let the activate path's populateSidebarFromDb
+  // re-set status to "loading" → "ready" naturally, but the user shouldn't
+  // see the leftover badge in the meantime.
+  const clearStaleWorkspaceSessionError = (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return;
+    setSidebarSessionStatusByWorkspaceId((prev) => {
+      if (prev[id] !== "error") return prev;
+      const next = { ...prev };
+      next[id] = "idle" as const;
+      return next;
+    });
+    setSidebarSessionErrorByWorkspaceId((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      next[id] = null;
+      return next;
+    });
+  };
+
+  const handleActivateWorkspace: typeof workspaceStore.activateWorkspace = (workspaceId, options) => {
+    if (typeof workspaceId === "string") {
+      clearStaleWorkspaceSessionError(workspaceId);
+    }
+    return workspaceStore.activateWorkspace(workspaceId, options);
   };
 
   const resolveSidebarClientConfig = (workspaceId: string) => {
@@ -4203,7 +4342,7 @@ export default function App() {
     if (currentView() !== "session") return;
     const normalizedPath = location.pathname.toLowerCase().replace(/\/+$/, "");
     if (normalizedPath !== "/session") return;
-    if (!client()) return;
+    if (!routedClient()) return;
     if (!sessionsLoaded()) return;
     if (creatingSession()) return;
     if (selectedSessionId()) return;
@@ -4225,7 +4364,7 @@ export default function App() {
 
     const connectionKey = [
       id,
-      client() ? "live" : "offline",
+      routedClient() ? "live" : "offline",
       clientDirectory() || workspaceStore.activeWorkspaceRoot().trim(),
       connectedVersion() ?? "",
     ].join("::");
@@ -5262,7 +5401,7 @@ export default function App() {
     const ok = result.status === "connected" || result.status === "limited";
     if (ok && !isTauriRuntime()) {
       const active = workspaceStore.activeWorkspaceDisplay();
-      const shouldAttach = !client() || active.workspaceType !== "remote" || active.remoteType !== "veslo";
+      const shouldAttach = !routedClient() || active.workspaceType !== "remote" || active.remoteType !== "veslo";
       if (shouldAttach) {
         await workspaceStore
           .createRemoteWorkspaceFlow({
@@ -5459,6 +5598,7 @@ export default function App() {
 
   const systemState = createSystemState({
     client,
+    routing: workspaceRouting,
     sessions,
     sessionStatusById,
     refreshPlugins,
@@ -6002,7 +6142,7 @@ export default function App() {
   });
 
   const newTaskDisabled = createMemo(() => {
-    if (!client()) {
+    if (!routedClient()) {
       return true;
     }
 
@@ -6026,7 +6166,7 @@ export default function App() {
   createEffect(() => {
     if (isTauriRuntime()) return;
     if (autoConnectAttempted()) return;
-    if (client()) return;
+    if (routedClient()) return;
     if (vesloServerStatus() !== "connected") return;
 
     const settings = vesloServerSettings();
@@ -6196,7 +6336,7 @@ export default function App() {
         setMcpServers(next);
         setMcpLastUpdatedAt(Date.now());
 
-        const activeClient = client();
+        const activeClient = routedClient();
         if (activeClient && projectDir) {
           try {
             const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
@@ -6230,7 +6370,7 @@ export default function App() {
         setMcpServers(next);
         setMcpLastUpdatedAt(Date.now());
 
-        const activeClient = client();
+        const activeClient = routedClient();
         if (activeClient && projectDir) {
           try {
             const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
@@ -6281,7 +6421,7 @@ export default function App() {
       setMcpServers(next);
       setMcpLastUpdatedAt(Date.now());
 
-      const activeClient = client();
+      const activeClient = routedClient();
       if (activeClient) {
         try {
           const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
@@ -6304,7 +6444,7 @@ export default function App() {
   async function ensureMcpRuntimeContext() {
     const projectDir = workspaceProjectDir().trim();
 
-    let activeClient = client();
+    let activeClient = routedClient();
     if (!activeClient) {
       const vesloBaseUrl = vesloServerBaseUrl().trim();
       const auth = vesloServerAuth();
@@ -6632,7 +6772,7 @@ export default function App() {
       return;
     }
 
-    let activeClient = client();
+    let activeClient = routedClient();
     if (!activeClient) {
       const vesloBaseUrl = vesloServerBaseUrl().trim();
       const auth = vesloServerAuth();
@@ -6733,7 +6873,7 @@ export default function App() {
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
       activeWorkspaceId: workspaceStore.activeWorkspaceId(),
       activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
-      hasClient: Boolean(client()),
+      hasClient: Boolean(routedClient()),
     });
     // Block session creation while a workspace switch is in progress.
     // Without this gate, activeWorkspaceRoot() can return a stale or empty
@@ -6751,7 +6891,7 @@ export default function App() {
     }
 
     await ensureManagedAiBootstrapReady();
-    const c = client();
+    const c = routedClient();
     if (!c) {
       recordSendTrace("createSessionAndOpen:blocked-no-client");
       setError("Local runtime is not ready yet.");
@@ -6922,6 +7062,18 @@ export default function App() {
         runId,
         error: e instanceof Error ? e.message : safeStringify(e),
       });
+      // VSLO-86 Task #20 — workspace switched while session.create was in
+      // flight. The guarded routedClient threw to keep the new session from
+      // landing in the stale workspace's engine. Don't surface a user-visible
+      // error: the user already moved on and the next click will spin up a
+      // fresh session in the right workspace.
+      if (isWorkspaceClientStaleError(e)) {
+        recordSendTrace("createSessionAndOpen:stale-client", {
+          entryWorkspaceId: e.entryWorkspaceId,
+          currentWorkspaceId: e.currentWorkspaceId,
+        });
+        return undefined;
+      }
       const message = e instanceof Error ? e.message : t("app.unknown_error", currentLocale());
       recordSendTrace("createSessionAndOpen:error", {
         message,
@@ -7552,6 +7704,30 @@ export default function App() {
           }
         }
 
+        // VSLO-171 F3Ú9 — Performance settings.
+        const storedMax = window.localStorage.getItem(MAX_ENGINES_PREF_KEY);
+        if (storedMax != null) {
+          try {
+            const parsed = JSON.parse(storedMax);
+            if (typeof parsed === "number" && parsed >= 1 && parsed <= 16) {
+              setMaxEngines(parsed);
+            }
+          } catch {
+            // ignore
+          }
+        }
+        const storedIdle = window.localStorage.getItem(IDLE_SUSPEND_MS_PREF_KEY);
+        if (storedIdle != null) {
+          try {
+            const parsed = JSON.parse(storedIdle);
+            if (typeof parsed === "number" && parsed >= 0) {
+              setIdleSuspendMs(parsed);
+            }
+          } catch {
+            // ignore
+          }
+        }
+
         const storedHideTitlebar = window.localStorage.getItem(HIDE_TITLEBAR_PREF_KEY);
         if (storedHideTitlebar != null) {
           try {
@@ -7727,7 +7903,7 @@ export default function App() {
             // the time the delayed hydration finishes, the retry bootstrap
             // is redundant — and would race the user's current session
             // view through bootstrapOnboarding → connectToServer.
-            if (client()) {
+            if (routedClient()) {
               return;
             }
             setOnboardingStep("connecting");
@@ -7775,7 +7951,7 @@ export default function App() {
     setWorkspaceDefaultModelReady(false);
     const workspaceType = workspaceStore.activeWorkspaceDisplay().workspaceType;
     const workspaceRoot = workspaceStore.activeWorkspacePath().trim();
-    const activeClient = client();
+    const activeClient = routedClient();
     const vesloClient = vesloServerClient();
     const vesloWorkspaceId = vesloServerWorkspaceId();
     const vesloCapabilities = resolvedVesloCapabilities();
@@ -8068,6 +8244,100 @@ export default function App() {
     });
   });
 
+  // VSLO-86: heal stale gateway baseURL in non-active managed workspaces.
+  // The active-workspace patch effect above only fires for the workspace the
+  // user has currently open, so any other workspace keeps the baseURL from a
+  // previous Veslo server lifetime. After a Tauri restart that allocates a
+  // different server port, the engine spawn for those workspaces fails with
+  // "Unable to connect" the moment the user opens or creates a session in
+  // them. We mirror the same patch flow here for every managed local
+  // workspace once per server-client-token rotation, but without restarting
+  // any engine — the active workspace's effect handles engine reload, and the
+  // other workspaces have no engine running to reload yet.
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+    const vesloClient = vesloServerClient();
+    if (!vesloClient) return;
+    if (vesloServerStatus() !== "connected") return;
+    const vesloCapabilities = resolvedVesloCapabilities();
+    if (!vesloCapabilities?.config?.write) return;
+    const managedProfile = managedAiAccess();
+    if (!managedProfile) return;
+    const providerRoutingLocalHost = activeVesloServerHostInfo();
+    if (!providerRoutingLocalHost?.baseUrl) return;
+    const gatewayClient = gatewayVesloServerClient();
+    const providerRoutingTarget = resolveManagedAiProviderRoutingTarget({
+      isDesktopRuntime: isTauriRuntime(),
+      workspaceType: "local",
+      activeBaseUrl: providerRoutingLocalHost.baseUrl,
+      activeToken: providerRoutingLocalHost?.clientToken ?? "",
+      gatewayBaseUrl: gatewayClient?.baseUrl ?? "",
+      gatewayToken: gatewayClient?.token ?? "",
+    });
+    if (!providerRoutingTarget?.serverClientToken) return;
+    const gatewayAccessToken = managedAiGatewayAccessToken() || denGatewayAccessToken();
+    if (!gatewayAccessToken) return;
+
+    const sessionToken = providerRoutingTarget.serverClientToken;
+    const activeWorkspaceId = (vesloServerWorkspaceId() ?? "").trim();
+    let cancelled = false;
+
+    const healInactiveWorkspaces = async () => {
+      let workspaceItems: Awaited<ReturnType<typeof vesloClient.listWorkspaces>>["items"];
+      try {
+        const response = await vesloClient.listWorkspaces();
+        workspaceItems = Array.isArray(response.items) ? response.items : [];
+      } catch (error) {
+        if (!cancelled) reportError(error, "managed-baseurl.listWorkspaces");
+        return;
+      }
+      for (const workspace of workspaceItems) {
+        if (cancelled) return;
+        if (workspace.workspaceType !== "local") continue;
+        if (workspace.id === activeWorkspaceId) continue;
+        if (inactiveWorkspaceBaseUrlHealedFor.get(workspace.id) === sessionToken) continue;
+        try {
+          const config = await vesloClient.getConfig(workspace.id);
+          if (cancelled) return;
+          const currentOpencodeContent = JSON.stringify(config.opencode ?? {}, null, 2);
+          const desiredContent = formatManagedAiAccessConfig(currentOpencodeContent, {
+            profile: managedProfile,
+            serverBaseUrl: providerRoutingTarget.baseUrl,
+            serverClientToken: providerRoutingTarget.serverClientToken,
+            gatewayAccessToken,
+          });
+          if (managedConfigContentsMatchForServerPatch(currentOpencodeContent, desiredContent)) {
+            inactiveWorkspaceBaseUrlHealedFor.set(workspace.id, sessionToken);
+            continue;
+          }
+          await vesloClient.patchConfig(workspace.id, {
+            opencode: JSON.parse(desiredContent) as Record<string, unknown>,
+          });
+          if (cancelled) return;
+          inactiveWorkspaceBaseUrlHealedFor.set(workspace.id, sessionToken);
+        } catch (error) {
+          if (cancelled) continue;
+          const message = error instanceof Error ? error.message : safeStringify(error);
+          // Private/system workspaces returned by listWorkspaces() can refuse
+          // GET/PATCH /config with "Workspace is not authorized" — mark them
+          // healed for this server token so the effect doesn't re-spam once
+          // per state-change cycle.
+          if (/not authorized|unauthorized|401/i.test(message)) {
+            inactiveWorkspaceBaseUrlHealedFor.set(workspace.id, sessionToken);
+            continue;
+          }
+          reportError(error, `managed-baseurl.heal:${workspace.id}`);
+        }
+      }
+    };
+
+    void healInactiveWorkspaces();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
+
   createEffect(() => {
     if (!isTauriRuntime()) return;
     if (onboardingStep() !== "local") return;
@@ -8076,6 +8346,12 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
+    // In Tauri desktop the orchestrator port rotates on every `pnpm dev`
+    // restart and the live URL always comes from `engineInfo()` IPC.
+    // Persisting it to localStorage here only pollutes the cache (the read
+    // path at line ~7509 already skips localStorage in Tauri) and creates
+    // a stale value that a future regression could read by accident.
+    if (isTauriRuntime()) return;
     try {
       window.localStorage.setItem("veslo.baseUrl", baseUrl());
     } catch {
@@ -8195,6 +8471,24 @@ export default function App() {
         THINKING_PREF_KEY,
         JSON.stringify(showThinking())
       );
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(MAX_ENGINES_PREF_KEY, JSON.stringify(maxEngines()));
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(IDLE_SUSPEND_MS_PREF_KEY, JSON.stringify(idleSuspendMs()));
     } catch {
       // ignore
     }
@@ -8334,7 +8628,7 @@ export default function App() {
   });
 
   const headerStatus = createMemo(() => {
-    if (!client() || !headerConnectedVersion()) return t("status.disconnected", currentLocale());
+    if (!routedClient() || !headerConnectedVersion()) return t("status.disconnected", currentLocale());
     const bits = [`${t("status.connected", currentLocale())} · ${headerConnectedVersion()}`];
     if (sseConnected()) bits.push(t("status.live", currentLocale()));
     return bits.join(" · ");
@@ -8591,7 +8885,7 @@ export default function App() {
       setView,
       startupPreference: startupPreference(),
       baseUrl: baseUrl(),
-      clientConnected: Boolean(client()),
+      clientConnected: Boolean(routedClient()),
       authenticatedUser: authenticatedUser(),
       onLogout: logoutLocalDenAuth,
       onSignIn: startDesktopBrowserSignIn,
@@ -8599,6 +8893,7 @@ export default function App() {
       busyHint: busyHint(),
       busyLabel: busyLabel(),
       newTaskDisabled: newTaskDisabled(),
+      pendingPermissionCountByWs: sessionStore.pendingPermissionCountByWs(),
       headerStatus: headerStatus(),
       error: error(),
       vesloServerStatus: vesloStatus,
@@ -8636,7 +8931,8 @@ export default function App() {
       activeWorkspaceId: workspaceStore.activeWorkspaceId(),
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
       workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
-      activateWorkspace: workspaceStore.activateWorkspace,
+      readyEngineWorkspaceIds: readyEngineWorkspaceIds(),
+      activateWorkspace: handleActivateWorkspace,
       testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
       recoverWorkspace: workspaceStore.recoverWorkspace,
       openCreateWorkspace: () => {
@@ -8683,7 +8979,6 @@ export default function App() {
       openRenameWorkspace,
       editWorkspaceConnection: openWorkspaceConnectionSettings,
       forgetWorkspace: workspaceStore.forgetWorkspace,
-      stopSandbox: workspaceStore.stopSandbox,
       scheduledJobs: scheduledJobs(),
       scheduledJobsSource: scheduledJobsSource(),
       scheduledJobsSourceReady: scheduledJobsSourceReady(),
@@ -8753,6 +9048,10 @@ export default function App() {
       toggleAutoCompactContext: () => setAutoCompactContext(true),
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
+      maxEngines: maxEngines(),
+      setMaxEngines: (n: number) => setMaxEngines(Math.max(1, Math.min(64, Math.floor(n)))),
+      idleSuspendMs: idleSuspendMs(),
+      setIdleSuspendMs: (ms: number) => setIdleSuspendMs(Math.max(0, Math.floor(ms))),
       modelVariantLabel: formatModelVariantLabel(modelVariant()),
       modelVariant: normalizeModelVariant(modelVariant()) ?? "none",
       setModelVariant: (value: string) => setModelVariant(value),
@@ -8798,7 +9097,6 @@ export default function App() {
       pendingPermissions: pendingPermissions(),
       events: events(),
       workspaceDebugEvents: workspaceStore.workspaceDebugEvents(),
-      sandboxCreateProgress: workspaceStore.sandboxCreateProgress(),
       clearWorkspaceDebugEvents: workspaceStore.clearWorkspaceDebugEvents,
       safeStringify,
       repairOpencodeMigration: workspaceStore.repairOpencodeMigration,
@@ -8855,7 +9153,7 @@ export default function App() {
   const searchWorkspaceFiles = async (query: string) => {
     const trimmed = query.trim();
     if (!trimmed) return [];
-    const activeClient = client();
+    const activeClient = routedClient();
     if (!activeClient) return [];
     try {
       const directory = workspaceProjectDir().trim();
@@ -8888,7 +9186,8 @@ export default function App() {
     activeWorkspaceId: workspaceStore.activeWorkspaceId(),
     connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
     workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
-    activateWorkspace: workspaceStore.activateWorkspace,
+    readyEngineWorkspaceIds: readyEngineWorkspaceIds(),
+    activateWorkspace: handleActivateWorkspace,
     testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
     recoverWorkspace: workspaceStore.recoverWorkspace,
     editWorkspaceConnection: openWorkspaceConnectionSettings,
@@ -8928,7 +9227,7 @@ export default function App() {
     exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
     exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
     engineReady: engineReady(),
-    clientConnected: Boolean(client()),
+    clientConnected: Boolean(routedClient()),
     authenticatedUser: authenticatedUser(),
     onLogout: logoutLocalDenAuth,
     onSignIn: startDesktopBrowserSignIn,
@@ -8979,6 +9278,7 @@ export default function App() {
     lastPromptSent: lastPromptSent(),
     retryLastPrompt: retryLastPrompt,
     newTaskDisabled: newTaskDisabled(),
+    pendingPermissionCountByWs: sessionStore.pendingPermissionCountByWs(),
     workspaceSessionGroups: sidebarWorkspaceGroups(),
     workspaceSessionPagingById: workspaceSessionPagingById(),
     subagentDecorationsBySessionId: subagentDecorationsBySessionId(),
@@ -9257,7 +9557,11 @@ export default function App() {
   });
 
   return (
-    <>
+    <WorkspaceRoutingProvider value={workspaceRouting}>
+      <WorkspaceServerSync
+        workspaceStore={workspaceStore}
+        orchestratorPort={() => orchestratorStatusState()?.daemon?.port ?? null}
+      />
       <Switch>
         <Match when={currentView() === "proto"}>
           <Switch>
@@ -9314,7 +9618,7 @@ export default function App() {
 
       <McpAuthModal
         open={mcpAuthModalOpen()}
-        client={client()}
+        client={routedClient()}
         entry={mcpAuthEntry()}
         projectDir={workspaceProjectDir()}
         language={currentLocale()}
@@ -9341,80 +9645,12 @@ export default function App() {
         open={workspaceStore.createWorkspaceOpen()}
         onClose={() => {
           workspaceStore.setCreateWorkspaceOpen(false);
-          workspaceStore.clearSandboxCreateProgress?.();
         }}
         onPickFolder={workspaceStore.pickWorkspaceFolder}
         onConfirm={(preset, folder) =>
           workspaceStore.createWorkspaceFlow(preset, folder)
         }
-        onConfirmWorker={
-          isTauriRuntime()
-            ? async (preset, folder) => {
-                const ok = await workspaceStore.createSandboxFlow(preset, folder);
-                if (!ok) return;
-              }
-            : undefined
-        }
-        workerDisabled={(() => {
-          if (!isTauriRuntime()) return true;
-          if (workspaceStore.sandboxDoctorBusy?.()) return true;
-          const doctor = workspaceStore.sandboxDoctorResult?.();
-          if (!doctor) return false;
-          return !doctor?.ready;
-        })()}
-        workerDisabledReason={(() => {
-          if (!isTauriRuntime()) return t("app.error.tauri_required", currentLocale());
-          if (workspaceStore.sandboxDoctorBusy?.()) {
-            return t("dashboard.sandbox_checking_docker", currentLocale());
-          }
-          const doctor = workspaceStore.sandboxDoctorResult?.();
-          if (!doctor || doctor.ready) return null;
-          const message = doctor?.error?.trim();
-          return message || t("dashboard.sandbox_get_ready_desc", currentLocale());
-        })()}
-        workerCtaLabel={t("dashboard.sandbox_get_ready_action", currentLocale())}
-        workerCtaDescription={t("dashboard.sandbox_get_ready_desc", currentLocale())}
-        onWorkerCta={async () => {
-          const url = "https://www.docker.com/products/docker-desktop/";
-          if (isTauriRuntime()) {
-            const { openUrl } = await import("@tauri-apps/plugin-opener");
-            await openUrl(url);
-          } else {
-            window.open(url, "_blank", "noopener,noreferrer");
-          }
-        }}
-        workerRetryLabel={t("common.retry", currentLocale())}
-        workerDebugLines={(() => {
-          const doctor = workspaceStore.sandboxDoctorResult?.();
-          const lines: string[] = [];
-          if (!doctor?.debug) return lines;
-          const selected = doctor.debug.selectedBin?.trim();
-          if (selected) lines.push(`selected: ${selected}`);
-          if (doctor.debug.candidates?.length) {
-            lines.push(`candidates: ${doctor.debug.candidates.join(", ")}`);
-          }
-          if (doctor.debug.versionCommand) {
-            const cmd = doctor.debug.versionCommand;
-            lines.push(`docker --version exit=${cmd.status}`);
-            if (cmd.stderr?.trim()) lines.push(`docker --version stderr: ${cmd.stderr.trim()}`);
-          }
-          if (doctor.debug.infoCommand) {
-            const cmd = doctor.debug.infoCommand;
-            lines.push(`docker info exit=${cmd.status}`);
-            if (cmd.stderr?.trim()) lines.push(`docker info stderr: ${cmd.stderr.trim()}`);
-          }
-          return lines;
-        })()}
-        onWorkerRetry={() => {
-          void workspaceStore.refreshSandboxDoctor?.();
-        }}
-        workerSubmitting={workspaceStore.sandboxPreflightBusy?.() ?? false}
-        submitting={(() => {
-          const phase = workspaceStore.sandboxCreatePhase?.() ?? "idle";
-          if (phase === "provisioning" || phase === "finalizing") return true;
-          return busy() && busyLabel() === "status.creating_workspace";
-        })()}
-        submittingProgress={workspaceStore.sandboxCreateProgress?.() ?? null}
+        submitting={busy() && busyLabel() === "status.creating_workspace"}
       />
 
       <CreateRemoteWorkspaceModal
@@ -9478,19 +9714,6 @@ export default function App() {
         confirmLabel={t("dashboard.edit_remote_workspace_confirm", currentLocale())}
       />
 
-      <ConfirmModal
-        open={!!crossWorkspaceConfirm()}
-        title={t("workspace.busy_takeover_title", currentLocale())}
-        message={t("workspace.busy_takeover_message", currentLocale()).replaceAll(
-          "{name}",
-          crossWorkspaceConfirm()?.workspaceName ?? "",
-        )}
-        confirmLabel={t("workspace.busy_takeover_confirm", currentLocale())}
-        cancelLabel={t("common.cancel", currentLocale())}
-        variant="danger"
-        onConfirm={() => resolveCrossWorkspaceConfirm(true)}
-        onCancel={() => resolveCrossWorkspaceConfirm(false)}
-      />
-    </>
+    </WorkspaceRoutingProvider>
   );
 }

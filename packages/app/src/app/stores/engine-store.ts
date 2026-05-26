@@ -11,6 +11,7 @@ import { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecycle";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import { t, currentLocale } from "../../i18n";
 import type { OpencodeAuth } from "../lib/opencode";
+import type { WorkspaceRouting } from "../context/workspace-routing";
 import {
   engineDoctor,
   engineInfo,
@@ -18,10 +19,8 @@ import {
   engineStart,
   engineStop,
   orchestratorInstanceDispose,
-  sandboxDoctor,
   type EngineDoctorResult,
   type EngineInfo,
-  type SandboxDoctorResult,
   type WorkspaceInfo,
 } from "../lib/tauri";
 
@@ -40,6 +39,9 @@ export interface EngineStoreDeps {
   // Engine source / bin path
   engineSource: () => "path" | "sidecar" | "custom";
   engineCustomBinPath?: () => string;
+  // VSLO-171 F3Ú9: pool tuning passed down to orchestrator on spawn.
+  maxEngines?: () => number | null;
+  idleSuspendMs?: () => number | null;
   isWindowsPlatform: () => boolean;
 
   // UI state setters
@@ -60,6 +62,7 @@ export interface EngineStoreDeps {
   setOnboardingStep: (step: OnboardingStep) => void;
   setView: (value: any) => void;
   client: () => any;
+  routing: WorkspaceRouting;
   onEngineStable?: () => void;
 
   // Server connection
@@ -95,15 +98,14 @@ export function createEngineStore(deps: EngineStoreDeps) {
   const [engineDoctorResult, setEngineDoctorResult] = createSignal<EngineDoctorResult | null>(null);
   const [engineDoctorCheckedAt, setEngineDoctorCheckedAt] = createSignal<number | null>(null);
   const [engineInstallLogs, setEngineInstallLogs] = createSignal<string | null>(null);
-  const [sandboxDoctorResult, setSandboxDoctorResult] = createSignal<SandboxDoctorResult | null>(null);
-  const [sandboxDoctorCheckedAt, setSandboxDoctorCheckedAt] = createSignal<number | null>(null);
-  const [sandboxDoctorBusy, setSandboxDoctorBusy] = createSignal(false);
 
   const localRuntimeLifecycle = createLocalRuntimeLifecycle({
     engineSource: deps.engineSource,
     engineCustomBinPath: deps.engineCustomBinPath,
     resolveEngineRuntime: deps.resolveEngineRuntime,
     resolveWorkspacePaths: deps.resolveWorkspacePaths,
+    maxEngines: deps.maxEngines,
+    idleSuspendMs: deps.idleSuspendMs,
     setEngine,
     setEngineAuth,
     startEngine: engineStart,
@@ -140,7 +142,7 @@ export function createEngineStore(deps: EngineStoreDeps) {
       const engineProjectDir = normalizeDirectoryPath(info.projectDir?.trim() ?? "");
       const browsingDifferentLocalWorkspace =
         syncLocalState &&
-        !deps.client() &&
+        !deps.routing.active() &&
         activeWorkspaceRoot.length > 0 &&
         engineProjectDir.length > 0 &&
         activeWorkspaceRoot !== engineProjectDir;
@@ -175,35 +177,6 @@ export function createEngineStore(deps: EngineStoreDeps) {
       setEngineDoctorResult(null);
       setEngineDoctorCheckedAt(Date.now());
       setEngineInstallLogs(e instanceof Error ? e.message : safeStringify(e));
-    }
-  }
-
-  async function refreshSandboxDoctor() {
-    if (!isTauriRuntime()) {
-      setSandboxDoctorResult(null);
-      setSandboxDoctorCheckedAt(Date.now());
-      return null;
-    }
-    if (sandboxDoctorBusy()) return sandboxDoctorResult();
-    setSandboxDoctorBusy(true);
-    try {
-      const result = await sandboxDoctor();
-      setSandboxDoctorResult(result);
-      return result;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      const fallback: SandboxDoctorResult = {
-        installed: false,
-        daemonRunning: false,
-        permissionOk: false,
-        ready: false,
-        error: message,
-      };
-      setSandboxDoctorResult(fallback);
-      return fallback;
-    } finally {
-      setSandboxDoctorCheckedAt(Date.now());
-      setSandboxDoctorBusy(false);
     }
   }
 
@@ -442,13 +415,9 @@ export function createEngineStore(deps: EngineStoreDeps) {
     engineDoctorCheckedAt,
     engineInstallLogs,
     setEngineInstallLogs,
-    sandboxDoctorResult,
-    sandboxDoctorCheckedAt,
-    sandboxDoctorBusy,
     // Methods
     refreshEngine,
     refreshEngineDoctor,
-    refreshSandboxDoctor,
     startHost,
     stopHost,
     reloadWorkspaceEngine,

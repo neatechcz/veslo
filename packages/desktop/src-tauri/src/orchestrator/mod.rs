@@ -11,8 +11,8 @@ use tauri_plugin_shell::ShellExt;
 use crate::paths::home_dir;
 use crate::paths::{prepended_path_env, sidecar_path_candidates};
 use crate::types::{
-    OrchestratorBinaryState, OrchestratorDaemonState, OrchestratorOpencodeState,
-    OrchestratorSidecarInfo, OrchestratorStatus, OrchestratorWorkspace,
+    OrchestratorBinaryState, OrchestratorDaemonState, OrchestratorEngineSnapshot,
+    OrchestratorOpencodeState, OrchestratorSidecarInfo, OrchestratorStatus, OrchestratorWorkspace,
 };
 
 pub mod manager;
@@ -52,6 +52,8 @@ pub struct OrchestratorHealth {
     pub binaries: Option<OrchestratorBinaryState>,
     pub active_id: Option<String>,
     pub workspace_count: Option<usize>,
+    #[serde(default)]
+    pub engines: Vec<OrchestratorEngineSnapshot>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,6 +75,10 @@ pub struct OrchestratorSpawnOptions {
     pub opencode_username: Option<String>,
     pub opencode_password: Option<String>,
     pub cors: Option<String>,
+    /// VSLO-171 F3Ú9: max concurrent engines in pool (1-16). None = orchestrator default.
+    pub max_engines: Option<u32>,
+    /// VSLO-171 F3Ú9: idle suspend threshold in ms. None = orchestrator default.
+    pub idle_suspend_ms: Option<u64>,
 }
 
 pub fn resolve_orchestrator_data_dir() -> String {
@@ -252,6 +258,17 @@ pub fn spawn_orchestrator_daemon(
         }
     }
 
+    // VSLO-171 F3Ú9: pool tuning from Settings → Performance.
+    if let Some(max) = options.max_engines {
+        args.push("--max-engines".to_string());
+        args.push(max.to_string());
+    }
+
+    if let Some(idle) = options.idle_suspend_ms {
+        args.push("--idle-suspend-ms".to_string());
+        args.push(idle.to_string());
+    }
+
     let mut command = command.args(args);
 
     let resource_dir = app.path().resource_dir().ok();
@@ -361,6 +378,7 @@ pub fn orchestrator_status_from_state(
         active_id,
         workspace_count,
         workspaces,
+        engines: Vec::new(),
         last_error,
     }
 }
@@ -406,6 +424,7 @@ pub fn resolve_orchestrator_status(
                 active_id,
                 workspace_count,
                 workspaces,
+                engines: health.engines,
                 last_error: None,
             }
         }

@@ -28,8 +28,9 @@ use commands::den_auth::{den_auth_snapshot_read, den_auth_snapshot_write};
 use commands::engine::{
     engine_doctor, engine_info, engine_install, engine_restart, engine_start, engine_stop,
 };
+use commands::engine_sse::{engine_sse_subscribe, engine_sse_unsubscribe, EngineSseRegistry};
 use commands::misc::{
-    app_build_info, obsidian_is_available, open_in_obsidian, opencode_db_migrate,
+    app_build_info, log_ui_event, obsidian_is_available, open_in_obsidian, opencode_db_migrate,
     opencode_db_update_session_directory, opencode_mcp_auth, read_obsidian_mirror_file,
     reset_opencode_cache, reset_veslo_state, write_obsidian_mirror_file,
 };
@@ -39,9 +40,8 @@ use commands::opencode_router::{
 };
 use commands::opkg::{import_skill, opkg_install};
 use commands::orchestrator::{
-    orchestrator_instance_dispose, orchestrator_start_detached, orchestrator_status,
-    orchestrator_workspace_activate, sandbox_cleanup_veslo_containers, sandbox_debug_probe,
-    sandbox_doctor, sandbox_stop,
+    orchestrator_engines_list, orchestrator_instance_dispose, orchestrator_start_detached,
+    orchestrator_status, orchestrator_workspace_activate, spawn_engine_event_poller,
 };
 use commands::pending_session_drafts::{
     pending_session_drafts_delete, pending_session_drafts_get, pending_session_drafts_list,
@@ -104,12 +104,65 @@ fn stop_managed_services(app_handle: &tauri::AppHandle) {
     if let Ok(mut veslo_server) = app_handle.state::<VesloServerManager>().inner.lock() {
         VesloServerManager::stop_locked(&mut veslo_server);
     }
+    // VSLO-86 — clear persisted state.json on shutdown so the next boot
+    // doesn't try to attach to dead port/token from this run.
+    let _ = crate::veslo_server::clear_persisted_veslo_server_info(app_handle);
     if let Ok(mut opencode_router) = app_handle.state::<OpenCodeRouterManager>().inner.lock() {
         OpenCodeRouterManager::stop_locked(&mut opencode_router);
     }
 }
 
+/// Best-effort dev-mode cleanup: kill veslo-* sidecars whose process group
+/// differs from ours. A `pnpm dev` Ctrl+C does not always reap orchestrator/
+/// veslo-server/veslo-code-router; orphans bind ports and leave a stale
+/// veslo-server-state.json that breaks the next dev session. Release builds
+/// keep the original tauri-plugin-single-instance behavior — we don't want a
+/// shipped Veslo killing unrelated user processes.
+#[cfg(all(debug_assertions, not(windows)))]
+fn kill_orphan_sidecars() {
+    use std::process::Command;
+
+    let my_pid = std::process::id().to_string();
+    let my_pgid = match Command::new("ps").args(["-o", "pgid=", "-p", &my_pid]).output() {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        Err(_) => return,
+    };
+    if my_pgid.is_empty() {
+        return;
+    }
+
+    let output = match Command::new("pgrep")
+        .args(["-f", "veslo-server|veslo-orchestrator|veslo-code-router|veslo-code"])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return,
+    };
+    let pids: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty() && line != &my_pid)
+        .collect();
+
+    for pid in pids {
+        let other_pgid = Command::new("ps")
+            .args(["-o", "pgid=", "-p", &pid])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        if other_pgid.is_empty() || other_pgid == my_pgid {
+            continue;
+        }
+        eprintln!("[veslo] killing orphan sidecar pid={pid} pgid={other_pgid}");
+        let _ = Command::new("kill").arg(&pid).status();
+    }
+}
+
+#[cfg(not(all(debug_assertions, not(windows))))]
+fn kill_orphan_sidecars() {}
+
 pub fn run() {
+    kill_orphan_sidecars();
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             let deep_link_urls: Vec<String> = argv
@@ -161,6 +214,7 @@ pub fn run() {
         .manage(VesloServerManager::default())
         .manage(OpenCodeRouterManager::default())
         .manage(WorkspaceWatchState::default())
+        .manage(EngineSseRegistry::default())
         .invoke_handler(tauri::generate_handler![
             engine_start,
             engine_stop,
@@ -168,14 +222,15 @@ pub fn run() {
             engine_doctor,
             engine_install,
             engine_restart,
+            engine_sse_subscribe,
+            engine_sse_unsubscribe,
             orchestrator_status,
+            orchestrator_engines_list,
             orchestrator_workspace_activate,
             orchestrator_instance_dispose,
             orchestrator_start_detached,
-            sandbox_doctor,
-            sandbox_debug_probe,
-            sandbox_stop,
-            sandbox_cleanup_veslo_containers,
+            // F4Ú8b — sandbox_doctor, sandbox_debug_probe, sandbox_stop,
+            // sandbox_cleanup_veslo_containers IPC commands SMAZÁNY.
             veslo_server_info,
             veslo_server_restart,
             opencodeRouter_info,
@@ -211,6 +266,7 @@ pub fn run() {
             write_opencode_config,
             updater_environment,
             app_build_info,
+            log_ui_event,
             obsidian_is_available,
             open_in_obsidian,
             write_obsidian_mirror_file,
@@ -237,6 +293,17 @@ pub fn run() {
         .expect("error while building Veslo");
 
     register_debug_logs_forwarder(app.handle());
+
+    // F2Ú7: background poller that watches orchestrator engine snapshots and
+    // emits `veslo://engine-event` on state transitions. Runs on a dedicated
+    // OS thread for the lifetime of the app process.
+    spawn_engine_event_poller(app.handle().clone());
+
+    // F2Ú7 (dev only): auto-spawn orchestrator daemon shortly after app boot
+    // so the per-workspace pool is available without explicit user action.
+    // No-op if the frontend onboarding starts an engine first.
+    #[cfg(debug_assertions)]
+    commands::engine::spawn_orchestrator_dev_autostart(app.handle().clone());
 
     // Best-effort cleanup on app exit. Without this, background sidecars can keep
     // running after the UI quits (especially during dev), leading to multiple

@@ -97,6 +97,11 @@ type Props = {
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
+  /** VSLO-171 F3Ú7c — per-workspace pending permission counts for sidebar badges. */
+  pendingPermissionCountByWs?: Record<string, number>;
+  /** Workspace IDs whose orchestrator engine is currently in `ready` state.
+   *  Switching into those is instant (no spawn wait). */
+  readyEngineWorkspaceIds?: Set<string>;
   importingWorkspaceConfig: boolean;
   showRemoteActions?: boolean;
   soulStatusByWorkspaceId: Record<string, VesloSoulStatus | null>;
@@ -173,11 +178,7 @@ const workspaceLabel = (workspace: WorkspaceInfo) =>
 
 const workspaceKindLabel = (workspace: WorkspaceInfo) =>
   workspace.workspaceType === "remote"
-    ? workspace.sandboxBackend === "docker" ||
-      Boolean(workspace.sandboxRunId?.trim()) ||
-      Boolean(workspace.sandboxContainerName?.trim())
-      ? t("sidebar.workspace_kind_sandbox", currentLocale())
-      : t("sidebar.workspace_kind_remote", currentLocale())
+    ? t("sidebar.workspace_kind_remote", currentLocale())
     : t("sidebar.workspace_kind_local", currentLocale());
 
 const sidebarControlTooltipClass =
@@ -1478,11 +1479,7 @@ export default function WorkspaceSessionList(props: Props) {
         >
           {(errorDisplay) => (
             <div
-              class={`px-2 py-1.5 text-xs rounded-lg border ${
-                errorDisplay().tone === "offline"
-                  ? "text-amber-11 bg-amber-3 border-amber-7"
-                  : "text-red-11 bg-red-3 border-red-7"
-              }`}
+              class="px-2 py-1.5 text-xs rounded-lg border text-red-11 bg-red-3 border-red-7"
               title={errorDisplay().title}
             >
               {errorDisplay().message}
@@ -1699,11 +1696,7 @@ export default function WorkspaceSessionList(props: Props) {
                                 </Show>
                                 <Show when={row.status === "error"}>
                                   <span
-                                    class={`text-[10px] px-1.5 py-0.5 rounded-full border ${
-                                      taskLoadError().tone === "offline"
-                                        ? "border-amber-7 text-amber-11 bg-amber-3"
-                                        : "border-red-7 text-red-11 bg-red-3"
-                                    }`}
+                                    class="text-[10px] px-1.5 py-0.5 rounded-full border border-red-7 text-red-11 bg-red-3"
                                     title={taskLoadError().title}
                                   >
                                     {taskLoadError().label}
@@ -1880,7 +1873,14 @@ export default function WorkspaceSessionList(props: Props) {
                           title={project.projectTitle}
                           aria-label={project.projectLabel ? `${tr("sidebar.open_project")} ${project.projectLabel}` : tr("sidebar.open_project")}
                           onPointerDown={(event) => handleProjectPointerDown(event, project.key, projectDragLabel())}
-                          onClick={() => toggleProjectCollapse(project.key)}
+                          onClick={() => {
+                            if (!isActiveWorkspace()) {
+                              void Promise.resolve(props.onActivateWorkspace(workspace().id));
+                              if (collapsed()) toggleProjectCollapse(project.key);
+                              return;
+                            }
+                            toggleProjectCollapse(project.key);
+                          }}
                         >
                           <div class="flex items-center gap-2 min-w-0">
                             <Folder
@@ -1891,15 +1891,15 @@ export default function WorkspaceSessionList(props: Props) {
                                 toggleProjectCollapse(project.key);
                               }}
                             />
-                            <span
-                              class="truncate text-[12px] font-semibold text-gray-10 cursor-pointer"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                toggleProjectCollapse(project.key);
-                              }}
-                            >
+                            <span class="truncate text-[12px] font-semibold text-gray-10">
                               {project.projectLabel}
                             </span>
+                            <Show when={props.readyEngineWorkspaceIds?.has(workspace().id)}>
+                              <span
+                                class="h-1.5 w-1.5 shrink-0 rounded-full bg-green-9"
+                                title="Engine ready — switching is instant"
+                              />
+                            </Show>
                             <Show when={workspace().workspaceType === "remote"}>
                               <span class="shrink-0 text-[10px] text-gray-8 uppercase tracking-[0.12em]">
                                 {workspaceKindLabel(workspace())}
@@ -1914,13 +1914,17 @@ export default function WorkspaceSessionList(props: Props) {
                             <Show when={isConnecting()}>
                               <Loader2 size={11} class="animate-spin text-gray-10" />
                             </Show>
+                            <Show when={(props.pendingPermissionCountByWs?.[workspace().id] ?? 0) > 0}>
+                              <span
+                                class="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-9 text-white text-[10px] font-semibold"
+                                title="Pending permission request"
+                              >
+                                {props.pendingPermissionCountByWs![workspace().id]}
+                              </span>
+                            </Show>
                             <Show when={project.status === "error"}>
                               <span
-                                class={`text-[10px] px-1.5 py-0.5 rounded-full border ${
-                                  taskLoadError().tone === "offline"
-                                    ? "border-amber-7 text-amber-11 bg-amber-3"
-                                    : "border-red-7 text-red-11 bg-red-3"
-                                }`}
+                                class="text-[10px] px-1.5 py-0.5 rounded-full border border-red-7 text-red-11 bg-red-3"
                                 title={taskLoadError().title}
                               >
                                 {taskLoadError().label}
