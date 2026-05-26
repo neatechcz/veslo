@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
 import test from "node:test"
 
@@ -78,6 +79,7 @@ test("skill_versions, version files, and blobs are immutable schema rows", () =>
   const skillVersionTrigger = triggerStatement(migration, "skill_versions_prevent_update")
   assert.match(skillVersionTrigger, /SET NEW\.id = IF\(/)
   for (const immutableColumn of [
+    "id",
     "org_id",
     "skill_id",
     "version_number",
@@ -102,6 +104,34 @@ test("skill_versions, version files, and blobs are immutable schema rows", () =>
     migration,
     /CREATE TRIGGER `skill_blobs_prevent_update` BEFORE UPDATE ON `skill_blobs` FOR EACH ROW SIGNAL SQLSTATE '45000'/,
   )
+})
+
+test("skill registry key helpers produce canonical non-null keys", () => {
+  assert.equal(
+    skillPolicy.skillVersionFilePathSha256("SKILL.md"),
+    createHash("sha256").update("SKILL.md").digest("hex"),
+  )
+  assert.equal(
+    skillPolicy.skillVersionFilePathSha256("scripts\\run.sh"),
+    createHash("sha256").update("scripts/run.sh").digest("hex"),
+  )
+  assert.throws(() => skillPolicy.skillVersionFilePathSha256("../SKILL.md"), /invalid_skill_file_path/)
+
+  assert.equal(skillPolicy.skillScopeOwnerKey({ scope: "user", userId: "user_1" }), "user:user_1")
+  assert.equal(skillPolicy.skillScopeOwnerKey({ scope: "org", orgId: "org_1" }), "org:org_1")
+  assert.equal(
+    skillPolicy.skillScopeOwnerKey({ scope: "workspace", orgId: "org_1", workspaceId: "workspace_1" }),
+    "workspace:org_1:workspace_1",
+  )
+  assert.equal(skillPolicy.skillScopeOwnerKey({ scope: "system" }), "system:__system__")
+
+  assert.equal(skillPolicy.skillApprovalOwnerKey({ scope: "org", orgId: "org_1" }), "org:org_1")
+  assert.equal(skillPolicy.skillApprovalOwnerKey({ scope: "system" }), "system:__system__")
+
+  assert.equal(skillPolicy.skillReleaseChannelKey(null), "default")
+  assert.equal(skillPolicy.skillReleaseChannelKey(undefined), "default")
+  assert.equal(skillPolicy.skillReleaseChannelKey(""), "default")
+  assert.equal(skillPolicy.skillReleaseChannelKey("  beta  "), "beta")
 })
 
 test("approved org and system installations have approval and approved-version wiring", () => {

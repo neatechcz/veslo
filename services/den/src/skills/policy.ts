@@ -4,6 +4,76 @@ import type {
   SkillScope,
   SkillVersionStatus,
 } from "./schema.js"
+import { createHash } from "node:crypto"
+
+const SYSTEM_OWNER_KEY = "__system__"
+const DEFAULT_RELEASE_CHANNEL_KEY = "default"
+
+export type SkillScopeOwnerKeyInput =
+  | { scope: "user"; userId: string }
+  | { scope: "org"; orgId: string }
+  | { scope: "workspace"; orgId: string; workspaceId: string }
+  | { scope: "system" }
+
+export type SkillApprovalOwnerKeyInput =
+  | { scope: "org"; orgId: string }
+  | { scope: "system" }
+
+export function skillVersionFilePathSha256(path: string): string {
+  return sha256Hex(canonicalSkillVersionFilePath(path))
+}
+
+export function skillScopeOwnerKey(input: SkillScopeOwnerKeyInput): string {
+  switch (input.scope) {
+    case "user":
+      return `user:${encodeKeyPart(input.userId)}`
+    case "org":
+      return `org:${encodeKeyPart(input.orgId)}`
+    case "workspace":
+      return `workspace:${encodeKeyPart(input.orgId)}:${encodeKeyPart(input.workspaceId)}`
+    case "system":
+      return `system:${SYSTEM_OWNER_KEY}`
+  }
+}
+
+export function skillApprovalOwnerKey(input: SkillApprovalOwnerKeyInput): string {
+  switch (input.scope) {
+    case "org":
+      return `org:${encodeKeyPart(input.orgId)}`
+    case "system":
+      return `system:${SYSTEM_OWNER_KEY}`
+  }
+}
+
+export function skillReleaseChannelKey(releaseChannel?: string | null): string {
+  const normalized = releaseChannel?.trim()
+  return normalized ? normalized : DEFAULT_RELEASE_CHANNEL_KEY
+}
+
+function canonicalSkillVersionFilePath(path: string): string {
+  const normalized = path.replace(/\\/g, "/")
+  if (normalized.startsWith("/") || normalized === "") {
+    throw new Error("invalid_skill_file_path")
+  }
+
+  const parts = normalized.split("/")
+  if (parts.some((part) => part === "" || part === "." || part === "..")) {
+    throw new Error("invalid_skill_file_path")
+  }
+
+  return parts.join("/")
+}
+
+function encodeKeyPart(value: string): string {
+  if (value.length === 0) {
+    throw new Error("invalid_skill_registry_key_part")
+  }
+  return encodeURIComponent(value)
+}
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex")
+}
 
 export type SkillRegistryPolicyResult<TCode extends string = string> =
   | { ok: true }

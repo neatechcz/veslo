@@ -312,7 +312,7 @@ CREATE INDEX `skill_audit_events_org_skill` ON `skill_audit_events` (`org_id`, `
 --> statement-breakpoint
 CREATE INDEX `skill_audit_events_actor_time` ON `skill_audit_events` (`actor_user_id`, `created_at`);
 --> statement-breakpoint
-CREATE TRIGGER `skill_versions_prevent_update` BEFORE UPDATE ON `skill_versions` FOR EACH ROW SET NEW.id = IF(NOT (OLD.org_id <=> NEW.org_id) OR OLD.skill_id <> NEW.skill_id OR OLD.version_number <> NEW.version_number OR OLD.manifest_sha256 <> NEW.manifest_sha256 OR OLD.package_sha256 <> NEW.package_sha256 OR OLD.package_size_bytes <> NEW.package_size_bytes OR OLD.file_count <> NEW.file_count OR OLD.created_by_user_id <> NEW.created_by_user_id OR OLD.created_at <> NEW.created_at, NULL, NEW.id);
+CREATE TRIGGER `skill_versions_prevent_update` BEFORE UPDATE ON `skill_versions` FOR EACH ROW SET NEW.id = IF(OLD.id <> NEW.id OR NOT (OLD.org_id <=> NEW.org_id) OR OLD.skill_id <> NEW.skill_id OR OLD.version_number <> NEW.version_number OR OLD.manifest_sha256 <> NEW.manifest_sha256 OR OLD.package_sha256 <> NEW.package_sha256 OR OLD.package_size_bytes <> NEW.package_size_bytes OR OLD.file_count <> NEW.file_count OR OLD.created_by_user_id <> NEW.created_by_user_id OR OLD.created_at <> NEW.created_at, NULL, NEW.id);
 --> statement-breakpoint
 CREATE TRIGGER `skill_version_files_prevent_update` BEFORE UPDATE ON `skill_version_files` FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'skill_version_files are immutable';
 --> statement-breakpoint
