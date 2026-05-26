@@ -31,6 +31,7 @@ use commands::den_auth::{den_auth_snapshot_read, den_auth_snapshot_write};
 use commands::engine::{
     engine_doctor, engine_info, engine_install, engine_restart, engine_start, engine_stop,
 };
+use commands::engine_sse::{engine_sse_subscribe, engine_sse_unsubscribe, EngineSseRegistry};
 use commands::misc::{
     app_build_info, log_ui_event, obsidian_is_available, open_in_obsidian, opencode_db_migrate,
     opencode_db_update_session_directory, opencode_mcp_auth, read_obsidian_mirror_file,
@@ -254,6 +255,7 @@ pub fn run() {
         .manage(VesloServerManager::default())
         .manage(OpenCodeRouterManager::default())
         .manage(WorkspaceWatchState::default())
+        .manage(EngineSseRegistry::default())
         .invoke_handler(tauri::generate_handler![
             engine_start,
             engine_stop,
@@ -261,6 +263,8 @@ pub fn run() {
             engine_doctor,
             engine_install,
             engine_restart,
+            engine_sse_subscribe,
+            engine_sse_unsubscribe,
             orchestrator_status,
             orchestrator_engines_list,
             orchestrator_workspace_activate,

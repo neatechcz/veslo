@@ -1344,11 +1344,20 @@ export function createWorkspaceStore(options: {
     // can browse history without waiting for engine startup.  Entered when
     // switching between local workspaces (wasLocalConnection truthy) OR on
     // cold boot when no engine is running yet (client is null and startup
-    // preference has already been set to "local" by this function).
+    // preference has already been set to "local" by this function), OR when
+    // the user clicks the already-active workspace but no engine is running
+    // for it yet (post-restart lazy-boot state — without this branch the
+    // engine never spawns until a proxy request triggers pool.ensure, which
+    // then races the UI's 10s session-list timeout).
+    const enginePresentForActiveWorkspace = Boolean(
+      engineStore.engine()?.baseUrl?.trim() &&
+        (engineStore.engine()?.projectDir?.trim() ?? "") === next.path,
+    );
+    const needsEngineWarmup = !isRemote && !workspaceChanged && !enginePresentForActiveWorkspace;
     const canBrowseOffline =
-      !isRemote && workspaceChanged && isTauriRuntime() && options.populateSidebarFromDb;
+      !isRemote && (workspaceChanged || needsEngineWarmup) && isTauriRuntime() && options.populateSidebarFromDb;
     const isColdBoot = !options.routing.active() && options.startupPreference() === "local";
-    if (canBrowseOffline && (wasLocalConnection || isColdBoot)) {
+    if (canBrowseOffline && (wasLocalConnection || isColdBoot || needsEngineWarmup)) {
       _wsLog("[workspace:activate] STEP 5-BROWSE — browsing mode, loading from SQLite", { id, path: next.path });
       wsDebug("activate:local->local:browsingMode", { id, nextPath: next.path });
 

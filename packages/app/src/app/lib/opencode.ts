@@ -17,7 +17,14 @@ export type OpencodeAuth = {
   mode?: "basic" | "veslo";
 };
 
-const DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS = 10_000;
+// VSLO-86 — opencode engine cold-start (Bun JIT + SQLite migration + sandbox
+// init + plugin vendoring) routinely takes 15-30s, and the first proxy request
+// through the orchestrator after a workspace activate must wait for the engine
+// to finish spawning. A 10s frontend timeout (the previous value) raced the
+// engine warmup and surfaced as "Request timed out" Error badges on every
+// workspace in the sidebar. Once the engine is up, requests complete in tens
+// of ms — the longer ceiling only changes worst-case behavior.
+const DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS = 60_000;
 const OAUTH_OPENCODE_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const MCP_AUTH_OPENCODE_REQUEST_TIMEOUT_MS = 90_000;
 const GATEWAY_PROVIDER_SECRET_OPTION_KEYS = new Set([

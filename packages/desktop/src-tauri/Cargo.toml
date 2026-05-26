@@ -35,6 +35,12 @@ zip = "0.6"
 include_dir = "0.7"
 tauri-plugin-pilot = { version = "0.7.1", default-features = false }
 sha1 = "0.10"
+# VSLO-86 — async SSE streaming in Rust so engine event subscription doesn't
+# block paralel short requests through the Tauri http plugin's IPC channel.
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls", "http2", "charset"] }
+futures-util = "0.3"
+tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread"] }
+base64 = "0.22"
 
 [profile.release]
 panic = "abort"

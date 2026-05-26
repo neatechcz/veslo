@@ -28,6 +28,7 @@ import {
   safeStringify,
 } from "../utils";
 import { unwrap } from "../lib/opencode";
+import { engineSseSubscribe, isEngineSseAvailable } from "../lib/engine-sse";
 import type { WorkspaceRouting, RoutingClient } from "./workspace-routing";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { formatSessionError, truncateErrorField } from "../lib/session-error";
@@ -1741,7 +1742,21 @@ export function createSessionStore(options: {
 
     const connectSse = async (controller: AbortController) => {
       try {
-        const sub = await c.event.subscribe(undefined, { signal: controller.signal });
+        // VSLO-86 — when running under Tauri, route SSE through the Rust-side
+        // proxy (engineSseSubscribe) so the stream doesn't hold an
+        // `fetch_read_body` invoke on the Tauri http plugin's IPC channel.
+        // That pending invoke was starving paralel short requests (sidebar
+        // session listing across workspaces), surfacing as 60s timeouts. The
+        // SDK path is kept as a fallback for non-Tauri runtimes.
+        const entry = sourceWsId ? options.routing.entry(sourceWsId) : null;
+        const sub = await (isEngineSseAvailable() && entry?.baseUrl
+          ? engineSseSubscribe({
+              workspaceId: sourceWsId,
+              baseUrl: entry.baseUrl,
+              directory: entry.directory ?? null,
+              signal: controller.signal,
+            })
+          : c.event.subscribe(undefined, { signal: controller.signal }));
         let yielded = Date.now();
         let lastArrivalAt = Date.now();
 
