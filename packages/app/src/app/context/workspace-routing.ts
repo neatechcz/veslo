@@ -105,6 +105,12 @@ export interface WorkspaceRouting {
   client(workspaceId?: string): RoutingClient | null;
   active(): RoutingClient | null;
   activeWorkspaceId(): string;
+  /**
+   * VSLO-86 — raw entry lookup so callers (Rust-side SSE proxy) can read
+   * `baseUrl`/`directory` without going through the SDK client. Returns the
+   * cached `ClientEntry` or `null` if the workspace hasn't been ensured yet.
+   */
+  entry(workspaceId: string): ClientEntry | null;
   ensure(
     workspaceId: string,
     baseUrl: string,
@@ -180,6 +186,11 @@ export function createWorkspaceRouting(
     },
     activeWorkspaceId() {
       return opts.activeWorkspaceId();
+    },
+    entry(workspaceId: string) {
+      const id = workspaceId.trim();
+      if (!id) return null;
+      return entries.get(id) ?? null;
     },
     async ensure(
       workspaceId: string,

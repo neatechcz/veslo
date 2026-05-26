@@ -3,7 +3,7 @@ import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 import type { WorkerSandbox } from "./sandbox/index.js";
 import { resolveSandbox } from "./sandbox/index.js";
 import { randomUUID, createHash } from "node:crypto";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile, realpath } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile, realpath } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
 import { homedir, hostname, networkInterfaces, tmpdir } from "node:os";
@@ -1853,6 +1853,137 @@ function opencodeRouterStatusToolSource(): string {
   ].join("\n");
 }
 
+/**
+ * Vendors `@opencode-ai/plugin` (plus its `zod` dependency) into
+ * `<configDir>/node_modules/` so managed tool files load cleanly inside the
+ * sandboxed opencode engine. Opencode runs Bun with `--no-install`, and
+ * opencode's `tool({...})` introspects real zod internals (`_zod.def`), so a
+ * pure shim isn't enough — we need the actual published packages.
+ *
+ * Source is the local Bun install cache (`~/.bun/install/cache/<pkg>@<ver>@@@1/`),
+ * which is populated by `bun install` during development and shipped alongside
+ * orchestrator builds. If the cache is empty (CI, first run), we fall back to
+ * a minimal hand-written shim that lets opencode load the tools but won't pass
+ * full zod introspection — the warning is logged so callers can investigate.
+ */
+const VESLO_MANAGED_PLUGIN_VERSION = "1.15.10";
+const VESLO_MANAGED_ZOD_VERSION = "4.1.13";
+
+const MANAGED_PLUGIN_FALLBACK_TOOL = `function makeLeaf(typeName) {
+  const leaf = { _veslo_schema_type: typeName, _zod: { def: { type: typeName } } };
+  leaf.optional = () => leaf;
+  leaf.nullable = () => leaf;
+  leaf.describe = () => leaf;
+  leaf.default = () => leaf;
+  leaf.parse = (value) => value;
+  leaf.safeParse = (value) => ({ success: true, data: value });
+  return leaf;
+}
+const schema = {
+  string: () => makeLeaf("string"),
+  number: () => makeLeaf("number"),
+  boolean: () => makeLeaf("boolean"),
+  any: () => makeLeaf("any"),
+  enum: (values) => Object.assign(makeLeaf("enum"), { options: Array.isArray(values) ? values.slice() : [] }),
+  literal: (value) => Object.assign(makeLeaf("literal"), { value }),
+  object: (shape) => Object.assign(makeLeaf("object"), { shape: shape || {} }),
+  array: (item) => Object.assign(makeLeaf("array"), { element: item }),
+  record: (value) => Object.assign(makeLeaf("record"), { valueType: value }),
+  union: (options) => Object.assign(makeLeaf("union"), { options: Array.isArray(options) ? options.slice() : [] }),
+  optional: (inner) => Object.assign(makeLeaf("optional"), { inner }),
+  nullable: (inner) => Object.assign(makeLeaf("nullable"), { inner }),
+};
+export function tool(input) {
+  return input;
+}
+tool.schema = schema;
+`;
+
+const MANAGED_PLUGIN_FALLBACK_INDEX = `export * from "./tool.js";\n`;
+
+const MANAGED_PLUGIN_FALLBACK_PACKAGE_JSON = `${JSON.stringify(
+  {
+    name: "@opencode-ai/plugin",
+    version: "0.0.0-veslo-managed",
+    type: "module",
+    exports: {
+      ".": { import: "./dist/index.js" },
+      "./tool": { import: "./dist/tool.js" },
+    },
+    files: ["dist"],
+  },
+  null,
+  2,
+)}\n`;
+
+async function copyDirRecursive(src: string, dst: string): Promise<void> {
+  // Prefer fs/promises.cp, but fall back to shell `cp -R` when running inside a
+  // Bun-compiled standalone binary, where cp() can silently no-op on macOS.
+  try {
+    await cp(src, dst, { recursive: true, force: true });
+    // Sanity check: cp succeeded but copied nothing? Fall through to shell cp.
+    const entries = await readdir(src).catch(() => [] as string[]);
+    if (entries.length > 0) {
+      const dstEntries = await readdir(dst).catch(() => [] as string[]);
+      if (dstEntries.length > 0) return;
+    } else {
+      return;
+    }
+  } catch (err) {
+    // fall through to shell cp
+    void err;
+  }
+  const result = spawnProcess("cp", ["-R", `${src}/.`, dst], { stdio: "ignore" });
+  await new Promise<void>((resolve, reject) => {
+    result.on("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`cp -R ${src} -> ${dst} exited with code ${code}`));
+    });
+    result.on("error", reject);
+  });
+}
+
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await access(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveBunCacheEntry(pkg: string, version: string): string {
+  return join(
+    process.env.HOME ?? "",
+    ".bun",
+    "install",
+    "cache",
+    pkg,
+    `${version}@@@1`,
+  );
+}
+
+async function vendorBunCachePackage(
+  pkg: string,
+  version: string,
+  destNodeModules: string,
+): Promise<boolean> {
+  const cacheRoot = resolveBunCacheEntry(pkg, version);
+  if (!(await pathExists(cacheRoot))) return false;
+  const destDir = join(destNodeModules, pkg);
+  await mkdir(destDir, { recursive: true });
+  await copyDirRecursive(cacheRoot, destDir);
+  return true;
+}
+
+async function writeManagedPluginFallback(pluginDir: string): Promise<void> {
+  const distDir = join(pluginDir, "dist");
+  await mkdir(distDir, { recursive: true });
+  await writeFile(join(pluginDir, "package.json"), MANAGED_PLUGIN_FALLBACK_PACKAGE_JSON, "utf8");
+  await writeFile(join(distDir, "index.js"), MANAGED_PLUGIN_FALLBACK_INDEX, "utf8");
+  await writeFile(join(distDir, "tool.js"), MANAGED_PLUGIN_FALLBACK_TOOL, "utf8");
+}
+
 async function ensureOpencodeManagedTools(configDir: string): Promise<void> {
   const toolsDir = join(configDir, "tools");
   await mkdir(toolsDir, { recursive: true });
@@ -1867,6 +1998,38 @@ async function ensureOpencodeManagedTools(configDir: string): Promise<void> {
     }
     await writeFile(toolPath, content, "utf8");
   };
+
+  const nodeModulesDir = join(configDir, "node_modules");
+  await mkdir(nodeModulesDir, { recursive: true });
+
+  // Vendor @opencode-ai/plugin (preferred: from Bun cache; fallback: hand-rolled shim).
+  const pluginDir = join(nodeModulesDir, "@opencode-ai", "plugin");
+  if (!(await pathExists(join(pluginDir, "package.json")))) {
+    await mkdir(join(nodeModulesDir, "@opencode-ai"), { recursive: true });
+    const ok = await vendorBunCachePackage(
+      "@opencode-ai/plugin",
+      VESLO_MANAGED_PLUGIN_VERSION,
+      nodeModulesDir,
+    );
+    if (!ok) {
+      console.warn(
+        `[veslo-orchestrator] Bun cache miss for @opencode-ai/plugin@${VESLO_MANAGED_PLUGIN_VERSION}; using hand-rolled shim (tools may not pass full zod introspection).`,
+      );
+      await writeManagedPluginFallback(pluginDir);
+    }
+  }
+
+  // Vendor zod (only used when the real plugin from cache is in place; cheap to
+  // skip the copy if the destination already exists).
+  const zodDir = join(nodeModulesDir, "zod");
+  if (!(await pathExists(join(zodDir, "package.json")))) {
+    const ok = await vendorBunCachePackage("zod", VESLO_MANAGED_ZOD_VERSION, nodeModulesDir);
+    if (!ok) {
+      console.warn(
+        `[veslo-orchestrator] Bun cache miss for zod@${VESLO_MANAGED_ZOD_VERSION}; the @opencode-ai/plugin shim will be used instead.`,
+      );
+    }
+  }
 
   await writeManagedTool("opencode_router_send.ts", opencodeRouterSendToolSource());
   await writeManagedTool("opencode_router_status.ts", opencodeRouterStatusToolSource());

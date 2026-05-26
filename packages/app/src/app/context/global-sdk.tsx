@@ -12,6 +12,7 @@ import {
 
 import { extractSessionId } from "../utils";
 import { reportError } from "../lib/error-reporter";
+import { engineSseSubscribe, isEngineSseAvailable } from "../lib/engine-sse";
 import { usePlatform } from "./platform";
 import { useServer } from "./server";
 
@@ -129,7 +130,18 @@ export function GlobalSDKProvider(props: ParentProps) {
     };
 
     void (async () => {
-      const subscription = await eventClient.event.subscribe(undefined, { signal: abort.signal });
+      // VSLO-86 — when running in Tauri, hold the SSE stream entirely in Rust
+      // via engine_sse_subscribe so it doesn't keep an `fetch_read_body`
+      // invoke pending on the http plugin's IPC channel (that pending invoke
+      // was starving paralel short requests like sidebar session listing).
+      // Outside Tauri (dev web build) we still use the SDK path.
+      const subscription = isEngineSseAvailable()
+        ? await engineSseSubscribe({
+            workspaceId: "global",
+            baseUrl,
+            signal: abort.signal,
+          })
+        : await eventClient.event.subscribe(undefined, { signal: abort.signal });
       let yielded = Date.now();
 
       for await (const event of subscription.stream as AsyncIterable<unknown>) {
