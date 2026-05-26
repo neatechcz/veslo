@@ -23,7 +23,9 @@ test("session relocates the dashboard nav into the left sidebar above settings",
 
 test("session keeps the right sidebar reserved for advanced nav and session panels", () => {
   assert.match(source, /import SidebarAdvancedNav from "\.\.\/components\/session\/sidebar-advanced-nav";/);
+  assert.match(source, /import SessionCapabilitiesPanel from "\.\.\/components\/session\/session-capabilities-panel";/);
   assert.match(rightSidebar, /<SidebarAdvancedNav[\s\S]*currentTab=\{props\.tab\}/);
   assert.doesNotMatch(rightSidebar, /<SidebarDashboardNav/);
   assert.match(rightSidebar, /<ArtifactsPanel/);
+  assert.match(rightSidebar, /<ArtifactsPanel[\s\S]*<SessionCapabilitiesPanel/);
 });

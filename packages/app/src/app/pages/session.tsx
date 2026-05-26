@@ -134,6 +134,8 @@ import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
 import ArtifactsPanel from "../components/session/artifacts-panel";
 import type { ArtifactFamily } from "../components/session/artifact-family-model";
+import SessionCapabilitiesPanel from "../components/session/session-capabilities-panel";
+import type { SessionCapabilitiesSnapshot } from "../lib/session-capabilities";
 import { openSessionWithWorkspaceActivation } from "./session-navigation";
 import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "./session-layout-width";
 import { resolveSessionTitlebarContext } from "./session-titlebar-context";
@@ -269,6 +271,9 @@ export type SessionViewProps = {
   ) => SidebarSectionState;
   artifacts: ArtifactItem[];
   artifactFamilies: ArtifactFamily[];
+  sessionCapabilities: SessionCapabilitiesSnapshot | null;
+  sessionCapabilitiesStatus: "idle" | "loading" | "ready" | "error";
+  sessionCapabilitiesError: string | null;
   workingFiles: string[];
   authorizedDirs: string[];
   activePlugins: string[];
@@ -4322,6 +4327,12 @@ export default function SessionView(props: SessionViewProps) {
         onRevealArtifact={revealArtifact}
         onOpenInObsidian={openArtifactInObsidian}
         obsidianAvailable={obsidianAvailable()}
+      />
+      <SessionCapabilitiesPanel
+        state={props.sessionCapabilitiesStatus}
+        skills={props.sessionCapabilities?.skills ?? []}
+        mcp={props.sessionCapabilities?.mcp ?? []}
+        error={props.sessionCapabilitiesError}
       />
     </div>
   );
