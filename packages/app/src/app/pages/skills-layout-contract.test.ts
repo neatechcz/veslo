@@ -52,22 +52,56 @@ test("skills page uses inventory as primary installed source", () => {
 test("skills page separates global and workspace-specific inventory sections", () => {
   assert.match(source, /translate\("skills\.all_workspaces"\)/);
   assert.match(source, /translate\("skills\.workspace_specific"\)/);
-  assert.match(source, /translate\("skills\.workspace_overrides"\)/);
   assert.match(enSource, /"skills\.all_workspaces":\s*"All workspaces"/);
   assert.match(enSource, /"skills\.workspace_specific":\s*"Workspace-specific"/);
-  assert.match(enSource, /"skills\.workspace_overrides":\s*"Workspace overrides"/);
   assert.match(csSource, /"skills\.all_workspaces":/);
   assert.match(csSource, /"skills\.workspace_specific":/);
-  assert.match(csSource, /"skills\.workspace_overrides":/);
   assert.match(zhSource, /"skills\.all_workspaces":/);
   assert.match(zhSource, /"skills\.workspace_specific":/);
-  assert.match(zhSource, /"skills\.workspace_overrides":/);
+});
+
+test("skills inventory cards show placement badges instead of Veslo bootstrap badges", () => {
+  assert.equal(source.includes("VESLO_DEFAULT_SKILL_NAMES"), false);
+  assert.equal(source.includes("isVesloInjectedSkill"), false);
+  assert.doesNotMatch(renderInventoryCardSource, />\s*Veslo\s*</);
+  assert.match(source, /const workspaceDirectoryNameForInstance = \(instance: SkillInstance\) =>/);
+  assert.match(source, /const workspaceDirectoryNamesForItem = \(item: SkillInventoryItem\) =>/);
+  assert.match(source, /const workspaceDirectoryTooltipLinesForItem = \(item: SkillInventoryItem\) =>/);
+  assert.match(source, /const skillInventoryScopeBadge = \(input: \{ item: SkillInventoryItem; instance: SkillInstance \}\) =>/);
+  assert.match(source, /input\.instance\.scope === "user-global"[\s\S]{0,220}translate\("skills\.scope_global"\)/);
+  assert.match(source, /workspaceTooltipLines\.length > 1[\s\S]{0,260}translate\("skills\.workspace_scope_multiple"\)/);
+  assert.match(source, /title: input\.instance\.path/);
+  assert.match(source, /title: workspaceTooltipLines\.join\("\\n"\)/);
+  assert.match(source, /const skillDirectoryPathForLocation = \(path: string\) =>/);
+  assert.equal(source.includes('path.trim().replace(/[\\\\/](?:SKILL\\.md|AGENTS\\.md)$/i, "")'), true);
+  assert.match(source, /const openInventoryInstanceLocation = async \(path: string\) =>/);
+  assert.match(source, /await import\("@tauri-apps\/plugin-opener"\)/);
+  assert.match(source, /await openPath\(target\)/);
+  assert.match(source, /await revealItemInDir\(originalTarget \|\| target\)/);
+  assert.match(renderInventoryCardSource, /const scopeBadge = createMemo\(\(\) => skillInventoryScopeBadge\(input\)\)/);
+  assert.match(renderInventoryCardSource, /<h4[\s\S]*?title=\{input\.item\.name\}[\s\S]*?>[\s\S]*?\{input\.item\.name\}[\s\S]*?<\/h4>/);
+  assert.match(renderInventoryCardSource, /title=\{scopeBadge\(\)\.title\}/);
+  assert.match(renderInventoryCardSource, /<FolderOpen size=\{13\}/);
+  assert.match(renderInventoryCardSource, /openInventoryInstanceLocation\(input\.instance\.path\)/);
+  assert.match(renderInventoryCardSource, /title=\{translate\("skills\.reveal_skill_location"\)\}/);
+  assert.match(renderInventoryCardSource, /e\.stopPropagation\(\)/);
+  assert.doesNotMatch(renderInventoryCardSource, /\{input\.instance\.path\}<\/div>/);
+  assert.match(enSource, /"skills\.scope_global":\s*"Global"/);
+  assert.match(enSource, /"skills\.workspace_scope_multiple":\s*"Various"/);
+  assert.match(enSource, /"skills\.reveal_skill_location":/);
+  assert.match(csSource, /"skills\.scope_global":\s*"Globální"/);
+  assert.match(csSource, /"skills\.workspace_scope_multiple":\s*"Různé"/);
+  assert.match(csSource, /"skills\.reveal_skill_location":/);
+  assert.match(zhSource, /"skills\.scope_global":/);
+  assert.match(zhSource, /"skills\.workspace_scope_multiple":/);
+  assert.match(zhSource, /"skills\.reveal_skill_location":/);
 });
 
 test("workspace-specific rows come from workspaceInstances without expanding globals across workspaces", () => {
   assert.match(source, /const workspaceInventoryRows = createMemo\(\(\) =>\s*filteredInstalledInventoryItems\(\)\s*\.flatMap/);
   assert.match(source, /item\.workspaceInstances\.map/);
-  assert.match(source, /item\.status === "mixed"\s*\?\s*translate\("skills\.workspace_overrides"\)/);
+  assert.doesNotMatch(source, /sectionLabel:/);
+  assert.doesNotMatch(source, /item\.status === "mixed"\s*\?\s*translate\("skills\.workspace_overrides"\)/);
   assert.doesNotMatch(source, /props\.workspaces\.map\([\s\S]{0,500}globalInstance/);
 });
 

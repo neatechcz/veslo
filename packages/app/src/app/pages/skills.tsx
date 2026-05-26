@@ -16,6 +16,7 @@ import { currentLocale, t } from "../../i18n";
 import { DEFAULT_VESLO_PUBLISHER_BASE_URL, publishVesloBundleJson } from "../lib/publisher";
 import { skillMutationTargetFromInstance } from "../lib/skill-inventory";
 import type { SkillMutationTarget } from "../lib/skill-inventory";
+import { isTauriRuntime } from "../utils";
 
 type InstallResult = { ok: boolean; message: string };
 type ActionSkillCard = SkillCard & { mutationTarget: SkillMutationTarget };
@@ -29,11 +30,6 @@ type SkillBundleV1 = {
   trigger?: string;
 };
 
-const VESLO_DEFAULT_SKILL_NAMES = new Set([
-  "skill-creator",
-  "agent-creator",
-  "plugin-creator",
-]);
 const SKILLS_TOAST_DISMISS_DELAY_MS = 4_000;
 
 const cloneSkillInventoryItem = (item: SkillInventoryItem): SkillInventoryItem => ({
@@ -212,8 +208,23 @@ export default function SkillsView(props: SkillsViewProps) {
     return `${trimmed}-${Date.now()}`;
   };
 
-  const normalizeSkillPath = (value: string | undefined) =>
+  const normalizeSkillPath = (value: string | null | undefined) =>
     String(value ?? "").trim().replace(/\\/g, "/");
+
+  const lastPathSegment = (value: string | null | undefined) => {
+    const normalized = normalizeSkillPath(value).replace(/\/+$/, "");
+    if (!normalized) return "";
+    const parts = normalized.split("/").filter(Boolean);
+    return parts[parts.length - 1] ?? normalized;
+  };
+
+  const workspaceRootFromSkillPath = (value: string | null | undefined) => {
+    const normalized = normalizeSkillPath(value);
+    const markers = ["/.opencode/skills/", "/.claude/skills/", "/.agents/skills/"];
+    const marker = markers.find((item) => normalized.includes(item));
+    if (!marker) return "";
+    return normalized.slice(0, normalized.indexOf(marker));
+  };
 
   const workspaceLabelForInstance = (instance: SkillInstance) => {
     const workspaceId = instance.workspaceId?.trim();
@@ -227,6 +238,81 @@ export default function SkillsView(props: SkillsViewProps) {
       workspaceId ||
       translate("skills.worker_fallback")
     );
+  };
+
+  const workspaceDirectoryNameForInstance = (instance: SkillInstance) => {
+    const workspaceId = instance.workspaceId?.trim();
+    const workspace = workspaceId ? props.workspaces.find((item) => item.id === workspaceId) : null;
+    return (
+      lastPathSegment(workspace?.directory) ||
+      lastPathSegment(workspace?.path) ||
+      lastPathSegment(workspaceRootFromSkillPath(instance.path)) ||
+      lastPathSegment(instance.workspaceLabel) ||
+      workspaceLabelForInstance(instance)
+    );
+  };
+
+  const workspaceDirectoryNamesForItem = (item: SkillInventoryItem) => {
+    const seen = new Set<string>();
+    return item.workspaceInstances.flatMap((instance) => {
+      const label = workspaceDirectoryNameForInstance(instance);
+      const key = instance.workspaceId?.trim() || label;
+      if (!key || seen.has(key)) return [];
+      seen.add(key);
+      return [label];
+    });
+  };
+
+  const workspaceDirectoryTooltipLinesForItem = (item: SkillInventoryItem) => {
+    const seen = new Set<string>();
+    return item.workspaceInstances.flatMap((instance) => {
+      const label = workspaceDirectoryNameForInstance(instance);
+      const path = instance.path.trim();
+      const key = instance.workspaceId?.trim() || label;
+      if (!key || seen.has(key)) return [];
+      seen.add(key);
+      return [path ? `${label}: ${path}` : label];
+    });
+  };
+
+  const skillInventoryScopeBadge = (input: { item: SkillInventoryItem; instance: SkillInstance }) => {
+    if (input.instance.scope === "user-global") {
+      const label = translate("skills.scope_global");
+      return { label, title: input.instance.path };
+    }
+    const workspaceLabels = workspaceDirectoryNamesForItem(input.item);
+    const workspaceTooltipLines = workspaceDirectoryTooltipLinesForItem(input.item);
+    if (workspaceTooltipLines.length > 1) {
+      return {
+        label: translate("skills.workspace_scope_multiple"),
+        title: workspaceTooltipLines.join("\n"),
+      };
+    }
+    const label = workspaceLabels[0] || workspaceDirectoryNameForInstance(input.instance);
+    return { label, title: input.instance.path };
+  };
+
+  const skillDirectoryPathForLocation = (path: string) =>
+    path.trim().replace(/[\\/](?:SKILL\.md|AGENTS\.md)$/i, "");
+
+  const openInventoryInstanceLocation = async (path: string) => {
+    const originalTarget = path.trim();
+    const target = skillDirectoryPathForLocation(path);
+    if (!target) return;
+    if (!isTauriRuntime()) {
+      setToast(translate("skills.desktop_required"));
+      return;
+    }
+    try {
+      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
+      try {
+        await openPath(target);
+      } catch {
+        await revealItemInDir(originalTarget || target);
+      }
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : translate("skills.reveal_failed"));
+    }
   };
 
   const workspaceLabelForTarget = (workspace: WorkspaceInfo) => (
@@ -300,9 +386,6 @@ export default function SkillsView(props: SkillsViewProps) {
         item.workspaceInstances.map((instance) => ({
           item,
           instance,
-          sectionLabel: item.status === "mixed"
-            ? translate("skills.workspace_overrides")
-            : translate("skills.workspace_specific"),
         }))
       )
   );
@@ -732,21 +815,13 @@ export default function SkillsView(props: SkillsViewProps) {
     () => !props.busy && (props.canInstallSkillCreator || props.canUseDesktopTools)
   );
 
-  const isVesloInjectedSkill = (skill: SkillCard) => {
-    const normalizedName = skill.name.trim().toLowerCase();
-    const normalizedPath = skill.path.replace(/\\/g, "/").toLowerCase();
-    const inProjectSkillPath = normalizedPath.includes("/.opencode/skills/");
-    if (!inProjectSkillPath) return false;
-    return VESLO_DEFAULT_SKILL_NAMES.has(normalizedName) || normalizedName.endsWith("-creator");
-  };
-
   const renderInventoryCard = (input: {
     item: SkillInventoryItem;
     instance: SkillInstance;
-    scopeLabel: string;
     workspaceLabel?: string;
   }) => {
     const actionSkill = createMemo(() => actionSkillForInstance(input.instance));
+    const scopeBadge = createMemo(() => skillInventoryScopeBadge(input));
     const displayDescription = () => input.instance.description ?? input.item.description ?? "";
     const canUseActions = () => Boolean(actionSkill());
     const canUninstall = () => canUninstallInventoryInstance({ item: input.item, instance: input.instance });
@@ -787,15 +862,32 @@ export default function SkillsView(props: SkillsViewProps) {
           </div>
           <div class="min-w-0">
             <div class="flex items-center gap-2 mb-0.5">
-              <h4 class="font-product type-ui-md font-semibold text-dls-text truncate">{input.item.name}</h4>
-              <Show when={isVesloInjectedSkill({ name: input.instance.name, path: input.instance.path })}>
-                <span class="font-product type-ui-xs rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 font-semibold uppercase tracking-wide text-dls-secondary">
-                  Veslo
-                </span>
-              </Show>
-              <span class="font-product type-ui-xs rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 font-semibold text-dls-secondary">
-                {input.scopeLabel}
+              <h4
+                class="font-product type-ui-md font-semibold text-dls-text truncate"
+                title={input.item.name}
+              >
+                {input.item.name}
+              </h4>
+              <span
+                class="font-product type-ui-xs inline-block max-w-[12rem] truncate rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 font-semibold text-dls-secondary"
+                title={scopeBadge().title}
+              >
+                {scopeBadge().label}
               </span>
+              <button
+                type="button"
+                class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-dls-border bg-dls-hover text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text disabled:opacity-40"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void openInventoryInstanceLocation(input.instance.path);
+                }}
+                disabled={!input.instance.path.trim()}
+                title={translate("skills.reveal_skill_location")}
+                aria-label={translate("skills.reveal_skill_location")}
+              >
+                <FolderOpen size={13} />
+              </button>
             </div>
             <Show when={displayDescription()}>
               <p class="font-reading type-ui-sm text-dls-secondary line-clamp-1">
@@ -805,7 +897,6 @@ export default function SkillsView(props: SkillsViewProps) {
             <Show when={input.workspaceLabel}>
               <div class="font-product type-ui-xs mt-1 text-dls-secondary truncate">{input.workspaceLabel}</div>
             </Show>
-            <div class="font-mono type-ui-xs mt-1 text-dls-secondary truncate">{input.instance.path}</div>
           </div>
         </div>
         <div class="flex items-center gap-1">
@@ -1001,7 +1092,6 @@ export default function SkillsView(props: SkillsViewProps) {
                       return renderInventoryCard({
                         item,
                         instance,
-                        scopeLabel: translate("skills.all_workspaces"),
                       });
                     }}
                   </For>
@@ -1019,7 +1109,6 @@ export default function SkillsView(props: SkillsViewProps) {
                     {(row) => renderInventoryCard({
                       item: row.item,
                       instance: row.instance,
-                      scopeLabel: row.sectionLabel,
                       workspaceLabel: workspaceLabelForInstance(row.instance),
                     })}
                   </For>
