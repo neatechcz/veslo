@@ -29,6 +29,7 @@ type SeededSession = {
 
 const WAIT_TIMEOUT_MS = 20_000;
 const SIDEBAR_DOCKED_VISIBILITY_KEY = "veslo.global.sidebar.docked.v1";
+const SESSION_DIRECTORY_OVERRIDE_KEY = "veslo.session-workspace-override.v1";
 const CAPABILITIES_PANEL_SELECTOR = '[data-testid="session-capabilities-panel"]';
 const CAPABILITIES_SKILLS_SELECTOR = '[data-testid="session-capabilities-skills"]';
 const CAPABILITIES_MCP_SELECTOR = '[data-testid="session-capabilities-mcp"]';
@@ -186,14 +187,14 @@ async function readActiveWorkspaceDirectory(): Promise<string> {
   return directory;
 }
 
-async function ensureActiveEngineStarted(selectedDirectory: string) {
+async function ensureActiveEngineStarted() {
   const directory = await readActiveWorkspaceDirectory();
 
   await tauriInvoke<EngineInfo>("engine_start", {
     projectDir: directory,
     preferSidecar: true,
     runtime: "direct",
-    workspacePaths: [directory, selectedDirectory],
+    workspacePaths: [directory],
   });
 }
 
@@ -219,10 +220,8 @@ async function waitForActiveClientContext() {
   return context!;
 }
 
-async function createSessionForSelectedWorkspace(): Promise<SeededSession> {
-  const selectedDirectory = selectedWorkspaceRoot();
-  mkdirSync(selectedDirectory, { recursive: true });
-  await ensureActiveEngineStarted(selectedDirectory);
+async function createSessionInActiveWorkspace(): Promise<SeededSession> {
+  await ensureActiveEngineStarted();
   const { baseUrl, directory, username, password } = await waitForActiveClientContext();
   // @ts-expect-error -- shared app test utilities are JS-only in this workspace.
   const { makeClient, waitForHealthy } = await import("../../app/scripts/_util.mjs");
@@ -239,8 +238,19 @@ async function createSessionForSelectedWorkspace(): Promise<SeededSession> {
   await waitForHealthy(client, { timeoutMs: WAIT_TIMEOUT_MS, pollMs: 250 });
 
   const title = `e2e session capabilities ${Date.now()}`;
-  const created = await client.session.create({ title, directory: selectedDirectory });
+  const created = await client.session.create({ title, directory });
   return { id: created.id, title };
+}
+
+async function overrideSessionDirectory(sessionId: string, directory: string): Promise<void> {
+  await browser.execute(
+    (key: string, id: string, value: string) => {
+      window.localStorage.setItem(key, JSON.stringify({ [id]: value }));
+    },
+    SESSION_DIRECTORY_OVERRIDE_KEY,
+    sessionId,
+    directory,
+  );
 }
 
 async function positionWindowForSessionCapabilities(): Promise<void> {
@@ -311,10 +321,13 @@ const runWhenDefaultIsolatedProfile =
 runWhenDefaultIsolatedProfile("Session capabilities right menu", () => {
   it("shows local global and workspace skills and MCP servers for the selected session", async () => {
     seedSessionCapabilitiesFixture();
-    const session = await createSessionForSelectedWorkspace();
+    const session = await createSessionInActiveWorkspace();
     const sessionHash = `#/session/${session.id}`;
 
+    await overrideSessionDirectory(session.id, selectedWorkspaceRoot());
     await navigateToHash(`/session/${session.id}`);
+    await waitForHashRoute(sessionHash, WAIT_TIMEOUT_MS);
+    await browser.refresh();
     await waitForHashRoute(sessionHash, WAIT_TIMEOUT_MS);
     await forceRightSidebarVisible(sessionHash);
 
