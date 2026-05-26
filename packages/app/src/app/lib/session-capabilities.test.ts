@@ -160,3 +160,39 @@ test("session capabilities cache supports force reload and clear", async () => {
   cache.clear();
   assert.equal((await cache.load({ directory: "/workspaces/a" })).skills[0]?.name, "skill:3");
 });
+
+test("session capabilities cache ignores stale same-directory writes", async () => {
+  const resolvers: Array<() => void> = [];
+  const cache = createSessionCapabilitiesCache(
+    (scope) =>
+      new Promise((resolve) => {
+        const index = resolvers.length + 1;
+        resolvers.push(() =>
+          resolve({
+            directory: scope.directory,
+            skills: [
+              {
+                id: `${scope.directory}:${index}`,
+                name: `skill:${index}`,
+                scope: "workspace",
+                path: `${scope.directory}/SKILL.md`,
+              },
+            ],
+            mcp: [],
+          }),
+        );
+      }),
+  );
+
+  const first = cache.load({ directory: "/workspaces/a" }, { force: true });
+  const second = cache.load({ directory: "/workspaces/a" }, { force: true });
+  assert.equal(resolvers.length, 2);
+
+  resolvers[1]?.();
+  assert.equal((await second).skills[0]?.name, "skill:2");
+
+  resolvers[0]?.();
+  assert.equal((await first).skills[0]?.name, "skill:1");
+
+  assert.equal((await cache.load({ directory: "/workspaces/a" })).skills[0]?.name, "skill:2");
+});

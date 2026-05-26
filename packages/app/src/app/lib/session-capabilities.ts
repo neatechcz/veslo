@@ -46,10 +46,14 @@ export function createSessionCapabilitiesCache(
   loadFresh: (scope: SessionCapabilitiesScope) => Promise<Omit<SessionCapabilitiesSnapshot, "loadedAt">>,
 ) {
   const cache = new Map<string, SessionCapabilitiesSnapshot>();
+  const generations = new Map<string, number>();
+  let nextGeneration = 0;
 
   return {
     clear() {
       cache.clear();
+      generations.clear();
+      nextGeneration += 1;
     },
     async load(scope: SessionCapabilitiesScope, options?: { force?: boolean }) {
       const directory = normalizeSessionCapabilityDirectory(scope.directory);
@@ -61,9 +65,14 @@ export function createSessionCapabilitiesCache(
         if (cached) return cached;
       }
 
+      const generation = nextGeneration + 1;
+      nextGeneration = generation;
+      generations.set(directory, generation);
       const fresh = await loadFresh({ ...scope, directory });
       const snapshot = { ...fresh, directory, loadedAt: Date.now() };
-      cache.set(directory, snapshot);
+      if (generations.get(directory) === generation) {
+        cache.set(directory, snapshot);
+      }
       return snapshot;
     },
   };

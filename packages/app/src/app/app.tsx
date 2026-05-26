@@ -4756,6 +4756,17 @@ export default function App() {
     return activeCandidates.includes(normalizedDirectory) ? runtimeClient : null;
   };
 
+  const runtimeMatchContextForSessionCapabilities = () => {
+    const active = workspaceStore.activeWorkspaceDisplay();
+    return {
+      activeWorkspaceId: workspaceStore.activeWorkspaceId().trim(),
+      activeWorkspacePath: normalizeCapabilityDirectoryForMatch(active.path),
+      activeWorkspaceDirectory: normalizeCapabilityDirectoryForMatch(active.directory),
+      activeWorkspaceRoot: normalizeCapabilityDirectoryForMatch(workspaceStore.activeWorkspaceRoot()),
+      workspaceProjectDir: normalizeCapabilityDirectoryForMatch(workspaceProjectDir()),
+    };
+  };
+
   const loadSessionMcpStatuses = async (
     directory: string,
     entries: McpServerEntry[],
@@ -4919,6 +4930,7 @@ export default function App() {
           runtimeBaseUrl: baseUrl().trim(),
           runtimeVersion: connectedVersion() ?? "",
           hasRuntimeClient: Boolean(client()),
+          runtimeMatch: runtimeMatchContextForSessionCapabilities(),
           matchedWorkspaceId: workspace?.id ?? "",
         })
       : "";
