@@ -36,6 +36,8 @@ sudo chmod 600 /srv/veslo/env/production.env
 
 Fill `/srv/veslo/env/production.env` with production values. The template covers Den, AI Gateway, web, Lettr, owned-server worker provisioning, temporary Render worker provisioning, Vercel worker-domain integration, Polar, YouTrack, debug-log ingest, and managed-AI settings.
 
+The GitHub Actions deployment can point at a different server-side env file with `OWNED_SERVER_ENV_FILE`. The current production workflow default uses the existing production env path on the owned server until the host layout is normalized.
+
 Auth email uses Lettr over HTTPS via `LETTR_API_KEY`, `AUTH_EMAIL_ADDRESS`, and `AUTH_EMAIL_FROM_NAME`. Direct SMTP is not required.
 
 The web app reads public `NEXT_PUBLIC_*` values at image build time. Rebuild the `web` image after changing those values.
@@ -83,6 +85,23 @@ The app images use `node:22-bookworm-slim`, enable Corepack, prepare `pnpm@10.27
 - `pnpm --filter @neatech/veslo-web build` then `pnpm --filter @neatech/veslo-web start`.
 
 The worker manager is the only long-running service that mounts `/var/run/docker.sock`. Den talks to it over the internal Compose network using `OWNED_WORKER_MANAGER_TOKEN`.
+
+## GitHub Actions Deployment
+
+Production deploys are normally run through the `Deploy Owned Server` GitHub Actions workflow. The workflow is manual-only and does not run on push.
+
+Required GitHub Actions configuration:
+
+- `OWNED_SERVER_HOST`: owned-server host or IP. The workflow has a default for the current production host.
+- `OWNED_SERVER_USER`: SSH deploy user. The workflow has a default for the current production user.
+- `OWNED_SERVER_SSH_KEY`: private SSH key for the deploy user. Store this as a secret.
+- `OWNED_SERVER_KNOWN_HOSTS`: known-hosts entry for the owned server. Store this as a secret.
+- `OWNED_SERVER_APP_DIR`: stable Git checkout directory on the owned server.
+- `OWNED_SERVER_ENV_FILE`: production env file path on the owned server.
+
+On each run, the workflow creates or updates the stable checkout, checks out the requested branch, validates the Compose configuration, builds `worker-runtime-image`, `worker-manager`, `den`, `ai-gateway`, and `web`, starts database dependencies, runs Den and AI Gateway migrations, starts the full stack, and verifies internal plus public health endpoints.
+
+Keep production secrets in the server-side env file and GitHub secrets. Do not commit them.
 
 ## Health Check
 
