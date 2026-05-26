@@ -1,6 +1,7 @@
 use tauri::{AppHandle, Manager, State};
 
 use crate::commands::opencode_router::opencodeRouter_start;
+use crate::commands::orchestrator::reconcile_orchestrator_workspaces;
 use crate::config::{read_opencode_config, write_opencode_config};
 use crate::engine::doctor::{
     opencode_serve_help, opencode_version, resolve_engine_path, resolve_sidecar_candidate,
@@ -895,6 +896,20 @@ pub fn engine_start(
             if let Ok(mut state) = manager.inner.lock() {
                 state.last_stderr =
                     Some(truncate_output(&format!("OpenCodeRouter: {error}"), 8000));
+            }
+        }
+
+        // Reconcile orchestrator registry with Tauri-side workspace list. Without
+        // this the daemon only learns about workspaces that get explicitly
+        // activated, and a sidebar click on any unseen workspace would 404 on
+        // /workspaces/:id/activate and stall the 30s frontend timeout.
+        match reconcile_orchestrator_workspaces(&app, &orchestrator_manager) {
+            Ok(count) if count > 0 => {
+                eprintln!("[orchestrator] reconciled {count} workspace(s)");
+            }
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!("[orchestrator] reconcile failed: {error}");
             }
         }
 

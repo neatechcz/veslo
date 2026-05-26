@@ -4,9 +4,13 @@ import { basename, dirname, resolve } from "node:path";
 import type { ServerConfig, WorkspaceConfig, WorkspaceInfo } from "./types.js";
 import { shortId } from "./utils.js";
 
+// Align with orchestrator (packages/orchestrator/src/cli.ts workspaceIdForLocal)
+// and Tauri state (packages/desktop/src-tauri/src/workspace/state.rs
+// stable_workspace_id): sha1(path)[:12] with `ws-` prefix. All three stores
+// must agree on workspace identity or cross-system lookups silently 404.
 export function workspaceIdForPath(path: string): string {
-  const hash = createHash("sha256").update(path).digest("hex");
-  return `ws_${hash.slice(0, 12)}`;
+  const hash = createHash("sha1").update(path).digest("hex");
+  return `ws-${hash.slice(0, 12)}`;
 }
 
 function normalizeConfiguredWorkspaceId(id: string | undefined): string | undefined {

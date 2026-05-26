@@ -180,6 +180,64 @@ pub fn spawn_engine_event_poller(app: AppHandle) {
     });
 }
 
+fn register_workspace_with_orchestrator(
+    base_url: &str,
+    workspace_path: &str,
+    name: Option<&str>,
+) -> Result<OrchestratorWorkspace, String> {
+    let add_url = format!("{}/workspaces", base_url.trim_end_matches('/'));
+    let payload = json!({
+        "path": workspace_path,
+        "name": name,
+    });
+
+    let add_response = ureq::post(&add_url)
+        .set("Content-Type", "application/json")
+        .send_json(payload)
+        .map_err(|e| format!("Failed to add workspace: {e}"))?;
+    let added: OrchestratorWorkspaceResponse = add_response
+        .into_json()
+        .map_err(|e| format!("Failed to parse orchestrator response: {e}"))?;
+    Ok(added.workspace)
+}
+
+/// Push every local workspace from the Tauri-side veslo-workspaces.json into
+/// the orchestrator daemon. The daemon is the source of truth for engine
+/// lifecycle, but it only learns about a workspace when something explicitly
+/// POSTs /workspaces. Until reconciled, a sidebar click on an
+/// orchestrator-unknown workspace 404s on /workspaces/:id/activate and the
+/// frontend hangs on the 30s activation timeout.
+pub fn reconcile_orchestrator_workspaces(
+    app: &AppHandle,
+    manager: &OrchestratorManager,
+) -> Result<usize, String> {
+    let base_url = resolve_base_url(manager)?;
+    let state = crate::workspace::state::load_workspace_state(app)?;
+    let mut registered = 0usize;
+    for workspace in state.workspaces.iter() {
+        if !matches!(workspace.workspace_type, crate::types::WorkspaceType::Local) {
+            continue;
+        }
+        let path = workspace.path.trim();
+        if path.is_empty() {
+            continue;
+        }
+        let display_name = workspace
+            .display_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .or_else(|| Some(workspace.name.trim()).filter(|s| !s.is_empty()));
+        match register_workspace_with_orchestrator(&base_url, path, display_name) {
+            Ok(_) => registered += 1,
+            Err(error) => eprintln!(
+                "[orchestrator] reconcile failed for {path}: {error}"
+            ),
+        }
+    }
+    Ok(registered)
+}
+
 #[tauri::command]
 pub fn orchestrator_workspace_activate(
     app: AppHandle,
@@ -195,36 +253,19 @@ pub fn orchestrator_workspace_activate(
     .to_string_lossy()
     .to_string();
     let base_url = resolve_base_url(&manager)?;
-    let add_url = format!("{}/workspaces", base_url.trim_end_matches('/'));
-    let payload = json!({
-        "path": workspace_path,
-        "name": name,
-    });
+    let added = register_workspace_with_orchestrator(&base_url, &workspace_path, name.as_deref())?;
 
-    let add_response = ureq::post(&add_url)
-        .set("Content-Type", "application/json")
-        .send_json(payload)
-        .map_err(|e| format!("Failed to add workspace: {e}"))?;
-    let added: OrchestratorWorkspaceResponse = add_response
-        .into_json()
-        .map_err(|e| format!("Failed to parse orchestrator response: {e}"))?;
-
-    let id = added.workspace.id.clone();
     let activate_url = format!(
         "{}/workspaces/{}/activate",
         base_url.trim_end_matches('/'),
-        id
+        added.id
     );
     ureq::post(&activate_url)
         .set("Content-Type", "application/json")
         .send_string("")
         .map_err(|e| format!("Failed to activate workspace: {e}"))?;
 
-    // VSLO-171 fáze 2 F2Ú3: GET /workspaces/:id/path endpoint smazán v
-    // orchestratoru. Tady jsme response stejně ignorovali (`let _ = ...`),
-    // takže smazání volání = no-op pro caller.
-
-    Ok(added.workspace)
+    Ok(added)
 }
 
 #[tauri::command]
