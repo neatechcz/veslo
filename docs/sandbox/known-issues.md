@@ -235,7 +235,8 @@ generovat noise v log.
 
 **Příčina:** `engine_start` v `commands/engine.rs:873` vždy spawne
 veslo-code-router (= Telegram/Slack messaging bridge). V dev mode
-Pavel nepoužívá messaging, ale router běží.
+pro multi-workspace stabilizaci se messaging nepoužívá, ale router
+přesto běží.
 
 **Opravitelné?** Conditional spawn (env var `VESLO_SKIP_ROUTER=1`) nebo
 přesun do explicit user action (Settings → Messaging → Enable). Drobný

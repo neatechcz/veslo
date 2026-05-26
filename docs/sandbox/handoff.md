@@ -1,8 +1,8 @@
 # Handoff — pro nového vývojáře, který přebírá VSLO-86
 
 Tenhle dokument je **vstupní bod**, pokud přebíráš multi-workspace
-stabilizaci po Pavlovi (a po předchozí AI session, která tvořila docs
-v `docs/sandbox/`). Předpokládá, že jsi přečetl
+stabilizaci (= návaznost na sérii commitů `04a2ba75 … 60c5d93d` na
+branchi `sandbox` z května 2026). Předpokládá, že jsi přečetl
 [`README.md`](README.md) a alespoň [`architecture.md`](architecture.md)
 a [`known-issues.md`](known-issues.md).
 
@@ -28,9 +28,9 @@ Latest commit: `60c5d93d`.
 
 ## Priorita 1 — nehas dílčí bugy, opravit systémově
 
-Pavel jasně řekl (a měl pravdu): **fix-mole hra je vyčerpávající**.
-Symptomy "jeden bug = jeden fix" se vrací, protože architektonický
-dluh produkuje nové. Tři systémové iniciativy v pořadí ROI:
+**Fix-mole hra je vyčerpávající.** Symptomy "jeden bug = jeden fix" se
+vrací, protože architektonický dluh produkuje nové. Tři systémové
+iniciativy v pořadí ROI:
 
 ### a) Audit všech entry points pro engine spawn (~4 hodin)
 
@@ -183,7 +183,7 @@ Pak `tail -f ~/.veslo/debug.log` ukáže komplet timeline.
    ```bash
    cd packages/e2e
    export E2E_USE_EXISTING_PROFILE=1
-   export E2E_TAURI_BINARY=/Users/.../packages/desktop/src-tauri/target/debug/veslo
+   export E2E_TAURI_BINARY=$(pwd)/../desktop/src-tauri/target/debug/veslo
    pnpm exec wdio run wdio.conf.ts --spec ./specs/browse-no-engine-spawn.spec.ts
    pnpm exec wdio run wdio.conf.ts --spec ./specs/boot-freeze.spec.ts
    pnpm exec wdio run wdio.conf.ts --spec ./specs/pnpm-dev-3-clicks.spec.ts
@@ -194,7 +194,7 @@ Pak `tail -f ~/.veslo/debug.log` ukáže komplet timeline.
 
 2. **Při novém bugu:**
 
-   - Reprodukuj manuálně přes `pnpm dev` (= Pavlův workflow).
+   - Reprodukuj manuálně přes `pnpm dev` (= primární dev workflow).
    - Otevři DevTools (pravý klik → Inspect Element).
    - Zkopíruj **kompletní console** + screenshot.
    - Najdi v [`known-issues.md`](known-issues.md) jestli to není známé.
@@ -213,15 +213,15 @@ Pak `tail -f ~/.veslo/debug.log` ukáže komplet timeline.
    - Update [`fixes-timeline.md`](fixes-timeline.md) o nový commit
      v stejném commit (jinak docs ztratí cenu rychle).
 
-4. **Commit, ale NEPUSHOVAT** bez Pavlova OK. Branch `sandbox` je
-   work-in-progress, push by overwrite-l další session.
+4. **Commit, ale NEPUSHOVAT** bez explicitního OK maintainera. Branch
+   `sandbox` je work-in-progress, push by mohl overwrite další session.
 
 ## Copy-paste prompt pro novou AI session
 
 Pokud používáš Claude Code / podobnou AI pro pokračování:
 
 ```
-Přebírám multi-workspace stabilizaci Vesla (VSLO-86) po Pavlovi.
+Přebírám multi-workspace stabilizaci Vesla (VSLO-86).
 
 Branch: sandbox, latest commit 60c5d93d.
 
@@ -241,34 +241,35 @@ Pravidla:
 - Test přes UI klikání (WebDriver), ne přes Tauri/orchestrator API
   direct calls. Vlastní spec pokud existující nepokrývá.
 - Po edit vždy build (cargo check pro Rust, pnpm typecheck pro TS).
-- Commit po success, nepush bez explicit "pushni".
+- Commit po success, nepush bez explicitního "pushni".
 - Žádné Co-Authored-By v commit messages.
 - Při změně v docs/sandbox/ aktualizuj stejný commit (jinak docs
   rotnou).
-- NIKDY revert vlastních změn ze stejné session bez Pavlova OK.
+- NIKDY revert vlastních změn ze stejné session bez explicitního OK.
 
 První krok pro tebe: spustit 3 E2E specs (pnpm exec wdio run …) aby
 sis ověřil že stávající fixy stojí. Pokud failují, opravit dřív než
 začneš nové.
 ```
 
-## Co Pavel chce, ne jen technicky
+## Produktové priority
 
-Z konverzace se mnou:
+Multi-workspace stabilizace má **uživatelskou** stránku — co projekt
+opravdu chce řešit:
 
-- **"Klik na další workspace, zasekne se"** — toto je primary symptom,
-  který Pavel sleduje. Ne abstraktní "AI gateway 401".
-- **"Když zapneme appku, žádný workspace není aktivní, žádný kontejner"**
-  — Pavel chce **lazy engine spawn** jako mentální model. Cokoli co
+- **Klik na další workspace nesmí zaseknout UI** — toto je primární
+  symptom, který se sleduje. Ne abstraktní "AI gateway 401".
+- **Lazy engine spawn jako mentální model** — když uživatel zapne
+  aplikaci, žádný workspace není aktivní, žádný kontejner. Pasivně
+  prochází historii. Engine se spustí až při první send. Cokoli co
   spawne engine bez explicit user akce je bug.
-- **"To není složitý projekt, máme back-end, API, front-end"** — Pavel
-  je frustrovaný komplexitou. Doporučení vede k **redukci** počtu
-  procesů (= sloučit orchestrator do veslo-server), ne k přidávání
-  vrstev.
-- **"Furt to řešíme dokola"** — fix-mole hra. Cíl je **stabilizovat
-  trvale**, ne řešit symptom po symptomu.
+- **Redukce komplexity, ne přidávání vrstev** — projekt už má
+  6 procesů, frustrace s tím existuje. Doporučení vede k **redukci**
+  (= sloučit orchestrator do veslo-server), ne k novým vrstvám.
+- **Stabilizovat trvale, ne fix-mole** — cíl je odstranit
+  architektonický dluh, ne řešit symptom po symptomu.
 
-Tahle hodnota:
+Tyto hodnoty se promítají do metrik:
 
 - **Boot do 5 s.** Reálně lze (po fixu měřeno 5 s pro veslo-server
   ready). UI musí být plně interaktivní bez čekání na engine.

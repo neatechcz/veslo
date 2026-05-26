@@ -238,7 +238,7 @@ Run 1-3 každý 3/3 pass, ~0.5 s per klik.
 ### `b211e5a0` — stop eager engine spawn on browse-mode activate
 
 **Symptom:** Po `pnpm dev` boot spinner "Otevírám konverzaci…" 30-60 s
-i bez explicit user akce. Pavel: "Apka naběhla a nic to nedělá".
+i bez explicit user akce. Aplikace naběhla a UI nereaguje.
 
 **Root cause:** `STEP 5-BROWSE` v `workspace.ts:1241` (původně) fired
 `void ensureEngineForWorkspace()` na každý sidebar klik — včetně
@@ -260,8 +260,9 @@ Předtím 30-60 s spinner per boot.
 ### `60c5d93d` — selectSession offline-first v browse mode
 
 **Symptom:** Pasivní klikání mezi workspaces / sessions stále občas
-spawnovalo engine. Pavel: "Najednou zelený puntík u B, ale já jsem tam
-nic neposlal." Engine fail → 502 cascade → "Unable to connect".
+spawnovalo engine. Symptom v UI: zelené kolečko (= engine ready) se
+objevilo u workspace, do kterého uživatel jen klikl na session, ale
+neposlal žádnou zprávu. Engine fail → 502 cascade → "Unable to connect".
 
 **Root cause:** `selectSession` v `session.ts` volal
 `c.session.messages({...})` přes cached SDK klienta. Klient zustal

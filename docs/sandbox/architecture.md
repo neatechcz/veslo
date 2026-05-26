@@ -77,8 +77,8 @@ Zdroj: `packages/server/src/server.ts`, `packages/server/src/cli.ts`.
 ### 4) Veslo-code-router
 
 Bun proces. Bridge na messaging platformy (Telegram, Slack, WhatsApp).
-**Pro testování workspace flow irrelevantní** — Pavel ho ve VSLO-86
-nepoužíval. V dev mode běží, ale jen poll-loopuje health.
+**Pro testování workspace flow irrelevantní** — ve VSLO-86 stabilizaci
+se nepoužíval. V dev mode běží, ale jen poll-loopuje health.
 
 Naslouchá random port.
 
