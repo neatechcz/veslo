@@ -1,6 +1,6 @@
 import { expect } from "@wdio/globals";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { navigateToHash, waitForHashRoute } from "../helpers/app-launcher.js";
 
@@ -33,12 +33,15 @@ const CAPABILITIES_PANEL_SELECTOR = '[data-testid="session-capabilities-panel"]'
 const CAPABILITIES_SKILLS_SELECTOR = '[data-testid="session-capabilities-skills"]';
 const CAPABILITIES_MCP_SELECTOR = '[data-testid="session-capabilities-mcp"]';
 
-const isolatedProfileRoot = () => join(process.cwd(), ".tmp-veslo-home");
-const workspaceRoot = () => join(isolatedProfileRoot(), "workspaces", "visual-workspace");
-const globalSkillsRoot = () => join(isolatedProfileRoot(), ".config", "opencode", "skills");
-const workspaceSkillsRoot = () => join(workspaceRoot(), ".opencode", "skills");
-const globalMcpConfigPath = () => join(isolatedProfileRoot(), ".config", "opencode", "opencode.jsonc");
-const workspaceMcpConfigPath = () => join(workspaceRoot(), "opencode.jsonc");
+const profileRoot = () => process.env.E2E_OPENCODE_HOME?.trim() || join(process.cwd(), ".tmp-veslo-home");
+const activeWorkspaceRoot = () => join(profileRoot(), "workspaces", "visual-workspace");
+const selectedWorkspaceRoot = () => join(profileRoot(), "workspaces", "session-capabilities-selected-workspace");
+const globalSkillsRoot = () => join(profileRoot(), ".config", "opencode", "skills");
+const activeWorkspaceSkillsRoot = () => join(activeWorkspaceRoot(), ".opencode", "skills");
+const selectedWorkspaceSkillsRoot = () => join(selectedWorkspaceRoot(), ".opencode", "skills");
+const globalMcpConfigPath = () => join(profileRoot(), ".config", "opencode", "opencode.jsonc");
+const activeWorkspaceMcpConfigPath = () => join(activeWorkspaceRoot(), "opencode.jsonc");
+const selectedWorkspaceMcpConfigPath = () => join(selectedWorkspaceRoot(), "opencode.jsonc");
 
 function trimText(value: string | null | undefined) {
   return (value ?? "").trim();
@@ -63,7 +66,7 @@ function writeSkill(root: string, name: string, description: string): void {
 }
 
 function writeJsonc(path: string, value: unknown): void {
-  mkdirSync(join(path, ".."), { recursive: true });
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
@@ -74,9 +77,14 @@ function seedSessionCapabilitiesFixture(): void {
     "Global fixture skill for the session capabilities panel.",
   );
   writeSkill(
-    workspaceSkillsRoot(),
+    selectedWorkspaceSkillsRoot(),
     "e2e-workspace-session-skill",
-    "Workspace fixture skill for the session capabilities panel.",
+    "Selected workspace fixture skill for the session capabilities panel.",
+  );
+  writeSkill(
+    activeWorkspaceSkillsRoot(),
+    "e2e-active-decoy-session-skill",
+    "Active workspace decoy skill that should not appear for the selected session.",
   );
   writeJsonc(globalMcpConfigPath(), {
     mcp: {
@@ -86,11 +94,19 @@ function seedSessionCapabilitiesFixture(): void {
       },
     },
   });
-  writeJsonc(workspaceMcpConfigPath(), {
+  writeJsonc(selectedWorkspaceMcpConfigPath(), {
     mcp: {
       "e2e-workspace-session-mcp": {
         type: "remote",
         url: "https://workspace-session-mcp.example/mcp",
+      },
+    },
+  });
+  writeJsonc(activeWorkspaceMcpConfigPath(), {
+    mcp: {
+      "e2e-active-decoy-session-mcp": {
+        type: "remote",
+        url: "https://active-decoy-session-mcp.example/mcp",
       },
     },
   });
@@ -158,10 +174,7 @@ async function readActiveClientContext() {
   };
 }
 
-async function ensureActiveEngineStarted() {
-  const engine = await tauriInvoke<EngineInfo>("engine_info").catch(() => null);
-  if (engine?.running && trimText(engine.baseUrl)) return;
-
+async function readActiveWorkspaceDirectory(): Promise<string> {
   const bootstrap = await tauriInvoke<WorkspaceList>("workspace_bootstrap");
   const activeWorkspace = bootstrap.workspaces.find((workspace) => workspace.id === bootstrap.activeId);
   const directory = trimText(activeWorkspace?.directory) || trimText(activeWorkspace?.path);
@@ -169,11 +182,17 @@ async function ensureActiveEngineStarted() {
     throw new Error("Active workspace is not ready yet");
   }
 
+  return directory;
+}
+
+async function ensureActiveEngineStarted(selectedDirectory: string) {
+  const directory = await readActiveWorkspaceDirectory();
+
   await tauriInvoke<EngineInfo>("engine_start", {
     projectDir: directory,
     preferSidecar: true,
     runtime: "direct",
-    workspacePaths: [directory],
+    workspacePaths: [directory, selectedDirectory],
   });
 }
 
@@ -199,8 +218,10 @@ async function waitForActiveClientContext() {
   return context!;
 }
 
-async function createSessionInActiveWorkspace(): Promise<SeededSession> {
-  await ensureActiveEngineStarted();
+async function createSessionForSelectedWorkspace(): Promise<SeededSession> {
+  const selectedDirectory = selectedWorkspaceRoot();
+  mkdirSync(selectedDirectory, { recursive: true });
+  await ensureActiveEngineStarted(selectedDirectory);
   const { baseUrl, directory, username, password } = await waitForActiveClientContext();
   // @ts-expect-error -- shared app test utilities are JS-only in this workspace.
   const { makeClient, waitForHealthy } = await import("../../app/scripts/_util.mjs");
@@ -217,7 +238,7 @@ async function createSessionInActiveWorkspace(): Promise<SeededSession> {
   await waitForHealthy(client, { timeoutMs: WAIT_TIMEOUT_MS, pollMs: 250 });
 
   const title = `e2e session capabilities ${Date.now()}`;
-  const created = await client.session.create({ title, directory });
+  const created = await client.session.create({ title, directory: selectedDirectory });
   return { id: created.id, title };
 }
 
@@ -286,7 +307,7 @@ const runWhenIsolatedProfile = process.env.E2E_USE_EXISTING_PROFILE?.trim() === 
 runWhenIsolatedProfile("Session capabilities right menu", () => {
   it("shows local global and workspace skills and MCP servers for the selected session", async () => {
     seedSessionCapabilitiesFixture();
-    const session = await createSessionInActiveWorkspace();
+    const session = await createSessionForSelectedWorkspace();
     const sessionHash = `#/session/${session.id}`;
 
     await navigateToHash(`/session/${session.id}`);
@@ -311,7 +332,9 @@ runWhenIsolatedProfile("Session capabilities right menu", () => {
     expect(skillsText).toContain("e2e-workspace-session-skill");
     expect(mcpText).toContain("e2e-global-session-mcp");
     expect(mcpText).toContain("e2e-workspace-session-mcp");
-    expect(panelText).not.toContain("e2e-hub-only-session-skill");
-    expect(bodyText).not.toContain("e2e-hub-only-session-skill");
+    expect(panelText).not.toContain("e2e-active-decoy-session-skill");
+    expect(panelText).not.toContain("e2e-active-decoy-session-mcp");
+    expect(bodyText).not.toContain("e2e-active-decoy-session-skill");
+    expect(bodyText).not.toContain("e2e-active-decoy-session-mcp");
   });
 });
