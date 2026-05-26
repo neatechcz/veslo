@@ -86,3 +86,18 @@ test("desktop onboarding page uses Veslo auth copy", () => {
   assert.equal(onboardingPage.includes("Sign in to Veslo"), true)
   assert.equal(onboardingPage.includes("Openwork"), false)
 })
+
+test("desktop onboarding page does not ship the public control-plane demo", () => {
+  for (const forbiddenText of [
+    "Den Control Plane Demo",
+    "TestPass123!",
+    "GET /v1/me",
+    "POST /v1/workers",
+  ]) {
+    assert.equal(
+      onboardingPage.includes(forbiddenText),
+      false,
+      `desktop onboarding page must not include ${forbiddenText}`,
+    )
+  }
+})

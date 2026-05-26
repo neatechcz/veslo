@@ -87,12 +87,14 @@ cp .env.development .env
 
 Set `LETTR_API_KEY` and `AUTH_EMAIL_ADDRESS` to enable email verification and password reset delivery through Lettr. `AUTH_EMAIL_FROM_NAME` is optional. Blank or unset values disable email verification and password reset delivery.
 
-The root onboarding page (`GET /?desktopOnboarding=1`) now supports the desktop browser auth flow end to end:
+The explicit desktop onboarding page (`GET /?desktopOnboarding=1`) supports the desktop browser auth flow end to end:
 
 - sign in and sign up
 - resend verification email
 - forgot-password reset requests
 - reset-password completion from emailed links
+
+The default root (`GET /`) returns neutral service metadata. It does not serve an API demo or expose mutating control-plane actions.
 
 Generate Better Auth schema (Drizzle):
 
@@ -110,7 +112,7 @@ pnpm db:migrate
 ## API
 
 - `GET /health`
-- `GET /` demo web app (sign-up + auth + worker launch)
+- `GET /` neutral service metadata
 - `GET /v1/me`
 - `GET /v1/orgs`
 - `GET /v1/orgs/:orgId/members`

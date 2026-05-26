@@ -97,7 +97,19 @@ if (managedAiRuntime) {
   app.use("/providers", managedAiProxyJsonParser)
 }
 app.use(express.json())
-app.use(express.static(publicDir))
+
+function handleRootRequest(req: express.Request, res: express.Response) {
+  if (req.query.desktopOnboarding === "1") {
+    res.sendFile(path.join(publicDir, "index.html"))
+    return
+  }
+
+  res.json({ ok: true, service: "veslo-den" })
+}
+
+app.get("/", handleRootRequest)
+app.get("/index.html", handleRootRequest)
+app.use(express.static(publicDir, { index: false }))
 
 if (managedAiRuntime) {
   app.use(
