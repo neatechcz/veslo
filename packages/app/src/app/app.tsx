@@ -1574,6 +1574,11 @@ export default function App() {
         limit,
       );
     },
+    // VSLO-86 — selectSession uses this to decide between the offline DB
+    // transcript (browse mode) and a live SDK call that would cold-spawn the
+    // engine. engineReady() flips to true only after sendPrompt has driven
+    // the engine through ensureEngineForWorkspace.
+    engineReady: () => engineReady(),
     onSessionBusyChange: (sessionId, busy) => {
       const wsId = workspaceStore.activeWorkspaceId().trim();
       if (!wsId) return;
