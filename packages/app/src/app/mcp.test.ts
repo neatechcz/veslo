@@ -94,7 +94,24 @@ test("buildEffectiveMcpServerEntriesFromContent applies disabledByTools like the
   assert.equal(result.find((entry) => entry.name === "project-denied")?.disabledByTools, true);
 });
 
+test("buildEffectiveMcpServerEntriesFromContent uses server-equivalent glob patterns for disabledByTools", () => {
+  const result = buildEffectiveMcpServerEntriesFromContent(
+    "",
+    JSON.stringify({
+      tools: { deny: ["mcp.fo?"] },
+      mcp: {
+        foo: { type: "remote", url: "https://foo.example" },
+        food: { type: "remote", url: "https://food.example" },
+      },
+    }),
+  );
+
+  assert.equal(result.find((entry) => entry.name === "foo")?.disabledByTools, true);
+  assert.equal(result.find((entry) => entry.name === "food")?.disabledByTools, undefined);
+});
+
 test("canRemoveMcpFromProjectConfig blocks effective global-only entries", () => {
+  assert.equal(canRemoveMcpFromProjectConfig(undefined), false);
   assert.equal(
     canRemoveMcpFromProjectConfig({
       name: "global-only",

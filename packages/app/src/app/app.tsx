@@ -6775,17 +6775,22 @@ export default function App() {
         vesloWorkspaceId &&
         resolvedVesloCapabilities()?.mcp?.write;
 
+      const entry = mcpServers().find((server) => server.name === name);
+      if (!entry) {
+        setMcpStatus("This MCP is no longer available. Refresh and try again.");
+        return;
+      }
+      if (!canRemoveMcpFromProjectConfig(entry)) {
+        setMcpStatus("This MCP comes from your global OpenCode config and cannot be removed from this workspace.");
+        return;
+      }
+
       if (canUseVesloServer && vesloClient && vesloWorkspaceId) {
         await vesloClient.removeMcp(vesloWorkspaceId, name);
       } else {
         const projectDir = workspaceProjectDir().trim();
         if (!projectDir) {
           setMcpStatus(t("mcp.pick_workspace_first", currentLocale()));
-          return;
-        }
-        const entry = mcpServers().find((server) => server.name === name);
-        if (!canRemoveMcpFromProjectConfig(entry)) {
-          setMcpStatus("This MCP comes from your global OpenCode config and cannot be removed from this workspace.");
           return;
         }
         await removeMcpFromConfig(projectDir, name);

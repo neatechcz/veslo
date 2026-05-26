@@ -1,4 +1,5 @@
 import { parse } from "jsonc-parser";
+import { minimatch } from "minimatch";
 import type { McpServerConfig, McpServerEntry } from "./types";
 import { readOpencodeConfig, writeOpencodeConfig } from "./lib/tauri";
 import type { McpDirectoryInfo } from "./constants";
@@ -156,19 +157,11 @@ function getDeniedToolPatterns(config: Record<string, unknown>): string[] {
   return deny.filter((item): item is string => typeof item === "string");
 }
 
-function matchesToolPattern(pattern: string, candidate: string): boolean {
-  const escaped = pattern
-    .split("*")
-    .map((part) => part.replace(/[|\\{}()[\]^$+?.]/g, "\\$&"))
-    .join(".*");
-  return new RegExp(`^${escaped}$`).test(candidate);
-}
-
 function isMcpDisabledByTools(config: Record<string, unknown>, name: string): boolean {
   const patterns = getDeniedToolPatterns(config);
   if (!patterns.length) return false;
   const candidates = [`mcp.${name}`, `mcp.${name}.*`, `mcp:${name}`, `mcp:${name}:*`, "mcp.*", "mcp:*"];
-  return patterns.some((pattern) => candidates.some((candidate) => matchesToolPattern(pattern, candidate)));
+  return patterns.some((pattern) => candidates.some((candidate) => minimatch(candidate, pattern)));
 }
 
 export function mergeMcpServerEntries(
@@ -215,5 +208,5 @@ export async function readEffectiveMcpServerEntries(projectDir: string): Promise
 }
 
 export function canRemoveMcpFromProjectConfig(entry: McpServerEntry | undefined): boolean {
-  return entry?.source !== "config.global";
+  return Boolean(entry && entry.source !== "config.global");
 }
