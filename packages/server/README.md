@@ -42,7 +42,8 @@ Defaults to `~/.config/veslo/server.json` (override with `VESLO_SERVER_CONFIG` o
     }
   ],
   "corsOrigins": ["http://localhost:5173"],
-  "denApiBase": "https://den.example"
+  "denApiBase": "https://den.example",
+  "skillRegistryBaseUrl": "https://registry.example"
 }
 ```
 
@@ -61,6 +62,8 @@ Defaults to `~/.config/veslo/server.json` (override with `VESLO_SERVER_CONFIG` o
 - `VESLO_OPENCODE_USERNAME`
 - `VESLO_OPENCODE_PASSWORD`
 - `VESLO_DEN_API_BASE` Den API base URL used for org-scoped extension catalog fetches
+- `VESLO_SKILL_REGISTRY_BASE_URL` skill package registry base URL; falls back to `skillRegistryBaseUrl` in config, then `denApiBase` / `VESLO_DEN_API_BASE`
+- `VESLO_SKILL_REGISTRY_TOKEN` bearer token for registry requests; callers may still pass a Den token per request when this is unset
 
 Token management (scoped tokens):
 

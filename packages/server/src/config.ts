@@ -46,6 +46,7 @@ interface FileConfig {
   opencodeUsername?: string;
   opencodePassword?: string;
   denApiBase?: string;
+  skillRegistryBaseUrl?: string;
   logFormat?: LogFormat;
   logRequests?: boolean;
 }
@@ -81,6 +82,11 @@ function parsePositiveInteger(value: string | undefined): number | undefined {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) return undefined;
   return parsed;
+}
+
+function normalizeOptionalUrl(value: string | undefined): string | undefined {
+  const trimmed = value?.trim() ?? "";
+  return trimmed ? trimmed.replace(/\/+$/, "") : undefined;
 }
 
 export function parseCliArgs(argv: string[]): CliArgs {
@@ -341,8 +347,12 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     spoolMaxBytes: debugLogSpoolMaxBytes,
     flushIntervalMs: debugLogFlushIntervalMs,
   };
-  const denApiBaseRaw = process.env.VESLO_DEN_API_BASE?.trim() || fileConfig.denApiBase?.trim() || "";
-  const denApiBase = denApiBaseRaw ? denApiBaseRaw.replace(/\/+$/, "") : undefined;
+  const denApiBase = normalizeOptionalUrl(process.env.VESLO_DEN_API_BASE) ?? normalizeOptionalUrl(fileConfig.denApiBase);
+  const skillRegistryBaseUrl =
+    normalizeOptionalUrl(process.env.VESLO_SKILL_REGISTRY_BASE_URL) ??
+    normalizeOptionalUrl(fileConfig.skillRegistryBaseUrl) ??
+    denApiBase;
+  const skillRegistryToken = process.env.VESLO_SKILL_REGISTRY_TOKEN?.trim() || undefined;
 
   const authorizedRoots =
     fileConfig.authorizedRoots?.length
@@ -370,5 +380,7 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     logRequests,
     debugLogs,
     denApiBase,
+    skillRegistryBaseUrl,
+    skillRegistryToken,
   };
 }

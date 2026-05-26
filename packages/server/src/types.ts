@@ -70,6 +70,8 @@ export interface ServerConfig {
   logRequests: boolean;
   debugLogs: DebugLogConfig;
   denApiBase?: string;
+  skillRegistryBaseUrl?: string;
+  skillRegistryToken?: string;
 }
 
 export interface Capabilities {
