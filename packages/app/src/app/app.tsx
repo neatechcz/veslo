@@ -183,7 +183,9 @@ import {
   buildSessionMcpRows,
   buildSessionSkillRows,
   createSessionCapabilitiesCache,
+  filterSessionSkillInventoryByScope,
   normalizeSessionCapabilityDirectory,
+  resolveSessionCapabilitySessionSource,
   type SessionCapabilitiesScope,
   type SessionCapabilitiesSnapshot,
 } from "./lib/session-capabilities";
@@ -293,7 +295,6 @@ import {
   pendingSessionDraftsGet,
   pendingSessionDraftsList,
   pendingSessionDraftsPut,
-  listLocalSkillsScoped,
   readOpencodeConfig,
   writeOpencodeConfig,
   schedulerDeleteJob,
@@ -2913,6 +2914,7 @@ export default function App() {
   const [mcpAuthModalOpen, setMcpAuthModalOpen] = createSignal(false);
   const [mcpAuthEntry, setMcpAuthEntry] = createSignal<McpDirectoryInfo | null>(null);
   const [mcpAuthNeedsReload, setMcpAuthNeedsReload] = createSignal(false);
+  let resolveSessionCapabilitySkillInventoryWorkspaces: () => { id: string; label: string; path: string }[] = () => [];
 
   const extensionsStore = createExtensionsStore({
     client,
@@ -2921,6 +2923,7 @@ export default function App() {
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
     workspaceType: () => workspaceStore.activeWorkspaceDisplay().workspaceType,
     workspaces: () => workspaceStore.workspaces(),
+    extraSkillInventoryWorkspaces: () => resolveSessionCapabilitySkillInventoryWorkspaces(),
     vesloServerClient,
     vesloServerStatus,
     vesloServerCapabilities,
@@ -4903,17 +4906,29 @@ export default function App() {
     );
   };
 
+  const selectedSessionCapabilitySource = createMemo(() =>
+    resolveSessionCapabilitySessionSource({
+      selectedSessionId: selectedSessionId(),
+      selectedSession: selectedSession(),
+      workspaceGroups: sidebarWorkspaceGroups(),
+      resolveDirectory: (session) => resolveSessionDirectory({ id: session.id, directory: session.directory ?? "" }),
+    }),
+  );
+
   const selectedSessionCapabilityDirectory = createMemo(() => {
-    const session = selectedSession();
-    return session ? normalizeSessionCapabilityDirectory(resolveSessionDirectory(session)) : "";
+    const session = selectedSessionCapabilitySource()?.session;
+    return session
+      ? normalizeSessionCapabilityDirectory(resolveSessionDirectory({ id: session.id, directory: session.directory ?? "" }))
+      : "";
   });
 
   const selectedSessionCapabilityWorkspace = createMemo(() =>
+    selectedSessionCapabilitySource()?.workspace ??
     findWorkspaceForSessionCapabilityDirectory(selectedSessionCapabilityDirectory()),
   );
 
   const selectedSessionCapabilitiesScope = createMemo<SessionCapabilitiesScope | null>(() => {
-    const session = selectedSession();
+    const session = selectedSessionCapabilitySource()?.session;
     if (!session) return null;
 
     const directory = selectedSessionCapabilityDirectory();
@@ -4925,6 +4940,18 @@ export default function App() {
       workspaceType: workspace?.workspaceType,
     };
   });
+
+  resolveSessionCapabilitySkillInventoryWorkspaces = () => {
+    const directory = selectedSessionCapabilityDirectory();
+    if (!directory) return [];
+    const workspace = selectedSessionCapabilityWorkspace();
+    if (workspace?.workspaceType === "remote") return [];
+    return [{
+      id: workspace?.id || `session:${directory}`,
+      label: workspaceLabelForSessionCapabilities(workspace, directory),
+      path: directory,
+    }];
+  };
 
   const filterSessionMcpStatuses = (status: McpStatusMap, entries: McpServerEntry[]) => {
     const configured = new Set(entries.map((entry) => entry.name));
@@ -5006,27 +5033,13 @@ export default function App() {
     workspace: WorkspaceInfo | null,
   ): Promise<Omit<SessionCapabilitiesSnapshot, "loadedAt">> => {
     const directory = scope.directory;
-    const workspaceId = scope.workspaceId || directory;
-    const workspaceLabel = scope.workspaceLabel || workspaceLabelForSessionCapabilities(workspace, directory);
-    const [globalSkills, workspaceSkills, mcpEntries] = await Promise.all([
-      listLocalSkillsScoped("", "global"),
-      listLocalSkillsScoped(directory, "workspace"),
+    const [mcpEntries] = await Promise.all([
       readEffectiveMcpServerEntries(directory),
+      refreshSkillInventory(),
     ]);
-    const inventory = buildSkillInventory({
-      globalSkills,
-      workspaceSkillsByWorkspaceId: {
-        [workspaceId]: {
-          workspace: {
-            id: workspaceId,
-            label: workspaceLabel,
-            path: directory,
-            kind: "local",
-          },
-          skills: workspaceSkills,
-        },
-      },
-      hubSkills: [],
+    const inventory = filterSessionSkillInventoryByScope(skillInventory(), {
+      directory,
+      workspaceId: scope.workspaceId,
     });
     const statuses = await loadSessionMcpStatuses(directory, mcpEntries, workspace);
     return {
@@ -5107,6 +5120,15 @@ export default function App() {
   const sessionCapabilitiesLoadContextByDirectory = new Map<string, string>();
   let sessionCapabilitiesRequestVersion = 0;
 
+  const sessionSkillInventoryContextForCapabilities = (scope: SessionCapabilitiesScope) =>
+    filterSessionSkillInventoryByScope(skillInventory(), scope)
+      .flatMap((item) => [
+        item.globalInstance?.id ?? "",
+        ...item.workspaceInstances.map((instance) => instance.id),
+      ])
+      .filter(Boolean)
+      .join("|");
+
   createEffect(() => {
     const scope = selectedSessionCapabilitiesScope();
     const workspace = selectedSessionCapabilityWorkspace();
@@ -5127,6 +5149,7 @@ export default function App() {
           hasRuntimeClient: Boolean(client()),
           runtimeMatch: runtimeMatchContextForSessionCapabilities(),
           matchedWorkspaceId: workspace?.id ?? "",
+          skillInventory: sessionSkillInventoryContextForCapabilities(scope),
         })
       : "";
 

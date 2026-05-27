@@ -55,6 +55,7 @@ import { readDenAuth } from "../lib/den-auth";
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
 type ListLocalSkillsScoped = (projectDir: string, scope: LocalSkillListScope) => Promise<LocalSkillCard[]>;
 type SkillInventoryRefreshResult = "published" | "stale" | "failed" | "aborted";
+type LocalSkillInventoryWorkspace = { id: string; label: string; path: string };
 
 const vesloServerClientIdentities = new WeakMap<object, string>();
 let nextVesloServerClientIdentity = 1;
@@ -95,6 +96,7 @@ export function createExtensionsStore(options: {
   activeWorkspaceRoot: () => string;
   workspaceType: () => "local" | "remote";
   workspaces?: () => WorkspaceInfo[];
+  extraSkillInventoryWorkspaces?: () => LocalSkillInventoryWorkspace[];
   vesloServerClient: () => VesloServerClient | null;
   vesloServerStatus: () => VesloServerStatus;
   vesloServerCapabilities: () => VesloServerCapabilities | null;
@@ -384,8 +386,14 @@ export function createExtensionsStore(options: {
   async function refreshSkillInventory(optionsOverride?: { force?: boolean }) {
     let forceRefresh = optionsOverride?.force === true;
 
-    const getLocalSkillInventoryWorkspaces = () =>
-      (options.workspaces?.() ?? [])
+    const normalizeLocalSkillInventoryWorkspace = (workspace: LocalSkillInventoryWorkspace) => ({
+      id: workspace.id.trim(),
+      label: workspace.label.trim(),
+      path: workspace.path.trim(),
+    });
+
+    const getLocalSkillInventoryWorkspaces = () => {
+      const configured = (options.workspaces?.() ?? [])
         .filter((workspace) => workspace.workspaceType === "local")
         .map((workspace) => ({
           id: workspace.id.trim(),
@@ -393,6 +401,21 @@ export function createExtensionsStore(options: {
           path: workspace.path.trim(),
         }))
         .filter((workspace) => workspace.id && workspace.path);
+      const extras = (options.extraSkillInventoryWorkspaces?.() ?? [])
+        .map(normalizeLocalSkillInventoryWorkspace)
+        .filter((workspace) => workspace.id && workspace.path);
+      const seenIds = new Set<string>();
+      const seenPaths = new Set<string>();
+      const result: LocalSkillInventoryWorkspace[] = [];
+      for (const workspace of [...configured, ...extras]) {
+        const pathKey = workspace.path.replace(/[/\\]+$/, "");
+        if (seenIds.has(workspace.id) || seenPaths.has(pathKey)) continue;
+        seenIds.add(workspace.id);
+        seenPaths.add(pathKey);
+        result.push(workspace);
+      }
+      return result;
+    };
 
     const getSkillInventoryContextKey = (
       workspacesForContext: ReturnType<typeof getLocalSkillInventoryWorkspaces>,

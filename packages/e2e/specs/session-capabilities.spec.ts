@@ -1,5 +1,6 @@
 import { expect } from "@wdio/globals";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { navigateToHash, waitForHashRoute } from "../helpers/app-launcher.js";
@@ -7,6 +8,7 @@ import { navigateToHash, waitForHashRoute } from "../helpers/app-launcher.js";
 type EngineInfo = {
   running: boolean;
   baseUrl: string | null;
+  projectDir: string | null;
   opencodeUsername: string | null;
   opencodePassword: string | null;
 };
@@ -44,6 +46,7 @@ const selectedWorkspaceSkillsRoot = () => join(selectedWorkspaceRoot(), ".openco
 const globalMcpConfigPath = () => join(defaultIsolatedProfileRoot(), ".config", "opencode", "opencode.jsonc");
 const activeWorkspaceMcpConfigPath = () => join(activeWorkspaceRoot(), "opencode.jsonc");
 const selectedWorkspaceMcpConfigPath = () => join(selectedWorkspaceRoot(), "opencode.jsonc");
+const opencodeDbPath = () => join(defaultIsolatedProfileRoot(), ".local", "share", "opencode", "opencode.db");
 
 function trimText(value: string | null | undefined) {
   return (value ?? "").trim();
@@ -70,6 +73,93 @@ function writeSkill(root: string, name: string, description: string): void {
 function writeJsonc(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function normalizePath(value: string | null | undefined): string {
+  return trimText(value).replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function hasSqlite3(): boolean {
+  if (existsSync("/usr/bin/sqlite3") || existsSync("/opt/homebrew/bin/sqlite3")) return true;
+  try {
+    execFileSync("sqlite3", ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sqlite3Command(): string {
+  if (existsSync("/usr/bin/sqlite3")) return "/usr/bin/sqlite3";
+  if (existsSync("/opt/homebrew/bin/sqlite3")) return "/opt/homebrew/bin/sqlite3";
+  return "sqlite3";
+}
+
+function sql(value: string | number | null): string {
+  if (value === null) return "NULL";
+  if (typeof value === "number") return String(value);
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function seedOpenCodeDbSession(input: { id: string; title: string; directory: string }): void {
+  const dbPath = opencodeDbPath();
+  mkdirSync(dirname(dbPath), { recursive: true });
+  const now = Date.now();
+  const projectId = `project-${input.id}`;
+  const script = `
+PRAGMA foreign_keys = OFF;
+CREATE TABLE IF NOT EXISTS project (
+  id text PRIMARY KEY,
+  worktree text NOT NULL,
+  vcs text,
+  name text,
+  icon_url text,
+  icon_color text,
+  time_created integer NOT NULL,
+  time_updated integer NOT NULL,
+  time_initialized integer,
+  sandboxes text NOT NULL,
+  commands text,
+  icon_url_override text
+);
+CREATE TABLE IF NOT EXISTS session (
+  id text PRIMARY KEY,
+  project_id text NOT NULL,
+  parent_id text,
+  slug text NOT NULL,
+  directory text NOT NULL,
+  title text NOT NULL,
+  version text NOT NULL,
+  share_url text,
+  summary_additions integer,
+  summary_deletions integer,
+  summary_files integer,
+  summary_diffs text,
+  revert text,
+  permission text,
+  time_created integer NOT NULL,
+  time_updated integer NOT NULL,
+  time_compacting integer,
+  time_archived integer,
+  workspace_id text,
+  path text
+);
+INSERT OR REPLACE INTO project (
+  id, worktree, vcs, name, icon_url, icon_color, time_created, time_updated, time_initialized, sandboxes, commands, icon_url_override
+) VALUES (
+  ${sql(projectId)}, ${sql(input.directory)}, NULL, ${sql("Selected Workspace")}, NULL, NULL, ${sql(now)}, ${sql(now)}, NULL, ${sql("[]")}, NULL, NULL
+);
+INSERT OR REPLACE INTO session (
+  id, project_id, parent_id, slug, directory, title, version, share_url,
+  summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission,
+  time_created, time_updated, time_compacting, time_archived, workspace_id, path
+) VALUES (
+  ${sql(input.id)}, ${sql(projectId)}, NULL, ${sql(input.title.toLowerCase().replace(/[^a-z0-9]+/g, "-"))},
+  ${sql(input.directory)}, ${sql(input.title)}, ${sql("0.0.0")}, NULL,
+  NULL, NULL, NULL, NULL, NULL, NULL, ${sql(now)}, ${sql(now)}, NULL, NULL, NULL, ${sql(input.directory)}
+);
+`;
+  execFileSync(sqlite3Command(), [dbPath], { input: script });
 }
 
 function seedSessionCapabilitiesFixture(): void {
@@ -253,6 +343,35 @@ async function overrideSessionDirectory(sessionId: string, directory: string): P
   );
 }
 
+async function registerSelectedWorkspaceWithoutLoadingRuntime(): Promise<string> {
+  mkdirSync(selectedWorkspaceRoot(), { recursive: true });
+  const before = await tauriInvoke<WorkspaceList>("workspace_bootstrap");
+  const activeWorkspaceId = before.activeId;
+  let selected = before.workspaces.find((workspace) => normalizePath(workspace.path) === normalizePath(selectedWorkspaceRoot()));
+
+  if (!selected) {
+    await tauriInvoke<WorkspaceList>("workspace_create", {
+      folderPath: selectedWorkspaceRoot(),
+      name: "Session Capabilities Selected Workspace",
+      preset: "starter",
+    });
+    const afterCreate = await tauriInvoke<WorkspaceList>("workspace_bootstrap");
+    selected = afterCreate.workspaces.find((workspace) => normalizePath(workspace.path) === normalizePath(selectedWorkspaceRoot()));
+  }
+
+  if (activeWorkspaceId) {
+    await tauriInvoke<WorkspaceList>("workspace_set_active", {
+      workspaceId: activeWorkspaceId,
+      promoteToFront: false,
+    });
+  }
+
+  if (!selected?.id) {
+    throw new Error("Selected workspace fixture was not registered.");
+  }
+  return selected.id;
+}
+
 async function positionWindowForSessionCapabilities(): Promise<void> {
   await browser.execute(async () => {
     const { LogicalPosition, LogicalSize } = await import("@tauri-apps/api/dpi");
@@ -266,13 +385,17 @@ async function positionWindowForSessionCapabilities(): Promise<void> {
   }).catch(() => undefined);
 }
 
-async function forceRightSidebarVisible(hashFragment: string): Promise<void> {
+async function setDockedSidebarsVisible(hashFragment: string): Promise<void> {
   await positionWindowForSessionCapabilities();
   await browser.execute((key: string) => {
     window.localStorage.setItem(key, JSON.stringify({ left: true, right: true }));
   }, SIDEBAR_DOCKED_VISIBILITY_KEY);
   await browser.refresh();
   await waitForHashRoute(hashFragment, WAIT_TIMEOUT_MS);
+}
+
+async function forceRightSidebarVisible(hashFragment: string): Promise<void> {
+  await setDockedSidebarsVisible(hashFragment);
 
   if (!(await $(CAPABILITIES_PANEL_SELECTOR).isExisting())) {
     const toggle = await $('button[aria-label="Toggle right menu"]');
@@ -294,21 +417,84 @@ async function forceRightSidebarVisible(hashFragment: string): Promise<void> {
 async function waitForPanelText(selector: string, expected: string[]): Promise<string> {
   let latestText = "";
 
-  await browser.waitUntil(
-    async () => {
-      const element = await $(selector);
-      if (!(await element.isExisting())) return false;
-      latestText = await element.getText();
-      return expected.every((value) => latestText.includes(value));
-    },
-    {
-      timeout: WAIT_TIMEOUT_MS,
-      interval: 250,
-      timeoutMsg: `${selector} did not include expected text: ${expected.join(", ")}`,
-    },
-  );
+  try {
+    await browser.waitUntil(
+      async () => {
+        const element = await $(selector);
+        if (!(await element.isExisting())) return false;
+        latestText = await element.getText();
+        return expected.every((value) => latestText.includes(value));
+      },
+      {
+        timeout: WAIT_TIMEOUT_MS,
+        interval: 250,
+        timeoutMsg: `${selector} did not include expected text: ${expected.join(", ")}`,
+      },
+    );
+  } catch (error) {
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}\nLast ${selector} text:\n${latestText}`,
+    );
+  }
 
   return latestText;
+}
+
+async function clickSidebarSessionRow(expectedText: string): Promise<void> {
+  let matchingRow: WebdriverIO.Element | null = null;
+  let latestRowsText = "";
+
+  try {
+    await browser.waitUntil(
+      async () => {
+        const rows = await $$('[data-session-sidebar-row="true"]');
+        const texts: string[] = [];
+        for (const row of rows) {
+          const text = await row.getText().catch(() => "");
+          texts.push(text);
+          if (text.includes(expectedText)) {
+            matchingRow = row;
+            return true;
+          }
+        }
+        latestRowsText = texts.join("\n---\n");
+        return false;
+      },
+      {
+        timeout: WAIT_TIMEOUT_MS,
+        interval: 250,
+        timeoutMsg: `Sidebar session row did not appear: ${expectedText}`,
+      },
+    );
+  } catch (error) {
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}\nLast sidebar rows:\n${latestRowsText}`,
+    );
+  }
+
+  await matchingRow!.click();
+}
+
+async function waitForSessionHashRoute(hashFragment: string): Promise<void> {
+  try {
+    await waitForHashRoute(hashFragment, WAIT_TIMEOUT_MS);
+  } catch (error) {
+    const [currentHash, rowsText, bodyText] = await Promise.all([
+      browser.execute(() => window.location.hash).catch(() => ""),
+      browser
+        .execute(async () =>
+          Array.from(document.querySelectorAll('[data-session-sidebar-row="true"]'))
+            .map((row) => row.textContent?.trim() ?? "")
+            .filter(Boolean)
+            .join("\n---\n"),
+        )
+        .catch(() => ""),
+      browser.execute(() => document.body.innerText).catch(() => ""),
+    ]);
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}\nCurrent hash: ${currentHash}\nSidebar rows:\n${rowsText}\nBody:\n${bodyText}`,
+    );
+  }
 }
 
 // Custom E2E_OPENCODE_HOME does not rewrite HOME/XDG_CONFIG_HOME in the launcher,
@@ -353,5 +539,54 @@ runWhenDefaultIsolatedProfile("Session capabilities right menu", () => {
     expect(panelText).not.toContain("e2e-active-decoy-session-mcp");
     expect(bodyText).not.toContain("e2e-active-decoy-session-skill");
     expect(bodyText).not.toContain("e2e-active-decoy-session-mcp");
+  });
+
+  it("shows inherited global skills when opening a DB-backed session from another workspace without loading its runtime", async function () {
+    if (!hasSqlite3()) this.skip();
+
+    seedSessionCapabilitiesFixture();
+    await registerSelectedWorkspaceWithoutLoadingRuntime();
+
+    const session = {
+      id: `e2e-db-session-capabilities-${Date.now()}`,
+      title: `E2E DB session capabilities ${Date.now()}`,
+    };
+    seedOpenCodeDbSession({
+      ...session,
+      directory: selectedWorkspaceRoot(),
+    });
+    await tauriInvoke<EngineInfo>("engine_stop");
+
+    await navigateToHash("/session");
+    await waitForHashRoute("#/session", WAIT_TIMEOUT_MS);
+    await browser.refresh();
+    await waitForHashRoute("#/session", WAIT_TIMEOUT_MS);
+    await setDockedSidebarsVisible("#/session");
+
+    const engineBefore = await tauriInvoke<EngineInfo>("engine_info").catch(() => null);
+    await clickSidebarSessionRow(session.title);
+    const sessionHash = `#/session/${session.id}`;
+    await navigateToHash(`/session/${session.id}`);
+    await waitForSessionHashRoute(sessionHash);
+    await forceRightSidebarVisible(sessionHash);
+
+    const skillsText = await waitForPanelText(CAPABILITIES_SKILLS_SELECTOR, [
+      "e2e-global-session-skill",
+      "e2e-workspace-session-skill",
+    ]);
+    const mcpText = await waitForPanelText(CAPABILITIES_MCP_SELECTOR, [
+      "e2e-global-session-mcp",
+      "e2e-workspace-session-mcp",
+    ]);
+
+    expect(skillsText).toContain("e2e-global-session-skill");
+    expect(skillsText).toContain("e2e-workspace-session-skill");
+    expect(mcpText).toContain("e2e-global-session-mcp");
+    expect(mcpText).toContain("e2e-workspace-session-mcp");
+
+    const engineAfter = await tauriInvoke<EngineInfo>("engine_info").catch(() => null);
+    expect(engineBefore?.running).toBe(false);
+    expect(engineAfter?.running).toBe(false);
+    expect(normalizePath(engineAfter?.projectDir)).not.toBe(normalizePath(selectedWorkspaceRoot()));
   });
 });

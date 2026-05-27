@@ -222,6 +222,68 @@ test("extensions store exposes an app-wide skill inventory from global, workspac
   });
 });
 
+test("skill inventory includes extra selected-session workspace directories", async () => {
+  await withDenAuthStorage(async () => {
+    await createRoot(async (dispose) => {
+      const localCalls: Array<{ projectDir: string; scope: LocalSkillListScope }> = [];
+      const listLocalSkillsScoped = async (
+        projectDir: string,
+        scope: LocalSkillListScope,
+      ): Promise<LocalSkillCard[]> => {
+        localCalls.push({ projectDir, scope });
+        if (scope === "global") {
+          return [{ name: "global-helper", path: "/Users/example/.opencode/skills/global-helper/SKILL.md" }];
+        }
+        if (projectDir === "/workspaces/session-only") {
+          return [{
+            name: "session-workspace-helper",
+            path: "/workspaces/session-only/.opencode/skills/session-workspace-helper/SKILL.md",
+          }];
+        }
+        return [];
+      };
+
+      try {
+        const store = createExtensionsStore({
+          client: () => null,
+          projectDir: () => "/workspaces/alpha",
+          activeWorkspaceId: () => "ws-alpha",
+          activeWorkspaceRoot: () => "/workspaces/alpha",
+          workspaceType: () => "local",
+          workspaces: () => [workspaces[0]],
+          extraSkillInventoryWorkspaces: () => [{
+            id: "session:/workspaces/session-only",
+            label: "Session Only",
+            path: "/workspaces/session-only",
+          }],
+          vesloServerClient: () => null,
+          vesloServerStatus: () => "disconnected",
+          vesloServerCapabilities: () => null,
+          vesloServerWorkspaceId: () => null,
+          listLocalSkillsScoped,
+          setBusy: () => undefined,
+          setBusyLabel: () => undefined,
+          setBusyStartedAt: () => undefined,
+          setError: () => undefined,
+        });
+
+        await store.refreshSkillInventory({ force: true });
+
+        assert.deepEqual(localCalls, [
+          { projectDir: "", scope: "global" },
+          { projectDir: "/workspaces/alpha", scope: "workspace" },
+          { projectDir: "/workspaces/session-only", scope: "workspace" },
+        ]);
+        const item = store.skillInventory().find((entry) => entry.name === "session-workspace-helper");
+        assert.equal(item?.workspaceInstances[0]?.workspaceId, "session:/workspaces/session-only");
+        assert.equal(item?.workspaceInstances[0]?.workspaceLabel, "Session Only");
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
 test("skill inventory refreshes hub entries when the Veslo server client changes", async () => {
   await withDenAuthStorage(async () => {
     await createRoot(async (dispose) => {

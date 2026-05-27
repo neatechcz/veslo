@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
   buildSessionMcpRows,
   buildSessionSkillRows,
   createSessionCapabilitiesCache,
+  filterSessionSkillInventoryByScope,
   normalizeSessionCapabilityDirectory,
+  resolveSessionCapabilitySessionSource,
 } from "./session-capabilities.js";
 
 test("normalizeSessionCapabilityDirectory does not fall back to the active workspace", () => {
@@ -85,6 +88,118 @@ test("buildSessionMcpRows preserves failed status detail", () => {
   assert.deepEqual(rows.map((row) => `${row.name}:${row.status}:${row.statusDetail}`), [
     "broken:failed:connection refused",
   ]);
+});
+
+test("filterSessionSkillInventoryByScope uses app-wide inventory for selected session workspace", () => {
+  const scoped = filterSessionSkillInventoryByScope(
+    [
+      {
+        name: "global-only",
+        status: "global",
+        globalInstance: {
+          id: "global:global-only",
+          name: "global-only",
+          scope: "user-global",
+          path: "/home/user/.config/opencode/skills/global-only/SKILL.md",
+          source: "opencode",
+          readable: true,
+          writable: true,
+        },
+        workspaceInstances: [],
+      },
+      {
+        name: "research",
+        status: "mixed",
+        globalInstance: {
+          id: "global:research",
+          name: "research",
+          scope: "user-global",
+          path: "/home/user/.config/opencode/skills/research/SKILL.md",
+          description: "Global research",
+          source: "opencode",
+          readable: true,
+          writable: true,
+        },
+        workspaceInstances: [
+          {
+            id: "workspace:ws-a:research",
+            name: "research",
+            scope: "workspace",
+            workspaceId: "ws-a",
+            workspaceLabel: "Workspace A",
+            path: "/workspaces/a/.opencode/skills/research/SKILL.md",
+            description: "Workspace research",
+            source: "opencode",
+            readable: true,
+            writable: true,
+          },
+          {
+            id: "workspace:ws-b:research",
+            name: "research",
+            scope: "workspace",
+            workspaceId: "ws-b",
+            workspaceLabel: "Workspace B",
+            path: "/workspaces/b/.opencode/skills/research/SKILL.md",
+            description: "Other workspace research",
+            source: "opencode",
+            readable: true,
+            writable: true,
+          },
+        ],
+      },
+      {
+        name: "hub-only",
+        status: "hub-only",
+        workspaceInstances: [],
+        hubItem: {
+          name: "hub-only",
+          source: { owner: "x", repo: "y", ref: "main", path: "skills/hub-only" },
+        },
+      },
+    ],
+    { workspaceId: "ws-a", directory: "/workspaces/a" },
+  );
+
+  assert.deepEqual(buildSessionSkillRows(scoped).map((row) => `${row.name}:${row.scope}:${row.description ?? ""}`), [
+    "global-only:global:",
+    "research:workspace:Workspace research",
+  ]);
+});
+
+test("resolveSessionCapabilitySessionSource falls back to sidebar DB session before workspace activation", () => {
+  const source = resolveSessionCapabilitySessionSource({
+    selectedSessionId: "sess-a",
+    selectedSession: { id: "sess-a", directory: "" },
+    workspaceGroups: [
+      {
+        workspace: { id: "ws-a", path: "/workspaces/a" },
+        sessions: [{ id: "sess-a", directory: "/workspaces/a" }],
+      },
+    ],
+    resolveDirectory: (session) => session.directory ?? "",
+  });
+
+  assert.equal(source?.session.directory, "/workspaces/a");
+  assert.deepEqual(source?.workspace, { id: "ws-a", path: "/workspaces/a" });
+});
+
+test("resolveSessionCapabilitySessionSource can use a selected id with a persisted directory override", () => {
+  const source = resolveSessionCapabilitySessionSource({
+    selectedSessionId: "sess-a",
+    selectedSession: null,
+    workspaceGroups: [],
+    resolveDirectory: (session) => session.id === "sess-a" ? "/workspaces/a" : "",
+  });
+
+  assert.deepEqual(source?.session, { id: "sess-a", directory: "/workspaces/a" });
+});
+
+test("app session capabilities load local skills from the shared inventory surface", () => {
+  const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /refreshSkillInventory\(\)/);
+  assert.match(source, /filterSessionSkillInventoryByScope\(skillInventory\(\),/);
+  assert.doesNotMatch(source, /listLocalSkillsScoped\(directory,\s*"workspace"\)/);
 });
 
 test("session capabilities cache loads by selected chat directory", async () => {

@@ -35,11 +35,77 @@ export type SessionCapabilitiesScope = {
   workspaceType?: "local" | "remote";
 };
 
+export type SessionCapabilitySessionLike = {
+  id: string;
+  directory?: string | null;
+};
+
+export type SessionCapabilityWorkspaceGroupLike<TWorkspace = unknown> = {
+  workspace: TWorkspace;
+  sessions: SessionCapabilitySessionLike[];
+};
+
 export function normalizeSessionCapabilityDirectory(value: string | null | undefined) {
   const normalized = String(value ?? "")
     .trim()
     .replace(/\\/g, "/");
   return normalized === "/" ? normalized : normalized.replace(/\/+$/, "");
+}
+
+export function resolveSessionCapabilitySessionSource<TWorkspace>(input: {
+  selectedSessionId?: string | null;
+  selectedSession?: SessionCapabilitySessionLike | null;
+  workspaceGroups: SessionCapabilityWorkspaceGroupLike<TWorkspace>[];
+  resolveDirectory?: (session: SessionCapabilitySessionLike) => string;
+}): { session: SessionCapabilitySessionLike; workspace?: TWorkspace } | null {
+  const selectedSessionId = input.selectedSessionId?.trim() ?? "";
+  const directoryFor = (session: SessionCapabilitySessionLike) =>
+    normalizeSessionCapabilityDirectory(input.resolveDirectory?.(session) ?? session.directory ?? "");
+
+  if (input.selectedSession && (!selectedSessionId || input.selectedSession.id === selectedSessionId)) {
+    if (directoryFor(input.selectedSession)) return { session: input.selectedSession };
+  }
+
+  if (selectedSessionId) {
+    for (const group of input.workspaceGroups) {
+      const session = group.sessions.find((item) => item.id === selectedSessionId);
+      if (session && directoryFor(session)) {
+        return { session, workspace: group.workspace };
+      }
+    }
+
+    const syntheticSession = { id: selectedSessionId, directory: "" };
+    const syntheticDirectory = directoryFor(syntheticSession);
+    if (syntheticDirectory) {
+      return { session: { ...syntheticSession, directory: syntheticDirectory } };
+    }
+  }
+
+  return input.selectedSession ? { session: input.selectedSession } : null;
+}
+
+function skillPathMatchesDirectory(path: string | null | undefined, directory: string) {
+  if (!directory) return false;
+  const normalizedPath = normalizeSessionCapabilityDirectory(path);
+  return normalizedPath === directory || normalizedPath.startsWith(`${directory}/`);
+}
+
+export function filterSessionSkillInventoryByScope(
+  items: SkillInventoryItem[],
+  scope: Pick<SessionCapabilitiesScope, "directory" | "workspaceId">,
+): SkillInventoryItem[] {
+  const workspaceId = scope.workspaceId?.trim() ?? "";
+  const directory = normalizeSessionCapabilityDirectory(scope.directory);
+
+  return items.flatMap((item) => {
+    const workspaceInstances = item.workspaceInstances.filter((instance) => {
+      if (workspaceId && instance.workspaceId === workspaceId) return true;
+      return skillPathMatchesDirectory(instance.path, directory);
+    });
+    if (workspaceInstances.length > 0) return [{ ...item, workspaceInstances }];
+    if (item.globalInstance) return [{ ...item, workspaceInstances: [] }];
+    return [];
+  });
 }
 
 export function createSessionCapabilitiesCache(
