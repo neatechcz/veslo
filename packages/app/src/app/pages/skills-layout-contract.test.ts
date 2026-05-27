@@ -108,7 +108,7 @@ test("local skill import refreshes the app-wide installed inventory", () => {
 test("inventory card uninstall targets writable active workspace instances", () => {
   assert.match(source, /activeWorkspaceId: string/);
   assert.match(source, /const canUninstallInventoryInstance = \(input: \{ item: SkillInventoryItem; instance: SkillInstance \}\) =>\s*Boolean\(mutationTargetForInstance\(input\.instance\)\)/);
-  assert.match(source, /if \(input\.instance\.writable === false\) return translate\("skills\.registry_action_pending"\)/);
+  assert.match(source, /if \(input\.instance\.writable === false\) return translate\("skills\.uninstall_read_only"\)/);
   assert.match(source, /if \(input\.instance\.scope !== "workspace"\) return translate\("skills\.uninstall_scope_ambiguous"\)/);
   assert.match(source, /if \(input\.instance\.workspaceId !== props\.activeWorkspaceId\) return translate\("skills\.uninstall_not_active_workspace"\)/);
   assert.match(renderInventoryCardSource, /disabled=\{props\.busy \|\| !canUninstall\(\)\}/);
@@ -206,6 +206,18 @@ test("skills inventory exposes stable desktop e2e selectors", () => {
   assert.match(source, /data-testid="skills-hub-placeholder"/);
 });
 
+test("skills inventory item clicks toggle selection while pencil opens detail drawer", () => {
+  assert.match(renderInventoryCardSource, /const toggleCurrentSelection = \(\) => toggleInventorySelection\(selectionId\(\), !selected\(\)\)/);
+  assert.match(renderInventoryCardSource, /onClick=\{toggleCurrentSelection\}/);
+  assert.match(renderInventoryCardSource, /toggleCurrentSelection\(\);/);
+  assert.doesNotMatch(renderInventoryCardSource, /onClick=\{openDetails\}/);
+  assert.match(renderInventoryCardSource, /data-testid="skill-inventory-detail-button"/);
+  assert.match(renderInventoryCardSource, /openDetails\(\);/);
+  assert.match(source, /const toggleTableRowSelection = \(instance: SkillInstance\) =>/);
+  assert.match(source, /onClick=\{\(\) => toggleTableRowSelection\(row\.instance\)\}/);
+  assert.doesNotMatch(source, /<tr[\s\S]{0,500}onClick=\{\(\) => openSkillDetail\(row\.item, row\.instance\)\}/);
+});
+
 test("hub skill install requires an explicit target selection", () => {
   assert.match(source, /import type \{[\s\S]*HubSkillInstallTarget[\s\S]*\} from "\.\.\/types"/);
   assert.match(source, /installHubSkill:\s*\(name: string, target: HubSkillInstallTarget\) => Promise<InstallResult>/);
@@ -266,10 +278,15 @@ test("workspace skill copy and move are local scope transfer actions, not disabl
   );
   assert.match(appSource, /\bcopySkillInstanceToGlobal,/);
   assert.match(appSource, /\bdeleteSkillInstance,/);
-  assert.match(source, /const copySelectedSkillToGlobal = \(deleteSource: boolean\) =>/);
+  assert.match(source, /const globalTransferDisabledReasonForInstance = \(instance: SkillInstance\) =>/);
+  assert.match(source, /if \(instance\.scope === "user-global"\) return translate\("skills\.copy_to_global_already_global"\)/);
+  assert.match(source, /const detailInstanceForAction = \(input\?: SkillDetailActionInput\): SkillInstance \| null =>/);
+  assert.match(source, /const copySelectedSkillToGlobal = \(deleteSource: boolean, input\?: SkillDetailActionInput\) =>/);
+  assert.match(source, /const actionInstance = detailInstanceForAction\(input\)/);
   assert.match(source, /props\.copySkillInstanceToGlobal\(target, \{ deleteSource \}\)/);
-  assert.match(source, /onCopySkill=\{\(\) => copySelectedSkillToGlobal\(false\)\}/);
-  assert.match(source, /onMoveSkill=\{\(\) => copySelectedSkillToGlobal\(true\)\}/);
+  assert.match(source, /actionUnavailableReason=\{\{\s*copy: selectedDetailGlobalTransferDisabledReason\(\),\s*move: selectedDetailGlobalTransferDisabledReason\(\),\s*\}\}/);
+  assert.match(source, /onCopySkill=\{\(input\) => copySelectedSkillToGlobal\(false, input\)\}/);
+  assert.match(source, /onMoveSkill=\{\(input\) => copySelectedSkillToGlobal\(true, input\)\}/);
   assert.doesNotMatch(source, /translate\("skills\.bulk_copy"\)[\s\S]{0,240}<Button[\s\S]{0,180}\sdisabled\s/);
   assert.doesNotMatch(source, /translate\("skills\.bulk_move"\)[\s\S]{0,240}<Button[\s\S]{0,180}\sdisabled\s/);
 });
@@ -284,4 +301,20 @@ test("skills page wires registry inventory filters, table mode, bulk selection, 
   assert.match(source, /<SkillReviewDialog/);
   assert.match(source, /onPublishSkill=\{\(action\) => openSkillReviewDialog\("organization", action\)\}/);
   assert.match(source, /onRequestApproval=\{\(action\) => openSkillReviewDialog\("system", action\)\}/);
+});
+
+test("skills page localizes skill review metadata field labels", () => {
+  assert.match(source, /field: translate\("skills\.review_field_name"\)/);
+  assert.match(source, /field: translate\("skills\.review_field_description"\)/);
+  assert.match(source, /field: translate\("skills\.review_field_trigger"\)/);
+  assert.doesNotMatch(source, /field: "Name"/);
+  assert.doesNotMatch(source, /field: "Description"/);
+  assert.doesNotMatch(source, /field: "Trigger"/);
+});
+
+test("skills page review file diff points at the skill entry file", () => {
+  assert.ok(source.includes("const reviewFilePath = detail.instance.path"));
+  assert.ok(source.includes('${detail.instance.path.replace(/\\/$/, "")}/SKILL.md'));
+  assert.match(source, /path: reviewFilePath/);
+  assert.doesNotMatch(source, /path: detail\.instance\.path \|\| "SKILL\.md"/);
 });

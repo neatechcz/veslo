@@ -87,6 +87,20 @@ The local Veslo server materializes managed workspace skills into `.opencode/ski
 
 Registry search can be reached through the local server at `/v1/skills/search` when the desktop app needs server-side registry auth and validation. Registry update polling can be reached through `/v1/skill-registry-events`; app clients should invalidate inventory for all visible events, mark active workspace updates as pending reload, and materialize idle workspace or personal-global updates through the local server. Workspace runtime sync uses `/workspace/:id/skills/materialization`; personal-global sync uses `/skills/materialization`. Writes require host or owner auth and active runs should return a pending reload state instead of mutating files.
 
-The local Skills UI can show filterable inventory rows, bulk selection, detail tabs, locations, version history, and review evidence using local inventory plus registry metadata when available. Mutating registry actions such as copy, move, organization publish, system approval, restore, and adoption require registry mutation routes; until those routes are connected, the UI must not synthesize registry writes from filesystem-only data. Local adoption preparation can package an unmanaged skill for registry upload, but registry-side version and installation creation remains backend-owned.
+The local Skills UI can show filterable inventory rows, bulk selection, detail tabs, locations, version history, and review evidence using local inventory plus registry metadata when available. Clicking an inventory card or row toggles its bulk selection state; the skill detail drawer opens from the row edit affordance so selection and inspection remain separate. Detail drawer tabs, location labels, version history, action labels, disabled reasons, and review text are resolved through runtime localization. Local copy and move actions transfer an active workspace-local skill into the user-global skill root. Registry actions such as organization publish, system catalog approval, restore, and adoption require registry mutation routes; until those routes are connected, the UI must not synthesize registry writes from filesystem-only data. Local adoption preparation can package an unmanaged skill for registry upload, but registry-side version and installation creation remains backend-owned.
+
+## Skill Detail Actions
+
+The detail drawer action bar operates on the selected skill location unless a location row in the Locations tab provides a more specific source location.
+
+- Edit opens the skill editor for the exact writable skill location in the active workspace. It is unavailable for global, managed, read-only, or non-active-workspace locations until those mutation paths are explicitly supported.
+- Copy to global copies a writable skill from the active workspace into the user-global skill root so it becomes available in all workspaces. The workspace-local source remains in place.
+- Move to global performs the same global copy, then deletes the original workspace-local source. If deletion fails, the operation reports the failure instead of silently hiding it.
+- Delete removes the exact writable active-workspace skill location. Global, managed, read-only, and non-active-workspace delete paths remain disabled with a visible reason.
+- Publish to organization opens a review request for publishing the current skill version into an organization catalog. This is a registry governance action and does not change the local runtime while registry mutation routes are disconnected.
+- Request system catalog approval opens a review request for platform-level approval before the current skill version can be distributed through the system catalog. The approval is for catalog distribution, not for local use of the skill.
+- Restore version is a registry-backed version action. It stays pending until registry version restore routes are connected.
+
+Unavailable actions must be disabled or explain their unavailable state. They should not look clickable if the app can already determine that the selected location cannot support the operation.
 
 Registry distribution does not make cloud the execution environment. The Tauri desktop app and local Veslo server remain the runtime under test; the cloud registry owns catalog, package, review, and installation metadata.
