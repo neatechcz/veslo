@@ -32,6 +32,14 @@ test("skill detail drawer exposes accessible dialog semantics and close control"
   assert.match(source, /onClick=\{props\.onClose\}/);
 });
 
+test("skill detail drawer closes from backdrop clicks and leaves titlebar clearance", () => {
+  assert.match(source, /data-testid="skill-detail-drawer-backdrop"/);
+  assert.match(source, /const closeFromBackdrop = \(event: MouseEvent & \{ currentTarget: HTMLDivElement; target: Element \}\) =>/);
+  assert.match(source, /if \(event\.target === event\.currentTarget\) props\.onClose\(\)/);
+  assert.match(source, /onClick=\{closeFromBackdrop\}/);
+  assert.match(source, /class="border-b border-dls-border px-4 pb-3 pt-10"/);
+});
+
 test("skill detail drawer renders all requested tabs without wiring into the skills page", () => {
   for (const tab of ["Overview", "Locations", "Versions", "Sharing", "Audit"]) {
     assert.match(source, new RegExp(`label: "${tab}"`));

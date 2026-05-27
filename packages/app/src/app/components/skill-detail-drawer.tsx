@@ -102,17 +102,26 @@ export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
     location: location ?? null,
   });
 
+  const closeFromBackdrop = (event: MouseEvent & { currentTarget: HTMLDivElement; target: Element }) => {
+    if (event.target === event.currentTarget) props.onClose();
+  };
+
   return (
     <Show when={props.open ? props.skill : null} keyed>
       {(skill) => (
-        <div class="fixed inset-0 z-50 flex justify-end bg-gray-1/60 backdrop-blur-sm" data-testid="skill-detail-drawer">
+        <div
+          class="fixed inset-0 z-50 flex justify-end bg-gray-1/60 backdrop-blur-sm"
+          data-testid="skill-detail-drawer-backdrop"
+          onClick={closeFromBackdrop}
+        >
           <aside
             class="flex h-full w-full max-w-[560px] flex-col border-l border-dls-border bg-gray-1 shadow-2xl"
+            data-testid="skill-detail-drawer"
             role="dialog"
             aria-modal="true"
             aria-labelledby={titleId}
           >
-            <header class="border-b border-dls-border px-4 py-3">
+            <header class="border-b border-dls-border px-4 pb-3 pt-10">
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
                   <p class="type-ui-xs uppercase text-dls-muted">Skill</p>
