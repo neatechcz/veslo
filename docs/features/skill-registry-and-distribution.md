@@ -83,4 +83,10 @@ Installing or updating a registry-backed skill should follow the same local safe
 - refresh inventory after the local mutation
 - trigger workspace reload when the effective runtime skill set changes
 
+The local Veslo server materializes managed workspace skills into `.opencode/skills/veslo-managed/` and records both a root manifest and per-skill ownership markers. Managed replacements and removals create pre-change backups under the Veslo data directory. Unmanaged user skill directories are never overwritten by registry sync unless they have first been adopted into Veslo-managed ownership.
+
+Registry search can be reached through the local server at `/v1/skills/search` when the desktop app needs server-side registry auth and validation. Registry update polling can be reached through `/v1/skill-registry-events`; app clients should invalidate inventory for all visible events, mark active workspace updates as pending reload, and materialize idle workspace or personal-global updates through the local server. Workspace runtime sync uses `/workspace/:id/skills/materialization`; personal-global sync uses `/skills/materialization`. Writes require host or owner auth and active runs should return a pending reload state instead of mutating files.
+
+The local Skills UI can show filterable inventory rows, bulk selection, detail tabs, locations, version history, and review evidence using local inventory plus registry metadata when available. Mutating registry actions such as copy, move, organization publish, system approval, restore, and adoption require registry mutation routes; until those routes are connected, the UI must not synthesize registry writes from filesystem-only data. Local adoption preparation can package an unmanaged skill for registry upload, but registry-side version and installation creation remains backend-owned.
+
 Registry distribution does not make cloud the execution environment. The Tauri desktop app and local Veslo server remain the runtime under test; the cloud registry owns catalog, package, review, and installation metadata.

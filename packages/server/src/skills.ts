@@ -1,6 +1,6 @@
 import { readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import type { Dirent } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { SkillItem } from "./types.js";
 import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
@@ -206,10 +206,12 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
   });
 }
 
-export async function upsertSkill(
-  workspaceRoot: string,
-  payload: { name: string; content: string; description?: string },
-): Promise<{ path: string; action: "added" | "updated" }> {
+const isPathInside = (parent: string, child: string): boolean => {
+  const rel = relative(parent, child);
+  return rel === "" || (Boolean(rel) && !rel.startsWith("..") && !isAbsolute(rel));
+};
+
+const prepareSkillContent = (payload: { name: string; content: string; description?: string }): string => {
   const name = payload.name.trim();
   validateSkillName(name);
   if (!payload.content) {
@@ -238,13 +240,84 @@ export async function upsertSkill(
     content = frontmatter + payload.content.replace(/^\n/, "");
   }
 
+  return content.endsWith("\n") ? content : content + "\n";
+};
+
+const workspaceSkillRootsForMutation = async (workspaceRoot: string): Promise<string[]> => {
+  const roots = await findWorkspaceRoots(workspaceRoot);
+  return roots.flatMap((root) => [
+    join(root, ".opencode", "skills"),
+    join(root, ".claude", "skills"),
+  ]);
+};
+
+async function resolveExistingWorkspaceSkillPath(
+  workspaceRoot: string,
+  name: string,
+  instancePath: string,
+  options: { allowManaged?: boolean } = {},
+): Promise<string> {
+  validateSkillName(name);
+  const target = resolve(instancePath.trim());
+  if (basename(target) !== SKILL_ENTRYPOINT) {
+    throw new ApiError(400, "invalid_skill_path", "Skill instance path must point to SKILL.md");
+  }
+  if (basename(dirname(target)) !== name) {
+    throw new ApiError(400, "invalid_skill_path", "Skill instance path must match payload name");
+  }
+  const roots = await workspaceSkillRootsForMutation(workspaceRoot);
+  const owningRoot = roots.map((root) => resolve(root)).find((root) => isPathInside(root, target));
+  if (!owningRoot) {
+    throw new ApiError(400, "invalid_skill_path", "Skill instance path must be inside a workspace skill root");
+  }
+  const relativeToRoot = relative(owningRoot, target).replace(/\\/g, "/");
+  if (!options.allowManaged && (relativeToRoot === `veslo-managed/${name}/${SKILL_ENTRYPOINT}` || relativeToRoot.startsWith("veslo-managed/"))) {
+    throw new ApiError(409, "managed_skill_read_only", "Managed materialized skills must be edited through the registry");
+  }
+  if (!(await exists(target))) {
+    throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
+  }
+  return target;
+}
+
+export async function upsertSkill(
+  workspaceRoot: string,
+  payload: { name: string; content: string; description?: string },
+): Promise<{ path: string; action: "added" | "updated" }> {
+  const name = payload.name.trim();
+  const content = prepareSkillContent({ ...payload, name });
+
   const baseDir = projectSkillsDir(workspaceRoot);
   const skillDir = join(baseDir, name);
   await mkdir(skillDir, { recursive: true });
   const skillPath = join(skillDir, "SKILL.md");
   const existed = await exists(skillPath);
-  await writeFile(skillPath, content.endsWith("\n") ? content : content + "\n", "utf8");
+  await writeFile(skillPath, content, "utf8");
   return { path: skillPath, action: existed ? "updated" : "added" };
+}
+
+export async function updateSkillAtPath(
+  workspaceRoot: string,
+  payload: { name: string; path: string; content: string; description?: string },
+): Promise<{ path: string; action: "updated" }> {
+  const name = payload.name.trim();
+  const skillPath = await resolveExistingWorkspaceSkillPath(workspaceRoot, name, payload.path);
+  const content = prepareSkillContent({ name, content: payload.content, description: payload.description });
+  await writeFile(skillPath, content, "utf8");
+  return { path: skillPath, action: "updated" };
+}
+
+export async function readSkillAtPath(
+  workspaceRoot: string,
+  payload: { name: string; path: string },
+): Promise<{ path: string; content: string }> {
+  const skillPath = await resolveExistingWorkspaceSkillPath(workspaceRoot, payload.name.trim(), payload.path, {
+    allowManaged: true,
+  });
+  return {
+    path: skillPath,
+    content: await readFile(skillPath, "utf8"),
+  };
 }
 
 export async function deleteSkill(workspaceRoot: string, name: string): Promise<{ path: string }> {
@@ -256,6 +329,16 @@ export async function deleteSkill(workspaceRoot: string, name: string): Promise<
   if (!(await exists(skillPath))) {
     throw new ApiError(404, "skill_not_found", `Skill not found: ${trimmed}`);
   }
+  await rm(skillDir, { recursive: true, force: true });
+  return { path: skillDir };
+}
+
+export async function deleteSkillAtPath(
+  workspaceRoot: string,
+  payload: { name: string; path: string },
+): Promise<{ path: string }> {
+  const skillPath = await resolveExistingWorkspaceSkillPath(workspaceRoot, payload.name.trim(), payload.path);
+  const skillDir = dirname(skillPath);
   await rm(skillDir, { recursive: true, force: true });
   return { path: skillDir };
 }

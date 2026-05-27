@@ -292,6 +292,325 @@ test("listHubSkills forwards den auth context headers when provided", async () =
   }
 });
 
+const registrySkill = (overrides: Record<string, unknown> = {}) => ({
+  id: "skill_research",
+  slug: "research",
+  name: "research",
+  description: "Research assistant",
+  tags: ["automation"],
+  visibility: "personal",
+  reviewStatus: "approved",
+  createdAt: "2026-05-26T10:00:00.000Z",
+  updatedAt: "2026-05-26T10:01:00.000Z",
+  latestVersion: {
+    id: "version_research_1",
+    version: "1.0.0",
+    packageSha256: "a".repeat(64),
+    createdAt: "2026-05-26T10:00:00.000Z",
+  },
+  ...overrides,
+});
+
+test("searchRegistrySkills encodes supported filters and normalizes scored results", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; headers: Headers }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+    });
+    return new Response(
+      JSON.stringify({
+        query: "agent workflows",
+        skills: [
+          registrySkill({
+            score: 0.86,
+            matchedFields: ["name", "metadata.trigger"],
+          }),
+        ],
+        nextCursor: "next/cursor",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example/",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    const result = await client.searchRegistrySkills({
+      q: " agent workflows ",
+      workspaceId: " workspace_a ",
+      owner: "user",
+      approvalStatus: "approved",
+      includeDeleted: true,
+      language: " cs ",
+      cursor: " next/cursor ",
+      limit: 25,
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(
+      calls[0]?.url,
+      "https://veslo.example/v1/skills/search?q=agent+workflows&workspaceId=workspace_a&ownerScope=user&reviewStatus=approved&includeDeleted=true&language=cs&cursor=next%2Fcursor&limit=25",
+    );
+    assert.equal(calls[0]?.headers.get("authorization"), "Bearer token-123");
+    assert.equal(calls[0]?.headers.get("x-veslo-host-token"), "host-token-123");
+    assert.deepEqual(result, {
+      query: "agent workflows",
+      skills: [
+        {
+          id: "skill_research",
+          slug: "research",
+          name: "research",
+          description: "Research assistant",
+          tags: ["automation"],
+          visibility: "personal",
+          reviewStatus: "approved",
+          createdAt: "2026-05-26T10:00:00.000Z",
+          updatedAt: "2026-05-26T10:01:00.000Z",
+          latestVersion: {
+            id: "version_research_1",
+            version: "1.0.0",
+            packageSha256: "a".repeat(64),
+            createdAt: "2026-05-26T10:00:00.000Z",
+          },
+          score: 0.86,
+          matchedFields: ["name", "metadata.trigger"],
+        },
+      ],
+      nextCursor: "next/cursor",
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("searchRegistrySkills accepts scope and reviewStatus aliases", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string }> = [];
+
+  globalThis.fetch = async (input) => {
+    calls.push({ url: String(input) });
+    return new Response(JSON.stringify({ query: "approval", skills: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    await client.searchRegistrySkills({
+      q: "approval",
+      scope: "org",
+      reviewStatus: "pending_review",
+      includeDeleted: false,
+    });
+
+    assert.equal(
+      calls[0]?.url,
+      "https://veslo.example/v1/skills/search?q=approval&ownerScope=org&reviewStatus=pending_review&includeDeleted=false",
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("searchRegistrySkills rejects invalid registry search payloads", async () => {
+  const previousFetch = globalThis.fetch;
+
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        query: "agent",
+        skills: [
+          registrySkill({
+            visibility: "public",
+          }),
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    await assert.rejects(
+      () => client.searchRegistrySkills({ q: "agent" }),
+      (error) => {
+        assert.equal((error as { code?: unknown }).code, "skill_registry_invalid_payload");
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("skill materialization helpers call workspace and global status and sync endpoints", async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; headers: Headers; body: string | null }> = [];
+
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      headers: new Headers(init?.headers as HeadersInit | undefined),
+      body: typeof init?.body === "string" ? init.body : null,
+    });
+    const url = new URL(String(input));
+    if (url.pathname === "/skills/materialization") {
+      return new Response(
+        JSON.stringify({
+          scope: "personal-global",
+          status: "current",
+          registryConfigured: true,
+          rootDir: "/home/user/.config/opencode/skills/veslo-managed",
+          materializedSkills: [],
+          reloadRequired: false,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (url.pathname === "/skills/materialization/sync-global") {
+      return new Response(
+        JSON.stringify({
+          scope: "personal-global",
+          status: "synced",
+          registryConfigured: true,
+          rootDir: "/home/user/.config/opencode/skills/veslo-managed",
+          materializedSkills: [],
+          synced: true,
+          reloadRequired: true,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (url.pathname.endsWith("/sync")) {
+      return new Response(
+        JSON.stringify({
+          workspaceId: "workspace-a",
+          status: "pending",
+          registryConfigured: true,
+          materializedSkills: [],
+          synced: false,
+          reloadRequired: true,
+        }),
+        { status: 202, headers: { "content-type": "application/json" } },
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        workspaceId: "workspace-a",
+        status: "current",
+        registryConfigured: true,
+        rootDir: "/workspace/.opencode/skills/veslo-managed",
+        materializedSkills: [
+          {
+            name: "research",
+            packageSha256: "a".repeat(64),
+          },
+        ],
+        reloadRequired: false,
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      hostToken: "host-token-123",
+    });
+
+    const globalStatus = await client.getGlobalSkillMaterializationStatus();
+    const globalSync = await client.syncGlobalSkillMaterialization({
+      denToken: "den-token",
+      denOrgId: "org_123",
+      denUserId: "user_123",
+    });
+    const status = await client.getWorkspaceSkillMaterializationStatus("workspace-a");
+    const sync = await client.syncWorkspaceSkillMaterialization("workspace-a", {
+      activeRun: true,
+      denToken: "den-token",
+      denOrgId: "org_123",
+      denUserId: "user_123",
+    });
+    await client.getSkill("workspace-a", "research", {
+      includeGlobal: true,
+      path: "/workspace/.opencode/skills/category/research/SKILL.md",
+    });
+    await client.deleteSkill("workspace-a", "research", {
+      path: "/workspace/.opencode/skills/category/research/SKILL.md",
+    });
+
+    assert.equal(globalStatus.scope, "personal-global");
+    assert.equal(globalSync.status, "synced");
+    assert.equal(status.status, "current");
+    assert.equal(sync.status, "pending");
+    assert.deepEqual(calls.map((call) => ({ url: call.url, method: call.method, body: call.body })), [
+      {
+        url: "https://veslo.example/skills/materialization",
+        method: "GET",
+        body: null,
+      },
+      {
+        url: "https://veslo.example/skills/materialization/sync-global",
+        method: "POST",
+        body: null,
+      },
+      {
+        url: "https://veslo.example/workspace/workspace-a/skills/materialization",
+        method: "GET",
+        body: null,
+      },
+      {
+        url: "https://veslo.example/workspace/workspace-a/skills/materialization/sync",
+        method: "POST",
+        body: JSON.stringify({ activeRun: true }),
+      },
+      {
+        url: "https://veslo.example/workspace/workspace-a/skills/research?includeGlobal=true&path=%2Fworkspace%2F.opencode%2Fskills%2Fcategory%2Fresearch%2FSKILL.md",
+        method: "GET",
+        body: null,
+      },
+      {
+        url: "https://veslo.example/workspace/workspace-a/skills/research?path=%2Fworkspace%2F.opencode%2Fskills%2Fcategory%2Fresearch%2FSKILL.md",
+        method: "DELETE",
+        body: null,
+      },
+    ]);
+    assert.equal(calls[1]?.headers.get("authorization"), "Bearer token-123");
+    assert.equal(calls[1]?.headers.get("x-veslo-host-token"), "host-token-123");
+    assert.equal(calls[1]?.headers.get("x-veslo-den-token"), "den-token");
+    assert.equal(calls[1]?.headers.get("x-veslo-den-org-id"), "org_123");
+    assert.equal(calls[1]?.headers.get("x-veslo-den-user-id"), "user_123");
+    assert.equal(calls[3]?.headers.get("x-veslo-den-token"), "den-token");
+    assert.equal(calls[3]?.headers.get("x-veslo-den-org-id"), "org_123");
+    assert.equal(calls[3]?.headers.get("x-veslo-den-user-id"), "user_123");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("listHubMcp forwards den auth context headers when provided", async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; headers: Headers }> = [];

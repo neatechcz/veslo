@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { ApiError } from "./errors.js";
 import {
   downloadSkillPackageFromRegistry,
+  listRegistrySkillInstallations,
   listRegistrySkills,
   searchRegistrySkills,
 } from "./skill-registry-client.js";
@@ -90,19 +91,21 @@ afterEach(() => {
 });
 
 describe("skill registry client", () => {
-  test("forwards bearer token and org id headers", async () => {
+  test("forwards bearer token, org id, and user id headers", async () => {
     const calls = mockFetch(listResponse());
 
     await listRegistrySkills({
       baseUrl: "https://registry.example/",
       token: "registry-token",
       orgId: "org_123",
+      userId: "user_123",
     });
 
     expect(calls).toHaveLength(1);
     const headers = new Headers(calls[0].init?.headers);
     expect(headers.get("authorization")).toBe("Bearer registry-token");
     expect(headers.get("x-veslo-den-org-id")).toBe("org_123");
+    expect(headers.get("x-veslo-den-user-id")).toBe("user_123");
   });
 
   test("uses den token as bearer token when registry token is absent", async () => {
@@ -156,6 +159,34 @@ describe("skill registry client", () => {
     expect(calls[0].url).toBe(
       "https://registry.example/v1/skills/search?q=agent+workflows&cursor=next%2Fcursor&limit=25",
     );
+  });
+
+  test("lists personal global installations with target filters", async () => {
+    const calls = mockFetch({
+      installations: [
+        {
+          installationId: "install_personal",
+          skillId: "skill_personal",
+          versionId: "version_personal",
+          enabled: true,
+          source: "personal",
+          installedAt: "2026-05-26T12:00:00.000Z",
+        },
+      ],
+      nextCursor: null,
+    });
+
+    const response = await listRegistrySkillInstallations({
+      baseUrl: "https://registry.example",
+      source: "personal",
+      target: "personal-global",
+      token: "registry-token",
+    });
+
+    expect(calls[0].url).toBe(
+      "https://registry.example/v1/skill-installations?source=personal&target=personal-global",
+    );
+    expect(response.installations[0].installationId).toBe("install_personal");
   });
 
   test("preserves base URL path prefixes", async () => {

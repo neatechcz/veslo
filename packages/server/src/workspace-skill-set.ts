@@ -109,6 +109,16 @@ export function resolveWorkspaceSkillSet(input: ResolveWorkspaceSkillSetInput): 
   const blockedInstallations: BlockedWorkspaceSkillInstallation[] = [];
   const conflicts: WorkspaceSkillConflict[] = [];
   const managedByName = new Map<string, ResolvedWorkspaceSkill>();
+  const orgManagedNames = new Map<string, WorkspaceSkillRegistryInstallation>();
+
+  for (const installation of input.registryInstallations) {
+    const name = normalize(installation.name);
+    if (!name || installation.source === "personal") continue;
+    if (!installation.enabled) continue;
+    if (!isInstallationInScope(installation, input.workspace, input.user, policy)) continue;
+    if (isApprovedRequired(installation.source) && installation.approved !== true) continue;
+    orgManagedNames.set(name, { ...installation, name });
+  }
 
   for (const installation of input.registryInstallations) {
     const name = normalize(installation.name);
@@ -129,6 +139,24 @@ export function resolveWorkspaceSkillSet(input: ResolveWorkspaceSkillSetInput): 
 
     if (isApprovedRequired(installation.source) && installation.approved !== true) {
       blockedInstallations.push(blockedInstallation(installation, "not-approved"));
+      continue;
+    }
+
+    const orgManaged = orgManagedNames.get(name);
+    if (
+      input.workspace.scope === "organization" &&
+      installation.source === "personal" &&
+      orgManaged &&
+      policy.allowPersonalGlobalShadowOrgManaged !== true
+    ) {
+      blockedInstallations.push(blockedInstallation({ ...installation, name }, "shadowed"));
+      conflicts.push({
+        code: "personal-global-shadowed",
+        name,
+        blockingInstallationId: orgManaged.installationId,
+        blockedInstallationId: installation.installationId,
+        message: `Personal global skill ${name} cannot shadow organization-managed skill ${orgManaged.name}.`,
+      });
       continue;
     }
 

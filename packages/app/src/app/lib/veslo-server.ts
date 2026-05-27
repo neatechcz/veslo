@@ -150,6 +150,103 @@ export type VesloHubMcpItem = {
   };
 };
 
+export type VesloSkillRegistryOwnerScope = "user" | "workspace" | "org" | "system";
+export type VesloSkillRegistryVisibility = "personal" | "workspace" | "organization" | "platform";
+export type VesloSkillRegistryReviewStatus = "draft" | "pending_review" | "approved" | "rejected";
+
+export type VesloSkillRegistryVersionSummary = {
+  id: string;
+  version: string;
+  packageSha256: string;
+  createdAt: string;
+};
+
+export type VesloSkillRegistrySearchSkill = {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  tags?: string[];
+  visibility: VesloSkillRegistryVisibility;
+  reviewStatus: VesloSkillRegistryReviewStatus;
+  createdAt: string;
+  updatedAt: string;
+  latestVersion?: VesloSkillRegistryVersionSummary;
+  score?: number;
+  matchedFields?: string[];
+};
+
+export type VesloSkillRegistrySearchResponse = {
+  query: string;
+  skills: VesloSkillRegistrySearchSkill[];
+  nextCursor?: string | null;
+};
+
+export type VesloSkillRegistrySearchParams = {
+  q: string;
+  workspaceId?: string;
+  scope?: VesloSkillRegistryOwnerScope;
+  owner?: VesloSkillRegistryOwnerScope;
+  ownerScope?: VesloSkillRegistryOwnerScope;
+  approvalStatus?: VesloSkillRegistryReviewStatus;
+  reviewStatus?: VesloSkillRegistryReviewStatus;
+  includeDeleted?: boolean;
+  language?: string;
+  cursor?: string;
+  limit?: number;
+};
+
+export type VesloSkillMaterializationEntry = {
+  installationId?: string;
+  skillId?: string;
+  name: string;
+  versionId?: string;
+  packageSha256: string;
+  target?: "workspace" | "personal-global";
+  skillDir?: string;
+  materializedAt?: string;
+};
+
+export type VesloSkillMaterializationStatus = {
+  workspaceId: string;
+  status: "not-configured" | "pending" | "current" | "synced" | string;
+  registryConfigured: boolean;
+  rootDir?: string;
+  materializedSkills: VesloSkillMaterializationEntry[];
+  reloadRequired?: boolean;
+  synced?: boolean;
+};
+
+export type VesloGlobalSkillMaterializationStatus = Omit<VesloSkillMaterializationStatus, "workspaceId"> & {
+  scope: "personal-global";
+};
+
+export type VesloSkillMaterializationSyncOptions = {
+  activeRun?: boolean;
+};
+
+export type VesloSkillRegistryAuthContext = {
+  denToken?: string;
+  denOrgId?: string;
+  denUserId?: string;
+};
+
+export type VesloSkillMaterializationRequestOptions =
+  VesloSkillMaterializationSyncOptions & VesloSkillRegistryAuthContext;
+
+export type VesloSkillMaterializationSyncResult = VesloSkillMaterializationStatus & {
+  synced: boolean;
+  removedSkillNames?: string[];
+  backupDirs?: string[];
+  globalRootDir?: string;
+};
+
+export type VesloGlobalSkillMaterializationSyncResult = VesloGlobalSkillMaterializationStatus & {
+  synced: boolean;
+  removedSkillNames?: string[];
+  backupDirs?: string[];
+};
+
 export type VesloWorkspaceFileContent = {
   path: string;
   content: string;
@@ -1233,6 +1330,180 @@ export class VesloServerError extends Error {
   }
 }
 
+const SKILL_REGISTRY_ISO_INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const SKILL_REGISTRY_SHA256_PATTERN = /^[a-f0-9]{64}$/i;
+const SKILL_REGISTRY_VISIBILITY_VALUES: readonly VesloSkillRegistryVisibility[] = [
+  "personal",
+  "workspace",
+  "organization",
+  "platform",
+];
+const SKILL_REGISTRY_REVIEW_STATUS_VALUES: readonly VesloSkillRegistryReviewStatus[] = [
+  "draft",
+  "pending_review",
+  "approved",
+  "rejected",
+];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requireRegistryRecord(value: unknown, field: string): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error(`${field} must be an object`);
+  }
+  return value;
+}
+
+function requireRegistryString(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${field} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function requireRegistryQuery(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new Error("query must be a string");
+  }
+  return value.trim();
+}
+
+function optionalRegistryString(value: unknown, field: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw new Error(`${field} must be a string`);
+  }
+  return value.trim() || undefined;
+}
+
+function requireRegistryIsoInstant(value: unknown, field: string): string {
+  const normalized = requireRegistryString(value, field);
+  if (!SKILL_REGISTRY_ISO_INSTANT_PATTERN.test(normalized)) {
+    throw new Error(`${field} must be a UTC ISO instant`);
+  }
+  return normalized;
+}
+
+function requireRegistrySha256(value: unknown, field: string): string {
+  const normalized = requireRegistryString(value, field).toLowerCase();
+  if (!SKILL_REGISTRY_SHA256_PATTERN.test(normalized)) {
+    throw new Error(`${field} must be a SHA-256 digest`);
+  }
+  return normalized;
+}
+
+function requireRegistryEnum<T extends string>(value: unknown, field: string, allowed: readonly T[]): T {
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
+    throw new Error(`${field} must be one of: ${allowed.join(", ")}`);
+  }
+  return value as T;
+}
+
+function optionalRegistryStringArray(value: unknown, field: string): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error(`${field} must be an array`);
+  }
+  return value.map((item, index) => requireRegistryString(item, `${field}[${index}]`));
+}
+
+function optionalRegistryScore(value: unknown, field: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${field} must be a finite number`);
+  }
+  return value;
+}
+
+function validateSkillRegistryVersionSummary(value: unknown, field: string): VesloSkillRegistryVersionSummary {
+  const record = requireRegistryRecord(value, field);
+  return {
+    id: requireRegistryString(record.id, `${field}.id`),
+    version: requireRegistryString(record.version, `${field}.version`),
+    packageSha256: requireRegistrySha256(record.packageSha256, `${field}.packageSha256`),
+    createdAt: requireRegistryIsoInstant(record.createdAt, `${field}.createdAt`),
+  };
+}
+
+function validateSkillRegistrySearchSkill(value: unknown, field: string): VesloSkillRegistrySearchSkill {
+  const record = requireRegistryRecord(value, field);
+  const description = optionalRegistryString(record.description, `${field}.description`);
+  const tags = optionalRegistryStringArray(record.tags, `${field}.tags`);
+  const latestVersion =
+    record.latestVersion === undefined || record.latestVersion === null
+      ? undefined
+      : validateSkillRegistryVersionSummary(record.latestVersion, `${field}.latestVersion`);
+  const score = optionalRegistryScore(record.score, `${field}.score`);
+  const matchedFields = optionalRegistryStringArray(record.matchedFields, `${field}.matchedFields`);
+
+  const skill: VesloSkillRegistrySearchSkill = {
+    id: requireRegistryString(record.id, `${field}.id`),
+    slug: requireRegistryString(record.slug, `${field}.slug`),
+    name: requireRegistryString(record.name, `${field}.name`),
+    visibility: requireRegistryEnum(record.visibility, `${field}.visibility`, SKILL_REGISTRY_VISIBILITY_VALUES),
+    reviewStatus: requireRegistryEnum(record.reviewStatus, `${field}.reviewStatus`, SKILL_REGISTRY_REVIEW_STATUS_VALUES),
+    createdAt: requireRegistryIsoInstant(record.createdAt, `${field}.createdAt`),
+    updatedAt: requireRegistryIsoInstant(record.updatedAt, `${field}.updatedAt`),
+  };
+  if (description) skill.description = description;
+  if (tags) skill.tags = tags;
+  if (latestVersion) skill.latestVersion = latestVersion;
+  if (score !== undefined) skill.score = score;
+  if (matchedFields) skill.matchedFields = matchedFields;
+  return skill;
+}
+
+function validateSkillRegistrySearchResponse(value: unknown): VesloSkillRegistrySearchResponse {
+  try {
+    const record = requireRegistryRecord(value, "skill registry search response");
+    if (!Array.isArray(record.skills)) {
+      throw new Error("skills must be an array");
+    }
+    const nextCursor =
+      record.nextCursor === undefined || record.nextCursor === null
+        ? record.nextCursor
+        : requireRegistryString(record.nextCursor, "nextCursor");
+    const response: VesloSkillRegistrySearchResponse = {
+      query: requireRegistryQuery(record.query),
+      skills: record.skills.map((skill, index) => validateSkillRegistrySearchSkill(skill, `skills[${index}]`)),
+    };
+    if (nextCursor !== undefined) response.nextCursor = nextCursor;
+    return response;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Invalid skill registry search response";
+    throw new VesloServerError(502, "skill_registry_invalid_payload", "Skill registry returned an invalid search payload", {
+      reason,
+    });
+  }
+}
+
+function setTrimmedSearchParam(search: URLSearchParams, key: string, value?: string | null) {
+  const normalized = value?.trim() ?? "";
+  if (normalized) search.set(key, normalized);
+}
+
+function buildSkillRegistrySearchPath(params: VesloSkillRegistrySearchParams) {
+  const search = new URLSearchParams();
+  setTrimmedSearchParam(search, "q", params.q);
+  setTrimmedSearchParam(search, "workspaceId", params.workspaceId);
+  const ownerScope = params.ownerScope ?? params.owner ?? params.scope;
+  if (ownerScope) search.set("ownerScope", ownerScope);
+  const reviewStatus = params.reviewStatus ?? params.approvalStatus;
+  if (reviewStatus) search.set("reviewStatus", reviewStatus);
+  if (typeof params.includeDeleted === "boolean") {
+    search.set("includeDeleted", params.includeDeleted ? "true" : "false");
+  }
+  setTrimmedSearchParam(search, "language", params.language);
+  setTrimmedSearchParam(search, "cursor", params.cursor);
+  if (typeof params.limit === "number" && Number.isSafeInteger(params.limit) && params.limit > 0) {
+    search.set("limit", String(params.limit));
+  }
+  const suffix = search.toString();
+  return `/v1/skills/search${suffix ? `?${suffix}` : ""}`;
+}
+
 function buildHeaders(
   token?: string,
   hostToken?: string,
@@ -1277,6 +1548,22 @@ function buildGatewayCallerHeaders(userToken: string) {
   return {
     "X-Veslo-Gateway-Authorization": normalizeBearerToken(userToken, "userToken"),
   };
+}
+
+function buildDenContextHeaders(options?: VesloSkillRegistryAuthContext): Record<string, string> | undefined {
+  const denToken = options?.denToken?.trim() ?? "";
+  const denOrgId = options?.denOrgId?.trim() ?? "";
+  const denUserId = options?.denUserId?.trim() ?? "";
+  const headers = {
+    ...(denToken ? { "x-veslo-den-token": denToken } : {}),
+    ...(denOrgId ? { "x-veslo-den-org-id": denOrgId } : {}),
+    ...(denUserId ? { "x-veslo-den-user-id": denUserId } : {}),
+  };
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+function skillMaterializationSyncBody(options?: VesloSkillMaterializationRequestOptions): VesloSkillMaterializationSyncOptions | undefined {
+  return options?.activeRun === true ? { activeRun: true } : undefined;
 }
 
 export async function requestManagedAiAccessBundle(baseUrl: string, userToken: string) {
@@ -1452,6 +1739,8 @@ export function createVesloServerClient(options: {
     workspaceProvision: 20_000,
     aiAccess: 30_000,
     binary: 60_000,
+    skillRegistrySearch: 10_000,
+    skillMaterialization: 30_000,
   };
 
   return {
@@ -1861,6 +2150,63 @@ export function createVesloServerClient(options: {
           body: payload,
         },
       ),
+    searchRegistrySkills: async (params: VesloSkillRegistrySearchParams) => {
+      const payload = await requestJson<unknown>(baseUrl, buildSkillRegistrySearchPath(params), {
+        token,
+        hostToken,
+        timeoutMs: timeouts.skillRegistrySearch,
+      });
+      return validateSkillRegistrySearchResponse(payload);
+    },
+    getGlobalSkillMaterializationStatus: () =>
+      requestJson<VesloGlobalSkillMaterializationStatus>(
+        baseUrl,
+        "/skills/materialization",
+        {
+          token,
+          hostToken,
+          timeoutMs: timeouts.skillMaterialization,
+        },
+      ),
+    syncGlobalSkillMaterialization: (options?: VesloSkillMaterializationRequestOptions) =>
+      requestJson<VesloGlobalSkillMaterializationSyncResult>(
+        baseUrl,
+        "/skills/materialization/sync-global",
+        {
+          method: "POST",
+          token,
+          hostToken,
+          body: skillMaterializationSyncBody(options),
+          extraHeaders: buildDenContextHeaders(options),
+          timeoutMs: timeouts.skillMaterialization,
+        },
+      ),
+    getWorkspaceSkillMaterializationStatus: (workspaceId: string) =>
+      requestJson<VesloSkillMaterializationStatus>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/skills/materialization`,
+        {
+          token,
+          hostToken,
+          timeoutMs: timeouts.skillMaterialization,
+        },
+      ),
+    syncWorkspaceSkillMaterialization: (
+      workspaceId: string,
+      options?: VesloSkillMaterializationRequestOptions,
+    ) =>
+      requestJson<VesloSkillMaterializationSyncResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/skills/materialization/sync`,
+        {
+          method: "POST",
+          token,
+          hostToken,
+          body: skillMaterializationSyncBody(options),
+          extraHeaders: buildDenContextHeaders(options),
+          timeoutMs: timeouts.skillMaterialization,
+        },
+      ),
     listHubSkills: (options?: { denToken?: string; denOrgId?: string }) => {
       const denToken = options?.denToken?.trim() ?? "";
       const denOrgId = options?.denOrgId?.trim() ?? "";
@@ -1930,21 +2276,34 @@ export function createVesloServerClient(options: {
         },
       );
     },
-    getSkill: (workspaceId: string, name: string, options?: { includeGlobal?: boolean }) => {
-      const query = options?.includeGlobal ? "?includeGlobal=true" : "";
+    getSkill: (workspaceId: string, name: string, options?: { includeGlobal?: boolean; path?: string }) => {
+      const queryParams = new URLSearchParams();
+      if (options?.includeGlobal) queryParams.set("includeGlobal", "true");
+      if (options?.path?.trim()) queryParams.set("path", options.path.trim());
+      const query = queryParams.toString();
       return requestJson<VesloSkillContent>(
         baseUrl,
-        `/workspace/${workspaceId}/skills/${encodeURIComponent(name)}${query}`,
+        `/workspace/${workspaceId}/skills/${encodeURIComponent(name)}${query ? `?${query}` : ""}`,
         { token, hostToken },
       );
     },
-    upsertSkill: (workspaceId: string, payload: { name: string; content: string; description?: string }) =>
+    upsertSkill: (workspaceId: string, payload: { name: string; path?: string; content: string; description?: string }) =>
       requestJson<VesloSkillItem>(baseUrl, `/workspace/${workspaceId}/skills`, {
         token,
         hostToken,
         method: "POST",
         body: payload,
       }),
+    deleteSkill: (workspaceId: string, name: string, options?: { path?: string }) => {
+      const queryParams = new URLSearchParams();
+      if (options?.path?.trim()) queryParams.set("path", options.path.trim());
+      const query = queryParams.toString();
+      return requestJson<{ ok: true; name: string; path: string }>(
+        baseUrl,
+        `/workspace/${workspaceId}/skills/${encodeURIComponent(name)}${query ? `?${query}` : ""}`,
+        { token, hostToken, method: "DELETE" },
+      );
+    },
     listMcp: (workspaceId: string) =>
       requestJson<{ items: VesloMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, { token, hostToken }),
     addMcp: (workspaceId: string, payload: { name: string; config: Record<string, unknown> }) =>

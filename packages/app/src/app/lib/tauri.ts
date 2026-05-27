@@ -903,6 +903,18 @@ export async function installSkillTemplate(
   });
 }
 
+export async function installGlobalSkillTemplate(
+  name: string,
+  content: string,
+  options?: { overwrite?: boolean },
+): Promise<ExecResult> {
+  return invoke<ExecResult>("install_global_skill_template", {
+    name,
+    content,
+    overwrite: options?.overwrite ?? false,
+  });
+}
+
 export type LocalSkillCard = {
   name: string;
   path: string;
@@ -932,12 +944,24 @@ export async function readLocalSkill(projectDir: string, name: string): Promise<
   return invoke<LocalSkillContent>("read_local_skill", { projectDir, name });
 }
 
+export async function readLocalSkillAtPath(projectDir: string, name: string, path: string): Promise<LocalSkillContent> {
+  return invoke<LocalSkillContent>("read_local_skill_at_path", { projectDir, name, path });
+}
+
 export async function writeLocalSkill(projectDir: string, name: string, content: string): Promise<ExecResult> {
   return invoke<ExecResult>("write_local_skill", { projectDir, name, content });
 }
 
+export async function writeLocalSkillAtPath(projectDir: string, name: string, path: string, content: string): Promise<ExecResult> {
+  return invoke<ExecResult>("write_local_skill_at_path", { projectDir, name, path, content });
+}
+
 export async function uninstallSkill(projectDir: string, name: string): Promise<ExecResult> {
   return invoke<ExecResult>("uninstall_skill", { projectDir, name });
+}
+
+export async function uninstallSkillAtPath(projectDir: string, name: string, path: string): Promise<ExecResult> {
+  return invoke<ExecResult>("uninstall_skill_at_path", { projectDir, name, path });
 }
 
 export type OpencodeConfigFile = {

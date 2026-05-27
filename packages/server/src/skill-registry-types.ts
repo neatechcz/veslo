@@ -11,7 +11,7 @@ import {
 
 export type RegistrySkillVisibility = "personal" | "workspace" | "organization" | "platform";
 export type RegistrySkillReviewStatus = "draft" | "pending_review" | "approved" | "rejected";
-export type RegistrySkillInstallationSource = "personal" | "workspace" | "organization";
+export type RegistrySkillInstallationSource = "personal" | "workspace" | "organization" | "platform";
 
 export type RegistrySkillVersionSummary = {
   id: string;
@@ -69,14 +69,29 @@ export type RegistrySkillInstallation = {
   source: RegistrySkillInstallationSource;
   installedAt: string;
   updatedAt?: string;
+  name?: string;
+  packageSha256?: string;
+  ownerUserId?: string | null;
+  orgId?: string | null;
+  workspaceId?: string | null;
+  approved?: boolean;
+  desiredVersionId?: string | null;
+  desiredPackageSha256?: string | null;
 };
 
 export type RegistrySkillInstallationResponse = {
   installation: RegistrySkillInstallation;
 };
 
+export type RegistrySkillInstallationsResponse = {
+  installations: RegistrySkillInstallation[];
+  nextCursor?: string | null;
+};
+
 export type WorkspaceSkillSetResponse = {
   workspaceId: string;
+  skillSetId?: string;
+  revision?: string;
   skills: RegistrySkillInstallation[];
 };
 
@@ -90,6 +105,25 @@ export type RegistrySkillReviewRequestResponse = {
 
 export type RegistrySkillSearchResponse = RegistrySkillListResponse & {
   query: string;
+};
+
+export type RegistrySkillEvent = {
+  id: string;
+  action: string;
+  orgId?: string | null;
+  workspaceId?: string | null;
+  skillId?: string | null;
+  versionId?: string | null;
+  installationId?: string | null;
+  actorUserId?: string | null;
+  payload?: unknown;
+  createdAt: string;
+};
+
+export type RegistrySkillEventsResponse = {
+  events: RegistrySkillEvent[];
+  nextCursor?: string | null;
+  revision?: string | null;
 };
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
@@ -131,6 +165,11 @@ const requireBoolean = (value: unknown, field: string): boolean => {
     throw new Error(`Skill registry ${field} must be a boolean`);
   }
   return value;
+};
+
+const optionalBoolean = (value: unknown, field: string): boolean | undefined => {
+  if (value === undefined || value === null) return undefined;
+  return requireBoolean(value, field);
 };
 
 const requireIsoDateString = (value: unknown, field: string): string => {
@@ -215,6 +254,12 @@ const validateSkillSummary = (value: unknown, field: string): RegistrySkillSumma
 };
 
 const validatePaginatedCursor = (value: unknown, field: string): string | null | undefined => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  return requireString(value, field);
+};
+
+const optionalNullableString = (value: unknown, field: string): string | null | undefined => {
   if (value === undefined) return undefined;
   if (value === null) return null;
   return requireString(value, field);
@@ -367,15 +412,35 @@ export function validateRegistrySkillPackageResponse(value: unknown): RegistrySk
 const validateInstallation = (value: unknown, field: string): RegistrySkillInstallation => {
   const record = requireRecord(value, field);
   const updatedAt = record.updatedAt === undefined ? undefined : requireIsoDateString(record.updatedAt, `${field}.updatedAt`);
+  const name = optionalString(record.name, `${field}.name`);
+  const packageSha256 = record.packageSha256 === undefined || record.packageSha256 === null
+    ? undefined
+    : requireSha256(record.packageSha256, `${field}.packageSha256`);
+  const ownerUserId = optionalNullableString(record.ownerUserId, `${field}.ownerUserId`);
+  const orgId = optionalNullableString(record.orgId, `${field}.orgId`);
+  const workspaceId = optionalNullableString(record.workspaceId, `${field}.workspaceId`);
+  const approved = optionalBoolean(record.approved, `${field}.approved`);
+  const desiredVersionId = optionalNullableString(record.desiredVersionId, `${field}.desiredVersionId`);
+  const desiredPackageSha256 = record.desiredPackageSha256 === undefined || record.desiredPackageSha256 === null
+    ? optionalNullableString(record.desiredPackageSha256, `${field}.desiredPackageSha256`)
+    : requireSha256(record.desiredPackageSha256, `${field}.desiredPackageSha256`);
   const installation: RegistrySkillInstallation = {
     installationId: requireString(record.installationId, `${field}.installationId`),
     skillId: requireString(record.skillId, `${field}.skillId`),
     versionId: requireString(record.versionId, `${field}.versionId`),
     enabled: requireBoolean(record.enabled, `${field}.enabled`),
-    source: requireEnum(record.source, `${field}.source`, ["personal", "workspace", "organization"]),
+    source: requireEnum(record.source, `${field}.source`, ["personal", "workspace", "organization", "platform"]),
     installedAt: requireIsoDateString(record.installedAt, `${field}.installedAt`),
   };
   if (updatedAt) installation.updatedAt = updatedAt;
+  if (name) installation.name = name;
+  if (packageSha256) installation.packageSha256 = packageSha256;
+  if (ownerUserId !== undefined) installation.ownerUserId = ownerUserId;
+  if (orgId !== undefined) installation.orgId = orgId;
+  if (workspaceId !== undefined) installation.workspaceId = workspaceId;
+  if (approved !== undefined) installation.approved = approved;
+  if (desiredVersionId !== undefined) installation.desiredVersionId = desiredVersionId;
+  if (desiredPackageSha256 !== undefined) installation.desiredPackageSha256 = desiredPackageSha256;
   return installation;
 };
 
@@ -383,6 +448,26 @@ export function validateRegistrySkillInstallationResponse(value: unknown): Regis
   const record = requireRecord(value, "skill installation response");
   return {
     installation: validateInstallation(record.installation, "installation"),
+  };
+}
+
+export function validateRegistrySkillInstallationsResponse(value: unknown): RegistrySkillInstallationsResponse {
+  const record = requireRecord(value, "skill installations response");
+  if (!Array.isArray(record.installations)) {
+    throw new Error("Skill registry installations must be an array");
+  }
+  const seenInstallationIds = new Set<string>();
+  const installations = record.installations.map((installation, index) => {
+    const parsed = validateInstallation(installation, `installations[${index}]`);
+    if (seenInstallationIds.has(parsed.installationId)) {
+      throw new Error(`Skill registry installations contain duplicate installationId: ${parsed.installationId}`);
+    }
+    seenInstallationIds.add(parsed.installationId);
+    return parsed;
+  });
+  return {
+    installations,
+    nextCursor: validatePaginatedCursor(record.nextCursor, "nextCursor"),
   };
 }
 
@@ -402,6 +487,8 @@ export function validateWorkspaceSkillSetResponse(value: unknown): WorkspaceSkil
   });
   return {
     workspaceId: requireString(record.workspaceId, "workspaceId"),
+    skillSetId: optionalString(record.skillSetId, "skillSetId"),
+    revision: optionalString(record.revision, "revision"),
     skills,
   };
 }
@@ -425,5 +512,42 @@ export function validateRegistrySkillSearchResponse(value: unknown): RegistrySki
   return {
     ...list,
     query: requireString(record.query, "query"),
+  };
+}
+
+const validateRegistrySkillEvent = (value: unknown, field: string): RegistrySkillEvent => {
+  const record = requireRecord(value, field);
+  const event: RegistrySkillEvent = {
+    id: requireString(record.id, `${field}.id`),
+    action: requireString(record.action, `${field}.action`),
+    createdAt: requireIsoDateString(record.createdAt, `${field}.createdAt`),
+  };
+
+  const orgId = optionalNullableString(record.orgId, `${field}.orgId`);
+  const workspaceId = optionalNullableString(record.workspaceId, `${field}.workspaceId`);
+  const skillId = optionalNullableString(record.skillId, `${field}.skillId`);
+  const versionId = optionalNullableString(record.versionId, `${field}.versionId`);
+  const installationId = optionalNullableString(record.installationId, `${field}.installationId`);
+  const actorUserId = optionalNullableString(record.actorUserId, `${field}.actorUserId`);
+  if (orgId !== undefined) event.orgId = orgId;
+  if (workspaceId !== undefined) event.workspaceId = workspaceId;
+  if (skillId !== undefined) event.skillId = skillId;
+  if (versionId !== undefined) event.versionId = versionId;
+  if (installationId !== undefined) event.installationId = installationId;
+  if (actorUserId !== undefined) event.actorUserId = actorUserId;
+  if (Object.prototype.hasOwnProperty.call(record, "payload")) event.payload = record.payload;
+  return event;
+};
+
+export function validateRegistrySkillEventsResponse(value: unknown): RegistrySkillEventsResponse {
+  const record = requireRecord(value, "skill registry events response");
+  if (!Array.isArray(record.events)) {
+    throw new Error("Skill registry events must be an array");
+  }
+  const revision = validatePaginatedCursor(record.revision, "revision");
+  return {
+    events: record.events.map((event, index) => validateRegistrySkillEvent(event, `events[${index}]`)),
+    nextCursor: validatePaginatedCursor(record.nextCursor, "nextCursor"),
+    revision,
   };
 }

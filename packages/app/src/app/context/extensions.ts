@@ -27,12 +27,16 @@ import {
 import { buildSkillInventory, type BuildSkillInventoryInput, type SkillMutationTarget } from "../lib/skill-inventory";
 import {
   importSkill,
+  installGlobalSkillTemplate,
   installSkillTemplate,
   listLocalSkills,
   listLocalSkillsScoped as listLocalSkillsScopedCommand,
   readLocalSkill,
+  readLocalSkillAtPath,
   uninstallSkill as uninstallSkillCommand,
+  uninstallSkillAtPath,
   writeLocalSkill,
+  writeLocalSkillAtPath,
   pickDirectory,
   readOpencodeConfig,
   writeOpencodeConfig,
@@ -555,6 +559,13 @@ export function createExtensionsStore(options: {
       if (result === "published") return;
       continue;
     }
+  }
+
+  async function invalidateSkillRegistryInventory() {
+    markHubSkillsSourceChanged();
+    markLocalSkillsSourceChanged();
+    skillInventoryLoaded = false;
+    await refreshSkillInventory({ force: true });
   }
 
   async function installHubSkill(name: string, target: HubSkillInstallTarget): Promise<{ ok: boolean; message: string }> {
@@ -1415,7 +1426,7 @@ export function createExtensionsStore(options: {
     }
   }
 
-  async function readSkill(name: string): Promise<{ name: string; path: string; content: string } | null> {
+  async function readSkill(name: string, instancePath?: string): Promise<{ name: string; path: string; content: string } | null> {
     const trimmed = name.trim();
     if (!trimmed) return null;
 
@@ -1439,7 +1450,7 @@ export function createExtensionsStore(options: {
         const result = await (vesloClient as VesloServerClient & { getSkill: any }).getSkill(
           vesloWorkspaceId,
           trimmed,
-          { includeGlobal: isLocalWorkspace },
+          { includeGlobal: isLocalWorkspace, ...(instancePath?.trim() ? { path: instancePath.trim() } : {}) },
         );
         return {
           name: result.item.name,
@@ -1469,7 +1480,9 @@ export function createExtensionsStore(options: {
 
     try {
       setSkillsStatus(null);
-      const result = await readLocalSkill(root, trimmed);
+      const result = instancePath?.trim()
+        ? await readLocalSkillAtPath(root, trimmed, instancePath.trim())
+        : await readLocalSkill(root, trimmed);
       return { name: trimmed, path: result.path, content: result.content };
     } catch (e) {
       setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
@@ -1479,6 +1492,9 @@ export function createExtensionsStore(options: {
 
   const normalizeSkillMutationPath = (value: string | undefined) =>
     String(value ?? "").trim().replace(/\\/g, "/");
+
+  const isManagedSkillMutationPath = (value: string | undefined) =>
+    normalizeSkillMutationPath(value).includes("/.opencode/skills/veslo-managed/");
 
   const activeSkillForMutationTarget = (target: SkillMutationTarget):
     | { skill: SkillCard; normalizedPath: string }
@@ -1512,7 +1528,7 @@ export function createExtensionsStore(options: {
       return null;
     }
 
-    const result = await readSkill(resolved.skill.name);
+    const result = await readSkill(resolved.skill.name, resolved.skill.path);
     if (!result) return null;
     if (normalizeSkillMutationPath(result.path) !== resolved.normalizedPath) {
       setSkillsStatus(translate("skills.failed_load_skill"));
@@ -1532,15 +1548,22 @@ export function createExtensionsStore(options: {
       return { ok: false, message: resolved.message };
     }
 
-    const current = await readSkill(resolved.skill.name);
+    const current = await readSkill(resolved.skill.name, resolved.skill.path);
     if (!current || normalizeSkillMutationPath(current.path) !== resolved.normalizedPath) {
       const message = translate("skills.failed_save_skill");
       setSkillsStatus(message);
       return { ok: false, message };
     }
 
+    if (isManagedSkillMutationPath(resolved.skill.path)) {
+      const message = translate("skills.registry_action_pending");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+
     return saveSkill({
       name: resolved.skill.name,
+      path: resolved.skill.path,
       content,
       description: resolved.skill.description,
     });
@@ -1552,10 +1575,138 @@ export function createExtensionsStore(options: {
       setSkillsStatus(resolved.message);
       return;
     }
-    setSkillsStatus(translate("skills.uninstall_scoped_pending"));
+
+    if (isManagedSkillMutationPath(resolved.skill.path)) {
+      setSkillsStatus(translate("skills.registry_action_pending"));
+      return;
+    }
+
+    const root = options.activeWorkspaceRoot().trim();
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const isLocalWorkspace = options.workspaceType() === "local";
+    const vesloClient = options.vesloServerClient();
+    const vesloWorkspaceId = options.vesloServerWorkspaceId();
+    const vesloCapabilities = options.vesloServerCapabilities();
+    const canUseVesloServer =
+      options.vesloServerStatus() === "connected" &&
+      vesloClient &&
+      vesloWorkspaceId &&
+      vesloCapabilities?.skills?.write &&
+      typeof (vesloClient as any).deleteSkill === "function";
+
+    options.setBusy(true);
+    options.setError(null);
+    setSkillsStatus(null);
+
+    try {
+      if (canUseVesloServer) {
+        await (vesloClient as VesloServerClient & {
+          deleteSkill: (workspaceId: string, name: string, options?: { path?: string }) => Promise<unknown>;
+        }).deleteSkill(vesloWorkspaceId, resolved.skill.name, { path: resolved.skill.path });
+      } else {
+        if (isRemoteWorkspace) {
+          throw new Error("Veslo server unavailable. Connect to delete skills.");
+        }
+        if (!isTauriRuntime()) {
+          throw new Error(translate("skills.desktop_required"));
+        }
+        if (!isLocalWorkspace) {
+          throw new Error("Local workers are required to delete skills.");
+        }
+        const result = await uninstallSkillAtPath(root, resolved.skill.name, resolved.skill.path);
+        if (!result.ok) {
+          throw new Error(result.stderr || result.stdout || translate("skills.uninstall_failed"));
+        }
+      }
+
+      setSkillsStatus(translate("skills.uninstalled"));
+      options.markReloadRequired?.("skills", { type: "skill", name: resolved.skill.name, action: "removed" });
+      await refreshSkills({ force: true });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      options.setError(addOpencodeCacheHint(message));
+    } finally {
+      options.setBusy(false);
+    }
   }
 
-  async function saveSkill(input: { name: string; content: string; description?: string }): Promise<SkillSaveResult> {
+  async function copySkillInstanceToGlobal(
+    target: SkillMutationTarget,
+    optionsOverride?: { deleteSource?: boolean },
+  ): Promise<SkillSaveResult> {
+    const resolved = activeSkillForMutationTarget(target);
+    if ("message" in resolved) {
+      setSkillsStatus(resolved.message);
+      return { ok: false, message: resolved.message };
+    }
+
+    if (isManagedSkillMutationPath(resolved.skill.path)) {
+      const message = translate("skills.registry_action_pending");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+
+    if (!isTauriRuntime()) {
+      const message = translate("skills.desktop_required");
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+
+    if (options.workspaceType() !== "local") {
+      const message = "Local workers are required to copy skills to all workspaces.";
+      setSkillsStatus(message);
+      return { ok: false, message };
+    }
+
+    const root = options.activeWorkspaceRoot().trim();
+    const deleteSource = optionsOverride?.deleteSource === true;
+    options.setBusy(true);
+    options.setError(null);
+    setSkillsStatus(null);
+
+    try {
+      const current = await readSkill(resolved.skill.name, resolved.skill.path);
+      if (!current || normalizeSkillMutationPath(current.path) !== resolved.normalizedPath) {
+        const message = translate("skills.failed_load_skill");
+        setSkillsStatus(message);
+        return { ok: false, message };
+      }
+
+      const installResult = await installGlobalSkillTemplate(resolved.skill.name, current.content, { overwrite: false });
+      if (!installResult.ok) {
+        const message = installResult.stderr || installResult.stdout || translate("skills.failed_save_skill");
+        setSkillsStatus(message);
+        return { ok: false, message };
+      }
+
+      if (deleteSource) {
+        const deleteResult = await uninstallSkillAtPath(root, resolved.skill.name, resolved.skill.path);
+        if (!deleteResult.ok) {
+          throw new Error(deleteResult.stderr || deleteResult.stdout || translate("skills.uninstall_failed"));
+        }
+      }
+
+      const message = translate(deleteSource ? "skills.moved_to_global" : "skills.copied_to_global");
+      setSkillsStatus(message);
+      options.markReloadRequired?.("skills", {
+        type: "skill",
+        name: resolved.skill.name,
+        action: deleteSource ? "updated" : "added",
+      });
+      await refreshSkills({ force: true });
+      await refreshSkillInventory({ force: true });
+      return { ok: true, message };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      const hintedMessage = addOpencodeCacheHint(message);
+      options.setError(hintedMessage);
+      return { ok: false, message: hintedMessage };
+    } finally {
+      options.setBusy(false);
+    }
+  }
+
+  async function saveSkill(input: { name: string; path?: string; content: string; description?: string }): Promise<SkillSaveResult> {
     const trimmed = input.name.trim();
     if (!trimmed) return { ok: false, message: translate("skills.bundle_missing_name") };
 
@@ -1584,6 +1735,7 @@ export function createExtensionsStore(options: {
       try {
         await vesloClient.upsertSkill(vesloWorkspaceId, {
           name: trimmed,
+          ...(input.path?.trim() ? { path: input.path.trim() } : {}),
           content: input.content,
           description: input.description,
         });
@@ -1624,7 +1776,9 @@ export function createExtensionsStore(options: {
     options.setError(null);
     setSkillsStatus(null);
     try {
-      const result = await writeLocalSkill(root, trimmed, input.content);
+      const result = input.path?.trim()
+        ? await writeLocalSkillAtPath(root, trimmed, input.path.trim(), input.content)
+        : await writeLocalSkill(root, trimmed, input.content);
       const message = result.stderr || result.stdout || translate("skills.unknown_error");
       if (!result.ok) {
         setSkillsStatus(message);
@@ -1679,6 +1833,7 @@ export function createExtensionsStore(options: {
     isPluginInstalledByName,
     refreshSkills,
     refreshSkillInventory,
+    invalidateSkillRegistryInventory,
     refreshHubSkills,
     refreshHubMcp,
     refreshPlugins,
@@ -1694,6 +1849,7 @@ export function createExtensionsStore(options: {
     readSkillInstance,
     saveSkillInstance,
     deleteSkillInstance,
+    copySkillInstanceToGlobal,
     installHubMcp,
     abortRefreshes,
   };

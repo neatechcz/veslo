@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { expect, test } from "bun:test";
 
 import {
+  validateRegistrySkillInstallationsResponse,
   validateRegistrySkillInstallationResponse,
   validateRegistrySkillListResponse,
   validateRegistrySkillPackageResponse,
@@ -253,29 +254,67 @@ test("validateRegistrySkillPackageResponse rejects package files over local inst
   ).toThrow(/too large/);
 });
 
-test("validateRegistrySkillInstallationResponse accepts an installation and rejects unknown sources", () => {
+test("validateRegistrySkillInstallationResponse accepts installation metadata and rejects unknown sources", () => {
   const response = validateRegistrySkillInstallationResponse({
     installation: installation({
+      name: "demo-skill",
+      packageSha256: digest,
+      ownerUserId: "user_1",
+      orgId: "org_1",
+      workspaceId: "workspace_1",
+      approved: true,
+      desiredVersionId: "version_demo_pinned",
+      desiredPackageSha256: digest,
       updatedAt: "2026-05-26T12:10:00.000Z",
     }),
   });
 
   expect(response.installation.source).toBe("workspace");
+  expect(response.installation.name).toBe("demo-skill");
+  expect(response.installation.approved).toBe(true);
+  expect(response.installation.desiredVersionId).toBe("version_demo_pinned");
   expect(response.installation.updatedAt).toBe("2026-05-26T12:10:00.000Z");
 
   expect(() =>
     validateRegistrySkillInstallationResponse({
-      installation: installation({ source: "platform" }),
+      installation: installation({ source: "team" }),
     }),
   ).toThrow(/source/);
+});
+
+test("validateRegistrySkillInstallationsResponse accepts a page and rejects duplicate installation ids", () => {
+  const response = validateRegistrySkillInstallationsResponse({
+    installations: [installation()],
+    nextCursor: null,
+  });
+
+  expect(response.installations[0].installationId).toBe("install_1");
+  expect(response.nextCursor).toBeNull();
+
+  expect(() =>
+    validateRegistrySkillInstallationsResponse({
+      installations: [
+        installation(),
+        installation({
+          skillId: "skill_other",
+          versionId: "version_other",
+          installedAt: "2026-05-26T12:01:00.000Z",
+        }),
+      ],
+    }),
+  ).toThrow(/duplicate installationId/);
 });
 
 test("validateWorkspaceSkillSetResponse accepts installations and rejects duplicate skill ids", () => {
   const response = validateWorkspaceSkillSetResponse({
     workspaceId: "workspace_1",
+    skillSetId: "skill_set_1",
+    revision: "rev_1",
     skills: [installation()],
   });
 
+  expect(response.skillSetId).toBe("skill_set_1");
+  expect(response.revision).toBe("rev_1");
   expect(response.skills[0].source).toBe("workspace");
 
   expect(() =>

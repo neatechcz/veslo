@@ -191,3 +191,24 @@ test("skill mutation targets keep exact instance scope, path, and workspace", ()
     workspaceId: "ws1",
   });
 });
+
+test("managed materialized skill instances are read-only until registry mutation APIs are connected", () => {
+  const items = buildSkillInventory({
+    globalSkills: [],
+    workspaceSkillsByWorkspaceId: {
+      ws1: {
+        workspace: { id: "ws1", label: "Veslo", kind: "local" },
+        skills: [
+          {
+            name: "managed-research",
+            path: "/workspaces/veslo/.opencode/skills/veslo-managed/managed-research/SKILL.md",
+            scope: "workspace",
+          },
+        ],
+      },
+    },
+    hubSkills: [],
+  });
+
+  assert.equal(items[0]?.workspaceInstances[0]?.writable, false);
+});

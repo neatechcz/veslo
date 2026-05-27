@@ -79,6 +79,9 @@ const inferSourceFromPath = (path: string): SkillInstance["source"] => {
   return "unknown";
 };
 
+const isManagedMaterializedSkillPath = (path: string): boolean =>
+  path.replace(/\\/g, "/").includes("/.opencode/skills/veslo-managed/");
+
 const normalizeSource = (source: SkillInventorySkillInput["source"], path: string): SkillInstance["source"] => {
   if (source && SKILL_SOURCES.has(source)) return source;
   return inferSourceFromPath(path);
@@ -108,6 +111,7 @@ const normalizeSkillInstance = (
 
   const description = normalizeText(skill.description);
   const trigger = normalizeText(skill.trigger);
+  const defaultWritable = !isManagedMaterializedSkillPath(path);
 
   return {
     id: instanceId(options.scope, options.workspaceId, name, path),
@@ -120,7 +124,7 @@ const normalizeSkillInstance = (
     trigger,
     source: normalizeSource(skill.source, path),
     readable: skill.readable ?? true,
-    writable: skill.writable ?? true,
+    writable: skill.writable ?? defaultWritable,
   };
 };
 

@@ -34,6 +34,8 @@ Skills are the main reusable workflow abstraction across workers and workspaces.
 Current skills surface includes:
 
 - installed skills from the app-wide inventory
+- local filters, table mode, and bulk selection for inventory locations
+- a detail drawer with locations and version-history placeholders
 - hub skills
 - local skill import
 - reading and saving skill content
@@ -59,6 +61,13 @@ user-global skill root when available.
 Hub skill installs require an explicit target. Today, the supported target is
 the active workspace; all-workspaces Hub install is visible as unavailable until
 there is a safe global-write backend.
+
+Registry-backed distribution is documented separately in
+`docs/features/skill-registry-and-distribution.md`. The Skills page may show
+registry-oriented copy, move, publish, approval, restore, and adoption controls
+only when they are backed by registry routes or clearly surfaced as pending.
+Filesystem-only inventory must remain a fallback and must not be treated as the
+source of truth for organization-approved or platform-approved skills.
 
 ## Plugins
 

@@ -1,13 +1,20 @@
 import { ApiError } from "./errors.js";
 import {
   validateRegistrySkillListResponse,
+  validateRegistrySkillEventsResponse,
+  validateRegistrySkillInstallationsResponse,
   validateRegistrySkillPackageResponse,
   validateRegistrySkillSearchResponse,
+  validateWorkspaceSkillSetResponse,
 } from "./skill-registry-types.js";
 import type {
+  RegistrySkillEventsResponse,
+  RegistrySkillInstallationSource,
+  RegistrySkillInstallationsResponse,
   RegistrySkillListResponse,
   RegistrySkillPackageResponse,
   RegistrySkillSearchResponse,
+  WorkspaceSkillSetResponse,
 } from "./skill-registry-types.js";
 
 type RegistryClientInput = {
@@ -15,6 +22,7 @@ type RegistryClientInput = {
   token?: string;
   denToken?: string;
   orgId?: string;
+  userId?: string;
 };
 
 type PaginatedInput = RegistryClientInput & {
@@ -24,10 +32,29 @@ type PaginatedInput = RegistryClientInput & {
 
 type SearchInput = PaginatedInput & {
   query: string;
+  workspaceId?: string;
+  ownerScope?: string;
+  reviewStatus?: string;
+  includeDeleted?: boolean;
+  language?: string;
 };
 
 type DownloadPackageInput = RegistryClientInput & {
   versionId: string;
+};
+
+type WorkspaceSkillSetInput = RegistryClientInput & {
+  workspaceId: string;
+};
+
+type ListInstallationsInput = PaginatedInput & {
+  source?: RegistrySkillInstallationSource;
+  target?: "personal-global" | "workspace";
+};
+
+type EventsInput = PaginatedInput & {
+  orgId?: string;
+  workspaceId?: string;
 };
 
 function parseBaseUrl(baseUrl: string): URL {
@@ -64,6 +91,9 @@ function buildHeaders(input: RegistryClientInput): Headers {
 
   const orgId = input.orgId?.trim();
   if (orgId) headers.set("x-veslo-den-org-id", orgId);
+
+  const userId = input.userId?.trim();
+  if (userId) headers.set("x-veslo-den-user-id", userId);
 
   return headers;
 }
@@ -164,6 +194,11 @@ export async function searchRegistrySkills(input: SearchInput): Promise<Registry
     q: input.query,
     cursor: input.cursor,
     limit: input.limit,
+    workspaceId: input.workspaceId,
+    ownerScope: input.ownerScope,
+    reviewStatus: input.reviewStatus,
+    includeDeleted: input.includeDeleted === undefined ? undefined : input.includeDeleted ? "true" : "false",
+    language: input.language,
   });
   const payload = await fetchRegistryJson(input, url);
   return validatePayload(validateRegistrySkillSearchResponse, payload, url);
@@ -175,4 +210,36 @@ export async function downloadSkillPackageFromRegistry(
   const url = buildUrl(input.baseUrl, `/v1/skill-versions/${encodeURIComponent(input.versionId)}/package`);
   const payload = await fetchRegistryJson(input, url);
   return validatePayload(validateRegistrySkillPackageResponse, payload, url);
+}
+
+export async function getWorkspaceSkillSetFromRegistry(
+  input: WorkspaceSkillSetInput,
+): Promise<WorkspaceSkillSetResponse> {
+  const url = buildUrl(input.baseUrl, `/v1/workspaces/${encodeURIComponent(input.workspaceId)}/skill-set`);
+  const payload = await fetchRegistryJson(input, url);
+  return validatePayload(validateWorkspaceSkillSetResponse, payload, url);
+}
+
+export async function listRegistrySkillInstallations(
+  input: ListInstallationsInput,
+): Promise<RegistrySkillInstallationsResponse> {
+  const url = buildUrl(input.baseUrl, "/v1/skill-installations", {
+    cursor: input.cursor,
+    limit: input.limit,
+    source: input.source,
+    target: input.target,
+  });
+  const payload = await fetchRegistryJson(input, url);
+  return validatePayload(validateRegistrySkillInstallationsResponse, payload, url);
+}
+
+export async function listRegistrySkillEvents(input: EventsInput): Promise<RegistrySkillEventsResponse> {
+  const url = buildUrl(input.baseUrl, "/v1/skill-registry-events", {
+    cursor: input.cursor,
+    limit: input.limit,
+    orgId: input.orgId,
+    workspaceId: input.workspaceId,
+  });
+  const payload = await fetchRegistryJson(input, url);
+  return validatePayload(validateRegistrySkillEventsResponse, payload, url);
 }

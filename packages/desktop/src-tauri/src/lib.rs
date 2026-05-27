@@ -50,8 +50,9 @@ use commands::pending_session_drafts::{
 use commands::scheduler::{scheduler_delete_job, scheduler_list_jobs};
 use commands::session_reader::{opencode_db_read_sessions, opencode_db_read_transcript};
 use commands::skills::{
-    install_skill_template, list_local_skills, list_local_skills_scoped, read_local_skill,
-    uninstall_skill, write_local_skill,
+    install_global_skill_template, install_skill_template, list_local_skills,
+    list_local_skills_scoped, read_local_skill, read_local_skill_at_path, uninstall_skill,
+    uninstall_skill_at_path, write_local_skill, write_local_skill_at_path,
 };
 use commands::updater::{updater_environment, updater_prepare_install};
 use commands::veslo_server::{veslo_server_info, veslo_server_restart};
@@ -227,11 +228,15 @@ pub fn run() {
             opkg_install,
             import_skill,
             install_skill_template,
+            install_global_skill_template,
             list_local_skills,
             list_local_skills_scoped,
             read_local_skill,
+            read_local_skill_at_path,
             uninstall_skill,
+            uninstall_skill_at_path,
             write_local_skill,
+            write_local_skill_at_path,
             read_opencode_config,
             write_opencode_config,
             updater_environment,

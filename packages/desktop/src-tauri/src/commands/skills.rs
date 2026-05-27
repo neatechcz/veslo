@@ -32,6 +32,16 @@ fn ensure_project_skill_root(project_dir: &str) -> Result<PathBuf, String> {
     Ok(modern)
 }
 
+fn ensure_global_skill_root() -> Result<PathBuf, String> {
+    let Some(config_root) = candidate_xdg_config_dirs().into_iter().next() else {
+        return Err("Home directory is required to install global skills".to_string());
+    };
+    let skill_root = config_root.join("opencode").join("skills");
+    fs::create_dir_all(&skill_root)
+        .map_err(|e| format!("Failed to create {}: {e}", skill_root.display()))?;
+    Ok(skill_root)
+}
+
 fn collect_project_skill_roots(project_dir: &Path) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     let mut current = Some(project_dir);
@@ -286,6 +296,63 @@ fn collect_skill_dirs_by_name(root: &Path, name: &str) -> Vec<PathBuf> {
     }
 
     out
+}
+
+fn is_path_inside(parent: &Path, child: &Path) -> bool {
+    child.starts_with(parent)
+}
+
+fn resolve_skill_file_at_path(
+    project_dir: &str,
+    name: &str,
+    path: &str,
+    allow_managed: bool,
+) -> Result<PathBuf, String> {
+    let project_dir = project_dir.trim();
+    if project_dir.is_empty() {
+        return Err("projectDir is required".to_string());
+    }
+
+    let name = validate_skill_name(name)?;
+    let candidate = PathBuf::from(path.trim());
+    if candidate.file_name().and_then(|s| s.to_str()) != Some("SKILL.md") {
+        return Err("skill path must point to SKILL.md".to_string());
+    }
+    if candidate
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|s| s.to_str())
+        != Some(name.as_str())
+    {
+        return Err("skill path must match skill name".to_string());
+    }
+    if !candidate.is_file() {
+        return Err("Skill not found".to_string());
+    }
+
+    let canonical_candidate = fs::canonicalize(&candidate)
+        .map_err(|e| format!("Failed to resolve {}: {e}", candidate.display()))?;
+    let roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
+    for root in roots {
+        let Ok(canonical_root) = fs::canonicalize(&root) else {
+            continue;
+        };
+        if !is_path_inside(&canonical_root, &canonical_candidate) {
+            continue;
+        }
+        if !allow_managed {
+            if let Ok(relative) = canonical_candidate.strip_prefix(&canonical_root) {
+                let mut parts = relative.components();
+                if parts.next().and_then(|part| part.as_os_str().to_str()) == Some("veslo-managed")
+                {
+                    return Err("Managed materialized skills must be edited through the registry".to_string());
+                }
+            }
+        }
+        return Ok(canonical_candidate);
+    }
+
+    Err("skill path must be inside a configured skill root".to_string())
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -606,6 +673,21 @@ pub fn read_local_skill(project_dir: String, name: String) -> Result<LocalSkillC
 }
 
 #[tauri::command]
+pub fn read_local_skill_at_path(
+    project_dir: String,
+    name: String,
+    path: String,
+) -> Result<LocalSkillContent, String> {
+    let path = resolve_skill_file_at_path(&project_dir, &name, &path, true)?;
+    let raw = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    Ok(LocalSkillContent {
+        path: path.to_string_lossy().to_string(),
+        content: raw,
+    })
+}
+
+#[tauri::command]
 pub fn write_local_skill(
     project_dir: String,
     name: String,
@@ -652,6 +734,52 @@ pub fn write_local_skill(
 }
 
 #[tauri::command]
+pub fn write_local_skill_at_path(
+    project_dir: String,
+    name: String,
+    path: String,
+    content: String,
+) -> Result<ExecResult, String> {
+    let path = resolve_skill_file_at_path(&project_dir, &name, &path, false)?;
+    let name = validate_skill_name(&name)?;
+    let next = if content.ends_with('\n') {
+        content
+    } else {
+        format!("{}\n", content)
+    };
+    fs::write(&path, next).map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+
+    Ok(ExecResult {
+        ok: true,
+        status: 0,
+        stdout: format!("Saved skill {}", name),
+        stderr: String::new(),
+    })
+}
+
+#[tauri::command]
+pub fn uninstall_skill_at_path(
+    project_dir: String,
+    name: String,
+    path: String,
+) -> Result<ExecResult, String> {
+    let path = resolve_skill_file_at_path(&project_dir, &name, &path, false)?;
+    let name = validate_skill_name(&name)?;
+    let Some(skill_dir) = path.parent() else {
+        return Err("Skill path must have a parent directory".to_string());
+    };
+    fs::remove_dir_all(skill_dir)
+        .map_err(|e| format!("Failed to remove {}: {e}", skill_dir.display()))?;
+
+    Ok(ExecResult {
+        ok: true,
+        status: 0,
+        stdout: format!("Removed skill {}", name),
+        stderr: String::new(),
+    })
+}
+
+#[tauri::command]
 pub fn install_skill_template(
     project_dir: String,
     name: String,
@@ -693,6 +821,46 @@ pub fn install_skill_template(
         ok: true,
         status: 0,
         stdout: format!("Installed skill to {}", dest.display()),
+        stderr: String::new(),
+    })
+}
+
+#[tauri::command]
+pub fn install_global_skill_template(
+    name: String,
+    content: String,
+    overwrite: bool,
+) -> Result<ExecResult, String> {
+    let name = validate_skill_name(&name)?;
+    let skill_root = ensure_global_skill_root()?;
+    let dest = skill_root.join(&name);
+
+    if dest.exists() {
+        if overwrite {
+            fs::remove_dir_all(&dest).map_err(|e| {
+                format!(
+                    "Failed to remove existing skill dir {}: {e}",
+                    dest.display()
+                )
+            })?;
+        } else {
+            return Ok(ExecResult {
+                ok: false,
+                status: 1,
+                stdout: String::new(),
+                stderr: format!("Skill already exists at {}", dest.display()),
+            });
+        }
+    }
+
+    fs::create_dir_all(&dest).map_err(|e| format!("Failed to create {}: {e}", dest.display()))?;
+    fs::write(dest.join("SKILL.md"), content)
+        .map_err(|e| format!("Failed to write SKILL.md: {e}"))?;
+
+    Ok(ExecResult {
+        ok: true,
+        status: 0,
+        stdout: format!("Installed global skill to {}", dest.display()),
         stderr: String::new(),
     })
 }

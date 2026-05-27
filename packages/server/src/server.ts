@@ -11,14 +11,33 @@ import type {
   ReloadReason,
   ReloadTrigger,
   TokenScope,
+  WorkspaceSkillMaterialization,
 } from "./types.js";
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { addMcp, installHubMcp, listMcp, removeMcp } from "./mcp.js";
-import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
+import { deleteSkill, deleteSkillAtPath, listSkills, readSkillAtPath, updateSkillAtPath, upsertSkill } from "./skills.js";
 import { installHubSkill } from "./skill-hub.js";
 import { fetchOrgMcpCatalog, fetchOrgSkillsCatalog } from "./den-catalog.js";
+import {
+  downloadSkillPackageFromRegistry,
+  getWorkspaceSkillSetFromRegistry,
+  listRegistrySkillEvents,
+  listRegistrySkillInstallations,
+  searchRegistrySkills,
+} from "./skill-registry-client.js";
+import {
+  materializeWorkspaceSkillSet,
+  materializePersonalGlobalSkillSet,
+  personalGlobalManagedSkillsRoot,
+  readSkillMaterializationManifest,
+  workspaceManagedSkillsRoot,
+} from "./skill-materializer.js";
+import type { SkillPackageArchive } from "./skill-packages.js";
 import { resolveSkillMatch } from "./skill-resolver.js";
+import { resolveWorkspaceSkillSet } from "./workspace-skill-set.js";
+import type { WorkspaceSkillRegistryInstallation } from "./workspace-skill-set.js";
+import { writeWorkspaceSkillLockfile } from "./workspace-skill-lockfile.js";
 import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
 import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
 import { provisionWorkspaceInternalSystem, resolveVesloAppDataDir } from "./internal-system.js";
@@ -1754,6 +1773,225 @@ export function serializeWorkspace(workspace: ServerConfig["workspaces"][number]
     opencode,
   };
 }
+
+function skillRegistryBaseUrl(config: ServerConfig): string {
+  return config.skillRegistryBaseUrl?.trim() || "";
+}
+
+function skillRegistryRequestInput(ctx: RequestContext) {
+  const userId = ctx.request.headers.get("x-veslo-den-user-id")?.trim() ||
+    ctx.request.headers.get("x-veslo-user-id")?.trim() ||
+    ctx.request.headers.get("x-veslo-account-id")?.trim() ||
+    undefined;
+  return {
+    baseUrl: skillRegistryBaseUrl(ctx.config),
+    token: ctx.config.skillRegistryToken?.trim() || undefined,
+    denToken: ctx.request.headers.get("x-veslo-den-token")?.trim() || undefined,
+    orgId: ctx.request.headers.get("x-veslo-den-org-id")?.trim() || undefined,
+    userId,
+  };
+}
+
+function materializationEntryPayload(entry: WorkspaceSkillMaterialization & {
+  skillDir?: string;
+  materializedAt?: string;
+}) {
+  return {
+    installationId: entry.installationId,
+    skillId: entry.skillId,
+    name: entry.name,
+    versionId: entry.versionId,
+    packageSha256: entry.packageSha256,
+    target: entry.target,
+    ...(entry.skillDir ? { skillDir: entry.skillDir } : {}),
+    ...(entry.materializedAt ? { materializedAt: entry.materializedAt } : {}),
+  };
+}
+
+function materializationSummaryPayload(entry: WorkspaceSkillMaterialization) {
+  return {
+    name: entry.name,
+    packageSha256: entry.packageSha256,
+  };
+}
+
+async function buildWorkspaceSkillMaterializationStatus(config: ServerConfig, workspace: WorkspaceInfo) {
+  const rootDir = workspaceManagedSkillsRoot(workspace.path);
+  const manifest = await readSkillMaterializationManifest(rootDir);
+  const registryConfigured = Boolean(skillRegistryBaseUrl(config));
+  return {
+    workspaceId: workspace.id,
+    status: registryConfigured ? "pending" : "not-configured",
+    registryConfigured,
+    rootDir,
+    materializedSkills: manifest?.entries.map(materializationEntryPayload) ?? [],
+    reloadRequired: registryConfigured,
+  };
+}
+
+async function buildGlobalSkillMaterializationStatus(config: ServerConfig) {
+  const rootDir = personalGlobalManagedSkillsRoot();
+  const manifest = await readSkillMaterializationManifest(rootDir);
+  const registryConfigured = Boolean(skillRegistryBaseUrl(config));
+  return {
+    scope: "personal-global",
+    status: registryConfigured ? "pending" : "not-configured",
+    registryConfigured,
+    rootDir,
+    materializedSkills: manifest?.entries.map(materializationEntryPayload) ?? [],
+    reloadRequired: registryConfigured,
+  };
+}
+
+function desiredSkillSetRevision(materializations: WorkspaceSkillMaterialization[]) {
+  const payload = materializations
+    .map((entry) => ({
+      installationId: entry.installationId,
+      skillId: entry.skillId,
+      name: entry.name,
+      versionId: entry.versionId,
+      packageSha256: entry.packageSha256,
+      target: entry.target,
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name) || left.installationId.localeCompare(right.installationId));
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+}
+
+function registryInstallationToWorkspaceInstallation(input: {
+  installation: Awaited<ReturnType<typeof getWorkspaceSkillSetFromRegistry>>["skills"][number];
+  workspace: WorkspaceInfo;
+  packageResponse: { versionId: string; package: SkillPackageArchive };
+  orgId?: string;
+  userId?: string;
+}): WorkspaceSkillRegistryInstallation {
+  const { installation, workspace, packageResponse, orgId, userId } = input;
+  return {
+    installationId: installation.installationId,
+    skillId: installation.skillId,
+    name: installation.name?.trim() || packageResponse.package.metadata.name,
+    versionId: packageResponse.versionId,
+    packageSha256: installation.desiredPackageSha256?.trim() || installation.packageSha256?.trim() || packageResponse.package.packageSha256,
+    enabled: installation.enabled,
+    source: installation.source,
+    installedAt: installation.installedAt,
+    ownerUserId: installation.ownerUserId ?? (installation.source === "personal" ? userId : undefined),
+    orgId: installation.orgId ?? (installation.source === "organization" ? orgId : undefined),
+    workspaceId: installation.workspaceId ?? (installation.source === "workspace" ? workspace.id : undefined),
+    approved: installation.approved ?? (installation.source === "personal" ? undefined : true),
+    desiredVersionId: installation.desiredVersionId ?? null,
+    desiredPackageSha256: installation.desiredPackageSha256 ?? null,
+  };
+}
+
+async function fetchRegistryWorkspaceMaterializations(
+  ctx: RequestContext,
+  workspace: WorkspaceInfo,
+): Promise<{
+  materializations: WorkspaceSkillMaterialization[];
+  packagesByInstallationId: Map<string, SkillPackageArchive>;
+  skillSetId: string;
+  skillSetRevision: string;
+}> {
+  const baseUrl = skillRegistryBaseUrl(ctx.config);
+  if (!baseUrl) {
+    throw new ApiError(503, "skill_registry_misconfigured", "Skill registry base URL is missing");
+  }
+
+  const registryInput = skillRegistryRequestInput(ctx);
+  const skillSet = await getWorkspaceSkillSetFromRegistry({
+    ...registryInput,
+    workspaceId: workspace.id,
+  });
+
+  const registryInstallations: WorkspaceSkillRegistryInstallation[] = [];
+  const packagesByInstallationId = new Map<string, SkillPackageArchive>();
+  for (const installation of skillSet.skills) {
+    if (!installation.enabled) continue;
+    const versionId = installation.desiredVersionId?.trim() || installation.versionId;
+    const packageResponse = await downloadSkillPackageFromRegistry({
+      ...registryInput,
+      versionId,
+    });
+    const workspaceInstallation = registryInstallationToWorkspaceInstallation({
+      installation,
+      workspace,
+      packageResponse,
+      orgId: registryInput.orgId,
+      userId: registryInput.userId,
+    });
+    registryInstallations.push(workspaceInstallation);
+    packagesByInstallationId.set(workspaceInstallation.installationId, packageResponse.package);
+  }
+
+  const resolution = resolveWorkspaceSkillSet({
+    workspace: {
+      id: workspace.id,
+      scope: registryInput.orgId ? "organization" : "personal",
+      orgId: registryInput.orgId,
+    },
+    user: {
+      id: registryInput.userId ?? "local-user",
+      orgId: registryInput.orgId,
+    },
+    registryInstallations,
+    localUnmanagedSkills: [],
+    policy: {},
+  });
+  const materializations = resolution.requiredMaterializations;
+
+  return {
+    materializations,
+    packagesByInstallationId,
+    skillSetId: skillSet.skillSetId?.trim() || `workspace:${workspace.id}`,
+    skillSetRevision: skillSet.revision?.trim() || desiredSkillSetRevision(materializations),
+  };
+}
+
+async function fetchRegistryPersonalGlobalMaterializations(
+  ctx: RequestContext,
+): Promise<{
+  materializations: WorkspaceSkillMaterialization[];
+  packagesByInstallationId: Map<string, SkillPackageArchive>;
+}> {
+  const baseUrl = skillRegistryBaseUrl(ctx.config);
+  if (!baseUrl) {
+    throw new ApiError(503, "skill_registry_misconfigured", "Skill registry base URL is missing");
+  }
+
+  const registryInput = skillRegistryRequestInput(ctx);
+  const installations = await listRegistrySkillInstallations({
+    ...registryInput,
+    source: "personal",
+    target: "personal-global",
+  });
+
+  const materializations: WorkspaceSkillMaterialization[] = [];
+  const packagesByInstallationId = new Map<string, SkillPackageArchive>();
+  for (const installation of installations.installations) {
+    if (!installation.enabled) continue;
+    const packageResponse = await downloadSkillPackageFromRegistry({
+      ...registryInput,
+      versionId: installation.versionId,
+    });
+    const materialization: WorkspaceSkillMaterialization = {
+      installationId: installation.installationId,
+      skillId: installation.skillId,
+      name: packageResponse.package.metadata.name,
+      versionId: packageResponse.versionId,
+      packageSha256: packageResponse.package.packageSha256,
+      target: "personal-global",
+    };
+    materializations.push(materialization);
+    packagesByInstallationId.set(materialization.installationId, packageResponse.package);
+  }
+
+  return { materializations, packagesByInstallationId };
+}
+
+const trimmedSearchParam = (params: URLSearchParams, key: string): string | undefined => {
+  const value = params.get(key)?.trim();
+  return value || undefined;
+};
 
 function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: TokenService): Route[] {
   const routes: Route[] = [];
@@ -3873,6 +4111,120 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     return jsonResponse(result);
   });
 
+  addRoute(routes, "GET", "/v1/skills/search", "client", async (ctx) => {
+    const query = trimmedSearchParam(ctx.url.searchParams, "q");
+    if (!query) {
+      throw new ApiError(400, "invalid_query", "Skill registry search query is required");
+    }
+
+    if (!skillRegistryBaseUrl(config)) {
+      return jsonResponse({
+        query,
+        skills: [],
+        nextCursor: null,
+        registryConfigured: false,
+      });
+    }
+
+    const limit = parseInteger(trimmedSearchParam(ctx.url.searchParams, "limit"));
+    const includeDeletedParam = trimmedSearchParam(ctx.url.searchParams, "includeDeleted");
+    const result = await searchRegistrySkills({
+      ...skillRegistryRequestInput(ctx),
+      query,
+      cursor: trimmedSearchParam(ctx.url.searchParams, "cursor"),
+      limit: limit ?? undefined,
+      workspaceId: trimmedSearchParam(ctx.url.searchParams, "workspaceId"),
+      ownerScope: trimmedSearchParam(ctx.url.searchParams, "ownerScope"),
+      reviewStatus: trimmedSearchParam(ctx.url.searchParams, "reviewStatus"),
+      includeDeleted: includeDeletedParam === undefined ? undefined : includeDeletedParam === "true",
+      language: trimmedSearchParam(ctx.url.searchParams, "language"),
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "GET", "/v1/skill-registry-events", "client", async (ctx) => {
+    if (!skillRegistryBaseUrl(config)) {
+      return jsonResponse({
+        events: [],
+        nextCursor: null,
+        revision: null,
+        registryConfigured: false,
+      });
+    }
+
+    const limit = parseInteger(trimmedSearchParam(ctx.url.searchParams, "limit"));
+    const result = await listRegistrySkillEvents({
+      ...skillRegistryRequestInput(ctx),
+      cursor: trimmedSearchParam(ctx.url.searchParams, "cursor"),
+      limit: limit ?? undefined,
+      orgId: trimmedSearchParam(ctx.url.searchParams, "orgId"),
+      workspaceId: trimmedSearchParam(ctx.url.searchParams, "workspaceId"),
+    });
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "GET", "/skills/materialization", "client", async () => {
+    return jsonResponse(await buildGlobalSkillMaterializationStatus(config));
+  });
+
+  addRoute(routes, "POST", "/skills/materialization/sync-global", "host", async (ctx) => {
+    ensureWritable(config);
+    const body = await readOptionalJsonBody(ctx.request);
+    if (body.activeRun === true) {
+      const status = await buildGlobalSkillMaterializationStatus(config);
+      return jsonResponse({
+        ...status,
+        status: "pending",
+        synced: false,
+        reloadRequired: true,
+      }, 202);
+    }
+
+    const { materializations, packagesByInstallationId } = await fetchRegistryPersonalGlobalMaterializations(ctx);
+    const loadPackage = async (skill: WorkspaceSkillMaterialization) => {
+      const archive = packagesByInstallationId.get(skill.installationId);
+      if (!archive) {
+        throw new ApiError(500, "skill_package_missing", `Missing package for skill ${skill.name}`);
+      }
+      return archive;
+    };
+
+    const result = await materializePersonalGlobalSkillSet({
+      skills: materializations,
+      loadPackage,
+    });
+
+    await recordAudit(result.rootDir, {
+      id: shortId(),
+      workspaceId: "global",
+      actor: ctx.actor ?? { type: "host" },
+      action: "skills.materialization.sync-global",
+      target: result.rootDir,
+      summary: `Synced ${materializations.length} managed global skill materialization(s)`,
+      timestamp: Date.now(),
+    });
+    for (const workspace of config.workspaces) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+        type: "skill",
+        name: "veslo-managed",
+        action: "updated",
+        path: result.rootDir,
+      });
+    }
+
+    return jsonResponse({
+      scope: "personal-global",
+      status: "synced",
+      synced: true,
+      reloadRequired: true,
+      registryConfigured: true,
+      rootDir: result.rootDir,
+      materializedSkills: materializations.map(materializationSummaryPayload),
+      removedSkillNames: result.removedSkillNames,
+      backupDirs: result.backupDirs,
+    });
+  });
+
   addRoute(routes, "GET", "/hub/skills", "client", async (ctx) => {
     const denToken = ctx.request.headers.get("x-veslo-den-token")?.trim() || "";
     if (!denToken) {
@@ -3949,6 +4301,105 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     return jsonResponse(result);
   });
 
+  addRoute(routes, "GET", "/workspace/:id/skills/materialization", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    return jsonResponse(await buildWorkspaceSkillMaterializationStatus(config, workspace));
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/skills/materialization/sync", "host", async (ctx) => {
+    ensureWritable(config);
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readOptionalJsonBody(ctx.request);
+    if (body.activeRun === true) {
+      const status = await buildWorkspaceSkillMaterializationStatus(config, workspace);
+      return jsonResponse({
+        ...status,
+        status: "pending",
+        synced: false,
+        reloadRequired: true,
+      }, 202);
+    }
+
+    const { materializations, packagesByInstallationId, skillSetId, skillSetRevision } =
+      await fetchRegistryWorkspaceMaterializations(ctx, workspace);
+    const workspaceMaterializations = materializations.filter((skill) => skill.target === "workspace");
+    const personalGlobalMaterializations = materializations.filter((skill) => skill.target === "personal-global");
+    const loadPackage = async (skill: WorkspaceSkillMaterialization) => {
+      const archive = packagesByInstallationId.get(skill.installationId);
+      if (!archive) {
+        throw new ApiError(500, "skill_package_missing", `Missing package for skill ${skill.name}`);
+      }
+      return archive;
+    };
+
+    const workspaceResult = await materializeWorkspaceSkillSet({
+      workspaceRoot: workspace.path,
+      skills: workspaceMaterializations,
+      loadPackage,
+    });
+    const personalGlobalResult = personalGlobalMaterializations.length > 0
+      ? await materializePersonalGlobalSkillSet({
+          skills: personalGlobalMaterializations,
+          loadPackage,
+        })
+      : {
+          rootDir: personalGlobalManagedSkillsRoot(),
+          materializedSkills: [],
+          removedSkillNames: [],
+          backupDirs: [],
+        };
+    const lockfileEntries = workspaceMaterializations.map((skill) => ({
+      skillId: skill.skillId,
+      installationId: skill.installationId,
+      versionId: skill.versionId,
+      name: skill.name,
+      packageSha256: skill.packageSha256,
+    }));
+    const lockfilePath = await writeWorkspaceSkillLockfile(workspace.path, {
+      schemaVersion: 1,
+      workspaceId: workspace.id,
+      skillSetId,
+      skillSetRevision,
+      entries: lockfileEntries,
+    });
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "host" },
+      action: "skills.materialization.sync",
+      target: workspaceResult.rootDir,
+      summary: `Synced ${materializations.length} managed skill materialization(s)`,
+      timestamp: Date.now(),
+    });
+    emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+      type: "skill",
+      name: "veslo-managed",
+      action: "updated",
+      path: workspaceResult.rootDir,
+    });
+
+    return jsonResponse({
+      workspaceId: workspace.id,
+      status: "synced",
+      synced: true,
+      reloadRequired: true,
+      registryConfigured: true,
+      rootDir: workspaceResult.rootDir,
+      globalRootDir: personalGlobalResult.rootDir,
+      lockfilePath,
+      materializedSkills: materializations.map(materializationSummaryPayload),
+      removedSkillNames: [
+        ...workspaceResult.removedSkillNames,
+        ...personalGlobalResult.removedSkillNames,
+      ].sort(),
+      backupDirs: [
+        ...workspaceResult.backupDirs,
+        ...personalGlobalResult.backupDirs,
+      ],
+    });
+  });
+
   addRoute(routes, "POST", "/workspace/:id/skills/hub/:name", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
@@ -4002,6 +4453,19 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     if (!name) {
       throw new ApiError(400, "invalid_skill_name", "Skill name is required");
     }
+    const instancePath = ctx.url.searchParams.get("path")?.trim() ?? "";
+    if (instancePath) {
+      const result = await readSkillAtPath(workspace.path, { name, path: instancePath });
+      return jsonResponse({
+        item: {
+          name,
+          path: result.path,
+          description: "",
+          scope: "project",
+        },
+        content: result.content,
+      });
+    }
     const items = await listSkills(workspace.path, includeGlobal);
     const item = items.find((skill) => skill.name === name);
     if (!item) {
@@ -4019,13 +4483,16 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const name = String(body.name ?? "");
     const content = String(body.content ?? "");
     const description = body.description ? String(body.description) : undefined;
+    const instancePath = typeof body.path === "string" ? body.path.trim() : "";
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "skills.upsert",
       summary: `Upsert skill ${name}`,
-      paths: [join(workspace.path, ".opencode", "skills", name, "SKILL.md")],
+      paths: [instancePath || join(workspace.path, ".opencode", "skills", name, "SKILL.md")],
     });
-    const result = await upsertSkill(workspace.path, { name, content, description });
+    const result = instancePath
+      ? await updateSkillAtPath(workspace.path, { name, path: instancePath, content, description })
+      : await upsertSkill(workspace.path, { name, content, description });
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -4052,13 +4519,16 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     if (!name) {
       throw new ApiError(400, "invalid_skill_name", "Skill name is required");
     }
+    const instancePath = ctx.url.searchParams.get("path")?.trim() ?? "";
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "skills.delete",
       summary: `Delete skill ${name}`,
-      paths: [join(workspace.path, ".opencode", "skills", name)],
+      paths: [instancePath || join(workspace.path, ".opencode", "skills", name)],
     });
-    const result = await deleteSkill(workspace.path, name);
+    const result = instancePath
+      ? await deleteSkillAtPath(workspace.path, { name, path: instancePath })
+      : await deleteSkill(workspace.path, name);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -4678,6 +5148,17 @@ async function readJsonBody(request: Request): Promise<Record<string, unknown>> 
   try {
     const json = await request.json();
     return json as Record<string, unknown>;
+  } catch {
+    throw new ApiError(400, "invalid_json", "Invalid JSON body");
+  }
+}
+
+async function readOptionalJsonBody(request: Request): Promise<Record<string, unknown>> {
+  const text = await request.text();
+  if (!text.trim()) return {};
+  try {
+    const json = JSON.parse(text);
+    return json && typeof json === "object" && !Array.isArray(json) ? json as Record<string, unknown> : {};
   } catch {
     throw new ApiError(400, "invalid_json", "Invalid JSON body");
   }

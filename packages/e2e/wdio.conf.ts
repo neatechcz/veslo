@@ -25,6 +25,8 @@ const defaultSpecs = [
   './specs/navigation.spec.ts',
   './specs/skills-global-inventory.e2e.ts',
   './specs/session-capabilities.spec.ts',
+  './specs/skill-registry-materialization.e2e.ts',
+  './specs/shared-workspace-skill-lock.e2e.ts',
   './specs/session-prefetch.spec.ts',
   './specs/session.spec.ts',
   './specs/settings-gear-navigation.spec.ts',

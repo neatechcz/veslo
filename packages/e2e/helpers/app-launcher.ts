@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname, win32, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prepareDesktopAuthSeed } from './desktop-auth-seed.js';
+import { startSkillRegistryFixture, stopSkillRegistryFixture } from './skill-registry-fixture.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -285,6 +286,12 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   const binaryPath = resolveBinaryPath();
   console.log(`[e2e] Launching Tauri binary: ${binaryPath}`);
   console.log(`[e2e] WebDriver port: ${port}`);
+  const skillRegistryFixtureBaseUrl = process.env.E2E_SKILL_REGISTRY_FIXTURE?.trim() === '0'
+    ? null
+    : await startSkillRegistryFixture();
+  if (skillRegistryFixtureBaseUrl) {
+    console.log(`[e2e] Skill registry fixture: ${skillRegistryFixtureBaseUrl}`);
+  }
 
   const tmpDir = join(resolveDesktopRoot(), '..', 'e2e', '.tmp-opencode-home');
   let env: NodeJS.ProcessEnv;
@@ -330,7 +337,15 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
   }
 
   appProcess = spawn(binaryPath, [], {
-    env,
+    env: {
+      ...env,
+      ...(skillRegistryFixtureBaseUrl
+        ? {
+            VESLO_SKILL_REGISTRY_BASE_URL: skillRegistryFixtureBaseUrl,
+            VESLO_SKILL_REGISTRY_TOKEN: 'veslo-e2e-registry-token',
+          }
+        : {}),
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   appProcessOwnedByHarness = true;
@@ -354,6 +369,7 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
     console.log(`[e2e] WebDriver server is ready.`);
   } catch (error) {
     if (!appProcess) {
+      await stopSkillRegistryFixture();
       throw new Error(
         `Spawned Tauri app exited before WebDriver became ready. ` +
         `If Veslo is already running, run it with the e2e WebDriver build or stop it before launching tests.`,
@@ -366,6 +382,7 @@ export async function startApp(port: number = WEBDRIVER_PORT): Promise<void> {
 
 export async function stopApp(): Promise<void> {
   if (!appProcessOwnedByHarness || !appProcess) {
+    await stopSkillRegistryFixture();
     return;
   }
   const processToStop = appProcess;
@@ -379,6 +396,7 @@ export async function stopApp(): Promise<void> {
   if (!result.exited) {
     console.warn(`[e2e] App process PID ${processToStop.pid} did not exit after termination request.`);
   }
+  await stopSkillRegistryFixture();
 }
 
 /** Utility for HashRouter-based URL assertions (just the fragment). */

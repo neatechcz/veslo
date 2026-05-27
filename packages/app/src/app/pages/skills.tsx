@@ -11,15 +11,47 @@ import type {
 import type { WorkspaceInfo } from "../lib/tauri";
 
 import Button from "../components/button";
-import { Copy, Edit2, FolderOpen, Link2, Loader2, Package, Plus, RefreshCw, Search, Share2, Trash2, Upload } from "lucide-solid";
+import SkillDetailDrawer, {
+  type SkillDetailActionInput,
+  type SkillDetailLocation,
+  type SkillDetailMetadata,
+  type SkillDetailTab,
+} from "../components/skill-detail-drawer";
+import SkillReviewDialog, { type SkillReviewTargetScope } from "../components/skill-review-dialog";
+import type { SkillVersionRow, SkillVersionTargetMetadata } from "../components/skill-version-history";
+import {
+  ArrowRightToLine,
+  Copy,
+  Edit2,
+  FolderOpen,
+  LayoutGrid,
+  Link2,
+  Loader2,
+  Package,
+  Plus,
+  RefreshCw,
+  Search,
+  Share2,
+  Table2,
+  Trash2,
+  Upload,
+} from "lucide-solid";
 import { currentLocale, t } from "../../i18n";
 import { DEFAULT_VESLO_PUBLISHER_BASE_URL, publishVesloBundleJson } from "../lib/publisher";
 import { skillMutationTargetFromInstance } from "../lib/skill-inventory";
 import type { SkillMutationTarget } from "../lib/skill-inventory";
+import {
+  filterSkillInventoryItems,
+  selectAllSkillInventoryIdsForCurrentFilter,
+  skillInventoryInstanceId,
+  type SkillInventoryFilters,
+  type SkillInventorySelectionId,
+} from "../lib/skill-inventory-filters";
 import { isTauriRuntime } from "../utils";
 
 type InstallResult = { ok: boolean; message: string };
 type ActionSkillCard = SkillCard & { mutationTarget: SkillMutationTarget };
+type InventoryViewMode = "cards" | "table";
 
 type SkillBundleV1 = {
   schemaVersion: 1;
@@ -84,10 +116,11 @@ export type SkillsViewProps = {
   revealSkillsFolder: () => void;
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
-  saveSkill: (input: { name: string; content: string; description?: string }) => Promise<SkillSaveResult>;
+  saveSkill: (input: { name: string; path?: string; content: string; description?: string }) => Promise<SkillSaveResult>;
   readSkillInstance: (target: SkillMutationTarget) => Promise<{ name: string; path: string; content: string } | null>;
   saveSkillInstance: (target: SkillMutationTarget, content: string) => Promise<SkillSaveResult>;
   deleteSkillInstance: (target: SkillMutationTarget) => Promise<void>;
+  copySkillInstanceToGlobal: (target: SkillMutationTarget, options?: { deleteSource?: boolean }) => Promise<SkillSaveResult>;
   createSessionAndOpen: () => void;
   setPrompt: (value: string) => void;
 };
@@ -144,6 +177,11 @@ export default function SkillsView(props: SkillsViewProps) {
   const [uninstallTarget, setUninstallTarget] = createSignal<SkillMutationTarget | null>(null);
   const uninstallOpen = createMemo(() => uninstallTarget() != null);
   const [searchQuery, setSearchQuery] = createSignal("");
+  const [inventoryScopeFilter, setInventoryScopeFilter] = createSignal<"all" | "user-global" | "workspace">("all");
+  const [inventoryWorkspaceFilter, setInventoryWorkspaceFilter] = createSignal("all");
+  const [inventoryIncludeDeleted, setInventoryIncludeDeleted] = createSignal(false);
+  const [inventoryViewMode, setInventoryViewMode] = createSignal<InventoryViewMode>("cards");
+  const [selectedInventoryIds, setSelectedInventoryIds] = createSignal<SkillInventorySelectionId[]>([]);
 
   const [shareTarget, setShareTarget] = createSignal<SkillCard | null>(null);
   const shareOpen = createMemo(() => shareTarget() != null);
@@ -166,6 +204,14 @@ export default function SkillsView(props: SkillsViewProps) {
   const [selectedLoading, setSelectedLoading] = createSignal(false);
   const [selectedDirty, setSelectedDirty] = createSignal(false);
   const [selectedError, setSelectedError] = createSignal<string | null>(null);
+  const [selectedDetail, setSelectedDetail] = createSignal<{ item: SkillInventoryItem; instance: SkillInstance } | null>(null);
+  const [selectedDetailTab, setSelectedDetailTab] = createSignal<SkillDetailTab>("overview");
+  const [reviewDialog, setReviewDialog] = createSignal<{
+    mode: "request" | "review";
+    targetScope: SkillReviewTargetScope;
+    action: SkillDetailActionInput;
+  } | null>(null);
+  const [reviewReason, setReviewReason] = createSignal("");
 
   const [toast, setToast] = createSignal<string | null>(null);
   const [installingHubSkill, setInstallingHubSkill] = createSignal<string | null>(null);
@@ -254,6 +300,7 @@ export default function SkillsView(props: SkillsViewProps) {
   );
 
   const mutationTargetForInstance = (instance: SkillInstance): SkillMutationTarget | null => {
+    if (!instance.writable) return null;
     if (instance.scope !== "workspace") return null;
     if (instance.workspaceId !== props.activeWorkspaceId) return null;
     return skillMutationTargetFromInstance(instance);
@@ -274,36 +321,30 @@ export default function SkillsView(props: SkillsViewProps) {
       : null;
   };
 
-  const canUninstallInventoryInstance = (_input: { item: SkillInventoryItem; instance: SkillInstance }) => false;
+  const canUninstallInventoryInstance = (input: { item: SkillInventoryItem; instance: SkillInstance }) =>
+    Boolean(mutationTargetForInstance(input.instance));
 
-  const uninstallDisabledReason = (_input: { item: SkillInventoryItem; instance: SkillInstance }) =>
-    translate("skills.uninstall_scoped_pending");
+  const uninstallDisabledReason = (input: { item: SkillInventoryItem; instance: SkillInstance }) => {
+    if (input.instance.writable === false) return translate("skills.registry_action_pending");
+    if (input.instance.scope !== "workspace") return translate("skills.uninstall_scope_ambiguous");
+    if (input.instance.workspaceId !== props.activeWorkspaceId) return translate("skills.uninstall_not_active_workspace");
+    return translate("skills.uninstall_scoped_pending");
+  };
 
-  const filteredInstalledInventoryItems = createMemo(() => {
-    const query = searchQuery().trim().toLowerCase();
-    const items = installedInventoryItems();
-    if (!query) return items;
-    return items.filter((item) => {
-      const haystack = [
-        item.name,
-        item.description,
-        item.trigger,
-        item.globalInstance?.description,
-        item.globalInstance?.trigger,
-        item.globalInstance?.path,
-        ...item.workspaceInstances.flatMap((instance) => [
-          instance.description,
-          instance.trigger,
-          instance.path,
-          workspaceLabelForInstance(instance),
-        ]),
-      ]
-        .filter((value): value is string => Boolean(value))
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(query);
-    });
+  const installedInventoryFilterState = createMemo<SkillInventoryFilters>(() => {
+    const scope = inventoryScopeFilter();
+    const workspaceId = inventoryWorkspaceFilter();
+    return {
+      query: searchQuery(),
+      scopes: scope === "all" ? undefined : [scope],
+      workspaceId: workspaceId === "all" ? undefined : workspaceId,
+      includeDeleted: inventoryIncludeDeleted(),
+    };
   });
+
+  const filteredInstalledInventoryItems = createMemo(() =>
+    filterSkillInventoryItems(installedInventoryItems(), installedInventoryFilterState())
+  );
 
   const allWorkspaceInventoryItems = createMemo(() =>
     filteredInstalledInventoryItems().filter((item) => Boolean(item.globalInstance))
@@ -318,6 +359,95 @@ export default function SkillsView(props: SkillsViewProps) {
         }))
       )
   );
+
+  const inventoryTableRows = createMemo(() => [
+    ...allWorkspaceInventoryItems().flatMap((item) =>
+      item.globalInstance
+        ? [{
+            item,
+            instance: item.globalInstance,
+            workspaceLabel: translate("skills.all_workspaces"),
+          }]
+        : []
+    ),
+    ...workspaceInventoryRows().map((row) => ({
+      ...row,
+      workspaceLabel: workspaceLabelForInstance(row.instance),
+    })),
+  ]);
+
+  const currentInventorySelectionIds = createMemo(() =>
+    selectAllSkillInventoryIdsForCurrentFilter(installedInventoryItems(), installedInventoryFilterState())
+  );
+  const selectedInventoryIdSet = createMemo(() => new Set(selectedInventoryIds()));
+  const selectedInventoryCount = createMemo(() =>
+    selectedInventoryIds().filter((id) => currentInventorySelectionIds().includes(id)).length
+  );
+  const allCurrentInventorySelected = createMemo(() => {
+    const ids = currentInventorySelectionIds();
+    return ids.length > 0 && ids.every((id) => selectedInventoryIdSet().has(id));
+  });
+
+  createEffect(() => {
+    const allowed = new Set(currentInventorySelectionIds());
+    setSelectedInventoryIds((prev) => prev.filter((id) => allowed.has(id)));
+  });
+
+  const toggleInventorySelection = (id: SkillInventorySelectionId, checked: boolean) => {
+    setSelectedInventoryIds((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+      return [...next];
+    });
+  };
+
+  const toggleAllCurrentInventorySelection = (checked: boolean) => {
+    if (checked) {
+      setSelectedInventoryIds(currentInventorySelectionIds());
+    } else {
+      const current = new Set(currentInventorySelectionIds());
+      setSelectedInventoryIds((prev) => prev.filter((id) => !current.has(id)));
+    }
+  };
+
+  const selectedInventoryRows = createMemo(() =>
+    inventoryTableRows().filter((row) => selectedInventoryIdSet().has(skillInventoryInstanceId(row.instance)))
+  );
+  const selectedGlobalTransferTargets = createMemo(() =>
+    selectedInventoryRows()
+      .map((row) => mutationTargetForInstance(row.instance))
+      .filter((target): target is SkillMutationTarget => Boolean(target))
+  );
+  const globalTransferDisabledReason = createMemo(() => {
+    const selectedRows = selectedInventoryRows();
+    if (selectedRows.length === 0) return translate("skills.select_skill_location");
+    if (selectedGlobalTransferTargets().length !== selectedRows.length) return translate("skills.copy_to_global_unavailable");
+    return null;
+  });
+
+  const transferSelectedSkillsToGlobal = async (deleteSource: boolean) => {
+    const disabledReason = globalTransferDisabledReason();
+    if (disabledReason) {
+      setToast(disabledReason);
+      return;
+    }
+
+    for (const target of selectedGlobalTransferTargets()) {
+      const result = await props.copySkillInstanceToGlobal(target, { deleteSource });
+      if (!result.ok) {
+        setToast(result.message ?? translate("skills.failed_save_skill"));
+        return;
+      }
+    }
+
+    setSelectedInventoryIds([]);
+    setToast(translate(deleteSource ? "skills.moved_to_global" : "skills.copied_to_global"));
+    props.refreshSkillInventory({ force: true });
+  };
 
   const activeWorkspaceInstalledNames = createMemo(() =>
     new Set(
@@ -343,6 +473,153 @@ export default function SkillsView(props: SkillsViewProps) {
   const canOverwriteInstallLinkBundle = (name: string) => activeWorkspaceInstalledNames().has(name.trim());
   const installLinkShouldRename = (name: string, mode: "overwrite" | "keep-both") =>
     mode === "keep-both" || (installedNames().has(name.trim()) && !canOverwriteInstallLinkBundle(name));
+
+  const openSkillDetail = (item: SkillInventoryItem, instance: SkillInstance) => {
+    setSelectedDetail({ item, instance });
+    setSelectedDetailTab("overview");
+  };
+
+  const skillDetailLocationFromInstance = (instance: SkillInstance): SkillDetailLocation => ({
+    id: instance.id,
+    label: instance.scope === "user-global" ? translate("skills.all_workspaces") : workspaceLabelForInstance(instance),
+    scope: instance.scope === "user-global" ? "global" : "workspace",
+    path: instance.path,
+    writable: instance.writable,
+    active: selectedDetail()?.instance.id === instance.id,
+    source: instance.source,
+  });
+
+  const selectedDetailLocations = createMemo<SkillDetailLocation[]>(() => {
+    const detail = selectedDetail();
+    if (!detail) return [];
+    const locations: SkillDetailLocation[] = [];
+    if (detail.item.globalInstance) {
+      locations.push(skillDetailLocationFromInstance(detail.item.globalInstance));
+    }
+    for (const instance of detail.item.workspaceInstances) {
+      locations.push(skillDetailLocationFromInstance(instance));
+    }
+    return locations;
+  });
+
+  const selectedDetailMetadata = createMemo<SkillDetailMetadata | null>(() => {
+    const detail = selectedDetail();
+    if (!detail) return null;
+    return {
+      id: detail.instance.id,
+      name: detail.item.name,
+      description: detail.instance.description ?? detail.item.description ?? null,
+      trigger: detail.instance.trigger ?? detail.item.trigger ?? null,
+      status: detail.item.status,
+      source: detail.instance.source,
+      approvalStatus: "approved",
+      updatedAt: null,
+    };
+  });
+
+  const selectedDetailVersionTarget = createMemo<SkillVersionTargetMetadata | null>(() => {
+    const detail = selectedDetail();
+    if (!detail) return null;
+    return {
+      id: detail.instance.id,
+      label: detail.instance.scope === "user-global" ? translate("skills.all_workspaces") : workspaceLabelForInstance(detail.instance),
+      scope: detail.instance.scope === "user-global" ? "global" : "workspace",
+      path: detail.instance.path,
+      workspaceId: detail.instance.workspaceId ?? null,
+    };
+  });
+
+  const selectedDetailVersions = createMemo<SkillVersionRow[]>(() => {
+    const detail = selectedDetail();
+    const target = selectedDetailVersionTarget();
+    if (!detail || !target) return [];
+    return [{
+      id: detail.instance.id,
+      version: translate("skills.current_version"),
+      createdAt: translate("skills.runtime_copy"),
+      status: "approved",
+      target,
+      isCurrent: true,
+    }];
+  });
+
+  const showRegistryActionPending = () => {
+    setToast(translate("skills.registry_action_pending"));
+  };
+
+  const copySelectedSkillToGlobal = (deleteSource: boolean) => {
+    const detail = selectedDetail();
+    if (!detail) return;
+    const target = mutationTargetForInstance(detail.instance);
+    if (!target) {
+      setToast(uninstallDisabledReason({ item: detail.item, instance: detail.instance }));
+      return;
+    }
+
+    void props.copySkillInstanceToGlobal(target, { deleteSource }).then((result) => {
+      setToast(result.message ?? translate(result.ok ? "skills.copied_to_global" : "skills.failed_save_skill"));
+      if (result.ok) props.refreshSkillInventory({ force: true });
+    });
+  };
+
+  const openSkillReviewDialog = (targetScope: SkillReviewTargetScope, action: SkillDetailActionInput) => {
+    setReviewReason("");
+    setReviewDialog({
+      mode: "request",
+      targetScope,
+      action,
+    });
+  };
+
+  const closeSkillReviewDialog = () => {
+    setReviewDialog(null);
+    setReviewReason("");
+  };
+
+  const selectedReviewMetadataDiff = createMemo(() => {
+    const detail = selectedDetail();
+    if (!detail) return [];
+    return [
+      {
+        field: "Name",
+        before: null,
+        after: detail.item.name,
+      },
+      {
+        field: "Description",
+        before: null,
+        after: detail.instance.description ?? detail.item.description ?? null,
+      },
+      {
+        field: "Trigger",
+        before: null,
+        after: detail.instance.trigger ?? detail.item.trigger ?? null,
+      },
+    ];
+  });
+
+  const selectedReviewFileDiffs = createMemo(() => {
+    const detail = selectedDetail();
+    if (!detail) return [];
+    return [
+      {
+        path: detail.instance.path || "SKILL.md",
+        kind: "unchanged" as const,
+        executable: false,
+      },
+    ];
+  });
+
+  const requestDetailDelete = () => {
+    const detail = selectedDetail();
+    if (!detail) return;
+    const target = mutationTargetForInstance(detail.instance);
+    if (!target) {
+      setToast(uninstallDisabledReason({ item: detail.item, instance: detail.instance }));
+      return;
+    }
+    setUninstallTarget(target);
+  };
 
   const availableHubSkills = createMemo(() =>
     props.hubSkills.filter((skill) => !installedNames().has(skill.name))
@@ -721,11 +998,14 @@ export default function SkillsView(props: SkillsViewProps) {
     const canUninstall = () => canUninstallInventoryInstance({ item: input.item, instance: input.instance });
     const uninstallTitle = () =>
       uninstallDisabledReason({ item: input.item, instance: input.instance }) ?? translate("skills.uninstall");
+    const selectionId = () => skillInventoryInstanceId(input.instance);
+    const selected = () => selectedInventoryIdSet().has(selectionId());
     const openActionSkill = () => {
       const skill = actionSkill();
       if (!skill) return;
       void openSkill(skill);
     };
+    const openDetails = () => openSkillDetail(input.item, input.instance);
 
     return (
       <div
@@ -733,24 +1013,27 @@ export default function SkillsView(props: SkillsViewProps) {
         data-skill-inventory-name={input.item.name}
         data-skill-inventory-scope={input.instance.scope}
         data-skill-inventory-workspace-id={input.instance.workspaceId ?? ""}
-        role={canUseActions() ? "button" : undefined}
-        tabindex={canUseActions() ? "0" : undefined}
-        class={`bg-dls-surface border border-dls-border rounded-xl p-4 flex items-start justify-between group transition-all text-left ${
-          canUseActions()
-            ? "hover:border-dls-border hover:bg-dls-hover cursor-pointer"
-            : "opacity-90"
-        }`}
-        onClick={openActionSkill}
+        role="button"
+        tabindex="0"
+        class="bg-dls-surface border border-dls-border rounded-xl p-4 flex items-start justify-between group transition-all text-left hover:border-dls-border hover:bg-dls-hover cursor-pointer"
+        onClick={openDetails}
         onKeyDown={(e) => {
-          if (!canUseActions()) return;
           if (e.key === "Enter" || e.key === " ") {
             if (e.isComposing || e.keyCode === 229) return;
             e.preventDefault();
-            openActionSkill();
+            openDetails();
           }
         }}
       >
         <div class="flex gap-4 min-w-0">
+          <input
+            type="checkbox"
+            class="mt-2 h-4 w-4 shrink-0 rounded border-dls-border"
+            checked={selected()}
+            aria-label={translate("skills.select_skill_location")}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => toggleInventorySelection(selectionId(), e.currentTarget.checked)}
+          />
           <div class="w-10 h-10 rounded-lg flex items-center justify-center shadow-sm border border-dls-border bg-dls-surface">
             <Package size={20} class="text-dls-secondary" />
           </div>
@@ -837,6 +1120,9 @@ export default function SkillsView(props: SkillsViewProps) {
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
+              const target = mutationTargetForInstance(input.instance);
+              if (!target || props.busy) return;
+              setUninstallTarget(target);
             }}
             disabled={props.busy || !canUninstall()}
             title={uninstallTitle()}
@@ -888,6 +1174,59 @@ export default function SkillsView(props: SkillsViewProps) {
             class="font-reading type-ui-sm bg-dls-hover border border-dls-border rounded-lg py-1.5 pl-9 pr-4 w-56 focus:w-72 focus:outline-none transition-all"
           />
         </div>
+        <select
+          value={inventoryScopeFilter()}
+          aria-label={translate("skills.filter_scope")}
+          class="font-product type-ui-xs rounded-lg border border-dls-border bg-dls-surface px-2 py-1.5 text-dls-text"
+          onChange={(event) => setInventoryScopeFilter(event.currentTarget.value as "all" | "user-global" | "workspace")}
+        >
+          <option value="all">{translate("skills.filter_scope_all")}</option>
+          <option value="user-global">{translate("skills.filter_scope_global")}</option>
+          <option value="workspace">{translate("skills.filter_scope_workspace")}</option>
+        </select>
+        <select
+          value={inventoryWorkspaceFilter()}
+          aria-label={translate("skills.filter_workspace")}
+          class="font-product type-ui-xs rounded-lg border border-dls-border bg-dls-surface px-2 py-1.5 text-dls-text"
+          onChange={(event) => setInventoryWorkspaceFilter(event.currentTarget.value)}
+        >
+          <option value="all">{translate("skills.filter_workspace_all")}</option>
+          <For each={props.workspaces.filter((workspace) => workspace.workspaceType === "local")}>
+            {(workspace) => <option value={workspace.id}>{workspaceLabelForTarget(workspace)}</option>}
+          </For>
+        </select>
+        <label class="font-product type-ui-xs flex items-center gap-1.5 text-dls-secondary">
+          <input
+            type="checkbox"
+            checked={inventoryIncludeDeleted()}
+            onChange={(event) => setInventoryIncludeDeleted(event.currentTarget.checked)}
+          />
+          {translate("skills.filter_deleted")}
+        </label>
+        <div class="flex rounded-lg border border-dls-border bg-dls-surface p-0.5">
+          <button
+            type="button"
+            class={`inline-flex h-7 items-center gap-1 rounded-md px-2 type-ui-xs ${
+              inventoryViewMode() === "cards" ? "bg-dls-active text-dls-text" : "text-dls-secondary hover:text-dls-text"
+            }`}
+            aria-pressed={inventoryViewMode() === "cards"}
+            onClick={() => setInventoryViewMode("cards")}
+          >
+            <LayoutGrid size={13} />
+            {translate("skills.view_cards")}
+          </button>
+          <button
+            type="button"
+            class={`inline-flex h-7 items-center gap-1 rounded-md px-2 type-ui-xs ${
+              inventoryViewMode() === "table" ? "bg-dls-active text-dls-text" : "text-dls-secondary hover:text-dls-text"
+            }`}
+            aria-pressed={inventoryViewMode() === "table"}
+            onClick={() => setInventoryViewMode("table")}
+          >
+            <Table2 size={13} />
+            {translate("skills.view_table")}
+          </button>
+        </div>
         <button
           type="button"
           onClick={openInstallFromLink}
@@ -926,9 +1265,70 @@ export default function SkillsView(props: SkillsViewProps) {
       </Show>
 
       <div data-testid="skills-installed-section" class="space-y-4">
-        <h3 class="font-product type-ui-xs font-bold text-dls-secondary uppercase tracking-widest">
-          {translate("skills.installed")}
-        </h3>
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <h3 class="font-product type-title-md font-semibold text-dls-text">
+            {translate("skills.installed")}
+          </h3>
+          <Show when={currentInventorySelectionIds().length}>
+            <label class="font-product type-ui-xs flex items-center gap-2 text-dls-secondary">
+              <input
+                type="checkbox"
+                checked={allCurrentInventorySelected()}
+                onChange={(event) => toggleAllCurrentInventorySelection(event.currentTarget.checked)}
+              />
+              {translate("skills.select_all_filtered")}
+            </label>
+          </Show>
+        </div>
+        <Show when={selectedInventoryCount() > 0}>
+          <div
+            data-testid="skills-bulk-toolbar"
+            class="flex flex-wrap items-center gap-2 rounded-lg border border-dls-border bg-dls-hover px-3 py-2"
+          >
+            <span class="font-product type-ui-xs text-dls-secondary">
+              {translate("skills.selected_count", { count: String(selectedInventoryCount()) })}
+            </span>
+            <Button
+              variant="outline"
+              class="h-8 px-2 type-ui-xs"
+              title={globalTransferDisabledReason() ?? translate("skills.copy_to_global")}
+              disabled={props.busy || Boolean(globalTransferDisabledReason())}
+              onClick={() => void transferSelectedSkillsToGlobal(false)}
+            >
+              <Copy size={13} />
+              {translate("skills.copy_to_global")}
+            </Button>
+            <Button
+              variant="outline"
+              class="h-8 px-2 type-ui-xs"
+              title={globalTransferDisabledReason() ?? translate("skills.move_to_global")}
+              disabled={props.busy || Boolean(globalTransferDisabledReason())}
+              onClick={() => void transferSelectedSkillsToGlobal(true)}
+            >
+              <ArrowRightToLine size={13} />
+              {translate("skills.move_to_global")}
+            </Button>
+            <Button variant="outline" class="h-8 px-2 type-ui-xs" disabled title={translate("skills.registry_action_pending")} onClick={showRegistryActionPending}>
+              <Upload size={13} />
+              {translate("skills.bulk_publish")}
+            </Button>
+            <Button variant="outline" class="h-8 px-2 type-ui-xs" disabled title={translate("skills.registry_action_pending")} onClick={showRegistryActionPending}>
+              <Package size={13} />
+              {translate("skills.bulk_adopt")}
+            </Button>
+            <Button variant="danger" class="h-8 px-2 type-ui-xs" disabled title={translate("skills.registry_action_pending")} onClick={showRegistryActionPending}>
+              <Trash2 size={13} />
+              {translate("skills.bulk_remove")}
+            </Button>
+            <button
+              type="button"
+              class="font-product type-ui-xs text-dls-secondary hover:text-dls-text"
+              onClick={() => setSelectedInventoryIds([])}
+            >
+              {translate("skills.clear_selection")}
+            </button>
+          </div>
+        </Show>
         <Show
           when={filteredInstalledInventoryItems().length}
           fallback={
@@ -937,43 +1337,136 @@ export default function SkillsView(props: SkillsViewProps) {
             </div>
           }
         >
-          <div class="space-y-6">
-            <Show when={allWorkspaceInventoryItems().length}>
-              <div data-testid="skills-all-workspaces-section" class="space-y-3">
-                <h4 class="font-product type-ui-xs font-bold text-dls-secondary uppercase tracking-widest">
-                  {translate("skills.all_workspaces")}
-                </h4>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <For each={allWorkspaceInventoryItems()}>
-                    {(item) => {
-                      const instance = item.globalInstance!;
-                      return renderInventoryCard({
-                        item,
-                        instance,
-                      });
+          <Show
+            when={inventoryViewMode() === "table"}
+            fallback={
+              <div class="space-y-6">
+                <Show when={allWorkspaceInventoryItems().length}>
+                  <div data-testid="skills-all-workspaces-section" class="space-y-3">
+                    <h4 class="font-product type-ui-xs font-bold text-dls-secondary uppercase tracking-widest">
+                      {translate("skills.all_workspaces")}
+                    </h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <For each={allWorkspaceInventoryItems()}>
+                        {(item) => {
+                          const instance = item.globalInstance!;
+                          return renderInventoryCard({
+                            item,
+                            instance,
+                          });
+                        }}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
+
+                <Show when={workspaceInventoryRows().length}>
+                  <div data-testid="skills-workspace-specific-section" class="space-y-3">
+                    <h4 class="font-product type-ui-xs font-bold text-dls-secondary uppercase tracking-widest">
+                      {translate("skills.workspace_specific")}
+                    </h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <For each={workspaceInventoryRows()}>
+                        {(row) => renderInventoryCard({
+                          item: row.item,
+                          instance: row.instance,
+                          workspaceLabel: workspaceLabelForInstance(row.instance),
+                        })}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
+              </div>
+            }
+          >
+            <div data-testid="skills-inventory-table" class="overflow-x-auto rounded-lg border border-dls-border bg-dls-surface">
+              <table class="w-full min-w-[720px] border-collapse">
+                <thead class="border-b border-dls-border bg-dls-hover text-left">
+                  <tr class="font-product type-ui-xs uppercase text-dls-secondary">
+                    <th class="w-10 px-3 py-2">
+                      <span class="sr-only">{translate("skills.select_skill_location")}</span>
+                    </th>
+                    <th class="px-3 py-2">{translate("skills.skill_label")}</th>
+                    <th class="px-3 py-2">{translate("skills.filter_scope")}</th>
+                    <th class="px-3 py-2">{translate("skills.filter_workspace")}</th>
+                    <th class="px-3 py-2">{translate("skills.source")}</th>
+                    <th class="px-3 py-2 text-right">{translate("skills.actions")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <For each={inventoryTableRows()}>
+                    {(row) => {
+                      const selectionId = () => skillInventoryInstanceId(row.instance);
+                      const actionSkill = createMemo(() => actionSkillForInstance(row.instance));
+                      return (
+                        <tr
+                          class="border-b border-dls-border last:border-0 hover:bg-dls-hover"
+                          data-testid="skill-inventory-table-row"
+                          data-skill-inventory-name={row.item.name}
+                          onClick={() => openSkillDetail(row.item, row.instance)}
+                        >
+                          <td class="px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedInventoryIdSet().has(selectionId())}
+                              aria-label={translate("skills.select_skill_location")}
+                              onClick={(event) => event.stopPropagation()}
+                              onChange={(event) => toggleInventorySelection(selectionId(), event.currentTarget.checked)}
+                            />
+                          </td>
+                          <td class="max-w-[220px] px-3 py-2">
+                            <div class="truncate font-product type-ui-sm font-semibold text-dls-text">{row.item.name}</div>
+                            <Show when={row.instance.description ?? row.item.description}>
+                              {(description) => <div class="truncate type-ui-xs text-dls-secondary">{description()}</div>}
+                            </Show>
+                          </td>
+                          <td class="px-3 py-2 type-ui-sm text-dls-secondary">
+                            {row.instance.scope === "user-global" ? translate("skills.filter_scope_global") : translate("skills.filter_scope_workspace")}
+                          </td>
+                          <td class="max-w-[220px] px-3 py-2 type-ui-sm text-dls-secondary">
+                            <span class="block truncate">{row.workspaceLabel}</span>
+                          </td>
+                          <td class="px-3 py-2 type-ui-sm text-dls-secondary">{row.instance.source}</td>
+                          <td class="px-3 py-2">
+                            <div class="flex justify-end gap-1">
+                              <button
+                                type="button"
+                                class="rounded-md p-1.5 text-dls-secondary hover:bg-dls-active hover:text-dls-text disabled:opacity-40"
+                                disabled={props.busy || !actionSkill()}
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  const skill = actionSkill();
+                                  if (skill) void openSkill(skill);
+                                }}
+                                aria-label={translate("common.edit")}
+                                title={translate("common.edit")}
+                              >
+                                <Edit2 size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                class="rounded-md p-1.5 text-dls-secondary hover:bg-dls-active hover:text-dls-text"
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  void openInventoryInstanceLocation(row.instance.path);
+                                }}
+                                aria-label={translate("skills.reveal_skill_location")}
+                                title={translate("skills.reveal_skill_location")}
+                              >
+                                <FolderOpen size={14} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
                     }}
                   </For>
-                </div>
-              </div>
-            </Show>
-
-            <Show when={workspaceInventoryRows().length}>
-              <div data-testid="skills-workspace-specific-section" class="space-y-3">
-                <h4 class="font-product type-ui-xs font-bold text-dls-secondary uppercase tracking-widest">
-                  {translate("skills.workspace_specific")}
-                </h4>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <For each={workspaceInventoryRows()}>
-                    {(row) => renderInventoryCard({
-                      item: row.item,
-                      instance: row.instance,
-                      workspaceLabel: workspaceLabelForInstance(row.instance),
-                    })}
-                  </For>
-                </div>
-              </div>
-            </Show>
-          </div>
+                </tbody>
+              </table>
+            </div>
+          </Show>
         </Show>
       </div>
 
@@ -1407,6 +1900,50 @@ export default function SkillsView(props: SkillsViewProps) {
             </div>
           </div>
         </div>
+      </Show>
+
+      <SkillDetailDrawer
+        open={Boolean(selectedDetail())}
+        skill={selectedDetailMetadata()}
+        locations={selectedDetailLocations()}
+        versions={selectedDetailVersions()}
+        versionTargets={selectedDetailVersionTarget() ? [selectedDetailVersionTarget()!] : []}
+        selectedTab={selectedDetailTab()}
+        onSelectTab={setSelectedDetailTab}
+        onClose={() => setSelectedDetail(null)}
+        onCopySkill={() => copySelectedSkillToGlobal(false)}
+        onMoveSkill={() => copySelectedSkillToGlobal(true)}
+        onPublishSkill={(action) => openSkillReviewDialog("organization", action)}
+        onRequestApproval={(action) => openSkillReviewDialog("system", action)}
+        onRestoreVersion={showRegistryActionPending}
+        onDeleteSkill={requestDetailDelete}
+      />
+
+      <Show when={reviewDialog()}>
+        {(dialog) => (
+          <SkillReviewDialog
+            open
+            mode={dialog().mode}
+            skillId={dialog().action.skill.id}
+            versionId={dialog().action.skill.currentVersionId ?? dialog().action.skill.id}
+            skillName={dialog().action.skill.name}
+            versionLabel={translate("skills.current_version")}
+            targetScope={dialog().targetScope}
+            metadataDiff={selectedReviewMetadataDiff()}
+            fileDiffs={selectedReviewFileDiffs()}
+            reason={reviewReason()}
+            onReasonChange={setReviewReason}
+            onClose={closeSkillReviewDialog}
+            onRequestOrganizationPublish={() => {
+              showRegistryActionPending();
+              closeSkillReviewDialog();
+            }}
+            onRequestSystemApproval={() => {
+              showRegistryActionPending();
+              closeSkillReviewDialog();
+            }}
+          />
+        )}
       </Show>
 
       <Show when={installLinkOpen()}>

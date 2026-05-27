@@ -86,6 +86,24 @@ Auth scopes:
 
 Local contract validators live server-side and are intentionally narrow. They validate only registry response shapes consumed by the local Veslo server and app, including skill lists, skill detail, version lists, package downloads, installations, workspace skill sets, review responses, and search results. Package download validation delegates to the existing skill package manifest model so local install behavior stays aligned with pack/unpack.
 
+Veslo server also exposes a local proxy for registry search:
+
+- `GET /v1/skills/search`
+  Requires client auth. Proxies configured registry search with server-side response validation. If no registry base URL is configured, returns an empty search result instead of treating the local runtime as failed.
+- `GET /v1/skill-registry-events`
+  Requires client auth. Proxies ordered registry mutation events with cursor, org, workspace, and limit filters. If no registry base URL is configured, returns an empty event page so the app can keep polling without surfacing a local runtime error.
+
+Managed registry package materialization is a local server responsibility:
+
+- `GET /skills/materialization`
+  Requires client auth. Returns local managed personal-global skill materialization status.
+- `POST /skills/materialization/sync-global`
+  Requires host or owner auth. Downloads desired personal-global registry installations, validates package archives, writes managed global runtime skill directories, and returns `pending` without mutating files when the caller reports an active run.
+- `GET /workspace/:id/skills/materialization`
+  Requires client auth. Returns local managed skill materialization status for the workspace.
+- `POST /workspace/:id/skills/materialization/sync`
+  Requires host or owner auth. Downloads the desired registry workspace skill set, validates package archives, writes managed runtime skill directories, and returns `pending` without mutating files when the caller reports an active run.
+
 ## Workspace Scope
 
 Many routes are workspace-scoped and should be called with an active workspace id.

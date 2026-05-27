@@ -96,6 +96,12 @@ Sandbox advertisement (for capability discovery):
 - `DELETE /workspace/:id/plugins/:name`
 - `GET /workspace/:id/skills`
 - `POST /workspace/:id/skills/resolve`
+- `GET /v1/skills/search`
+- `GET /v1/skill-registry-events`
+- `GET /skills/materialization`
+- `POST /skills/materialization/sync-global` (host/owner auth)
+- `GET /workspace/:id/skills/materialization`
+- `POST /workspace/:id/skills/materialization/sync` (host/owner auth)
 - `POST /workspace/:id/skills`
 - `GET /workspace/:id/mcp`
 - `POST /workspace/:id/mcp`

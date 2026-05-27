@@ -105,13 +105,15 @@ test("local skill import refreshes the app-wide installed inventory", () => {
   assert.doesNotMatch(source, /id: "import-local"[\s\S]{0,300}onClick: props\.importLocalSkill/);
 });
 
-test("inventory card uninstall is unavailable until scoped uninstall exists", () => {
+test("inventory card uninstall targets writable active workspace instances", () => {
   assert.match(source, /activeWorkspaceId: string/);
-  assert.match(source, /const canUninstallInventoryInstance = \(_input: \{ item: SkillInventoryItem; instance: SkillInstance \}\) => false/);
-  assert.match(source, /const uninstallDisabledReason = \(_input: \{ item: SkillInventoryItem; instance: SkillInstance \}\) =>\s*translate\("skills\.uninstall_scoped_pending"\)/);
+  assert.match(source, /const canUninstallInventoryInstance = \(input: \{ item: SkillInventoryItem; instance: SkillInstance \}\) =>\s*Boolean\(mutationTargetForInstance\(input\.instance\)\)/);
+  assert.match(source, /if \(input\.instance\.writable === false\) return translate\("skills\.registry_action_pending"\)/);
+  assert.match(source, /if \(input\.instance\.scope !== "workspace"\) return translate\("skills\.uninstall_scope_ambiguous"\)/);
+  assert.match(source, /if \(input\.instance\.workspaceId !== props\.activeWorkspaceId\) return translate\("skills\.uninstall_not_active_workspace"\)/);
   assert.match(renderInventoryCardSource, /disabled=\{props\.busy \|\| !canUninstall\(\)\}/);
   assert.match(source, /aria-label=\{uninstallTitle\(\)\}/);
-  assert.doesNotMatch(renderInventoryCardSource, /setUninstallTarget/);
+  assert.match(renderInventoryCardSource, /setUninstallTarget/);
 });
 
 test("install-from-link overwrite is gated by active workspace conflicts only", () => {
@@ -137,8 +139,8 @@ test("install-from-link overwrite is gated by active workspace conflicts only", 
 
 test("install-from-link keeps the modal open when saveSkill reports failure", () => {
   assert.match(source, /import type \{[\s\S]*SkillSaveResult[\s\S]*\} from "\.\.\/types"/);
-  assert.match(source, /saveSkill: \(input: \{ name: string; content: string; description\?: string \}\) => Promise<SkillSaveResult>/);
-  assert.match(dashboardSource, /saveSkill: \(input: \{ name: string; content: string; description\?: string \}\) => Promise<SkillSaveResult>/);
+  assert.match(source, /saveSkill: \(input: \{ name: string; path\?: string; content: string; description\?: string \}\) => Promise<SkillSaveResult>/);
+  assert.match(dashboardSource, /saveSkill: \(input: \{ name: string; path\?: string; content: string; description\?: string \}\) => Promise<SkillSaveResult>/);
   assert.match(source, /const result = await Promise\.resolve\(\s*props\.saveSkill\(\{/);
   assert.match(source, /if \(!result\.ok\) \{\s*setInstallLinkError\(result\.message \?\? translate\("skills\.failed_save_skill"\)\);\s*return;\s*\}/);
   assert.match(source, /if \(!result\.ok\)[\s\S]{0,220}return;[\s\S]{0,220}props\.refreshSkills\(\{ force: true \}\);/);
@@ -239,7 +241,12 @@ test("skill edit and delete callbacks are targeted by inventory instance", () =>
   assert.match(dashboardSource, /deleteSkillInstance:\s*\(target: SkillMutationTarget\) => Promise<void>/);
   assert.match(extensionsSource, /async function readSkillInstance\(target: SkillMutationTarget\)/);
   assert.match(extensionsSource, /async function saveSkillInstance\(target: SkillMutationTarget, content: string\)/);
+  assert.match(extensionsSource, /readSkill\(resolved\.skill\.name, resolved\.skill\.path\)/);
+  assert.match(extensionsSource, /writeLocalSkillAtPath/);
+  assert.match(extensionsSource, /path: resolved\.skill\.path/);
   assert.match(extensionsSource, /async function deleteSkillInstance\(target: SkillMutationTarget\)/);
+  assert.match(extensionsSource, /deleteSkill\(vesloWorkspaceId, resolved\.skill\.name, \{ path: resolved\.skill\.path \}\)/);
+  assert.match(extensionsSource, /uninstallSkillAtPath\(root, resolved\.skill\.name, resolved\.skill\.path\)/);
   assert.match(source, /const mutationTargetForInstance = \(instance: SkillInstance\): SkillMutationTarget \| null =>/);
   assert.match(source, /skillMutationTargetFromInstance\(instance\)/);
   assert.match(source, /props\.readSkillInstance\(skill\.mutationTarget\)/);
@@ -248,4 +255,33 @@ test("skill edit and delete callbacks are targeted by inventory instance", () =>
   assert.doesNotMatch(source, /props\.readSkill\(skill\.name\)/);
   assert.doesNotMatch(source, /props\.saveSkill\(\{\s*name: skill\.name/);
   assert.doesNotMatch(source, /props\.uninstallSkill\(target\.name\)/);
+});
+
+test("workspace skill copy and move are local scope transfer actions, not disabled placeholders", () => {
+  assert.match(source, /copySkillInstanceToGlobal:\s*\(target: SkillMutationTarget, options\?: \{ deleteSource\?: boolean \}\) => Promise<SkillSaveResult>/);
+  assert.match(dashboardSource, /copySkillInstanceToGlobal:\s*\(target: SkillMutationTarget, options\?: \{ deleteSource\?: boolean \}\) => Promise<SkillSaveResult>/);
+  assert.match(
+    extensionsSource,
+    /async function copySkillInstanceToGlobal\(\s*target: SkillMutationTarget,\s*optionsOverride\?: \{ deleteSource\?: boolean \},?\s*\): Promise<SkillSaveResult>/,
+  );
+  assert.match(appSource, /\bcopySkillInstanceToGlobal,/);
+  assert.match(appSource, /\bdeleteSkillInstance,/);
+  assert.match(source, /const copySelectedSkillToGlobal = \(deleteSource: boolean\) =>/);
+  assert.match(source, /props\.copySkillInstanceToGlobal\(target, \{ deleteSource \}\)/);
+  assert.match(source, /onCopySkill=\{\(\) => copySelectedSkillToGlobal\(false\)\}/);
+  assert.match(source, /onMoveSkill=\{\(\) => copySelectedSkillToGlobal\(true\)\}/);
+  assert.doesNotMatch(source, /translate\("skills\.bulk_copy"\)[\s\S]{0,240}<Button[\s\S]{0,180}\sdisabled\s/);
+  assert.doesNotMatch(source, /translate\("skills\.bulk_move"\)[\s\S]{0,240}<Button[\s\S]{0,180}\sdisabled\s/);
+});
+
+test("skills page wires registry inventory filters, table mode, bulk selection, and detail drawer", () => {
+  assert.match(source, /filterSkillInventoryItems/);
+  assert.match(source, /selectAllSkillInventoryIdsForCurrentFilter/);
+  assert.match(source, /data-testid="skills-inventory-table"/);
+  assert.match(source, /data-testid="skills-bulk-toolbar"/);
+  assert.match(source, /translate\("skills\.bulk_adopt"\)/);
+  assert.match(source, /<SkillDetailDrawer/);
+  assert.match(source, /<SkillReviewDialog/);
+  assert.match(source, /onPublishSkill=\{\(action\) => openSkillReviewDialog\("organization", action\)\}/);
+  assert.match(source, /onRequestApproval=\{\(action\) => openSkillReviewDialog\("system", action\)\}/);
 });

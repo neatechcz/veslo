@@ -278,10 +278,16 @@ Local Veslo state:
 - downloaded package archives before install
 - cached package archives under `${VESLO_DATA_DIR or ~/.veslo/veslo-server}/skill-package-cache/`, keyed by package SHA-256 and verified before use
 - unpacked runtime skill directories controlled by the local Veslo server
+- workspace managed skill materializations under `.opencode/skills/veslo-managed/`, with a root manifest and per-skill managed markers
+- pre-change backups for managed materialization replacement/removal under the Veslo data directory
 - workspace activation or reload state after a skill set changes
 - any temporary install progress, errors, or selected install target in the app UI
 
 The local server validates registry responses before using them. Validators accept only the response fields needed by the app/server contract and delegate package manifest checks to the skill package model. They are not a backend implementation and do not replace registry-side authorization, review workflow, package storage, or audit enforcement.
+
+Registry search can be proxied through the local Veslo server at `/v1/skills/search` so the app can reuse server-side registry auth configuration and response validation. Registry update events can be polled through `/v1/skill-registry-events`; active workspace updates should become pending reload state, while idle workspace and personal-global updates can be materialized immediately. Runtime mutation remains explicit: `/workspace/:id/skills/materialization/sync` and `/skills/materialization/sync-global` require host or owner auth and must not rewrite managed skill files while an agent run is active.
+
+The Skills page now treats installed skills as an app-wide inventory with filterable location rows. UI filters are local presentation state. Registry-backed copy, move, publish, approval, restore, and adoption controls must stay review/pending-only until the corresponding cloud registry mutation routes exist and are connected through the local Veslo server.
 
 Registry auth is account-scoped:
 

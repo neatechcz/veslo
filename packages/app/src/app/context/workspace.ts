@@ -28,6 +28,7 @@ import {
   buildVesloWorkspaceBaseUrl,
   createVesloServerClient,
   normalizeVesloServerUrl,
+  VesloServerError,
   type VesloServerClient,
   type VesloServerSettings,
   type VesloWorkspaceInfo,
@@ -576,6 +577,84 @@ export function createWorkspaceStore(options: {
     }
   }
 
+  async function syncWorkspaceSkillMaterializationBeforeRuntime(
+    workspace: WorkspaceInfo,
+    context?: { reason?: string },
+  ) {
+    const client = options.vesloServerClient?.();
+    if (!client) return true;
+
+    const workspaceId = workspace.id?.trim() ?? "";
+    if (!workspaceId) return true;
+    const denAuth = readDenAuth();
+    const materializationAuth = {
+      denToken: denAuth?.token?.trim() || undefined,
+      denOrgId: denAuth?.orgId?.trim() || undefined,
+      denUserId: denAuth?.user?.id?.trim() || undefined,
+    };
+
+    try {
+      const status = await client.getWorkspaceSkillMaterializationStatus(workspaceId);
+      if (!status.registryConfigured) {
+        wsDebug("skills:materialization:skip:not-configured", {
+          workspaceId,
+          reason: context?.reason ?? null,
+        });
+        return true;
+      }
+
+      const activeRun = Boolean(workspaceBusy()[workspace.id]);
+      if (activeRun) {
+        await client.syncWorkspaceSkillMaterialization(workspaceId, { ...materializationAuth, activeRun: true });
+        wsDebug("skills:materialization:pending:active-run", {
+          workspaceId,
+          reason: context?.reason ?? null,
+        });
+        return true;
+      }
+
+      if (status.status === "current" && status.reloadRequired !== true) {
+        wsDebug("skills:materialization:skip:current", {
+          workspaceId,
+          reason: context?.reason ?? null,
+        });
+        return true;
+      }
+
+      const result = await client.syncWorkspaceSkillMaterialization(workspaceId, materializationAuth);
+      wsDebug("skills:materialization:synced", {
+        workspaceId,
+        reason: context?.reason ?? null,
+        status: result.status,
+        synced: result.synced,
+        reloadRequired: result.reloadRequired ?? false,
+        materializedCount: result.materializedSkills.length,
+        removedCount: result.removedSkillNames?.length ?? 0,
+      });
+      if (result.synced || result.reloadRequired === true) {
+        options.refreshSkills({ force: true }).catch(e => reportError(e, "workspace.refreshSkills"));
+      }
+      return true;
+    } catch (error) {
+      if (error instanceof VesloServerError && error.status === 404) {
+        wsDebug("skills:materialization:skip:unsupported-server", {
+          workspaceId,
+          reason: context?.reason ?? null,
+        });
+        return true;
+      }
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      wsDebug("skills:materialization:failed", {
+        workspaceId,
+        reason: context?.reason ?? null,
+        message,
+      });
+      options.setError(addOpencodeCacheHint(message));
+      updateWorkspaceConnectionState(workspaceId, { status: "error", message });
+      return false;
+    }
+  }
+
   async function activateWorkspace(
     workspaceId?: string,
     activationOptions?: { promoteToFront?: boolean },
@@ -1117,6 +1196,13 @@ export function createWorkspaceStore(options: {
       options.setBusyStartedAt(Date.now());
 
       try {
+        const skillsReady = await syncWorkspaceSkillMaterializationBeforeRuntime(next, {
+          reason: "workspace-restart",
+        });
+        if (!skillsReady) {
+          engineRestartFailed = true;
+          return false;
+        }
         const runtime = resolveEngineRuntime();
         _wsLog("[workspace:activate] STEP 5 — runtime =", runtime);
         _wsLog("[workspace:activate] STEP 5.1 — localRuntimeLifecycle.restartWorkspaceRuntime...", {
@@ -2435,6 +2521,11 @@ export function createWorkspaceStore(options: {
       clearWorkspaceBusyAllExcept(workspace.id);
 
       try {
+        const skillsReady = await syncWorkspaceSkillMaterializationBeforeRuntime(workspace, {
+          reason: "browse-attach",
+        });
+        if (!skillsReady) return false;
+
         let ok = false;
         try {
           const runtime = resolveEngineRuntime();
