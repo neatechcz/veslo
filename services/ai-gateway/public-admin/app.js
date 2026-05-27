@@ -482,12 +482,7 @@ async function fetchJson(path, options = {}) {
 }
 
 async function bootstrapSession() {
-  if (!state.token) {
-    showLogin();
-    return;
-  }
-
-  setStatus("Checking session", "validating stored token");
+  setStatus("Checking session", state.token ? "validating stored token" : "validating admin cookie");
   const { response, payload } = await api("/session", { method: "GET" });
   if (!response.ok) {
     state.session = null;
@@ -497,12 +492,14 @@ async function bootstrapSession() {
       state.token = ""
       localStorage.removeItem(STORAGE_KEY)
     }
+    if (shouldClearToken && payload?.error === "unauthorized") {
+      window.location.assign(`${location.pathname}${location.search}`);
+      return;
+    }
     showLogin(
-      shouldClearToken && payload?.error === "unauthorized"
-        ? "Your session expired. Sign in again."
-        : shouldClearToken && payload?.error === "forbidden"
-          ? "You do not have admin access."
-          : "Unable to verify session.",
+      shouldClearToken && payload?.error === "forbidden"
+        ? "You do not have admin access."
+        : "Unable to verify session.",
     )
     if (!shouldClearToken) {
       setStatus("Session check failed", "stored token kept")
@@ -632,7 +629,12 @@ async function initializeAuth() {
   await bootstrapSession();
 }
 
-function signOut() {
+async function clearServerAdminSession() {
+  await api("/auth/sign-out", { method: "POST" }).catch(() => null);
+}
+
+async function signOut() {
+  await clearServerAdminSession();
   state.token = "";
   state.session = null;
   state.user = null;
@@ -649,7 +651,7 @@ function signOut() {
   state.selectedUserId = null;
   state.userMode = "edit";
   localStorage.removeItem(STORAGE_KEY);
-  showLogin("Signed out.");
+  window.location.assign("/admin");
 }
 
 async function loadAllData() {
@@ -1679,7 +1681,7 @@ function bindNavigation() {
       event.preventDefault();
       const page = item.dataset.route || "overview";
       setActivePage(page);
-      if (state.token) {
+      if (state.session) {
         showApp();
       } else {
         showLogin();
@@ -1693,7 +1695,7 @@ function bindActions() {
   els.browserSignInButton.addEventListener("click", () => {
     void startBrowserAuth();
   });
-  els.signOutButton.addEventListener("click", signOut);
+  els.signOutButton.addEventListener("click", () => void signOut());
   els.refreshButton.addEventListener("click", () => void bootstrapSession());
   els.createUserButton.addEventListener("click", enterCreateMode);
   els.createUserButtonInline.addEventListener("click", enterCreateMode);
@@ -1821,9 +1823,6 @@ function bindActions() {
 function handleRoute() {
   const page = normalizePage(location.pathname);
   setActivePage(page);
-  if (!state.token) {
-    showLogin();
-  }
 }
 
 bindNavigation();

@@ -4,15 +4,244 @@ import type { AddressInfo } from "node:net"
 import test from "node:test"
 
 import { createApp } from "../src/index.js"
+import type {
+  AdminService,
+  AdminSessionSnapshot,
+  AuthPayload,
+  BrowserAuthExchangeInput,
+  BrowserAuthStartInput,
+  BrowserAuthStartPayload,
+  CreateCredentialInput,
+  CreateUserInput,
+  ListCredentialsInput,
+  UpdateUserAiAccessInput,
+  UpdateUserInput,
+  UsageGroupBy,
+} from "../src/http/admin.js"
 
-test("GET /admin/credentials serves the admin shell with an admin-only platform credential form", async () => {
-  const app = createApp()
+const ADMIN_COOKIE = "veslo.ai-gateway.admin.token=admin-token"
+
+function adminSession(): AdminSessionSnapshot {
+  return {
+    user: {
+      id: "user_admin",
+      email: "admin@example.test",
+      emailVerified: true,
+      name: "Admin User",
+    },
+    platformAdmin: true,
+    activeOrgId: "org_admin",
+    organizations: [
+      {
+        id: "org_admin",
+        name: "Admin Org",
+        slug: "admin-org",
+        ownerUserId: "user_admin",
+        role: "owner",
+      },
+    ],
+  }
+}
+
+function createAdminServiceStub(overrides: Partial<AdminService> = {}): AdminService {
+  const service: AdminService = {
+    async startBrowserAuth(_input: BrowserAuthStartInput): Promise<BrowserAuthStartPayload> {
+      return {
+        authorizeUrl: "https://api.veslo.work/?desktopOnboarding=1&sid=session_test&intent=signin",
+        sessionId: "session_test",
+        expiresAt: null,
+      }
+    },
+    async exchangeBrowserAuth(_input: BrowserAuthExchangeInput): Promise<AuthPayload> {
+      return {
+        token: "admin-token",
+        denApiBase: "https://api.veslo.work",
+        session: adminSession(),
+      }
+    },
+    async getSession(token: string) {
+      if (token !== "admin-token") {
+        throw Object.assign(new Error("forbidden"), { status: 403 })
+      }
+      return adminSession()
+    },
+    async listUsers() {
+      return []
+    },
+    async createUser(_token: string, _input: CreateUserInput) {
+      throw new Error("unused")
+    },
+    async getEligibleCodexCredentialForAutoAssign() {
+      return null
+    },
+    async updateUser(_token: string, _userId: string, _input: UpdateUserInput) {
+      throw new Error("unused")
+    },
+    async getUserAiAccess() {
+      return { aiAccess: null, availableCredentials: [] }
+    },
+    async upsertUserAiAccess(_token: string, _userId: string, _input: UpdateUserAiAccessInput) {
+      throw new Error("unused")
+    },
+    async disableUser() {
+      throw new Error("unused")
+    },
+    async enableUser() {
+      throw new Error("unused")
+    },
+    async deleteUser() {
+      return
+    },
+    async listCredentials(_token: string, _input?: ListCredentialsInput) {
+      return { credentials: [] }
+    },
+    async listCredentialModels(_token: string, credentialId: string) {
+      return { credentialId, models: [] }
+    },
+    async createCredential(_token: string, _input: CreateCredentialInput, _actorUserId: string | null) {
+      throw new Error("unused")
+    },
+    async revokeCredential() {
+      throw new Error("unused")
+    },
+    async drainCredential() {
+      throw new Error("unused")
+    },
+    async rotateCredential() {
+      throw new Error("unused")
+    },
+    async deleteCredential() {
+      throw new Error("unused")
+    },
+    async listSessions() {
+      return { sessions: [] }
+    },
+    async getUsage(_token: string, input: { groupBy: UsageGroupBy; credentialId: string | null; userId: string | null; orgId: string | null }) {
+      return {
+        summary: { totalTokens: 0, totalRequests: 0 },
+        groupBy: input.groupBy,
+        filters: { credentials: [], users: [], orgs: [] },
+        series: [],
+        topCredentials: [],
+        topUsers: [],
+        topOrgs: [],
+        credentialUsage: [],
+      }
+    },
+    async listAlerts() {
+      return { alerts: [] }
+    },
+    async acknowledgeAlert() {
+      throw new Error("unused")
+    },
+    async resolveAlert() {
+      throw new Error("unused")
+    },
+    async listAudit() {
+      return { events: [] }
+    },
+  }
+
+  return { ...service, ...overrides }
+}
+
+test("GET /admin/credentials redirects unauthenticated browsers to the existing Den login page", async () => {
+  const calls: BrowserAuthStartInput[] = []
+  const app = createApp({
+    admin: createAdminServiceStub({
+      async startBrowserAuth(input) {
+        calls.push(input)
+        return {
+          authorizeUrl: "https://api.veslo.work/?desktopOnboarding=1&sid=session_test&intent=signin",
+          sessionId: "session_test",
+          expiresAt: null,
+        }
+      },
+    }),
+  })
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
 
   try {
     const { port } = server.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${port}/admin/credentials`)
+    const response = await fetch(`http://127.0.0.1:${port}/admin/credentials`, { redirect: "manual" })
+
+    assert.equal(response.status, 302)
+    const location = response.headers.get("location")
+    assert.ok(location)
+    const redirect = new URL(location)
+    assert.equal(redirect.origin, "https://api.veslo.work")
+    assert.equal(redirect.searchParams.get("desktopOnboarding"), "1")
+    assert.equal(redirect.searchParams.get("sid"), "session_test")
+    assert.equal(redirect.searchParams.get("intent"), "signin")
+    assert.equal(redirect.searchParams.get("view"), "auth")
+    assert.match(response.headers.get("set-cookie") ?? "", /veslo\.ai-gateway\.admin\.browser-auth=/)
+    assert.equal(calls.length, 1)
+    assert.match(calls[0]!.redirectUri, new RegExp(`^http://127\\.0\\.0\\.1:${port}/admin/credentials$`))
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin callback exchanges Den handoff and returns to the original admin path", async () => {
+  const exchanges: BrowserAuthExchangeInput[] = []
+  const app = createApp({
+    admin: createAdminServiceStub({
+      async exchangeBrowserAuth(input) {
+        exchanges.push(input)
+        return {
+          token: "admin-token",
+          denApiBase: "https://api.veslo.work",
+          session: adminSession(),
+        }
+      },
+    }),
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const start = await fetch(`http://127.0.0.1:${port}/admin/credentials`, { redirect: "manual" })
+    const pendingCookie = start.headers.get("set-cookie")?.split(";")[0] ?? ""
+    assert.match(pendingCookie, /veslo\.ai-gateway\.admin\.browser-auth=/)
+
+    const callback = await fetch(`http://127.0.0.1:${port}/admin/credentials?code=code_123&sessionId=session_test`, {
+      redirect: "manual",
+      headers: {
+        cookie: pendingCookie,
+      },
+    })
+
+    assert.equal(callback.status, 302)
+    assert.equal(callback.headers.get("location"), "/admin/credentials")
+    const setCookie = callback.headers.get("set-cookie") ?? ""
+    assert.match(setCookie, /veslo\.ai-gateway\.admin\.token=admin-token/)
+    assert.match(setCookie, /veslo\.ai-gateway\.admin\.browser-auth=;/)
+    assert.equal(exchanges.length, 1)
+    assert.equal(exchanges[0]!.code, "code_123")
+    assert.equal(exchanges[0]!.sessionId, "session_test")
+    assert.match(exchanges[0]!.state, /^[A-Za-z0-9_-]+$/)
+    assert.match(exchanges[0]!.codeVerifier, /^[A-Za-z0-9_-]+$/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/credentials serves the admin shell with an admin-only platform credential form", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/credentials`, {
+      headers: {
+        cookie: ADMIN_COOKIE,
+      },
+    })
 
     assert.equal(response.status, 200)
     const html = await response.text()
@@ -42,13 +271,17 @@ test("GET /admin/credentials serves the admin shell with an admin-only platform 
 })
 
 test("GET /admin shell avoids browser favicon and form-field console issues", async () => {
-  const app = createApp()
+  const app = createApp({ admin: createAdminServiceStub() })
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
 
   try {
     const { port } = server.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${port}/admin`)
+    const response = await fetch(`http://127.0.0.1:${port}/admin`, {
+      headers: {
+        cookie: ADMIN_COOKIE,
+      },
+    })
 
     assert.equal(response.status, 200)
     const html = await response.text()
@@ -173,14 +406,37 @@ test("GET /admin/app.js keeps the stored admin token during transient session ve
   }
 })
 
-test("GET /admin/users includes admin-managed ai access controls in the user editor", async () => {
+test("GET /admin/app.js checks the HTTP-only admin cookie before showing the login panel", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
 
   try {
     const { port } = server.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${port}/admin/users`)
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.doesNotMatch(script, /if \(!state\.token\) \{\s*showLogin\(\);\s*return;\s*\}/)
+    assert.match(script, /validating admin cookie/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/users includes admin-managed ai access controls in the user editor", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/users`, {
+      headers: {
+        cookie: ADMIN_COOKIE,
+      },
+    })
 
     assert.equal(response.status, 200)
     const html = await response.text()
@@ -201,13 +457,17 @@ test("GET /admin/users includes admin-managed ai access controls in the user edi
 })
 
 test("GET /admin/usage includes a credential usage section", async () => {
-  const app = createApp()
+  const app = createApp({ admin: createAdminServiceStub() })
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
 
   try {
     const { port } = server.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${port}/admin/usage`)
+    const response = await fetch(`http://127.0.0.1:${port}/admin/usage`, {
+      headers: {
+        cookie: ADMIN_COOKIE,
+      },
+    })
 
     assert.equal(response.status, 200)
     const html = await response.text()
@@ -395,6 +655,27 @@ test("GET /admin/api/session returns 401 when no bearer token is present", async
     const response = await fetch(`http://127.0.0.1:${port}/admin/api/session`)
     assert.equal(response.status, 401)
     assert.deepEqual(await response.json(), { error: "unauthorized" })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/api/session accepts the admin token from an HTTP-only cookie", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/session`, {
+      headers: {
+        cookie: ADMIN_COOKIE,
+      },
+    })
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), adminSession())
   } finally {
     server.close()
     await once(server, "close")
