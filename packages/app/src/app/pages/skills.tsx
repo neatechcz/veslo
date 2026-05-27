@@ -857,6 +857,10 @@ export default function SkillsView(props: SkillsViewProps) {
         </div>
       </Show>
 
+      <div class="space-y-1">
+        <h2 class="font-product type-title-md text-dls-text">{translate("dashboard.skills")}</h2>
+      </div>
+
       <div class="flex flex-wrap items-center gap-3 border-b border-dls-border pb-4">
         <button
           type="button"
