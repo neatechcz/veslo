@@ -3,14 +3,14 @@ import { chmod, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "no
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { TextDecoder } from "node:util";
 
-import { parseFrontmatter } from "./frontmatter.js";
 import {
   buildSkillPackageManifest,
   normalizeSkillPackagePath,
   validateSkillPackageManifest,
 } from "./skill-package-model.js";
 import type { SkillPackageFile, SkillPackageManifest } from "./skill-package-model.js";
-import { extractTriggerFromBody, SKILL_ENTRYPOINT } from "./skills.js";
+import { parseSkillMarkdownMetadata } from "./skill-metadata.js";
+import { SKILL_ENTRYPOINT } from "./skills.js";
 
 export const MAX_SKILL_PACKAGE_FILE_COUNT = 256;
 export const MAX_SKILL_PACKAGE_FILE_SIZE_BYTES = 10 * 1024 * 1024;
@@ -72,18 +72,6 @@ const comparePaths = (left: string, right: string) => {
   if (left < right) return -1;
   if (left > right) return 1;
   return 0;
-};
-
-const optionalTrimmedString = (value: unknown): string | undefined => {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed || undefined;
-};
-
-const optionalStringList = (value: unknown): string[] | undefined => {
-  if (!Array.isArray(value)) return undefined;
-  const entries = value.map((entry) => optionalTrimmedString(entry)).filter((entry): entry is string => Boolean(entry));
-  return entries.length ? entries : undefined;
 };
 
 const mediaTypeForPath = (path: string): string => {
@@ -207,21 +195,16 @@ const metadataFromSkillMarkdown = (
   if (!skillMarkdown) return { name: fallbackName };
 
   try {
-    const { data, body } = parseFrontmatter(skillMarkdown);
-    const name = optionalTrimmedString(data.name) ?? fallbackName;
-    const description = optionalTrimmedString(data.description);
-    const trigger =
-      optionalTrimmedString(data.trigger) ??
-      optionalTrimmedString(data.when) ??
-      optionalTrimmedString(extractTriggerFromBody(body));
-    const tags = optionalStringList(data.tags);
-    const language = optionalTrimmedString(data.language);
+    const metadata = parseSkillMarkdownMetadata(skillMarkdown, {
+      fallbackName,
+      descriptionMaxLength: 1024,
+    });
     return {
-      name,
-      ...(description ? { description } : {}),
-      ...(trigger ? { trigger } : {}),
-      ...(tags ? { tags } : {}),
-      ...(language ? { language } : {}),
+      name: metadata.name,
+      ...(metadata.description ? { description: metadata.description } : {}),
+      ...(metadata.trigger ? { trigger: metadata.trigger } : {}),
+      ...(metadata.tags ? { tags: metadata.tags } : {}),
+      ...(metadata.language ? { language: metadata.language } : {}),
     };
   } catch {
     return { name: fallbackName };

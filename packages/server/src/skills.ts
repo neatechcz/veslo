@@ -8,6 +8,11 @@ import { exists } from "./utils.js";
 import { validateDescription, validateSkillName } from "./validators.js";
 import { ApiError } from "./errors.js";
 import { projectSkillsDir } from "./workspace-files.js";
+import {
+  extractTriggerFromSkillBody,
+  parseSkillMarkdownMetadata,
+  type SkillMarkdownMetadata,
+} from "./skill-metadata.js";
 
 export const SKILL_ENTRYPOINT = "SKILL.md";
 
@@ -25,56 +30,7 @@ async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
   return roots;
 }
 
-export const extractTriggerFromBody = (body: string) => {
-  const lines = body.split(/\r?\n/);
-  let inWhenSection = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-
-    if (/^#{1,6}\s+/.test(trimmed)) {
-      const heading = trimmed.replace(/^#{1,6}\s+/, "").trim();
-      inWhenSection = /^when to use$/i.test(heading);
-      continue;
-    }
-
-    if (!inWhenSection) continue;
-
-    const cleaned = trimmed
-      .replace(/^[-*+]\s+/, "")
-      .replace(/^\d+[.)]\s+/, "")
-      .trim();
-
-    if (cleaned) return cleaned;
-  }
-
-  return "";
-};
-
-const parseBoolean = (value: unknown): boolean | undefined => {
-  if (typeof value === "boolean") return value;
-  if (typeof value !== "string") return undefined;
-  const normalized = value.trim().toLowerCase();
-  if (["true", "1", "yes"].includes(normalized)) return true;
-  if (["false", "0", "no"].includes(normalized)) return false;
-  return undefined;
-};
-
-const parseStringList = (value: unknown): string[] | undefined => {
-  if (Array.isArray(value)) {
-    const items = value
-      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
-      .filter(Boolean);
-    return items.length ? items : undefined;
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return undefined;
-    return [trimmed];
-  }
-  return undefined;
-};
+export const extractTriggerFromBody = extractTriggerFromSkillBody;
 
 async function parseSkillEntry(
   skillPath: string,
@@ -87,53 +43,27 @@ async function parseSkillEntry(
   } catch {
     return null;
   }
-  let parsed: { data: Record<string, unknown>; body: string };
+  let metadata: SkillMarkdownMetadata;
   try {
-    parsed = parseFrontmatter(content);
+    metadata = parseSkillMarkdownMetadata(content, {
+      expectedName: entryName,
+      fallbackName: entryName,
+      requireDescription: true,
+    });
   } catch {
     return null;
   }
-  const { data, body } = parsed;
-  const name = typeof data.name === "string" ? data.name : entryName;
-  const description = typeof data.description === "string" ? data.description : "";
-  const disableModelInvocation =
-    parseBoolean(data["disable-model-invocation"]) ??
-    parseBoolean(data.disableModelInvocation);
-  const userInvocable =
-    parseBoolean(data["user-invocable"]) ??
-    parseBoolean(data.userInvocable);
-  const aliases = parseStringList(data.aliases);
-  const paths = parseStringList(data.paths);
-  const whenToUse =
-    typeof data.when_to_use === "string"
-      ? data.when_to_use
-      : typeof data.whenToUse === "string"
-        ? data.whenToUse
-        : undefined;
-  const trigger =
-    typeof data.trigger === "string"
-      ? data.trigger
-      : typeof data.when === "string"
-        ? data.when
-        : extractTriggerFromBody(body);
-  try {
-    validateSkillName(name);
-    validateDescription(description);
-  } catch {
-    return null;
-  }
-  if (name !== entryName) return null;
   return {
-    name,
-    description,
+    name: metadata.name,
+    description: metadata.description ?? "",
     path: skillPath,
     scope,
-    trigger: trigger.trim() || undefined,
-    disableModelInvocation,
-    userInvocable,
-    aliases,
-    whenToUse,
-    paths,
+    trigger: metadata.trigger,
+    disableModelInvocation: metadata.disableModelInvocation,
+    userInvocable: metadata.userInvocable,
+    aliases: metadata.aliases,
+    whenToUse: metadata.whenToUse,
+    paths: metadata.paths,
   };
 }
 

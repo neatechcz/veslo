@@ -43,3 +43,49 @@ test("listSkills skips malformed skill entries instead of failing the entire lis
   const items = await listSkills(workspaceRoot, false);
   expect(items.map((item) => item.name)).toEqual(["valid-skill"]);
 });
+
+test("listSkills returns shared parser metadata for local skills", async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-skills-metadata-"));
+  tempDirs.push(workspaceRoot);
+
+  await mkdir(join(workspaceRoot, ".git"), { recursive: true });
+  await mkdir(join(workspaceRoot, ".opencode", "skills", "research-helper"), { recursive: true });
+  await writeFile(
+    join(workspaceRoot, ".opencode", "skills", "research-helper", "SKILL.md"),
+    [
+      "---",
+      "name: research-helper",
+      "description:   Research helper   ",
+      "aliases:",
+      "  - research",
+      "  - source lookup",
+      "paths: docs/**",
+      "disable-model-invocation: yes",
+      "user-invocable: no",
+      "when_to_use: Prefer this for source-backed requests.",
+      "---",
+      "",
+      "# Research helper",
+      "",
+      "## When to use",
+      "- Use for source-backed research requests.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const items = await listSkills(workspaceRoot, false);
+
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({
+    name: "research-helper",
+    description: "Research helper",
+    scope: "project",
+    trigger: "Use for source-backed research requests.",
+    disableModelInvocation: true,
+    userInvocable: false,
+    aliases: ["research", "source lookup"],
+    whenToUse: "Prefer this for source-backed requests.",
+    paths: ["docs/**"],
+  });
+});

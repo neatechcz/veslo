@@ -95,6 +95,38 @@ test("packSkillDirectory includes valid files in deterministic order and skips i
   expect(manifest.packageSha256).toBe(archive.packageSha256);
 });
 
+test("packSkillDirectory derives manifest metadata through the shared skill parser", async () => {
+  const skillDir = await tempDir("veslo-skill-package-metadata-");
+  await writeFile(
+    join(skillDir, "SKILL.md"),
+    [
+      "---",
+      "name: package-helper",
+      "description:   Package helper   ",
+      "when: Use when packaging skills.",
+      "tags:",
+      "  - packaging",
+      "  - skills",
+      "language: cs",
+      "---",
+      "",
+      "# Package helper",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const archive = await packSkillDirectory(skillDir);
+
+  expect(archive.metadata).toEqual({
+    name: "package-helper",
+    description: "Package helper",
+    trigger: "Use when packaging skills.",
+    tags: ["packaging", "skills"],
+    language: "cs",
+  });
+});
+
 test("packSkillDirectory rejects invalid package paths", async () => {
   if (process.platform === "win32") return;
 

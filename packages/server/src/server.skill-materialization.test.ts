@@ -532,6 +532,60 @@ test("POST skill upsert with an instance path updates that exact skill file inst
   expect(await readFile(directSkillPath, "utf8")).toContain("# Direct");
 });
 
+test("GET workspace skills returns parsed local skill metadata through the server route", async () => {
+  const { server, workspaceRoot } = await startFixture();
+  const skillDir = join(workspaceRoot, ".opencode", "skills", "research-helper");
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(
+    join(skillDir, "SKILL.md"),
+    [
+      "---",
+      "name: research-helper",
+      "description:   Research helper   ",
+      "aliases: source lookup",
+      "paths:",
+      "  - docs/**",
+      "disableModelInvocation: true",
+      "userInvocable: false",
+      "---",
+      "",
+      "# Research helper",
+      "",
+      "## When to use",
+      "- Use for server route metadata checks.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/skills`, {
+    headers: { Authorization: "Bearer client-token" },
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as {
+    items: Array<{
+      name: string;
+      description: string;
+      trigger?: string;
+      aliases?: string[];
+      paths?: string[];
+      disableModelInvocation?: boolean;
+      userInvocable?: boolean;
+    }>;
+  };
+  expect(payload.items).toHaveLength(1);
+  expect(payload.items[0]).toMatchObject({
+    name: "research-helper",
+    description: "Research helper",
+    trigger: "Use for server route metadata checks.",
+    aliases: ["source lookup"],
+    paths: ["docs/**"],
+    disableModelInvocation: true,
+    userInvocable: false,
+  });
+});
+
 test("exact skill reads allow managed materialized instances but exact deletes reject them", async () => {
   const { server, workspaceRoot } = await startFixture();
   const managedSkillDir = join(workspaceRoot, ".opencode", "skills", "veslo-managed", "managed-tool");

@@ -3,10 +3,10 @@ import { dirname, join, resolve } from "node:path";
 
 import type { HubSkillItem } from "./types.js";
 import { ApiError } from "./errors.js";
-import { parseFrontmatter } from "./frontmatter.js";
 import { exists } from "./utils.js";
 import { validateSkillName } from "./validators.js";
 import { projectSkillsDir } from "./workspace-files.js";
+import { parseSkillMarkdownMetadata } from "./skill-metadata.js";
 
 type HubRepo = { owner: string; repo: string; ref: string };
 
@@ -17,7 +17,11 @@ const DEFAULT_HUB_REPO: HubRepo = {
 };
 
 const CATALOG_TTL_MS = 5 * 60 * 1000;
-let cachedCatalog: { at: number; items: HubSkillItem[] } | null = null;
+const cachedCatalogs = new Map<string, { at: number; items: HubSkillItem[] }>();
+
+function hubRepoCacheKey(repo: HubRepo) {
+  return `${repo.owner}/${repo.repo}@${repo.ref}`;
+}
 
 function hubApiBase(repo: HubRepo) {
   return `https://api.github.com/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}`;
@@ -55,30 +59,6 @@ async function fetchText(url: string): Promise<string> {
   return res.text();
 }
 
-function extractTriggerFromBody(body: string) {
-  const lines = body.split(/\r?\n/);
-  let inWhenSection = false;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-
-    if (/^#{1,6}\s+/.test(trimmed)) {
-      const heading = trimmed.replace(/^#{1,6}\s+/, "").trim();
-      inWhenSection = /^when to use$/i.test(heading);
-      continue;
-    }
-
-    if (!inWhenSection) continue;
-
-    const cleaned = trimmed
-      .replace(/^[-*+]\s+/, "")
-      .replace(/^\d+[.)]\s+/, "")
-      .trim();
-    if (cleaned) return cleaned;
-  }
-  return "";
-}
-
 async function mapWithConcurrency<T, R>(
   items: T[],
   limit: number,
@@ -98,9 +78,12 @@ async function mapWithConcurrency<T, R>(
 
 export async function listHubSkills(repo: HubRepo = DEFAULT_HUB_REPO): Promise<HubSkillItem[]> {
   const now = Date.now();
+  const cacheKey = hubRepoCacheKey(repo);
+  const cachedCatalog = cachedCatalogs.get(cacheKey);
   if (cachedCatalog && now - cachedCatalog.at < CATALOG_TTL_MS) {
     return cachedCatalog.items;
   }
+  if (cachedCatalog) cachedCatalogs.delete(cacheKey);
 
   const listing = await fetchJson(`${hubApiBase(repo)}/contents/skills?ref=${encodeURIComponent(repo.ref)}`);
   const dirs = Array.isArray(listing)
@@ -115,26 +98,15 @@ export async function listHubSkills(repo: HubRepo = DEFAULT_HUB_REPO): Promise<H
       const skillName = dirName.trim();
       validateSkillName(skillName);
       const skillMd = await fetchText(`${rawBase}/skills/${encodeURIComponent(skillName)}/SKILL.md`);
-      const { data, body } = parseFrontmatter(skillMd);
-      const name = typeof data.name === "string" ? data.name : skillName;
-      const descriptionRaw = typeof data.description === "string" ? data.description : "";
-      const triggerRaw =
-        typeof data.trigger === "string"
-          ? data.trigger
-          : typeof data.when === "string"
-            ? data.when
-            : extractTriggerFromBody(body);
-
-      if (name !== skillName) {
-        return null;
-      }
-
-      const description = descriptionRaw.replace(/\s+/g, " ").trim().slice(0, 1024);
-      const trigger = triggerRaw?.trim() || "";
+      const metadata = parseSkillMarkdownMetadata(skillMd, {
+        expectedName: skillName,
+        fallbackName: skillName,
+        descriptionMaxLength: 1024,
+      });
       const item: HubSkillItem = {
-        name,
-        description,
-        ...(trigger ? { trigger } : {}),
+        name: metadata.name,
+        description: metadata.description ?? "",
+        ...(metadata.trigger ? { trigger: metadata.trigger } : {}),
         source: {
           owner: repo.owner,
           repo: repo.repo,
@@ -153,7 +125,7 @@ export async function listHubSkills(repo: HubRepo = DEFAULT_HUB_REPO): Promise<H
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  cachedCatalog = { at: now, items: sorted };
+  cachedCatalogs.set(cacheKey, { at: now, items: sorted });
   return sorted;
 }
 
