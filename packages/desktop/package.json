@@ -7,6 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "node ./scripts/tauri-dev.mjs",
+    "dev:cleanup": "node ./scripts/cleanup-dev-processes.mjs",
     "build": "tauri build",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
   },

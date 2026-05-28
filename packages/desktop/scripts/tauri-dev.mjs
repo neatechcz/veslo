@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { main as cleanupDevProcesses } from "./cleanup-dev-processes.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -25,6 +26,13 @@ const env = {
   VESLO_SERVER_DEV_WATCH: process.env.VESLO_SERVER_DEV_WATCH?.trim() || "1",
   VESLO_SERVER_DEV_DIR: process.env.VESLO_SERVER_DEV_DIR?.trim() || serverDir,
 };
+
+if (process.platform === "win32" && process.env.VESLO_DEV_CLEANUP !== "0") {
+  const cleanupStatus = cleanupDevProcesses(["--quiet-empty"]);
+  if (cleanupStatus !== 0) {
+    process.exit(cleanupStatus);
+  }
+}
 
 const args = [
   "dev",

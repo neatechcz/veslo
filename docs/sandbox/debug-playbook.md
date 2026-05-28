@@ -285,6 +285,16 @@ opakované volání `veslo_server_restart` nebo stabilní `422` z
 Na Windows se Tauri sidecar spool dá sledovat přes
 `%LOCALAPPDATA%\com.neatech.veslo.dev\desktop-debug-log-spool\pending.jsonl`.
 
+Pokud další `pnpm dev` spadne v `tauri-build` na `PermissionDenied`, bývá
+zamčený starý sidecar `.exe` nebo `bun --watch src/cli.ts` z předchozího dev
+runu. Windows cleanup je napojený automaticky před `tauri dev`; ručně ho lze
+ověřit přes:
+
+```powershell
+pnpm dev:cleanup -- --dry-run
+pnpm dev:cleanup
+```
+
 ## Useful one-liners
 
 ```bash
