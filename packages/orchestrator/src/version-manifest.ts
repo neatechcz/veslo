@@ -13,6 +13,9 @@ export type VersionManifest = {
 
 export function manifestFileCandidates(platform: NodeJS.Platform, target?: string | null): string[] {
   const candidates = ["versions.json"];
+  if (platform === "win32") {
+    candidates.push("versions.json.exe");
+  }
   const trimmedTarget = target?.trim();
   if (!trimmedTarget) {
     return candidates;
