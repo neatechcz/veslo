@@ -29,7 +29,17 @@ export type VesloServerCapabilities = {
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
   config: { read: boolean; write: boolean };
-  sandbox?: { enabled: boolean; backend: "none" | "docker" | "container" };
+  sandbox?: {
+    enabled: boolean;
+    backend:
+      | "none"
+      | "docker"
+      | "container"
+      | "mac-sandbox-exec"
+      | "windows-wsl2"
+      | "windows-job-object"
+      | "stub";
+  };
   proxy?: { opencode: boolean; opencodeRouter: boolean };
   toolProviders?: {
     browser?: {

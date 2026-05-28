@@ -8,6 +8,15 @@ export type ProviderPlacement = "in-sandbox" | "host-machine" | "client-machine"
 
 export type LogFormat = "pretty" | "json";
 
+export type SandboxBackend =
+  | "none"
+  | "docker"
+  | "container"
+  | "mac-sandbox-exec"
+  | "windows-wsl2"
+  | "windows-job-object"
+  | "stub";
+
 export interface WorkspaceConfig {
   id?: string;
   path: string;
@@ -91,6 +100,7 @@ export interface Capabilities {
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
   config: { read: boolean; write: boolean };
+  sandbox?: { enabled: boolean; backend: SandboxBackend };
 
   approvals: { mode: ApprovalMode; timeoutMs: number };
   ui: { toy: boolean };
