@@ -13,7 +13,8 @@ import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { defaultBlockedReadPaths } from "./blocked-defaults.js";
-import type { SandboxSpawnOptions, WorkerSandbox } from "./types.js";
+import { commandToShellString } from "./launch.js";
+import type { SandboxLaunch, SandboxSpawnOptions, WorkerSandbox } from "./types.js";
 
 let initialized = false;
 
@@ -83,12 +84,12 @@ function buildConfig(opts: SandboxSpawnOptions): SandboxRuntimeConfig {
 export const MacSandboxExec: WorkerSandbox = {
   name: "mac-sandbox-exec",
   isAvailable: () => process.platform === "darwin",
-  async wrap(opts: SandboxSpawnOptions): Promise<string> {
+  async buildLaunch(opts: SandboxSpawnOptions): Promise<SandboxLaunch> {
     if (!MacSandboxExec.isAvailable()) {
       throw new Error("MacSandboxExec is macOS-only (current: " + process.platform + ")");
     }
     if (!opts.workspacePath) {
-      throw new Error("MacSandboxExec.wrap requires workspacePath");
+      throw new Error("MacSandboxExec.buildLaunch requires workspacePath");
     }
     try {
       const root = statSync(opts.workspacePath);
@@ -100,6 +101,18 @@ export const MacSandboxExec: WorkerSandbox = {
     }
     await ensureInitialized();
     const customConfig = buildConfig(opts);
-    return await SandboxManager.wrapWithSandbox(opts.command, undefined, customConfig);
+    const wrapped = await SandboxManager.wrapWithSandbox(
+      commandToShellString(opts.command),
+      undefined,
+      customConfig,
+    );
+    return {
+      command: "/bin/sh",
+      args: ["-c", wrapped],
+      cwd: opts.command.cwd,
+      env: opts.command.env,
+      displayCommand: wrapped,
+      childKind: "direct",
+    };
   },
 };

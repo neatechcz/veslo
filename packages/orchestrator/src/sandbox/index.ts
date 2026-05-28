@@ -1,24 +1,30 @@
 /**
- * F4 — Sandbox abstrakce.
+ * F4 - Sandbox abstraction.
  *
- * `resolveSandbox()` vybere backend podle platformy. Centralizovaný entry point
- * pro orchestrator engine spawn (`cli.ts spawnEngine` callback) a budoucí
- * non-engine spawn callers.
+ * `resolveSandbox()` selects the backend for orchestrator engine spawn and
+ * future non-engine spawn callers.
  */
 
 import type { WorkerSandbox } from "./types.js";
 import { MacSandboxExec } from "./mac-sandbox-exec.js";
-import { WindowsJobObject, WindowsWsl2 } from "./windows-stubs.js";
+import { WindowsWsl2 } from "./windows-wsl2/index.js";
+import { WindowsJobObject } from "./windows-stubs.js";
 
-export type { SandboxMount, SandboxSpawnOptions, WorkerSandbox } from "./types.js";
+export type {
+  SandboxCommand,
+  SandboxLaunch,
+  SandboxMount,
+  SandboxSpawnOptions,
+  WorkerSandbox,
+} from "./types.js";
 export { MacSandboxExec, WindowsWsl2, WindowsJobObject };
 export { defaultBlockedReadPaths } from "./blocked-defaults.js";
 
 export function resolveSandbox(): WorkerSandbox {
   if (process.platform === "darwin") return MacSandboxExec;
-  if (process.platform === "win32") return WindowsWsl2; // fáze 7 dořeší
+  if (process.platform === "win32") return WindowsWsl2;
   throw new Error(
     `No sandbox backend for platform=${process.platform}. ` +
-      "Mac MVP supports macOS only; Windows je fáze 7, Linux out of scope.",
+      "macOS and Windows WSL2 are supported sandbox hosts.",
   );
 }
