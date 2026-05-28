@@ -72,10 +72,14 @@ File injection / artifacts:
 - `VESLO_INBOX_MAX_BYTES` (default: 50MB, capped)
 - `VESLO_OUTBOX_ENABLED` (`1` | `0`)
 
+*** DEPRECATED ***
+
 Sandbox advertisement (for capability discovery):
 
 - `VESLO_SANDBOX_ENABLED` (`1` | `0`)
 - `VESLO_SANDBOX_BACKEND` (`docker` | `container` | `none`)
+
+*** DEPRECATED ***
 
 ## Endpoints
 

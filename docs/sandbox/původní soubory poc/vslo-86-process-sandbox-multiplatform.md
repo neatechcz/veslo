@@ -16,9 +16,13 @@ Per-workspace dlouhoběžící workery + sandbox **na úrovni procesu**, nativn�
 
 **Priorita platforem:**
 
+*** DEPRECATED ***
+
 1. **Windows** — primární cíl. AppContainer + Job Object + Restricted Token přes Win32 API.
 2. **macOS** — sekundární. `sandbox-exec` s vygenerovaným `.sb` profilem.
 3. **Linux** — minimální. `bubblewrap` jako v Codex scriptu.
+
+*** DEPRECATED ***
 
 **Klíčový princip:** Veslo má v Rustu jeden trait `WorkerSandbox`, tři implementace (Win/Mac/Linux), zbytek kódu (orchestrátor, frontend) o platformě neví.
 
@@ -83,6 +87,8 @@ pub struct SandboxCapabilities {
 
 **Per platforma:**
 
+*** DEPRECATED ***
+
 ```
 sandbox/
 ├── mod.rs            // trait + factory (vybírá podle cfg(target_os))
@@ -104,7 +110,11 @@ pub fn create_sandbox() -> Box<dyn WorkerSandbox> {
 
 Když uživatel zapne "Run without sandbox" v workspace settings → `NoSandbox` pro ten workspace.
 
+*** DEPRECATED ***
+
 ## 4. Sandbox per platforma
+
+*** DEPRECATED ***
 
 ### 4.1 Windows (primární cíl)
 
@@ -149,6 +159,8 @@ Když uživatel zapne "Run without sandbox" v workspace settings → `NoSandbox`
 - Windows code signing nutný pro stabilní AppContainer SID generation across reboots.
 
 **Prototyp ve fázi 0:** spustit `npm install` v AppContaineru s workspace ACL → zkontrolovat, že to projde.
+
+*** DEPRECATED ***
 
 ### 4.2 macOS (sekundární)
 
@@ -265,6 +277,8 @@ Command::new("bwrap-sidecar").args(args).spawn()
 
 **Implementační riziko:** prakticky žádné. Bwrap je zralá technologie, Codex script ukazuje, že to "prostě funguje".
 
+*** DEPRECATED ***
+
 ### 4.4 Co když platforma nepodporuje sandbox
 
 - Windows < 8: AppContainer nedostupný → fallback na Job Object only (slabší izolace).
@@ -273,6 +287,8 @@ Command::new("bwrap-sidecar").args(args).spawn()
 - Per workspace toggle "Run without sandbox" (org-owner) → `NoSandbox` přímo.
 
 UI musí jasně komunikovat aktuální izolační úroveň: ikona/badge u workspace ("Strong sandbox" / "Weak sandbox" / "Žádný sandbox"). Audit log: zaznamenává úroveň při každém spawn.
+
+*** DEPRECATED ***
 
 ## 5. Co se mění oproti cestě β
 
@@ -301,7 +317,13 @@ UI musí jasně komunikovat aktuální izolační úroveň: ikona/badge u worksp
 ### Fáze 0 — discovery + Windows prototyp (1-2 týdny)
 
 Cíle:
+
+*** DEPRECATED ***
+
 1. **Windows AppContainer prototyp** — minimální Rust kód, který spustí `node hello.js` v AppContaineru s workspace ACL. `npm install` musí projít. Měřit overhead.
+
+*** DEPRECATED ***
+
 2. **bwrap helper sidecar** — zabudovat bwrap binary do Veslo Tauri resources, ověřit spawn.
 3. **sandbox-exec profil generator** — minimální `.sb` template, ověřit, že opencode v něm nastartuje a může číst workspace.
 4. **Sjednotit `WorkerSandbox` trait** — common API, tři implementace stub.
@@ -373,7 +395,12 @@ Tyto volby z 11.x v β-dokumentu zůstávají **beze změny**:
 
 ## 9. Otázky stále otevřené
 
+*** DEPRECATED ***
+
 1. **Windows code signing** — AppContainer SID generation potřebuje stable certifikát. Máme Apple developer účet, máme Windows code signing certifikát?
+
+*** DEPRECATED ***
+
 2. **macOS notarization s sandbox-exec** — interní použití systémového binary, žádný entitlement nutný, ale ověřit.
 3. **Network policy** — v MVP necháme default open? Nebo už v MVP allowlistnout jen LLM API endpoints (Anthropic, OpenAI, Google, etc.)?
 4. **Resource limits v MVP** — Job Object na Windows zdarma. macOS/Linux do v2?
