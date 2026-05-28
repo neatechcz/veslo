@@ -264,6 +264,27 @@ Nebo přes WebDriverIO spec — viz [`e2e-specs.md`](e2e-specs.md).
 Pro každý symptom má [`known-issues.md`](known-issues.md) odpovídající
 sekci s root cause a referencí na fix.
 
+### `401`/`422` krátce po Tauri dev startu
+
+`http://ipc.localhost/*` requesty jsou normální Tauri IPC. Podezřelé je až
+opakované volání `veslo_server_restart` nebo stabilní `422` z
+`/workspace/:id/config` / `/workspace/:id/mcp`.
+
+- `401` hned po startu může být krátký auth race, pokud frontend drží starý
+  bearer token a server už zrotoval nový. Po úspěšném `/health` a refreshi
+  klientského tokenu by se requesty měly změnit na `200` nebo skutečnou
+  aplikační chybu.
+- V dev-watch režimu se PID Bun watcheru může lišit od PID HTTP serveru.
+  Pokud `/health` vrací shodný bearer token, PID mismatch sám o sobě neznamená
+  stale server state.
+- `422` na config/MCP route většinou znamená, že `<workspace-root>/opencode.jsonc`
+  nejde přečíst jako JSONC. Trailing NUL padding na konci souboru je recoverable
+  a při dalším zápisu se odstraní; NUL bajty uvnitř JSON obsahu zůstávají
+  invalidní config.
+
+Na Windows se Tauri sidecar spool dá sledovat přes
+`%LOCALAPPDATA%\com.neatech.veslo.dev\desktop-debug-log-spool\pending.jsonl`.
+
 ## Useful one-liners
 
 ```bash
