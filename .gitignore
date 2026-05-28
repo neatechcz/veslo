@@ -49,5 +49,13 @@ vendor/opencode/
 # Local evidence artifacts
 evidence/
 
+# Local Codex run logs
+.codex-run/
+.codex-runlogs/
+
+# Developer-specific local docs
+dev-specific-docs/
+dev-specific/
+
 # Local Codex runtime artifact
 .codex
