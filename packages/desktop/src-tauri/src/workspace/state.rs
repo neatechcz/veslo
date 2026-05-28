@@ -351,7 +351,6 @@ fn load_workspace_state_from_paths(
     }
 
     if prune_reserved_internal_child_workspaces(&mut state) {
-
         changed = true;
     }
 

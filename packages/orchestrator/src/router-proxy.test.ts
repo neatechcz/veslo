@@ -613,6 +613,50 @@ describe("proxyToEngine — unit-level edge cases", () => {
     front.unref();
     try { front.close(); } catch { /* see EchoServer comment */ }
   });
+
+  test("rewrites JSON request and response bodies", async () => {
+    let captured: unknown = null;
+    const target = createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      captured = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ directory: "/workspace" }));
+    });
+    await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
+    target.unref();
+    const port = (target.address() as AddressInfo).port;
+
+    const front = createServer((req, res) => {
+      proxyToEngine({
+        clientReq: req,
+        clientRes: res,
+        targetBaseUrl: `http://127.0.0.1:${port}`,
+        targetPath: "/session",
+        rewriteJsonBody: (value) => ({ ...(value as Record<string, unknown>), directory: "/workspace" }),
+        rewriteJsonResponse: (value) => ({ ...(value as Record<string, unknown>), directory: "C:\\Work\\project" }),
+      });
+    });
+    await new Promise<void>((resolve) => front.listen(0, "127.0.0.1", resolve));
+    front.unref();
+    const frontPort = (front.address() as AddressInfo).port;
+
+    const res = await fetch(`http://127.0.0.1:${frontPort}/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ directory: "C:\\Work\\project" }),
+    });
+
+    expect(captured).toEqual({ directory: "/workspace" });
+    expect(await res.json()).toEqual({ directory: "C:\\Work\\project" });
+
+    front.unref();
+    target.unref();
+    try { front.close(); } catch { /* see EchoServer comment */ }
+    try { target.close(); } catch { /* see EchoServer comment */ }
+  });
 });
 
 // Suppress unused import warning if httpRequest end up unreferenced in tests

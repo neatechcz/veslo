@@ -190,7 +190,7 @@ fn register_workspace_with_orchestrator(
         "name": name,
     });
 
-    eprintln!(
+    crate::flow_log!(
         "[veslo:http] OUT POST {add_url} (orchestrator.add-workspace) path={workspace_path:?}"
     );
     let started = Instant::now();
@@ -199,7 +199,7 @@ fn register_workspace_with_orchestrator(
         .send_json(payload)
     {
         Ok(r) => {
-            eprintln!(
+            crate::flow_log!(
                 "[veslo:http] IN  {} ({}ms) {add_url} (orchestrator.add-workspace)",
                 r.status(),
                 started.elapsed().as_millis()
@@ -209,14 +209,14 @@ fn register_workspace_with_orchestrator(
         Err(ureq::Error::Status(code, response)) => {
             let body = response.into_string().unwrap_or_default();
             let excerpt: String = body.chars().take(500).collect();
-            eprintln!(
+            crate::flow_log!(
                 "[veslo:http] IN  {code} ({}ms) {add_url} (orchestrator.add-workspace) body={excerpt:?}",
                 started.elapsed().as_millis()
             );
             return Err(format!("Failed to add workspace: status {code}: {excerpt}"));
         }
         Err(ureq::Error::Transport(t)) => {
-            eprintln!(
+            crate::flow_log!(
                 "[veslo:http] IN  ERR ({}ms) {add_url} (orchestrator.add-workspace) transport={:?}",
                 started.elapsed().as_millis(),
                 t.to_string()
@@ -291,7 +291,7 @@ pub async fn orchestrator_workspace_activate(
             base_url.trim_end_matches('/'),
             added.id
         );
-        eprintln!(
+        crate::flow_log!(
             "[veslo:http] OUT POST {activate_url} (orchestrator.activate) wsId={:?}",
             added.id
         );
@@ -301,7 +301,7 @@ pub async fn orchestrator_workspace_activate(
             .send_string("")
         {
             Ok(r) => {
-                eprintln!(
+                crate::flow_log!(
                     "[veslo:http] IN  {} ({}ms) {activate_url} (orchestrator.activate)",
                     r.status(),
                     started.elapsed().as_millis()
@@ -310,14 +310,14 @@ pub async fn orchestrator_workspace_activate(
             Err(ureq::Error::Status(code, response)) => {
                 let body = response.into_string().unwrap_or_default();
                 let excerpt: String = body.chars().take(500).collect();
-                eprintln!(
+                crate::flow_log!(
                     "[veslo:http] IN  {code} ({}ms) {activate_url} (orchestrator.activate) body={excerpt:?}",
                     started.elapsed().as_millis()
                 );
                 return Err(format!("Failed to activate workspace: status {code}: {excerpt}"));
             }
             Err(ureq::Error::Transport(t)) => {
-                eprintln!(
+                crate::flow_log!(
                     "[veslo:http] IN  ERR ({}ms) {activate_url} (orchestrator.activate) transport={:?}",
                     started.elapsed().as_millis(),
                     t.to_string()

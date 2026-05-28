@@ -1,5 +1,11 @@
 import type { ChildProcess } from "node:child_process";
 
+// Workflow diagnostic toggle — see dev-specific-docs/logging-workflow-milestones--claude.md
+// Off by default. Opt-in via env var: VESLO_FLOW_LOG=1 (or =true)
+const FLOW_LOG_ENABLED =
+  process.env.VESLO_FLOW_LOG === "1" ||
+  process.env.VESLO_FLOW_LOG?.toLowerCase() === "true";
+
 export type EngineState =
   | "spawning"
   | "ready"
@@ -465,6 +471,13 @@ export class EnginePool {
     const port = await this.deps.findFreePort();
     const spawnedAt = this.deps.now();
 
+    if (FLOW_LOG_ENABLED) {
+      console.log(
+        `[veslo:flow] ENGINE spawn-start { wsId: ${JSON.stringify(
+          workspace.id,
+        )}, workdir: ${JSON.stringify(workdir)}, port: ${port} }`,
+      );
+    }
     this.deps.log?.("engine spawning", {
       workspaceId: workspace.id,
       workdir,
@@ -507,6 +520,15 @@ export class EnginePool {
     } catch (err) {
       engine.state = "crashed";
       this.engines.delete(workspace.id);
+      if (FLOW_LOG_ENABLED) {
+        console.log(
+          `[veslo:flow] ENGINE healthy:FAIL { wsId: ${JSON.stringify(
+            workspace.id,
+          )}, ms: ${this.deps.now() - spawnedAt}, reason: ${JSON.stringify(
+            String(err),
+          )} }`,
+        );
+      }
       // F2Ú5 — spawn-time fail (engine never reached ready). Mark intentional
       // before stopChild so the exit handler doesn't trigger restart logic.
       this.intentionallyStopping.add(workspace.id);
@@ -526,6 +548,13 @@ export class EnginePool {
     engine.state = "ready";
     engine.lastActivityAt = this.deps.now();
     engine.lastSuccessfulRunStartedAt = engine.lastActivityAt;
+    if (FLOW_LOG_ENABLED) {
+      console.log(
+        `[veslo:flow] ENGINE healthy { wsId: ${JSON.stringify(
+          workspace.id,
+        )}, ms: ${engine.lastActivityAt - spawnedAt}, pid: ${engine.pid}, port: ${port} }`,
+      );
+    }
     this.deps.log?.("engine ready", {
       workspaceId: workspace.id,
       baseUrl,
