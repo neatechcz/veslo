@@ -6,8 +6,13 @@ import { discoverWsl2Runtime, runWslInDistro, type Wsl2Runtime } from "./discove
 import { isWslMappableWindowsPath, windowsPathToWslPath } from "./paths.js";
 import { resolveWslOpencodeRuntime, type WslOpencodeRuntime } from "./runtime.js";
 
-function workspaceKey(workspacePath: string): string {
-  return createHash("sha1").update(workspacePath).digest("hex").slice(0, 12);
+export function workspaceKey(workspacePath: string, hostConfigDir: string | null): string {
+  return createHash("sha1")
+    .update(workspacePath)
+    .update("\0")
+    .update(hostConfigDir ?? "")
+    .digest("hex")
+    .slice(0, 12);
 }
 
 function buildBashArray(name: string, values: string[]): string {
@@ -104,14 +109,14 @@ async function assertWslDirectory(runtime: Wsl2Runtime, path: string, label: str
   }
 }
 
-function buildWindowsWsl2Script(opts: SandboxSpawnOptions, runtime: Wsl2Runtime, opencode: WslOpencodeRuntime): string {
+export function buildWindowsWsl2Script(opts: SandboxSpawnOptions, runtime: Wsl2Runtime, opencode: WslOpencodeRuntime): string {
   if (opts.engine?.kind !== "opencode") {
     throw new Error("WindowsWsl2 currently supports only the OpenCode engine sandbox.");
   }
 
   const workspace = windowsPathToWslPath(opts.workspacePath);
   const hostConfigDir = hostConfigDirFromOptions(opts);
-  const key = workspaceKey(opts.workspacePath);
+  const key = workspaceKey(opts.workspacePath, hostConfigDir);
   const sandboxRuntime = runtimeCommandForSandbox(opencode);
   const envArgs = sandboxEnvArgs(opts.command.env);
 
@@ -126,14 +131,6 @@ function buildWindowsWsl2Script(opts: SandboxSpawnOptions, runtime: Wsl2Runtime,
     `BWRAP_BIN=${shellQuote(runtime.bwrapPath)}`,
     `OPENCODE_BIN=${shellQuote(sandboxRuntime.bin)}`,
     "mkdir -p \"$CONFIG_DIR\" \"$ENGINE_HOME/.config\" \"$ENGINE_HOME/.cache\" \"$ENGINE_HOME/.local/share\" \"$ENGINE_HOME/.local/state\"",
-    "if [ -n \"$HOST_CONFIG_DIR\" ] && [ -d \"$HOST_CONFIG_DIR\" ]; then",
-    "  for managed_item in tools node_modules; do",
-    "    if [ -e \"$HOST_CONFIG_DIR/$managed_item\" ]; then",
-    "      rm -rf \"$CONFIG_DIR/$managed_item\"",
-    "      cp -a \"$HOST_CONFIG_DIR/$managed_item\" \"$CONFIG_DIR/$managed_item\"",
-    "    fi",
-    "  done",
-    "fi",
     buildBashArray("CMD_ARGS", opts.command.args),
     buildBashArray("SETENV_ARGS", envArgs),
     "add_target_parent_dirs() {",
@@ -174,6 +171,14 @@ function buildWindowsWsl2Script(opts: SandboxSpawnOptions, runtime: Wsl2Runtime,
     "  --bind \"$ENGINE_HOME\" /home/veslo",
     "  --chdir /workspace",
     ")",
+    "if [ -n \"$HOST_CONFIG_DIR\" ] && [ -d \"$HOST_CONFIG_DIR/tools\" ]; then",
+    "  mkdir -p \"$CONFIG_DIR/tools\"",
+    "  BWRAP_ARGS+=(--ro-bind \"$HOST_CONFIG_DIR/tools\" /config/tools)",
+    "fi",
+    "if [ -n \"$HOST_CONFIG_DIR\" ] && [ -d \"$HOST_CONFIG_DIR/node_modules\" ]; then",
+    "  mkdir -p \"$CONFIG_DIR/node_modules\"",
+    "  BWRAP_ARGS+=(--ro-bind \"$HOST_CONFIG_DIR/node_modules\" /config/node_modules)",
+    "fi",
     "if [ -d \"$WORKSPACE/.git\" ]; then",
     "  BWRAP_ARGS+=(--ro-bind \"$WORKSPACE/.git\" /workspace/.git)",
     "elif [ -f \"$WORKSPACE/.git\" ]; then",

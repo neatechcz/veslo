@@ -89,6 +89,19 @@ Consider startup complete only when both appear in logs:
 
 If only Vite runs, desktop runtime is not fully started; stop it and use the desktop startup flow.
 
+## Browser Web Dev With Services
+
+For browser-based web development that still needs local Veslo services, run:
+
+```bash
+pnpm dev:web
+```
+
+This starts the Vite web UI plus the headless Veslo orchestrator/server flow via
+`scripts/dev-headless-web.ts`. It is not a substitute for the authoritative
+Tauri desktop runtime above, but it is different from `pnpm dev:ui`, which starts
+only raw Vite.
+
 ## After Server-Side Changes
 
 If changes touched `packages/server/src`, rebuild server binary before relying on orchestrator-backed flows:

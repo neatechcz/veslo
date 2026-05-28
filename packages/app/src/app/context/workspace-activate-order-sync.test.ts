@@ -105,6 +105,18 @@ test("bootstrap pre-loads the sidebar from SQLite without starting the engine", 
   );
 });
 
+test("orchestrator activation timeout covers cold engine spawn", () => {
+  const raw = source.match(/const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS = ([\d_]+);/)?.[1];
+  assert.ok(raw, "ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS constant missing");
+  const timeoutMs = Number(raw.replaceAll("_", ""));
+
+  assert.ok(
+    timeoutMs >= 75_000,
+    "orchestrator activation timeout must stay above the daemon's 60s cold OpenCode health window",
+  );
+  assert.match(source, /default health window is 60s on cold dev starts/);
+});
+
 test("workspace activation delegates local runtime reuse and restart flows to the shared lifecycle helper", () => {
   assert.match(
     source,
