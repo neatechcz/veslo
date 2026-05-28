@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "pnpm --filter @neatech/veslo dev",
+    "dev:cleanup": "pnpm --filter @neatech/veslo dev:cleanup",
     "dev:ui": "pnpm --filter @neatech/veslo-ui dev",
     "dev:web": "pnpm --filter @neatech/veslo-ui dev",
     "dev:headless-web": "bun scripts/dev-headless-web.ts",
