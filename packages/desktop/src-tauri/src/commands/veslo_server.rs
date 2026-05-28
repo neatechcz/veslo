@@ -58,9 +58,13 @@ fn sanitize_live_info_with_health(
         (info.client_token.as_deref(), identity.token.as_deref()),
         (Some(a), Some(b)) if a != b
     );
+    let token_verified = matches!(
+        (info.client_token.as_deref(), identity.token.as_deref()),
+        (Some(a), Some(b)) if a == b
+    );
     let pid_mismatch = matches!(
         (info.pid, identity.pid),
-        (Some(a), Some(b)) if a != b
+        (Some(a), Some(b)) if !token_verified && a != b
     );
 
     if !(token_mismatch || pid_mismatch) {
@@ -286,11 +290,25 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_live_info_marks_stale_when_pid_does_not_match() {
+    fn sanitize_live_info_tolerates_pid_mismatch_when_token_matches() {
         let info = sample_live_info();
         let (sanitized, stale) = sanitize_live_info_with_health(info.clone(), |_| {
             Some(HealthIdentity {
                 token: info.client_token.clone(),
+                pid: Some(99999),
+            })
+        });
+        assert!(!stale);
+        assert!(sanitized.running);
+        assert_eq!(sanitized.client_token, info.client_token);
+    }
+
+    #[test]
+    fn sanitize_live_info_marks_stale_when_pid_does_not_match_without_token_match() {
+        let info = sample_live_info();
+        let (sanitized, stale) = sanitize_live_info_with_health(info, |_| {
+            Some(HealthIdentity {
+                token: None,
                 pid: Some(99999),
             })
         });

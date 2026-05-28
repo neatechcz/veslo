@@ -122,10 +122,15 @@ fn persisted_state_to_info_with_health(
         .filter(|value| !value.trim().is_empty())?;
 
     let identity = health_check(&base_url)?;
+    // A matching bearer token is stronger than a PID match. In dev watch mode,
+    // the managed Bun watcher PID can differ from the HTTP server PID.
+    let token_verified = matches!(
+        (state.client_token.as_deref(), identity.token.as_deref()),
+        (Some(expected), Some(actual)) if expected == actual
+    );
 
-    // Identity validation — reject if persisted token/pid doesn't match what the
-    // server on this port actually reports. Tolerate None fields on either side
-    // for backward compatibility with legacy servers that don't yet expose identity.
+    // Identity validation: the bearer token is the strongest signal. PID checks
+    // still protect older persisted state that cannot verify a token.
     if let (Some(expected), Some(actual)) =
         (state.client_token.as_deref(), identity.token.as_deref())
     {
@@ -136,12 +141,14 @@ fn persisted_state_to_info_with_health(
             return None;
         }
     }
-    if let (Some(expected), Some(actual)) = (state.pid, identity.pid) {
-        if expected != actual {
-            eprintln!(
+    if !token_verified {
+        if let (Some(expected), Some(actual)) = (state.pid, identity.pid) {
+            if expected != actual {
+                eprintln!(
                 "[veslo-server] identity mismatch — pid on {base_url} is {actual}, expected {expected}, rejecting"
             );
-            return None;
+                return None;
+            }
         }
     }
 
@@ -676,7 +683,7 @@ mod tests {
     }
 
     #[test]
-    fn read_persisted_server_info_rejects_pid_mismatch() {
+    fn read_persisted_server_info_tolerates_pid_mismatch_when_token_matches() {
         let dir = std::env::temp_dir().join(format!("veslo-server-state-pid-{}", Uuid::new_v4()));
         fs::create_dir_all(&dir).expect("create test dir");
         write_persisted_state(&dir, &sample_state("our-token", 4242));
@@ -691,11 +698,39 @@ mod tests {
             },
             |_| Ok(()),
         )
+        .expect("read persisted state")
+        .expect("matching token must recover persisted state");
+
+        assert!(recovered.running);
+        assert_eq!(recovered.client_token.as_deref(), Some("our-token"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn read_persisted_server_info_rejects_pid_mismatch_without_token_match() {
+        let dir = std::env::temp_dir().join(format!(
+            "veslo-server-state-pid-no-token-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).expect("create test dir");
+        write_persisted_state(&dir, &sample_state("our-token", 4242));
+
+        let recovered = read_persisted_veslo_server_info_with_cleanup(
+            &dir,
+            |_| {
+                Some(HealthIdentity {
+                    token: None,
+                    pid: Some(9999),
+                })
+            },
+            |_| Ok(()),
+        )
         .expect("read persisted state");
 
         assert!(
             recovered.is_none(),
-            "pid mismatch must reject persisted state"
+            "pid mismatch must reject persisted state when token was not verified"
         );
 
         let _ = fs::remove_dir_all(dir);
