@@ -270,8 +270,7 @@ fn load_workspace_state_from_paths(
     // workspace switches hang in "connecting" forever. We map old ID → new ID
     // and rewrite both the workspaces table and active_id so the rest of the
     // app sees a self-consistent state.
-    let mut id_remap: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
+    let mut id_remap: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for workspace in state.workspaces.iter_mut() {
         if workspace.workspace_type != WorkspaceType::Local {
             continue;
@@ -357,8 +356,8 @@ pub fn stable_workspace_id_for_veslo(host_url: &str, workspace_id: Option<&str>)
 #[cfg(test)]
 mod tests {
     use super::{
-        legacy_state_candidates, load_workspace_state_from_paths, private_workspace_root_from_data_dir,
-        try_load_legacy_workspace_state,
+        legacy_state_candidates, load_workspace_state_from_paths,
+        private_workspace_root_from_data_dir, try_load_legacy_workspace_state,
     };
     use crate::types::{RemoteType, WorkspaceInfo, WorkspaceState, WorkspaceType};
     use std::fs;

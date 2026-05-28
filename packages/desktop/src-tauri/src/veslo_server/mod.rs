@@ -647,8 +647,7 @@ mod tests {
 
     #[test]
     fn read_persisted_server_info_rejects_token_mismatch() {
-        let dir =
-            std::env::temp_dir().join(format!("veslo-server-state-token-{}", Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("veslo-server-state-token-{}", Uuid::new_v4()));
         fs::create_dir_all(&dir).expect("create test dir");
         write_persisted_state(&dir, &sample_state("our-token", 4242));
 
@@ -664,7 +663,10 @@ mod tests {
         )
         .expect("read persisted state");
 
-        assert!(recovered.is_none(), "token mismatch must reject persisted state");
+        assert!(
+            recovered.is_none(),
+            "token mismatch must reject persisted state"
+        );
         assert!(
             !dir.join("veslo-server-state.json").exists(),
             "stale state file must be removed when identity check fails"
@@ -675,8 +677,7 @@ mod tests {
 
     #[test]
     fn read_persisted_server_info_rejects_pid_mismatch() {
-        let dir =
-            std::env::temp_dir().join(format!("veslo-server-state-pid-{}", Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("veslo-server-state-pid-{}", Uuid::new_v4()));
         fs::create_dir_all(&dir).expect("create test dir");
         write_persisted_state(&dir, &sample_state("our-token", 4242));
 
@@ -692,7 +693,10 @@ mod tests {
         )
         .expect("read persisted state");
 
-        assert!(recovered.is_none(), "pid mismatch must reject persisted state");
+        assert!(
+            recovered.is_none(),
+            "pid mismatch must reject persisted state"
+        );
 
         let _ = fs::remove_dir_all(dir);
     }

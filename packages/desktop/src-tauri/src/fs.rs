@@ -78,8 +78,8 @@ fn collect_copy_conflicts_inner(
         ));
     }
 
-    for entry in
-        fs::read_dir(current).map_err(|e| format!("Failed to read dir {}: {e}", current.display()))?
+    for entry in fs::read_dir(current)
+        .map_err(|e| format!("Failed to read dir {}: {e}", current.display()))?
     {
         let entry = entry.map_err(|e| e.to_string())?;
         let file_type = entry.file_type().map_err(|e| e.to_string())?;
@@ -90,9 +90,12 @@ fn collect_copy_conflicts_inner(
         }
 
         let from = entry.path();
-        let relative = from
-            .strip_prefix(root)
-            .map_err(|e| format!("Failed to resolve relative path for {}: {e}", from.display()))?;
+        let relative = from.strip_prefix(root).map_err(|e| {
+            format!(
+                "Failed to resolve relative path for {}: {e}",
+                from.display()
+            )
+        })?;
         let target = dest.join(relative);
 
         if file_type.is_dir() {

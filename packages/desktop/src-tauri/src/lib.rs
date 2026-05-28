@@ -19,10 +19,10 @@ mod workspace;
 
 pub use types::*;
 
+use commands::clipboard::clipboard_file_paths;
 use commands::command_files::{
     opencode_command_delete, opencode_command_list, opencode_command_write,
 };
-use commands::clipboard::clipboard_file_paths;
 use commands::config::{read_opencode_config, write_opencode_config};
 use commands::den_auth::{den_auth_snapshot_read, den_auth_snapshot_write};
 use commands::engine::{
@@ -58,8 +58,9 @@ use commands::window::set_window_decorations;
 use commands::workspace::{
     workspace_add_authorized_root, workspace_bootstrap, workspace_copy_into_folder,
     workspace_create, workspace_create_remote, workspace_export_config, workspace_forget,
-    workspace_import_config, workspace_private_root, workspace_veslo_read, workspace_veslo_write,
-    workspace_set_active, workspace_update_display_name, workspace_update_remote,
+    workspace_import_config, workspace_private_root, workspace_set_active,
+    workspace_update_display_name, workspace_update_remote, workspace_veslo_read,
+    workspace_veslo_write,
 };
 use engine::manager::EngineManager;
 use opencode_router::manager::OpenCodeRouterManager;
@@ -73,11 +74,7 @@ fn register_debug_logs_forwarder(app_handle: &tauri::AppHandle) {
     use std::time::Duration;
 
     let spool_dir = paths::app_local_data_dir_override()
-        .or_else(|| {
-            tauri::Manager::path(app_handle)
-                .app_local_data_dir()
-                .ok()
-        })
+        .or_else(|| tauri::Manager::path(app_handle).app_local_data_dir().ok())
         .map(|dir| dir.join("desktop-debug-log-spool"));
 
     let Some(spool_dir) = spool_dir else {
@@ -123,7 +120,10 @@ fn kill_orphan_sidecars() {
     use std::process::Command;
 
     let my_pid = std::process::id().to_string();
-    let my_pgid = match Command::new("ps").args(["-o", "pgid=", "-p", &my_pid]).output() {
+    let my_pgid = match Command::new("ps")
+        .args(["-o", "pgid=", "-p", &my_pid])
+        .output()
+    {
         Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         Err(_) => return,
     };
@@ -132,7 +132,10 @@ fn kill_orphan_sidecars() {
     }
 
     let output = match Command::new("pgrep")
-        .args(["-f", "veslo-server|veslo-orchestrator|veslo-code-router|veslo-code"])
+        .args([
+            "-f",
+            "veslo-server|veslo-orchestrator|veslo-code-router|veslo-code",
+        ])
         .output()
     {
         Ok(o) => o,

@@ -2,21 +2,21 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::commands::opencode_router::opencodeRouter_start;
 use crate::commands::orchestrator::reconcile_orchestrator_workspaces;
-use crate::workspace::server_client::reconcile_server_workspaces;
 use crate::config::{read_opencode_config, write_opencode_config};
 use crate::engine::doctor::{
     opencode_serve_help, opencode_version, resolve_engine_path, resolve_sidecar_candidate,
 };
 use crate::engine::manager::EngineManager;
 use crate::engine::spawn::{find_free_port, spawn_engine};
+use crate::env_guard::EnvVarGuard;
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::opencode_router::spawn::resolve_opencode_router_health_port;
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{self, OrchestratorSpawnOptions};
 use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
-use crate::env_guard::EnvVarGuard;
 use crate::utils::truncate_output;
 use crate::veslo_server::{manager::VesloServerManager, start_veslo_server};
+use crate::workspace::server_client::reconcile_server_workspaces;
 use serde_json::json;
 use std::time::Duration;
 use tauri_plugin_shell::process::CommandEvent;
@@ -102,7 +102,11 @@ fn format_orchestrator_start_error(
     message
 }
 
-fn should_retry_orchestrator_start(attempt: usize, max_attempts: usize, child_exited: bool) -> bool {
+fn should_retry_orchestrator_start(
+    attempt: usize,
+    max_attempts: usize,
+    child_exited: bool,
+) -> bool {
     child_exited && attempt < max_attempts && max_attempts > 1
 }
 
@@ -272,7 +276,9 @@ pub fn engine_info(
                 .find(|ws| ws.path.trim_end_matches('/') == normalized)
         });
         let resolved_ws = by_id.or(by_path);
-        let resolved_ws_id = resolved_ws.map(|ws| ws.id.clone()).unwrap_or_else(|| ws_id.clone());
+        let resolved_ws_id = resolved_ws
+            .map(|ws| ws.id.clone())
+            .unwrap_or_else(|| ws_id.clone());
         let engine = status
             .engines
             .iter()
@@ -690,8 +696,9 @@ pub fn engine_start(
                                 );
                             }
                             if let Ok(mut state) = orchestrator_state_handle.try_lock() {
-                                let next = state.last_stdout.as_deref().unwrap_or_default().to_string()
-                                    + &line;
+                                let next =
+                                    state.last_stdout.as_deref().unwrap_or_default().to_string()
+                                        + &line;
                                 state.last_stdout = Some(truncate_output(&next, 8000));
                             }
                         }
@@ -705,8 +712,9 @@ pub fn engine_start(
                                 );
                             }
                             if let Ok(mut state) = orchestrator_state_handle.try_lock() {
-                                let next = state.last_stderr.as_deref().unwrap_or_default().to_string()
-                                    + &line;
+                                let next =
+                                    state.last_stderr.as_deref().unwrap_or_default().to_string()
+                                        + &line;
                                 state.last_stderr = Some(truncate_output(&next, 8000));
                             }
                         }
@@ -725,8 +733,9 @@ pub fn engine_start(
                             }
                             if let Ok(mut state) = orchestrator_state_handle.try_lock() {
                                 state.child_exited = true;
-                                let next = state.last_stderr.as_deref().unwrap_or_default().to_string()
-                                    + &message;
+                                let next =
+                                    state.last_stderr.as_deref().unwrap_or_default().to_string()
+                                        + &message;
                                 state.last_stderr = Some(truncate_output(&next, 8000));
                             }
                         }
@@ -809,13 +818,7 @@ pub fn engine_start(
             .daemon
             .as_ref()
             .map(|d| d.port)
-            .unwrap_or_else(|| {
-                health
-                    .opencode
-                    .as_ref()
-                    .map(|o| o.port)
-                    .unwrap_or(0)
-            });
+            .unwrap_or_else(|| health.opencode.as_ref().map(|o| o.port).unwrap_or(0));
         let active_ws_id = health.active_id.clone();
         let opencode_port = health
             .opencode
@@ -954,7 +957,11 @@ pub fn engine_start(
                 CommandEvent::Stdout(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
                     if let Some(fwd) = engine_forwarder.as_ref() {
-                        fwd.append("engine", crate::debug_logs_forwarder::LogStream::Stdout, &line);
+                        fwd.append(
+                            "engine",
+                            crate::debug_logs_forwarder::LogStream::Stdout,
+                            &line,
+                        );
                     }
                     if let Ok(mut output) = output_state_handle.lock() {
                         output.stdout.push_str(&line);
@@ -968,7 +975,11 @@ pub fn engine_start(
                 CommandEvent::Stderr(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
                     if let Some(fwd) = engine_forwarder.as_ref() {
-                        fwd.append("engine", crate::debug_logs_forwarder::LogStream::Stderr, &line);
+                        fwd.append(
+                            "engine",
+                            crate::debug_logs_forwarder::LogStream::Stderr,
+                            &line,
+                        );
                     }
                     if let Ok(mut output) = output_state_handle.lock() {
                         output.stderr.push_str(&line);

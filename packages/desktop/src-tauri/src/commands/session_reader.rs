@@ -209,13 +209,27 @@ mod tests {
         conn.execute(
             "INSERT INTO session (id, title, directory, parent_id, time_created, time_updated)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params!["root-parent", "root-parent", "/tmp/workspace", Option::<String>::None, 100, 300],
+            params![
+                "root-parent",
+                "root-parent",
+                "/tmp/workspace",
+                Option::<String>::None,
+                100,
+                300
+            ],
         )
         .expect("insert root session");
         conn.execute(
             "INSERT INTO session (id, title, directory, parent_id, time_created, time_updated)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params!["child-subagent", "child-subagent", "/tmp/workspace", "root-parent", 200, 400],
+            params![
+                "child-subagent",
+                "child-subagent",
+                "/tmp/workspace",
+                "root-parent",
+                200,
+                400
+            ],
         )
         .expect("insert child session");
 

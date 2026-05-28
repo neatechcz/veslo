@@ -217,13 +217,10 @@ pub fn opencodeRouter_start(
     opencode_password: Option<String>,
     health_port: Option<u16>,
 ) -> Result<OpenCodeRouterInfo, String> {
-    let workspace_path = validate_workspace_path(
-        &app,
-        &workspace_path,
-        ValidationMode::IsRegisteredWorkspace,
-    )?
-    .to_string_lossy()
-    .to_string();
+    let workspace_path =
+        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?
+            .to_string_lossy()
+            .to_string();
 
     let mut state = manager
         .inner
@@ -426,8 +423,8 @@ pub async fn opencodeRouter_config_set(
     key: String,
     value: String,
 ) -> Result<(), String> {
-    let command =
-        resolve_opencode_router_command(&app).map_err(|e| format!("Failed to resolve router command: {e}"))?;
+    let command = resolve_opencode_router_command(&app)
+        .map_err(|e| format!("Failed to resolve router command: {e}"))?;
 
     let output = command
         .args(["config", "set", &key, &value])
@@ -448,8 +445,8 @@ async fn opencodeRouter_json(
     args: &[&str],
     context: &str,
 ) -> Result<serde_json::Value, String> {
-    let command =
-        resolve_opencode_router_command(app).map_err(|e| format!("Failed to resolve router command: {e}"))?;
+    let command = resolve_opencode_router_command(app)
+        .map_err(|e| format!("Failed to resolve router command: {e}"))?;
 
     let output = command
         .args(args)

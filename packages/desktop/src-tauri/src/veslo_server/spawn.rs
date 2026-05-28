@@ -33,7 +33,11 @@ fn resolve_dev_watch_dir() -> PathBuf {
 }
 
 fn build_veslo_server_dev_watch_args(mut server_args: Vec<String>) -> Vec<String> {
-    let mut args = vec!["--watch".to_string(), "src/cli.ts".to_string(), "--".to_string()];
+    let mut args = vec![
+        "--watch".to_string(),
+        "src/cli.ts".to_string(),
+        "--".to_string(),
+    ];
     args.append(&mut server_args);
     args
 }
@@ -79,10 +83,14 @@ fn list_stale_veslo_server_pids() -> Vec<u32> {
 
 fn kill_pid(pid: u32) {
     use std::process::Command;
-    let _ = Command::new("kill").args(["-TERM", &pid.to_string()]).status();
+    let _ = Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status();
     // Give the process a moment to clean up, then force-kill if still alive.
     std::thread::sleep(std::time::Duration::from_millis(250));
-    let _ = Command::new("kill").args(["-KILL", &pid.to_string()]).status();
+    let _ = Command::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .status();
 }
 
 pub fn resolve_veslo_port() -> Result<u16, String> {
@@ -255,15 +263,13 @@ pub fn spawn_veslo_server(
         command = command.env(key, value);
     }
 
-    command
-        .spawn()
-        .map_err(|e| {
-            if use_dev_watch {
-                format!("Failed to start Veslo server in dev watch mode: {e}")
-            } else {
-                format!("Failed to start Veslo server: {e}")
-            }
-        })
+    command.spawn().map_err(|e| {
+        if use_dev_watch {
+            format!("Failed to start Veslo server in dev watch mode: {e}")
+        } else {
+            format!("Failed to start Veslo server: {e}")
+        }
+    })
 }
 
 #[cfg(test)]
@@ -306,7 +312,8 @@ mod tests {
 
     #[test]
     fn managed_ai_base_url_falls_back_to_legacy_env() {
-        let resolved = resolve_managed_ai_base_url_from_env(None, Some("https://legacy.example.test/"));
+        let resolved =
+            resolve_managed_ai_base_url_from_env(None, Some("https://legacy.example.test/"));
 
         assert_eq!(resolved, "https://legacy.example.test");
     }

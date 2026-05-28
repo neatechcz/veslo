@@ -73,7 +73,9 @@ pub fn reconcile_server_workspaces(app: &AppHandle) -> usize {
     let state = match load_workspace_state(app) {
         Ok(state) => state,
         Err(error) => {
-            eprintln!("[workspace] reconcile_server_workspaces: load_workspace_state failed: {error}");
+            eprintln!(
+                "[workspace] reconcile_server_workspaces: load_workspace_state failed: {error}"
+            );
             return 0;
         }
     };

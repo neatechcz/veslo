@@ -87,8 +87,7 @@ fn canonicalize_existing_or_parent(
     mode: ValidationMode,
 ) -> Result<PathBuf, String> {
     if candidate.exists() {
-        return fs::canonicalize(candidate)
-            .map_err(|e| format!("Failed to resolve path: {e}"));
+        return fs::canonicalize(candidate).map_err(|e| format!("Failed to resolve path: {e}"));
     }
 
     // For modes that require the path to exist (workspace / authorized root)
@@ -107,8 +106,8 @@ fn canonicalize_existing_or_parent(
             parent.display()
         ));
     }
-    let parent_canonical = fs::canonicalize(parent)
-        .map_err(|e| format!("Failed to resolve parent: {e}"))?;
+    let parent_canonical =
+        fs::canonicalize(parent).map_err(|e| format!("Failed to resolve parent: {e}"))?;
     let leaf = candidate
         .file_name()
         .ok_or_else(|| "path must have a final component".to_string())?;
@@ -146,9 +145,7 @@ pub fn load_authorized_roots(app: &AppHandle) -> Result<Vec<PathBuf>, String> {
 
 /// Read `.opencode/veslo.json` for a workspace, or return a default config
 /// containing the workspace path as the sole authorized root.
-pub fn read_workspace_veslo_config(
-    workspace_path: &Path,
-) -> Result<WorkspaceVesloConfig, String> {
+pub fn read_workspace_veslo_config(workspace_path: &Path) -> Result<WorkspaceVesloConfig, String> {
     let veslo_path = workspace_path.join(".opencode").join("veslo.json");
     if !veslo_path.exists() {
         let mut cfg = WorkspaceVesloConfig::default();

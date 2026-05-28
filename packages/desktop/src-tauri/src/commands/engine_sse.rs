@@ -119,11 +119,17 @@ pub async fn engine_sse_subscribe(
     let workspace_id = options.workspace_id.clone();
     let base_url = options.base_url.clone();
     let directory = options.directory.clone();
-    let auth_header = match options.bearer_token.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    let auth_header = match options
+        .bearer_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         Some(token) => Some(format!("Bearer {}", token)),
         None => build_basic_auth_header(options.username.as_deref(), options.password.as_deref()),
     };
-    let connect_timeout = std::time::Duration::from_secs(options.connect_timeout_secs.unwrap_or(30));
+    let connect_timeout =
+        std::time::Duration::from_secs(options.connect_timeout_secs.unwrap_or(30));
 
     tauri::async_runtime::spawn(async move {
         run_subscription(
@@ -370,7 +376,10 @@ mod tests {
 
     #[test]
     fn event_url_appends_directory_when_present() {
-        let u = build_event_url("http://127.0.0.1:1234/workspace/ws-x/opencode", &Some("/Users/test/path".into()));
+        let u = build_event_url(
+            "http://127.0.0.1:1234/workspace/ws-x/opencode",
+            &Some("/Users/test/path".into()),
+        );
         assert_eq!(
             u,
             "http://127.0.0.1:1234/workspace/ws-x/opencode/event?directory=%2FUsers%2Ftest%2Fpath"

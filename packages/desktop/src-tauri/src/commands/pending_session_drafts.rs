@@ -444,7 +444,9 @@ fn delete_pending_session_draft(root: &Path, draft_id: &str) -> Result<bool, Str
     if live_dir.exists() {
         target_paths.push(live_dir);
     }
-    target_paths.extend(pending_session_draft_backup_dirs_for_draft(root, &draft_id)?);
+    target_paths.extend(pending_session_draft_backup_dirs_for_draft(
+        root, &draft_id,
+    )?);
 
     if target_paths.is_empty() {
         return Ok(false);
@@ -776,14 +778,13 @@ pub fn pending_session_drafts_delete(app: AppHandle, draft_id: String) -> Result
 mod tests {
     use super::{
         attachment_file_path, delete_pending_session_draft, get_pending_session_draft,
-        list_pending_session_drafts, latest_pending_session_draft_backup_dirs,
-        put_pending_session_draft,
-        put_pending_session_draft_with_commit_hook, put_pending_session_draft_with_commit_hooks,
-        PendingSessionDraftAttachmentInput, PendingSessionDraftAttachmentMetadata,
-        PendingSessionDraftAttachmentPayload, PendingSessionDraftComposerInput,
-        PendingSessionDraftComposerMetadata, PendingSessionDraftComposerPayload,
-        PendingSessionDraftGetResult, PendingSessionDraftPutInput, PendingSessionDraftRecord,
-        PendingSessionDraftSummary,
+        latest_pending_session_draft_backup_dirs, list_pending_session_drafts,
+        put_pending_session_draft, put_pending_session_draft_with_commit_hook,
+        put_pending_session_draft_with_commit_hooks, PendingSessionDraftAttachmentInput,
+        PendingSessionDraftAttachmentMetadata, PendingSessionDraftAttachmentPayload,
+        PendingSessionDraftComposerInput, PendingSessionDraftComposerMetadata,
+        PendingSessionDraftComposerPayload, PendingSessionDraftGetResult,
+        PendingSessionDraftPutInput, PendingSessionDraftRecord, PendingSessionDraftSummary,
     };
     use serde_json::json;
     use std::fs;
@@ -1146,7 +1147,11 @@ mod tests {
 
         let stale_backups =
             latest_pending_session_draft_backup_dirs(dir.path()).expect("backup scan should work");
-        assert_eq!(stale_backups.len(), 1, "stale backup should exist before delete");
+        assert_eq!(
+            stale_backups.len(),
+            1,
+            "stale backup should exist before delete"
+        );
 
         let deleted =
             delete_pending_session_draft(dir.path(), "draft-1").expect("delete should succeed");

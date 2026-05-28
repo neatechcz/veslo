@@ -569,7 +569,13 @@ fn vendor_opencode_plugin_into_workspace(opencode_root: &Path, stats: &mut Write
         &node_modules_root,
         stats,
     );
-    vendor_bun_cache_package(&home, "zod", VESLO_MANAGED_ZOD_VERSION, &node_modules_root, stats);
+    vendor_bun_cache_package(
+        &home,
+        "zod",
+        VESLO_MANAGED_ZOD_VERSION,
+        &node_modules_root,
+        stats,
+    );
 }
 
 fn vendor_bun_cache_package(

@@ -151,8 +151,8 @@ fn diff_engine_events(
 /// thread so it doesn't require a tokio runtime; sleeps when no orchestrator
 /// manager state is registered yet.
 pub fn spawn_engine_event_poller(app: AppHandle) {
-    use tauri::Manager;
     use std::thread;
+    use tauri::Manager;
 
     thread::spawn(move || {
         let mut last: Vec<OrchestratorEngineSnapshot> = Vec::new();
@@ -229,9 +229,7 @@ pub fn reconcile_orchestrator_workspaces(
             .or_else(|| Some(workspace.name.trim()).filter(|s| !s.is_empty()));
         match register_workspace_with_orchestrator(&base_url, path, display_name) {
             Ok(_) => registered += 1,
-            Err(error) => eprintln!(
-                "[orchestrator] reconcile failed for {path}: {error}"
-            ),
+            Err(error) => eprintln!("[orchestrator] reconcile failed for {path}: {error}"),
         }
     }
     Ok(registered)
@@ -244,13 +242,10 @@ pub async fn orchestrator_workspace_activate(
     workspace_path: String,
     name: Option<String>,
 ) -> Result<OrchestratorWorkspace, String> {
-    let workspace_path = validate_workspace_path(
-        &app,
-        &workspace_path,
-        ValidationMode::IsRegisteredWorkspace,
-    )?
-    .to_string_lossy()
-    .to_string();
+    let workspace_path =
+        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?
+            .to_string_lossy()
+            .to_string();
     let base_url = resolve_base_url(&manager)?;
 
     // VSLO-86 — push the blocking ureq calls onto a dedicated thread so the
@@ -259,7 +254,8 @@ pub async fn orchestrator_workspace_activate(
     // user sees "kolečko se točí" for 30s+ on every second click while
     // browser.execute / other Tauri invokes wait for their turn.
     tauri::async_runtime::spawn_blocking(move || {
-        let added = register_workspace_with_orchestrator(&base_url, &workspace_path, name.as_deref())?;
+        let added =
+            register_workspace_with_orchestrator(&base_url, &workspace_path, name.as_deref())?;
         let activate_url = format!(
             "{}/workspaces/{}/activate",
             base_url.trim_end_matches('/'),
@@ -281,13 +277,10 @@ pub fn orchestrator_instance_dispose(
     manager: State<OrchestratorManager>,
     workspace_path: String,
 ) -> Result<bool, String> {
-    let workspace_path = validate_workspace_path(
-        &app,
-        &workspace_path,
-        ValidationMode::IsRegisteredWorkspace,
-    )?
-    .to_string_lossy()
-    .to_string();
+    let workspace_path =
+        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?
+            .to_string_lossy()
+            .to_string();
     let base_url = resolve_base_url(&manager)?;
     let add_url = format!("{}/workspaces", base_url.trim_end_matches('/'));
     let payload = json!({
@@ -328,13 +321,10 @@ pub fn orchestrator_start_detached(
     veslo_host_token: Option<String>,
 ) -> Result<OrchestratorDetachedHost, String> {
     let start_ts = now_ms();
-    let workspace_path = validate_workspace_path(
-        &app,
-        &workspace_path,
-        ValidationMode::IsRegisteredWorkspace,
-    )?
-    .to_string_lossy()
-    .to_string();
+    let workspace_path =
+        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?
+            .to_string_lossy()
+            .to_string();
 
     let host_run_id = run_id
         .map(|value| value.trim().to_string())

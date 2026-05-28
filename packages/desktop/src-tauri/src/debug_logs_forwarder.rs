@@ -172,7 +172,9 @@ impl DebugLogsForwarder {
         };
         for entry in entries.flatten() {
             let name = entry.file_name();
-            let Some(name_str) = name.to_str() else { continue };
+            let Some(name_str) = name.to_str() else {
+                continue;
+            };
             if name_str.starts_with(FLUSHING_PREFIX) && name_str.ends_with(".jsonl") {
                 out.push(entry.path());
             }
