@@ -2315,6 +2315,7 @@ async function startOpencode(options: {
   hotReload: OpencodeHotReload;
   bindHost: string;
   port: number;
+  expectedVersion?: string;
   username?: string;
   password?: string;
   corsOrigins: string[];
@@ -2385,8 +2386,10 @@ async function startOpencode(options: {
   }
 
   let child: ChildProcess;
-  if (sandbox && sandbox.isAvailable()) {
-    const baseCommand = [options.bin, ...args].map(shellQuote).join(" ");
+  if (sandbox) {
+    if (!sandbox.isAvailable()) {
+      throw new Error(`Sandbox backend ${sandbox.name} is not available on this host.`);
+    }
     // F4Ú4 — engine needs write access beyond workspace:
     //   - OPENCODE_CONFIG_DIR (SQLite migrations, logs, telemetry, auth cache)
     //   - /tmp + /private/tmp + /var/folders (SQLite WAL/SHM, scratch files)
@@ -2414,20 +2417,29 @@ async function startOpencode(options: {
         `${home}/.config/opencode`,
       );
     }
-    const wrapped = await sandbox.wrap({
-      command: baseCommand,
+    const launch = await sandbox.buildLaunch({
+      command: {
+        program: options.bin,
+        args,
+        cwd: options.workspace,
+        env,
+      },
       workspacePath: options.workspace,
       additionalWritePaths: extraWrites,
+      engine: {
+        kind: "opencode",
+        expectedVersion: options.expectedVersion,
+      },
     });
     options.logger.info(
       "engine spawn (sandboxed)",
-      { workspace: options.workspace, backend: sandbox.name },
+      { workspace: options.workspace, backend: sandbox.name, childKind: launch.childKind ?? "direct" },
       "sandbox",
     );
-    child = spawnProcess("/bin/sh", ["-c", wrapped], {
-      cwd: options.workspace,
+    child = spawnProcess(launch.command, launch.args, {
+      cwd: launch.cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      env,
+      env: launch.env,
     });
   } else {
     child = spawnProcess(options.bin, args, {
@@ -2467,6 +2479,15 @@ async function startOpencode(options: {
   return child;
 }
 
+function resolveConfiguredSandboxBackend(): WorkerSandbox["name"] | "none" {
+  if (process.env.VESLO_DISABLE_SANDBOX === "1") return "none";
+  try {
+    return resolveSandbox().name;
+  } catch {
+    return "none";
+  }
+}
+
 async function startVesloServer(options: {
   bin: string;
   host: string;
@@ -2484,6 +2505,7 @@ async function startVesloServer(options: {
   opencodePassword?: string;
   opencodeRouterHealthPort?: number;
   opencodeRouterDataDir?: string;
+  sandboxBackend?: WorkerSandbox["name"] | "none";
   logger: Logger;
   runId: string;
   logFormat: LogFormat;
@@ -2554,6 +2576,7 @@ async function startVesloServer(options: {
       ),
       ...(options.opencodeRouterHealthPort ? { OPENCODE_ROUTER_HEALTH_PORT: String(options.opencodeRouterHealthPort) } : {}),
       ...(options.opencodeRouterDataDir ? { OPENCODE_ROUTER_DATA_DIR: options.opencodeRouterDataDir } : {}),
+      VESLO_SANDBOX_BACKEND: options.sandboxBackend ?? resolveConfiguredSandboxBackend(),
       VESLO_MANAGED_AI_BASE_URL: managedAiBaseUrl,
       ...(options.opencodeBaseUrl ? { VESLO_OPENCODE_BASE_URL: options.opencodeBaseUrl } : {}),
       ...(options.opencodeDirectory ? { VESLO_OPENCODE_DIRECTORY: options.opencodeDirectory } : {}),
@@ -2757,7 +2780,9 @@ async function verifyVesloServer(input: {
   if (input.expectedOpencodeUsername && opencode?.username !== input.expectedOpencodeUsername) {
     throw new Error("Veslo server OpenCode username mismatch.");
   }
-  if (input.expectedOpencodePassword && opencode?.password !== input.expectedOpencodePassword) {
+  // Veslo server intentionally omits opencode.password from workspace
+  // serialization. If a future server does expose it, still catch mismatches.
+  if (input.expectedOpencodePassword && opencode?.password && opencode.password !== input.expectedOpencodePassword) {
     throw new Error("Veslo server OpenCode password mismatch.");
   }
 
@@ -2783,7 +2808,7 @@ async function runChecks(input: {
   }
 
   const workspaceId = workspaces.items[0].id as string;
-  await fetchJson(`${baseUrl}/workspace/${workspaceId}/config`, { headers });
+  await fetchJson(`${baseUrl}/workspace/${workspaceId}/config`, { headers: { ...headers, ...hostHeaders } });
 
   // Smoke test: mounted opencodeRouter proxy and auth behavior.
   // - /w/:id/veslo-code-router/health is client-readable
@@ -3553,6 +3578,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           hotReload: opencodeHotReload,
           bindHost: opencodeHost,
           port,
+          expectedVersion: opencodeBinary.expectedVersion,
           username: opencodePassword ? opencodeUsername : undefined,
           password: opencodePassword,
           corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
@@ -4716,6 +4742,7 @@ async function runStart(args: ParsedArgs) {
         hotReload: opencodeHotReload,
         bindHost: opencodeBindHost,
         port: opencodePort,
+        expectedVersion: opencodeBinary.expectedVersion,
         username: opencodeUsername,
         password: opencodePassword,
         corsOrigins: corsOrigins.length ? corsOrigins : ["*"],

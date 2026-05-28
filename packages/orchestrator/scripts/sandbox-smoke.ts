@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { MacSandboxExec } from "../src/sandbox/index.js";
+import type { SandboxLaunch } from "../src/sandbox/index.js";
 
 const WORKDIR = "/tmp/sandbox-veslo-smoke";
 const SECRET = join(WORKDIR, "secret.txt");
@@ -30,9 +31,16 @@ function setup() {
   writeFileSync(join(GIT_DIR, "HEAD"), "ref: refs/heads/main\n");
 }
 
-async function runWrapped(label: string, wrapped: string) {
+async function runWrapped(label: string, wrapped: string | SandboxLaunch) {
   return new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
-    const child = spawn("/bin/sh", ["-c", wrapped], { stdio: ["ignore", "pipe", "pipe"] });
+    const child =
+      typeof wrapped === "string"
+        ? spawn("/bin/sh", ["-c", wrapped], { stdio: ["ignore", "pipe", "pipe"] })
+        : spawn(wrapped.command, wrapped.args, {
+            cwd: wrapped.cwd,
+            env: wrapped.env,
+            stdio: ["ignore", "pipe", "pipe"],
+          });
     let stdout = "";
     let stderr = "";
     child.stdout!.on("data", (b) => (stdout += b.toString()));
@@ -81,39 +89,39 @@ async function partTwo_workerSandbox() {
     return;
   }
 
-  const wrappedAllow = await MacSandboxExec.wrap({
-    command: `cat ${SECRET}`,
+  const wrappedAllow = await MacSandboxExec.buildLaunch({
+    command: { program: "/bin/sh", args: ["-c", `cat ${SECRET}`], cwd: WORKDIR, env: process.env },
     workspacePath: WORKDIR,
   });
   const r1 = await runWrapped("p2-allow-read", wrappedAllow);
   if (!r1.stdout.includes(SECRET_CONTENT)) fails.push("part2: workspace read failed");
 
-  const wrappedDeny = await MacSandboxExec.wrap({
-    command: `ls ${homedir()}/.ssh 2>&1 || true`,
+  const wrappedDeny = await MacSandboxExec.buildLaunch({
+    command: { program: "/bin/sh", args: ["-c", `ls ${homedir()}/.ssh 2>&1 || true`], cwd: WORKDIR, env: process.env },
     workspacePath: WORKDIR,
   });
   const r2 = await runWrapped("p2-deny-read", wrappedDeny);
   if (!/permitted|denied|EPERM|EACCES/i.test(r2.stdout + r2.stderr)) fails.push("part2: ~/.ssh read not blocked");
 
   // F4Ú5 — .git ⊂ workspace should be RO. Try to write into .git, expect deny.
-  const wrappedGitWrite = await MacSandboxExec.wrap({
-    command: `echo evil > ${join(GIT_DIR, "config")} 2>&1 || true`,
+  const wrappedGitWrite = await MacSandboxExec.buildLaunch({
+    command: { program: "/bin/sh", args: ["-c", `echo evil > ${join(GIT_DIR, "config")} 2>&1 || true`], cwd: WORKDIR, env: process.env },
     workspacePath: WORKDIR,
   });
   const r3 = await runWrapped("p2-deny-git-write", wrappedGitWrite);
   if (!/permitted|denied|EPERM|EACCES/i.test(r3.stdout + r3.stderr)) fails.push("part2: .git write not blocked");
 
   // But .git read MUST work (agent needs `git log`, `git show`).
-  const wrappedGitRead = await MacSandboxExec.wrap({
-    command: `cat ${join(GIT_DIR, "HEAD")}`,
+  const wrappedGitRead = await MacSandboxExec.buildLaunch({
+    command: { program: "/bin/sh", args: ["-c", `cat ${join(GIT_DIR, "HEAD")}`], cwd: WORKDIR, env: process.env },
     workspacePath: WORKDIR,
   });
   const r4 = await runWrapped("p2-allow-git-read", wrappedGitRead);
   if (!r4.stdout.includes("refs/heads/main")) fails.push("part2: .git read should be allowed");
 
   // Workspace file write outside .git must still work.
-  const wrappedWsWrite = await MacSandboxExec.wrap({
-    command: `echo hello > ${join(WORKDIR, "test.txt")} && cat ${join(WORKDIR, "test.txt")}`,
+  const wrappedWsWrite = await MacSandboxExec.buildLaunch({
+    command: { program: "/bin/sh", args: ["-c", `echo hello > ${join(WORKDIR, "test.txt")} && cat ${join(WORKDIR, "test.txt")}`], cwd: WORKDIR, env: process.env },
     workspacePath: WORKDIR,
   });
   const r5 = await runWrapped("p2-allow-ws-write", wrappedWsWrite);
@@ -132,11 +140,18 @@ async function partThree_subprocessInheritance() {
 
   // Outer shell (sandboxed) spawns inner shell that tries to read blocked paths.
   // Subprocess MUST also fail.
-  const wrappedNested = await MacSandboxExec.wrap({
-    command:
-      `/bin/sh -c "ls ${homedir()}/.ssh 2>&1 || true; ` +
-      `cat ${homedir()}/.aws/credentials 2>&1 || true; ` +
-      `echo escape > ${homedir()}/nested-escape.txt 2>&1 || true"`,
+  const wrappedNested = await MacSandboxExec.buildLaunch({
+    command: {
+      program: "/bin/sh",
+      args: [
+        "-c",
+        `/bin/sh -c "ls ${homedir()}/.ssh 2>&1 || true; ` +
+          `cat ${homedir()}/.aws/credentials 2>&1 || true; ` +
+          `echo escape > ${homedir()}/nested-escape.txt 2>&1 || true"`,
+      ],
+      cwd: WORKDIR,
+      env: process.env,
+    },
     workspacePath: WORKDIR,
   });
   const r = await runWrapped("p3-nested-shell", wrappedNested);
@@ -153,8 +168,8 @@ async function partThree_subprocessInheritance() {
   }
 
   // Ensure the inner shell still gets workspace access.
-  const wrappedNestedAllow = await MacSandboxExec.wrap({
-    command: `/bin/sh -c "cat ${SECRET}"`,
+  const wrappedNestedAllow = await MacSandboxExec.buildLaunch({
+    command: { program: "/bin/sh", args: ["-c", `/bin/sh -c "cat ${SECRET}"`], cwd: WORKDIR, env: process.env },
     workspacePath: WORKDIR,
   });
   const r2 = await runWrapped("p3-nested-allow", wrappedNestedAllow);
