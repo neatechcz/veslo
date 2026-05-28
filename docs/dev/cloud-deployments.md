@@ -34,6 +34,8 @@ Operators must keep firewall ownership, OS patching ownership, backup ownership,
 
 Owned-server production deploys are run through the `Deploy Owned Server` GitHub Actions workflow. The workflow is intentionally `workflow_dispatch` only. A commit, push, or merge to `main` or `dev` must not deploy production by itself.
 
+The deploy job runs on the repository self-hosted runner labeled `veslo-owned-server`. That runner must be installed on the owned server because GitHub-hosted runners cannot reliably reach the server over inbound SSH. The runner connects outbound to GitHub over HTTPS and executes the Docker Compose deployment locally on the host.
+
 To deploy production:
 
 1. Open GitHub Actions.
@@ -41,18 +43,25 @@ To deploy production:
 3. Run the workflow manually.
 4. Leave the `branch` input empty to deploy the selected workflow branch, or enter a branch to override it for that run.
 
-The workflow connects to the owned server over SSH, creates or updates a stable Git checkout, checks out the requested branch, validates the production environment file and Compose file, builds the app and worker images, runs Den and AI Gateway migrations, starts the Compose stack, and verifies internal plus public health endpoints.
+The workflow creates or updates a stable Git checkout on the owned server, checks out the requested branch, validates the production environment file and Compose file, builds the app and worker images, runs Den and AI Gateway migrations, starts the Compose stack, and verifies internal plus public health endpoints.
 
 Required GitHub Actions configuration:
 
-- `OWNED_SERVER_HOST` variable or secret. Defaults to the current owned-server IP when unset.
-- `OWNED_SERVER_USER` variable or secret. Defaults to the current deploy user when unset.
-- `OWNED_SERVER_SSH_KEY` secret. This must be a private key accepted by the owned server for the deploy user.
-- `OWNED_SERVER_KNOWN_HOSTS` secret. This must contain the SSH known-hosts entry for the owned server.
+- A self-hosted runner assigned to this repository with labels `self-hosted`, `linux`, `x64`, and `veslo-owned-server`.
 - `OWNED_SERVER_APP_DIR` variable. Defaults to the stable production checkout path.
 - `OWNED_SERVER_ENV_FILE` variable. Defaults to the current production env file path on the owned server.
 
 Do not store production secrets in the repository. Keep production environment values in the server-side env file and GitHub secrets only.
+
+## Production ops workflows
+
+Production operations that mutate Den state must run on the owned-server runner
+and use the owned-server Compose stack. `Grant Veslo Platform Admin` follows this
+policy: it runs on the `veslo-owned-server` runner and executes inside the
+running `den` service so database access stays on the owned server.
+
+Do not reintroduce GitHub-hosted production database mutation workflows that
+connect through externally reachable database URLs.
 
 ## Managed-AI routing and admin visibility
 
@@ -88,5 +97,5 @@ For changes to production deployment behavior:
 
 1. Confirm `Deploy Owned Server` has no `push` trigger.
 2. Confirm no active GitHub Actions workflow deploys production through Render.
-3. Confirm the workflow validates the SSH target, server-side env file, Compose config, migrations, stack startup, internal worker-manager health, and public Den, AI Gateway, and web endpoints.
+3. Confirm the workflow validates the self-hosted runner path, server-side env file, Compose config, migrations, stack startup, internal worker-manager health, and public Den, AI Gateway, and web endpoints.
 4. Confirm this document and any service-local deployment notes match the workflow.

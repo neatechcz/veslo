@@ -1,10 +1,10 @@
-name: Ops DEN Platform Admin
+name: Grant Veslo Platform Admin
 
 on:
   workflow_dispatch:
     inputs:
       email:
-        description: DEN user email to grant platform_admin
+        description: Veslo user email to grant platform_admin
         required: true
         type: string
       apply:
@@ -16,36 +16,54 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: grant-veslo-platform-admin-production
+  cancel-in-progress: false
+
 jobs:
   grant:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, veslo-owned-server]
     if: github.repository == 'neatechcz/veslo'
+    env:
+      OWNED_SERVER_APP_DIR: ${{ vars.OWNED_SERVER_APP_DIR || '/home/neatech/veslo-owned-server-production' }}
+      OWNED_SERVER_ENV_FILE: ${{ vars.OWNED_SERVER_ENV_FILE || '/home/neatech/veslo-owned-server-dark-launch-inputs/env/production.env' }}
+      TARGET_EMAIL: ${{ inputs.email }}
+      APPLY_GRANT: ${{ inputs.apply }}
     steps:
-      - name: Check out branch
-        uses: actions/checkout@v4
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.27.0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install DEN dependencies
-        run: pnpm install --filter @neatech/den... --frozen-lockfile
-
-      - name: Grant platform admin role
-        working-directory: services/den
-        env:
-          DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
-          TARGET_EMAIL: ${{ inputs.email }}
-          APPLY_GRANT: ${{ inputs.apply }}
+      - name: Validate owned-server ops configuration
         run: |
-          node <<'NODE'
+          set -euo pipefail
+
+          missing=0
+          for key in OWNED_SERVER_APP_DIR OWNED_SERVER_ENV_FILE TARGET_EMAIL APPLY_GRANT; do
+            if [ -z "${!key}" ]; then
+              echo "::error::Missing required owned-server ops value: $key"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+          test -d "$OWNED_SERVER_APP_DIR/.git"
+          test -f "$OWNED_SERVER_ENV_FILE"
+          test -f "$OWNED_SERVER_APP_DIR/packaging/owned-server/compose.yml"
+
+      - name: Grant Veslo platform admin role
+        run: |
+          set -euo pipefail
+
+          cd "$OWNED_SERVER_APP_DIR"
+
+          compose() {
+            sudo -n docker compose -f packaging/owned-server/compose.yml --env-file "$OWNED_SERVER_ENV_FILE" "$@"
+          }
+
+          compose exec -T \
+            -e TARGET_EMAIL="$TARGET_EMAIL" \
+            -e APPLY_GRANT="$APPLY_GRANT" \
+            den sh -lc 'cd /app/services/den && node <<'"'"'NODE'"'"'
           const mysql = require("mysql2/promise");
           const crypto = require("node:crypto");
 
@@ -105,4 +123,4 @@ jobs:
             console.error(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;
           });
-          NODE
+          NODE'

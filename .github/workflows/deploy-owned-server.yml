@@ -18,24 +18,21 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, veslo-owned-server]
     if: github.repository == 'neatechcz/veslo'
     env:
-      OWNED_SERVER_HOST: ${{ vars.OWNED_SERVER_HOST || secrets.OWNED_SERVER_HOST || '62.109.146.43' }}
-      OWNED_SERVER_USER: ${{ vars.OWNED_SERVER_USER || secrets.OWNED_SERVER_USER || 'neatech' }}
-      OWNED_SERVER_SSH_KEY: ${{ secrets.OWNED_SERVER_SSH_KEY }}
-      OWNED_SERVER_KNOWN_HOSTS: ${{ secrets.OWNED_SERVER_KNOWN_HOSTS }}
       OWNED_SERVER_APP_DIR: ${{ vars.OWNED_SERVER_APP_DIR || '/home/neatech/veslo-owned-server-production' }}
       OWNED_SERVER_ENV_FILE: ${{ vars.OWNED_SERVER_ENV_FILE || '/home/neatech/veslo-owned-server-dark-launch-inputs/env/production.env' }}
       DEPLOY_BRANCH: ${{ github.event.inputs.branch || github.ref_name }}
       REPO_URL: https://github.com/${{ github.repository }}.git
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - name: Validate owned-server deploy configuration
         run: |
           set -euo pipefail
 
           missing=0
-          for key in OWNED_SERVER_HOST OWNED_SERVER_USER OWNED_SERVER_SSH_KEY OWNED_SERVER_KNOWN_HOSTS OWNED_SERVER_APP_DIR OWNED_SERVER_ENV_FILE DEPLOY_BRANCH; do
+          for key in OWNED_SERVER_APP_DIR OWNED_SERVER_ENV_FILE DEPLOY_BRANCH REPO_URL GITHUB_TOKEN; do
             if [ -z "${!key}" ]; then
               echo "::error::Missing required owned-server deployment value: $key"
               missing=1
@@ -46,49 +43,34 @@ jobs:
             exit 1
           fi
 
-      - name: Configure SSH
-        run: |
-          set -euo pipefail
-
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$OWNED_SERVER_SSH_KEY" > ~/.ssh/owned-server-deploy
-          chmod 600 ~/.ssh/owned-server-deploy
-          printf '%s\n' "$OWNED_SERVER_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-
       - name: Deploy Compose stack on owned server
         run: |
           set -euo pipefail
 
-          quote() {
-            printf '%q' "$1"
+          git_auth_header="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+
+          git_auth() {
+            GIT_CONFIG_COUNT=1 \
+            GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $git_auth_header" \
+            git "$@"
           }
 
-          remote_env="DEPLOY_BRANCH=$(quote "$DEPLOY_BRANCH") APP_DIR=$(quote "$OWNED_SERVER_APP_DIR") ENV_FILE=$(quote "$OWNED_SERVER_ENV_FILE") REPO_URL=$(quote "$REPO_URL")"
-
-          ssh -i ~/.ssh/owned-server-deploy \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            "$OWNED_SERVER_USER@$OWNED_SERVER_HOST" \
-            "$remote_env bash -s" <<'REMOTE'
-          set -euo pipefail
-
-          if [ ! -d "$APP_DIR/.git" ]; then
-            mkdir -p "$(dirname "$APP_DIR")"
-            git clone "$REPO_URL" "$APP_DIR"
+          if [ ! -d "$OWNED_SERVER_APP_DIR/.git" ]; then
+            mkdir -p "$(dirname "$OWNED_SERVER_APP_DIR")"
+            git_auth clone "$REPO_URL" "$OWNED_SERVER_APP_DIR"
           fi
 
-          cd "$APP_DIR"
-          git fetch --prune origin "+refs/heads/$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"
+          cd "$OWNED_SERVER_APP_DIR"
+          git_auth fetch --prune origin "+refs/heads/$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"
           git checkout --detach "origin/$DEPLOY_BRANCH"
           git reset --hard "origin/$DEPLOY_BRANCH"
 
-          test -f "$ENV_FILE"
+          test -f "$OWNED_SERVER_ENV_FILE"
           test -f packaging/owned-server/compose.yml
 
           compose() {
-            sudo -n docker compose -f packaging/owned-server/compose.yml --env-file "$ENV_FILE" "$@"
+            sudo -n docker compose -f packaging/owned-server/compose.yml --env-file "$OWNED_SERVER_ENV_FILE" "$@"
           }
 
           compose config --quiet
@@ -98,8 +80,7 @@ jobs:
           compose run --rm --no-deps ai-gateway pnpm --filter @neatech/ai-gateway db:migrate
           compose up -d
           compose ps
-          curl -fsS http://127.0.0.1:8790/health >/dev/null
-          REMOTE
+          compose exec -T worker-manager node -e "fetch('http://127.0.0.1:8790/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
       - name: Verify public production endpoints
         run: |

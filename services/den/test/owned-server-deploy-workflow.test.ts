@@ -12,20 +12,24 @@ test("owned-server deployment workflow replaces Render production deploy workflo
   assert.equal(existsSync(deployAiGatewayWorkflowUrl), false, "Render Deploy AI Gateway workflow must be retired")
 })
 
-test("owned-server deployment workflow deploys the Compose stack over SSH", () => {
+test("owned-server deployment workflow deploys the Compose stack on the owned-server runner", () => {
   const workflowSource = readFileSync(ownedServerWorkflowUrl, "utf8")
 
   for (const requiredText of [
     "name: Deploy Owned Server",
     "workflow_dispatch",
-    "OWNED_SERVER_HOST",
-    "OWNED_SERVER_USER",
-    "OWNED_SERVER_SSH_KEY",
-    "OWNED_SERVER_KNOWN_HOSTS",
+    "runs-on:",
+    "self-hosted",
+    "linux",
+    "x64",
+    "veslo-owned-server",
     "OWNED_SERVER_APP_DIR",
     "OWNED_SERVER_ENV_FILE",
-    "ssh -i",
-    "git fetch --prune origin",
+    "GITHUB_TOKEN",
+    "http.https://github.com/.extraheader",
+    "x-access-token",
+    "AUTHORIZATION: basic",
+    "git_auth fetch --prune origin",
     "packaging/owned-server/compose.yml",
     "docker compose",
     "build worker-runtime-image worker-manager den ai-gateway web",
@@ -34,6 +38,7 @@ test("owned-server deployment workflow deploys the Compose stack over SSH", () =
     "https://api.veslo.work/health",
     "https://ai.veslo.work/health",
     "https://app.veslo.work",
+    "compose exec -T worker-manager",
     "http://127.0.0.1:8790/health",
   ]) {
     assert.match(workflowSource, new RegExp(requiredText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
@@ -50,6 +55,9 @@ test("owned-server deployment workflow has no Render deploy integration", () => 
     "api.render.com",
     "/services/",
     "autoDeploy",
+    "ssh -i",
+    "OWNED_SERVER_SSH_KEY",
+    "OWNED_SERVER_KNOWN_HOSTS",
   ]) {
     assert.equal(
       workflowSource.includes(forbiddenText),
