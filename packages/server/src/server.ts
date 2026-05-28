@@ -11,6 +11,7 @@ import type {
   ReloadReason,
   ReloadTrigger,
   TokenScope,
+  SandboxBackend,
 } from "./types.js";
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
@@ -1245,6 +1246,7 @@ function buildCapabilities(config: ServerConfig): Capabilities {
     mcp: { read: true, write: writeEnabled },
     commands: { read: true, write: writeEnabled },
     config: { read: true, write: writeEnabled },
+    sandbox: resolveSandboxCapability(),
 
     approvals: { mode: config.approval.mode, timeoutMs: config.approval.timeoutMs },
     ui: { toy: toyUiEnabled },
@@ -1263,6 +1265,28 @@ function buildCapabilities(config: ServerConfig): Capabilities {
         maxBytes,
       },
     },
+  };
+}
+
+function resolveSandboxCapability(): Capabilities["sandbox"] {
+  const raw = (process.env.VESLO_SANDBOX_BACKEND ?? "none").trim() as SandboxBackend;
+  const known = new Set<SandboxBackend>([
+    "none",
+    "docker",
+    "container",
+    "mac-sandbox-exec",
+    "windows-wsl2",
+    "windows-job-object",
+    "stub",
+  ]);
+  const activeBackends = new Set<SandboxBackend>([
+    "mac-sandbox-exec",
+    "windows-wsl2",
+  ]);
+  const backend = known.has(raw) ? raw : "none";
+  return {
+    enabled: activeBackends.has(backend) && process.env.VESLO_DISABLE_SANDBOX !== "1",
+    backend,
   };
 }
 
