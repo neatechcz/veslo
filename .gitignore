@@ -53,6 +53,14 @@ evidence/
 # Local Graphify runtime state
 graphify-out/.graphify_root
 
+# Local Codex run logs
+.codex-run/
+.codex-runlogs/
+
+# Developer-specific local docs
+dev-specific-docs/
+dev-specific/
+
 # Local Codex runtime artifacts; keep the project Graphify hook tracked.
 .codex/*
 !.codex/
