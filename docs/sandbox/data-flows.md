@@ -12,7 +12,15 @@ Konvence v sekvenčních diagramech:
 - `Server` = veslo-server (port 8787)
 - `Daemon` = orchestrator daemon (random port)
 - `Engine` = OpenCode engine (per workspace)
-- `Den` = cloud AI gateway
+- `Managed AI` = nakonfigurovaný managed-AI backend. Aktuální produkční
+  default je standalone AI Gateway na owned serveru (`https://ai.veslo.work`);
+  Den pořád zajišťuje browser/app auth a může být fallback nebo zdroj user
+  bearer tokenu.
+
+Poznámka k owned-server změně: starší VSLO-86 commity a logy často používají
+`Den` jako zkratku pro managed-AI cloud. V aktuálním kódu desktop/orchestrator
+směřuje managed-AI default na `https://ai.veslo.work`; lokální engine pořád
+volá jen lokální `veslo-server` proxy `/ai-gateway/*`.
 
 ## Flow 1 — Boot (spuštění `pnpm dev`)
 
@@ -183,7 +191,8 @@ app.tsx ::sendPrompt
    ├── ensureManagedAiBootstrapReady                    ← AI access preflight
    │   │
    │   └── HTTP GET /ai-gateway/me/ai-access (na veslo-server)
-   │       — veslo-server forwarduje na Den
+   │       — veslo-server forwarduje na configured managed-AI gateway
+   │         (`/api/me/ai-access`; default `https://ai.veslo.work`)
    │
    ├── routedClient() → guarded klient k engine přes orchestrator proxy
    │
@@ -203,8 +212,8 @@ app.tsx ::sendPrompt
    │   └── engine interně volá veslo-server AI gateway:
    │       HTTP POST http://127.0.0.1:8787/ai-gateway/providers/codex_oauth/v1/chat/completions
    │       │
-   │       └── veslo-server forwarduje na Den
-   │           Den → vlastní AI provider (OpenAI/Anthropic/Codex)
+   │       └── veslo-server forwarduje na configured managed-AI gateway
+   │           managed-AI gateway → vlastní AI provider (OpenAI/Anthropic/Codex)
    │
    └── engine SSE events (přes Rust proxy) populují UI
        │
@@ -223,7 +232,7 @@ už běží).
 | 502 Bad Gateway na `/opencode/*` | Orchestrator proxy | Engine spawn fail (`Unable to connect`) |
 | `WorkspaceClientStaleError` | Guard proxy v `workspace-routing.ts:59` | Uživatel přepnul workspace během SDK call |
 | `Timed out waiting for session.messages` | `withTimeout` 12 s v session.ts:965 | Engine pomalý / mrtvý |
-| AI gateway 401 | Veslo-server `/ai-gateway/...` | Stale gateway token v opencode.jsonc, nebo Den auth expired |
+| AI gateway 401 | Veslo-server `/ai-gateway/...` | Stale gateway token v opencode.jsonc, nebo expired caller/gateway auth (typicky Den bearer token nebo managed-AI access token) |
 
 ## Flow 5 — Workspace switch během běžícího sendu
 

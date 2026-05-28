@@ -151,7 +151,11 @@ export function createWorkspaceStore(options: {
   preferServerByDefault?: () => boolean;
   vesloServerClient?: () => VesloServerClient | null;
   ensureLocalVesloServerRunning?: () => Promise<boolean>;
-  vesloServerHostInfo?: () => { baseUrl?: string | null; clientToken?: string | null } | null;
+  vesloServerHostInfo?: () => {
+    baseUrl?: string | null;
+    engineUrl?: string | null;
+    clientToken?: string | null;
+  } | null;
   setOpencodeConnectStatus?: (status: OpencodeConnectStatus | null) => void;
   onEngineStable?: () => void;
   engineRuntime?: () => EngineRuntime;
@@ -574,11 +578,20 @@ export function createWorkspaceStore(options: {
   // active-workspace effect in app.tsx patches the on-disk file when the user
   // visits a workspace; this reconciliation extends the same fix to every
   // local workspace at boot so the user doesn't need to "warm up" each one.
+  //
+  // baseURL is consumed by OpenCode, not by the browser UI. On Windows the
+  // OpenCode engine can run inside WSL, where 127.0.0.1 points at the Linux
+  // distro instead of the Windows veslo-server. Prefer engineUrl when Tauri
+  // provides it and keep baseUrl only as the Windows/UI fallback.
   const reconcileManagedAiApiKeys = async () => {
     const client = options.vesloServerClient?.();
     const hostInfo = options.vesloServerHostInfo?.();
     const currentToken = hostInfo?.clientToken?.trim() ?? "";
-    const currentBaseUrl = hostInfo?.baseUrl?.trim().replace(/\/+$/, "") ?? "";
+    const currentBaseUrl = (
+      hostInfo?.engineUrl?.trim() ||
+      hostInfo?.baseUrl?.trim() ||
+      ""
+    ).replace(/\/+$/, "");
     if (!client || !currentToken) return;
     let serverItems: Array<{ id: string; workspaceType?: string; path?: string }> = [];
     try {

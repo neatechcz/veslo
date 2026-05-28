@@ -12,6 +12,8 @@ export type ProxyToEngineOptions = {
   targetSearch?: string;
   injectHeaders?: Record<string, string>;
   stripIncomingHeaders?: string[];
+  rewriteJsonBody?: (value: unknown) => unknown;
+  rewriteJsonResponse?: (value: unknown) => unknown;
   onSuccess?: () => void;
   onError?: (error: Error) => void;
 };
@@ -38,6 +40,50 @@ const ALWAYS_STRIPPED_REQUEST_HEADERS = new Set([
   "transfer-encoding",
   "upgrade",
 ]);
+
+function isJsonContentType(value: string | string[] | number | undefined): boolean {
+  if (Array.isArray(value)) return value.some((item) => isJsonContentType(item));
+  return typeof value === "string" && /\bjson\b/i.test(value);
+}
+
+async function readBody(req: IncomingMessage): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+function stripContentLength(headers: Record<string, string | string[]>): Record<string, string | string[]> {
+  const next: Record<string, string | string[]> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === "content-length") continue;
+    next[key] = value;
+  }
+  return next;
+}
+
+function writeJsonResponse(
+  opts: ProxyToEngineOptions,
+  upstreamRes: IncomingMessage,
+  body: Buffer,
+): void {
+  try {
+    const parsed = body.length ? JSON.parse(body.toString("utf8")) : null;
+    const rewritten = opts.rewriteJsonResponse?.(parsed) ?? parsed;
+    const payload = Buffer.from(JSON.stringify(rewritten), "utf8");
+    opts.clientRes.setHeader("content-type", "application/json");
+    opts.clientRes.setHeader("content-length", String(payload.byteLength));
+    opts.clientRes.end(payload);
+    opts.onSuccess?.();
+  } catch (err) {
+    opts.onError?.(err instanceof Error ? err : new Error(String(err)));
+    opts.clientRes.statusCode = 502;
+    opts.clientRes.setHeader("content-type", "application/json");
+    opts.clientRes.end(JSON.stringify({ error: "upstream rewrite error" }));
+    upstreamRes.resume();
+  }
+}
 
 export function proxyToEngine(opts: ProxyToEngineOptions): void {
   const target = new URL(opts.targetBaseUrl);
@@ -70,10 +116,30 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
       if (upstreamRes.statusMessage) {
         opts.clientRes.statusMessage = upstreamRes.statusMessage;
       }
+      const rewriteResponse = Boolean(
+        opts.rewriteJsonResponse && isJsonContentType(upstreamRes.headers["content-type"]),
+      );
       for (const [k, v] of Object.entries(upstreamRes.headers)) {
         if (v === undefined) continue;
         if (HOP_BY_HOP_RESPONSE_HEADERS.has(k.toLowerCase())) continue;
+        if (rewriteResponse && k.toLowerCase() === "content-length") continue;
         opts.clientRes.setHeader(k, v);
+      }
+      if (rewriteResponse) {
+        const chunks: Buffer[] = [];
+        upstreamRes.on("data", (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        upstreamRes.on("end", () => {
+          writeJsonResponse(opts, upstreamRes, Buffer.concat(chunks));
+        });
+        upstreamRes.on("error", (err) => {
+          opts.onError?.(err);
+          if (!opts.clientRes.writableEnded) {
+            opts.clientRes.destroy(err);
+          }
+        });
+        return;
       }
       upstreamRes.pipe(opts.clientRes);
       upstreamRes.on("end", () => {
@@ -101,6 +167,17 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
     }
   });
 
+  const endWithBodyRewriteError = (err: unknown): void => {
+    const error = err instanceof Error ? err : new Error(String(err));
+    opts.onError?.(error);
+    if (!upstreamReq.destroyed) upstreamReq.destroy(error);
+    if (!opts.clientRes.headersSent) {
+      opts.clientRes.statusCode = 502;
+      opts.clientRes.setHeader("content-type", "application/json");
+      opts.clientRes.end(JSON.stringify({ error: "upstream request rewrite error" }));
+    }
+  };
+
   const abortUpstream = (): void => {
     if (!upstreamReq.destroyed) upstreamReq.destroy();
   };
@@ -114,5 +191,26 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
     if (!opts.clientRes.writableEnded) abortUpstream();
   });
 
-  opts.clientReq.pipe(upstreamReq);
+  if (opts.rewriteJsonBody && isJsonContentType(headers["content-type"])) {
+    void readBody(opts.clientReq)
+      .then((body) => {
+        if (body.length === 0) {
+          upstreamReq.end();
+          return;
+        }
+        const parsed = JSON.parse(body.toString("utf8"));
+        const rewritten = opts.rewriteJsonBody?.(parsed) ?? parsed;
+        const payload = Buffer.from(JSON.stringify(rewritten), "utf8");
+        upstreamReq.setHeader("content-type", "application/json");
+        upstreamReq.setHeader("content-length", String(payload.byteLength));
+        upstreamReq.end(payload);
+      })
+      .catch(endWithBodyRewriteError);
+  } else {
+    const nextHeaders = opts.rewriteJsonBody ? stripContentLength(headers) : headers;
+    for (const [key, value] of Object.entries(nextHeaders)) {
+      upstreamReq.setHeader(key, value);
+    }
+    opts.clientReq.pipe(upstreamReq);
+  }
 }

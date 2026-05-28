@@ -62,8 +62,11 @@ Existující docs **nezatahuj duplikováním**, jen na ně odkazuj:
   multi-workspace freeze symptomy.
 - **`docs/features/session-runtime.md`** — feature popis session runtime.
   Sandbox/data-flows.md odkazuje pro detail v send flow.
-- **`docs/plans/`** — historické plány. **Nepoužívat** — jsou převážně
-  desuted a popisují stav před VSLO-86 fixy.
+- **`docs/plans/`** — implementační/design historie. Pro VSLO-86
+  multi-workspace flow je neber jako zdroj pravdy o shipped chování; některé
+  novější plány ale popisují jiné aktuální oblasti, například owned-server
+  GitHub Actions. Pro aktuální chování vždy preferuj `docs/dev/`,
+  service-local README a kód.
 
 ## Co dělat když se docs rozcházejí
 

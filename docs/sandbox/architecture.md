@@ -8,7 +8,7 @@ autentizací**. Pro vysokoúrovňovou vizi Vesla viz kořenový
 ## Skutečný stav v dev modu
 
 Po `pnpm dev` se postupně spustí **5 lokálních procesů** plus aplikace
-mluví s **1 cloudovým endpointem**:
+mluví s **1 managed-AI HTTPS endpointem**:
 
 ```
 [1] veslo                          — Tauri main, vlastní okno + IPC (port 4445 jen s --features e2e)
@@ -16,8 +16,9 @@ mluví s **1 cloudovým endpointem**:
 [3] bun --watch src/cli.ts         — veslo-server v dev modu (port 8787, fallback random)
 [4] veslo-code-router              — Bun, Telegram/Slack messaging bridge (random port)
 [5] veslo-code (× N)               — OpenCode engines, jeden per workspace (random porty)
-[6] https://den-control-plane-     — Den AI gateway (cloud, není v repu)
-    veslo.onrender.com
+[6] https://ai.veslo.work          — standalone AI Gateway na owned serveru
+                                      (managed-AI access/proxy; Den auth běží na
+                                      https://api.veslo.work)
 ```
 
 V production buildu jsou procesy stejné, jen `[3]` je nativní binárka
@@ -103,13 +104,22 @@ Hlavní endpointy (z OpenCode SDK):
 Zdroj engine binárky: externí OpenCode (npm `@opencode-ai/server`),
 vendorovaná do `packages/desktop/src-tauri/target/debug/veslo-code`.
 
-### 6) Den AI gateway (cloud, https://den-control-plane-veslo.onrender.com)
+### 6) Managed AI gateway (owned server, default https://ai.veslo.work)
 
-Mimo repo. Zajišťuje **AI access management** — uživatel se přihlásí
-do Den, dostane gateway access token, ten se použije při AI requestech
-přes `/ai-gateway/providers/*/v1/...`. Veslo-server forwarduje na Den.
+Externí HTTPS služba pro **AI access management** a provider proxy. Aktuální
+produkční default je standalone AI Gateway ze `services/ai-gateway`,
+nasazená přes owned-server Compose stack. Den pořád zajišťuje browser/app auth
+na `https://api.veslo.work`; desktop používá Den bearer token při dotazu na
+managed-AI access bundle.
 
-Auth: Den access token v hlavičce `x-veslo-gateway-token`.
+`veslo-server` forwarduje lokální `/ai-gateway/*` požadavky na configured
+managed-AI base URL (`VESLO_MANAGED_AI_BASE_URL`, legacy
+`VESLO_AI_GATEWAY_BASE_URL`; orchestrator default `https://ai.veslo.work`).
+Starý Render endpoint `https://den-control-plane-veslo.onrender.com` je
+historie/rollback, ne aktuální default.
+
+Auth: user/caller bearer přes `x-veslo-gateway-authorization`, provider requesty
+používají gateway access token v `x-veslo-gateway-token`.
 
 ## Graf komunikace
 
@@ -117,11 +127,12 @@ Ne lineární pipeline, je to **mesh**. Šipka = "volá":
 
 ```
                                 ┌──────────────────────┐
-                                │   Den (cloud)        │
-                                │   AI gateway         │
+                                │   Managed AI gateway │
+                                │   (owned server)     │
                                 └───────────▲──────────┘
                                             │ HTTPS
-                                            │ x-veslo-gateway-token
+                                            │ x-veslo-gateway-token /
+                                            │ x-veslo-gateway-authorization
                                             │
                                   ┌─────────┴──────────┐
                                   │  veslo-server      │
@@ -247,7 +258,7 @@ Krátce — proč nelze jen "back-end + API + front-end":
 | Orchestrator daemon | Engine pool (spawn, suspend, route), HTTP proxy | Lze sloučit do veslo-server |
 | Engine (per workspace) | OpenCode native, sandbox-exec, čte tvoje soubory | Ne (jinak žádné AI s context tvého kódu) |
 | Veslo-code-router | Telegram/Slack messaging bridge | Ano (vypnout v dev) |
-| Den (cloud) | AI provider keys management, gateway | Ne (kromě případů kdy user má vlastní keys) |
+| Managed AI gateway | AI provider keys management, gateway | Ne (kromě případů kdy user má vlastní keys) |
 
 Realistický refactor zacílený na zjednodušení:
 
@@ -257,5 +268,6 @@ Realistický refactor zacílený na zjednodušení:
 2. **Vypnout veslo-code-router v dev mode** — ušetří jeden proces, sníží
    noise v logu. **~30 minut**.
 
-Po těchto změnách: `UI ↔ Tauri ↔ veslo-server ↔ engines ↔ Den`. 4 procesy
-plus cloud. To už je rozumný stack pro multi-workspace desktop app.
+Po těchto změnách: `UI ↔ Tauri ↔ veslo-server ↔ engines ↔ Managed AI`.
+4 procesy plus managed-AI HTTPS služba. To už je rozumný stack pro
+multi-workspace desktop app.

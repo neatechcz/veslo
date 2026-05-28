@@ -536,7 +536,7 @@ pub fn engine_start(
         return Err("projectDir is required".to_string());
     }
 
-    eprintln!(
+    crate::flow_log!(
         "[veslo:flow] BOOT rust-up {{ pid: {}, project_dir: {:?} }}",
         std::process::id(),
         project_dir
@@ -794,7 +794,7 @@ pub fn engine_start(
 
             match health_result {
                 Ok(next_health) => {
-                    eprintln!(
+                    crate::flow_log!(
                         "[veslo:flow] BOOT daemon-ready {{ port: {}, ms: {}, attempt: {} }}",
                         daemon_port,
                         wait_started_at.elapsed().as_millis(),
@@ -891,18 +891,14 @@ pub fn engine_start(
         );
         match &veslo_started {
             Ok(_) => {
-                let server_port = veslo_manager
-                    .inner
-                    .lock()
-                    .ok()
-                    .and_then(|s| s.port);
+                let server_port = veslo_manager.inner.lock().ok().and_then(|s| s.port);
                 let has_token = veslo_manager
                     .inner
                     .lock()
                     .ok()
                     .map(|s| s.host_token.as_ref().is_some_and(|t| !t.is_empty()))
                     .unwrap_or(false);
-                eprintln!(
+                crate::flow_log!(
                     "[veslo:flow] BOOT server-ready {{ port: {:?}, host_token_set: {}, ms: {} }}",
                     server_port,
                     has_token,
@@ -910,7 +906,7 @@ pub fn engine_start(
                 );
             }
             Err(error) => {
-                eprintln!(
+                crate::flow_log!(
                     "[veslo:flow] BOOT server-ready:FAIL {{ ms: {}, error: {error:?} }}",
                     veslo_started_at.elapsed().as_millis()
                 );
@@ -961,7 +957,7 @@ pub fn engine_start(
                 Err(error)
             }
         };
-        eprintln!(
+        crate::flow_log!(
             "[veslo:flow] RECONCILE done {{ server: {}, daemon: {} }}",
             server_reconciled,
             match &daemon_reconciled {

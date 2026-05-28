@@ -22,6 +22,13 @@ import type { SerializedEngineState } from "./engine-pool.js";
 import { atomicWriteJson, cleanupStaleTmpFiles, createDebouncedPersister } from "./persistence.js";
 import { EnginePool, type EngineProcess } from "./engine-pool.js";
 import { proxyToEngine } from "./router-proxy.js";
+import {
+  hostDirectoryToEngineDirectory,
+  rewriteDirectoryFieldsForEngine,
+  rewriteDirectoryFieldsForHost,
+  rewriteDirectoryQueryForEngine,
+  type EnginePathMapping,
+} from "./engine-paths.js";
 
 type ApprovalMode = "manual" | "auto";
 
@@ -3874,8 +3881,19 @@ async function runRouterDaemon(args: ParsedArgs) {
         }
 
         const restPath = "/" + parts.slice(3).join("/");
+        const pathMapping: EnginePathMapping = {
+          backend: resolveConfiguredSandboxBackend(),
+          hostWorkspacePath: ws.path,
+        };
+        const rewriteEnginePaths = pathMapping.backend === "windows-wsl2";
+        const engineDirectory = hostDirectoryToEngineDirectory(ws.path, pathMapping) ?? ws.path;
+        const targetSearch = rewriteDirectoryQueryForEngine(url.search, {
+          method: req.method,
+          targetPath: restPath,
+          mapping: pathMapping,
+        });
         const injectHeaders: Record<string, string> = {
-          "x-opencode-directory": ws.path,
+          "x-opencode-directory": engineDirectory,
           "x-veslo-workspace-id": ws.id,
         };
         if (opencodePassword) {
@@ -3893,7 +3911,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           clientRes: res,
           targetBaseUrl: engine.baseUrl,
           targetPath: restPath,
-          targetSearch: url.search,
+          targetSearch,
           injectHeaders,
           stripIncomingHeaders: [
             "authorization",
@@ -3901,6 +3919,12 @@ async function runRouterDaemon(args: ParsedArgs) {
             "x-forwarded-host",
             "x-forwarded-proto",
           ],
+          rewriteJsonBody: rewriteEnginePaths
+            ? (value) => rewriteDirectoryFieldsForEngine(value, pathMapping)
+            : undefined,
+          rewriteJsonResponse: rewriteEnginePaths
+            ? (value) => rewriteDirectoryFieldsForHost(value, pathMapping)
+            : undefined,
           onSuccess: () => {
             pool.touch(ws.id);
             persistEnginesSnapshot();

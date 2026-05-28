@@ -29,38 +29,46 @@ pub(crate) fn strip_trailing_nul_padding(mut content: String) -> String {
 fn opencode_config_candidates(
     scope: &str,
     project_dir: &str,
-) -> Result<(PathBuf, PathBuf), String> {
+) -> Result<(Vec<PathBuf>, PathBuf), String> {
     match scope {
         "project" => {
             if project_dir.trim().is_empty() {
                 return Err("projectDir is required".to_string());
             }
             let root = PathBuf::from(project_dir);
-            Ok((root.join("opencode.jsonc"), root.join("opencode.json")))
+            let root_jsonc = root.join("opencode.jsonc");
+            Ok((
+                vec![
+                    root.join(".opencode").join("opencode.jsonc"),
+                    root.join(".opencode").join("opencode.json"),
+                    root_jsonc.clone(),
+                    root.join("opencode.json"),
+                ],
+                root_jsonc,
+            ))
         }
         "global" => {
             let base =
                 xdg_config_home().ok_or_else(|| "Unable to resolve config directory".to_string())?;
 
             let root = base.join("opencode");
-            Ok((root.join("opencode.jsonc"), root.join("opencode.json")))
+            let jsonc = root.join("opencode.jsonc");
+            Ok((vec![jsonc.clone(), root.join("opencode.json")], jsonc))
         }
         _ => Err("scope must be 'project' or 'global'".to_string()),
     }
 }
 
 pub fn resolve_opencode_config_path(scope: &str, project_dir: &str) -> Result<PathBuf, String> {
-    let (jsonc_path, json_path) = opencode_config_candidates(scope, project_dir)?;
+    let (candidates, default_path) = opencode_config_candidates(scope, project_dir)?;
 
-    if jsonc_path.exists() {
-        return Ok(jsonc_path);
+    for path in candidates {
+        if path.exists() {
+            return Ok(path);
+        }
     }
 
-    if json_path.exists() {
-        return Ok(json_path);
-    }
-
-    Ok(jsonc_path)
+    Ok(default_path)
 }
 
 pub fn read_opencode_config(scope: &str, project_dir: &str) -> Result<OpencodeConfigFile, String> {
@@ -109,6 +117,7 @@ pub fn write_opencode_config(
 mod tests {
     use super::*;
     use crate::env_guard::EnvVarGuard;
+    use std::fs;
 
     #[test]
     fn global_config_resolves_from_userprofile_when_home_is_missing() {
@@ -144,5 +153,30 @@ mod tests {
             strip_trailing_nul_padding("{\"bad\":\"\0\"}\n".to_string()),
             "{\"bad\":\"\0\"}\n"
         );
+    }
+
+    #[test]
+    fn project_config_prefers_existing_dot_opencode_config() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        fs::write(root.join("opencode.jsonc"), "{}").expect("root config");
+        fs::create_dir_all(root.join(".opencode")).expect("dot opencode");
+        fs::write(root.join(".opencode").join("opencode.jsonc"), "{}").expect("active config");
+
+        let resolved = resolve_opencode_config_path("project", &root.to_string_lossy())
+            .expect("resolve project config");
+
+        assert_eq!(resolved, root.join(".opencode").join("opencode.jsonc"));
+    }
+
+    #[test]
+    fn project_config_defaults_to_root_jsonc_when_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+
+        let resolved = resolve_opencode_config_path("project", &root.to_string_lossy())
+            .expect("resolve project config");
+
+        assert_eq!(resolved, root.join("opencode.jsonc"));
     }
 }
