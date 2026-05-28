@@ -26,6 +26,7 @@ export type VesloServerInfo = {
   connectUrl: string | null;
   mdnsUrl: string | null;
   lanUrl: string | null;
+  engineUrl: string | null;
   clientToken: string | null;
   hostToken: string | null;
   pid: number | null;

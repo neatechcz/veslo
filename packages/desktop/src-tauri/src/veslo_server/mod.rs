@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use gethostname::gethostname;
-use local_ip_address::local_ip;
+use local_ip_address::{list_afinet_netifas, local_ip};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri::Manager;
@@ -39,7 +39,36 @@ fn generate_token() -> String {
     Uuid::new_v4().to_string()
 }
 
-fn build_urls(port: u16) -> (Option<String>, Option<String>, Option<String>) {
+fn resolve_engine_url(port: u16) -> Option<String> {
+    #[cfg(windows)]
+    {
+        list_afinet_netifas()
+            .ok()?
+            .into_iter()
+            .find_map(|(name, ip)| {
+                let name = name.to_ascii_lowercase();
+                if !name.contains("wsl") || !ip.is_ipv4() || ip.is_loopback() {
+                    return None;
+                }
+                Some(format!("http://{ip}:{port}"))
+            })
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = port;
+        None
+    }
+}
+
+fn build_urls(
+    port: u16,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
     let hostname = gethostname().to_string_lossy().trim().to_string();
     let mdns_url = if hostname.is_empty() {
         None
@@ -51,12 +80,13 @@ fn build_urls(port: u16) -> (Option<String>, Option<String>, Option<String>) {
     let lan_url = local_ip().ok().map(|ip| format!("http://{ip}:{port}"));
 
     let connect_url = lan_url.clone().or(mdns_url.clone());
+    let engine_url = resolve_engine_url(port);
 
-    (connect_url, mdns_url, lan_url)
+    (connect_url, mdns_url, lan_url, engine_url)
 }
 
 pub fn resolve_connect_url(port: u16) -> Option<String> {
-    let (connect_url, _mdns_url, _lan_url) = build_urls(port);
+    let (connect_url, _mdns_url, _lan_url, _engine_url) = build_urls(port);
     connect_url
 }
 
@@ -160,6 +190,7 @@ fn persisted_state_to_info_with_health(
         connect_url: state.connect_url.clone(),
         mdns_url: state.mdns_url.clone(),
         lan_url: state.lan_url.clone(),
+        engine_url: state.port.and_then(resolve_engine_url),
         client_token: state.client_token.clone(),
         host_token: state.host_token.clone(),
         pid: state.pid,
@@ -276,9 +307,9 @@ fn discover_external_veslo_server() -> Option<VesloServerInfo> {
         .rsplit_once(':')
         .and_then(|(_, tail)| tail.split('/').next())
         .and_then(|p| p.parse::<u16>().ok());
-    let (connect_url, mdns_url, lan_url) = match port {
+    let (connect_url, mdns_url, lan_url, engine_url) = match port {
         Some(p) => build_urls(p),
-        None => (None, None, None),
+        None => (None, None, None, None),
     };
     Some(VesloServerInfo {
         running: true,
@@ -288,6 +319,7 @@ fn discover_external_veslo_server() -> Option<VesloServerInfo> {
         connect_url,
         mdns_url,
         lan_url,
+        engine_url,
         client_token: identity.token,
         host_token: None,
         pid: identity.pid,
@@ -445,10 +477,11 @@ pub fn start_veslo_server(
     state.host = Some(host.clone());
     state.port = Some(port);
     state.base_url = Some(format!("http://127.0.0.1:{port}"));
-    let (connect_url, mdns_url, lan_url) = build_urls(port);
+    let (connect_url, mdns_url, lan_url, engine_url) = build_urls(port);
     state.connect_url = connect_url;
     state.mdns_url = mdns_url;
     state.lan_url = lan_url;
+    state.engine_url = engine_url;
     state.client_token = Some(client_token);
     state.host_token = Some(host_token);
     state.workspace_paths = workspace_paths.to_vec();

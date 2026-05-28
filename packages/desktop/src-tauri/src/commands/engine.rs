@@ -534,6 +534,12 @@ pub fn engine_start(
         return Err("projectDir is required".to_string());
     }
 
+    eprintln!(
+        "[veslo:flow] BOOT rust-up {{ pid: {}, project_dir: {:?} }}",
+        std::process::id(),
+        project_dir
+    );
+
     // OpenCode is spawned with `current_dir(project_dir)`. If the user selected a
     // workspace path that doesn't exist yet (common during onboarding), spawning
     // fails with `os error 2`.
@@ -782,6 +788,12 @@ pub fn engine_start(
 
             match health_result {
                 Ok(next_health) => {
+                    eprintln!(
+                        "[veslo:flow] BOOT daemon-ready {{ port: {}, ms: {}, attempt: {} }}",
+                        daemon_port,
+                        wait_started_at.elapsed().as_millis(),
+                        attempt
+                    );
                     health = Some(next_health);
                     break;
                 }
@@ -862,6 +874,7 @@ pub fn engine_start(
             }
         };
 
+        let veslo_started_at = std::time::Instant::now();
         let veslo_started = start_veslo_server(
             &app,
             &veslo_manager,
@@ -871,18 +884,44 @@ pub fn engine_start(
             opencode_password.as_deref(),
             opencode_router_health_port,
         );
-        if let Err(error) = veslo_started {
-            if let Ok(mut state) = manager.inner.lock() {
-                state.last_stderr = Some(truncate_output(&format!("Veslo server: {error}"), 8000));
+        match &veslo_started {
+            Ok(_) => {
+                let server_port = veslo_manager
+                    .inner
+                    .lock()
+                    .ok()
+                    .and_then(|s| s.port);
+                let has_token = veslo_manager
+                    .inner
+                    .lock()
+                    .ok()
+                    .map(|s| s.host_token.as_ref().is_some_and(|t| !t.is_empty()))
+                    .unwrap_or(false);
+                eprintln!(
+                    "[veslo:flow] BOOT server-ready {{ port: {:?}, host_token_set: {}, ms: {} }}",
+                    server_port,
+                    has_token,
+                    veslo_started_at.elapsed().as_millis()
+                );
+            }
+            Err(error) => {
+                eprintln!(
+                    "[veslo:flow] BOOT server-ready:FAIL {{ ms: {}, error: {error:?} }}",
+                    veslo_started_at.elapsed().as_millis()
+                );
+                if let Ok(mut state) = manager.inner.lock() {
+                    state.last_stderr =
+                        Some(truncate_output(&format!("Veslo server: {error}"), 8000));
+                }
             }
         }
         // Reconcile every engine_start call (not only on fresh spawn), because
         // start_veslo_server has an idempotent-reuse fast path that skips the
         // reconcile branch — sidebar clicks on workspaces added after the
         // initial boot would otherwise stay unknown to veslo-server.
-        let count = reconcile_server_workspaces(&app);
-        if count > 0 {
-            eprintln!("[veslo-server] reconciled {count} workspace(s)");
+        let server_reconciled = reconcile_server_workspaces(&app);
+        if server_reconciled > 0 {
+            eprintln!("[veslo-server] reconciled {server_reconciled} workspace(s)");
         }
 
         if let Err(error) = opencodeRouter_start(
@@ -904,15 +943,27 @@ pub fn engine_start(
         // this the daemon only learns about workspaces that get explicitly
         // activated, and a sidebar click on any unseen workspace would 404 on
         // /workspaces/:id/activate and stall the 30s frontend timeout.
-        match reconcile_orchestrator_workspaces(&app, &orchestrator_manager) {
-            Ok(count) if count > 0 => {
-                eprintln!("[orchestrator] reconciled {count} workspace(s)");
+        let daemon_reconciled = match reconcile_orchestrator_workspaces(&app, &orchestrator_manager)
+        {
+            Ok(count) => {
+                if count > 0 {
+                    eprintln!("[orchestrator] reconciled {count} workspace(s)");
+                }
+                Ok(count)
             }
-            Ok(_) => {}
             Err(error) => {
                 eprintln!("[orchestrator] reconcile failed: {error}");
+                Err(error)
             }
-        }
+        };
+        eprintln!(
+            "[veslo:flow] RECONCILE done {{ server: {}, daemon: {} }}",
+            server_reconciled,
+            match &daemon_reconciled {
+                Ok(c) => format!("{c}"),
+                Err(e) => format!("ERR({e:?})"),
+            }
+        );
 
         return Ok(EngineInfo {
             running: true,

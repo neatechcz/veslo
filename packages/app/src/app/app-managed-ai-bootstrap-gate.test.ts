@@ -7,16 +7,16 @@ const source = readFileSync(new URL("./app.tsx", import.meta.url), "utf8");
 test("sendPrompt waits for managed bootstrap readiness before reading client", () => {
   assert.match(
     source,
-    /async function sendPrompt\(draft\?: ComposerDraft\)[\s\S]*?await ensureManagedAiBootstrapReady\(\);\s*const c = client\(\);/s,
-    "sendPrompt should wait for managed bootstrap readiness before grabbing the local client",
+    /async function sendPrompt\([\s\S]*?\)[\s\S]*?await ensureManagedAiBootstrapReady\(\);\s*const c = routedClient\(\);/s,
+    "sendPrompt should wait for managed bootstrap readiness before grabbing the routed client",
   );
 });
 
 test("createSessionAndOpen waits for managed bootstrap readiness before reading client", () => {
   assert.match(
     source,
-    /async function createSessionAndOpen\(\)[\s\S]*?await ensureManagedAiBootstrapReady\(\);\s*const c = client\(\);/s,
-    "createSessionAndOpen should wait for managed bootstrap readiness before grabbing the local client",
+    /async function createSessionAndOpen\(\)[\s\S]*?await ensureManagedAiBootstrapReady\(\);\s*const c = routedClient\(\);/s,
+    "createSessionAndOpen should wait for managed bootstrap readiness before grabbing the routed client",
   );
 });
 
@@ -31,13 +31,13 @@ test("managed AI bootstrap writes config with the managed gateway token when pre
 test("managed AI bootstrap routes desktop local providers through the local Veslo server target", () => {
   assert.match(
     source,
-    /const providerRoutingLocalHost = activeVesloServerHostInfo\(\);[\s\S]*?const providerRoutingLocalBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.baseUrl \?\? deriveLocalVesloServerUrlFromOpencodeBaseUrl\(baseUrl\(\)\) \?\? "";[\s\S]*?resolveManagedAiProviderRoutingTarget\(\{[\s\S]*?workspaceType: workspace\.workspaceType,[\s\S]*?activeBaseUrl: providerRoutingLocalBaseUrl,[\s\S]*?activeToken: providerRoutingLocalHost\?\.clientToken \?\? "",[\s\S]*?gatewayBaseUrl: gatewayClient\?\.baseUrl \?\? "",[\s\S]*?\}\)/s,
+    /const providerRoutingLocalHost = activeVesloServerHostInfo\(\);[\s\S]*?const providerRoutingLocalBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.baseUrl \?\? deriveLocalVesloServerUrlFromOpencodeBaseUrl\(baseUrl\(\)\) \?\? "";[\s\S]*?const providerRoutingEngineBaseUrl =[\s\S]*?providerRoutingLocalHost\?\.engineUrl \?\? providerRoutingLocalBaseUrl;[\s\S]*?resolveManagedAiProviderRoutingTarget\(\{[\s\S]*?workspaceType: workspace\.workspaceType,[\s\S]*?activeBaseUrl: providerRoutingLocalBaseUrl,[\s\S]*?engineBaseUrl: providerRoutingEngineBaseUrl,[\s\S]*?activeToken: providerRoutingLocalHost\?\.clientToken \?\? "",[\s\S]*?gatewayBaseUrl: gatewayClient\?\.baseUrl \?\? "",[\s\S]*?\}\)/s,
     "managed AI config writes should resolve provider routing from the local host snapshot instead of the remote access gateway client",
   );
   assert.match(
     source,
-    /serverBaseUrl: providerRoutingTarget\.baseUrl,[\s\S]*?serverClientToken: providerRoutingTarget\.serverClientToken/s,
-    "managed AI provider config should use the resolved routing target base URL and local server token",
+    /serverBaseUrl: providerRoutingTarget\.baseUrl,[\s\S]*?engineBaseUrl: providerRoutingTarget\.engineBaseUrl,[\s\S]*?serverClientToken: providerRoutingTarget\.serverClientToken/s,
+    "managed AI provider config should use the resolved engine routing target URL and local server token",
   );
 });
 
@@ -67,7 +67,7 @@ test("managed AI bootstrap skips veslo-server config patches when the computed m
 
 test("managed AI reload coalescing records the server token only after a successful reload", () => {
   const reloadBlocks = source.match(
-    /if \(\s*shouldAutoReloadManagedAiConfig\(\{[\s\S]*?\}\) &&\s*lastReloadedForServerToken\(\) !== providerRoutingTarget\.serverClientToken\s*\) \{\s*const managedAiReloaded = await reloadWorkspaceEngine\(\);\s*if \(managedAiReloaded\) \{\s*setLastReloadedForServerToken\(providerRoutingTarget\.serverClientToken\);\s*\}\s*\}/g,
+    /if \(\s*shouldAutoReloadManagedAiConfig\(\{[\s\S]*?\}\) &&\s*lastReloadedForServerToken\(\) !== providerRoutingReloadKey\s*\) \{\s*const managedAiReloaded = await reloadWorkspaceEngine\(\);\s*if \(managedAiReloaded\) \{\s*setLastReloadedForServerToken\(providerRoutingReloadKey\);\s*\}\s*\}/g,
   );
 
   assert.equal(

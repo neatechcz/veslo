@@ -80,18 +80,24 @@ export function resolveManagedAiProviderRoutingTarget(input: {
   isDesktopRuntime: boolean;
   workspaceType: "local" | "remote" | null | undefined;
   activeBaseUrl: string | null | undefined;
+  engineBaseUrl?: string | null | undefined;
   activeToken: string | null | undefined;
   gatewayBaseUrl: string | null | undefined;
   gatewayToken: string | null | undefined;
-}): { baseUrl: string; serverClientToken: string } | null {
+}): { baseUrl: string; engineBaseUrl: string; serverClientToken: string } | null {
   const activeBaseUrl = normalizeHttpUrl(input.activeBaseUrl);
+  const engineBaseUrl = normalizeHttpUrl(input.engineBaseUrl);
   const activeToken = input.activeToken?.trim() ?? "";
   if (
     input.isDesktopRuntime &&
     input.workspaceType === "local" &&
     isLoopbackHttpUrl(activeBaseUrl)
   ) {
-    return { baseUrl: activeBaseUrl, serverClientToken: activeToken };
+    return {
+      baseUrl: activeBaseUrl,
+      engineBaseUrl: engineBaseUrl || activeBaseUrl,
+      serverClientToken: activeToken,
+    };
   }
 
   if (input.isDesktopRuntime && input.workspaceType === "local") {
@@ -104,7 +110,11 @@ export function resolveManagedAiProviderRoutingTarget(input: {
     return null;
   }
 
-  return { baseUrl: gatewayBaseUrl, serverClientToken: gatewayToken };
+  return {
+    baseUrl: gatewayBaseUrl,
+    engineBaseUrl: gatewayBaseUrl,
+    serverClientToken: gatewayToken,
+  };
 }
 
 function readConfigObject(value: unknown): Record<string, unknown> {
@@ -338,6 +348,7 @@ export function formatManagedAiAccessConfig(
   input: {
     profile: ManagedAiAccessProfile;
     serverBaseUrl: string;
+    engineBaseUrl?: string | null;
     serverClientToken: string;
     gatewayAccessToken: string;
   },
@@ -345,7 +356,7 @@ export function formatManagedAiAccessConfig(
   const withDefaultModel = formatConfigWithDefaultModel(content ?? "", input.profile.defaultModel);
   return `${applyGatewayProviderRouting(withDefaultModel, {
     providerId: input.profile.providerId,
-    serverBaseUrl: input.serverBaseUrl,
+    serverBaseUrl: input.engineBaseUrl?.trim() || input.serverBaseUrl,
     serverClientToken: input.serverClientToken,
     gatewayAccessToken: input.gatewayAccessToken,
     models: [input.profile.defaultModel.modelID, ...input.profile.allowedModels],
