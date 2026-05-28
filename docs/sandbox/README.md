@@ -41,6 +41,7 @@ viz [`known-issues.md`](known-issues.md) a [`fixes-timeline.md`](fixes-timeline.
 | 5 | [`debug-playbook.md`](debug-playbook.md) | Jak spustit dev mode, najít porty, otevřít DevTools, číst logy | Jakmile narazíš na první problém. |
 | 6 | [`e2e-specs.md`](e2e-specs.md) | Existující WebDriver specy a jak je rozšířit | Pokud chceš automatizovaně reprodukovat / verifikovat fixy. |
 | 7 | [`handoff.md`](handoff.md) | Otevřené úkoly, doporučená strategie, copy-paste prompt pro novou AI session | Až budeš plánovat další krok. |
+| 8 | [`windows-wsl2-sandbox-runtime.md`](windows-wsl2-sandbox-runtime.md) | Windows WSL2 + bwrap runtime, first-run onboarding, managed `VesloSandbox` distro | Windows sandbox/runtime provisioning. |
 
 ## Vztah k existující dokumentaci v gitu
 
