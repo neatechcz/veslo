@@ -15,6 +15,7 @@ describe("version manifest resolution", () => {
   test("includes target-suffixed Windows manifest candidates", () => {
     expect(manifestFileCandidates("win32", "x86_64-pc-windows-msvc")).toEqual([
       "versions.json",
+      "versions.json.exe",
       "versions.json-x86_64-pc-windows-msvc",
       "versions.json-x86_64-pc-windows-msvc.exe",
     ]);
@@ -40,5 +41,26 @@ describe("version manifest resolution", () => {
     expect(manifest).not.toBeNull();
     expect(manifest?.dir).toBe(dir);
     expect(manifest?.entries["veslo-server"]?.version).toBe("2026.3.7");
+  });
+
+  test("reads the Windows Tauri dev manifest copied as versions.json.exe", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "veslo-version-manifest-"));
+    tempDirs.push(dir);
+
+    await writeFile(
+      join(dir, "versions.json.exe"),
+      JSON.stringify({
+        "veslo-code": { version: "1.14.29", sha256: "codehash" },
+      }),
+      "utf8",
+    );
+
+    const manifest = await readVersionManifestFromDirs([dir], {
+      platform: "win32",
+    });
+
+    expect(manifest).not.toBeNull();
+    expect(manifest?.dir).toBe(dir);
+    expect(manifest?.entries["veslo-code"]?.version).toBe("1.14.29");
   });
 });
