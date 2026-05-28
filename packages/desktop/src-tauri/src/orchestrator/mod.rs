@@ -109,6 +109,56 @@ fn orchestrator_auth_path(data_dir: &str) -> PathBuf {
     Path::new(data_dir).join("veslo-orchestrator-auth.json")
 }
 
+fn read_opencode_version_from_manifest(path: &Path) -> Option<String> {
+    let payload = fs::read_to_string(path).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&payload).ok()?;
+    let version = parsed
+        .get("veslo-code")
+        .and_then(|entry| entry.get("version"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+
+    Some(version.to_string())
+}
+
+fn resolve_manifest_opencode_version(sidecar_paths: &[PathBuf]) -> Option<String> {
+    let mut names = vec!["versions.json".to_string(), "versions.json.exe".to_string()];
+    let target = env::var("TAURI_ENV_TARGET_TRIPLE")
+        .ok()
+        .or_else(|| env::var("TARGET").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if let Some(target) = target {
+        names.push(format!("versions.json-{target}"));
+        names.push(format!("versions.json-{target}.exe"));
+    }
+
+    for dir in sidecar_paths {
+        for name in &names {
+            if let Some(version) = read_opencode_version_from_manifest(&dir.join(name)) {
+                return Some(version);
+            }
+        }
+
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if !name.starts_with("versions.json-") {
+                    continue;
+                }
+                if let Some(version) = read_opencode_version_from_manifest(&entry.path()) {
+                    return Some(version);
+                }
+            }
+        }
+    }
+
+    None
+}
+
 pub fn read_orchestrator_auth(data_dir: &str) -> Option<OrchestratorAuthFile> {
     let path = orchestrator_auth_path(data_dir);
     let payload = fs::read_to_string(path).ok()?;
@@ -285,6 +335,12 @@ pub fn spawn_orchestrator_daemon(
         command = command.env(key, value);
     }
 
+    if env::var_os("OPENCODE_VERSION").is_none() {
+        if let Some(version) = resolve_manifest_opencode_version(&sidecar_paths) {
+            command = command.env("OPENCODE_VERSION", version);
+        }
+    }
+
     command
         .spawn()
         .map_err(|e| format!("Failed to start orchestrator: {e}"))
@@ -292,7 +348,7 @@ pub fn spawn_orchestrator_daemon(
 
 #[cfg(test)]
 mod tests {
-    use super::request_orchestrator_shutdown;
+    use super::{request_orchestrator_shutdown, resolve_manifest_opencode_version};
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -349,6 +405,25 @@ mod tests {
         assert!(stopped);
 
         handle.join().expect("server thread");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn resolve_manifest_opencode_version_reads_sidecar_manifest() {
+        let dir = std::env::temp_dir().join(format!(
+            "veslo-orchestrator-version-manifest-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).expect("create test dir");
+        fs::write(
+            dir.join("versions.json.exe"),
+            r#"{"veslo-code":{"version":"1.14.29","sha256":"abc"}}"#,
+        )
+        .expect("write manifest");
+
+        let version = resolve_manifest_opencode_version(&[dir.clone()]);
+        assert_eq!(version.as_deref(), Some("1.14.29"));
+
         let _ = fs::remove_dir_all(dir);
     }
 }
