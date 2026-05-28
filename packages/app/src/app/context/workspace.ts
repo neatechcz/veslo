@@ -226,14 +226,13 @@ export function createWorkspaceStore(options: {
   const WORKSPACE_SET_ACTIVE_TIMEOUT_MS = 8_000;
   const START_HOST_TIMEOUT_MS = 45_000;
   const WORKSPACE_ACTIVATE_TIMEOUT_MS = 30_000;
-  // VSLO-86 — orchestrator_workspace_activate Tauri IPC POSTs two HTTP calls
-  // to the orchestrator daemon (`/workspaces`, `/workspaces/:id/activate`).
-  // When the daemon is busy spawning an engine (cold first-message in a
-  // workspace), those POSTs serialize behind the engine spawn and the
-  // 15s window timed out → fallback startHost → another ~12s cold respawn
-  // = 27s user-visible latency. 30s comfortably covers the realistic cold
-  // spawn (sandbox-exec + opencode serve) without forcing the fallback.
-  const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS = 30_000;
+  // VSLO-86 -- orchestrator_workspace_activate waits for the daemon's
+  // /workspaces/:id/activate path. That route eagerly spawns the per-workspace
+  // OpenCode engine and its default health window is 60s on cold dev starts
+  // (Bun + SQLite + sandbox init). Keep this timeout above that backend window;
+  // otherwise the UI falls back to startHost while the original activation is
+  // still alive, producing competing daemons and stale base URLs.
+  const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS = 75_000;
   const LONG_BOOT_CONNECT_REASONS = new Set([
     "browse-cold-start",
     "browse-cold-start-reattach",

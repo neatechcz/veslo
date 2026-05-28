@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import {
   buildWorkspaceInfos,
   persistServerWorkspaceState,
@@ -41,7 +41,7 @@ function makeConfig(overrides: Partial<ServerConfig>): ServerConfig {
 function ws(path: string, name?: string): WorkspaceInfo {
   return {
     id: workspaceIdForPath(path),
-    name: name ?? path.split("/").pop()!,
+    name: name ?? basename(path),
     path,
     workspaceType: "local",
   };
@@ -68,7 +68,7 @@ describe("workspaceIdForPath", () => {
 describe("buildWorkspaceInfos", () => {
   test("resolves relative path against cwd", () => {
     const infos = buildWorkspaceInfos([{ path: "relative/sub" }], "/base/cwd");
-    expect(infos[0]!.path).toBe("/base/cwd/relative/sub");
+    expect(infos[0]!.path).toBe(resolve("/base/cwd", "relative/sub"));
   });
 
   test("derives name from basename if not provided", () => {
@@ -114,7 +114,7 @@ describe("persistServerWorkspaceState", () => {
     const parsed = JSON.parse(raw);
     expect(parsed.workspaces).toHaveLength(2);
     expect(parsed.workspaces[0].path).toBe("/tmp/a");
-    expect(parsed.authorizedRoots).toEqual(["/tmp/a", "/tmp/b"]);
+    expect(parsed.authorizedRoots).toEqual([resolve("/tmp/a"), resolve("/tmp/b")]);
   });
 
   test("preserves non-workspace fields when merging into existing config", async () => {
@@ -157,7 +157,7 @@ describe("persistServerWorkspaceState", () => {
     await persistServerWorkspaceState(config);
 
     const parsed = JSON.parse(await readFile(configPath, "utf8"));
-    expect(parsed.authorizedRoots).toEqual(["/tmp/x", "/tmp/y"]);
+    expect(parsed.authorizedRoots).toEqual([resolve("/tmp/x"), resolve("/tmp/y")]);
   });
 
   test("roundtrip preserves workspaces through write+read", async () => {

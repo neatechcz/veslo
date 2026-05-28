@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { startServer } from "./server.js";
 import type { WorkspaceInfo } from "./types.js";
@@ -111,7 +111,7 @@ test("POST /workspaces/local with default name uses basename", async () => {
   });
 
   const payload = (await response.json()) as { items: Array<{ name: string }> };
-  const expectedBase = newDir.split("/").pop() ?? "";
+  const expectedBase = basename(newDir);
   expect(payload.items[0]!.name).toBe(expectedBase);
 });
 

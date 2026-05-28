@@ -307,6 +307,24 @@ describe("router proxy + EnginePool integration", () => {
     expect(cap.headers["x-veslo-workspace-id"]).toBe("ws-a");
   });
 
+  test("directory query override does not change the workspace engine root", async () => {
+    const { echo, orch } = await setup([
+      { id: "ws-root", path: "/tmp/ws-root", type: "local" },
+    ]);
+    const res = await fetchJson(
+      `${orch.baseUrl}/workspace/ws-root/opencode/session?directory=${encodeURIComponent("/tmp/ws-root/.opencode")}&limit=20`,
+    );
+
+    expect(res.status).toBe(200);
+    expect(orch.pool.size()).toBe(1);
+    expect(orch.pool.get("ws-root")?.workdir).toBe("/tmp/ws-root");
+    expect(echo.captures).toHaveLength(1);
+    const cap = echo.captures[0]!;
+    expect(cap.path).toBe("/session?directory=%2Ftmp%2Fws-root%2F.opencode&limit=20");
+    expect(cap.headers["x-opencode-directory"]).toBe("/tmp/ws-root");
+    expect(cap.headers["x-veslo-workspace-id"]).toBe("ws-root");
+  });
+
   test("second request reuses engine (no respawn)", async () => {
     const { orch } = await setup([
       { id: "ws-a", path: "/tmp/ws-a", type: "local" },

@@ -111,10 +111,21 @@ describe("debug-log-pipeline", () => {
       };
 
       // tiny spool: 16 KB, with retention thresholds 90%/70%.
+      const fetchImpl = (async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(init.body as string) as { batchId: string };
+        return new Response(JSON.stringify({ acceptedBatchIds: [body.batchId] }), { status: 200 });
+      }) as typeof fetch;
+
       const pipeline = createDebugLogPipeline({
-        config: makeConfig({ spoolMaxBytes: 16 * 1024 }),
+        config: makeConfig({
+          enabled: true,
+          ingestUrl: "https://den.example/v1/internal/debug-logs",
+          ingestToken: "tok",
+          spoolMaxBytes: 16 * 1024,
+        }),
         spoolDir: dir,
         logger,
+        fetchImpl,
       });
 
       // ~512 bytes per event payload → 100 events ~50 KB → far over 16 KB.

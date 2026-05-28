@@ -80,6 +80,9 @@ const runCommand = (command: string, args: string[]) =>
     });
   });
 
+const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const executableName = (name: string) => (process.platform === "win32" ? `${name}.exe` : name);
+
 const spawnLogged = (command: string, args: string[], logPath: string, env: NodeJS.ProcessEnv) => {
   const logFd = openSync(logPath, "w");
   return spawn(command, args, {
@@ -111,8 +114,8 @@ const headlessDataDir =
   process.env.VESLO_DATA_DIR ??
   process.env.VESLO_DEV_HEADLESS_DATA_DIR ??
   defaultHeadlessDataDir;
-const vesloServerBin = path.join(cwd, "packages/server/dist/bin/veslo-server");
-const opencodeRouterBin = path.join(cwd, "packages/opencode-router/dist/bin/veslo-code-router");
+const vesloServerBin = path.join(cwd, "packages/server/dist/bin", executableName("veslo-server"));
+const opencodeRouterBin = path.join(cwd, "packages/opencode-router/dist/bin", executableName("veslo-code-router"));
 
 const ensureVesloServer = async () => {
   try {
@@ -129,7 +132,7 @@ const ensureVesloServer = async () => {
     logLine(`[dev:headless-web] Missing Veslo server binary at ${vesloServerBin}`);
     logLine("[dev:headless-web] Auto-building: pnpm --filter veslo-server build:bin");
     try {
-      await runCommand("pnpm", ["--filter", "veslo-server", "build:bin"]);
+      await runCommand(pnpmCommand, ["--filter", "veslo-server", "build:bin"]);
       await access(vesloServerBin);
     } catch (error) {
       logLine(`[dev:headless-web] Auto-build failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -153,7 +156,7 @@ const ensureOpencodeRouter = async () => {
     logLine(`[dev:headless-web] Missing opencode-router binary at ${opencodeRouterBin}`);
     logLine("[dev:headless-web] Auto-building: pnpm --filter veslo-code-router build:bin");
     try {
-      await runCommand("pnpm", ["--filter", "veslo-code-router", "build:bin"]);
+      await runCommand(pnpmCommand, ["--filter", "veslo-code-router", "build:bin"]);
       await access(opencodeRouterBin);
     } catch (error) {
       logLine(`[dev:headless-web] Auto-build failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -212,7 +215,7 @@ logLine(`[dev:headless-web] Web logs: ${path.relative(cwd, path.join(tmpDir, "de
 logLine(`[dev:headless-web] Headless logs: ${path.relative(cwd, path.join(tmpDir, "dev-headless.log"))}`);
 
 const webProcess = spawnLogged(
-  "pnpm",
+  pnpmCommand,
   [
     "--filter",
     "@neatech/veslo-ui",
@@ -229,7 +232,7 @@ const webProcess = spawnLogged(
 );
 
 const headlessProcess = spawnLogged(
-  "pnpm",
+  pnpmCommand,
   [
     "--filter",
     "veslo-orchestrator",
